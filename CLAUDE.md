@@ -471,8 +471,49 @@ cd ios && pod install
 > **Warning**: `npx expo prebuild --clean` resets CFBundleVersion to 1. Restore manually.
 
 #### Deploy to TestFlight
+Set env vars and run the deploy script:
 ```bash
+export APP_STORE_KEY_PATH="$HOME/Workspace/talos/mobile/ios/AuthKey_77Z6B543D5.p8"
+export APP_STORE_KEY_ID="77Z6B543D5"
+export APP_STORE_KEY_ISSUER="7bd9329e-49b0-440a-97ed-873c74244c12"
+export APPLE_TEAM_ID="5SJZ4KA39A"
 ./scripts/deploy-testflight.sh
+```
+The script auto-bumps CFBundleVersion, archives, and uploads to TestFlight.
+
+**Manual steps** (if script fails or for more control):
+```bash
+# 1. Bump build number
+cd mobile/ios
+/usr/libexec/PlistBuddy -c "Set CFBundleVersion $(( $(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' Yaver/Info.plist) + 1 ))" Yaver/Info.plist
+
+# 2. Archive
+xcodebuild -workspace Yaver.xcworkspace -scheme Yaver -configuration Release \
+  -archivePath /tmp/Yaver.xcarchive archive \
+  DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic \
+  ENABLE_USER_SCRIPT_SANDBOXING=NO -allowProvisioningUpdates \
+  -authenticationKeyPath "$APP_STORE_KEY_PATH" \
+  -authenticationKeyID "$APP_STORE_KEY_ID" \
+  -authenticationKeyIssuerID "$APP_STORE_KEY_ISSUER" \
+  -derivedDataPath /tmp/YaverBuild
+
+# 3. Export & upload
+cat > /tmp/ExportOptions.plist <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>method</key><string>app-store-connect</string>
+  <key>teamID</key><string>$APPLE_TEAM_ID</string>
+  <key>signingStyle</key><string>automatic</string>
+  <key>destination</key><string>upload</string>
+</dict></plist>
+PLIST
+xcodebuild -exportArchive -archivePath /tmp/Yaver.xcarchive \
+  -exportOptionsPlist /tmp/ExportOptions.plist \
+  -exportPath /tmp/YaverExport -allowProvisioningUpdates \
+  -authenticationKeyPath "$APP_STORE_KEY_PATH" \
+  -authenticationKeyID "$APP_STORE_KEY_ID" \
+  -authenticationKeyIssuerID "$APP_STORE_KEY_ISSUER"
 ```
 
 ### Android — Google Play (Local)
@@ -490,7 +531,17 @@ JAVA_HOME=$(/usr/libexec/java_home -v 17) ./scripts/deploy-playstore.sh
 
 # Upload AAB to internal testing track:
 PLAY_STORE_KEY_FILE=keys/google-play-service-account.json python3 scripts/upload-playstore.py
+
+# Manual: build + upload
+cd mobile/android
+JAVA_HOME=$(/usr/libexec/java_home -v 17) ./gradlew bundleRelease
+# AAB is at: mobile/android/app/build/outputs/bundle/release/app-release.aab
+# Upload with service account:
+PLAY_STORE_KEY_FILE=keys/google-play-service-account.json python3 scripts/upload-playstore.py
 ```
+**Keystore**: `keys/yaver-upload.keystore` (alias: `yaver-upload`, pw: `***REMOVED***`)
+**Service account**: `keys/google-play-service-account.json`
+**Config**: `mobile/android/keystore.properties` (gitignored, references keystore)
 
 #### Build release AAB only (no upload)
 Requires Java 17:

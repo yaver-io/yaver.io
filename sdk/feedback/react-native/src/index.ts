@@ -31,6 +31,7 @@ export { YaverConnectionScreen } from './ConnectionScreen';
 export { ShakeDetector } from './ShakeDetector';
 export { FloatingButton } from './FloatingButton';
 export { FeedbackModal } from './FeedbackModal';
+export { FixReport } from './FixReport';
 export { captureScreenshot, startAudioRecording, stopAudioRecording } from './capture';
 export { uploadFeedback } from './upload';
 export type {
@@ -45,6 +46,8 @@ export type {
   FeedbackStreamEvent,
   VoiceCapability,
   CapturedError,
+  TestFix,
+  TestSession,
 } from './types';
 export type { BlackBoxEvent, BlackBoxConfig } from './BlackBox';
 export type { DiscoveryResult } from './Discovery';

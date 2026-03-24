@@ -5,6 +5,7 @@ import {
   Dimensions,
   Keyboard,
   PanResponder,
+  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -14,6 +15,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth } from "../context/AuthContext";
 import { useDevice } from "../context/DeviceContext";
+import { quicClient } from "../lib/quic";
 
 const BUTTON_SIZE = 46;
 const PANEL_WIDTH = 300;
@@ -51,18 +53,18 @@ export function FeedbackOverlay() {
 
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponder: () => false,
       onMoveShouldSetPanResponder: (_, gs) =>
-        Math.abs(gs.dx) > 4 || Math.abs(gs.dy) > 4,
+        Math.abs(gs.dx) > 6 || Math.abs(gs.dy) > 6,
       onPanResponderGrant: () => {
         pan.extractOffset();
         isDragging.current = false;
       },
       onPanResponderMove: (_, gs) => {
-        if (Math.abs(gs.dx) > 4 || Math.abs(gs.dy) > 4) isDragging.current = true;
+        if (Math.abs(gs.dx) > 6 || Math.abs(gs.dy) > 6) isDragging.current = true;
         Animated.event([null, { dx: pan.x, dy: pan.y }], { useNativeDriver: false })(_, gs);
       },
-      onPanResponderRelease: () => pan.flattenOffset(),
+      onPanResponderRelease: () => { pan.flattenOffset(); isDragging.current = false; },
     })
   ).current;
 
@@ -92,7 +94,7 @@ export function FeedbackOverlay() {
     return () => clearInterval(interval);
   }, [user?.id, enabled]);
 
-  const agentUrl = activeDevice ? `http://${activeDevice.host}:${activeDevice.port}` : null;
+  const agentUrl = connectionStatus === "connected" ? quicClient.baseUrl : null;
   const isConnected = connectionStatus === "connected" && !!agentUrl;
 
   const addOutput = useCallback((line: string) => {
@@ -125,7 +127,7 @@ export function FeedbackOverlay() {
         return;
       }
       const data = await resp.json();
-      const taskId = data.id ?? data.task?.id;
+      const taskId = data.taskId ?? data.id ?? data.task?.id;
       if (!taskId) {
         addOutput("task created (no id)");
         setSending(false);
@@ -149,7 +151,7 @@ export function FeedbackOverlay() {
           const task = await statusResp.json();
           const t = task.task ?? task;
 
-          if (t.status === "finished" || t.status === "failed" || t.status === "stopped") {
+          if (t.status === "completed" || t.status === "failed" || t.status === "stopped") {
             // Get the last bit of output
             const out = t.output ?? t.rawOutput ?? "";
             if (out) {
@@ -157,7 +159,7 @@ export function FeedbackOverlay() {
               const last3 = lines.slice(-3);
               for (const l of last3) addOutput(l.slice(0, 60));
             }
-            addOutput(t.status === "finished" ? "done." : `${t.status}.`);
+            addOutput(t.status === "completed" ? "done." : `${t.status}.`);
             clearInterval(poll);
             setSending(false);
           } else if (attempts >= 15) {
@@ -193,7 +195,7 @@ export function FeedbackOverlay() {
       });
       if (!resp.ok) { addOutput(`err: ${resp.status}`); setSending(false); return; }
       const data = await resp.json();
-      const taskId = data.id ?? data.task?.id;
+      const taskId = data.taskId ?? data.id ?? data.task?.id;
       if (!taskId) { addOutput("started (no id)"); setSending(false); return; }
       addOutput(`${label}: task ${taskId}...`);
 
@@ -206,15 +208,15 @@ export function FeedbackOverlay() {
             headers: { Authorization: `Bearer ${token}` },
           });
           if (!sr.ok) { clearInterval(poll); setSending(false); return; }
-          const t = (await sr.json()).task ?? (await sr.json());
-          if (t.status === "finished" || t.status === "failed" || t.status === "stopped") {
+          const json = await sr.json(); const t = json.task ?? json;
+          if (t.status === "completed" || t.status === "failed" || t.status === "stopped") {
             const out = t.output ?? t.rawOutput ?? "";
             if (out) {
               for (const l of out.split("\n").filter((l: string) => l.trim()).slice(-3)) {
                 addOutput(l.slice(0, 60));
               }
             }
-            addOutput(t.status === "finished" ? "done." : `${t.status}.`);
+            addOutput(t.status === "completed" ? "done." : `${t.status}.`);
             clearInterval(poll); setSending(false);
           } else if (attempts >= 30) {
             addOutput("running in background...");
@@ -228,13 +230,61 @@ export function FeedbackOverlay() {
     }
   }, [agentUrl, token, addOutput]);
 
+  const isDevBuild = __DEV__;
+
   const handleReload = useCallback(() => {
-    runAgentAction("hot-reload", "Hot reload the app. Restart the dev server and trigger a refresh on the connected device.");
+    if (isDevBuild) {
+      // Dev build: trigger metro hot reload
+      runAgentAction("hot-reload", "Hot reload the app. Send the reload signal to the dev server to trigger a fast refresh on the connected device.");
+    } else {
+      // Release/TestFlight build: rebuild and redeploy
+      runAgentAction(
+        "rebuild",
+        "This is a release build — hot reload is not available. " +
+        "Rebuild the app and upload to TestFlight (iOS) and/or Play Store internal testing (Android). " +
+        "Use xcodebuild for iOS and gradle for Android — no Expo, use native build tools. " +
+        "Auto-increment the build number. Report progress.",
+      );
+    }
+  }, [runAgentAction, isDevBuild]);
+
+  const handleBuild = useCallback(() => {
+    runAgentAction(
+      "build-deploy",
+      "Build and deploy the app using native tools (xcodebuild for iOS, gradle for Android — no Expo). " +
+      "iOS: archive and upload to TestFlight, auto-increment CFBundleVersion. " +
+      "Android: release AAB and upload to Google Play internal testing, auto-increment versionCode. " +
+      "Report progress and result for both.",
+    );
   }, [runAgentAction]);
 
-  const handleBuild = useCallback((platform: string) => {
-    runAgentAction(`build-${platform}`, `Build and deploy the ${platform} app. Run the appropriate build command (expo build, xcodebuild, or gradle) and report the result.`);
-  }, [runAgentAction]);
+  const handleBugReport = useCallback(async () => {
+    if (!agentUrl || !token) return;
+    addOutput("> bug report");
+    setSending(true);
+    try {
+      const resp = await fetch(`${agentUrl}/tasks`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "Bug report from device — investigate and fix any visible issues on the current screen.",
+          source: "feedback-sdk",
+          description: "[Feedback SDK] User tapped the bug report button from the debug console.",
+        }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        const taskId = data.taskId ?? data.id ?? data.task?.id;
+        addOutput(taskId ? `bug task ${taskId} created` : "bug report sent");
+      } else {
+        addOutput(`err: ${resp.status}`);
+      }
+    } catch (e) {
+      addOutput(`fail: ${String(e).slice(0, 40)}`);
+    } finally {
+      setSending(false);
+    }
+  }, [agentUrl, token, addOutput]);
 
   const handleDisable = useCallback(async () => {
     if (!user?.id) return;
@@ -322,7 +372,7 @@ export function FeedbackOverlay() {
             </TouchableOpacity>
           </View>
 
-          {/* Action cards */}
+          {/* Action cards — Reload | Build | Bug */}
           <View style={styles.cardRow}>
             <TouchableOpacity
               style={[styles.card, fullSize && styles.cardFull, !isConnected && styles.dim]}
@@ -334,19 +384,46 @@ export function FeedbackOverlay() {
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.card, fullSize && styles.cardFull, !isConnected && styles.dim]}
-              onPress={() => handleBuild("ios")}
+              onPress={handleBuild}
               disabled={sending || !isConnected}
             >
               <Text style={[styles.cardIcon, { color: "#60a5fa" }]}>{"\u2692"}</Text>
-              <Text style={styles.cardLabel}>Build iOS</Text>
+              <Text style={styles.cardLabel}>Build</Text>
+              <Text style={[styles.cardLabel, { fontSize: 8, color: "#555" }]}>+ Deploy</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.card, fullSize && styles.cardFull, !isConnected && styles.dim]}
-              onPress={() => handleBuild("android")}
+              onPress={handleBugReport}
               disabled={sending || !isConnected}
             >
-              <Text style={[styles.cardIcon, { color: "#34d399" }]}>{"\u2692"}</Text>
-              <Text style={styles.cardLabel}>Build Android</Text>
+              <Text style={[styles.cardIcon, { color: "#f87171" }]}>{"\uD83D\uDC1B"}</Text>
+              <Text style={styles.cardLabel}>Report Bug</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Action cards row 2 — Test App */}
+          <View style={styles.cardRow}>
+            <TouchableOpacity
+              style={[styles.card, fullSize && styles.cardFull, !isConnected && styles.dim]}
+              onPress={() => {
+                runAgentAction(
+                  "test-app",
+                  "Start an autonomous test session for the app. " +
+                  "1. Read the codebase to understand the app structure, screens, and components. " +
+                  "2. If this is a release build (not dev), first build a debug/test version using native tools " +
+                  "(xcodebuild for iOS, gradle for Android — no Expo) and deploy it to the device/emulator. " +
+                  "Name the test build 'test-<appname>' (e.g. test-Yaver). Report: 'preparing test-Yaver.app...' " +
+                  "3. Navigate through every screen on the connected device or emulator. " +
+                  "Try tapping buttons, filling forms with test data, submitting empty forms, etc. " +
+                  "4. When you find errors/crashes, fix them in code. If dev build, hot reload. If release, rebuild and redeploy. " +
+                  "5. Do NOT commit any changes — all fixes are staged only. " +
+                  "6. After testing all screens, report a summary: screens tested, bugs found, fixes applied with file paths."
+                );
+              }}
+              disabled={sending || !isConnected}
+            >
+              <Text style={[styles.cardIcon, { color: "#a78bfa" }]}>{"\u25B6"}</Text>
+              <Text style={styles.cardLabel}>Test App</Text>
             </TouchableOpacity>
           </View>
 
@@ -362,15 +439,14 @@ export function FeedbackOverlay() {
         </View>
       )}
 
-      {/* Button */}
-      <TouchableOpacity
+      {/* Button — separate Pressable to avoid PanResponder stealing taps */}
+      <Pressable
         style={[styles.button, { backgroundColor: btnBg }]}
-        activeOpacity={0.7}
         onPress={handleTap}
       >
         <Text style={styles.buttonIcon}>{chatOpen ? "\u2715" : "y"}</Text>
         <View style={[styles.statusDot, isConnected ? styles.green : styles.red]} />
-      </TouchableOpacity>
+      </Pressable>
     </Animated.View>
   );
 }

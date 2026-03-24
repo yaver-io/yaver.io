@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import { FeedbackBundle, VoiceCapability } from './types';
+import { FeedbackBundle, TestSession, VoiceCapability } from './types';
 
 export interface FeedbackEvent {
   type: string;
@@ -217,6 +217,44 @@ export class P2PClient {
   /** Get the download URL for a build artifact. */
   getArtifactUrl(buildId: string): string {
     return `${this.baseUrl}/builds/${buildId}/artifact`;
+  }
+
+  /**
+   * Start an autonomous test session.
+   * The agent reads the codebase for context, then navigates the app
+   * on the connected device/emulator, catches exceptions via BlackBox,
+   * writes fixes, and hot reloads — all without committing.
+   */
+  async startTestSession(): Promise<{ sessionId: string }> {
+    const response = await fetch(`${this.baseUrl}/test-app/start`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ source: 'feedback-sdk' }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`[P2PClient] Start test session failed (${response.status}): ${text}`);
+    }
+
+    return response.json();
+  }
+
+  /** Stop a running test session. */
+  async stopTestSession(): Promise<void> {
+    await fetch(`${this.baseUrl}/test-app/stop`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    });
+  }
+
+  /** Get the current test session status and list of fixes. */
+  async getTestSession(): Promise<TestSession> {
+    const response = await this.request('GET', '/test-app/status');
+    return response.json();
   }
 
   /** Internal helper for authenticated GET/POST requests. */

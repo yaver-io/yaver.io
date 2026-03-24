@@ -1,0 +1,1 @@
+{"version":3,"file":"index.js","sourceRoot":"","sources":["../src/index.tsx"],"names":[],"mappings":";;;;;;;;;;;;;;;;AAAA,oBAAkB;AAClB,4CAA0B","sourcesContent":["import './global';\nexport * from './exports';\n"]}

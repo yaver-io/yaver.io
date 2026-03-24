@@ -120,9 +120,6 @@ export default function Header() {
             </>
           ) : (
             <>
-              <Link href="/#features" className="text-sm text-surface-400 transition-colors hover:text-surface-50">
-                Features
-              </Link>
               <Link href="/faq" className="text-sm text-surface-400 transition-colors hover:text-surface-50">
                 FAQ
               </Link>
@@ -134,9 +131,6 @@ export default function Header() {
               </Link>
               <Link href="/download" className="text-sm text-surface-400 transition-colors hover:text-surface-50">
                 Download
-              </Link>
-              <Link href="/#pricing" className="text-sm text-surface-400 transition-colors hover:text-surface-50">
-                Pricing
               </Link>
               <Link href="/integrations" className="text-sm text-surface-400 transition-colors hover:text-surface-50">
                 Integrations
@@ -203,12 +197,10 @@ export default function Header() {
       {mobileOpen && !isAuthenticated && (
         <div className="border-t border-surface-800 bg-surface-950 px-6 py-4 md:hidden">
           <div className="flex flex-col gap-4">
-            <Link href="/#features" className="text-sm text-surface-400 hover:text-surface-50" onClick={() => setMobileOpen(false)}>Features</Link>
             <Link href="/faq" className="text-sm text-surface-400 hover:text-surface-50" onClick={() => setMobileOpen(false)}>FAQ</Link>
             <Link href="/docs" className="text-sm text-surface-400 hover:text-surface-50" onClick={() => setMobileOpen(false)}>Docs</Link>
             <Link href="/docs/developers" className="text-sm text-surface-400 hover:text-surface-50" onClick={() => setMobileOpen(false)}>Developers</Link>
             <Link href="/download" className="text-sm text-surface-400 hover:text-surface-50" onClick={() => setMobileOpen(false)}>Download</Link>
-            <Link href="/#pricing" className="text-sm text-surface-400 hover:text-surface-50" onClick={() => setMobileOpen(false)}>Pricing</Link>
             <Link href="/integrations" className="text-sm text-surface-400 hover:text-surface-50" onClick={() => setMobileOpen(false)}>Integrations</Link>
             <Link href="/auth" className="btn-primary text-center text-sm" onClick={() => setMobileOpen(false)}>Log in</Link>
           </div>

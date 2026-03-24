@@ -94,6 +94,15 @@ export default function SettingsScreen() {
   const [keyStorage, setKeyStorage] = useState<KeyStorage>("local");
 
 
+  // Test App
+  const [showTestApp, setShowTestApp] = useState(false);
+  const [testTarget, setTestTarget] = useState<'device' | 'simulator' | null>(null);
+  const [testRunning, setTestRunning] = useState(false);
+  const [testExecId, setTestExecId] = useState<string | null>(null);
+  const [agentLogs, setAgentLogs] = useState<string[]>([]);
+  const agentLogsRef = useRef<ScrollView>(null);
+  const testAbortRef = useRef<AbortController | null>(null);
+
   const scrollViewRef = useRef<ScrollView>(null);
 
   // Relay servers
@@ -552,6 +561,78 @@ export default function SettingsScreen() {
     }
   };
 
+  const startTestApp = async (target: 'device' | 'simulator') => {
+    setTestTarget(target);
+    setTestRunning(true);
+    setAgentLogs([]);
+    try {
+      // Start yaver logs -f via exec on the agent
+      const { execId } = await quicClient.startExec("yaver logs -f");
+      setTestExecId(execId);
+
+      // Stream output via XHR onprogress (works in React Native)
+      const url = `${quicClient.baseUrl}/exec/${execId}/stream`;
+      const xhr = new XMLHttpRequest();
+      xhr.open("GET", url, true);
+      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+      let lastIndex = 0;
+
+      xhr.onprogress = () => {
+        const newData = xhr.responseText.slice(lastIndex);
+        lastIndex = xhr.responseText.length;
+        const lines = newData.split("\n");
+        const logLines: string[] = [];
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const payload = line.slice(6).trim();
+            if (!payload) continue;
+            try {
+              const evt = JSON.parse(payload);
+              // Extract raw text from the exec event
+              const text = evt.data || evt.output || evt.text || "";
+              if (text) logLines.push(text);
+            } catch {
+              if (payload) logLines.push(payload);
+            }
+          }
+        }
+        if (logLines.length > 0) {
+          setAgentLogs((prev) => {
+            const next = [...prev, ...logLines];
+            return next.length > 500 ? next.slice(-500) : next;
+          });
+        }
+      };
+
+      xhr.onerror = () => {
+        setAgentLogs((prev) => [...prev, "[error] Connection lost"]);
+        setTestRunning(false);
+      };
+
+      xhr.onloadend = () => {
+        setTestRunning(false);
+      };
+
+      // Store xhr ref so we can abort
+      testAbortRef.current = { abort: () => xhr.abort() } as AbortController;
+      xhr.send();
+    } catch (e: any) {
+      setAgentLogs((prev) => [...prev, `[error] ${e.message}`]);
+      setTestRunning(false);
+    }
+  };
+
+  const stopTestApp = async () => {
+    testAbortRef.current?.abort();
+    if (testExecId) {
+      try {
+        await quicClient.killExec(testExecId);
+      } catch {}
+    }
+    setTestRunning(false);
+    setTestExecId(null);
+  };
+
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <KeyboardAvoidingView
@@ -741,6 +822,152 @@ export default function SettingsScreen() {
               <Text style={[styles.noDeviceText, { color: c.textMuted }]}>
                 No device connected. Go to the Devices tab to connect.
               </Text>
+            </View>
+          )}
+        </View>
+
+        {/* Feedback SDK */}
+        <View style={styles.section}>
+          <Pressable
+            onPress={() => setShowFeedbackSDK(!showFeedbackSDK)}
+            style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+          >
+            <View style={styles.themeRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.themeLabel, { color: c.textPrimary }]}>Feedback SDK</Text>
+                <Text style={{ fontSize: 11, color: c.textMuted, marginTop: 2 }}>
+                  {feedbackEnabled ? `Enabled (${feedbackTrigger}, ${feedbackMode})` : "Disabled"}
+                </Text>
+              </View>
+              <Text style={{ color: c.textMuted }}>{showFeedbackSDK ? "\u25B2" : "\u25BC"}</Text>
+            </View>
+          </Pressable>
+
+          {showFeedbackSDK && (
+            <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginTop: 4, padding: 16 }]}>
+              <View style={[styles.themeRow, { marginBottom: 16 }]}>
+                <Text style={[styles.themeLabel, { color: c.textPrimary }]}>Enable Feedback SDK</Text>
+                <Switch
+                  value={feedbackEnabled}
+                  onValueChange={async (val) => {
+                    setFeedbackEnabled(val);
+                    const fbKey = user?.id ? `@yaver/u/${user.id}/feedback_config` : "@yaver/feedback_config";
+                    const cfg = { enabled: val, trigger: feedbackTrigger, feedbackMode, blackBox: blackBoxEnabled, voiceEnabled: feedbackVoice };
+                    await AsyncStorage.setItem(fbKey, JSON.stringify(cfg));
+                  }}
+                  trackColor={{ true: c.accent }}
+                />
+              </View>
+
+              {feedbackEnabled && (
+                <>
+                  <Text style={[styles.sectionLabel, { color: c.textMuted, marginBottom: 8 }]}>Trigger</Text>
+                  <View style={{ flexDirection: "row", gap: 8, marginBottom: 16 }}>
+                    {(["shake", "floating-button", "manual"] as const).map((t) => (
+                      <Pressable
+                        key={t}
+                        onPress={async () => {
+                          setFeedbackTrigger(t);
+                          const fbKey = user?.id ? `@yaver/u/${user.id}/feedback_config` : "@yaver/feedback_config";
+                          const cfg = { enabled: feedbackEnabled, trigger: t, feedbackMode, blackBox: blackBoxEnabled, voiceEnabled: feedbackVoice };
+                          await AsyncStorage.setItem(fbKey, JSON.stringify(cfg));
+                        }}
+                        style={{
+                          flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: "center" as const,
+                          backgroundColor: feedbackTrigger === t ? c.accent + "30" : c.bgInput,
+                          borderWidth: 1, borderColor: feedbackTrigger === t ? c.accent : c.border,
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, color: feedbackTrigger === t ? c.accent : c.textSecondary }}>
+                          {t === "floating-button" ? "Float" : t === "shake" ? "Shake" : "Manual"}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+
+                  <Text style={[styles.sectionLabel, { color: c.textMuted, marginBottom: 8 }]}>Mode</Text>
+                  <View style={{ flexDirection: "row", gap: 8, marginBottom: 16 }}>
+                    {(["live", "narrated", "batch"] as const).map((m) => (
+                      <Pressable
+                        key={m}
+                        onPress={async () => {
+                          setFeedbackMode(m);
+                          const fbKey = user?.id ? `@yaver/u/${user.id}/feedback_config` : "@yaver/feedback_config";
+                          const cfg = { enabled: feedbackEnabled, trigger: feedbackTrigger, feedbackMode: m, blackBox: blackBoxEnabled, voiceEnabled: feedbackVoice };
+                          await AsyncStorage.setItem(fbKey, JSON.stringify(cfg));
+                        }}
+                        style={{
+                          flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: "center" as const,
+                          backgroundColor: feedbackMode === m ? c.accent + "30" : c.bgInput,
+                          borderWidth: 1, borderColor: feedbackMode === m ? c.accent : c.border,
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, color: feedbackMode === m ? c.accent : c.textSecondary }}>
+                          {m.charAt(0).toUpperCase() + m.slice(1)}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+
+                  <View style={[styles.themeRow, { marginBottom: 16 }]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.themeLabel, { color: c.textPrimary }]}>Black Box Streaming</Text>
+                      <Text style={{ fontSize: 11, color: c.textMuted, marginTop: 2 }}>Stream logs, crashes, navigation to agent</Text>
+                    </View>
+                    <Switch
+                      value={blackBoxEnabled}
+                      onValueChange={async (val) => {
+                        setBlackBoxEnabled(val);
+                        const fbKey = user?.id ? `@yaver/u/${user.id}/feedback_config` : "@yaver/feedback_config";
+                        const cfg = { enabled: feedbackEnabled, trigger: feedbackTrigger, feedbackMode, blackBox: val, voiceEnabled: feedbackVoice };
+                        await AsyncStorage.setItem(fbKey, JSON.stringify(cfg));
+                      }}
+                      trackColor={{ true: c.accent }}
+                    />
+                  </View>
+
+                  <View style={[styles.themeRow, { marginBottom: 8 }]}>
+                    <Text style={[styles.themeLabel, { color: c.textPrimary }]}>Voice Input</Text>
+                    <Switch
+                      value={feedbackVoice}
+                      onValueChange={async (val) => {
+                        setFeedbackVoice(val);
+                        const fbKey = user?.id ? `@yaver/u/${user.id}/feedback_config` : "@yaver/feedback_config";
+                        const cfg = { enabled: feedbackEnabled, trigger: feedbackTrigger, feedbackMode, blackBox: blackBoxEnabled, voiceEnabled: val };
+                        await AsyncStorage.setItem(fbKey, JSON.stringify(cfg));
+                      }}
+                      trackColor={{ true: c.accent }}
+                    />
+                  </View>
+
+                  <Text style={[styles.sectionLabel, { color: c.textMuted, marginTop: 12, marginBottom: 8 }]}>Button Color</Text>
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    {["#6366f1", "#ec4899", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6", "#1a1a1a", "#333333"].map((color) => (
+                      <Pressable
+                        key={color}
+                        onPress={async () => {
+                          setFeedbackButtonColor(color);
+                          const fbKey = user?.id ? `@yaver/u/${user.id}/feedback_config` : "@yaver/feedback_config";
+                          const raw = await AsyncStorage.getItem(fbKey);
+                          const cfg = raw ? JSON.parse(raw) : {};
+                          cfg.buttonColor = color;
+                          await AsyncStorage.setItem(fbKey, JSON.stringify(cfg));
+                        }}
+                        style={{
+                          width: 32, height: 32, borderRadius: 16,
+                          backgroundColor: color, borderWidth: 2,
+                          borderColor: feedbackButtonColor === color ? "#fff" : "transparent",
+                        }}
+                      />
+                    ))}
+                  </View>
+
+                  <Text style={{ fontSize: 11, color: c.textMuted, marginTop: 12 }}>
+                    The debug button appears as a draggable &gt;_ terminal icon.
+                    Tap to expand the console. Send tasks, trigger hot reload, or disable the SDK.
+                  </Text>
+                </>
+              )}
             </View>
           )}
         </View>
@@ -987,6 +1214,120 @@ export default function SettingsScreen() {
             <Text style={[styles.actionRowChevron, { color: c.textMuted }]}>&rsaquo;</Text>
           </Pressable>
         </View>
+
+        {/* Test App */}
+        {connectionStatus === "connected" && (
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Test App</Text>
+          {!testRunning && !testTarget ? (
+            <>
+              <Text style={{ fontSize: 12, color: c.textMuted, marginBottom: 8 }}>
+                Run app tests and stream live agent logs. Where should tests run?
+              </Text>
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.actionRow,
+                    { backgroundColor: c.bgCard, borderColor: c.border, flex: 1 },
+                    pressed && styles.actionRowPressed,
+                  ]}
+                  onPress={() => startTestApp("device")}
+                >
+                  <Text style={[styles.actionRowLabel, { color: c.textPrimary, textAlign: "center" }]}>
+                    This Device
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.actionRow,
+                    { backgroundColor: c.bgCard, borderColor: c.border, flex: 1 },
+                    pressed && styles.actionRowPressed,
+                  ]}
+                  onPress={() => startTestApp("simulator")}
+                >
+                  <Text style={[styles.actionRowLabel, { color: c.textPrimary, textAlign: "center" }]}>
+                    Simulator
+                  </Text>
+                </Pressable>
+              </View>
+            </>
+          ) : (
+            <>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  {testRunning && <ActivityIndicator size="small" color={c.accent} />}
+                  <Text style={{ fontSize: 13, fontWeight: "600", color: c.textPrimary }}>
+                    {testRunning ? `Streaming logs (${testTarget})` : "Test stopped"}
+                  </Text>
+                </View>
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  {testRunning && (
+                    <Pressable
+                      onPress={stopTestApp}
+                      style={({ pressed }) => [
+                        { paddingVertical: 5, paddingHorizontal: 12, borderRadius: 6, backgroundColor: c.error },
+                        pressed && { opacity: 0.7 },
+                      ]}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: "600", color: "#fff" }}>Stop</Text>
+                    </Pressable>
+                  )}
+                  {!testRunning && (
+                    <Pressable
+                      onPress={() => { setTestTarget(null); setAgentLogs([]); }}
+                      style={({ pressed }) => [
+                        { paddingVertical: 5, paddingHorizontal: 12, borderRadius: 6, backgroundColor: c.accent },
+                        pressed && { opacity: 0.7 },
+                      ]}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: "600", color: "#fff" }}>Reset</Text>
+                    </Pressable>
+                  )}
+                </View>
+              </View>
+              {/* Agent console logs */}
+              <View style={{
+                backgroundColor: "#0d0d0d",
+                borderRadius: 8,
+                borderWidth: 1,
+                borderColor: c.border,
+                maxHeight: 300,
+                overflow: "hidden",
+              }}>
+                <ScrollView
+                  ref={agentLogsRef}
+                  style={{ padding: 10 }}
+                  nestedScrollEnabled
+                  onContentSizeChange={() => agentLogsRef.current?.scrollToEnd({ animated: false })}
+                >
+                  {agentLogs.length === 0 ? (
+                    <Text style={{ fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", fontSize: 11, color: "#555" }}>
+                      Waiting for agent logs...
+                    </Text>
+                  ) : (
+                    agentLogs.map((line, i) => (
+                      <Text
+                        key={i}
+                        style={{
+                          fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+                          fontSize: 11,
+                          color: line.includes("[error]") || line.includes("ERROR") ? "#ef4444"
+                            : line.includes("[warn]") || line.includes("WARN") ? "#eab308"
+                            : line.includes("[info]") || line.includes("INFO") ? "#22c55e"
+                            : "#9ca3af",
+                          lineHeight: 16,
+                        }}
+                      >
+                        {line}
+                      </Text>
+                    ))
+                  )}
+                </ScrollView>
+              </View>
+            </>
+          )}
+        </View>
+        )}
 
         {/* Logs */}
         <View style={styles.section}>
@@ -1967,169 +2308,6 @@ export default function SettingsScreen() {
           )}
         </View>
 
-        {/* Feedback SDK */}
-        <View style={styles.section}>
-          <Pressable
-            onPress={() => setShowFeedbackSDK(!showFeedbackSDK)}
-            style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-          >
-            <View style={styles.themeRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.themeLabel, { color: c.textPrimary }]}>Feedback SDK</Text>
-                <Text style={{ fontSize: 11, color: c.textMuted, marginTop: 2 }}>
-                  {feedbackEnabled ? `Enabled (${feedbackTrigger}, ${feedbackMode})` : "Disabled"}
-                </Text>
-              </View>
-              <Text style={{ color: c.textMuted }}>{showFeedbackSDK ? "\u25B2" : "\u25BC"}</Text>
-            </View>
-          </Pressable>
-
-          {showFeedbackSDK && (
-            <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginTop: 4, padding: 16 }]}>
-              {/* Enable/Disable */}
-              <View style={[styles.themeRow, { marginBottom: 16 }]}>
-                <Text style={[styles.themeLabel, { color: c.textPrimary }]}>Enable Feedback SDK</Text>
-                <Switch
-                  value={feedbackEnabled}
-                  onValueChange={async (val) => {
-                    setFeedbackEnabled(val);
-                    const fbKey = user?.id ? `@yaver/u/${user.id}/feedback_config` : "@yaver/feedback_config";
-                    const cfg = { enabled: val, trigger: feedbackTrigger, feedbackMode, blackBox: blackBoxEnabled, voiceEnabled: feedbackVoice };
-                    await AsyncStorage.setItem(fbKey, JSON.stringify(cfg));
-                  }}
-                  trackColor={{ true: c.accent }}
-                />
-              </View>
-
-              {feedbackEnabled && (
-                <>
-                  {/* Trigger mode */}
-                  <Text style={[styles.sectionLabel, { color: c.textMuted, marginBottom: 8 }]}>Trigger</Text>
-                  <View style={{ flexDirection: "row", gap: 8, marginBottom: 16 }}>
-                    {(["shake", "floating-button", "manual"] as const).map((t) => (
-                      <Pressable
-                        key={t}
-                        onPress={async () => {
-                          setFeedbackTrigger(t);
-                          const fbKey = user?.id ? `@yaver/u/${user.id}/feedback_config` : "@yaver/feedback_config";
-                          const cfg = { enabled: feedbackEnabled, trigger: t, feedbackMode, blackBox: blackBoxEnabled, voiceEnabled: feedbackVoice };
-                          await AsyncStorage.setItem(fbKey, JSON.stringify(cfg));
-                        }}
-                        style={{
-                          flex: 1,
-                          paddingVertical: 8,
-                          borderRadius: 8,
-                          alignItems: "center" as const,
-                          backgroundColor: feedbackTrigger === t ? c.accent + "30" : c.bgInput,
-                          borderWidth: 1,
-                          borderColor: feedbackTrigger === t ? c.accent : c.border,
-                        }}
-                      >
-                        <Text style={{ fontSize: 12, color: feedbackTrigger === t ? c.accent : c.textSecondary }}>
-                          {t === "floating-button" ? "Float" : t === "shake" ? "Shake" : "Manual"}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </View>
-
-                  {/* Feedback mode */}
-                  <Text style={[styles.sectionLabel, { color: c.textMuted, marginBottom: 8 }]}>Mode</Text>
-                  <View style={{ flexDirection: "row", gap: 8, marginBottom: 16 }}>
-                    {(["live", "narrated", "batch"] as const).map((m) => (
-                      <Pressable
-                        key={m}
-                        onPress={async () => {
-                          setFeedbackMode(m);
-                          const fbKey = user?.id ? `@yaver/u/${user.id}/feedback_config` : "@yaver/feedback_config";
-                          const cfg = { enabled: feedbackEnabled, trigger: feedbackTrigger, feedbackMode: m, blackBox: blackBoxEnabled, voiceEnabled: feedbackVoice };
-                          await AsyncStorage.setItem(fbKey, JSON.stringify(cfg));
-                        }}
-                        style={{
-                          flex: 1,
-                          paddingVertical: 8,
-                          borderRadius: 8,
-                          alignItems: "center" as const,
-                          backgroundColor: feedbackMode === m ? c.accent + "30" : c.bgInput,
-                          borderWidth: 1,
-                          borderColor: feedbackMode === m ? c.accent : c.border,
-                        }}
-                      >
-                        <Text style={{ fontSize: 12, color: feedbackMode === m ? c.accent : c.textSecondary }}>
-                          {m.charAt(0).toUpperCase() + m.slice(1)}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </View>
-
-                  {/* Black Box streaming */}
-                  <View style={[styles.themeRow, { marginBottom: 16 }]}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.themeLabel, { color: c.textPrimary }]}>Black Box Streaming</Text>
-                      <Text style={{ fontSize: 11, color: c.textMuted, marginTop: 2 }}>
-                        Stream logs, crashes, navigation to agent
-                      </Text>
-                    </View>
-                    <Switch
-                      value={blackBoxEnabled}
-                      onValueChange={async (val) => {
-                        setBlackBoxEnabled(val);
-                        const fbKey = user?.id ? `@yaver/u/${user.id}/feedback_config` : "@yaver/feedback_config";
-                        const cfg = { enabled: feedbackEnabled, trigger: feedbackTrigger, feedbackMode, blackBox: val, voiceEnabled: feedbackVoice };
-                        await AsyncStorage.setItem(fbKey, JSON.stringify(cfg));
-                      }}
-                      trackColor={{ true: c.accent }}
-                    />
-                  </View>
-
-                  {/* Voice */}
-                  <View style={[styles.themeRow, { marginBottom: 8 }]}>
-                    <Text style={[styles.themeLabel, { color: c.textPrimary }]}>Voice Input</Text>
-                    <Switch
-                      value={feedbackVoice}
-                      onValueChange={async (val) => {
-                        setFeedbackVoice(val);
-                        const fbKey = user?.id ? `@yaver/u/${user.id}/feedback_config` : "@yaver/feedback_config";
-                        const cfg = { enabled: feedbackEnabled, trigger: feedbackTrigger, feedbackMode, blackBox: blackBoxEnabled, voiceEnabled: val };
-                        await AsyncStorage.setItem(fbKey, JSON.stringify(cfg));
-                      }}
-                      trackColor={{ true: c.accent }}
-                    />
-                  </View>
-
-                  {/* Button color */}
-                  <Text style={[styles.sectionLabel, { color: c.textMuted, marginTop: 12, marginBottom: 8 }]}>Button Color</Text>
-                  <View style={{ flexDirection: "row", gap: 8 }}>
-                    {["#6366f1", "#ec4899", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6"].map((color) => (
-                      <Pressable
-                        key={color}
-                        onPress={async () => {
-                          setFeedbackButtonColor(color);
-                          const fbKey = user?.id ? `@yaver/u/${user.id}/feedback_config` : "@yaver/feedback_config";
-                          const raw = await AsyncStorage.getItem(fbKey);
-                          const cfg = raw ? JSON.parse(raw) : {};
-                          cfg.buttonColor = color;
-                          await AsyncStorage.setItem(fbKey, JSON.stringify(cfg));
-                        }}
-                        style={{
-                          width: 32, height: 32, borderRadius: 16,
-                          backgroundColor: color,
-                          borderWidth: 2,
-                          borderColor: feedbackButtonColor === color ? "#fff" : "transparent",
-                        }}
-                      />
-                    ))}
-                  </View>
-
-                  <Text style={{ fontSize: 11, color: c.textMuted, marginTop: 12 }}>
-                    The debug button appears as a draggable &gt;_ terminal icon.
-                    Tap to expand the console. Send tasks, trigger hot reload, or disable the SDK.
-                  </Text>
-                </>
-              )}
-            </View>
-          )}
-        </View>
-
         {/* Sign out */}
         <View style={styles.section}>
           <Pressable
@@ -2468,6 +2646,13 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingVertical: 10,
     paddingHorizontal: 12,
+    fontSize: 14,
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
     fontSize: 14,
   },
 });

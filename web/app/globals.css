@@ -93,3 +93,9 @@
 ::-webkit-scrollbar-thumb {
   @apply rounded-full bg-surface-700;
 }
+
+/* Yaver SDK button glow animation */
+@keyframes yaver-btn-glow {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}

@@ -58,6 +58,21 @@ export interface FeedbackConfig {
    * Bugsnag, or any other error tracking tool.
    */
   maxCapturedErrors?: number;
+  /**
+   * Which platforms the Build button targets.
+   * - 'ios' — build iOS only
+   * - 'android' — build Android only
+   * - 'both' — build iOS and Android sequentially (default)
+   * - 'web' — build web app
+   */
+  buildPlatforms?: 'ios' | 'android' | 'both' | 'web';
+  /**
+   * Auto-deploy builds after successful build.
+   * When true (default), iOS builds are uploaded to TestFlight
+   * and Android builds are uploaded to Google Play internal testing.
+   * When false, builds are created locally without uploading.
+   */
+  autoDeploy?: boolean;
 }
 
 export interface FeedbackBundle {
@@ -132,6 +147,53 @@ export interface FeedbackStreamEvent {
   type: string;
   timestamp: string;
   data: any;
+}
+
+/**
+ * A single fix applied by the AI agent during a test session.
+ * Displayed in the FixReport component as a markdown-style list.
+ */
+export interface TestFix {
+  /** Unique fix ID */
+  id: string;
+  /** File that was modified */
+  file: string;
+  /** Line number of the change */
+  line?: number;
+  /** Short description of what was fixed */
+  description: string;
+  /** The error/exception that triggered this fix */
+  error?: string;
+  /** Diff or code snippet (shown on expand) */
+  diff?: string;
+  /** Timestamp when the fix was applied */
+  timestamp: string;
+  /** Whether the fix resolved the issue (verified after hot reload) */
+  verified?: boolean;
+}
+
+/**
+ * Test session state returned by the agent's /test-app/status endpoint.
+ */
+export interface TestSession {
+  /** Whether a test session is currently running */
+  active: boolean;
+  /** Current screen being tested */
+  currentScreen?: string;
+  /** Total screens discovered */
+  screensDiscovered: number;
+  /** Total screens tested */
+  screensTested: number;
+  /** Errors found during this session */
+  errorsFound: number;
+  /** Fixes applied (not committed — staged only) */
+  fixes: TestFix[];
+  /** Session start time */
+  startedAt?: string;
+  /** Elapsed seconds */
+  elapsedSeconds?: number;
+  /** Status message */
+  status: string;
 }
 
 /** Voice capability info returned by the agent's /voice/status endpoint. */

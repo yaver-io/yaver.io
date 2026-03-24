@@ -237,30 +237,44 @@ export default function FeedbackSdkPage() {
         <section className="mb-20">
           <SectionHeading id="quick-start">Quick Start</SectionHeading>
           <Prose>
-            Initialize the SDK with your agent&apos;s address. In development,
-            this is typically your dev machine&apos;s local IP. The SDK
-            auto-discovers the agent via LAN beacon if no host is specified.
+            Initialize the SDK with your agent&apos;s address. Gate it behind
+            your developer user ID so only your team sees the debug console.
+            The SDK auto-discovers the agent via LAN beacon if no host is
+            specified.
           </Prose>
 
           <SubHeading>React Native</SubHeading>
           <div className="mb-8">
             <Terminal title="quick-start-rn.tsx">
               <pre className="text-surface-300">
-                {`import { YaverFeedback } from '@yaver/feedback-react-native';
+                {`import { YaverFeedback, FloatingButton, BlackBox } from '@yaver/feedback-react-native';
+import { useAuth } from './auth';
 
-// Initialize in your app entry (App.tsx)
-YaverFeedback.init({
-  // Optional — auto-discovered via LAN beacon
-  agentHost: '192.168.1.42',
-  agentPort: 18080,
+function App() {
+  const { user } = useAuth();
 
-  // Enable error capture and black box
-  errorCapture: true,
-  blackBox: true,
+  // Only show for your team — gate by user ID or email
+  const isDev = __DEV__ && user?.id === 'YOUR_USER_ID';
+  // or: user?.email?.endsWith('@yourcompany.com')
 
-  // Show the floating feedback button
-  showButton: true,
-});`}
+  if (isDev && !YaverFeedback.isInitialized()) {
+    YaverFeedback.init({ trigger: 'floating-button' });
+    BlackBox.start();
+    BlackBox.wrapConsole();
+  }
+
+  return (
+    <>
+      <YourApp />
+      {isDev && <FloatingButton />}
+      {/* Debug console includes:
+          - Message back-and-forth with AI agent
+          - Hot Reload button
+          - Build iOS → auto-submit to TestFlight
+          - Build Android → auto-submit to Play Store */}
+    </>
+  );
+}`}
               </pre>
             </Terminal>
           </div>
@@ -274,13 +288,19 @@ YaverFeedback.init({
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
-  YaverFeedback.init(
-    agentHost: '192.168.1.42',
-    agentPort: 18080,
-    errorCapture: true,
-    blackBox: true,
-    showButton: true,
-  );
+  // Gate by developer user ID
+  final isDev = kDebugMode && currentUser.id == 'YOUR_USER_ID';
+
+  if (isDev) {
+    YaverFeedback.init(FeedbackConfig(
+      trigger: FeedbackTrigger.floatingButton,
+      mode: FeedbackMode.live,
+    ));
+    BlackBox.start();
+    FlutterError.onError = YaverFeedback.wrapFlutterErrorHandler(
+      FlutterError.onError,
+    );
+  }
 
   runApp(const MyApp());
 }`}
@@ -294,13 +314,14 @@ void main() {
               <pre className="text-surface-300">
                 {`import { YaverFeedback } from '@yaver/feedback-web';
 
-YaverFeedback.init({
-  agentHost: '192.168.1.42',
-  agentPort: 18080,
-  errorCapture: true,
-  blackBox: true,
-  showButton: true,
-});`}
+// Only show for the developer
+const isDev = process.env.NODE_ENV === 'development'
+  && currentUser?.id === 'YOUR_USER_ID';
+
+if (isDev) {
+  YaverFeedback.init({ trigger: 'floating-button' });
+  // Floating button: message agent, hot reload, build + deploy
+}`}
               </pre>
             </Terminal>
           </div>
