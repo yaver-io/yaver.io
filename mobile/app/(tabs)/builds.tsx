@@ -9,6 +9,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -217,6 +218,7 @@ export default function BuildsScreen() {
   const [devStatus, setDevStatus] = useState<DevServerStatus | null>(null);
   const [discovering, setDiscovering] = useState(false);
   const [startingProject, setStartingProject] = useState<string | null>(null);
+  const [repoSearch, setRepoSearch] = useState("");
 
   useEffect(() => {
     if (!isConnected) { setProjects([]); setDevStatus(null); return; }
@@ -304,8 +306,34 @@ export default function BuildsScreen() {
             </View>
           )}
 
+          {/* Search */}
+          <View style={[styles.repoSearchRow, { borderColor: c.border }]}>
+            <Text style={{ color: c.textMuted, fontSize: 14 }}>{"\u{1F50D}"}</Text>
+            <TextInput
+              style={[styles.repoSearchInput, { color: c.textPrimary }]}
+              placeholder="Search repos..."
+              placeholderTextColor={c.textMuted}
+              value={repoSearch}
+              onChangeText={setRepoSearch}
+              autoCorrect={false}
+              autoCapitalize="none"
+            />
+            {repoSearch.length > 0 && (
+              <Pressable onPress={() => setRepoSearch("")}>
+                <Text style={{ color: c.textMuted, fontSize: 14 }}>{"\u2715"}</Text>
+              </Pressable>
+            )}
+          </View>
+
           {/* ── Project Cards (green = serving, gray = discovered) ── */}
-          {projects.map((p) => {
+          {projects.filter((p) => {
+            if (!repoSearch.trim()) return true;
+            const q = repoSearch.toLowerCase();
+            return p.name.toLowerCase().includes(q) ||
+              (p.branch?.toLowerCase().includes(q)) ||
+              (p.framework?.toLowerCase().includes(q)) ||
+              p.path.toLowerCase().includes(q);
+          }).map((p) => {
             const isRunning = devStatus?.workDir === p.path;
             const isStarting = startingProject === p.name;
             return (
@@ -518,6 +546,17 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   repoRunningText: { color: "#22c55e", fontSize: 12, fontWeight: "600" },
+  repoSearchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 10,
+    gap: 8,
+  },
+  repoSearchInput: { flex: 1, fontSize: 14, paddingVertical: 0 },
   frameworkChip: {
     backgroundColor: "#6366f115",
     borderWidth: 1,
