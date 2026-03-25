@@ -168,11 +168,30 @@ jobs:
       - name: Build CLI agent
         run: cd desktop/agent && go build -o yaver .
 
+      - name: Get CI account token
+        id: ci-auth
+        env:
+          CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+        run: |
+          CONVEX_URL="${CONVEX_SITE_URL:-https://shocking-echidna-394.eu-west-1.convex.site}"
+          TOKEN=$(curl -sf -X POST "${CONVEX_URL}/auth/login" \
+            -H "Content-Type: application/json" \
+            -d '{"email":"ci-test@yaver.io","password":"ciTestPass2026!"}' \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null) || true
+          if [ -z "$TOKEN" ]; then
+            TOKEN=$(curl -sf -X POST "${CONVEX_URL}/auth/signup" \
+              -H "Content-Type: application/json" \
+              -d '{"email":"ci-test@yaver.io","fullName":"CI Test User","password":"ciTestPass2026!"}' \
+              | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null) || true
+          fi
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+          echo "convex_url=$CONVEX_URL" >> "$GITHUB_OUTPUT"
+
       - name: Start agent in background
         run: |
           cd desktop/agent
           mkdir -p ~/.yaver
-          echo '{"auth_token":"ci-test-token","convex_site_url":"https://fake.convex.site","device_id":"ci-test-device"}' > ~/.yaver/config.json
+          echo "{\"auth_token\":\"${{ steps.ci-auth.outputs.token }}\",\"convex_site_url\":\"${{ steps.ci-auth.outputs.convex_url }}\",\"device_id\":\"ci-feedback-device\"}" > ~/.yaver/config.json
           ./yaver serve --debug --dummy &
           sleep 3
           curl -s http://localhost:18080/health | grep -q ok
@@ -272,11 +291,30 @@ jobs:
       - name: Build CLI agent
         run: cd desktop/agent && go build -o yaver .
 
+      - name: Get CI account token
+        id: ci-auth
+        env:
+          CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+        run: |
+          CONVEX_URL="${CONVEX_SITE_URL:-https://shocking-echidna-394.eu-west-1.convex.site}"
+          TOKEN=$(curl -sf -X POST "${CONVEX_URL}/auth/login" \
+            -H "Content-Type: application/json" \
+            -d '{"email":"ci-test@yaver.io","password":"ciTestPass2026!"}' \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null) || true
+          if [ -z "$TOKEN" ]; then
+            TOKEN=$(curl -sf -X POST "${CONVEX_URL}/auth/signup" \
+              -H "Content-Type: application/json" \
+              -d '{"email":"ci-test@yaver.io","fullName":"CI Test User","password":"ciTestPass2026!"}' \
+              | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null) || true
+          fi
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+          echo "convex_url=$CONVEX_URL" >> "$GITHUB_OUTPUT"
+
       - name: Start agent in dummy mode
         run: |
           cd desktop/agent
           mkdir -p ~/.yaver
-          echo '{"auth_token":"ci-test-token","convex_site_url":"https://fake.convex.site","device_id":"ci-test-device"}' > ~/.yaver/config.json
+          echo "{\"auth_token\":\"${{ steps.ci-auth.outputs.token }}\",\"convex_site_url\":\"${{ steps.ci-auth.outputs.convex_url }}\",\"device_id\":\"ci-integration-device\"}" > ~/.yaver/config.json
           ./yaver serve --debug --dummy &
           sleep 3
           curl -sf http://localhost:18080/health
@@ -330,11 +368,30 @@ jobs:
       - name: Build CLI agent
         run: cd desktop/agent && go build -o yaver .
 
+      - name: Get CI account token
+        id: ci-auth
+        env:
+          CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+        run: |
+          CONVEX_URL="${CONVEX_SITE_URL:-https://shocking-echidna-394.eu-west-1.convex.site}"
+          TOKEN=$(curl -sf -X POST "${CONVEX_URL}/auth/login" \
+            -H "Content-Type: application/json" \
+            -d '{"email":"ci-test@yaver.io","password":"ciTestPass2026!"}' \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null) || true
+          if [ -z "$TOKEN" ]; then
+            TOKEN=$(curl -sf -X POST "${CONVEX_URL}/auth/signup" \
+              -H "Content-Type: application/json" \
+              -d '{"email":"ci-test@yaver.io","fullName":"CI Test User","password":"ciTestPass2026!"}' \
+              | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null) || true
+          fi
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+          echo "convex_url=$CONVEX_URL" >> "$GITHUB_OUTPUT"
+
       - name: Start agent
         run: |
           cd desktop/agent
           mkdir -p ~/.yaver
-          echo '{"auth_token":"ci-test-token","convex_site_url":"https://fake.convex.site","device_id":"ci-test-device"}' > ~/.yaver/config.json
+          echo "{\"auth_token\":\"${{ steps.ci-auth.outputs.token }}\",\"convex_site_url\":\"${{ steps.ci-auth.outputs.convex_url }}\",\"device_id\":\"ci-emulator-device\"}" > ~/.yaver/config.json
           ./yaver serve --debug --dummy &
           sleep 3
 

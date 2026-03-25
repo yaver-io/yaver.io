@@ -388,8 +388,8 @@ class YaverFeedback {
   /// PlatformDispatcher.instance.onError =
   ///     YaverFeedback.wrapPlatformErrorHandler(previous);
   /// ```
-  static ErrorCallback wrapPlatformErrorHandler(
-    ErrorCallback? next,
+  static ui.ErrorCallback wrapPlatformErrorHandler(
+    ui.ErrorCallback? next,
   ) {
     return (Object error, StackTrace stack) {
       attachError(error, stack);
