@@ -45,6 +45,52 @@ curl -s -X POST http://localhost:18080/dev/reload \
 7. **Never output raw `exp://` URLs, QR codes, or tell the user to run terminal commands.** Everything flows through the Yaver P2P channel automatically.
 8. When done: `curl -s -X POST http://localhost:18080/dev/stop -H "Authorization: Bearer $TOKEN"`
 
+### Dev Server — Supported Frameworks
+
+| Framework | Detection | Dev Server Command | Hot Reload | Bundle URL |
+|-----------|-----------|-------------------|------------|------------|
+| **Expo / React Native** | `expo` in package.json | `npx expo start --web --lan` | Auto (Metro watches files) + `/dev/reload` | `/dev/` (web version) |
+| **Flutter** | `pubspec.yaml` | `flutter run -d web --web-port N` | `r` keystroke to stdin | `/dev/` |
+| **Vite** | `vite.config.{ts,js}` | `npx vite --port N --host 0.0.0.0` | Auto (Vite HMR) | `/dev/` |
+| **Next.js** | `next.config.{ts,js}` | `npx next dev --port N --hostname 0.0.0.0` | Auto (Fast Refresh) | `/dev/` |
+
+### Dev Server — How It Works Through Relay
+
+```
+Phone (Yaver app)                    Relay                     Dev Machine
+┌──────────────┐              ┌──────────────┐             ┌──────────────┐
+│  WebView     │──GET /dev/──►│  QUIC relay  │──forward───►│  Agent :18080│
+│  loads app   │              │  (pass-thru) │             │    │         │
+│  through     │◄─HTML/JS────│              │◄─response───│    ▼         │
+│  relay URL   │              └──────────────┘             │  /dev/* proxy│
+└──────────────┘                                          │    │         │
+                                                          │    ▼         │
+                                                          │  Metro :8081 │
+                                                          │  (or Vite,   │
+                                                          │   Flutter)   │
+                                                          └──────────────┘
+```
+
+The agent's `/dev/*` endpoint reverse-proxies to the local dev server. The relay forwards HTTP requests transparently. The phone loads the web version of the app in a WebView — works through captive portals, 4G, any network.
+
+### Dev Server — Key Files
+
+| File | Purpose |
+|------|---------|
+| `desktop/agent/devserver.go` | DevServer interface, manager, 4 framework implementations |
+| `desktop/agent/devserver_http.go` | HTTP handlers: /dev/start, /dev/stop, /dev/status, /dev/events (SSE), /dev/* proxy |
+| `desktop/agent/dev_cmd.go` | CLI: `yaver dev start\|stop\|status\|reload` |
+| `mobile/src/components/DevPreview.tsx` | Banner + WebView + SSE auto-reload |
+| `mobile/src/lib/quic.ts` | `getDevServerStatus()`, `startDevServer()`, `reloadDevServer()` |
+| `relay/tunnel.go` | SSE detection for /dev/events, 200MB body limit for /dev/ paths |
+
+### Hot Reload for Native Apps (Swift, Kotlin)
+
+Native apps compile to machine code — no runtime hot swap. For Swift/Kotlin, Yaver provides:
+1. **Feedback capture**: SDK captures screenshots, crash logs, stack traces
+2. **Build-deploy-restart**: Agent fixes code → rebuilds → pushes binary (ADB for Android, TestFlight for iOS)
+3. **Iteration speed**: ~30-60s build-deploy vs instant JS hot reload, but fully automated
+
 ## What is Yaver?
 Yaver is an open-source P2P tool that lets developers use any AI coding agent (Claude Code, Codex, Aider, Ollama, etc.) from their mobile device or any terminal, connecting directly to their development machines. Task data flows peer-to-peer between your devices — servers only handle auth and peer discovery.
 
