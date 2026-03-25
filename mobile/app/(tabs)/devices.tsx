@@ -166,18 +166,16 @@ function DeviceCard({
         </View>
       </View>
 
-      {/* Runner summary badges */}
-      {activeRunners.length > 0 && (
-        <View style={styles.runnerBadges}>
-          {Object.entries(runnerCounts).map(([rid, count]) => (
-            <View key={rid} style={[styles.runnerBadge, { backgroundColor: c.accent + "18" }]}>
-              <Text style={[styles.runnerBadgeText, { color: c.accent }]}>
-                {rid} x{count}
-              </Text>
-            </View>
-          ))}
-        </View>
-      )}
+      {/* Runner + status badges */}
+      <View style={styles.runnerBadges}>
+        {Object.entries(runnerCounts).map(([rid, count]) => (
+          <View key={rid} style={[styles.runnerBadge, { backgroundColor: c.accent + "18" }]}>
+            <Text style={[styles.runnerBadgeText, { color: c.accent }]}>
+              {rid} x{count}
+            </Text>
+          </View>
+        ))}
+      </View>
 
       {/* Runner list + actions — always visible */}
       {isOnline && (
@@ -248,6 +246,22 @@ function DeviceCard({
               pingState.ok === false ? "unreachable" : "ping"}
           </Text>
         </Pressable>
+        {!isOnline && (
+          <Pressable
+            style={[styles.pingBtn, { backgroundColor: "#6366f118" }]}
+            onPress={() => Alert.alert(
+              "Always-on Setup",
+              "To keep this machine always available:\n\n" +
+              "1. Enable auto-boot in BIOS\n" +
+              "2. Run: yaver serve --install-systemd\n" +
+              "3. Run: sudo loginctl enable-linger $USER\n\n" +
+              "Full guide: yaver.io/manuals/auto-boot",
+              [{ text: "OK" }]
+            )}
+          >
+            <Text style={[styles.pingBtnText, { color: c.accent }]}>Setup</Text>
+          </Pressable>
+        )}
       </View>
     </Pressable>
   );

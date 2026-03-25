@@ -616,6 +616,21 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Auto-start / systemd status
+	autoStart := map[string]interface{}{"configured": false}
+	home, _ := os.UserHomeDir()
+	// Check systemd
+	if _, err := os.Stat(filepath.Join(home, ".config", "systemd", "user", "yaver.service")); err == nil {
+		autoStart["configured"] = true
+		autoStart["type"] = "systemd"
+	}
+	// Check macOS LaunchAgent
+	if _, err := os.Stat(filepath.Join(home, "Library", "LaunchAgents", "io.yaver.agent.plist")); err == nil {
+		autoStart["configured"] = true
+		autoStart["type"] = "launchd"
+	}
+	info["autoStart"] = autoStart
+
 	// Voice capability — always true (mobile can always send audio)
 	info["voiceInputEnabled"] = true
 
