@@ -53,8 +53,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="builds"
         options={{
-          title: "Builds",
-          tabBarIcon: ({ focused }) => <TabIcon label="Builds" focused={focused} />,
+          href: null, // Hidden — builds are managed by the agent, not shown in UI
         }}
       />
       <Tabs.Screen
