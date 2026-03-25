@@ -668,12 +668,28 @@ func (s *HTTPServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 		GitRemote string   `json:"gitRemote,omitempty"`
 		Tags      []string `json:"tags,omitempty"`
 	}
-	// Filter out dotfiles, config dirs, and non-project directories
+	// Filter out non-deployable projects: dotfiles, editor configs, vim plugins, etc.
+	// Only show things a solo dev would actually deploy: apps, websites, backends, APIs.
 	skipPrefixes := []string{".", "_"}
 	skipNames := map[string]bool{
+		// System / OS dirs
 		"node_modules": true, "vendor": true, "dist": true, "build": true,
 		"Library": true, "Applications": true, "Music": true, "Movies": true,
-		"Pictures": true, "Documents": true, "Public": true,
+		"Pictures": true, "Documents": true, "Public": true, "Downloads": true,
+		"Desktop": true, "Trash": true,
+		// Editor / shell configs
+		"vim": true, "nvim": true, "neovim": true, "emacs": true,
+		"tmux": true, "zsh": true, "bash": true, "fish": true,
+		"oh-my-zsh": true, "powerlevel10k": true, "spacemacs": true,
+		// Vim plugin managers / bundles
+		"bundle": true, "plugged": true, "pack": true,
+	}
+	// Skip paths containing these segments (vim bundles, dotfile managers, etc.)
+	skipPathSegments := []string{
+		"/vim/bundle/", "/vim/plugged/", "/vim/pack/",
+		"/.vim/", "/.config/nvim/", "/.tmux/", "/.oh-my-zsh/",
+		"/.local/share/", "/.cache/", "/.cargo/",
+		"/homebrew/", "/Cellar/", "/Caskroom/",
 	}
 
 	result := make([]projectResp, 0, len(projects))
@@ -688,6 +704,28 @@ func (s *HTTPServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if skip || skipNames[name] {
+			continue
+		}
+		// Skip paths inside editor/config directories
+		for _, seg := range skipPathSegments {
+			if strings.Contains(p.Path, seg) {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		// Only show projects that look deployable (have a build system)
+		hasPackageJson := fileExists(filepath.Join(p.Path, "package.json"))
+		hasPubspec := fileExists(filepath.Join(p.Path, "pubspec.yaml"))
+		hasGoMod := fileExists(filepath.Join(p.Path, "go.mod"))
+		hasCargo := fileExists(filepath.Join(p.Path, "Cargo.toml"))
+		hasDockerfile := fileExists(filepath.Join(p.Path, "Dockerfile"))
+		hasDockerCompose := fileExists(filepath.Join(p.Path, "docker-compose.yml")) || fileExists(filepath.Join(p.Path, "docker-compose.yaml"))
+		hasPyProject := fileExists(filepath.Join(p.Path, "pyproject.toml")) || fileExists(filepath.Join(p.Path, "requirements.txt"))
+		hasMakefile := fileExists(filepath.Join(p.Path, "Makefile"))
+		if !hasPackageJson && !hasPubspec && !hasGoMod && !hasCargo && !hasDockerfile && !hasDockerCompose && !hasPyProject && !hasMakefile {
 			continue
 		}
 		info := DetectProjectInfo(p.Path)

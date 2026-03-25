@@ -212,6 +212,28 @@ export default function AppsScreen() {
                 <Text style={s.stopBtnText}>Stop</Text>
               </Pressable>
             </View>
+
+            {/* Quick actions */}
+            <View style={s.quickActions}>
+              {[
+                { icon: "\u{1F680}", label: "Ship It", prompt: `Ship ${runningProject}: bump version, build iOS + Android, upload to TestFlight and Google Play, generate changelog from recent git commits. Report progress.` },
+                { icon: "\u{1F3A8}", label: "Polish UI", prompt: `Do a design pass on ${runningProject}: fix inconsistent spacing, typography, colors. Make it look polished and professional. Don't redesign — just polish what's there. Hot reload when done.` },
+                { icon: "\u{1F4F1}", label: "Screenshots", prompt: `Generate App Store and Google Play screenshots for ${runningProject}: capture all key screens at iPhone 6.7", iPhone 6.1", iPad 12.9", and Android phone/tablet sizes. Save to a screenshots/ folder.` },
+                { icon: "\u{1F41B}", label: "Fix All Bugs", prompt: `Run the test suite for ${runningProject}, find all failing tests and runtime errors, fix them all. Hot reload after each fix so I can verify on my phone.` },
+              ].map((action) => (
+                <Pressable
+                  key={action.label}
+                  style={s.quickBtn}
+                  onPress={() => {
+                    quicClient.sendTask(action.prompt, `[Quick Action] ${action.label} for ${runningProject}`).catch(() => {});
+                    router.navigate("/(tabs)/tasks");
+                  }}
+                >
+                  <Text style={s.quickIcon}>{action.icon}</Text>
+                  <Text style={s.quickLabel}>{action.label}</Text>
+                </Pressable>
+              ))}
+            </View>
           </View>
         )}
 
@@ -401,18 +423,18 @@ const s = StyleSheet.create({
   searchInput: { flex: 1, fontSize: 14, paddingVertical: 0 },
 
   // Filter chips
-  filterRow: { marginHorizontal: 16, marginBottom: 8 },
-  filterRowContent: { gap: 6 },
+  filterRow: { marginHorizontal: 16, marginBottom: 8, maxHeight: 32 },
+  filterRowContent: { gap: 4, alignItems: "center" as const },
   filterChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderRadius: 6,
     backgroundColor: "#111",
     borderWidth: 1,
     borderColor: "#222",
   },
   filterChipActive: { backgroundColor: "#6366f122", borderColor: "#6366f1" },
-  filterChipText: { fontSize: 11, fontWeight: "600", color: "#888" },
+  filterChipText: { fontSize: 10, fontWeight: "600", color: "#888" },
   filterChipTextActive: { color: "#818cf8" },
 
   // Tag chips on cards
@@ -424,6 +446,20 @@ const s = StyleSheet.create({
     paddingVertical: 1,
   },
   tagText: { color: "#818cf8", fontSize: 9, fontWeight: "600" },
+
+  // Quick actions
+  quickActions: { flexDirection: "row", gap: 6, marginTop: 10 },
+  quickBtn: {
+    flex: 1,
+    backgroundColor: "#111",
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#1a1a1a",
+  },
+  quickIcon: { fontSize: 18, marginBottom: 2 },
+  quickLabel: { fontSize: 9, color: "#999", fontWeight: "600" },
 
   // Active app card
   card: { marginHorizontal: 16, borderRadius: 12, padding: 14, marginBottom: 8 },
