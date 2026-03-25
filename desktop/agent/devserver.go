@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -388,8 +389,15 @@ func (b *baseDevServer) startProcess(ctx context.Context, name string, args []st
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(), env...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+
+	// Pipe output to log with [dev] prefix
+	logWriter := &devLogWriter{prefix: fmt.Sprintf("[dev:%s]", b.name)}
+	cmd.Stdout = logWriter
+	cmd.Stderr = logWriter
+
+	// Keep stdin open (Flutter needs it for "r" hot reload)
+	stdinPipe, _ := cmd.StdinPipe()
+	_ = stdinPipe // kept open for Reload()
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("exec %s: %w", name, err)
@@ -426,6 +434,28 @@ func (b *baseDevServer) startProcess(ctx context.Context, name string, args []st
 	}
 }
 
+// devLogWriter writes dev server output to the agent log with a prefix.
+type devLogWriter struct {
+	prefix string
+	buf    []byte
+}
+
+func (w *devLogWriter) Write(p []byte) (int, error) {
+	w.buf = append(w.buf, p...)
+	for {
+		idx := bytes.IndexByte(w.buf, '\n')
+		if idx < 0 {
+			break
+		}
+		line := string(w.buf[:idx])
+		w.buf = w.buf[idx+1:]
+		if strings.TrimSpace(line) != "" {
+			log.Printf("%s %s", w.prefix, line)
+		}
+	}
+	return len(p), nil
+}
+
 // ─── Expo Dev Server ───────────────────────────────────────────────────
 
 type ExpoDevServer struct {
@@ -448,22 +478,46 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		e.port = 8081
 	}
 
-	args := []string{"expo", "start",
-		"--port", fmt.Sprintf("%d", e.port),
-		"--lan",
-		"--no-dev",
+	// Install deps if needed
+	if _, err := os.Stat(filepath.Join(opts.WorkDir, "node_modules")); os.IsNotExist(err) {
+		log.Printf("[dev] Installing dependencies in %s...", opts.WorkDir)
+		install := exec.CommandContext(ctx, "npm", "install", "--legacy-peer-deps")
+		install.Dir = opts.WorkDir
+		install.Stdout = os.Stdout
+		install.Stderr = os.Stderr
+		if err := install.Run(); err != nil {
+			return fmt.Errorf("npm install failed: %w", err)
+		}
 	}
 
-	readyURL := fmt.Sprintf("http://127.0.0.1:%d/status", e.port)
+	// Run yaver.config.js if it exists (generates SDK config)
+	configScript := filepath.Join(opts.WorkDir, "yaver.config.js")
+	if _, err := os.Stat(configScript); err == nil {
+		log.Printf("[dev] Running yaver.config.js...")
+		gen := exec.CommandContext(ctx, "node", "yaver.config.js")
+		gen.Dir = opts.WorkDir
+		gen.Stdout = os.Stdout
+		gen.Stderr = os.Stderr
+		gen.Run() // best-effort
+	}
+
+	// Start Expo with web support — serves both native bundle and web app
+	// --web: enables web platform
+	// --lan: binds to LAN IP (needed for proxy)
+	// No --no-dev: keep dev mode for hot reload and source maps
+	args := []string{"expo", "start",
+		"--web",
+		"--port", fmt.Sprintf("%d", e.port),
+		"--lan",
+	}
+
+	readyURL := fmt.Sprintf("http://127.0.0.1:%d", e.port)
 	return e.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
 }
 
 func (e *ExpoDevServer) BundleURL(platform string) string {
-	p := platform
-	if p == "" {
-		p = "ios"
-	}
-	return fmt.Sprintf("/dev/index.bundle?platform=%s&dev=true&hot=true", p)
+	// Web version served at root — this is what loads in the WebView
+	return "/dev/"
 }
 
 func (e *ExpoDevServer) SupportsHotReload() bool { return true }
