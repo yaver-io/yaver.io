@@ -140,9 +140,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/dev/events", s.authSDK(s.handleDevServerEvents))
 	mux.HandleFunc("/dev/", s.handleDevServerProxy) // No auth — serves app bundle in WebView (not sensitive)
 
-	// Projects (discovery + workdir switching)
+	// Projects (discovery + workdir switching + actions)
 	mux.HandleFunc("/projects", s.auth(s.handleProjects))
 	mux.HandleFunc("/projects/switch", s.auth(s.handleProjectSwitch))
+	mux.HandleFunc("/projects/actions", s.auth(s.handleProjectActions))
 
 	// Todo list (queued bug reports for batch implementation) — SDK-accessible for add/list/count
 	mux.HandleFunc("/todolist", s.authSDK(s.handleTodoList))
@@ -824,6 +825,37 @@ func (s *HTTPServer) handleProjectSwitch(w http.ResponseWriter, r *http.Request)
 	}
 
 	jsonReply(w, http.StatusOK, resp)
+}
+
+// handleProjectActions returns available actions for a project (deploy targets, dev servers, builds).
+func (s *HTTPServer) handleProjectActions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonError(w, http.StatusMethodNotAllowed, "use GET")
+		return
+	}
+
+	path := r.URL.Query().Get("path")
+	query := r.URL.Query().Get("query")
+
+	if path == "" && query != "" {
+		found, err := findProject(query)
+		if err != nil {
+			jsonError(w, http.StatusNotFound, "project not found: "+err.Error())
+			return
+		}
+		path = found
+	}
+	if path == "" {
+		path = s.taskMgr.workDir
+	}
+
+	actions := DetectProjectActions(path)
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":      true,
+		"project": filepath.Base(path),
+		"path":    path,
+		"actions": actions,
+	})
 }
 
 func (s *HTTPServer) handleAgentStatus(w http.ResponseWriter, r *http.Request) {

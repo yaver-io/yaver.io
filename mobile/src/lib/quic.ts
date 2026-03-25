@@ -589,6 +589,20 @@ export class QuicClient {
     return res.json();
   }
 
+  /** Get available actions for a project (deploy, hot reload, build, etc). */
+  async getProjectActions(query: string): Promise<{
+    project: string;
+    path: string;
+    actions: { label: string; target: string; type: string; framework?: string; platform?: string; command?: string; icon?: string }[];
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/projects/actions?query=${encodeURIComponent(query)}`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to get project actions: ${res.status}`);
+    return res.json();
+  }
+
   // ── Todo List (queued bug reports for batch implementation) ──────
 
   /** Get the count of pending todo items. */
