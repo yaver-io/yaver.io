@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -192,9 +193,11 @@ func (t *TunnelClient) handleRequest(stream quic.Stream) {
 		httpReq.Header.Set(k, v)
 	}
 
-	// Check if this is an SSE request (task output streaming)
-	isSSE := req.Path != "" && len(req.Path) > 7 &&
-		req.Path[len(req.Path)-7:] == "/output" && req.Method == "GET"
+	// Check if this is an SSE request (task output, dev server events, blackbox subscribe)
+	isSSE := req.Method == "GET" && req.Path != "" &&
+		(strings.HasSuffix(req.Path, "/output") ||
+			strings.HasSuffix(req.Path, "/dev/events") ||
+			strings.HasSuffix(req.Path, "/subscribe"))
 
 	if isSSE {
 		t.handleSSERequest(stream, req, httpReq)
@@ -210,7 +213,12 @@ func (t *TunnelClient) handleRequest(stream quic.Stream) {
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	// Dev server bundles can be large (RN bundles ~20MB, Flutter ~50MB+); raise limit for /dev/ paths
+	maxRespSize := int64(10 << 20) // 10MB default
+	if strings.HasPrefix(req.Path, "/dev/") {
+		maxRespSize = 200 << 20 // 200MB for dev server
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxRespSize))
 
 	headers := make(map[string]string)
 	for k, v := range resp.Header {

@@ -108,6 +108,8 @@ func main() {
 		runDeploy(os.Args[2:])
 	case "test":
 		runTest(os.Args[2:])
+	case "dev":
+		runDev(os.Args[2:])
 	case "repo":
 		runRepo(os.Args[2:])
 	case "pipeline":
@@ -1352,6 +1354,8 @@ func runServe(args []string) {
 		httpServer.blackboxMgr = bbMgr
 		log.Printf("Black box manager ready")
 	}
+	httpServer.devServerMgr = NewDevServerManager()
+	log.Printf("Dev server manager ready")
 	if *multiUser {
 		muMgr, err := NewMultiUserManager(MultiUserConfig{
 			TeamID:   *teamID,

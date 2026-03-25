@@ -64,31 +64,67 @@ func startBeacon(ctx context.Context, deviceID string, httpPort int, hostname st
 		Port: beaconPort,
 	}
 
-	conn, err := net.DialUDP("udp4", nil, addr)
-	if err != nil {
-		log.Printf("[beacon] Failed to create UDP socket: %v", err)
-		return
-	}
-	defer conn.Close()
-
 	log.Printf("[beacon] Broadcasting on UDP port %d every %s (id=%s, th=%s)", beaconPort, beaconInterval, shortID, fp)
 
 	ticker := time.NewTicker(beaconInterval)
 	defer ticker.Stop()
 
-	// Send immediately on start
-	if _, err := conn.Write(data); err != nil {
-		log.Printf("[beacon] Send error: %v", err)
+	var conn *net.UDPConn
+	lastErr := ""
+	consecutiveErrors := 0
+
+	dial := func() *net.UDPConn {
+		c, err := net.DialUDP("udp4", nil, addr)
+		if err != nil {
+			if err.Error() != lastErr {
+				log.Printf("[beacon] UDP socket error: %v (will retry silently)", err)
+				lastErr = err.Error()
+			}
+			return nil
+		}
+		if lastErr != "" {
+			log.Printf("[beacon] UDP socket recovered")
+			lastErr = ""
+			consecutiveErrors = 0
+		}
+		return c
 	}
+
+	conn = dial()
 
 	for {
 		select {
 		case <-ctx.Done():
+			if conn != nil {
+				conn.Close()
+			}
 			log.Println("[beacon] Stopped.")
 			return
 		case <-ticker.C:
+			if conn == nil {
+				conn = dial()
+				if conn == nil {
+					continue
+				}
+			}
 			if _, err := conn.Write(data); err != nil {
-				log.Printf("[beacon] Send error: %v", err)
+				consecutiveErrors++
+				if consecutiveErrors == 1 {
+					log.Printf("[beacon] Send error: %v (suppressing further)", err)
+				}
+				// Rebind after 5 consecutive failures (network likely changed)
+				if consecutiveErrors >= 5 {
+					conn.Close()
+					conn = nil
+					conn = dial()
+					consecutiveErrors = 0
+				}
+			} else {
+				if consecutiveErrors > 0 {
+					log.Printf("[beacon] Send recovered after %d errors", consecutiveErrors)
+				}
+				consecutiveErrors = 0
+				lastErr = ""
 			}
 		}
 	}

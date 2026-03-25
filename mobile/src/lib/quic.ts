@@ -1441,6 +1441,74 @@ export class QuicClient {
       }
     }
   }
+
+  // ─── Dev Server (proxied dev preview) ───────────────────────────────
+
+  /** Get dev server status from the agent. */
+  async getDevServerStatus(): Promise<DevServerStatus | null> {
+    if (!this.isConnected && !this.hasConnectionInfo) return null;
+    try {
+      const res = await fetch(`${this.baseUrl}/dev/status`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  /** Start a dev server on the agent. */
+  async startDevServer(opts: { framework?: string; workDir?: string; platform?: string; port?: number }): Promise<DevServerStatus | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/dev/start`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(opts),
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  /** Stop the running dev server. */
+  async stopDevServer(): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/dev/stop`, {
+        method: "POST",
+        headers: this.authHeaders,
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
+  /** Trigger hot reload on the running dev server. */
+  async reloadDevServer(): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/dev/reload`, {
+        method: "POST",
+        headers: this.authHeaders,
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
+  /** Get the full URL for the dev server bundle (through relay if needed). */
+  getDevServerBundleUrl(bundlePath: string): string {
+    return `${this.baseUrl}${bundlePath}`;
+  }
+}
+
+/** Dev server status returned by the agent. */
+export interface DevServerStatus {
+  framework: string;
+  running: boolean;
+  port: number;
+  bundleUrl: string;
+  deepLink?: string;
+  startedAt?: string;
+  error?: string;
+  pid?: number;
+  workDir?: string;
+  hotReload: boolean;
 }
 
 /** Singleton client instance. */

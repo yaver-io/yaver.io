@@ -24,6 +24,25 @@ export interface FeedbackConfig {
   trigger?: 'shake' | 'floating-button' | 'manual';
   /** Enable/disable the SDK. Defaults to __DEV__ */
   enabled?: boolean;
+  /**
+   * Reporting-only mode. When true:
+   * - Shake auto-captures screenshot + errors and sends to the agent
+   * - No floating button, no feedback modal, no auto-test UI
+   * - Agent receives and stores the report but does NOT auto-trigger a fix
+   * - Developer reviews reports in CLI and decides what to fix
+   *
+   * Use case: enable for QA testers / beta users who should report bugs
+   * but not trigger code changes. The developer configures their own device
+   * with `reportingOnly: false` to get the full SDK with fix triggers.
+   *
+   * @example
+   * // For beta testers:
+   * YaverFeedback.init({ reportingOnly: true, trigger: 'shake', ... });
+   *
+   * // For the developer:
+   * YaverFeedback.init({ reportingOnly: false, trigger: 'floating-button', ... });
+   */
+  reportingOnly?: boolean;
   /** Max screen recording duration in seconds. Default: 120 */
   maxRecordingDuration?: number;
   /**

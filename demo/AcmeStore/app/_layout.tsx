@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
+import { DeviceEventEmitter, Platform } from 'react-native';
 import { Slot } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { AuthProvider } from '../src/context/AuthContext';
 import { CartProvider } from '../src/context/CartContext';
 import { YaverFeedback } from '../src/yaver-sdk/YaverFeedback';
 import { FloatingButton } from '../src/yaver-sdk/FloatingButton';
+import { FeedbackModal } from '../src/yaver-sdk/FeedbackModal';
 import { BlackBox } from '../src/yaver-sdk/BlackBox';
 
 // Generated at build time by: node yaver.config.js
@@ -90,13 +92,25 @@ export default function RootLayout() {
         agentUrl: resolvedUrl || agentUrl,
         authToken,
         convexUrl,
-        trigger: 'floating-button',
+        trigger: 'shake',
         buildPlatforms: 'both',
         autoDeploy: true,
       });
       BlackBox.start();
+      BlackBox.wrapConsole();
       setSdkReady(true);
       console.log('[YaverSDK]', resolvedUrl ? `Connected: ${resolvedUrl}` : 'Offline');
+
+      // Wire shake detection → open feedback modal
+      // iOS emits 'shakeEvent' in debug, Android needs react-native-shake or manual
+      const shakeHandler = () => {
+        YaverFeedback.startReport();
+      };
+      if (Platform.OS === 'ios') {
+        DeviceEventEmitter.addListener('shakeEvent', shakeHandler);
+      } else {
+        DeviceEventEmitter.addListener('ShakeEvent', shakeHandler);
+      }
     })();
   }, []);
 
@@ -106,11 +120,14 @@ export default function RootLayout() {
         <StatusBar style="dark" />
         <Slot />
         {sdkReady && (
-          <FloatingButton
-            color="#1a1a1a"
-            style="terminal"
-            size={44}
-          />
+          <>
+            <FeedbackModal />
+            <FloatingButton
+              color="#1a1a1a"
+              style="terminal"
+              size={44}
+            />
+          </>
         )}
       </CartProvider>
     </AuthProvider>

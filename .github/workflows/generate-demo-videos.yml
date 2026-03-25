@@ -1,0 +1,76 @@
+name: Generate Demo Videos
+
+on:
+  workflow_dispatch:
+    inputs:
+      videos:
+        description: "Which videos to generate"
+        required: false
+        default: "both"
+        type: choice
+        options:
+          - both
+          - video2
+          - video3
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        working-directory: scripts/generate-demo-videos
+        run: npm ci
+
+      - name: Install Playwright browser
+        working-directory: scripts/generate-demo-videos
+        run: npx playwright install chromium --with-deps
+
+      - name: Install fonts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-noto fonts-liberation2 2>/dev/null || true
+
+      - name: Generate videos
+        working-directory: scripts/generate-demo-videos
+        run: |
+          mkdir -p output
+          VIDEO_FLAG=""
+          if [ "${{ inputs.videos }}" = "video2" ]; then
+            VIDEO_FLAG="--video2"
+          elif [ "${{ inputs.videos }}" = "video3" ]; then
+            VIDEO_FLAG="--video3"
+          fi
+          node generate.mjs $VIDEO_FLAG --output-dir ./output
+
+      - name: Show video info
+        run: |
+          ls -lh scripts/generate-demo-videos/output/*.mp4
+          for f in scripts/generate-demo-videos/output/*.mp4; do
+            echo "--- $(basename $f) ---"
+            ffprobe -v quiet -print_format json -show_format -show_streams "$f" \
+              | python3 -c "
+          import sys,json
+          d=json.load(sys.stdin)
+          s=d['streams'][0]
+          print(f'  Resolution: {s[\"width\"]}x{s[\"height\"]}')
+          print(f'  Duration: {float(d[\"format\"][\"duration\"]):.1f}s')
+          print(f'  Size: {int(d[\"format\"][\"size\"])/1024/1024:.1f} MB')
+          "
+          done
+
+      - name: Upload video artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-videos
+          path: scripts/generate-demo-videos/output/*.mp4
+          retention-days: 30

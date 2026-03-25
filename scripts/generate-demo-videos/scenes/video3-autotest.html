@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Video 3 — Auto Test</title>
+<style>
+/* ─── Reset & Base ─── */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+body {
+  width: 1440px; height: 1080px; overflow: hidden;
+  background: #050508; font-family: 'Inter', -apple-system, sans-serif;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* ─── Layout ─── */
+.container {
+  width: 1440px; height: 1080px;
+  display: flex; align-items: center; justify-content: center;
+  position: relative; overflow: hidden;
+}
+.phase-full .phone-panel { width: 480px; transition: all 0.8s cubic-bezier(0.4,0,0.2,1); }
+.phase-full .terminal-panel { opacity: 0; width: 0; overflow: hidden; }
+.phase-split .phone-panel { width: 500px; margin-left: 60px; margin-right: 30px; transition: all 0.8s cubic-bezier(0.4,0,0.2,1); }
+.phase-split .terminal-panel { flex: 1; margin-right: 60px; opacity: 1; transition: all 0.8s cubic-bezier(0.4,0,0.2,1); }
+
+/* ─── Phone Frame ─── */
+.phone-panel { display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.phone-frame {
+  width: 100%; aspect-ratio: 390/844;
+  background: #fff; border-radius: 44px;
+  box-shadow: 0 0 0 3px #1a1a2e, 0 25px 60px rgba(0,0,0,0.6);
+  overflow: hidden; position: relative; display: flex; flex-direction: column;
+}
+.phone-status-bar {
+  height: 54px; padding: 14px 24px 0; display: flex;
+  align-items: flex-start; justify-content: space-between;
+  background: #fff; position: relative; z-index: 10;
+}
+.phone-status-bar .time { font-size: 15px; font-weight: 600; color: #000; }
+.phone-status-bar .icons { display: flex; gap: 5px; align-items: center; }
+.phone-status-bar .icons span { font-size: 12px; color: #000; }
+.dynamic-island { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); width: 120px; height: 34px; background: #000; border-radius: 20px; }
+.phone-content { flex: 1; overflow: hidden; position: relative; background: #fff; }
+.screen { position: absolute; inset: 0; opacity: 0; transition: opacity 0.4s; padding: 24px; }
+.screen.active { opacity: 1; }
+.phone-tab-bar {
+  height: 80px; background: #fafafa; border-top: 1px solid #e5e5e5;
+  display: flex; align-items: center; justify-content: space-around;
+  padding: 0 16px 16px;
+}
+.tab-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.tab-item .icon { font-size: 20px; }
+.tab-item .label { font-size: 10px; color: #999; font-weight: 500; }
+.tab-item.active .label { color: #111; }
+
+/* ─── Home Screen ─── */
+.home-title { font-size: 22px; font-weight: 700; color: #111; margin-bottom: 4px; margin-top: 8px; }
+.home-subtitle { font-size: 13px; color: #999; margin-bottom: 16px; }
+.product-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.product-card { background: #f5f5f5; border-radius: 14px; padding: 12px; }
+.product-img { width: 100%; aspect-ratio: 1; background: #e5e5e5; border-radius: 10px; margin-bottom: 8px; display: flex; align-items: center; justify-content: center; font-size: 28px; }
+.product-name { font-size: 12px; font-weight: 600; color: #111; }
+.product-price { font-size: 11px; color: #666; }
+
+/* ─── Floating Button + Menu ─── */
+.floating-btn {
+  position: absolute; bottom: 100px; right: 20px;
+  width: 44px; height: 44px; border-radius: 22px;
+  background: #1a1a1a; display: flex; align-items: center;
+  justify-content: center; z-index: 100;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.floating-btn svg { width: 20px; height: 20px; }
+.floating-menu {
+  position: absolute; bottom: 100px; right: 20px;
+  z-index: 101; opacity: 0; transform: translateY(10px);
+  transition: all 0.3s; pointer-events: none;
+}
+.floating-menu.active { opacity: 1; transform: translateY(0); pointer-events: all; }
+.menu-item {
+  background: #1a1a1a; color: #fff; padding: 10px 16px;
+  border-radius: 12px; margin-bottom: 6px; font-size: 13px;
+  font-weight: 500; display: flex; align-items: center; gap: 8px;
+  white-space: nowrap;
+}
+.menu-item .mi-icon { font-size: 16px; }
+.menu-item-test { background: #1a1a1a; border: 1px solid #333; }
+
+/* ─── Test Progress Overlay ─── */
+.test-overlay {
+  position: absolute; inset: 0; z-index: 200;
+  background: rgba(255,255,255,0.97); opacity: 0;
+  transition: opacity 0.4s; padding: 24px;
+  display: flex; flex-direction: column;
+}
+.test-overlay.active { opacity: 1; }
+.test-header { font-size: 18px; font-weight: 700; color: #111; margin-bottom: 4px; margin-top: 12px; }
+.test-sub { font-size: 13px; color: #999; margin-bottom: 20px; }
+.test-progress-bar { width: 100%; height: 6px; background: #e5e5e5; border-radius: 3px; margin-bottom: 16px; overflow: hidden; }
+.test-progress-fill { height: 100%; background: #22c55e; border-radius: 3px; transition: width 0.5s; width: 0%; }
+.test-stat { display: flex; justify-content: space-between; margin-bottom: 6px; }
+.test-stat-label { font-size: 12px; color: #666; }
+.test-stat-value { font-size: 12px; font-weight: 600; color: #111; }
+.test-status { font-size: 12px; color: #818cf8; margin-top: 12px; font-weight: 500; }
+.test-screens { margin-top: 16px; }
+.test-screen-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 0; border-bottom: 1px solid #f0f0f0; font-size: 12px;
+}
+.tsi-icon { width: 20px; text-align: center; font-size: 14px; }
+.tsi-name { flex: 1; color: #111; font-weight: 500; }
+.tsi-status { color: #999; font-size: 11px; }
+.tsi-status.pass { color: #22c55e; }
+.tsi-status.fail { color: #ef4444; }
+.tsi-status.testing { color: #818cf8; }
+
+/* ─── Fix Report Modal ─── */
+.fix-overlay {
+  position: absolute; inset: 0; z-index: 300;
+  background: rgba(0,0,0,0.5); opacity: 0;
+  transition: opacity 0.3s; pointer-events: none;
+}
+.fix-overlay.active { opacity: 1; pointer-events: all; }
+.fix-modal {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  background: #fff; border-radius: 20px 20px 0 0;
+  padding: 20px; max-height: 80%; overflow-y: auto;
+  transform: translateY(100%); transition: transform 0.4s cubic-bezier(0.4,0,0.2,1);
+}
+.fix-overlay.active .fix-modal { transform: translateY(0); }
+.fix-handle { width: 36px; height: 4px; background: #ddd; border-radius: 2px; margin: 0 auto 12px; }
+.fix-title { font-size: 16px; font-weight: 700; color: #111; margin-bottom: 4px; }
+.fix-subtitle { font-size: 12px; color: #999; margin-bottom: 16px; }
+.fix-item { background: #f8f8f8; border-radius: 12px; padding: 12px; margin-bottom: 8px; }
+.fix-item-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.fix-check { width: 20px; height: 20px; border-radius: 10px; background: #22c55e; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #fff; font-weight: 700; flex-shrink: 0; }
+.fix-file { font-size: 12px; font-weight: 600; color: #111; }
+.fix-desc { font-size: 11px; color: #666; margin-left: 28px; }
+.fix-footer { text-align: center; font-size: 11px; color: #999; margin-top: 12px; }
+
+/* ─── Terminal ─── */
+.terminal-panel { display: flex; align-items: center; justify-content: center; transition: all 0.8s cubic-bezier(0.4,0,0.2,1); }
+.terminal-frame {
+  width: 100%; max-width: 780px; height: 640px;
+  background: #0c0c14; border-radius: 12px;
+  box-shadow: 0 25px 60px rgba(0,0,0,0.5);
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.terminal-bar {
+  height: 36px; background: #1e1e2a; display: flex;
+  align-items: center; padding: 0 12px; gap: 8px; flex-shrink: 0;
+}
+.terminal-dot { width: 12px; height: 12px; border-radius: 50%; }
+.dot-red { background: #ff5f57; }
+.dot-yellow { background: #febc2e; }
+.dot-green { background: #28c840; }
+.terminal-title { flex: 1; text-align: center; font-size: 12px; color: #888; font-family: 'JetBrains Mono', monospace; }
+.terminal-body {
+  flex: 1; padding: 16px; overflow-y: auto;
+  font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.7;
+}
+.terminal-body::-webkit-scrollbar { width: 6px; }
+.terminal-body::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+.t-line { white-space: pre-wrap; opacity: 0; transition: opacity 0.15s; }
+.t-line.visible { opacity: 1; }
+.t-dim { color: #555; }
+.t-text { color: #d4d4d8; }
+.t-green { color: #22c55e; }
+.t-red { color: #ef4444; }
+.t-blue { color: #818cf8; }
+.t-yellow { color: #fbbf24; }
+.t-cyan { color: #22d3ee; }
+.t-bold { font-weight: 600; }
+.t-diff-add { color: #22c55e; }
+.t-diff-del { color: #ef4444; }
+</style>
+</head>
+<body>
+
+<div class="container phase-full" id="root">
+  <!-- ─── Phone Panel ─── -->
+  <div class="phone-panel">
+    <div class="phone-frame">
+      <div class="phone-status-bar">
+        <span class="time">9:41</span>
+        <div class="dynamic-island"></div>
+        <div class="icons"><span>5G</span><span>100%</span></div>
+      </div>
+
+      <div class="phone-content">
+        <!-- Home Screen -->
+        <div class="screen active" id="screen-home">
+          <div class="home-title">Acme Store</div>
+          <div class="home-subtitle">Featured Products</div>
+          <div class="product-grid">
+            <div class="product-card">
+              <div class="product-img">&#128085;</div>
+              <div class="product-name">Classic Tee</div>
+              <div class="product-price">$29.99</div>
+            </div>
+            <div class="product-card">
+              <div class="product-img">&#128092;</div>
+              <div class="product-name">Denim Jacket</div>
+              <div class="product-price">$89.99</div>
+            </div>
+            <div class="product-card">
+              <div class="product-img">&#128095;</div>
+              <div class="product-name">Running Shoes</div>
+              <div class="product-price">$119.99</div>
+            </div>
+            <div class="product-card">
+              <div class="product-img">&#127890;</div>
+              <div class="product-name">Backpack</div>
+              <div class="product-price">$49.99</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Test Progress Screen -->
+        <div class="screen" id="screen-test">
+          <div class="test-header">Autonomous Test</div>
+          <div class="test-sub">Agent is testing your app</div>
+          <div class="test-progress-bar"><div class="test-progress-fill" id="progressFill"></div></div>
+          <div class="test-stat"><span class="test-stat-label">Screens discovered</span><span class="test-stat-value" id="statScreens">0</span></div>
+          <div class="test-stat"><span class="test-stat-label">Screens tested</span><span class="test-stat-value" id="statTested">0</span></div>
+          <div class="test-stat"><span class="test-stat-label">Bugs found</span><span class="test-stat-value" id="statBugs" style="color:#ef4444">0</span></div>
+          <div class="test-stat"><span class="test-stat-label">Fixes applied</span><span class="test-stat-value" id="statFixes" style="color:#22c55e">0</span></div>
+          <div class="test-status" id="testStatus">Starting...</div>
+          <div class="test-screens" id="testScreens"></div>
+        </div>
+
+        <!-- Floating Button -->
+        <div class="floating-btn" id="floatingBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+          </svg>
+        </div>
+
+        <!-- Floating Menu -->
+        <div class="floating-menu" id="floatingMenu">
+          <div class="menu-item"><span class="mi-icon">&#128206;</span> Report Bug</div>
+          <div class="menu-item"><span class="mi-icon">&#128247;</span> Screenshot</div>
+          <div class="menu-item menu-item-test" id="testAppBtn"><span class="mi-icon">&#9654;</span> Test App</div>
+        </div>
+
+        <!-- Fix Report Overlay -->
+        <div class="fix-overlay" id="fixOverlay">
+          <div class="fix-modal">
+            <div class="fix-handle"></div>
+            <div class="fix-title" id="fixTitle"></div>
+            <div class="fix-subtitle">All fixes verified. Changes staged, not committed.</div>
+            <div id="fixList"></div>
+            <div class="fix-footer">Tap a fix to see the diff</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="phone-tab-bar">
+        <div class="tab-item active"><div class="icon">&#127968;</div><div class="label">Home</div></div>
+        <div class="tab-item"><div class="icon">&#128269;</div><div class="label">Search</div></div>
+        <div class="tab-item"><div class="icon">&#128722;</div><div class="label">Cart</div></div>
+        <div class="tab-item"><div class="icon">&#128100;</div><div class="label">Profile</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Terminal Panel ─── -->
+  <div class="terminal-panel">
+    <div class="terminal-frame">
+      <div class="terminal-bar">
+        <div class="terminal-dot dot-red"></div>
+        <div class="terminal-dot dot-yellow"></div>
+        <div class="terminal-dot dot-green"></div>
+        <div class="terminal-title">agent &mdash; yaver serve</div>
+      </div>
+      <div class="terminal-body" id="terminal"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const root = $('root');
+const terminal = $('terminal');
+
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  $(id)?.classList.add('active');
+}
+
+async function addLine(html, delay) {
+  return new Promise(resolve => {
+    setTimeout(() => {
+      const div = document.createElement('div');
+      div.className = 't-line';
+      div.innerHTML = html;
+      terminal.appendChild(div);
+      requestAnimationFrame(() => {
+        div.classList.add('visible');
+        terminal.scrollTop = terminal.scrollHeight;
+      });
+      resolve();
+    }, delay || 0);
+  });
+}
+
+function setProgress(pct) { $('progressFill').style.width = pct + '%'; }
+function setStat(id, val) { $(id).textContent = val; }
+function setTestStatus(text) { $('testStatus').textContent = text; }
+
+function addScreenItem(name, status, icon) {
+  const el = document.createElement('div');
+  el.className = 'test-screen-item';
+  el.innerHTML = `<div class="tsi-icon">${icon}</div><div class="tsi-name">${name}</div><div class="tsi-status ${status}">${status === 'pass' ? 'Passed' : status === 'fail' ? 'Bug found' : status === 'testing' ? 'Testing...' : 'Pending'}</div>`;
+  $('testScreens').appendChild(el);
+  return el;
+}
+
+function updateScreenItem(el, status, icon) {
+  el.querySelector('.tsi-icon').textContent = icon;
+  const st = el.querySelector('.tsi-status');
+  st.className = 'tsi-status ' + status;
+  st.textContent = status === 'pass' ? 'Passed' : status === 'fail' ? 'Bug found & fixed' : 'Testing...';
+}
+
+function addFixItem(file, desc) {
+  const el = document.createElement('div');
+  el.className = 'fix-item';
+  el.innerHTML = `<div class="fix-item-header"><div class="fix-check">&#10003;</div><div class="fix-file">${file}</div></div><div class="fix-desc">${desc}</div>`;
+  $('fixList').appendChild(el);
+}
+
+const wait = ms => new Promise(r => setTimeout(r, ms));
+
+async function play() {
+  // ════════════════════════════════════════════════════════
+  // Phase 1: Home Screen + Start Test (0-10s)
+  // ════════════════════════════════════════════════════════
+  await wait(2000);
+
+  // Show floating menu
+  $('floatingMenu').classList.add('active');
+  $('floatingBtn').style.opacity = '0';
+  await wait(1500);
+
+  // Highlight "Test App"
+  $('testAppBtn').style.background = '#333';
+  await wait(300);
+  $('testAppBtn').style.background = '#1a1a1a';
+  await wait(500);
+
+  // Hide menu, show test screen
+  $('floatingMenu').classList.remove('active');
+  $('floatingBtn').style.display = 'none';
+  await wait(400);
+  showScreen('screen-test');
+  setStat('statScreens', '5');
+  setTestStatus('Scanning app structure...');
+  await wait(1500);
+
+  // ════════════════════════════════════════════════════════
+  // Phase 2: Split View — Agent Testing (10-60s)
+  // ════════════════════════════════════════════════════════
+  root.className = 'container phase-split';
+  await wait(1000);
+
+  await addLine('<span class="t-dim">$</span> <span class="t-text">yaver serve --debug</span>', 0);
+  await addLine('<span class="t-dim">[agent]</span> <span class="t-text">Listening on :18080</span>', 300);
+  await addLine('', 200);
+  await addLine('<span class="t-yellow t-bold">[autotest]</span> <span class="t-text">Starting autonomous test session</span>', 400);
+  await addLine('<span class="t-yellow">[autotest]</span> <span class="t-text">Detecting screens... found 5</span>', 300);
+  await addLine('<span class="t-yellow">[autotest]</span> <span class="t-dim">Login &#8594; Home &#8594; Search &#8594; Cart &#8594; Profile</span>', 300);
+  await wait(600);
+
+  // ─── Screen 1: Login ───
+  await addLine('', 400);
+  await addLine('<span class="t-blue t-bold">&#9473;&#9473; Screen 1/5: Login &#9473;&#9473;</span>', 400);
+  const s1 = addScreenItem('Login', 'testing', '...');
+  setTestStatus('Testing Login screen...');
+  setProgress(10);
+  await wait(800);
+
+  await addLine('<span class="t-dim">[autotest]</span> <span class="t-text">Rendering LoginScreen.tsx</span>', 300);
+  await addLine('<span class="t-dim">[autotest]</span> <span class="t-text">Testing: empty form submit</span>', 400);
+  await addLine('<span class="t-dim">[autotest]</span> <span class="t-text">Testing: invalid email format</span>', 400);
+  await addLine('<span class="t-red t-bold">  &#10007; BUG:</span> <span class="t-text">No input validation on email field</span>', 500);
+  await addLine('<span class="t-dim">         Empty email accepted without error</span>', 200);
+  await wait(600);
+
+  await addLine('<span class="t-blue">  &#9210; Fixing:</span> <span class="t-cyan">src/components/LoginForm.tsx</span>', 400);
+  await addLine('<span class="t-diff-add">  + Added email regex validation</span>', 200);
+  await addLine('<span class="t-diff-add">  + Added empty field checks</span>', 200);
+  await addLine('<span class="t-green">  &#10003; Fix applied &amp; verified</span>', 400);
+
+  updateScreenItem(s1, 'fail', '&#128295;');
+  setStat('statTested', '1');
+  setStat('statBugs', '1');
+  setStat('statFixes', '1');
+  setProgress(20);
+  await wait(600);
+
+  // ─── Screen 2: Home ───
+  await addLine('', 400);
+  await addLine('<span class="t-blue t-bold">&#9473;&#9473; Screen 2/5: Home &#9473;&#9473;</span>', 400);
+  const s2 = addScreenItem('Home', 'testing', '...');
+  setTestStatus('Testing Home screen...');
+  await wait(500);
+
+  await addLine('<span class="t-dim">[autotest]</span> <span class="t-text">Rendering HomeScreen.tsx</span>', 300);
+  await addLine('<span class="t-dim">[autotest]</span> <span class="t-text">Testing: product grid layout</span>', 400);
+  await addLine('<span class="t-dim">[autotest]</span> <span class="t-text">Testing: product card tap navigation</span>', 400);
+  await addLine('<span class="t-green">  &#10003; All checks passed</span>', 400);
+
+  updateScreenItem(s2, 'pass', '&#10003;');
+  setStat('statTested', '2');
+  setProgress(40);
+  await wait(400);
+
+  // ─── Screen 3: Search ───
+  await addLine('', 400);
+  await addLine('<span class="t-blue t-bold">&#9473;&#9473; Screen 3/5: Search &#9473;&#9473;</span>', 400);
+  const s3 = addScreenItem('Search', 'testing', '...');
+  setTestStatus('Testing Search screen...');
+  await wait(500);
+
+  await addLine('<span class="t-dim">[autotest]</span> <span class="t-text">Rendering SearchScreen.tsx</span>', 300);
+  await addLine('<span class="t-dim">[autotest]</span> <span class="t-text">Testing: search with special chars "&lt;&gt;&amp;"</span>', 400);
+  await addLine('<span class="t-red t-bold">  &#10007; BUG:</span> <span class="t-text">Crash on special characters in search</span>', 500);
+  await addLine('<span class="t-dim">         TypeError: Cannot read property \'filter\' of undefined</span>', 200);
+  await wait(600);
+
+  await addLine('<span class="t-blue">  &#9210; Fixing:</span> <span class="t-cyan">src/screens/SearchScreen.tsx</span>', 400);
+  await addLine('<span class="t-diff-add">  + Added null check: (products ?? []).filter(...)</span>', 200);
+  await addLine('<span class="t-diff-add">  + Sanitized search input</span>', 200);
+  await addLine('<span class="t-green">  &#10003; Fix applied &amp; verified</span>', 400);
+
+  updateScreenItem(s3, 'fail', '&#128295;');
+  setStat('statTested', '3');
+  setStat('statBugs', '2');
+  setStat('statFixes', '2');
+  setProgress(60);
+  await wait(600);
+
+  // ─── Screen 4: Cart ───
+  await addLine('', 400);
+  await addLine('<span class="t-blue t-bold">&#9473;&#9473; Screen 4/5: Cart &#9473;&#9473;</span>', 400);
+  const s4 = addScreenItem('Cart', 'testing', '...');
+  setTestStatus('Testing Cart screen...');
+  await wait(500);
+
+  await addLine('<span class="t-dim">[autotest]</span> <span class="t-text">Rendering CartScreen.tsx</span>', 300);
+  await addLine('<span class="t-dim">[autotest]</span> <span class="t-text">Testing: add item to cart, check total</span>', 400);
+  await addLine('<span class="t-red t-bold">  &#10007; BUG:</span> <span class="t-text">Price shows NaN for items with missing price</span>', 500);
+  await addLine('<span class="t-dim">         Total: $NaN when cart contains item with price: undefined</span>', 200);
+  await wait(600);
+
+  await addLine('<span class="t-blue">  &#9210; Fixing:</span> <span class="t-cyan">src/screens/CartScreen.tsx</span>', 400);
+  await addLine('<span class="t-diff-add">  + Added price fallback: (item.price ?? 0)</span>', 200);
+  await addLine('<span class="t-diff-add">  + Added guard for undefined items in reduce()</span>', 200);
+  await addLine('<span class="t-green">  &#10003; Fix applied &amp; verified</span>', 400);
+
+  updateScreenItem(s4, 'fail', '&#128295;');
+  setStat('statTested', '4');
+  setStat('statBugs', '3');
+  setStat('statFixes', '3');
+  setProgress(80);
+  await wait(600);
+
+  // ─── Screen 5: Profile ───
+  await addLine('', 400);
+  await addLine('<span class="t-blue t-bold">&#9473;&#9473; Screen 5/5: Profile &#9473;&#9473;</span>', 400);
+  const s5 = addScreenItem('Profile', 'testing', '...');
+  setTestStatus('Testing Profile screen...');
+  await wait(500);
+
+  await addLine('<span class="t-dim">[autotest]</span> <span class="t-text">Rendering ProfileScreen.tsx</span>', 300);
+  await addLine('<span class="t-dim">[autotest]</span> <span class="t-text">Testing: avatar display, logout button</span>', 400);
+  await addLine('<span class="t-green">  &#10003; All checks passed</span>', 400);
+
+  updateScreenItem(s5, 'pass', '&#10003;');
+  setStat('statTested', '5');
+  setProgress(100);
+  setTestStatus('Test complete');
+  await wait(800);
+
+  // ─── Summary ───
+  await addLine('', 400);
+  await addLine('<span class="t-yellow t-bold">&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;</span>', 300);
+  await addLine('<span class="t-text t-bold">  Test complete: 5 screens, 3 bugs found, 3 fixed</span>', 400);
+  await addLine('<span class="t-green t-bold">  All fixes verified &#10003;</span>', 300);
+  await addLine('<span class="t-yellow t-bold">&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;</span>', 200);
+  await wait(1500);
+
+  // ════════════════════════════════════════════════════════
+  // Phase 3: Fix Report (60-75s)
+  // ════════════════════════════════════════════════════════
+
+  $('fixTitle').textContent = '3 Fixes Applied';
+  addFixItem('src/components/LoginForm.tsx', 'Added email format validation and empty field checks');
+  addFixItem('src/screens/SearchScreen.tsx', 'Added null check for product array and input sanitization');
+  addFixItem('src/screens/CartScreen.tsx', 'Added price fallback for undefined values in cart total');
+  $('fixOverlay').classList.add('active');
+
+  await wait(8000);
+}
+
+play();
+</script>
+</body>
+</html>

@@ -44,6 +44,7 @@ import { useAuth } from "../../src/context/AuthContext";
 import { getUserSettings, getLocalSecret, LOCAL_KEYS, type SpeechProvider } from "../../src/lib/auth";
 import { transcribe, initWhisper, isWhisperReady, startRealtimeTranscribe, SPEECH_PROVIDERS } from "../../src/lib/speech";
 import { shareIntentEmitter } from "../../src/lib/shareIntent";
+import { DevPreview } from "../../src/components/DevPreview";
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -1050,6 +1051,9 @@ export default function TasksScreen() {
             </View>
           )}
         </Pressable>
+
+        {/* Dev server preview banner */}
+        {isEffectivelyConnected && <DevPreview />}
 
         {/* Ping result overlay */}
         {showPingResult && pingResult && (

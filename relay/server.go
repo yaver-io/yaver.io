@@ -580,8 +580,11 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	stream.Close() // signal done writing
 
-	// Check if this is an SSE request
-	if strings.Contains(forwardPath, "/output") && r.Method == "GET" {
+	// Check if this is an SSE request (task output, dev server events, blackbox subscribe)
+	isSSE := r.Method == "GET" && (strings.Contains(forwardPath, "/output") ||
+		strings.HasSuffix(forwardPath, "/dev/events") ||
+		strings.HasSuffix(forwardPath, "/subscribe"))
+	if isSSE {
 		s.proxySSE(w, r, stream, tunnel.deviceID)
 		return
 	}

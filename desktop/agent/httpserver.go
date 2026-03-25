@@ -36,8 +36,9 @@ type HTTPServer struct {
 	tunnelMgr   *TunnelManager
 	testMgr     *TestManager
 	feedbackMgr *FeedbackManager
-	blackboxMgr  *BlackBoxManager
-	multiUserMgr *MultiUserManager // nil in single-user mode
+	blackboxMgr   *BlackBoxManager
+	devServerMgr  *DevServerManager
+	multiUserMgr  *MultiUserManager // nil in single-user mode
 	server       *http.Server
 	tlsServer    *http.Server
 	onShutdown   func() // called when mobile requests agent shutdown
@@ -129,6 +130,14 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/blackbox/logs", s.authSDK(s.handleBlackBoxLogs))
 	mux.HandleFunc("/blackbox/subscribe", s.authSDK(s.handleBlackBoxSubscribe))
 	mux.HandleFunc("/blackbox/context", s.authSDK(s.handleBlackBoxContext))
+
+	// Dev server (reverse proxy to local Metro/Vite/Flutter dev server)
+	mux.HandleFunc("/dev/status", s.authSDK(s.handleDevServerStatus))
+	mux.HandleFunc("/dev/start", s.auth(s.handleDevServerStart))
+	mux.HandleFunc("/dev/stop", s.auth(s.handleDevServerStop))
+	mux.HandleFunc("/dev/reload", s.authSDK(s.handleDevServerReload))
+	mux.HandleFunc("/dev/events", s.authSDK(s.handleDevServerEvents))
+	mux.HandleFunc("/dev/", s.authSDK(s.handleDevServerProxy))
 
 	// Multi-user management (shared machines)
 	mux.HandleFunc("/users", s.auth(s.handleMultiUserList))

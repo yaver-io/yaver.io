@@ -2,10 +2,12 @@ import { FeedbackConfig, CapturedError } from './types';
 import { YaverDiscovery } from './Discovery';
 import { BlackBox } from './BlackBox';
 import { P2PClient } from './P2PClient';
+import { ShakeDetector } from './ShakeDetector';
 
 let config: FeedbackConfig | null = null;
 let enabled = false;
 let p2pClient: P2PClient | null = null;
+let shakeDetector: ShakeDetector | null = null;
 
 /** Ring buffer of captured errors. */
 let errorBuffer: CapturedError[] = [];
@@ -52,6 +54,23 @@ export class YaverFeedback {
     // Set up error capture buffer size
     maxErrors = cfg.maxCapturedErrors ?? 5;
     errorBuffer = [];
+
+    // Wire up shake detection when trigger is 'shake'
+    if (shakeDetector) {
+      shakeDetector.stop();
+      shakeDetector = null;
+    }
+    if (enabled && config.trigger === 'shake') {
+      shakeDetector = new ShakeDetector();
+      shakeDetector.start(() => {
+        if (config?.reportingOnly) {
+          YaverFeedback.sendAutoReport();
+        } else {
+          YaverFeedback.startReport();
+        }
+      });
+    }
+
     // NOTE: We intentionally do NOT hook ErrorUtils.setGlobalHandler().
     // Sentry, Crashlytics, Bugsnag, and other tools all compete for that
     // single slot. Hijacking it would break whichever tool the developer
@@ -133,10 +152,25 @@ export class YaverFeedback {
       }
       BlackBox.unwrapConsole(); // ensure console is restored even if BlackBox wasn't started
       errorBuffer = [];
+      if (shakeDetector) {
+        shakeDetector.stop();
+        shakeDetector = null;
+      }
     } else {
       // === ENABLE ===
       if (blackBoxWasStreaming) {
         BlackBox.start(); // restart with previous config
+      }
+      // Restart shake detector if trigger is 'shake'
+      if (config?.trigger === 'shake' && !shakeDetector) {
+        shakeDetector = new ShakeDetector();
+        shakeDetector.start(() => {
+          if (config?.reportingOnly) {
+            YaverFeedback.sendAutoReport();
+          } else {
+            YaverFeedback.startReport();
+          }
+        });
       }
     }
 
@@ -227,5 +261,85 @@ export class YaverFeedback {
   /** Returns the agent commentary level (0-10). */
   static getCommentaryLevel(): number {
     return config?.agentCommentaryLevel ?? 0;
+  }
+
+  /**
+   * Reporting-only mode: auto-capture screenshot + errors and send
+   * to the agent's /feedback endpoint. No modal UI — just shake and go.
+   *
+   * This is triggered by shake when `reportingOnly: true` is set.
+   * The agent receives the report via the same P2P channel and logs it.
+   */
+  static async sendAutoReport(): Promise<void> {
+    if (!config || !enabled) return;
+
+    // Resolve agent URL if needed
+    if (!config.agentUrl) {
+      try {
+        const result = await YaverDiscovery.discover({
+          convexUrl: config.convexUrl,
+          authToken: config.authToken,
+          preferredDeviceId: config.preferredDeviceId,
+        });
+        if (result) {
+          config.agentUrl = result.url;
+          p2pClient = new P2PClient(result.url, config.authToken);
+        }
+      } catch {}
+    }
+
+    if (!config.agentUrl) {
+      console.warn('[YaverFeedback] No agent URL — cannot send auto report.');
+      return;
+    }
+
+    try {
+      const { Platform, Dimensions } = require('react-native');
+      const { captureScreenshot } = require('./capture');
+      const { uploadFeedback } = require('./upload');
+      const { width, height } = Dimensions.get('window');
+
+      // Auto-capture screenshot
+      let screenshotPath: string | undefined;
+      try {
+        screenshotPath = await captureScreenshot();
+      } catch {
+        // Screenshot capture may fail (e.g. no view ref) — continue without it
+      }
+
+      const bundle = {
+        metadata: {
+          timestamp: new Date().toISOString(),
+          device: {
+            platform: Platform.OS,
+            osVersion: String(Platform.Version),
+            model: Platform.OS === 'ios' ? 'iOS Device' : 'Android Device',
+            screenWidth: width,
+            screenHeight: height,
+          },
+          app: {},
+          userNote: '[Auto-report via shake]',
+        },
+        screenshots: screenshotPath ? [screenshotPath] : [],
+        errors: errorBuffer.length > 0 ? [...errorBuffer] : undefined,
+      };
+
+      await uploadFeedback(config.agentUrl, config.authToken, bundle);
+      console.log('[YaverFeedback] Auto-report sent');
+    } catch (err) {
+      console.warn('[YaverFeedback] Auto-report failed:', err);
+    }
+  }
+
+  /** Tear down the SDK (stop shake detector, clear state). */
+  static destroy(): void {
+    if (shakeDetector) {
+      shakeDetector.stop();
+      shakeDetector = null;
+    }
+    enabled = false;
+    config = null;
+    p2pClient = null;
+    errorBuffer = [];
   }
 }

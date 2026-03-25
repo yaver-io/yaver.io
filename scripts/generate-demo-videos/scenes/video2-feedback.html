@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Video 2 — Bug Fix Loop</title>
+<style>
+/* ─── Reset & Base ─── */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+body {
+  width: 1440px; height: 1080px; overflow: hidden;
+  background: #050508; font-family: 'Inter', -apple-system, sans-serif;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* ─── Layout ─── */
+.container {
+  width: 1440px; height: 1080px;
+  display: flex; align-items: center; justify-content: center;
+  position: relative; overflow: hidden;
+}
+
+/* Full-screen phone (Phase 1) */
+.phase-full .phone-panel {
+  width: 480px; transition: all 0.8s cubic-bezier(0.4,0,0.2,1);
+}
+.phase-full .terminal-panel { opacity: 0; width: 0; overflow: hidden; }
+
+/* Split view (Phase 2+) */
+.phase-split .phone-panel {
+  width: 500px; margin-left: 60px; margin-right: 30px;
+  transition: all 0.8s cubic-bezier(0.4,0,0.2,1);
+}
+.phase-split .terminal-panel {
+  flex: 1; margin-right: 60px; opacity: 1;
+  transition: all 0.8s cubic-bezier(0.4,0,0.2,1);
+}
+
+/* ─── Phone Frame ─── */
+.phone-panel {
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.phone-frame {
+  width: 100%; aspect-ratio: 390/844;
+  background: #fff; border-radius: 44px;
+  box-shadow: 0 0 0 3px #1a1a2e, 0 25px 60px rgba(0,0,0,0.6);
+  overflow: hidden; position: relative;
+  display: flex; flex-direction: column;
+}
+
+/* Status Bar */
+.phone-status-bar {
+  height: 54px; padding: 14px 24px 0; display: flex;
+  align-items: flex-start; justify-content: space-between;
+  background: #fff; position: relative; z-index: 10;
+}
+.phone-status-bar .time { font-size: 15px; font-weight: 600; color: #000; }
+.phone-status-bar .icons { display: flex; gap: 5px; align-items: center; }
+.phone-status-bar .icons span { font-size: 12px; color: #000; }
+.dynamic-island {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+  width: 120px; height: 34px; background: #000; border-radius: 20px;
+}
+
+/* Phone Content */
+.phone-content { flex: 1; overflow: hidden; position: relative; background: #fff; }
+.screen { position: absolute; inset: 0; opacity: 0; transition: opacity 0.4s; padding: 24px; }
+.screen.active { opacity: 1; }
+
+/* Tab Bar */
+.phone-tab-bar {
+  height: 80px; background: #fafafa; border-top: 1px solid #e5e5e5;
+  display: flex; align-items: center; justify-content: space-around;
+  padding: 0 16px 16px;
+}
+.tab-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.tab-item .icon { font-size: 20px; }
+.tab-item .label { font-size: 10px; color: #999; font-weight: 500; }
+.tab-item.active .label { color: #111; }
+
+/* ─── Login Screen ─── */
+.login-title { font-size: 26px; font-weight: 700; color: #111; margin-bottom: 4px; margin-top: 20px; }
+.login-subtitle { font-size: 14px; color: #999; margin-bottom: 28px; }
+.field-label { font-size: 12px; font-weight: 600; color: #666; margin-bottom: 6px; margin-top: 16px; }
+.field-input {
+  width: 100%; background: #f5f5f5; border: 1px solid #e5e5e5;
+  border-radius: 12px; padding: 14px 16px; font-size: 15px; color: #111;
+  font-family: inherit;
+}
+.field-input.placeholder { color: #bbb; }
+.btn-signin {
+  width: 100%; background: #111; border-radius: 12px; padding: 16px;
+  text-align: center; margin-top: 24px; cursor: pointer;
+}
+.btn-signin span { color: #fff; font-size: 15px; font-weight: 700; }
+.forgot-link { text-align: center; margin-top: 14px; }
+.forgot-link span { color: #6366f1; font-size: 12px; }
+.error-box {
+  background: #fef2f2; border-radius: 10px; padding: 12px; margin-bottom: 8px;
+  opacity: 0; transition: opacity 0.3s; margin-top: 8px;
+}
+.error-box.visible { opacity: 1; }
+.error-box span { color: #ef4444; font-size: 12px; line-height: 1.4; }
+.validation-error { color: #ef4444; font-size: 12px; margin-top: 4px; opacity: 0; transition: opacity 0.3s; }
+.validation-error.visible { opacity: 1; }
+
+/* ─── Floating Button ─── */
+.floating-btn {
+  position: absolute; bottom: 100px; right: 20px;
+  width: 44px; height: 44px; border-radius: 22px;
+  background: #1a1a1a; display: flex; align-items: center;
+  justify-content: center; z-index: 100;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  transition: transform 0.2s;
+}
+.floating-btn.pulse {
+  animation: pulse-ring 1s ease-out;
+}
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgba(26,26,26,0.4); }
+  100% { box-shadow: 0 0 0 20px rgba(26,26,26,0); }
+}
+.floating-btn svg { width: 20px; height: 20px; }
+
+/* ─── Feedback Modal ─── */
+.feedback-overlay {
+  position: absolute; inset: 0; z-index: 200;
+  background: rgba(0,0,0,0.5); opacity: 0;
+  transition: opacity 0.3s; pointer-events: none;
+}
+.feedback-overlay.active { opacity: 1; pointer-events: all; }
+.feedback-modal {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  background: #fff; border-radius: 20px 20px 0 0;
+  padding: 20px 20px 32px; transform: translateY(100%);
+  transition: transform 0.4s cubic-bezier(0.4,0,0.2,1);
+}
+.feedback-overlay.active .feedback-modal { transform: translateY(0); }
+.modal-handle {
+  width: 36px; height: 4px; background: #ddd; border-radius: 2px;
+  margin: 0 auto 16px;
+}
+.modal-title { font-size: 17px; font-weight: 700; color: #111; margin-bottom: 12px; }
+.modal-input {
+  width: 100%; background: #f5f5f5; border: 1px solid #e5e5e5;
+  border-radius: 12px; padding: 12px; font-size: 13px; color: #111;
+  min-height: 60px; font-family: inherit; resize: none;
+}
+.modal-actions {
+  display: flex; gap: 8px; margin-top: 12px;
+}
+.modal-btn {
+  flex: 1; padding: 12px; border-radius: 10px; text-align: center; font-size: 13px; font-weight: 600;
+}
+.modal-btn-send { background: #111; color: #fff; }
+.modal-btn-screenshot { background: #f0f0f0; color: #666; }
+.modal-sending {
+  text-align: center; padding: 20px; color: #22c55e; font-size: 14px; font-weight: 600;
+  opacity: 0; transition: opacity 0.3s;
+}
+.modal-sending.visible { opacity: 1; }
+
+/* ─── Hot Reload Indicator ─── */
+.hot-reload-bar {
+  position: absolute; top: 54px; left: 0; right: 0; height: 0;
+  background: linear-gradient(90deg, #22c55e, #3b82f6);
+  z-index: 50; transition: height 0.2s;
+}
+.hot-reload-bar.active { height: 3px; animation: reload-progress 1.2s ease-out; }
+@keyframes reload-progress {
+  0% { width: 0; }
+  100% { width: 100%; }
+}
+
+/* ─── Success Checkmark ─── */
+.success-overlay {
+  position: absolute; inset: 0; z-index: 300;
+  background: rgba(255,255,255,0.95); display: flex;
+  align-items: center; justify-content: center; flex-direction: column;
+  opacity: 0; transition: opacity 0.5s;
+}
+.success-overlay.visible { opacity: 1; }
+.success-check {
+  width: 64px; height: 64px; border-radius: 32px;
+  background: #22c55e; display: flex; align-items: center;
+  justify-content: center; margin-bottom: 12px;
+}
+.success-check svg { width: 32px; height: 32px; }
+.success-text { font-size: 16px; font-weight: 600; color: #111; }
+
+/* ─── Terminal ─── */
+.terminal-panel {
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.8s cubic-bezier(0.4,0,0.2,1);
+}
+.terminal-frame {
+  width: 100%; max-width: 780px; height: 640px;
+  background: #0c0c14; border-radius: 12px;
+  box-shadow: 0 25px 60px rgba(0,0,0,0.5);
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.terminal-bar {
+  height: 36px; background: #1e1e2a; display: flex;
+  align-items: center; padding: 0 12px; gap: 8px; flex-shrink: 0;
+}
+.terminal-dot { width: 12px; height: 12px; border-radius: 50%; }
+.dot-red { background: #ff5f57; }
+.dot-yellow { background: #febc2e; }
+.dot-green { background: #28c840; }
+.terminal-title {
+  flex: 1; text-align: center; font-size: 12px; color: #888;
+  font-family: 'JetBrains Mono', monospace;
+}
+.terminal-body {
+  flex: 1; padding: 16px; overflow-y: auto; font-family: 'JetBrains Mono', monospace;
+  font-size: 12.5px; line-height: 1.7;
+}
+.terminal-body::-webkit-scrollbar { width: 6px; }
+.terminal-body::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+
+.t-line { white-space: pre-wrap; opacity: 0; transition: opacity 0.15s; }
+.t-line.visible { opacity: 1; }
+.t-dim { color: #555; }
+.t-text { color: #d4d4d8; }
+.t-green { color: #22c55e; }
+.t-red { color: #ef4444; }
+.t-blue { color: #818cf8; }
+.t-yellow { color: #fbbf24; }
+.t-cyan { color: #22d3ee; }
+.t-orange { color: #f97316; }
+.t-bold { font-weight: 600; }
+.t-diff-add { color: #22c55e; }
+.t-diff-del { color: #ef4444; }
+.t-diff-hdr { color: #818cf8; }
+
+/* Cursor blink */
+.cursor {
+  display: inline-block; width: 8px; height: 16px;
+  background: #d4d4d8; animation: blink 1s step-end infinite;
+  vertical-align: middle; margin-left: 2px;
+}
+@keyframes blink { 50% { opacity: 0; } }
+</style>
+</head>
+<body>
+
+<div class="container phase-full" id="root">
+  <!-- ─── Phone Panel ─── -->
+  <div class="phone-panel">
+    <div class="phone-frame">
+      <!-- Status Bar -->
+      <div class="phone-status-bar">
+        <span class="time">9:41</span>
+        <div class="dynamic-island"></div>
+        <div class="icons">
+          <span>5G</span>
+          <span>100%</span>
+        </div>
+      </div>
+
+      <!-- Hot Reload Bar -->
+      <div class="hot-reload-bar" id="hotReloadBar"></div>
+
+      <!-- Content -->
+      <div class="phone-content">
+
+        <!-- Login Screen (buggy) -->
+        <div class="screen active" id="screen-login">
+          <div class="login-title">Welcome back</div>
+          <div class="login-subtitle">Sign in to your account</div>
+          <div class="error-box" id="loginError">
+            <span>Error: 400 Bad Request — {"error":"invalid_email_format","message":"Malformed email address"}</span>
+          </div>
+          <div class="field-label">Email</div>
+          <div class="field-input" id="emailField">
+            <span class="placeholder">you@example.com</span>
+          </div>
+          <div class="field-label">Password</div>
+          <div class="field-input" id="passwordField">
+            <span class="placeholder">Enter your password</span>
+          </div>
+          <div class="btn-signin" id="signinBtn"><span>Sign In</span></div>
+          <div class="forgot-link"><span>Forgot your password?</span></div>
+        </div>
+
+        <!-- Login Screen (fixed) -->
+        <div class="screen" id="screen-login-fixed">
+          <div class="login-title">Welcome back</div>
+          <div class="login-subtitle">Sign in to your account</div>
+          <div class="validation-error" id="fixedValidation"></div>
+          <div class="field-label">Email</div>
+          <div class="field-input" id="fixedEmailField">
+            <span class="placeholder">you@example.com</span>
+          </div>
+          <div class="field-label">Password</div>
+          <div class="field-input" id="fixedPasswordField">
+            <span class="placeholder">Enter your password</span>
+          </div>
+          <div class="btn-signin"><span>Sign In</span></div>
+          <div class="forgot-link"><span>Forgot your password?</span></div>
+        </div>
+
+        <!-- Home Screen (after login success) -->
+        <div class="screen" id="screen-home">
+          <div style="font-size:22px;font-weight:700;color:#111;margin-bottom:4px;margin-top:8px">Acme Store</div>
+          <div style="font-size:13px;color:#999;margin-bottom:20px">Featured Products</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div style="background:#f5f5f5;border-radius:14px;padding:16px;aspect-ratio:1">
+              <div style="width:100%;aspect-ratio:1;background:#e5e5e5;border-radius:10px;margin-bottom:8px;display:flex;align-items:center;justify-content:center;font-size:32px">&#128085;</div>
+              <div style="font-size:13px;font-weight:600;color:#111">Classic Tee</div>
+              <div style="font-size:12px;color:#666">$29.99</div>
+            </div>
+            <div style="background:#f5f5f5;border-radius:14px;padding:16px;aspect-ratio:1">
+              <div style="width:100%;aspect-ratio:1;background:#e5e5e5;border-radius:10px;margin-bottom:8px;display:flex;align-items:center;justify-content:center;font-size:32px">&#128092;</div>
+              <div style="font-size:13px;font-weight:600;color:#111">Denim Jacket</div>
+              <div style="font-size:12px;color:#666">$89.99</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Floating Button -->
+        <div class="floating-btn" id="floatingBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+          </svg>
+        </div>
+
+        <!-- Feedback Overlay -->
+        <div class="feedback-overlay" id="feedbackOverlay">
+          <div class="feedback-modal">
+            <div class="modal-handle"></div>
+            <div class="modal-title">Report a Bug</div>
+            <div class="modal-input" id="feedbackInput" style="white-space:pre-wrap"></div>
+            <div class="modal-actions" id="modalActions">
+              <div class="modal-btn modal-btn-screenshot">Screenshot</div>
+              <div class="modal-btn modal-btn-send" id="sendBtn">Send</div>
+            </div>
+            <div class="modal-sending" id="sendingStatus">Sent to agent</div>
+          </div>
+        </div>
+
+        <!-- Success Overlay -->
+        <div class="success-overlay" id="successOverlay">
+          <div class="success-check">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg>
+          </div>
+          <div class="success-text">Fix verified</div>
+        </div>
+      </div>
+
+      <!-- Tab Bar -->
+      <div class="phone-tab-bar">
+        <div class="tab-item active"><div class="icon">&#127968;</div><div class="label">Home</div></div>
+        <div class="tab-item"><div class="icon">&#128269;</div><div class="label">Search</div></div>
+        <div class="tab-item"><div class="icon">&#128722;</div><div class="label">Cart</div></div>
+        <div class="tab-item"><div class="icon">&#128100;</div><div class="label">Profile</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Terminal Panel ─── -->
+  <div class="terminal-panel">
+    <div class="terminal-frame">
+      <div class="terminal-bar">
+        <div class="terminal-dot dot-red"></div>
+        <div class="terminal-dot dot-yellow"></div>
+        <div class="terminal-dot dot-green"></div>
+        <div class="terminal-title">agent &mdash; yaver serve</div>
+      </div>
+      <div class="terminal-body" id="terminal"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── Timeline Engine ───
+const $ = id => document.getElementById(id);
+const root = $('root');
+const terminal = $('terminal');
+let lineQueue = [];
+let lineTimer = null;
+
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  $(id)?.classList.add('active');
+}
+
+function addLine(html, delay) {
+  return new Promise(resolve => {
+    setTimeout(() => {
+      const div = document.createElement('div');
+      div.className = 't-line';
+      div.innerHTML = html;
+      terminal.appendChild(div);
+      requestAnimationFrame(() => {
+        div.classList.add('visible');
+        terminal.scrollTop = terminal.scrollHeight;
+      });
+      resolve();
+    }, delay || 0);
+  });
+}
+
+async function typeLines(lines, baseDelay) {
+  for (let i = 0; i < lines.length; i++) {
+    await addLine(lines[i], baseDelay || 120);
+  }
+}
+
+function typeText(el, text, speed) {
+  return new Promise(resolve => {
+    let i = 0;
+    el.textContent = '';
+    el.classList.remove('placeholder');
+    const iv = setInterval(() => {
+      if (i < text.length) {
+        el.textContent = text.substring(0, ++i);
+      } else {
+        clearInterval(iv);
+        resolve();
+      }
+    }, speed || 80);
+  });
+}
+
+// ─── Scene Timeline ───
+async function play() {
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+
+  // ════════════════════════════════════════════════════════
+  // Phase 1: Show the Bug (0-12s)
+  // ════════════════════════════════════════════════════════
+  await wait(1500);
+
+  // Type in email field
+  const emailEl = $('emailField');
+  await typeText(emailEl, 'kivanccakmak@gmail.', 70);
+  await wait(500);
+
+  // Type password
+  const passEl = $('passwordField');
+  passEl.innerHTML = '<span style="letter-spacing:3px">&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;</span>';
+  passEl.classList.remove('placeholder');
+  await wait(800);
+
+  // Tap sign in — show error
+  $('signinBtn').style.opacity = '0.6';
+  await wait(300);
+  $('signinBtn').style.opacity = '1';
+  await wait(400);
+  $('loginError').classList.add('visible');
+  await wait(3000);
+
+  // ════════════════════════════════════════════════════════
+  // Phase 2: Report Bug via SDK (12-22s)
+  // ════════════════════════════════════════════════════════
+
+  // Pulse floating button
+  $('floatingBtn').classList.add('pulse');
+  await wait(1200);
+  $('floatingBtn').classList.remove('pulse');
+  await wait(300);
+
+  // Open feedback modal
+  $('feedbackOverlay').classList.add('active');
+  await wait(600);
+
+  // Type feedback message
+  const feedbackEl = $('feedbackInput');
+  const feedbackText = 'Login accepts any text as email.\nNo validation on the form.';
+  for (let i = 0; i <= feedbackText.length; i++) {
+    feedbackEl.textContent = feedbackText.substring(0, i);
+    await wait(40);
+  }
+  await wait(800);
+
+  // Tap send
+  $('sendBtn').style.background = '#333';
+  await wait(200);
+  $('sendBtn').style.background = '#111';
+  await wait(600);
+  $('sendingStatus').classList.add('visible');
+  await wait(1500);
+
+  // Close modal
+  $('feedbackOverlay').classList.remove('active');
+  await wait(600);
+
+  // ════════════════════════════════════════════════════════
+  // Phase 3: Split View — Agent Working (22-55s)
+  // ════════════════════════════════════════════════════════
+
+  // Transition to split
+  root.className = 'container phase-split';
+  await wait(1000);
+
+  // Terminal output: receiving feedback
+  await addLine('<span class="t-dim">$</span> <span class="t-text">yaver serve --debug</span>', 0);
+  await addLine('<span class="t-dim">[agent]</span> <span class="t-text">Listening on :18080</span>', 400);
+  await addLine('<span class="t-dim">[agent]</span> <span class="t-text">BlackBox streaming active</span>', 300);
+  await addLine('', 200);
+  await addLine('<span class="t-yellow">[feedback]</span> <span class="t-text">New bug report received</span>', 600);
+  await addLine('<span class="t-yellow">[feedback]</span> <span class="t-dim">Source: in-app-sdk | Platform: ios</span>', 200);
+  await addLine('<span class="t-yellow">[feedback]</span> <span class="t-dim">"Login accepts any text as email. No validation."</span>', 200);
+  await addLine('<span class="t-yellow">[feedback]</span> <span class="t-text">Generating fix prompt with BlackBox context...</span>', 400);
+  await wait(800);
+
+  await addLine('', 300);
+  await addLine('<span class="t-blue t-bold">&#9210; Reading</span> <span class="t-cyan">src/components/LoginForm.tsx</span>', 500);
+  await wait(600);
+
+  // Show file content
+  await addLine('', 200);
+  await addLine('<span class="t-dim">  21 │</span> <span class="t-text">  const handleSubmit = async () => {</span>', 150);
+  await addLine('<span class="t-dim">  22 │</span> <span class="t-text">    setError(null);</span>', 100);
+  await addLine('<span class="t-dim">  23 │</span> <span class="t-text">    setLoading(true);</span>', 100);
+  await addLine('<span class="t-dim">  24 │</span>', 100);
+  await addLine('<span class="t-dim">  25 │</span> <span class="t-yellow">    // TODO: add input validation</span>', 100);
+  await addLine('<span class="t-dim">  26 │</span> <span class="t-text">    try {</span>', 100);
+  await addLine('<span class="t-dim">  27 │</span> <span class="t-text">      await onLogin(email, password);</span>', 100);
+  await wait(1200);
+
+  await addLine('', 300);
+  await addLine('<span class="t-text">Found: handleSubmit() has no validation before calling onLogin().</span>', 400);
+  await addLine('<span class="t-dim">The TODO at line 25 confirms this was intended to be added.</span>', 300);
+  await wait(1000);
+
+  // Apply fix
+  await addLine('', 400);
+  await addLine('<span class="t-blue t-bold">&#9210; Editing</span> <span class="t-cyan">src/components/LoginForm.tsx</span>', 500);
+  await wait(400);
+
+  await addLine('', 200);
+  await addLine('<span class="t-diff-hdr">@@ -21,7 +21,18 @@</span>', 200);
+  await addLine('<span class="t-dim">   const handleSubmit = async () => {</span>', 150);
+  await addLine('<span class="t-dim">     setError(null);</span>', 100);
+  await addLine('<span class="t-dim">     setLoading(true);</span>', 100);
+  await addLine('<span class="t-diff-del">-    // TODO: add input validation</span>', 200);
+  await addLine('<span class="t-diff-add">+    const emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;</span>', 200);
+  await addLine('<span class="t-diff-add">+    if (!email.trim()) {</span>', 150);
+  await addLine('<span class="t-diff-add">+      setError(\'Email is required\');</span>', 150);
+  await addLine('<span class="t-diff-add">+      setLoading(false);</span>', 100);
+  await addLine('<span class="t-diff-add">+      return;</span>', 100);
+  await addLine('<span class="t-diff-add">+    }</span>', 100);
+  await addLine('<span class="t-diff-add">+    if (!emailRegex.test(email)) {</span>', 150);
+  await addLine('<span class="t-diff-add">+      setError(\'Please enter a valid email address\');</span>', 150);
+  await addLine('<span class="t-diff-add">+      setLoading(false);</span>', 100);
+  await addLine('<span class="t-diff-add">+      return;</span>', 100);
+  await addLine('<span class="t-diff-add">+    }</span>', 100);
+  await wait(800);
+
+  // Hot reload
+  await addLine('', 400);
+  await addLine('<span class="t-green t-bold">&#10003;</span> <span class="t-text">Fix applied. Triggering hot reload...</span>', 500);
+  await addLine('<span class="t-dim">[hot-reload]</span> <span class="t-text">Reloading app...</span>', 400);
+  await addLine('<span class="t-dim">[hot-reload]</span> <span class="t-green">&#10003; Bundle rebuilt in 0.8s</span>', 800);
+
+  // ════════════════════════════════════════════════════════
+  // Phase 4: Verification (55-70s)
+  // ════════════════════════════════════════════════════════
+
+  // Show hot reload bar on phone
+  $('hotReloadBar').classList.add('active');
+  await wait(1500);
+  $('hotReloadBar').classList.remove('active');
+
+  // Switch to fixed login screen
+  showScreen('screen-login-fixed');
+  await wait(1000);
+
+  // Type bad email again
+  const fixedEmail = $('fixedEmailField');
+  await typeText(fixedEmail, 'test@', 80);
+  await wait(500);
+
+  // Show validation error (proper this time)
+  const validationEl = $('fixedValidation');
+  validationEl.textContent = 'Please enter a valid email address';
+  validationEl.classList.add('visible');
+  validationEl.style.color = '#ef4444';
+  validationEl.style.fontSize = '12px';
+  validationEl.style.marginBottom = '8px';
+  validationEl.style.padding = '10px';
+  validationEl.style.background = '#fef2f2';
+  validationEl.style.borderRadius = '10px';
+  await wait(2000);
+
+  // Now type valid email
+  validationEl.classList.remove('visible');
+  await wait(300);
+  await typeText(fixedEmail, 'kivanc@acme.com', 60);
+  await wait(400);
+
+  const fixedPass = $('fixedPasswordField');
+  fixedPass.innerHTML = '<span style="letter-spacing:3px">&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;</span>';
+  fixedPass.classList.remove('placeholder');
+  await wait(800);
+
+  // Login success — navigate to home
+  showScreen('screen-home');
+  await wait(1500);
+
+  // Terminal: verification
+  await addLine('', 400);
+  await addLine('<span class="t-green t-bold">&#10003;</span> <span class="t-text">Fix verified. 1 file changed.</span>', 500);
+  await addLine('', 300);
+  await addLine('<span class="t-blue t-bold">Summary of changes:</span>', 400);
+  await addLine('<span class="t-text">  &#8226; Added email format validation</span>', 200);
+  await addLine('<span class="t-text">  &#8226; Added empty field checks</span>', 200);
+  await addLine('<span class="t-text">  &#8226; Removed TODO comment</span>', 200);
+
+  // ════════════════════════════════════════════════════════
+  // Phase 5: Done (70-75s)
+  // ════════════════════════════════════════════════════════
+
+  await wait(1500);
+  // Show success overlay on phone
+  $('successOverlay').classList.add('visible');
+
+  await wait(4000);
+}
+
+// Start the animation
+play();
+</script>
+</body>
+</html>
