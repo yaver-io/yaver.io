@@ -247,20 +247,36 @@ function DeviceCard({
           </Text>
         </Pressable>
         {!isOnline && (
-          <Pressable
-            style={[styles.pingBtn, { backgroundColor: "#6366f118" }]}
-            onPress={() => Alert.alert(
-              "Always-on Setup",
-              "To keep this machine always available:\n\n" +
-              "1. Enable auto-boot in BIOS\n" +
-              "2. Run: yaver serve --install-systemd\n" +
-              "3. Run: sudo loginctl enable-linger $USER\n\n" +
-              "Full guide: yaver.io/manuals/auto-boot",
-              [{ text: "OK" }]
-            )}
-          >
-            <Text style={[styles.pingBtnText, { color: c.accent }]}>Setup</Text>
-          </Pressable>
+          <>
+            <Pressable
+              style={[styles.pingBtn, { backgroundColor: "#f59e0b18" }]}
+              onPress={() => Alert.alert(
+                "Wake Machine",
+                "Send a Wake-on-LAN magic packet to power on this machine.\n\n" +
+                "Requirements:\n" +
+                "• WoL enabled in BIOS\n" +
+                "• Wired ethernet (most WiFi cards don't support WoL)\n" +
+                "• Same network or Tailscale\n\n" +
+                "For always-on setup: yaver.io/manuals/auto-boot",
+                [{ text: "OK" }]
+              )}
+            >
+              <Text style={[styles.pingBtnText, { color: "#f59e0b" }]}>Wake</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.pingBtn, { backgroundColor: "#6366f118" }]}
+              onPress={() => Alert.alert(
+                "Always-on Setup",
+                "1. Enable auto-boot in BIOS\n" +
+                "2. Run: yaver serve --install-systemd\n" +
+                "3. Run: sudo loginctl enable-linger $USER\n\n" +
+                "Full guide: yaver.io/manuals/auto-boot",
+                [{ text: "OK" }]
+              )}
+            >
+              <Text style={[styles.pingBtnText, { color: c.accent }]}>Setup</Text>
+            </Pressable>
+          </>
         )}
       </View>
     </Pressable>

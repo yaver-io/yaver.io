@@ -423,15 +423,16 @@ const s = StyleSheet.create({
   searchInput: { flex: 1, fontSize: 14, paddingVertical: 0 },
 
   // Filter chips
-  filterRow: { marginHorizontal: 16, marginBottom: 8, maxHeight: 32 },
-  filterRowContent: { gap: 4, alignItems: "center" as const },
+  filterRow: { marginHorizontal: 16, marginBottom: 8, height: 30, flexGrow: 0 },
+  filterRowContent: { gap: 4, alignItems: "center" as const, paddingRight: 16 },
   filterChip: {
+    height: 26,
     paddingHorizontal: 8,
-    paddingVertical: 4,
     borderRadius: 6,
     backgroundColor: "#111",
     borderWidth: 1,
     borderColor: "#222",
+    justifyContent: "center" as const,
   },
   filterChipActive: { backgroundColor: "#6366f122", borderColor: "#6366f1" },
   filterChipText: { fontSize: 10, fontWeight: "600", color: "#888" },

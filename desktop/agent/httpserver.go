@@ -134,8 +134,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 
 	// Dev server (reverse proxy to local Metro/Vite/Flutter dev server)
 	mux.HandleFunc("/dev/status", s.authSDK(s.handleDevServerStatus))
-	mux.HandleFunc("/dev/start", s.auth(s.handleDevServerStart))
-	mux.HandleFunc("/dev/stop", s.auth(s.handleDevServerStop))
+	mux.HandleFunc("/dev/start", s.authOrLocalhost(s.handleDevServerStart))
+	mux.HandleFunc("/dev/stop", s.authOrLocalhost(s.handleDevServerStop))
 	mux.HandleFunc("/dev/reload", s.authSDK(s.handleDevServerReload))
 	mux.HandleFunc("/dev/events", s.authSDK(s.handleDevServerEvents))
 	mux.HandleFunc("/dev/", s.handleDevServerProxy) // No auth — serves app bundle in WebView (not sensitive)
@@ -349,6 +349,24 @@ func (s *HTTPServer) ipAllowlist(next http.Handler) http.Handler {
 
 // auth is for full-access endpoints (tasks, exec, agent commands, vault, etc.).
 // Accepts the agent's own token and CLI session tokens. Rejects SDK tokens.
+// authOrLocalhost allows requests from localhost without auth (for Claude Code tasks running locally).
+func (s *HTTPServer) authOrLocalhost(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Allow localhost without auth
+		remoteIP := r.RemoteAddr
+		if idx := strings.LastIndex(remoteIP, ":"); idx >= 0 {
+			remoteIP = remoteIP[:idx]
+		}
+		remoteIP = strings.Trim(remoteIP, "[]")
+		if remoteIP == "127.0.0.1" || remoteIP == "::1" || remoteIP == "localhost" {
+			next(w, r)
+			return
+		}
+		// Otherwise require auth
+		s.auth(next)(w, r)
+	}
+}
+
 func (s *HTTPServer) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
