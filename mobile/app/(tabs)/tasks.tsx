@@ -869,11 +869,28 @@ export default function TasksScreen() {
   }, [showNewTask]);
 
   const handleStopTask = async (taskId: string) => {
-    try { await quicClient.stopTask(taskId); await fetchTasks(); } catch {}
+    try {
+      await quicClient.stopTask(taskId);
+      // ACK received — immediately update UI
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: "completed" as TaskStatus } : t));
+      setSelectedTask(prev => prev?.id === taskId ? { ...prev, status: "completed" as TaskStatus } : prev);
+      await fetchTasks(); // Sync with server for final state
+    } catch {
+      // Stop not ACK'd — show error state
+      Alert.alert("Stop Failed", "Could not reach the agent. The task may still be running.");
+    }
   };
 
   const handleExitTask = async (taskId: string) => {
-    try { await quicClient.exitTask(taskId); await fetchTasks(); } catch {}
+    try {
+      await quicClient.exitTask(taskId);
+      // ACK received — immediately update UI
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: "completed" as TaskStatus } : t));
+      setSelectedTask(prev => prev?.id === taskId ? { ...prev, status: "completed" as TaskStatus } : prev);
+      await fetchTasks();
+    } catch {
+      Alert.alert("Stop Failed", "Could not reach the agent. The task may still be running.");
+    }
   };
 
   const handleFollowUp = async () => {
