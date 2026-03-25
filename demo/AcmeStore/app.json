@@ -30,6 +30,9 @@
     },
     "plugins": [
       "expo-router"
-    ]
+    ],
+    "extra": {
+      "yaverEnabled": true
+    }
   }
 }

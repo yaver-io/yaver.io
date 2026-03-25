@@ -49,10 +49,16 @@ export interface FloatingButtonProps {
    * endpoint to show connection status. Default: 5000. Set to 0 to disable.
    */
   healthCheckInterval?: number;
+  /**
+   * Background color of the debug console panel.
+   * Default: "#2d2d2d" (dark gray). Override to match your app's theme.
+   */
+  panelBackgroundColor?: string;
 }
 
 const DEFAULT_SIZE = 40;
 const DEFAULT_COLOR = '#6366f1';
+const DEFAULT_PANEL_BG = '#2d2d2d';
 
 /**
  * Draggable debug console button for the Yaver Feedback SDK.
@@ -93,6 +99,7 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
   agentUrl: agentUrlProp,
   authToken: authTokenProp,
   healthCheckInterval = 5000,
+  panelBackgroundColor,
 }) => {
   const { width: screenWidth } = Dimensions.get('window');
   const defaultX = initialPosition?.x ?? 10;
@@ -116,6 +123,7 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
   const config = YaverFeedback.getConfig();
   const agentUrl = agentUrlProp || config?.agentUrl;
   const authToken = authTokenProp || config?.authToken;
+  const panelBg = panelBackgroundColor || config?.panelBackgroundColor || DEFAULT_PANEL_BG;
 
   const addOutput = useCallback((line: string) => {
     setOutput((prev) => [...prev.slice(-20), line]);
@@ -527,7 +535,7 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
         <View style={[
           s.panel,
           isTerminal ? s.panelTerminal : s.panelMinimal,
-          { borderColor: `${color}44`, width: panelWidth },
+          { borderColor: `${color}44`, width: panelWidth, backgroundColor: panelBg },
           fullSize && { position: 'absolute', left: 0, top: size + 8 },
         ]}>
           {/* Header */}
@@ -560,13 +568,17 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
                   s.outputLine,
                   isTerminal && s.mono,
                   fullSize && s.outputLineFull,
-                  line.startsWith('>') && { color: '#9ca3af' },
+                  line.startsWith('>')
+                    ? s.outputLineUser
+                    : line === 'done.' || line.startsWith('task ')
+                      ? s.outputLineStatus
+                      : s.outputLineAgent,
                 ]}
               >
                 {line}
               </Text>
             )) : (
-              <Text style={[s.outputLine, isTerminal && s.mono, { color: '#333' }]}>
+              <Text style={[s.outputLine, isTerminal && s.mono, { color: '#666' }]}>
                 {isConnected ? 'connected. type a message or use actions below.' : 'not connected to agent.'}
               </Text>
             )}
@@ -763,11 +775,9 @@ const s = StyleSheet.create({
     elevation: 12,
   },
   panelTerminal: {
-    backgroundColor: '#0a0a0a',
     borderRadius: 12,
   },
   panelMinimal: {
-    backgroundColor: '#1a1a2e',
     borderRadius: 16,
   },
   // Header
@@ -779,7 +789,7 @@ const s = StyleSheet.create({
   xBtnText: { color: '#666', fontSize: 12 },
   // Output
   outputArea: {
-    backgroundColor: '#111',
+    backgroundColor: '#1a1a1a',
     borderRadius: 8,
     padding: 8,
     marginBottom: 6,
@@ -789,8 +799,17 @@ const s = StyleSheet.create({
   outputContent: { paddingBottom: 4 },
   outputLine: {
     fontSize: 11,
-    color: '#22c55e',
     lineHeight: 16,
+  },
+  outputLineUser: {
+    color: '#9ca3af',
+    fontStyle: 'italic' as const,
+  },
+  outputLineAgent: {
+    color: '#e5e5e5',
+  },
+  outputLineStatus: {
+    color: '#22c55e',
   },
   outputLineFull: { fontSize: 13, lineHeight: 20 },
   // Input
@@ -798,14 +817,14 @@ const s = StyleSheet.create({
   prompt: { fontSize: 14, fontWeight: '700' },
   input: {
     flex: 1,
-    backgroundColor: '#111',
+    backgroundColor: '#1a1a1a',
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 6,
     color: '#e5e5e5',
     fontSize: 12,
     borderWidth: 1,
-    borderColor: '#222',
+    borderColor: '#3a3a3a',
   },
   inputFull: { fontSize: 15, paddingVertical: 10 },
   goBtn: { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
@@ -815,12 +834,12 @@ const s = StyleSheet.create({
   cardRow: { flexDirection: 'row', gap: 6, marginBottom: 6 },
   card: {
     flex: 1,
-    backgroundColor: '#111',
+    backgroundColor: '#1a1a1a',
     borderRadius: 8,
     paddingVertical: 10,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#1a1a1a',
+    borderColor: '#3a3a3a',
   },
   cardFull: { paddingVertical: 14 },
   cardIcon: { fontSize: 18, marginBottom: 2 },
@@ -833,9 +852,9 @@ const s = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: 6,
     alignItems: 'center',
-    backgroundColor: '#111',
+    backgroundColor: '#1a1a1a',
     borderWidth: 1,
-    borderColor: '#1a1a1a',
+    borderColor: '#3a3a3a',
   },
-  actionText: { fontSize: 10, color: '#888', fontWeight: '600' },
+  actionText: { fontSize: 10, color: '#999', fontWeight: '600' },
 });
