@@ -10,8 +10,13 @@ import { FeedbackModal } from '../src/yaver-sdk/FeedbackModal';
 import { BlackBox } from '../src/yaver-sdk/BlackBox';
 
 // Generated at build time by: node yaver.config.js
-// Reads ~/.yaver/config.json + discovers local IP
+// Reads ~/.yaver/config.json + discovers local IP + embeds project metadata
 const yaverConfig = require('../src/yaver-sdk/config.generated.json');
+
+// Project context — tells the agent what app is being tested
+const PROJECT_CONTEXT = yaverConfig.project?.name
+  ? `You are testing "${yaverConfig.project.name}" (${yaverConfig.project.path || 'unknown path'}). All bugs and fixes relate to this app.`
+  : '';
 
 export default function RootLayout() {
   const [sdkReady, setSdkReady] = useState(false);
@@ -95,6 +100,8 @@ export default function RootLayout() {
         trigger: 'shake',
         buildPlatforms: 'both',
         autoDeploy: true,
+        projectContext: PROJECT_CONTEXT,
+        projectName: yaverConfig.project?.name || '',
       });
       BlackBox.start();
       BlackBox.wrapConsole();

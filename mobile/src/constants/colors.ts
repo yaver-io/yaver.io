@@ -24,7 +24,7 @@ export const DarkColors = {
   warnBg: "#1f160a",
   warnBorder: "#d97706",
   tabActive: "#ffffff",
-  tabInactive: "#444444",
+  tabInactive: "#777777",
 };
 
 export const LightColors: ThemeColors = {

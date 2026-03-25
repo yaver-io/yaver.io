@@ -24,6 +24,15 @@ export interface FeedbackConfig {
   trigger?: 'shake' | 'floating-button' | 'manual';
   /** Enable/disable the SDK. Defaults to __DEV__ */
   enabled?: boolean;
+  /**
+   * Project context string — tells the agent what app is being tested.
+   * Embedded at build time via yaver.config.js. Included in all todo items
+   * and feedback reports so the agent has full context.
+   * Example: 'You are testing "AcmeStore" (/path/to/AcmeStore).'
+   */
+  projectContext?: string;
+  /** Project name (from package.json). Shown as chip in agent UI. */
+  projectName?: string;
   /** Max screen recording duration in seconds. Default: 120 */
   maxRecordingDuration?: number;
   /**
@@ -194,6 +203,25 @@ export interface TestSession {
   elapsedSeconds?: number;
   /** Status message */
   status: string;
+}
+
+/** A queued bug/fix item in the todo list. */
+export interface TodoItemSummary {
+  id: string;
+  description: string;
+  status: 'pending' | 'implementing' | 'done' | 'failed';
+  numScreenshots: number;
+  hasAudio: boolean;
+  createdAt: string;
+  taskId?: string;
+}
+
+/** Full todo item detail including task output. */
+export interface TodoItemDetail extends TodoItemSummary {
+  blackboxSnap?: string;
+  errors?: CapturedError[];
+  source: string;
+  implementedAt?: string;
 }
 
 /** Voice capability info returned by the agent's /voice/status endpoint. */

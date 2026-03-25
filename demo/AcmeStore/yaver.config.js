@@ -41,12 +41,27 @@ for (const name of Object.keys(interfaces)) {
   if (localIP) break;
 }
 
+// Project metadata — embedded at build time so SDK knows what app it's testing
+const packageJsonPath = path.join(__dirname, 'package.json');
+let appName = path.basename(__dirname);
+let appVersion = '';
+try {
+  const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+  appName = pkg.name || appName;
+  appVersion = pkg.version || '';
+} catch {}
+
 const config = {
   authToken,
   convexUrl,
   agentUrl: localIP ? `http://${localIP}:18080` : '',
+  project: {
+    name: appName,
+    version: appVersion,
+    path: __dirname,
+  },
 };
 
 fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 fs.writeFileSync(outputPath, JSON.stringify(config, null, 2));
-console.log(`[yaver.config.js] Generated SDK config → ${config.agentUrl}`);
+console.log(`[yaver.config.js] Generated SDK config → ${config.agentUrl} (project: ${appName})`);

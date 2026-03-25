@@ -61,11 +61,11 @@ const manuals = [
     tags: ["Voice", "PersonaPlex", "MLX", "Apple Silicon"],
   },
   {
-    title: "Auto-boot on power restore",
+    title: "Headless Dev Machine — Set Up Once, Code Forever",
     description:
-      "Configure your macOS, Linux, or desktop PC to automatically boot when power is restored after an outage — so Yaver CLI starts without manual intervention.",
+      "Turn any machine into a permanent AI development server. Systemd service, OAuth that survives reboots, auto-updates, project discovery — your always-on dev companion from your pocket.",
     href: "/manuals/auto-boot",
-    tags: ["macOS", "Linux", "BIOS"],
+    tags: ["systemd", "macOS", "Linux", "headless"],
   },
 ];
 

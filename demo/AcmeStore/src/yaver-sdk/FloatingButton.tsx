@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { YaverFeedback } from './YaverFeedback';
 import { FixReport } from './FixReport';
-import type { TestSession } from './types';
+import type { TestSession, TodoItemSummary } from './types';
 import { BlackBox } from './BlackBox';
 
 export interface FloatingButtonProps {
@@ -109,6 +109,13 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
   const [isConnected, setIsConnected] = useState(false);
   const [testSession, setTestSession] = useState<TestSession | null>(null);
   const [showFixReport, setShowFixReport] = useState(false);
+  const [todoCount, setTodoCount] = useState(0);
+  const [todoItems, setTodoItems] = useState<TodoItemSummary[]>([]);
+  const [showTodoList, setShowTodoList] = useState(false);
+  const [projectName, setProjectName] = useState<string>(config?.projectName || '');
+  const [todoDone, setTodoDone] = useState(0);
+  const [todoTotal, setTodoTotal] = useState(0);
+  const [hasDevServer, setHasDevServer] = useState(false);
   const testPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const outputScrollRef = useRef<ScrollView>(null);
 
@@ -121,7 +128,7 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
     setOutput((prev) => [...prev.slice(-20), line]);
   }, []);
 
-  // Connection health polling
+  // Connection health + todo count polling
   useEffect(() => {
     if (!healthCheckInterval || !agentUrl) return;
 
@@ -129,7 +136,21 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
       try {
         const client = YaverFeedback.getP2PClient();
         if (client) {
-          setIsConnected(await client.health());
+          const healthy = await client.health();
+          setIsConnected(healthy);
+          if (healthy) {
+            try {
+              const info = await client.agentInfo();
+              setTodoCount(info.todoCount ?? 0);
+              setTodoDone(info.todoDone ?? 0);
+              setTodoTotal(info.todoTotal ?? 0);
+              setProjectName(info.project?.name ?? '');
+              setHasDevServer(info.devServer?.running ?? false);
+            } catch {
+              const count = await client.todoCount();
+              setTodoCount(count);
+            }
+          }
         } else if (agentUrl) {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 3000);
@@ -175,7 +196,7 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
     }
   }, [onPress]);
 
-  // Send message → create task → poll for response
+  // Send message → auto-classify → queue as todo or execute as action
   const handleSend = useCallback(async () => {
     if (!message.trim() || !agentUrl || !authToken) return;
     const msg = message.trim();
@@ -185,60 +206,89 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
     addOutput(`> ${msg}`);
 
     try {
+      const client = YaverFeedback.getP2PClient();
+      if (client) {
+        // Use smart chat — auto-classifies and acts
+        // Include project context so agent knows what app we're testing
+        const projectCtx = config?.projectContext;
+        const fullMsg = projectCtx ? `[${config?.projectName || 'app'}] ${msg}` : msg;
+        const result = await client.smartChat(fullMsg, {
+          platform: require('react-native').Platform.OS,
+          model: require('react-native').Platform.OS === 'ios' ? 'iOS Device' : 'Android Device',
+          osVersion: String(require('react-native').Platform.Version),
+        });
+
+        if (result.intent === 'todo') {
+          addOutput(`\u{1F4CB} queued: ${msg.slice(0, 50)}${msg.length > 50 ? '...' : ''}`);
+          setTodoCount(result.todoCount ?? todoCount + 1);
+          BlackBox.log(`Auto-queued: ${msg}`, 'FloatingButton');
+          setSending(false);
+          return;
+        }
+
+        if (result.intent === 'continuation' && result.todoItemId) {
+          addOutput(`\u{1F4CB} added to ${result.todoItemId}`);
+          BlackBox.log(`Continuation: ${msg}`, 'FloatingButton');
+          setSending(false);
+          return;
+        }
+
+        // Action — execute immediately
+        if (result.taskId) {
+          addOutput(`\u26A1 task ${result.taskId} started...`);
+          BlackBox.log(`Action: ${msg}`, 'FloatingButton');
+
+          // Poll task output
+          const url = agentUrl.replace(/\/$/, '');
+          let attempts = 0;
+          const poll = setInterval(async () => {
+            attempts++;
+            try {
+              const sr = await fetch(`${url}/tasks/${result.taskId}`, {
+                headers: { Authorization: `Bearer ${authToken}` },
+              });
+              if (!sr.ok) { clearInterval(poll); setSending(false); return; }
+              const task = await sr.json();
+              const t = task.task ?? task;
+
+              if (t.status === 'completed' || t.status === 'failed' || t.status === 'stopped') {
+                const out = t.output ?? t.rawOutput ?? '';
+                if (out) {
+                  for (const l of out.split('\n').filter((l: string) => l.trim()).slice(-5)) {
+                    addOutput(l.slice(0, 80));
+                  }
+                }
+                addOutput(t.status === 'completed' ? '\u2713 done.' : `${t.status}.`);
+                clearInterval(poll);
+                setSending(false);
+              } else if (attempts >= 30) {
+                addOutput('running in background...');
+                clearInterval(poll);
+                setSending(false);
+              }
+            } catch { clearInterval(poll); setSending(false); }
+          }, 2000);
+          return;
+        }
+      }
+
+      // Fallback: direct task creation
       const url = agentUrl.replace(/\/$/, '');
       const resp = await fetch(`${url}/tasks`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: msg, source: 'feedback-console' }),
       });
-      if (!resp.ok) {
-        addOutput(`err: ${resp.status}`);
-        setSending(false);
-        return;
-      }
+      if (!resp.ok) { addOutput(`err: ${resp.status}`); setSending(false); return; }
       const data = await resp.json();
-      const taskId = data.taskId ?? data.id ?? data.task?.id;
-      if (!taskId) {
-        addOutput('task created (no id)');
-        setSending(false);
-        return;
-      }
-      addOutput(`task ${taskId} started...`);
-      BlackBox.log(`Console task: ${msg}`, 'FloatingButton');
-
-      // Poll task output for up to 60s
-      let attempts = 0;
-      const poll = setInterval(async () => {
-        attempts++;
-        try {
-          const sr = await fetch(`${url}/tasks/${taskId}`, {
-            headers: { Authorization: `Bearer ${authToken}` },
-          });
-          if (!sr.ok) { clearInterval(poll); setSending(false); return; }
-          const task = await sr.json();
-          const t = task.task ?? task;
-
-          if (t.status === 'completed' || t.status === 'failed' || t.status === 'stopped') {
-            const out = t.output ?? t.rawOutput ?? '';
-            if (out) {
-              const lines = out.split('\n').filter((l: string) => l.trim());
-              for (const l of lines.slice(-5)) addOutput(l.slice(0, 80));
-            }
-            addOutput(t.status === 'completed' ? 'done.' : `${t.status}.`);
-            clearInterval(poll);
-            setSending(false);
-          } else if (attempts >= 30) {
-            addOutput('running in background...');
-            clearInterval(poll);
-            setSending(false);
-          }
-        } catch { clearInterval(poll); setSending(false); }
-      }, 2000);
+      const taskId = data.taskId ?? data.id;
+      addOutput(taskId ? `task ${taskId} started...` : 'sent');
+      setSending(false);
     } catch (e) {
       addOutput(`fail: ${String(e).slice(0, 50)}`);
       setSending(false);
     }
-  }, [message, agentUrl, authToken, addOutput]);
+  }, [message, agentUrl, authToken, addOutput, todoCount]);
 
   // Generic action: send task to agent, poll for output
   const runAgentAction = useCallback(async (label: string, prompt: string) => {
@@ -504,6 +554,46 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
     setChatOpen(false);
   }, []);
 
+  // Todo list handlers
+  const handleOpenTodoList = useCallback(async () => {
+    const client = YaverFeedback.getP2PClient();
+    if (!client) return;
+    try {
+      const items = await client.listTodoItems();
+      setTodoItems(items);
+      setShowTodoList(true);
+    } catch (e) {
+      addOutput(`todo list err: ${String(e).slice(0, 50)}`);
+    }
+  }, [addOutput]);
+
+  const handleRemoveTodoItem = useCallback(async (id: string) => {
+    const client = YaverFeedback.getP2PClient();
+    if (!client) return;
+    try {
+      await client.removeTodoItem(id);
+      setTodoItems(prev => prev.filter(i => i.id !== id));
+      setTodoCount(prev => Math.max(0, prev - 1));
+    } catch {}
+  }, []);
+
+  const handleImplementAll = useCallback(async () => {
+    const client = YaverFeedback.getP2PClient();
+    if (!client) return;
+    setSending(true);
+    addOutput('> implementing all queued items...');
+    try {
+      const result = await client.implementAllTodos();
+      addOutput(`batch task ${result.taskId} started (${result.itemCount} items)`);
+      setShowTodoList(false);
+      BlackBox.log(`Implement all: ${result.itemCount} items`, 'FloatingButton');
+    } catch (e) {
+      addOutput(`implement err: ${String(e).slice(0, 50)}`);
+    } finally {
+      setSending(false);
+    }
+  }, [addOutput]);
+
   // Auto-scroll output
   useEffect(() => {
     if (outputScrollRef.current) {
@@ -535,6 +625,11 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
             <Text style={[s.headerTitle, isTerminal && s.mono, { color }]}>
               {isTerminal ? 'YAVER DEBUG' : 'Yaver'}
             </Text>
+            {projectName ? (
+              <View style={s.projectChip}>
+                <Text style={s.projectChipText}>{projectName}</Text>
+              </View>
+            ) : null}
             <View style={[s.dotSmall, isConnected ? s.green : s.red]} />
             <Text style={[s.headerStatus, isTerminal && s.mono]}>
               {isConnected ? 'live' : 'off'}
@@ -672,6 +767,109 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
             )}
           </View>
 
+          {/* Action cards row 3 — Todo Queue + Hot Reload */}
+          {(todoTotal > 0 || hasDevServer) && (
+            <View style={[s.cardRow, { marginTop: -2 }]}>
+              {todoTotal > 0 && (
+                <TouchableOpacity
+                  style={[s.card, fullSize && s.cardFull, { borderColor: '#f59e0b44', backgroundColor: '#f59e0b08' }]}
+                  onPress={handleOpenTodoList}
+                  disabled={!isConnected}
+                >
+                  <Text style={[s.cardIcon, { color: '#f59e0b' }]}>
+                    {'\u{1F4CB}'}
+                  </Text>
+                  <Text style={[s.cardLabel, isTerminal && s.mono]}>
+                    Todo {todoDone}/{todoTotal}
+                  </Text>
+                  {todoCount > 0 && (
+                    <Text style={[s.cardSub, isTerminal && s.mono, { color: '#f59e0b' }]}>
+                      {todoCount} pending
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              )}
+              {hasDevServer && (
+                <TouchableOpacity
+                  style={[s.card, fullSize && s.cardFull, { borderColor: '#22c55e44', backgroundColor: '#22c55e08' }]}
+                  onPress={handleReload}
+                  disabled={sending || !isConnected}
+                >
+                  <Text style={[s.cardIcon, { color: '#22c55e' }]}>{'\u21BB'}</Text>
+                  <Text style={[s.cardLabel, isTerminal && s.mono]}>Reload</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          {/* Inline Todo List */}
+          {showTodoList && (
+            <View style={[s.todoListContainer, fullSize && { maxHeight: 240 }]}>
+              <View style={s.todoHeader}>
+                <Text style={[s.todoTitle, isTerminal && s.mono]}>
+                  Todo Queue ({todoItems.length})
+                </Text>
+                <TouchableOpacity onPress={() => setShowTodoList(false)}>
+                  <Text style={s.xBtnText}>{'\u2715'}</Text>
+                </TouchableOpacity>
+              </View>
+              <ScrollView style={s.todoScroll}>
+                {todoItems.map((item) => (
+                  <View key={item.id} style={s.todoItem}>
+                    <View style={[
+                      s.todoStatusDot,
+                      item.status === 'pending' && { backgroundColor: '#f59e0b' },
+                      item.status === 'implementing' && { backgroundColor: '#3b82f6' },
+                      item.status === 'done' && { backgroundColor: '#22c55e' },
+                      item.status === 'failed' && { backgroundColor: '#ef4444' },
+                    ]} />
+                    <View style={s.todoTextContainer}>
+                      <Text style={[s.todoDesc, isTerminal && s.mono]} numberOfLines={2}>
+                        {item.description}
+                      </Text>
+                      <Text style={[s.todoMeta, isTerminal && s.mono]}>
+                        {item.status}{item.taskId ? ` \u2022 task ${item.taskId}` : ''}
+                      </Text>
+                    </View>
+                    {item.status === 'pending' && (
+                      <TouchableOpacity onPress={() => handleRemoveTodoItem(item.id)} style={s.todoRemoveBtn}>
+                        <Text style={{ color: '#ef4444', fontSize: 12 }}>{'\u2715'}</Text>
+                      </TouchableOpacity>
+                    )}
+                    {item.taskId && (
+                      <TouchableOpacity
+                        onPress={async () => {
+                          const client = YaverFeedback.getP2PClient();
+                          if (!client || !item.taskId) return;
+                          try {
+                            const { output: taskOutput, status } = await client.getTaskOutput(item.taskId);
+                            const lines = taskOutput.split('\n').filter((l: string) => l.trim()).slice(-5);
+                            addOutput(`--- ${item.id} (${status}) ---`);
+                            for (const l of lines) addOutput(l.slice(0, 80));
+                          } catch {}
+                        }}
+                        style={s.todoLogBtn}
+                      >
+                        <Text style={{ color: '#60a5fa', fontSize: 10 }}>logs</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))}
+              </ScrollView>
+              {todoItems.some(i => i.status === 'pending') && (
+                <TouchableOpacity
+                  style={[s.implementAllBtn, { backgroundColor: color }]}
+                  onPress={handleImplementAll}
+                  disabled={sending}
+                >
+                  <Text style={s.implementAllText}>
+                    Implement All ({todoItems.filter(i => i.status === 'pending').length})
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
           {/* Bottom row */}
           <View style={s.actionsRow}>
             <TouchableOpacity style={s.actionBtn} onPress={() => setOutput([])}>
@@ -717,6 +915,11 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
         </Text>
         {showStatusDot && (
           <View style={[s.statusDot, isConnected ? s.green : s.red]} />
+        )}
+        {todoCount > 0 && !chatOpen && (
+          <View style={s.todoBadge}>
+            <Text style={s.todoBadgeText}>{todoCount > 9 ? '9+' : todoCount}</Text>
+          </View>
         )}
       </TouchableOpacity>
     </Animated.View>
@@ -838,4 +1041,68 @@ const s = StyleSheet.create({
     borderColor: '#1a1a1a',
   },
   actionText: { fontSize: 10, color: '#888', fontWeight: '600' },
+  // Todo badge
+  todoBadge: {
+    position: 'absolute',
+    top: -6,
+    left: -6,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#f59e0b',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 1.5,
+    borderColor: '#000',
+  },
+  todoBadgeText: { color: '#000', fontSize: 10, fontWeight: '800' },
+  // Project chip
+  projectChip: {
+    backgroundColor: '#6366f122',
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    marginRight: 4,
+  },
+  projectChipText: { color: '#818cf8', fontSize: 9, fontWeight: '600' },
+  // Todo list
+  todoListContainer: {
+    backgroundColor: '#111',
+    borderRadius: 8,
+    padding: 8,
+    marginBottom: 6,
+    maxHeight: 180,
+    borderWidth: 1,
+    borderColor: '#f59e0b33',
+  },
+  todoHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  todoTitle: { color: '#f59e0b', fontSize: 11, fontWeight: '700' },
+  todoScroll: { maxHeight: 120 },
+  todoItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#1a1a1a',
+    gap: 6,
+  },
+  todoStatusDot: { width: 8, height: 8, borderRadius: 4 },
+  todoTextContainer: { flex: 1 },
+  todoDesc: { color: '#ccc', fontSize: 11, lineHeight: 15 },
+  todoMeta: { color: '#555', fontSize: 9, marginTop: 1 },
+  todoRemoveBtn: { padding: 4 },
+  todoLogBtn: { padding: 4, marginLeft: 2 },
+  implementAllBtn: {
+    marginTop: 6,
+    borderRadius: 6,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  implementAllText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 });

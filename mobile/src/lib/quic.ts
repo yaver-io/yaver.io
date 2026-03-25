@@ -557,6 +557,172 @@ export class QuicClient {
     return data.stopped || 0;
   }
 
+  // ── Projects (discovery + switching) ────────────────────────────
+
+  /** List discovered projects on the machine. */
+  async listProjects(): Promise<{ name: string; path: string; branch?: string }[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/projects`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to list projects: ${res.status}`);
+    const data = await res.json();
+    return data.projects ?? [];
+  }
+
+  /** Switch agent to a different project (by fuzzy name or path). Optionally start dev server. */
+  async switchProject(query: string, startDev: boolean = false): Promise<{
+    path: string;
+    project: { name: string; gitBranch?: string; framework?: string };
+    devServer?: { running: boolean; framework?: string };
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/projects/switch`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, startDev }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Failed to switch project: ${text}`);
+    }
+    return res.json();
+  }
+
+  // ── Todo List (queued bug reports for batch implementation) ──────
+
+  /** Get the count of pending todo items. */
+  async todoCount(): Promise<number> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/todolist/count`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) return 0;
+    const data = await res.json();
+    return data.count ?? 0;
+  }
+
+  /** List all todo items. */
+  async listTodoItems(): Promise<{ id: string; description: string; status: string; numScreenshots: number; hasAudio: boolean; createdAt: string; taskId?: string }[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/todolist`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to list todo items: ${res.status}`);
+    const data = await res.json();
+    return data.items ?? [];
+  }
+
+  /** Add a todo item (text description + optional screenshots). */
+  async addTodoItem(description: string, source: string = 'mobile'): Promise<{ id: string; count: number }> {
+    this.assertConnected();
+    const formData = new FormData();
+    formData.append('metadata', JSON.stringify({ description, source }));
+    const res = await fetch(`${this.baseUrl}/todolist`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.token}` },
+      body: formData,
+    });
+    if (!res.ok) throw new Error(`Failed to add todo item: ${res.status}`);
+    return res.json();
+  }
+
+  /** Remove a todo item. */
+  async removeTodoItem(id: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/todolist/${id}`, {
+      method: 'DELETE',
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to remove todo item: ${res.status}`);
+  }
+
+  /** Implement all pending todo items as a batch. */
+  async implementAllTodos(): Promise<{ taskId: string; itemCount: number }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/todolist/implement-all`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) throw new Error(`Failed to implement all: ${res.status}`);
+    return res.json();
+  }
+
+  /** Implement a single todo item. */
+  async implementTodoItem(id: string): Promise<{ taskId: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/todolist/${id}/implement`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) throw new Error(`Failed to implement todo: ${res.status}`);
+    return res.json();
+  }
+
+  /** Toggle auto-consume mode. */
+  async setAutoConsume(enabled: boolean): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/todolist/auto-consume`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!res.ok) throw new Error(`Failed to set auto-consume: ${res.status}`);
+  }
+
+  /** Smart chat: auto-classifies message as todo item, continuation, or immediate action. */
+  async smartChat(message: string, source: string = 'mobile'): Promise<{
+    intent: 'todo' | 'action' | 'continuation';
+    todoItemId?: string;
+    taskId?: string;
+    todoCount?: number;
+    project?: string;
+    acted: boolean;
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/todolist/classify`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, source, autoAct: true }),
+    });
+    if (!res.ok) throw new Error(`Failed to classify: ${res.status}`);
+    return res.json();
+  }
+
+  /** Get full agent info including project, dev server, todo/task stats. */
+  async agentInfo(): Promise<{
+    hostname: string;
+    version: string;
+    workDir: string;
+    project: { name: string; path: string; gitBranch?: string; framework?: string };
+    devServer?: { running: boolean; framework?: string };
+    todoCount: number;
+    todoTotal: number;
+    todoDone: number;
+    todoImplementing: number;
+    autoConsume: boolean;
+    taskStats: { total: number; done: number; running: number; failed: number };
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/info`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to get agent info: ${res.status}`);
+    return res.json();
+  }
+
+  /** Clear all todo items. */
+  async clearTodoList(): Promise<number> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/todolist`, {
+      method: 'DELETE',
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to clear todo list: ${res.status}`);
+    const data = await res.json();
+    return data.cleared ?? 0;
+  }
+
   // ── Exec (remote command execution) ─────────────────────────────
 
   /** Start a command on the remote agent. */

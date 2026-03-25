@@ -249,64 +249,6 @@ export default function DownloadPage() {
           </div>
         </div>
 
-        {/* Desktop App (GUI) */}
-        <div className="mb-12">
-          <h2 className="mb-6 text-xs font-semibold uppercase tracking-wider text-surface-500">
-            Desktop App (GUI)
-          </h2>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            {[
-              {
-                name: "macOS",
-                desc: "macOS 13+ (Apple Silicon & Intel)",
-                highlighted: platform === "macos",
-                buttons: [
-                  { label: "Apple Silicon (.dmg)", file: "Yaver-latest-apple-silicon.dmg", primary: true },
-                  { label: "Intel (.dmg)", file: "Yaver-latest-intel.dmg" },
-                ],
-              },
-              {
-                name: "Linux",
-                desc: "x86_64 & ARM64",
-                highlighted: platform === "linux",
-                buttons: [
-                  { label: ".deb", file: "Yaver-latest-amd64.deb", primary: true },
-                  { label: ".AppImage", file: "Yaver-latest-x86_64.AppImage" },
-                ],
-              },
-            ].map((p) => (
-              <div
-                key={p.name}
-                className={`card ${p.highlighted ? "border-surface-600" : ""}`}
-              >
-                {p.highlighted && (
-                  <div className="mb-3 text-xs text-surface-400">
-                    Detected your platform
-                  </div>
-                )}
-                <h3 className="mb-1 text-base font-semibold text-surface-50">
-                  {p.name}
-                </h3>
-                <p className="mb-5 text-xs text-surface-500">{p.desc}</p>
-                <div className="flex flex-wrap gap-2">
-                  {p.buttons.map((btn) => (
-                    <a
-                      key={btn.label}
-                      href={`${GITHUB_RELEASE}/download/${btn.file}`}
-                      className={btn.primary ? "btn-primary py-2 px-4 text-xs" : "btn-secondary py-2 px-4 text-xs"}
-                    >
-                      {btn.label}
-                    </a>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-          <p className="mt-4 text-xs text-surface-600">
-            The desktop app provides a GUI for managing your agent, viewing tasks, and configuring settings. The CLI is still required for the agent itself.
-          </p>
-        </div>
-
         {/* Mobile app */}
         <div className="mb-12">
           <h2 className="mb-6 text-xs font-semibold uppercase tracking-wider text-surface-500">
@@ -357,16 +299,16 @@ export default function DownloadPage() {
               <p className="mb-5 text-xs text-surface-500">Android 12+.</p>
               <div className="flex flex-wrap gap-2">
                 <a
-                  href={`https://github.com/kivanccakmak/yaver.io/releases/latest/download/Yaver-${mobileVersion || "1.9.0"}.apk`}
+                  href="https://play.google.com/store/apps/details?id=io.yaver.mobile"
                   className="btn-primary py-2 px-4 text-xs"
                 >
-                  Download APK
+                  Google Play
                 </a>
                 <a
-                  href="https://play.google.com/store/apps/details?id=io.yaver.mobile"
+                  href={`https://github.com/kivanccakmak/yaver.io/releases/latest/download/Yaver-latest.apk`}
                   className="btn-secondary py-2 px-4 text-xs"
                 >
-                  Google Play
+                  APK Download
                 </a>
               </div>
             </div>

@@ -12,46 +12,130 @@ export default function AutoBootManual() {
         </Link>
 
         <h1 className="mb-4 text-3xl font-bold text-surface-50 md:text-4xl">
-          Auto-boot on power restore
+          Headless Dev Machine — Set Up Once, Code Forever
         </h1>
+        <p className="mb-4 text-sm leading-relaxed text-surface-400">
+          Turn any machine into a permanent, headless AI development server.
+          Mac Mini under your desk, Linux box in a closet, cloud VPS — set it up once, and
+          it runs forever. Control everything from your phone.
+        </p>
         <p className="mb-12 text-sm leading-relaxed text-surface-400">
-          If you use Yaver on a headless machine (Mac Mini, Linux server, home
-          lab PC), you want it to come back online automatically after a power
-          outage. This guide covers three layers: BIOS/firmware auto-power-on,
-          OS auto-login, and Yaver CLI auto-start.
+          This guide covers the full stack: BIOS auto-power-on, OS auto-login,
+          Yaver as a system service, OAuth that survives reboots, auto-updates,
+          and project discovery.
         </p>
 
         {/* Why */}
         <section className="mb-12">
           <h2 className="mb-3 text-lg font-semibold text-surface-100">
-            Why this matters
+            Your always-on dev companion, from your pocket
           </h2>
           <p className="text-sm leading-relaxed text-surface-400">
-            A typical power outage scenario: electricity goes out, then comes
-            back. Without configuration, your machine stays off until someone
-            physically presses the power button. With the setup below, the full
-            chain is automated:
+            As a solo founder, your dev machine is your most valuable asset. It has your codebase,
+            your AI agents, your running services. With this setup, it becomes a permanent,
+            always-available development server. Pull your phone out on the bus, at a cafe, or on
+            the couch — your full dev environment is one tap away.
+          </p>
+          <p className="mt-3 text-sm leading-relaxed text-surface-400">
+            The full chain is automated — no manual intervention, no SSH, no VPN:
           </p>
           <ol className="mt-4 space-y-2 text-sm text-surface-400">
             <li className="flex gap-3">
               <span className="shrink-0 font-mono text-surface-500">1.</span>
-              Power is restored &rarr; machine boots automatically (BIOS/firmware)
+              Power restored &rarr; machine boots automatically (BIOS/firmware)
             </li>
             <li className="flex gap-3">
               <span className="shrink-0 font-mono text-surface-500">2.</span>
-              OS starts &rarr; user session logs in automatically (optional)
+              OS starts &rarr; user session activates (auto-login or systemd lingering)
             </li>
             <li className="flex gap-3">
               <span className="shrink-0 font-mono text-surface-500">3.</span>
-              Yaver CLI starts as a system service &rarr; reconnects to relay
-              servers using saved auth token
+              Yaver starts as a system service &rarr; reconnects to relay servers using saved OAuth token
             </li>
             <li className="flex gap-3">
               <span className="shrink-0 font-mono text-surface-500">4.</span>
-              You send a task from your phone &rarr; it works as if nothing
-              happened
+              Auto-discovers all your projects, connects to the AI agent of your choice
+            </li>
+            <li className="flex gap-3">
+              <span className="shrink-0 font-mono text-surface-500">5.</span>
+              You open Yaver on your phone &rarr; everything works as if you&apos;re sitting at your desk
             </li>
           </ol>
+        </section>
+
+        {/* Auth & Persistence */}
+        <section className="mb-12">
+          <h2 className="mb-3 text-lg font-semibold text-surface-100">
+            How OAuth survives reboots
+          </h2>
+          <p className="text-sm leading-relaxed text-surface-400">
+            You only need to sign in once. <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-400">yaver auth</code> opens
+            a browser for Google, Apple, or Microsoft sign-in. After you authenticate, Yaver saves a
+            long-lived session token to <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-400">~/.yaver/config.json</code>.
+          </p>
+          <p className="mt-3 text-sm leading-relaxed text-surface-400">
+            This token persists across reboots. The systemd service (or LaunchAgent on macOS) reads
+            it on startup. No re-authentication needed — ever. If you rotate your password on
+            Google/Apple/Microsoft, the Yaver token remains valid (it&apos;s a separate session).
+          </p>
+          <div className="terminal mt-4 mb-4">
+            <div className="terminal-header">
+              <div className="terminal-dot bg-[#ff5f57]" />
+              <div className="terminal-dot bg-[#febc2e]" />
+              <div className="terminal-dot bg-[#28c840]" />
+              <span className="ml-3 text-xs text-surface-500">one-time setup</span>
+            </div>
+            <div className="terminal-body space-y-2 text-[13px]">
+              <div className="text-surface-500"># Sign in once (requires a browser — do this on initial setup)</div>
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200 select-all">yaver auth</span>
+              </div>
+              <div className="text-green-400/80 pl-2">Signed in as kivanc@acme.com</div>
+              <div className="text-green-400/80 pl-2">Token saved to ~/.yaver/config.json</div>
+              <div className="h-px bg-surface-800/60" />
+              <div className="text-surface-500"># For headless machines without a browser, sign in on another machine</div>
+              <div className="text-surface-500"># and copy ~/.yaver/config.json to the headless box</div>
+            </div>
+          </div>
+        </section>
+
+        {/* Auto-update */}
+        <section className="mb-12">
+          <h2 className="mb-3 text-lg font-semibold text-surface-100">
+            Auto-updates — never touch the binary again
+          </h2>
+          <p className="text-sm leading-relaxed text-surface-400">
+            The Yaver agent checks for new releases on GitHub every 6 hours. When a new version
+            is found, it downloads the binary for your platform, replaces itself, and restarts.
+            Under systemd, the service auto-restarts with the new binary thanks to{" "}
+            <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-400">Restart=on-failure</code>.
+          </p>
+          <p className="mt-3 text-sm leading-relaxed text-surface-400">
+            You ship a new feature from your laptop, and within 6 hours your Mac Mini in the closet
+            has it too. Zero manual intervention.
+          </p>
+          <div className="terminal mt-4">
+            <div className="terminal-header">
+              <div className="terminal-dot bg-[#ff5f57]" />
+              <div className="terminal-dot bg-[#febc2e]" />
+              <div className="terminal-dot bg-[#28c840]" />
+              <span className="ml-3 text-xs text-surface-500">auto-update config</span>
+            </div>
+            <div className="terminal-body space-y-2 text-[13px]">
+              <div className="text-surface-500"># Enable auto-update (on by default)</div>
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200 select-all">yaver config set auto-update true</span>
+              </div>
+              <div className="h-px bg-surface-800/60" />
+              <div className="text-surface-500"># Or install via Homebrew and let brew handle updates</div>
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200">brew upgrade yaver</span>
+              </div>
+            </div>
+          </div>
         </section>
 
         {/* macOS */}
@@ -269,23 +353,27 @@ export default function AutoBootManual() {
               <span className="ml-3 text-xs text-surface-500">terminal</span>
             </div>
             <div className="terminal-body space-y-2 text-[13px]">
-              <div className="text-surface-500"># Install the auto-start service</div>
+              <div className="text-surface-500"># One command — creates, enables, and starts the systemd service</div>
               <div>
                 <span className="text-surface-400">$</span>{" "}
                 <span className="text-surface-200 select-all">
-                  yaver config set auto-start true
+                  yaver serve --install-systemd
                 </span>
               </div>
               <div className="text-green-400/80 pl-2">
-                Systemd user service installed: ~/.config/systemd/user/yaver.service
+                Created: ~/.config/systemd/user/yaver.service
               </div>
               <div className="text-green-400/80 pl-2">
-                Yaver will start automatically on boot.
+                Yaver agent installed as systemd user service.
+              </div>
+              <div className="text-green-400/80 pl-2">
+                The agent starts automatically on login and survives reboots.
               </div>
             </div>
           </div>
           <p className="mb-3 text-xs text-surface-500">
-            The service file is installed at{" "}
+            The service runs from your home directory, discovers all your projects automatically,
+            and auto-updates from GitHub releases. Service file at{" "}
             <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-400">
               ~/.config/systemd/user/yaver.service
             </code>.
@@ -421,16 +509,24 @@ WantedBy=default.target`}
 
         <div className="rounded-lg border border-surface-800 bg-surface-900/50 p-6">
           <h3 className="mb-2 text-sm font-semibold text-surface-200">
-            The easy way
+            TL;DR — three commands, then forget about it
           </h3>
-          <p className="text-sm text-surface-400">
-            On all platforms, just run{" "}
-            <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-300">
-              yaver config set auto-start true
-            </code>{" "}
-            and Yaver handles the service installation for your OS. Combined with
-            BIOS auto-power-on, your machine becomes a fully autonomous AI
-            development server.
+          <div className="terminal mt-3">
+            <div className="terminal-header">
+              <div className="terminal-dot bg-[#ff5f57]" />
+              <div className="terminal-dot bg-[#febc2e]" />
+              <div className="terminal-dot bg-[#28c840]" />
+            </div>
+            <div className="terminal-body space-y-1 text-[13px]">
+              <div><span className="text-surface-400">$</span> <span className="text-surface-200">brew install kivanccakmak/yaver/yaver</span></div>
+              <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver auth</span></div>
+              <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver serve --install-systemd</span>  <span className="text-surface-500"># or: yaver config set auto-start true</span></div>
+            </div>
+          </div>
+          <p className="mt-4 text-sm text-surface-400">
+            Combined with BIOS auto-power-on, your machine becomes a permanent AI development
+            server that auto-updates, auto-discovers your projects, and is always reachable from
+            your phone. Your committed dev companion, always in your pocket.
           </p>
         </div>
 

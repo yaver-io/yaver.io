@@ -38,6 +38,7 @@ type HTTPServer struct {
 	feedbackMgr *FeedbackManager
 	blackboxMgr   *BlackBoxManager
 	devServerMgr  *DevServerManager
+	todolistMgr   *TodoListManager
 	multiUserMgr  *MultiUserManager // nil in single-user mode
 	server       *http.Server
 	tlsServer    *http.Server
@@ -137,7 +138,19 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/dev/stop", s.auth(s.handleDevServerStop))
 	mux.HandleFunc("/dev/reload", s.authSDK(s.handleDevServerReload))
 	mux.HandleFunc("/dev/events", s.authSDK(s.handleDevServerEvents))
-	mux.HandleFunc("/dev/", s.authSDK(s.handleDevServerProxy))
+	mux.HandleFunc("/dev/", s.handleDevServerProxy) // No auth — serves app bundle in WebView (not sensitive)
+
+	// Projects (discovery + workdir switching)
+	mux.HandleFunc("/projects", s.auth(s.handleProjects))
+	mux.HandleFunc("/projects/switch", s.auth(s.handleProjectSwitch))
+
+	// Todo list (queued bug reports for batch implementation) — SDK-accessible for add/list/count
+	mux.HandleFunc("/todolist", s.authSDK(s.handleTodoList))
+	mux.HandleFunc("/todolist/count", s.authSDK(s.handleTodoListCount))
+	mux.HandleFunc("/todolist/classify", s.authSDK(s.handleTodoListClassify))
+	mux.HandleFunc("/todolist/auto-consume", s.auth(s.handleTodoListAutoConsume))
+	mux.HandleFunc("/todolist/implement-all", s.auth(s.handleTodoListImplementAll))
+	mux.HandleFunc("/todolist/", s.authSDK(s.handleTodoListByID))
 
 	// Multi-user management (shared machines)
 	mux.HandleFunc("/users", s.auth(s.handleMultiUserList))
@@ -242,6 +255,7 @@ var scopePathPrefixes = map[string][]string{
 	"voice":    {"/voice/"},
 	"builds":   {"/builds"},
 	"health":   {"/health"},
+	"todolist": {"/todolist"},
 }
 
 func pathAllowedByScopes(path string, scopes []string) bool {
@@ -542,6 +556,66 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"workDir":  s.taskMgr.workDir,
 	}
 
+	// Project metadata
+	project := DetectProjectInfo(s.taskMgr.workDir)
+	info["project"] = project
+
+	// Dev server status (for hot-reload awareness)
+	if s.devServerMgr != nil {
+		if devStatus := s.devServerMgr.Status(); devStatus != nil {
+			info["devServer"] = devStatus
+		}
+	}
+
+	// Todo list count + stats
+	if s.todolistMgr != nil {
+		items := s.todolistMgr.ListItems()
+		pending, implementing, done, failed := 0, 0, 0, 0
+		for _, item := range items {
+			switch item.Status {
+			case TodoStatusPending:
+				pending++
+			case TodoStatusImplementing:
+				implementing++
+			case TodoStatusDone:
+				done++
+			case TodoStatusFailed:
+				failed++
+			}
+		}
+		info["todoCount"] = pending
+		info["todoTotal"] = len(items)
+		info["todoDone"] = done
+		info["todoFailed"] = failed
+		info["todoImplementing"] = implementing
+		info["autoConsume"] = s.todolistMgr.IsAutoConsume()
+	}
+
+	// Session task stats
+	if s.taskMgr != nil {
+		tasks := s.taskMgr.ListTasks()
+		taskTotal := len(tasks)
+		taskDone := 0
+		taskRunning := 0
+		taskFailed := 0
+		for _, t := range tasks {
+			switch t.Status {
+			case TaskStatusFinished:
+				taskDone++
+			case TaskStatusRunning:
+				taskRunning++
+			case TaskStatusFailed:
+				taskFailed++
+			}
+		}
+		info["taskStats"] = map[string]int{
+			"total":   taskTotal,
+			"done":    taskDone,
+			"running": taskRunning,
+			"failed":  taskFailed,
+		}
+	}
+
 	// Voice capability — always true (mobile can always send audio)
 	info["voiceInputEnabled"] = true
 
@@ -563,6 +637,96 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAgentStatus returns detailed agent and runner health status.
+// handleProjects lists discovered projects on this machine.
+func (s *HTTPServer) handleProjects(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonError(w, http.StatusMethodNotAllowed, "use GET")
+		return
+	}
+
+	projects := listDiscoveredProjects()
+	type projectResp struct {
+		Name   string `json:"name"`
+		Path   string `json:"path"`
+		Branch string `json:"branch,omitempty"`
+	}
+	result := make([]projectResp, 0, len(projects))
+	for _, p := range projects {
+		result = append(result, projectResp{
+			Name:   filepath.Base(p.Path),
+			Path:   p.Path,
+			Branch: p.Branch,
+		})
+	}
+
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":         true,
+		"projects":   result,
+		"currentDir": s.taskMgr.workDir,
+	})
+}
+
+// handleProjectSwitch changes the agent's working directory + optionally starts dev server.
+func (s *HTTPServer) handleProjectSwitch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+
+	var req struct {
+		Query    string `json:"query"`    // fuzzy project name
+		Path     string `json:"path"`     // or explicit path
+		StartDev bool   `json:"startDev"` // also start dev server
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	projectPath := req.Path
+	if projectPath == "" && req.Query != "" {
+		found, err := findProject(req.Query)
+		if err != nil {
+			jsonError(w, http.StatusNotFound, fmt.Sprintf("project not found: %v", err))
+			return
+		}
+		projectPath = found
+	}
+
+	if projectPath == "" {
+		jsonError(w, http.StatusBadRequest, "query or path required")
+		return
+	}
+
+	// Switch workdir
+	s.taskMgr.mu.Lock()
+	s.taskMgr.workDir = projectPath
+	s.taskMgr.mu.Unlock()
+	log.Printf("[projects] Switched to %s", projectPath)
+
+	resp := map[string]interface{}{
+		"ok":      true,
+		"path":    projectPath,
+		"project": DetectProjectInfo(projectPath),
+	}
+
+	// Optionally start dev server
+	if req.StartDev && s.devServerMgr != nil {
+		if status := s.devServerMgr.Status(); status != nil {
+			// Already running — stop first
+			s.devServerMgr.Stop()
+		}
+		framework := DetectProjectInfo(projectPath).Framework
+		if err := s.devServerMgr.Start(framework, projectPath, "", 0); err != nil {
+			resp["devServerError"] = err.Error()
+		} else {
+			resp["devServer"] = s.devServerMgr.Status()
+		}
+	}
+
+	jsonReply(w, http.StatusOK, resp)
+}
+
 func (s *HTTPServer) handleAgentStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonError(w, http.StatusMethodNotAllowed, "use GET")
@@ -862,10 +1026,19 @@ func (s *HTTPServer) handleTasks(w http.ResponseWriter, r *http.Request) {
 
 func (s *HTTPServer) listTasks(w http.ResponseWriter, r *http.Request) {
 	tasks := s.taskMgr.ListTasks()
-	jsonReply(w, http.StatusOK, map[string]interface{}{
+	resp := map[string]interface{}{
 		"ok":    true,
 		"tasks": tasks,
-	})
+	}
+	// Include project context so mobile can display project chips
+	project := DetectProjectInfo(s.taskMgr.workDir)
+	resp["project"] = project
+	// Include todo stats
+	if s.todolistMgr != nil {
+		resp["todoCount"] = s.todolistMgr.Count()
+		resp["todoTotal"] = len(s.todolistMgr.ListItems())
+	}
+	jsonReply(w, http.StatusOK, resp)
 }
 
 func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
@@ -904,11 +1077,13 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[HTTP] Task created: %s — %s (status: %s, model: %s, runner: %s)", task.ID, task.Title, task.Status, body.Model, task.RunnerID)
+	project := DetectProjectInfo(s.taskMgr.workDir)
 	resp := map[string]interface{}{
 		"ok":       true,
 		"taskId":   task.ID,
 		"status":   task.Status,
 		"runnerId": task.RunnerID,
+		"project":  project.Name,
 	}
 	log.Printf("[HTTP] Sending create response for task %s", task.ID)
 	jsonReply(w, http.StatusCreated, resp)

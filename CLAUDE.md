@@ -565,7 +565,36 @@ Build a local binary: `cd desktop/agent && go build -o yaver .`
    - Windows: `scoop bucket add yaver https://github.com/kivanccakmak/scoop-yaver && scoop install yaver`
 
 ### CLI Auth Flow
-`yaver auth` opens `https://yaver.io/auth?client=desktop` in the browser. The web app handles OAuth (Apple/Google/Microsoft) and redirects back to `http://127.0.0.1:19836/callback?token=<token>`. The CLI's local HTTP server receives the token and saves it to `~/.config/yaver/config.json`.
+`yaver auth` opens `https://yaver.io/auth?client=desktop` in the browser. The web app handles OAuth (Apple/Google/Microsoft) and redirects back to `http://127.0.0.1:19836/callback?token=<token>`. The CLI's local HTTP server receives the token and saves it to `~/.yaver/config.json`. The token is long-lived and persists across reboots — no re-auth needed.
+
+### Systemd Service (Linux — run on boot, auto-update)
+For headless machines (Mac Mini, cloud VPS, dev servers), install Yaver as a systemd user service:
+```bash
+# One-time setup:
+yaver auth                    # Sign in (requires browser — do this once)
+yaver serve --install-systemd # Creates + enables + starts the service
+
+# That's it. Yaver now:
+# - Starts automatically on login/boot
+# - Auto-updates from GitHub releases (checks every 6h, restarts with new binary)
+# - Runs from $HOME, discovers all projects automatically
+# - Survives reboots
+```
+
+**Management commands:**
+```bash
+systemctl --user status yaver   # Check status
+journalctl --user -u yaver -f   # Live logs
+systemctl --user restart yaver  # Restart
+systemctl --user stop yaver     # Stop
+systemctl --user disable yaver  # Disable auto-start
+```
+
+**How auth survives reboot:** `yaver auth` saves the token to `~/.yaver/config.json`. The systemd service reads it on startup. OAuth sign-in is only needed once — the token is long-lived.
+
+**Auto-update:** The agent checks GitHub releases every 6 hours. When a new version is found, it downloads the binary, replaces itself, and exits. Systemd automatically restarts with the new version (via `Restart=on-failure`).
+
+**macOS (launchd):** macOS doesn't use systemd. On macOS, `yaver serve` forks to background automatically and writes a PID file. Use `yaver stop` / `yaver logs` to manage. For login-item auto-start, use the Yaver desktop installer (`desktop/installer/`).
 
 ## Deployments
 
@@ -609,7 +638,6 @@ cd ios && pod install
 > **Warning**: `npx expo prebuild --clean` resets CFBundleVersion to 1. Restore manually.
 
 #### Deploy to TestFlight
-Set env vars and run the deploy script:
 ```bash
 export APP_STORE_KEY_PATH="$HOME/Workspace/talos/mobile/ios/AuthKey_77Z6B543D5.p8"
 export APP_STORE_KEY_ID="77Z6B543D5"
@@ -617,7 +645,20 @@ export APP_STORE_KEY_ISSUER="7bd9329e-49b0-440a-97ed-873c74244c12"
 export APPLE_TEAM_ID="5SJZ4KA39A"
 ./scripts/deploy-testflight.sh
 ```
-The script auto-bumps CFBundleVersion, archives, and uploads to TestFlight.
+> The script auto-bumps CFBundleVersion, archives, and uploads to TestFlight in one step.
+> **Always deploy iOS and Android together** when making mobile changes:
+> ```bash
+> # iOS
+> export APP_STORE_KEY_PATH="$HOME/Workspace/talos/mobile/ios/AuthKey_77Z6B543D5.p8"
+> export APP_STORE_KEY_ID="77Z6B543D5"
+> export APP_STORE_KEY_ISSUER="7bd9329e-49b0-440a-97ed-873c74244c12"
+> export APPLE_TEAM_ID="5SJZ4KA39A"
+> ./scripts/deploy-testflight.sh
+>
+> # Android
+> JAVA_HOME=$(/usr/libexec/java_home -v 17) ./scripts/deploy-playstore.sh && \
+>   PLAY_STORE_KEY_FILE=keys/google-play-service-account.json python3 scripts/upload-playstore.py
+> ```
 
 **Manual steps** (if script fails or for more control):
 ```bash
@@ -664,19 +705,18 @@ npx expo prebuild --platform android
 
 #### Deploy to Google Play
 ```bash
-# Full deploy (bumps versionCode, builds AAB, prints upload instructions):
+# Full deploy: bump versionCode + build AAB + upload to internal testing
+JAVA_HOME=$(/usr/libexec/java_home -v 17) ./scripts/deploy-playstore.sh && \
+  PLAY_STORE_KEY_FILE=keys/google-play-service-account.json python3 scripts/upload-playstore.py
+
+# Or step by step:
+# 1. Build (bumps versionCode, builds AAB):
 JAVA_HOME=$(/usr/libexec/java_home -v 17) ./scripts/deploy-playstore.sh
-
-# Upload AAB to internal testing track:
-PLAY_STORE_KEY_FILE=keys/google-play-service-account.json python3 scripts/upload-playstore.py
-
-# Manual: build + upload
-cd mobile/android
-JAVA_HOME=$(/usr/libexec/java_home -v 17) ./gradlew bundleRelease
-# AAB is at: mobile/android/app/build/outputs/bundle/release/app-release.aab
-# Upload with service account:
+# 2. Upload to internal testing track:
 PLAY_STORE_KEY_FILE=keys/google-play-service-account.json python3 scripts/upload-playstore.py
 ```
+> **The service account key is approved and working.** Upload goes directly to internal testing track.
+> Always run both commands together — build then upload. The upload script auto-finds the AAB.
 **Keystore**: `keys/yaver-upload.keystore` (alias: `yaver-upload`, pw: `***REMOVED***`)
 **Service account**: `keys/google-play-service-account.json`
 **Config**: `mobile/android/keystore.properties` (gitignored, references keystore)

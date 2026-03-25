@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 )
 
@@ -62,7 +63,17 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	jsonReply(w, http.StatusOK, s.devServerMgr.Status())
+	status := s.devServerMgr.Status()
+
+	// Emit control signal to any running task so the mobile app can auto-route
+	if s.taskMgr != nil {
+		project := filepath.Base(req.WorkDir)
+		controlSignal := fmt.Sprintf(`{"yaver_control":"dev_server_ready","project":%q,"framework":%q,"port":%d}`,
+			project, status.Framework, status.Port)
+		s.taskMgr.BroadcastControlSignal(controlSignal)
+	}
+
+	jsonReply(w, http.StatusOK, status)
 }
 
 // handleDevServerStop stops the active dev server.
@@ -92,6 +103,11 @@ func (s *HTTPServer) handleDevServerReload(w http.ResponseWriter, r *http.Reques
 	if err := s.devServerMgr.Reload(); err != nil {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
+	}
+
+	// Emit control signal for hot reload
+	if s.taskMgr != nil {
+		s.taskMgr.BroadcastControlSignal(`{"yaver_control":"hot_reload"}`)
 	}
 
 	jsonReply(w, http.StatusOK, map[string]string{"ok": "true"})

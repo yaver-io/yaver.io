@@ -44,6 +44,7 @@ import { useAuth } from "../../src/context/AuthContext";
 import { getUserSettings, getLocalSecret, LOCAL_KEYS, type SpeechProvider } from "../../src/lib/auth";
 import { transcribe, initWhisper, isWhisperReady, startRealtimeTranscribe, SPEECH_PROVIDERS } from "../../src/lib/speech";
 import { shareIntentEmitter } from "../../src/lib/shareIntent";
+import { useRouter } from "expo-router";
 import { DevPreview } from "../../src/components/DevPreview";
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -311,6 +312,7 @@ function buildChatMessages(task: Task): { role: string; content: string }[] {
 
 export default function TasksScreen() {
   const c = useColors();
+  const taskRouter = useRouter();
   const { connectionStatus, activeDevice, devices, userDisconnected, lastError, selectDevice, isLoadingDevices, refreshDevices } = useDevice();
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>(getLogEntries());
@@ -352,6 +354,13 @@ export default function TasksScreen() {
   const [isAdopting, setIsAdopting] = useState<string | null>(null); // session name being adopted
   const chatScrollRef = useRef<ScrollView>(null);
   const pendingOpenTaskRef = useRef<Task | null>(null);
+
+  // Project + Todo state
+  const [projectName, setProjectName] = useState<string>("");
+  const [projectBranch, setProjectBranch] = useState<string>("");
+  const [todoCount, setTodoCount] = useState(0);
+  const [todoTotal, setTodoTotal] = useState(0);
+  const [todoDone, setTodoDone] = useState(0);
 
   // Speech state
   const { token } = useAuth();
@@ -543,6 +552,18 @@ export default function TasksScreen() {
     };
 
     const unsub = quicClient.on("output", (taskId, line) => {
+      // Check for Yaver control signals (auto-route)
+      if (line.includes('"yaver_control"')) {
+        try {
+          const ctrl = JSON.parse(line);
+          if (ctrl.yaver_control === "dev_server_ready") {
+            // Dev server is ready — auto-route to Apps tab
+            setSelectedTask(null);
+            taskRouter.navigate("/(tabs)/apps");
+          }
+        } catch {}
+      }
+
       if (!outputBufferRef.current[taskId]) {
         outputBufferRef.current[taskId] = [];
       }
@@ -1017,6 +1038,24 @@ export default function TasksScreen() {
   const banner = BANNER_CONFIG[effectiveState];
   const isEffectivelyConnected = effectiveState === "connected";
   const modeLabel = connMode === "relay" ? " via Relay" : connMode === "direct" ? " Direct" : "";
+
+  // Fetch agent info (project, todo stats) every 5s
+  useEffect(() => {
+    if (!isEffectivelyConnected) return;
+    const fetchInfo = async () => {
+      try {
+        const info = await quicClient.agentInfo();
+        setProjectName(info.project?.name ?? "");
+        setProjectBranch(info.project?.gitBranch ?? "");
+        setTodoCount(info.todoCount ?? 0);
+        setTodoTotal(info.todoTotal ?? 0);
+        setTodoDone(info.todoDone ?? 0);
+      } catch {}
+    };
+    fetchInfo();
+    const interval = setInterval(fetchInfo, 5000);
+    return () => clearInterval(interval);
+  }, [isEffectivelyConnected]);
   const showRetryButton = connectionStatus === "disconnected" && activeDevice && !userDisconnected;
 
   const chatMessages = selectedTask ? buildChatMessages(selectedTask) : [];
@@ -1094,6 +1133,33 @@ export default function TasksScreen() {
 
         {/* Dev server preview banner */}
         {isEffectivelyConnected && <DevPreview />}
+
+        {/* Project chip + Todo queue bar */}
+        {isEffectivelyConnected && (projectName || todoTotal > 0) && (
+          <View style={[s.projectBar, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+            {projectName ? (
+              <View style={s.projectChipMobile}>
+                <Text style={[s.projectChipIcon, { color: c.accent }]}>{"\u25CF"}</Text>
+                <Text style={[s.projectChipName, { color: c.textPrimary }]}>{projectName}</Text>
+                {projectBranch ? (
+                  <Text style={[s.projectChipBranch, { color: c.textMuted }]}>{projectBranch}</Text>
+                ) : null}
+              </View>
+            ) : null}
+            {todoTotal > 0 && (
+              <View style={s.todoBarStats}>
+                <Text style={[s.todoBarLabel, { color: "#f59e0b" }]}>
+                  {"\u{1F4CB}"} {todoDone}/{todoTotal}
+                </Text>
+                {todoCount > 0 && (
+                  <Text style={[s.todoBarPending, { color: c.textMuted }]}>
+                    {todoCount} pending
+                  </Text>
+                )}
+              </View>
+            )}
+          </View>
+        )}
 
         {/* Ping result overlay */}
         {showPingResult && pingResult && (
@@ -1609,6 +1675,9 @@ export default function TasksScreen() {
                   )}
                 </View>
 
+                {/* Dev server banner — shown inside task detail so user doesn't have to go back */}
+                {isEffectivelyConnected && <DevPreview />}
+
                 {/* Chat messages */}
                 <ScrollView
                   ref={chatScrollRef}
@@ -1928,6 +1997,31 @@ const s = StyleSheet.create({
   pingBar: { height: 4, borderRadius: 2, marginTop: 8, overflow: "hidden" as const },
   pingBarFill: { height: 4, borderRadius: 2 },
   pingDismiss: { fontSize: 10, marginTop: 6, textAlign: "center" as const },
+
+  // Project bar + Todo stats
+  projectBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+  },
+  projectChipMobile: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  projectChipIcon: { fontSize: 8 },
+  projectChipName: { fontSize: 13, fontWeight: "600" },
+  projectChipBranch: { fontSize: 11, fontStyle: "italic" as const },
+  todoBarStats: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  todoBarLabel: { fontSize: 12, fontWeight: "600" },
+  todoBarPending: { fontSize: 11 },
 
   // List
   listContent: { padding: 16, paddingBottom: 100 },

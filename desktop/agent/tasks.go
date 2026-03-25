@@ -1124,9 +1124,11 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		prompt = task.Title + "\n\n" + task.Description
 	}
 
+	// Auto-detect project from task text and switch workDir if needed.
+	// This enables "start AcmeStore" from Yaver mobile when serving from ~.
+	tm.autoSwitchProject(task, prompt)
+
 	// System prompt: behave as a remote terminal agent, tailored to the task source.
-	// NOTE: project context and session history are NOT prepended to keep the prompt
-	// short and avoid CLI arg length issues. Claude reads CLAUDE.md automatically.
 	switch task.Source {
 	case "mcp":
 		prompt += "\n\nYou are running tasks via MCP from an AI agent. Show what you are doing step by step. Use only terminal commands. Be concise. Format output in markdown."
@@ -1135,6 +1137,11 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	default:
 		prompt += "\n\nYou are running tasks from a remote mobile device. Show what you are doing step by step. Use only terminal commands. Be concise. Format output in markdown."
 	}
+
+	// Inject Yaver dev server proxy context so the runner knows to use /dev/start.
+	// This is critical: the runner must NEVER output exp:// URLs or tell the user
+	// to install Expo Go. Everything flows through the Yaver P2P channel.
+	prompt += yaverDevServerContext(tm.workDir)
 
 	// Append speech context if the user sent this task via voice
 	if sc := task.SpeechContext; sc != nil {
@@ -2031,4 +2038,25 @@ func (tm *TaskManager) GetTask(id string) (*Task, bool) {
 	defer tm.mu.RUnlock()
 	t, ok := tm.tasks[id]
 	return t, ok
+}
+
+// BroadcastControlSignal injects a control signal JSON line into all running tasks' output.
+// The mobile app parses these to trigger auto-navigation (e.g. dev_server_ready → Apps tab).
+func (tm *TaskManager) BroadcastControlSignal(signal string) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
+	for _, t := range tm.tasks {
+		if t.Status == TaskStatusRunning {
+			t.Output += "\n" + signal + "\n"
+			// Also emit via streaming channel so mobile gets it in real-time
+			if t.outputCh != nil {
+				select {
+				case t.outputCh <- signal:
+				default:
+				}
+			}
+			log.Printf("[control] Sent to task %s: %s", t.ID, signal)
+		}
+	}
 }

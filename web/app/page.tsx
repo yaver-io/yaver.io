@@ -1004,19 +1004,18 @@ export default function HomePage() {
           </div>
 
           {/* App download row */}
-          <div className="mx-auto mt-10 max-w-lg">
+          <div className="mx-auto mt-10 max-w-2xl">
             <div className="flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
               <a href="https://testflight.apple.com/join/yaver" target="_blank" rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 rounded-lg bg-surface-800 px-4 py-2.5 text-xs font-medium text-surface-300 transition-colors hover:bg-surface-700">
                 <svg className="h-4 w-4 shrink-0 text-surface-400" fill="currentColor" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.40 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
                 App Store &mdash; iOS
               </a>
-              <a href="https://github.com/kivanccakmak/yaver.io/releases/latest/download/Yaver-1.11.0.apk" target="_blank" rel="noopener noreferrer"
+              <a href="https://play.google.com/store/apps/details?id=io.yaver.mobile" target="_blank" rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 rounded-lg bg-surface-800 px-4 py-2.5 text-xs font-medium text-surface-300 transition-colors hover:bg-surface-700">
                 <svg className="h-4 w-4 shrink-0 text-surface-400" fill="currentColor" viewBox="0 0 24 24"><path d="M17.523 2.238l-1.931 3.334c1.88.907 3.261 2.565 3.713 4.608H4.694c.452-2.043 1.833-3.701 3.714-4.608L6.477 2.238a.357.357 0 01.13-.487.357.357 0 01.487.13l1.962 3.389A8.97 8.97 0 0112 4.749c1.07 0 2.088.188 3.039.521l1.962-3.389a.357.357 0 01.487-.13.357.357 0 01.13.487h-.095zM9.5 7.5a.75.75 0 100-1.5.75.75 0 000 1.5zm5 0a.75.75 0 100-1.5.75.75 0 000 1.5zM4.5 11.68h15c.276 0 .5.224.5.5v7.5c0 1.401-1.119 2.5-2.5 2.5h-11C5.119 22.18 4 21.061 4 19.68v-7.5c0-.276.224-.5.5-.5z"/></svg>
-                APK Download
+                Google Play
               </a>
-              <span className="rounded-lg border border-surface-800 px-4 py-2.5 text-xs text-surface-600">Play Store &mdash; coming soon</span>
             </div>
             <p className="mt-4 text-xs text-surface-500">
               Sign in with Apple, Google, or Microsoft. Your machine appears automatically on your phone.
@@ -1061,6 +1060,59 @@ export default function HomePage() {
             <br />
             MIT licensed &mdash; fork it, run your own instance of everything.
           </p>
+        </div>
+      </section>
+
+      {/* ── Built for Solo Founders ── */}
+      <section className="border-t border-surface-800/60 px-6 py-24">
+        <div className="mx-auto max-w-4xl">
+          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
+            Built for solo founders.
+          </h2>
+          <p className="mb-12 text-center text-sm text-surface-400">
+            One person. One machine. No team. No cloud bill. Just the agent doing the work.
+          </p>
+
+          <div className="grid gap-4 md:grid-cols-3">
+            {[
+              {
+                icon: "\u{1F9D1}\u200D\u{1F4BB}",
+                label: "No team needed",
+                copy: "Autonomous test loop, hot reload, one-tap deploy \u2014 all the things a team would do, running on your laptop.",
+              },
+              {
+                icon: "\u{1F4B8}",
+                label: "No cloud bill",
+                copy: "Your hardware runs the LLM. Your VPS runs the relay. Total cost: what you already pay.",
+              },
+              {
+                icon: "\u{1F319}",
+                label: "Works while you sleep",
+                copy: "Queue tasks from your phone, walk away. Your machine runs them. You review the diff in the morning.",
+              },
+            ].map((item) => (
+              <div
+                key={item.label}
+                className="rounded-xl border border-surface-800 bg-surface-900/50 p-6"
+              >
+                <div className="mb-3 text-2xl">{item.icon}</div>
+                <p className="text-sm font-semibold text-surface-200">{item.label}</p>
+                <p className="mt-2 text-xs leading-relaxed text-surface-400">{item.copy}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-10 text-center">
+            <a
+              href="https://github.com/kivanccakmak/yaver.io"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 rounded-lg border border-surface-700 bg-surface-800/50 px-5 py-2.5 text-sm font-medium text-surface-300 transition-colors hover:bg-surface-800 hover:text-surface-100"
+            >
+              <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.405.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+              Star it if you&apos;re building alone
+            </a>
+          </div>
         </div>
       </section>
 
@@ -1135,6 +1187,85 @@ export default function HomePage() {
               {" "}Mobile app on the App Store and Google Play.
             </p>
           </div>
+        </div>
+      </section>
+
+      {/* ── Section 4b: Always-on (systemd) ── */}
+      <section className="border-t border-surface-800/60 px-6 py-24">
+        <div className="mx-auto max-w-3xl">
+          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
+            Set it up once. It runs forever.
+          </h2>
+          <p className="mb-12 text-center text-sm text-surface-400">
+            Install as a system service on any Linux machine. Survives reboots, auto-updates itself.
+          </p>
+
+          <div className="space-y-6">
+            {[
+              { step: 1, label: "Sign in (once — token persists across reboots)", cmd: "yaver auth", output: null },
+              { step: 2, label: "Install as systemd service", cmd: "yaver serve --install-systemd", output: "Yaver agent installed as systemd user service.\nThe agent starts automatically on login and survives reboots." },
+              { step: 3, label: "That's it. Manage with:", cmd: "systemctl --user status yaver    # status\njournalctl --user -u yaver -f    # live logs\nsystemctl --user restart yaver   # restart", output: null },
+            ].map((s) => (
+              <div key={s.step} className="flex items-start gap-4">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#22c55e]/10 text-sm font-bold text-[#22c55e]">
+                  {s.step}
+                </span>
+                <div className="flex-1">
+                  <p className="mb-2 text-sm font-medium text-surface-200">{s.label}</p>
+                  <div className="terminal">
+                    <div className="terminal-header">
+                      <div className="terminal-dot bg-[#ff5f57]" />
+                      <div className="terminal-dot bg-[#febc2e]" />
+                      <div className="terminal-dot bg-[#28c840]" />
+                    </div>
+                    <div className="terminal-body text-[13px]">
+                      {s.cmd.split("\n").map((line, i) => (
+                        <div key={i}>
+                          <span className="text-surface-400">$</span>{" "}
+                          <span className="text-surface-200">{line}</span>
+                        </div>
+                      ))}
+                      {s.output && (
+                        <div className="mt-1 pl-2 text-green-400/80 whitespace-pre-line">{s.output}</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-10 grid gap-4 md:grid-cols-3">
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
+              <p className="text-sm font-semibold text-surface-200">Auth persists</p>
+              <p className="mt-1 text-xs text-surface-400">
+                OAuth sign-in (Google/Apple/Microsoft) saves a long-lived token to ~/.yaver/config.json. No re-auth after reboot.
+              </p>
+            </div>
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
+              <p className="text-sm font-semibold text-surface-200">Auto-updates</p>
+              <p className="mt-1 text-xs text-surface-400">
+                Checks GitHub releases every 6 hours. Downloads new binary, restarts automatically via systemd.
+              </p>
+            </div>
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
+              <p className="text-sm font-semibold text-surface-200">Wake-on-LAN</p>
+              <p className="mt-1 text-xs text-surface-400">
+                Enable{" "}
+                <a href="https://wiki.archlinux.org/title/Wake-on-LAN" target="_blank" rel="noopener noreferrer" className="text-surface-300 underline hover:text-surface-100">Wake-on-LAN</a>
+                {" "}or{" "}
+                <a href="https://support.apple.com/guide/mac-help/wake-your-mac-mh11775/mac" target="_blank" rel="noopener noreferrer" className="text-surface-300 underline hover:text-surface-100">Power Nap (macOS)</a>
+                {" "}to wake your machine remotely from your phone.
+              </p>
+            </div>
+          </div>
+
+          <p className="mt-6 text-center text-xs text-surface-500">
+            Works on any Linux machine — Mac Mini, Raspberry Pi, cloud VPS, or your desktop.
+            {" "}macOS users: <code className="text-surface-400">yaver serve</code> auto-forks to background. Use the{" "}
+            <a href="https://github.com/kivanccakmak/yaver.io" target="_blank" rel="noopener noreferrer" className="text-surface-300 underline hover:text-surface-100">desktop installer</a>
+            {" "}for login-item auto-start.
+          </p>
         </div>
       </section>
 

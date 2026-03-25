@@ -1,26 +1,70 @@
-import { Tabs } from "expo-router";
-import React from "react";
-import { StyleSheet, Text } from "react-native";
+import { Tabs, useRouter } from "expo-router";
+import React, { useEffect, useRef, useState } from "react";
+import { StyleSheet, Text, View } from "react-native";
 import { useColors } from "../../src/context/ThemeContext";
+import { useDevice } from "../../src/context/DeviceContext";
+import { quicClient } from "../../src/lib/quic";
 
-function TabIcon({ label, focused }: { label: string; focused: boolean }) {
+function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boolean; showGreenDot?: boolean }) {
   const c = useColors();
   const icons: Record<string, string> = {
     Tasks: "T",
-    Todos: "☐",
+    Todos: "\u2610",
+    Apps: "\u25B6",
     Builds: "B",
     Devices: "D",
     Settings: "S",
   };
   return (
-    <Text style={[styles.icon, { color: focused ? c.tabActive : c.tabInactive }]}>
-      {icons[label] ?? "?"}
-    </Text>
+    <View>
+      <Text style={[styles.icon, { color: focused ? c.tabActive : c.tabInactive }]}>
+        {icons[label] ?? "?"}
+      </Text>
+      {showGreenDot && (
+        <View style={styles.greenDot} />
+      )}
+    </View>
   );
 }
 
 export default function TabLayout() {
   const c = useColors();
+  const router = useRouter();
+  const { connectionStatus, activeDevice } = useDevice();
+  const isConnected = connectionStatus === "connected" && !!activeDevice;
+  const [devServerRunning, setDevServerRunning] = useState(false);
+  const wasRunning = useRef(false);
+
+  // Poll dev server status for green dot badge + auto-route
+  useEffect(() => {
+    if (!isConnected) {
+      setDevServerRunning(false);
+      wasRunning.current = false;
+      return;
+    }
+    let mounted = true;
+    const poll = async () => {
+      try {
+        const status = await quicClient.getDevServerStatus();
+        const running = status?.running === true;
+        if (mounted) {
+          setDevServerRunning(running);
+          // Auto-navigate to Apps tab when dev server first starts
+          if (running && !wasRunning.current) {
+            wasRunning.current = true;
+            router.navigate("/(tabs)/apps");
+          }
+          if (!running) wasRunning.current = false;
+        }
+      } catch {
+        if (mounted) setDevServerRunning(false);
+      }
+    };
+    poll();
+    const interval = setInterval(poll, 3000);
+    return () => { mounted = false; clearInterval(interval); };
+  }, [isConnected, router]);
+
   return (
     <Tabs
       screenOptions={{
@@ -51,9 +95,19 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="apps"
+        options={{
+          title: "Apps",
+          tabBarIcon: ({ focused }) => (
+            <TabIcon label="Apps" focused={focused} showGreenDot={devServerRunning} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="builds"
         options={{
-          href: null, // Hidden — builds are managed by the agent, not shown in UI
+          title: "Builds",
+          tabBarIcon: ({ focused }) => <TabIcon label="Builds" focused={focused} />,
         }}
       />
       <Tabs.Screen
@@ -78,5 +132,16 @@ const styles = StyleSheet.create({
   icon: {
     fontSize: 18,
     fontWeight: "700",
+  },
+  greenDot: {
+    position: "absolute",
+    top: -2,
+    right: -6,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#22c55e",
+    borderWidth: 1.5,
+    borderColor: "#0a0a0a",
   },
 });

@@ -29,7 +29,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.46.0"
+const version = "1.49.0"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
@@ -824,6 +824,83 @@ func isAgentRunning() (int, bool) {
 	return pid, true
 }
 
+// installSystemdService creates and enables a systemd user service for yaver serve.
+func installSystemdService() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Find yaver binary path
+	yaverBin, err := os.Executable()
+	if err != nil {
+		yaverBin = "yaver" // fallback to PATH
+	}
+
+	serviceDir := filepath.Join(home, ".config", "systemd", "user")
+	servicePath := filepath.Join(serviceDir, "yaver.service")
+
+	unit := fmt.Sprintf(`[Unit]
+Description=Yaver Agent — AI coding from your phone
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%s serve --debug --work-dir %s
+Restart=on-failure
+RestartSec=5
+WorkingDirectory=%s
+Environment=HOME=%s
+
+[Install]
+WantedBy=default.target
+`, yaverBin, home, home, home)
+
+	if err := os.MkdirAll(serviceDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating systemd dir: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := os.WriteFile(servicePath, []byte(unit), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing service file: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Created: %s\n", servicePath)
+	fmt.Println()
+
+	// Try to enable and start
+	cmds := [][]string{
+		{"systemctl", "--user", "daemon-reload"},
+		{"systemctl", "--user", "enable", "yaver"},
+		{"systemctl", "--user", "start", "yaver"},
+	}
+	for _, c := range cmds {
+		cmd := osexec.Command(c[0], c[1:]...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("Note: '%s' failed (systemd may not be available on this OS).\n", strings.Join(c, " "))
+			fmt.Println("You can manually enable with:")
+			fmt.Printf("  systemctl --user daemon-reload\n")
+			fmt.Printf("  systemctl --user enable --now yaver\n")
+			return
+		}
+	}
+
+	fmt.Println()
+	fmt.Println("Yaver agent installed as systemd user service.")
+	fmt.Println("  Status:  systemctl --user status yaver")
+	fmt.Println("  Logs:    journalctl --user -u yaver -f")
+	fmt.Println("  Stop:    systemctl --user stop yaver")
+	fmt.Println("  Disable: systemctl --user disable yaver")
+	fmt.Println()
+	fmt.Println("The agent starts automatically on login and survives reboots.")
+	fmt.Println("Auth token is persisted in ~/.yaver/config.json (run 'yaver auth' once).")
+}
+
 func runServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	httpPort := fs.Int("port", 18080, "HTTP server port")
@@ -842,7 +919,14 @@ func runServe(args []string) {
 	allowIPs := fs.String("allow-ips", "", "IP allowlist: comma-separated CIDRs (e.g. 192.168.1.0/24)")
 	tlsPort := fs.Int("tls-port", 18443, "HTTPS server port (0 to disable)")
 	noTLS := fs.Bool("no-tls", false, "Disable HTTPS server")
+	installSystemd := fs.Bool("install-systemd", false, "Install and enable systemd user service, then exit")
 	fs.Parse(args)
+
+	// Install systemd service and exit
+	if *installSystemd {
+		installSystemdService()
+		return
+	}
 
 	if *workDir == "." {
 		wd, err := os.Getwd()
@@ -1356,6 +1440,16 @@ func runServe(args []string) {
 	}
 	httpServer.devServerMgr = NewDevServerManager()
 	log.Printf("Dev server manager ready")
+	if tlMgr, err := NewTodoListManager(); err != nil {
+		log.Printf("Warning: todolist unavailable: %v", err)
+	} else {
+		httpServer.todolistMgr = tlMgr
+		// Wire auto-consume: items are implemented immediately as they arrive
+		tlMgr.SetAutoConsume(true, func(item *TodoItem) {
+			httpServer.autoConsumeItem(item)
+		})
+		log.Printf("Todo list manager ready (%d existing items, auto-consume=on)", len(tlMgr.ListItems()))
+	}
 	if *multiUser {
 		muMgr, err := NewMultiUserManager(MultiUserConfig{
 			TeamID:   *teamID,
@@ -2440,7 +2534,15 @@ func checkAutoUpdate(cfg *Config) {
 		return
 	}
 
-	log.Printf("[auto-update] Updated to v%s. The new version will take effect on next restart.", latestVersion)
+	log.Printf("[auto-update] Updated to v%s.", latestVersion)
+
+	// In systemd mode (--debug from service), exit so systemd restarts with new binary
+	// Check if we're running under systemd by looking for INVOCATION_ID env var
+	if os.Getenv("INVOCATION_ID") != "" {
+		log.Println("[auto-update] Running under systemd — exiting for automatic restart with new binary.")
+		os.Exit(0)
+	}
+	log.Println("[auto-update] New version will take effect on next restart.")
 }
 
 // ---------------------------------------------------------------------------

@@ -307,11 +307,73 @@ export const FeedbackModal: React.FC = () => {
     }
   }, [timeline]);
 
+  const [queued, setQueued] = useState(false);
+
+  const handleQueue = useCallback(async () => {
+    const config = YaverFeedback.getConfig();
+    if (!config || !config.agentUrl) return;
+
+    setIsSending(true);
+    setError(null);
+
+    try {
+      const { Dimensions } = require('react-native');
+      const { width, height } = Dimensions.get('window');
+
+      const screenshots = timeline
+        .filter((e) => e.type === 'screenshot')
+        .map((e) => e.path);
+      const audioEvent = timeline.find((e) => e.type === 'audio');
+      const capturedErrors = YaverFeedback.getCapturedErrors();
+
+      const bundle: FeedbackBundle = {
+        metadata: {
+          timestamp: new Date().toISOString(),
+          device: {
+            platform: Platform.OS,
+            osVersion: String(Platform.Version),
+            model: Platform.OS === 'ios' ? 'iOS Device' : 'Android Device',
+            screenWidth: width,
+            screenHeight: height,
+          },
+          app: {},
+          userNote: 'Bug report from device testing',
+        },
+        screenshots,
+        audio: audioEvent?.path,
+        errors: capturedErrors.length > 0 ? capturedErrors : undefined,
+      };
+
+      const client = YaverFeedback.getP2PClient();
+      if (client) {
+        await client.addTodoItem(bundle);
+      }
+
+      if (mountedRef.current) {
+        setQueued(true);
+        setTimeout(() => {
+          if (mountedRef.current) {
+            setVisible(false);
+          }
+        }, 1200);
+      }
+    } catch (err) {
+      if (mountedRef.current) {
+        setError(String(err));
+      }
+    } finally {
+      if (mountedRef.current) {
+        setIsSending(false);
+      }
+    }
+  }, [timeline]);
+
   const handleCancel = useCallback(() => {
     setVisible(false);
     setTimeline([]);
     setError(null);
     setSent(false);
+    setQueued(false);
     setIsRecordingAudio(false);
     setIsVoiceCommand(false);
     setCommentary([]);
@@ -447,7 +509,7 @@ export const FeedbackModal: React.FC = () => {
           {/* Error display */}
           {error && <Text style={styles.error}>{error}</Text>}
 
-          {/* Send / Cancel */}
+          {/* Queue / Fix Now / Cancel */}
           <View style={styles.footer}>
             <TouchableOpacity style={styles.cancelButton} onPress={handleCancel}>
               <Text style={styles.cancelText}>Cancel</Text>
@@ -457,18 +519,31 @@ export const FeedbackModal: React.FC = () => {
               <View style={styles.sendButton}>
                 <Text style={styles.sendText}>Sent!</Text>
               </View>
+            ) : queued ? (
+              <View style={[styles.sendButton, { backgroundColor: '#f59e0b' }]}>
+                <Text style={styles.sendText}>Queued!</Text>
+              </View>
             ) : (
-              <TouchableOpacity
-                style={[styles.sendButton, isSending && styles.sendButtonDisabled]}
-                onPress={handleSend}
-                disabled={isSending || timeline.length === 0}
-              >
-                {isSending ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <Text style={styles.sendText}>Send Report</Text>
-                )}
-              </TouchableOpacity>
+              <View style={styles.footerActions}>
+                <TouchableOpacity
+                  style={[styles.queueButton, isSending && styles.sendButtonDisabled]}
+                  onPress={handleQueue}
+                  disabled={isSending || timeline.length === 0}
+                >
+                  <Text style={styles.queueText}>Queue</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.sendButton, isSending && styles.sendButtonDisabled]}
+                  onPress={handleSend}
+                  disabled={isSending || timeline.length === 0}
+                >
+                  {isSending ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <Text style={styles.sendText}>Fix Now</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
             )}
           </View>
         </View>
@@ -648,6 +723,23 @@ const styles = StyleSheet.create({
   },
   sendText: {
     color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  footerActions: {
+    flex: 2,
+    flexDirection: 'row',
+    gap: 8,
+  },
+  queueButton: {
+    flex: 1,
+    backgroundColor: '#f59e0b',
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderRadius: 12,
+  },
+  queueText: {
+    color: '#000',
     fontSize: 16,
     fontWeight: '700',
   },

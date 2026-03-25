@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import { FeedbackBundle, TestSession, VoiceCapability } from './types';
+import { FeedbackBundle, TestSession, TodoItemDetail, TodoItemSummary, VoiceCapability } from './types';
 
 export interface FeedbackEvent {
   type: string;
@@ -254,6 +254,193 @@ export class P2PClient {
   /** Get the current test session status and list of fixes. */
   async getTestSession(): Promise<TestSession> {
     const response = await this.request('GET', '/test-app/status');
+    return response.json();
+  }
+
+  // ─── Todo List (queued bug reports) ───
+
+  /** Add an item to the todo queue. Returns the new item ID and total pending count. */
+  async addTodoItem(bundle: FeedbackBundle): Promise<{ id: string; count: number }> {
+    const formData = new FormData();
+
+    const metadata = {
+      description: bundle.metadata.userNote || 'Bug report',
+      source: 'sdk',
+      deviceInfo: {
+        platform: bundle.metadata.device.platform,
+        model: bundle.metadata.device.model,
+        osVersion: bundle.metadata.device.osVersion,
+      },
+      errors: bundle.errors || [],
+    };
+    formData.append('metadata', JSON.stringify(metadata));
+
+    for (let i = 0; i < bundle.screenshots.length; i++) {
+      const path = bundle.screenshots[i];
+      formData.append(`screenshot_${i}`, {
+        uri: Platform.OS === 'android' ? `file://${path}` : path,
+        type: 'image/png',
+        name: `screenshot_${i}.png`,
+      } as any);
+    }
+
+    if (bundle.audio) {
+      formData.append('audio', {
+        uri: Platform.OS === 'android' ? `file://${bundle.audio}` : bundle.audio,
+        type: 'audio/m4a',
+        name: 'voice_note.m4a',
+      } as any);
+    }
+
+    const response = await fetch(`${this.baseUrl}/todolist`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.authToken}` },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`[P2PClient] Add todo failed (${response.status}): ${text}`);
+    }
+
+    return response.json();
+  }
+
+  /** Get the count of pending todo items (for badge display). */
+  async todoCount(): Promise<number> {
+    try {
+      const response = await this.request('GET', '/todolist/count');
+      const data = await response.json();
+      return data.count ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** List all todo items with summary info. */
+  async listTodoItems(): Promise<TodoItemSummary[]> {
+    const response = await this.request('GET', '/todolist');
+    const data = await response.json();
+    return data.items ?? [];
+  }
+
+  /** Get full detail for a single todo item. */
+  async getTodoItem(id: string): Promise<TodoItemDetail> {
+    const response = await this.request('GET', `/todolist/${id}`);
+    return response.json();
+  }
+
+  /** Remove a todo item from the queue. */
+  async removeTodoItem(id: string): Promise<void> {
+    await fetch(`${this.baseUrl}/todolist/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    });
+  }
+
+  /** Implement all pending items as a single batch task. Returns the task ID. */
+  async implementAllTodos(): Promise<{ taskId: string; itemCount: number }> {
+    const response = await fetch(`${this.baseUrl}/todolist/implement-all`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`[P2PClient] Implement all failed (${response.status}): ${text}`);
+    }
+
+    return response.json();
+  }
+
+  /** Toggle auto-consume mode: items are implemented immediately as they arrive. */
+  async setAutoConsume(enabled: boolean): Promise<void> {
+    await fetch(`${this.baseUrl}/todolist/auto-consume`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ enabled }),
+    });
+  }
+
+  /** Check if auto-consume is enabled. */
+  async getAutoConsume(): Promise<boolean> {
+    try {
+      const response = await this.request('GET', '/todolist/auto-consume');
+      const data = await response.json();
+      return data.enabled ?? false;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Get task output/logs for a specific task (linked from a todo item). */
+  async getTaskOutput(taskId: string): Promise<{ output: string; status: string }> {
+    try {
+      const response = await this.request('GET', `/tasks/${taskId}`);
+      const data = await response.json();
+      return { output: data.output ?? '', status: data.status ?? 'unknown' };
+    } catch {
+      return { output: '', status: 'unknown' };
+    }
+  }
+
+  /**
+   * Smart chat: send a message and let the agent auto-classify it.
+   * The agent determines if it's a todo item, continuation, or immediate action
+   * and acts on it automatically. No user interaction needed.
+   */
+  async smartChat(message: string, deviceInfo?: { platform: string; model: string; osVersion: string }): Promise<{
+    intent: 'todo' | 'action' | 'continuation';
+    todoItemId?: string;
+    taskId?: string;
+    todoCount?: number;
+    project?: string;
+    acted: boolean;
+  }> {
+    const response = await fetch(`${this.baseUrl}/todolist/classify`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        message,
+        source: 'sdk',
+        autoAct: true,
+        deviceInfo,
+      }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`[P2PClient] Smart chat failed (${response.status}): ${text}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Get full agent info including project metadata, dev server status,
+   * todo stats, and task stats.
+   */
+  async agentInfo(): Promise<{
+    hostname: string;
+    version: string;
+    project: { name: string; path: string; gitBranch?: string; framework?: string };
+    devServer?: { running: boolean; framework?: string; port?: number };
+    todoCount: number;
+    todoTotal: number;
+    todoDone: number;
+    autoConsume: boolean;
+    taskStats: { total: number; done: number; running: number; failed: number };
+  }> {
+    const response = await this.request('GET', '/info');
     return response.json();
   }
 
