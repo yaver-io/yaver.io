@@ -30,6 +30,32 @@ export interface Task {
   deviceName?: string;
 }
 
+export interface AgentInfo {
+  hostname: string;
+  version: string;
+  workDir: string;
+  voiceInputEnabled?: boolean;
+  voiceProvider?: string;
+  sttProvider?: string;
+}
+
+export interface VoiceStatus {
+  voiceInputEnabled: boolean;
+  s2sProvider?: string;
+  s2sReady?: boolean;
+  sttProvider?: string;
+  sttReady?: boolean;
+  providers?: Array<{ id: string; name: string; type: string; ready: boolean }>;
+}
+
+export interface Runner {
+  id: string;
+  name: string;
+  installed: boolean;
+  active: boolean;
+  models?: string[];
+}
+
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
 export interface RelayServer {
@@ -278,6 +304,78 @@ class AgentClient {
     if (!res.ok) throw new Error(`Failed to delete all: ${res.status}`);
     const data = await res.json();
     return data.deleted || 0;
+  }
+
+  // ── Agent Info ────────────────────────────────────────────────────
+
+  async getInfo(): Promise<AgentInfo> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/info`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to get info: ${res.status}`);
+    return res.json();
+  }
+
+  async getRunners(): Promise<Runner[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/agent/runners`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to get runners: ${res.status}`);
+    const data = await res.json();
+    return data.runners || [];
+  }
+
+  async switchRunner(runnerId: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/agent/runner/switch`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ runner: runnerId }),
+    });
+    if (!res.ok) throw new Error(`Failed to switch runner: ${res.status}`);
+  }
+
+  // ── Voice ────────────────────────────────────────────────────────
+
+  async getVoiceStatus(): Promise<VoiceStatus> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/voice/status`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to get voice status: ${res.status}`);
+    return res.json();
+  }
+
+  async transcribeVoice(audioBlob: Blob): Promise<{ ok: boolean; text?: string; provider?: string }> {
+    this.assertConnected();
+    const formData = new FormData();
+    formData.append("audio", audioBlob, "recording.webm");
+    const res = await fetch(`${this.baseUrl}/voice/transcribe`, {
+      method: "POST",
+      headers: this.authHeaders,
+      body: formData,
+    });
+    if (!res.ok) throw new Error(`Transcription failed: ${res.status}`);
+    return res.json();
+  }
+
+  // ── SSE Task Output Stream ───────────────────────────────────────
+
+  streamTaskOutput(taskId: string, onLine: (line: string) => void): () => void {
+    const url = `${this.baseUrl}/tasks/${taskId}/output`;
+    const es = new EventSource(url);
+    // EventSource doesn't support custom headers, so we fall back to
+    // polling for auth-protected endpoints. Use the existing poll mechanism
+    // but also try SSE for unauthenticated or relay-proxied streams.
+    es.onmessage = (e) => {
+      if (e.data) onLine(e.data);
+    };
+    es.onerror = () => {
+      es.close();
+    };
+    return () => es.close();
   }
 
   // ── EventEmitter ───────────────────────────────────────────────────

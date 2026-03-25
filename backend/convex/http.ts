@@ -451,6 +451,15 @@ http.route({
     const token = authHeader.slice(7);
     const tokenHash = await sha256Hex(token);
 
+    // Validate session at HTTP layer — return 401, not 500
+    const user = await authenticateRequest(ctx, request);
+    if (!user) {
+      return errorResponse("Session expired", 401);
+    }
+
+    // Auto-extend session on heartbeat (keeps CLI sessions alive indefinitely)
+    await ctx.runMutation(api.auth.refreshSession, { tokenHash }).catch(() => {});
+
     const body = await request.json();
     await ctx.runMutation(api.devices.heartbeat, {
       tokenHash,
@@ -458,9 +467,6 @@ http.route({
       runners: body.runners,
       quicHost: body.quicHost || undefined,
     });
-
-    // Auto-extend session on heartbeat (keeps CLI sessions alive indefinitely)
-    await ctx.runMutation(api.auth.refreshSession, { tokenHash }).catch(() => {});
 
     return jsonResponse({ ok: true });
   }),
@@ -541,6 +547,13 @@ http.route({
     if (!authHeader?.startsWith("Bearer ")) {
       return errorResponse("Unauthorized", 401);
     }
+
+    // Validate session at HTTP layer — return 401, not 500
+    const user = await authenticateRequest(ctx, request);
+    if (!user) {
+      return errorResponse("Session expired", 401);
+    }
+
     const token = authHeader.slice(7);
     const tokenHash = await sha256Hex(token);
 

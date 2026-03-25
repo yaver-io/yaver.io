@@ -203,8 +203,7 @@ func (s *HTTPServer) handleVoiceProviders(w http.ResponseWriter, r *http.Request
 func (s *HTTPServer) handleVoiceConfig(w http.ResponseWriter, r *http.Request) {
 	cfg, err := LoadConfig()
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, err.Error())
-		return
+		cfg = &Config{}
 	}
 
 	switch r.Method {

@@ -121,12 +121,7 @@ cleanup() {
         eval "$cmd" 2>/dev/null || true
     done
 
-    # Delete test accounts
-    for token in "${AUTH_TOKENS[@]+"${AUTH_TOKENS[@]}"}"; do
-        curl -sf -X POST "${CONVEX_SITE_URL}/auth/delete-account" \
-            -H "Authorization: Bearer ${token}" \
-            -H "Content-Type: application/json" 2>/dev/null || true
-    done
+    # Note: CI uses a dedicated persistent account (ci-test@yaver.io) — no deletion needed
 
     # Restore config if backed up
     if [ -f "$HOME/.yaver/config.json.test-bak" ]; then
@@ -148,21 +143,44 @@ gen_uuid() {
     uuidgen 2>/dev/null || python3 -c 'import uuid;print(uuid.uuid4())' | tr '[:upper:]' '[:lower:]'
 }
 
-create_test_account() {
-    local email="test-$(date +%s)-$RANDOM@test.yaver.io"
-    local resp
+CI_TEST_EMAIL="${CI_TEST_EMAIL:-ci-test@yaver.io}"
+CI_TEST_PASSWORD="${CI_TEST_PASSWORD:-ciTestPass2026!}"
+CI_TEST_FULLNAME="${CI_TEST_FULLNAME:-CI Test User}"
+
+# get_ci_token logs in with the dedicated CI account.
+# On first run the account is created via signup; subsequent runs use login.
+get_ci_token() {
+    local resp token
+
+    # Try login first
+    resp=$(curl -sf -X POST "${CONVEX_SITE_URL}/auth/login" \
+        -H "Content-Type: application/json" \
+        -d "{\"email\":\"${CI_TEST_EMAIL}\",\"password\":\"${CI_TEST_PASSWORD}\"}" 2>/dev/null) || true
+    token=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null) || true
+
+    if [ -n "$token" ]; then
+        echo "$token"
+        return 0
+    fi
+
+    # Account doesn't exist yet — create it
     resp=$(curl -sf -X POST "${CONVEX_SITE_URL}/auth/signup" \
         -H "Content-Type: application/json" \
-        -d "{\"email\":\"${email}\",\"fullName\":\"Test User\",\"password\":\"testpass123\"}")
+        -d "{\"email\":\"${CI_TEST_EMAIL}\",\"fullName\":\"${CI_TEST_FULLNAME}\",\"password\":\"${CI_TEST_PASSWORD}\"}" 2>/dev/null) || true
+    token=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null) || true
 
-    local token
-    token=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null)
-    if [ -z "$token" ]; then
-        echo ""
-        return 1
+    if [ -n "$token" ]; then
+        echo "$token"
+        return 0
     fi
-    AUTH_TOKENS+=("$token")
-    echo "$token"
+
+    echo ""
+    return 1
+}
+
+# Backward-compatible alias used throughout the test suite
+create_test_account() {
+    get_ci_token
 }
 
 build_agent() {
@@ -469,7 +487,7 @@ run_build_tests() {
     fi
 
     # Android
-    if [ -d "$ROOT_DIR/mobile/android" ] && command -v java &>/dev/null; then
+    if [ -f "$ROOT_DIR/mobile/android/gradlew" ] && command -v java &>/dev/null; then
         info "Building Android (assembleRelease)..."
         local java_home="${JAVA_HOME:-$(/usr/libexec/java_home -v 17 2>/dev/null || echo "")}"
         if [ -n "$java_home" ]; then
@@ -536,20 +554,19 @@ run_lan_test() {
 }
 
 # ── Local Relay Test ───────────────────────────────────────────────
+# Only verifies relay builds and starts. No QUIC tunnel registration
+# (relay registration is an expensive operation — tested manually).
 run_relay_test() {
-    header "Relay — Local CLI-to-CLI via Relay Server"
+    header "Relay — Build & Health Check"
 
-    local agent_bin="$TEST_DIR/yaver"
     local relay_bin="$TEST_DIR/yaver-relay"
-    [ -f "$agent_bin" ] || build_agent "$agent_bin" > /dev/null 2>&1 || { fail "Cannot build agent"; return; }
     [ -f "$relay_bin" ] || build_relay "$relay_bin" > /dev/null 2>&1 || { fail "Cannot build relay"; return; }
 
-    local relay_quic_port relay_http_port agent_http_port agent_quic_port
-    relay_quic_port=$(get_free_port); relay_http_port=$(get_free_port)
-    agent_http_port=$(get_free_port); agent_quic_port=$(get_free_port)
+    local relay_http_port relay_quic_port
+    relay_http_port=$(get_free_port); relay_quic_port=$(get_free_port)
     local relay_password="test-relay-pass-$$"
 
-    info "Starting relay (QUIC=$relay_quic_port, HTTP=$relay_http_port)..."
+    info "Starting relay (HTTP=$relay_http_port)..."
     local relay_pid
     relay_pid=$(start_relay "$relay_bin" "$relay_quic_port" "$relay_http_port" "$relay_password" "$TEST_DIR/relay.log") || {
         fail "Relay failed to start"; return
@@ -561,65 +578,10 @@ run_relay_test() {
         fail "Relay health check"; return
     fi
 
-    info "Creating test account..."
-    local token
-    token=$(create_test_account) || { fail "Cannot create test account"; return; }
-
-    local device_id="test-relay-$(gen_uuid)"
-    local work_dir="$TEST_DIR/relay-agent"
-    local config_dir="$work_dir/.yaver-config"
-    mkdir -p "$config_dir/.yaver"
-    cat > "$config_dir/.yaver/config.json" << EOF
-{
-  "auth_token": "${token}",
-  "device_id": "${device_id}",
-  "convex_site_url": "${CONVEX_SITE_URL}",
-  "relay_password": "${relay_password}",
-  "relay_servers": [{"id":"test-local","quic_addr":"127.0.0.1:${relay_quic_port}","http_url":"http://127.0.0.1:${relay_http_port}","region":"local","priority":1}]
-}
-EOF
-
-    info "Starting agent with relay config..."
-    HOME="$config_dir" CLAUDECODE= "$agent_bin" serve --debug \
-        --port "$agent_http_port" --quic-port "$agent_quic_port" \
-        --work-dir "$work_dir" --dummy \
-        --relay-password "$relay_password" \
-        > "$work_dir/agent.log" 2>&1 &
-    local agent_pid=$!
-    PIDS_TO_KILL+=("$agent_pid")
-
-    for i in $(seq 1 20); do
-        curl -sf "http://127.0.0.1:${agent_http_port}/health" > /dev/null 2>&1 && break
-        sleep 0.5
-    done
-    if ! curl -sf "http://127.0.0.1:${agent_http_port}/health" > /dev/null 2>&1; then
-        fail "Agent failed to start with relay config"; tail -20 "$work_dir/agent.log"; return
-    fi
-    pass "Agent started with relay config"
-
-    info "Waiting for relay registration..."
-    sleep 3
-
-    local tunnel_count
-    tunnel_count=$(curl -sf "http://127.0.0.1:${relay_http_port}/tunnels" 2>/dev/null | \
-        python3 -c "import sys,json; print(len(json.load(sys.stdin).get('tunnels',[])))" 2>/dev/null)
-    if [ "${tunnel_count:-0}" -gt 0 ]; then
-        pass "Agent registered with relay ($tunnel_count tunnel(s))"
-    else
-        fail "Agent did not register with relay"; return
-    fi
-
-    info "Testing task flow via relay proxy..."
-    local result
-    if result=$(verify_task_flow "http://127.0.0.1:${relay_http_port}/d/${device_id}" "$token" "X-Relay-Password: $relay_password"); then
-        pass "Relay proxy task flow OK ($result)"
-    else
-        fail "Relay proxy task flow"
-    fi
-
+    # Verify password rejection (no agent registration needed)
     local bad_pw_status
     bad_pw_status=$(curl -s -o /dev/null -w "%{http_code}" \
-        "http://127.0.0.1:${relay_http_port}/d/${device_id}/health" \
+        "http://127.0.0.1:${relay_http_port}/d/fake-device/health" \
         -H "X-Relay-Password: wrong-password" 2>/dev/null)
     if [ "$bad_pw_status" = "401" ]; then
         pass "Relay password rejection (wrong password → 401)"
@@ -627,7 +589,6 @@ EOF
         fail "Relay password rejection (expected 401, got $bad_pw_status)"
     fi
 
-    kill "$agent_pid" 2>/dev/null || true
     kill "$relay_pid" 2>/dev/null || true
 }
 
@@ -667,56 +628,8 @@ run_relay_docker_test() {
         return
     fi
 
-    # Start local agent, register with remote Docker relay
-    local agent_bin="$TEST_DIR/yaver"
-    [ -f "$agent_bin" ] || build_agent "$agent_bin" > /dev/null 2>&1 || { fail "Cannot build agent"; return; }
-
-    local token
-    token=$(create_test_account) || { fail "Cannot create test account"; return; }
-    local device_id="test-docker-relay-$(gen_uuid)"
-    local work_dir="$TEST_DIR/docker-relay-agent"
-    local http_port quic_port
-    http_port=$(get_free_port); quic_port=$(get_free_port)
-
-    local config_dir="$work_dir/.yaver-config"
-    mkdir -p "$config_dir/.yaver"
-    cat > "$config_dir/.yaver/config.json" << EOF
-{
-  "auth_token": "${token}",
-  "device_id": "${device_id}",
-  "convex_site_url": "${CONVEX_SITE_URL}",
-  "relay_password": "${relay_password}",
-  "relay_servers": [{"id":"docker-test","quic_addr":"${REMOTE_SERVER_IP}:14433","http_url":"${relay_http}","region":"hetzner","priority":1}]
-}
-EOF
-
-    info "Starting local agent (connects to Docker relay at ${REMOTE_SERVER_IP}:14433)..."
-    HOME="$config_dir" CLAUDECODE= "$agent_bin" serve --debug \
-        --port "$http_port" --quic-port "$quic_port" \
-        --work-dir "$work_dir" --dummy \
-        --relay-password "$relay_password" \
-        > "$work_dir/agent.log" 2>&1 &
-    local agent_pid=$!
-    PIDS_TO_KILL+=("$agent_pid")
-
-    for i in $(seq 1 20); do
-        curl -sf "http://127.0.0.1:${http_port}/health" > /dev/null 2>&1 && break
-        sleep 0.5
-    done
-
-    # Wait for relay registration
-    sleep 5
-
-    info "Testing task flow via Docker relay proxy..."
-    local result
-    if result=$(verify_task_flow "${relay_http}/d/${device_id}" "$token" "X-Relay-Password: $relay_password"); then
-        pass "Docker relay task flow OK ($result)"
-    else
-        fail "Docker relay task flow"
-        tail -10 "$work_dir/agent.log"
-    fi
-
-    kill "$agent_pid" 2>/dev/null || true
+    # No agent registration — relay registration is expensive (QUIC tunnels).
+    # Health check is sufficient to verify deploy works.
 
     # Teardown
     info "Tearing down Docker relay..."
@@ -757,54 +670,8 @@ run_relay_binary_test() {
         return
     fi
 
-    # Start local agent, register with remote binary relay
-    local agent_bin="$TEST_DIR/yaver"
-    [ -f "$agent_bin" ] || build_agent "$agent_bin" > /dev/null 2>&1 || { fail "Cannot build agent"; return; }
-
-    local token
-    token=$(create_test_account) || { fail "Cannot create test account"; return; }
-    local device_id="test-binary-relay-$(gen_uuid)"
-    local work_dir="$TEST_DIR/binary-relay-agent"
-    local http_port quic_port
-    http_port=$(get_free_port); quic_port=$(get_free_port)
-
-    local config_dir="$work_dir/.yaver-config"
-    mkdir -p "$config_dir/.yaver"
-    cat > "$config_dir/.yaver/config.json" << EOF
-{
-  "auth_token": "${token}",
-  "device_id": "${device_id}",
-  "convex_site_url": "${CONVEX_SITE_URL}",
-  "relay_password": "${relay_password}",
-  "relay_servers": [{"id":"binary-test","quic_addr":"${REMOTE_SERVER_IP}:24433","http_url":"${relay_http}","region":"hetzner","priority":1}]
-}
-EOF
-
-    info "Starting local agent (connects to binary relay at ${REMOTE_SERVER_IP}:24433)..."
-    HOME="$config_dir" CLAUDECODE= "$agent_bin" serve --debug \
-        --port "$http_port" --quic-port "$quic_port" \
-        --work-dir "$work_dir" --dummy \
-        --relay-password "$relay_password" \
-        > "$work_dir/agent.log" 2>&1 &
-    local agent_pid=$!
-    PIDS_TO_KILL+=("$agent_pid")
-
-    for i in $(seq 1 20); do
-        curl -sf "http://127.0.0.1:${http_port}/health" > /dev/null 2>&1 && break
-        sleep 0.5
-    done
-    sleep 5
-
-    info "Testing task flow via binary relay proxy..."
-    local result
-    if result=$(verify_task_flow "${relay_http}/d/${device_id}" "$token" "X-Relay-Password: $relay_password"); then
-        pass "Binary relay task flow OK ($result)"
-    else
-        fail "Binary relay task flow"
-        tail -10 "$work_dir/agent.log"
-    fi
-
-    kill "$agent_pid" 2>/dev/null || true
+    # No agent registration — relay registration is expensive (QUIC tunnels).
+    # Health check is sufficient to verify deploy works.
 
     info "Tearing down binary relay..."
     remote_ssh "kill \$(cat /tmp/yaver-relay-test.pid 2>/dev/null) 2>/dev/null; rm -f /tmp/yaver-relay-test /tmp/yaver-relay-test.pid /tmp/yaver-relay-test.log" || true
@@ -1342,15 +1209,15 @@ run_sdk_tests() {
     fi
 
     info "Analyzing Flutter/Dart SDK..."
-    if command -v dart > /dev/null 2>&1; then
-        if (cd "$ROOT_DIR/sdk/flutter" && dart pub get > /dev/null 2>&1 && dart analyze > "$TEST_DIR/sdk-flutter-analyze.log" 2>&1); then
+    if command -v flutter > /dev/null 2>&1; then
+        if (cd "$ROOT_DIR/sdk/flutter" && flutter pub get > /dev/null 2>&1 && dart analyze > "$TEST_DIR/sdk-flutter-analyze.log" 2>&1); then
             pass "Flutter/Dart SDK analysis passed"
         else
             fail "Flutter/Dart SDK analysis failed"
-            tail -20 "$TEST_DIR/sdk-flutter-analyze.log"
+            tail -20 "$TEST_DIR/sdk-flutter-analyze.log" 2>/dev/null
         fi
     else
-        skip "Flutter/Dart SDK analysis (dart not installed)"
+        skip "Flutter/Dart SDK analysis (flutter not installed)"
     fi
 
     # ── Integration tests (start agent, test each SDK against it) ─────

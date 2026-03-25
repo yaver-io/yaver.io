@@ -284,6 +284,9 @@ func ReportMetrics(baseURL, token, deviceID string, cpuPercent, memUsedMB, memTo
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return ErrAuthExpired
+	}
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("metrics failed (status %d): %s", resp.StatusCode, string(respBody))

@@ -54,6 +54,13 @@ const manuals = [
     tags: ["Notifications", "Webhooks", "MCP", "Session Transfer"],
   },
   {
+    title: "Local voice AI with PersonaPlex",
+    description:
+      "Run NVIDIA PersonaPlex 7B on Apple Silicon for real-time speech-to-speech \u2014 full-duplex, no cloud, no API keys. 4-bit quantized via MLX, fits in 5.3 GB.",
+    href: "/manuals/voice-ai",
+    tags: ["Voice", "PersonaPlex", "MLX", "Apple Silicon"],
+  },
+  {
     title: "Auto-boot on power restore",
     description:
       "Configure your macOS, Linux, or desktop PC to automatically boot when power is restored after an outage — so Yaver CLI starts without manual intervention.",

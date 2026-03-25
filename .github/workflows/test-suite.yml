@@ -171,7 +171,8 @@ jobs:
       - name: Start agent in background
         run: |
           cd desktop/agent
-          ./yaver auth --token fake-test-token 2>/dev/null || true
+          mkdir -p ~/.yaver
+          echo '{"auth_token":"ci-test-token","convex_site_url":"https://fake.convex.site","device_id":"ci-test-device"}' > ~/.yaver/config.json
           ./yaver serve --debug --dummy &
           sleep 3
           curl -s http://localhost:18080/health | grep -q ok
@@ -234,7 +235,7 @@ jobs:
 
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.22.0"
+          flutter-version: "3.27.0"
 
       - name: Run Flutter SDK tests
         run: |
@@ -275,7 +276,7 @@ jobs:
         run: |
           cd desktop/agent
           mkdir -p ~/.yaver
-          echo '{"auth_token":"ci-test-token"}' > ~/.yaver/config.json
+          echo '{"auth_token":"ci-test-token","convex_site_url":"https://fake.convex.site","device_id":"ci-test-device"}' > ~/.yaver/config.json
           ./yaver serve --debug --dummy &
           sleep 3
           curl -sf http://localhost:18080/health
@@ -333,7 +334,7 @@ jobs:
         run: |
           cd desktop/agent
           mkdir -p ~/.yaver
-          echo '{"auth_token":"ci-test-token"}' > ~/.yaver/config.json
+          echo '{"auth_token":"ci-test-token","convex_site_url":"https://fake.convex.site","device_id":"ci-test-device"}' > ~/.yaver/config.json
           ./yaver serve --debug --dummy &
           sleep 3
 
@@ -365,7 +366,7 @@ jobs:
         run: cd mobile && npm ci
 
       - name: Prebuild iOS
-        run: cd mobile && npx expo prebuild --platform ios --no-install
+        run: cd mobile && rm -rf ios && npx expo prebuild --platform ios --no-install
 
       - name: Install CocoaPods
         run: cd mobile/ios && pod install

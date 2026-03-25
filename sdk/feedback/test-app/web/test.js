@@ -33,7 +33,8 @@ global.AbortSignal = { timeout: () => ({}) };
 global.FormData = class { append() {} };
 global.Blob = class { constructor(p, o) { this.size = p?.[0]?.length || 0; } };
 global.MediaRecorder = class { start() {} stop() {} };
-global.process = { env: { NODE_ENV: 'development' } };
+const realExit = process.exit.bind(process);
+global.process = { ...process, env: { NODE_ENV: 'development' }, exit: realExit };
 
 async function main() {
   console.log('Web Feedback SDK Smoke Test\n');

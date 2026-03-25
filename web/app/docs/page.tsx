@@ -65,6 +65,10 @@ const manualLinks = [
     href: "/manuals/local-llm",
   },
   {
+    title: "Local voice AI with PersonaPlex",
+    href: "/manuals/voice-ai",
+  },
+  {
     title: "Auto-boot on power restore",
     href: "/manuals/auto-boot",
   },

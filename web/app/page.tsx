@@ -738,6 +738,7 @@ function DemoSection() {
               muted
               loop
               playsInline
+              controls
               src="/demo.mp4"
             />
           ) : (
@@ -994,7 +995,7 @@ export default function HomePage() {
               <span className="rounded-lg border border-surface-800 px-4 py-2.5 text-xs text-surface-600">Play Store &mdash; coming soon</span>
             </div>
             <p className="mt-4 text-xs text-surface-500">
-              Sign in with Apple, Google, or Microsoft. Your machine appears automatically.
+              Sign in with Apple, Google, or Microsoft. Run <code className="rounded bg-surface-800 px-1.5 py-0.5 font-mono text-surface-400">yaver auth</code> on your machine &mdash; it appears automatically.
             </p>
           </div>
         </div>

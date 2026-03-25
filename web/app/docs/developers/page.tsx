@@ -125,7 +125,9 @@ export default function DevelopersPage() {
               ["integration-test-suite", "Integration Test Suite"],
               ["session-transfer", "Session Transfer"],
               ["pr-rules", "Pull Request Rules"],
+              ["feedback-sdk", "Feedback SDK & Test Loop"],
               ["sdk", "SDK — Embed Yaver"],
+              ["demo-app", "Demo App (AcmeStore)"],
               ["contributing", "Contributing"],
             ].map(([id, label]) => (
               <a
@@ -1911,6 +1913,85 @@ CLI Agent ◄──QUIC──────────────── Relay (:
 
         {/* ─── SDK ─── */}
         <section className="mb-20">
+          <SectionHeading id="feedback-sdk">Feedback SDK &amp; Test Loop</SectionHeading>
+          <Prose>
+            The Feedback SDK turns your mobile app into a live testing tool that talks
+            directly to the AI agent on your dev machine. Drop it into your React Native,
+            Flutter, or web app and get a floating debug button that only you (the developer)
+            can see. From it you can report bugs with auto-screenshots, send voice notes,
+            trigger hot reload, and build/deploy to TestFlight or Play Store &mdash; all
+            without leaving the app.
+          </Prose>
+
+          <SubHeading>The Loop</SubHeading>
+          <Prose>
+            The Feedback SDK creates a closed loop between your app and the AI agent:
+            you use the app, hit a bug, tap the floating button to report it (with screenshot,
+            voice, and error context attached), and the agent receives everything it needs to
+            write a fix. Once the agent pushes the fix, you tap Hot Reload in the SDK
+            to pull the latest code, verify the fix, and continue testing. No context switching,
+            no copy-pasting stack traces, no typing bug reports.
+          </Prose>
+
+          <div className="mb-8">
+            <Terminal title="feedback-loop">
+              <div className="text-surface-300">{"1. Use your app → find a bug"}</div>
+              <div className="text-surface-300">{"2. Tap floating button → report with screenshot + voice"}</div>
+              <div className="text-surface-300">{"3. Agent receives: screenshot, error logs, BlackBox flight recorder, your description"}</div>
+              <div className="text-surface-300">{"4. Agent writes a fix → pushes code"}</div>
+              <div className="text-surface-300">{"5. Tap Hot Reload in SDK → app reloads with the fix"}</div>
+              <div className="text-surface-300">{"6. Verify → continue testing → repeat"}</div>
+            </Terminal>
+          </div>
+
+          <SubHeading>BlackBox (Flight Recorder)</SubHeading>
+          <Prose>
+            The SDK continuously streams all app events to the agent like a flight recorder:
+            console logs, errors, navigation events, lifecycle changes, network requests,
+            state changes, and render timings. The agent keeps the last 1000 events per device
+            in a ring buffer. When a bug is reported, the agent has full context &mdash;
+            not just the error, but everything that led up to it.
+          </Prose>
+
+          <SubHeading>Error Capture (No Conflicts)</SubHeading>
+          <Prose>
+            The SDK never hijacks global error handlers. It plays nicely with Sentry,
+            Crashlytics, Bugsnag, or any other tool you already use.
+            Use <InlineCode>wrapErrorHandler(existing)</InlineCode> for the handler chain
+            or <InlineCode>attachError(err, metadata)</InlineCode> for manual capture
+            in catch blocks. Fatal crashes auto-create fix tasks for the agent.
+          </Prose>
+
+          <SubHeading>Installation</SubHeading>
+          <div className="space-y-4 mb-8">
+            <div className="card">
+              <h4 className="mb-3 text-sm font-medium text-surface-200">React Native</h4>
+              <Terminal title="install">
+                <Cmd>npm install @yaver/feedback-react-native</Cmd>
+              </Terminal>
+            </div>
+            <div className="card">
+              <h4 className="mb-3 text-sm font-medium text-surface-200">Flutter</h4>
+              <Terminal title="install">
+                <Cmd>flutter pub add yaver_feedback</Cmd>
+              </Terminal>
+            </div>
+          </div>
+
+          <Prose>
+            See the full{" "}
+            <Link
+              href="/docs/feedback-sdk"
+              className="text-surface-200 underline underline-offset-2 hover:text-surface-50"
+            >
+              Feedback SDK docs
+            </Link>{" "}
+            for quick start, API reference, agent integration, and configuration options.
+          </Prose>
+        </section>
+
+        {/* ─── SDK — Embed Yaver ─── */}
+        <section className="mb-20">
           <SectionHeading id="sdk">SDK — Embed Yaver in Your App</SectionHeading>
           <Prose>
             Yaver provides embeddable SDKs so you can integrate P2P AI agent
@@ -2013,6 +2094,83 @@ YaverFreeClient(client);`}</pre>
               </Terminal>
             </div>
           </div>
+        </section>
+
+        {/* ─── Demo App (AcmeStore) ─── */}
+        <section className="mb-20">
+          <SectionHeading id="demo-app">Demo App (AcmeStore)</SectionHeading>
+          <Prose>
+            The <InlineCode>demo/AcmeStore</InlineCode> directory contains a
+            minimal React Native e-commerce app. It exists for one reason: to
+            showcase the Feedback SDK integration in a real, runnable app that
+            anyone can clone and try immediately.
+          </Prose>
+
+          <SubHeading>Why a demo app?</SubHeading>
+          <Prose>
+            The Feedback SDK is designed to be dropped into any React Native
+            app during development. But reading docs about it is not the same
+            as seeing it work. AcmeStore is a deliberately simple app (login,
+            product list, cart) so the SDK integration stands out clearly
+            without the noise of a real production codebase.
+          </Prose>
+
+          <SubHeading>What it demonstrates</SubHeading>
+          <div className="mb-6 space-y-2 text-sm text-surface-400">
+            <div className="flex items-start gap-2">
+              <span className="mt-0.5 text-surface-500">1.</span>
+              <span><strong className="text-surface-200">Floating debug button</strong> &mdash; the SDK adds a draggable button to the app. Tap it to open the debug panel, send messages to the AI agent, trigger hot reload, or report bugs with auto-screenshots.</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="mt-0.5 text-surface-500">2.</span>
+              <span><strong className="text-surface-200">Black box streaming</strong> &mdash; all logs, navigation events, errors, and crashes are streamed to the agent like a flight recorder. When a bug is reported, the agent already has full context.</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="mt-0.5 text-surface-500">3.</span>
+              <span><strong className="text-surface-200">Minimal integration code</strong> &mdash; the entire SDK setup is in <InlineCode>_layout.tsx</InlineCode>: init the SDK, start the black box, render the floating button. Three lines.</span>
+            </div>
+          </div>
+
+          <SubHeading>Project structure</SubHeading>
+          <div className="mb-6">
+            <Terminal title="demo/AcmeStore">
+              <pre className="text-surface-300">
+                {`demo/AcmeStore/
+├── app/
+│   ├── _layout.tsx        # SDK init + FloatingButton
+│   ├── index.tsx           # Home / product list
+│   └── login.tsx           # Login screen
+├── src/
+│   ├── components/         # ProductCard, LoginForm
+│   ├── context/            # AuthContext, CartContext
+│   └── yaver-sdk/          # Vendored SDK source
+│       ├── YaverFeedback.ts
+│       ├── FloatingButton.tsx
+│       ├── BlackBox.ts
+│       ├── P2PClient.ts
+│       └── Discovery.ts
+└── app.json`}
+              </pre>
+            </Terminal>
+          </div>
+
+          <SubHeading>Running it</SubHeading>
+          <div className="mb-6">
+            <Terminal title="terminal">
+              <Cmd>cd demo/AcmeStore</Cmd>
+              <Cmd>npm install</Cmd>
+              <Cmd>npx expo start</Cmd>
+              <Comment># Scan QR with Expo Go, or run on simulator:</Comment>
+              <Cmd>npx expo run:ios</Cmd>
+            </Terminal>
+          </div>
+
+          <Prose>
+            The SDK connects to your local Yaver agent automatically via LAN
+            beacon discovery. Start <InlineCode>yaver serve</InlineCode> on
+            your machine, open AcmeStore on your phone, and the debug button
+            turns green when connected.
+          </Prose>
         </section>
 
         {/* ─── Contributing ─── */}

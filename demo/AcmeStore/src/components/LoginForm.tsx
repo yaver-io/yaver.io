@@ -12,46 +12,19 @@ interface LoginFormProps {
   onLogin: (email: string, password: string) => Promise<void>;
 }
 
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
 export function LoginForm({ onLogin }: LoginFormProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [emailError, setEmailError] = useState<string | null>(null);
-  const [passwordError, setPasswordError] = useState<string | null>(null);
-
-  const validate = (): boolean => {
-    let valid = true;
-
-    if (!email.trim()) {
-      setEmailError('Email is required');
-      valid = false;
-    } else if (!EMAIL_REGEX.test(email.trim())) {
-      setEmailError('Enter a valid email address');
-      valid = false;
-    } else {
-      setEmailError(null);
-    }
-
-    if (!password) {
-      setPasswordError('Password is required');
-      valid = false;
-    } else {
-      setPasswordError(null);
-    }
-
-    return valid;
-  };
 
   const handleSubmit = async () => {
     setError(null);
-    if (!validate()) return;
-
     setLoading(true);
+
+    // TODO: add input validation — email format, empty fields
     try {
-      await onLogin(email.trim(), password);
+      await onLogin(email, password);
     } catch (err: any) {
       setError(err.message || 'Login failed');
     } finally {
@@ -72,27 +45,25 @@ export function LoginForm({ onLogin }: LoginFormProps) {
 
       <Text style={styles.label}>Email</Text>
       <TextInput
-        style={[styles.input, emailError ? styles.inputError : null]}
+        style={styles.input}
         value={email}
-        onChangeText={(v) => { setEmail(v); setEmailError(null); }}
+        onChangeText={setEmail}
         placeholder="you@example.com"
         placeholderTextColor="#bbb"
         keyboardType="email-address"
         autoCapitalize="none"
         autoCorrect={false}
       />
-      {emailError && <Text style={styles.fieldError}>{emailError}</Text>}
 
       <Text style={styles.label}>Password</Text>
       <TextInput
-        style={[styles.input, passwordError ? styles.inputError : null]}
+        style={styles.input}
         value={password}
-        onChangeText={(v) => { setPassword(v); setPasswordError(null); }}
+        onChangeText={setPassword}
         placeholder="Enter your password"
         placeholderTextColor="#bbb"
         secureTextEntry
       />
-      {passwordError && <Text style={styles.fieldError}>{passwordError}</Text>}
 
       <TouchableOpacity
         style={[styles.button, loading && styles.buttonDisabled]}
@@ -119,8 +90,6 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 15, color: '#999', marginBottom: 32 },
   label: { fontSize: 13, fontWeight: '600', color: '#666', marginBottom: 6, marginTop: 16 },
   input: { backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e5e5e5', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14, fontSize: 16, color: '#111' },
-  inputError: { borderColor: '#ef4444', backgroundColor: '#fff5f5' },
-  fieldError: { color: '#ef4444', fontSize: 12, marginTop: 4 },
   button: { backgroundColor: '#111', borderRadius: 12, paddingVertical: 16, alignItems: 'center', marginTop: 28 },
   buttonDisabled: { opacity: 0.6 },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
