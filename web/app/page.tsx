@@ -686,6 +686,37 @@ const DEMO_TABS = [
   },
 ];
 
+function DemoVideo({ src }: { src: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [paused, setPaused] = useState(false);
+  const toggle = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) { v.play(); setPaused(false); }
+    else { v.pause(); setPaused(true); }
+  };
+  return (
+    <div className="group relative cursor-pointer" onClick={toggle}>
+      <video
+        ref={videoRef}
+        className="w-full bg-[#050508]"
+        autoPlay
+        muted
+        loop
+        playsInline
+        src={src}
+      />
+      {paused && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white/20 backdrop-blur-sm">
+            <svg className="ml-1 h-6 w-6 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DemoSection() {
   const [activeDemo, setActiveDemo] = useState("remote");
   const demo = DEMO_TABS.find((d) => d.id === activeDemo)!;
@@ -732,15 +763,7 @@ function DemoSection() {
 
           {/* Video */}
           {demo.id === "remote" ? (
-            <video
-              className="w-full bg-[#050508]"
-              autoPlay
-              muted
-              loop
-              playsInline
-              controls
-              src="/demo.mp4"
-            />
+            <DemoVideo src="/demo.mp4" />
           ) : (
             <div className="flex aspect-video items-center justify-center bg-[#050508]">
               <div className="text-center">
@@ -972,9 +995,10 @@ export default function HomePage() {
                 <div className="terminal-dot bg-[#febc2e]" />
                 <div className="terminal-dot bg-[#28c840]" />
               </div>
-              <div className="terminal-body text-[13px]">
-                <span className="text-surface-400">$</span>{" "}
-                <span className="text-surface-200 select-all">brew install kivanccakmak/yaver/yaver</span>
+              <div className="terminal-body space-y-1.5 text-[13px]">
+                <div><span className="text-surface-400">$</span>{" "}<span className="text-surface-200 select-all">brew install kivanccakmak/yaver/yaver</span></div>
+                <div><span className="text-surface-400">$</span>{" "}<span className="text-surface-200">yaver auth</span></div>
+                <div><span className="text-surface-400">$</span>{" "}<span className="text-surface-200">yaver serve</span></div>
               </div>
             </div>
           </div>
@@ -995,7 +1019,7 @@ export default function HomePage() {
               <span className="rounded-lg border border-surface-800 px-4 py-2.5 text-xs text-surface-600">Play Store &mdash; coming soon</span>
             </div>
             <p className="mt-4 text-xs text-surface-500">
-              Sign in with Apple, Google, or Microsoft. Run <code className="rounded bg-surface-800 px-1.5 py-0.5 font-mono text-surface-400">yaver auth</code> on your machine &mdash; it appears automatically.
+              Sign in with Apple, Google, or Microsoft. Your machine appears automatically on your phone.
             </p>
           </div>
         </div>
@@ -1081,9 +1105,36 @@ export default function HomePage() {
             ))}
           </div>
 
-          <p className="mt-8 text-center text-xs text-surface-500">
-            Works on macOS and Linux via Homebrew. Mobile app available on the App Store and Google Play.
-          </p>
+          {/* All install methods */}
+          <div className="mt-12">
+            <p className="mb-4 text-center text-xs font-semibold uppercase tracking-wider text-surface-500">All installation methods</p>
+            <div className="overflow-hidden rounded-xl border border-surface-800">
+              <table className="w-full text-left text-sm">
+                <tbody className="divide-y divide-surface-800/60">
+                  {[
+                    { method: "Homebrew", cmd: "brew install kivanccakmak/yaver/yaver", os: "macOS / Linux" },
+                    { method: "AUR", cmd: "yay -S yaver", os: "Arch Linux" },
+                    { method: "apt", cmd: "sudo apt install yaver", os: "Debian / Ubuntu" },
+                    { method: "RPM", cmd: "sudo rpm -i yaver_latest_x86_64.rpm", os: "Fedora / RHEL" },
+                    { method: "Nix", cmd: "nix run github:kivanccakmak/yaver.io", os: "NixOS" },
+                    { method: "Docker", cmd: "docker run --rm kivanccakmak/yaver-cli version", os: "Any" },
+                    { method: "curl", cmd: "curl -fsSL https://yaver.io/install.sh | sh", os: "macOS / Linux" },
+                  ].map((row) => (
+                    <tr key={row.method}>
+                      <td className="whitespace-nowrap px-4 py-2.5 text-xs font-medium text-surface-200">{row.method}</td>
+                      <td className="px-4 py-2.5"><code className="text-[11px] text-surface-400 select-all">{row.cmd}</code></td>
+                      <td className="whitespace-nowrap px-4 py-2.5 text-[11px] text-surface-500">{row.os}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-3 text-center text-xs text-surface-500">
+              Or download binaries from{" "}
+              <a href="https://github.com/kivanccakmak/yaver.io/releases" target="_blank" rel="noopener noreferrer" className="text-surface-300 underline hover:text-surface-100">GitHub Releases</a>.
+              {" "}Mobile app on the App Store and Google Play.
+            </p>
+          </div>
         </div>
       </section>
 
@@ -1157,6 +1208,7 @@ export default function HomePage() {
               { icon: "\u25B6", color: "text-[#a78bfa] bg-[#a78bfa]/10", label: "Autonomous Test Loop", desc: "Agent reads codebase, navigates app on device/emulator, catches crashes, writes fixes, hot reloads, and repeats — no human in the loop" },
               { icon: "\u25CF", color: "text-[#22c55e] bg-[#22c55e]/10", label: "BlackBox", desc: "Streams logs, navigation, crashes like a flight recorder" },
               { icon: "\u2713", color: "text-[#34d399] bg-[#34d399]/10", label: "Fix Report", desc: "All fixes listed with diffs — staged, never committed — review and accept" },
+              { icon: "\uD83D\uDD12", color: "text-[#818cf8] bg-[#818cf8]/10", label: "6-layer security", desc: "Scoped tokens, IP binding, HTTPS on LAN, rotation, device alerts" },
               { icon: "\u2717", color: "text-surface-500 bg-surface-800", label: "Auto-disabled in production", desc: "Your users never see it" },
             ].map((f) => (
               <div key={f.label} className="flex items-start gap-3 rounded-xl border border-surface-800 bg-surface-900/50 p-4">
@@ -1543,6 +1595,70 @@ await for (final chunk in c.streamOutput(task.id)) {
         </div>
       </section>
 
+      {/* ── Section 12: ACL — Agent Communication Layer ── */}
+      <section className="border-t border-surface-800/60 px-6 py-24">
+        <div className="mx-auto max-w-4xl">
+          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
+            Connect agents to each other.
+          </h2>
+          <p className="mx-auto mb-12 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
+            ACL (Agent Communication Layer) connects Yaver to other MCP servers &mdash; chain tools across Ollama, databases, filesystems, and any MCP-compatible service.
+          </p>
+
+          <div className="terminal">
+            <div className="terminal-header">
+              <div className="terminal-dot bg-[#ff5f57]" />
+              <div className="terminal-dot bg-[#febc2e]" />
+              <div className="terminal-dot bg-[#28c840]" />
+              <span className="ml-3 text-xs text-surface-500">Agent Communication Layer</span>
+            </div>
+            <div className="terminal-body space-y-3 text-[13px]">
+              <div className="text-surface-500"># Connect to local Ollama</div>
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200 select-all">yaver acl add ollama http://localhost:11434/mcp</span>
+              </div>
+              <div className="h-px bg-surface-800/60" />
+              <div className="text-surface-500"># Connect to a filesystem MCP server (stdio)</div>
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200 select-all">{`yaver acl add files --stdio "npx -y @modelcontextprotocol/server-filesystem /home"`}</span>
+              </div>
+              <div className="h-px bg-surface-800/60" />
+              <div className="text-surface-500"># Connect to a remote database</div>
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200 select-all">yaver acl add mydb https://db.example.com/mcp --auth token123</span>
+              </div>
+              <div className="h-px bg-surface-800/60" />
+              <div className="text-surface-500"># List connected peers</div>
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200">yaver acl list</span>
+              </div>
+              <div className="pl-2 text-green-400/80">{`ollama   http://localhost:11434/mcp   ● connected   3 tools`}</div>
+              <div className="pl-2 text-green-400/80">{`files    stdio (npx server-fs)       ● connected   7 tools`}</div>
+              <div className="pl-2 text-green-400/80">{`mydb     https://db.example.com/mcp  ● connected   4 tools`}</div>
+            </div>
+          </div>
+
+          <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-4">
+              <p className="text-sm font-medium text-surface-200">Chain tools</p>
+              <p className="mt-1 text-xs text-surface-500">Claude reads your code via Yaver, queries your DB via ACL, and writes the migration &mdash; one prompt.</p>
+            </div>
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-4">
+              <p className="text-sm font-medium text-surface-200">Any MCP server</p>
+              <p className="mt-1 text-xs text-surface-500">HTTP or stdio transport. Ollama, Supabase, filesystem, Postgres, custom servers &mdash; all work.</p>
+            </div>
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-4">
+              <p className="text-sm font-medium text-surface-200">MCP-accessible</p>
+              <p className="mt-1 text-xs text-surface-500">ACL peers are exposed as MCP tools. Claude Desktop, Cursor, VS Code can call them through Yaver.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* ── Section 13: Voice ── */}
       <section className="border-t border-surface-800/60 px-6 py-24">
         <div className="mx-auto max-w-4xl">
@@ -1601,6 +1717,49 @@ await for (final chunk in c.streamOutput(task.id)) {
                 <p className="text-sm leading-relaxed text-surface-400">{item.desc}</p>
               </div>
             ))}
+          </div>
+
+          {/* Command Sandbox */}
+          <div className="mt-12">
+            <h3 className="mb-4 text-center text-lg font-semibold text-surface-100">
+              Command sandbox enabled by default
+            </h3>
+            <p className="mb-6 text-center text-sm text-surface-400">
+              AI agents can only run what you allow. The sandbox blocks dangerous operations out of the box.
+            </p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {[
+                { cat: "Filesystem destruction", ex: "rm -rf /, rm -rf ~" },
+                { cat: "Encryption / ransomware", ex: "Bulk encryption of home or root" },
+                { cat: "Privilege escalation", ex: "sudo, su, doas (unless allowed)" },
+                { cat: "Disk manipulation", ex: "mkfs, fdisk, dd to block devices" },
+                { cat: "Network exfiltration", ex: "curl|bash, piping sensitive files" },
+                { cat: "System compromise", ex: "Overwriting /etc/passwd, disabling services" },
+              ].map((b) => (
+                <div key={b.cat} className="rounded-lg border border-surface-800/60 bg-surface-900/50 px-4 py-3">
+                  <p className="text-xs font-medium text-red-400/80">{b.cat}</p>
+                  <p className="mt-1 text-[11px] text-surface-500">{b.ex}</p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-6 terminal">
+              <div className="terminal-header">
+                <div className="terminal-dot bg-[#ff5f57]" />
+                <div className="terminal-dot bg-[#febc2e]" />
+                <div className="terminal-dot bg-[#28c840]" />
+                <span className="ml-3 text-xs text-surface-500">~/.yaver/config.json</span>
+              </div>
+              <div className="terminal-body text-[12px]">
+                <pre className="text-surface-300">{`{
+  "sandbox": {
+    "enabled": true,
+    "allow_sudo": false,
+    "blocked_commands": ["terraform destroy"],
+    "allowed_paths": ["/home/user/projects"]
+  }
+}`}</pre>
+              </div>
+            </div>
           </div>
 
           <div className="mt-8 flex items-center justify-center gap-4">

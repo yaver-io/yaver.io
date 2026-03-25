@@ -125,6 +125,129 @@ func ValidateTokenUser(baseURL, token string) (string, error) {
 	return info.UserID, nil
 }
 
+// SdkTokenInfo contains validation results for an SDK token.
+type SdkTokenInfo struct {
+	UserID       string   `json:"userId"`
+	Scopes       []string `json:"scopes"`
+	AllowedCIDRs []string `json:"allowedCIDRs"`
+}
+
+// ValidateSdkTokenFull checks an SDK token against Convex and returns full info.
+func ValidateSdkTokenFull(baseURL, token string) (*SdkTokenInfo, error) {
+	req, err := newBearerRequest("GET", baseURL+"/sdk/token/validate", token, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create sdk token validate request: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("sdk token validate request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("sdk token validation failed (status %d)", resp.StatusCode)
+	}
+
+	var result struct {
+		User struct {
+			UserID       string   `json:"userId"`
+			Scopes       []string `json:"scopes"`
+			AllowedCIDRs []string `json:"allowedCIDRs"`
+		} `json:"user"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode sdk token validate response: %w", err)
+	}
+	return &SdkTokenInfo{
+		UserID:       result.User.UserID,
+		Scopes:       result.User.Scopes,
+		AllowedCIDRs: result.User.AllowedCIDRs,
+	}, nil
+}
+
+// ValidateSdkToken is a convenience wrapper returning just the userId.
+func ValidateSdkToken(baseURL, token string) (string, error) {
+	info, err := ValidateSdkTokenFull(baseURL, token)
+	if err != nil {
+		return "", err
+	}
+	return info.UserID, nil
+}
+
+// CreateSdkToken creates a new SDK token via the Convex backend.
+func CreateSdkToken(baseURL, sessionToken string, opts SdkTokenCreateOpts) (string, error) {
+	payload := map[string]interface{}{}
+	if opts.Label != "" {
+		payload["label"] = opts.Label
+	}
+	if len(opts.Scopes) > 0 {
+		payload["scopes"] = opts.Scopes
+	}
+	if len(opts.AllowedCIDRs) > 0 {
+		payload["allowedCIDRs"] = opts.AllowedCIDRs
+	}
+	if opts.ExpiresInMs > 0 {
+		payload["expiresInMs"] = opts.ExpiresInMs
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal sdk token request: %w", err)
+	}
+
+	req, err := newBearerRequest("POST", baseURL+"/sdk/token", sessionToken, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("create sdk token request: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("sdk token request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("create sdk token failed (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Token     string `json:"token"`
+		ExpiresAt int64  `json:"expiresAt"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode sdk token response: %w", err)
+	}
+	return result.Token, nil
+}
+
+// SdkTokenCreateOpts holds options for creating an SDK token.
+type SdkTokenCreateOpts struct {
+	Label        string
+	Scopes       []string
+	AllowedCIDRs []string
+	ExpiresInMs  int64
+}
+
+// ReportSecurityEvent sends a security event to Convex.
+func ReportSecurityEvent(baseURL, token, eventType string, details map[string]interface{}) {
+	d, _ := json.Marshal(details)
+	payload := map[string]string{
+		"eventType": eventType,
+		"details":   string(d),
+	}
+	body, _ := json.Marshal(payload)
+	req, err := newBearerRequest("POST", baseURL+"/security/event", token, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return
+	}
+	resp.Body.Close()
+}
+
 // RegisterDeviceRequest contains the fields sent when registering a device.
 type RegisterDeviceRequest struct {
 	Token     string `json:"-"`

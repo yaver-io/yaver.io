@@ -73,6 +73,27 @@ export interface FeedbackConfig {
    * When false, builds are created locally without uploading.
    */
   autoDeploy?: boolean;
+  /**
+   * Background color of the debug console panel.
+   * Default: "#2d2d2d" (dark gray). Set to any color to match your app's theme
+   * and avoid visual overlap.
+   *
+   * @example
+   * panelBackgroundColor: '#1a1a2e'  // dark blue-gray
+   * panelBackgroundColor: '#333333'  // neutral dark gray
+   */
+  panelBackgroundColor?: string;
+  /**
+   * TLS certificate fingerprint (SHA256) for HTTPS on LAN.
+   * When set, the SDK prefers HTTPS connections and verifies the agent's
+   * self-signed cert matches this fingerprint.
+   */
+  tlsFingerprint?: string;
+  /**
+   * Require TLS for all connections. When true, refuses HTTP connections.
+   * Default: false (HTTPS preferred when fingerprint available, HTTP fallback).
+   */
+  requireTLS?: boolean;
 }
 
 export interface FeedbackBundle {

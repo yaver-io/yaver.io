@@ -313,6 +313,31 @@ export default defineSchema({
   }).index("by_user", ["userId"])
     .index("by_team", ["teamId"]),
 
+  // SDK tokens — long-lived tokens for Feedback SDK (independent from CLI session tokens)
+  sdkTokens: defineTable({
+    tokenHash: v.string(),        // SHA-256 of the raw token
+    userId: v.id("users"),        // owner — must match CLI user
+    label: v.optional(v.string()), // human-readable label (e.g. "AcmeStore dev build")
+    scopes: v.optional(v.array(v.string())), // allowed scopes: "feedback","blackbox","voice","builds"
+    allowedCIDRs: v.optional(v.array(v.string())), // IP binding: "192.168.1.0/24"
+    replacedBy: v.optional(v.string()),  // tokenHash of replacement (rotation)
+    replacedAt: v.optional(v.number()),  // when replaced (5min grace period)
+    expiresAt: v.number(),        // 1 year from creation (or custom)
+    createdAt: v.number(),
+  })
+    .index("by_tokenHash", ["tokenHash"])
+    .index("by_userId", ["userId"]),
+
+  // Security events — new device IP alerts, token usage anomalies
+  securityEvents: defineTable({
+    userId: v.id("users"),
+    eventType: v.string(),        // "new_ip", "token_rotated", "token_revoked"
+    details: v.string(),          // JSON blob with event-specific data
+    read: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index("by_userId", ["userId", "createdAt"]),
+
   mobileStreamLogs: defineTable({
     userId: v.optional(v.string()),
     platform: v.string(),

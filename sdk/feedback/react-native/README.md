@@ -26,14 +26,18 @@ npm install react-native-audio-recorder-player
 ## Quick Start
 
 ```tsx
-import { YaverFeedback, FeedbackModal } from '@yaver/feedback-react-native';
+import { YaverFeedback, BlackBox, FeedbackModal } from '@yaver/feedback-react-native';
 
 // Initialize once at app startup
 YaverFeedback.init({
   agentUrl: 'http://192.168.1.10:18080',
-  authToken: 'your-token',
+  authToken: 'your-sdk-token',  // SDK token (recommended) or CLI token
   trigger: 'shake',
 });
+
+// Start Black Box flight recorder
+BlackBox.start();
+BlackBox.wrapConsole();  // opt-in: stream console.log/warn/error to the agent
 
 // Add FeedbackModal to your root component
 function App() {
@@ -48,9 +52,198 @@ function App() {
 
 Shake your phone to open the feedback modal. Take screenshots, record voice notes, and send everything to your Yaver agent in one tap.
 
+## Authentication
+
+The SDK uses **bearer token auth** for all requests to the agent. Two token types are supported:
+
+### SDK Tokens (recommended)
+
+SDK tokens are **long-lived (1 year)** and **independent from CLI session tokens**. CLI reauth (`yaver auth`) does NOT invalidate SDK tokens.
+
+```bash
+# Create an SDK token
+yaver sdk-token create --label "AcmeStore dev"
+# prints: 4a8f...b3c2
+```
+
+Use in your SDK config:
+```tsx
+YaverFeedback.init({
+  authToken: '4a8f...b3c2',  // SDK token
+  agentUrl: 'http://192.168.1.10:18080',
+});
+```
+
+Or via env var for build-time injection:
+```bash
+# .env.yaver (gitignored)
+YAVER_SDK_TOKEN=4a8f...b3c2
+YAVER_AGENT_URL=http://192.168.1.10:18080
+```
+
+### CLI Token (fallback)
+
+The SDK can share the CLI session token directly. This works because each `yaver auth` creates a **new session** without invalidating old ones. The old token stays valid until it expires (1 year) or is explicitly revoked via "logout everywhere".
+
+```bash
+# .env.yaver (fallback)
+YAVER_AUTH_TOKEN=abc123...
+```
+
+### Token Validation Flow
+
+```
+SDK request → Agent HTTP server
+  1. Exact match with agent's own token → Allow (fast path)
+  2. Token in cache → userId match → Allow/Deny
+  3. Try Convex /auth/validate (session token)
+  4. Try Convex /sdk/token/validate (SDK token)
+  → Cache result → userId match → Allow/Deny
+```
+
+Both token types resolve to the same `userId`. The agent checks `userId` equality, not token equality.
+
+### Token Lifecycle
+
+| Event | CLI Token | SDK Token |
+|-------|-----------|-----------|
+| `yaver auth` (reauth) | New token created, old stays valid | Unaffected |
+| `yaver signout` | Current session deleted | Unaffected |
+| `yaver signout --all` | ALL sessions deleted | Unaffected |
+| SDK token revoke | Unaffected | Revoked |
+| Token expiry | 1 year from last refresh | 1 year from creation |
+
+### Security
+
+The SDK implements defense-in-depth with 6 security layers:
+
+**1. Scope Restriction** — SDK tokens can only access feedback/blackbox/voice/builds endpoints. They CANNOT execute tasks, run commands, access the vault, or shut down the agent.
+
+```bash
+# Default scopes (safe for embedding in app builds)
+yaver sdk-token create --label "AcmeStore"
+# → scopes: feedback, blackbox, voice, builds
+
+# Narrow scopes (feedback only)
+yaver sdk-token create --scopes feedback,blackbox
+```
+
+**2. IP Binding** — Restrict tokens to specific networks:
+```bash
+yaver sdk-token create --allowed-ips 192.168.1.0/24
+```
+
+**3. Agent-side IP Allowlist** — Block all requests from outside your network:
+```bash
+yaver serve --allow-ips 192.168.1.0/24,10.0.0.0/8
+```
+
+**4. Token Rotation** — Rotate tokens without downtime (5-minute grace period):
+```typescript
+const { token } = await client.rotateToken();
+// Old token valid for 5 more minutes
+```
+
+```bash
+# Short-lived tokens for CI/CD
+yaver sdk-token create --expires 24h
+```
+
+**5. New Device Alerts** — When an SDK token is used from a new IP, a security event is logged to Convex. Query via `GET /security/events`.
+
+**6. HTTPS on LAN** — Agent auto-generates a self-signed TLS cert and serves HTTPS on port 18443. The cert fingerprint is exposed via `/health` and the LAN beacon for cert pinning.
+
+**General rules:**
+- **Never commit tokens to source control** — use `.env.yaver` (gitignored) or env vars
+- SDK tokens can be revoked independently: `POST /sdk/token/revoke`
+- Even if an SDK token is stolen, it cannot run code on your machine (scope restriction)
+- The Convex backend validates tokens against your account only
+
+## Black Box (Flight Recorder)
+
+Continuous streaming of app events to the agent. The agent keeps a ring buffer (last 1000 events per device) and injects context into fix prompts — so the AI agent already knows what the app was doing when you ask for a fix.
+
+```tsx
+import { BlackBox } from '@yaver/feedback-react-native';
+
+// Start streaming (call after YaverFeedback.init)
+BlackBox.start({
+  flushInterval: 2000,   // send buffered events every 2s (default)
+  maxBufferSize: 50,     // flush immediately at 50 events (default)
+  appName: 'AcmeStore',
+});
+
+// Logging
+BlackBox.log('Cart updated', 'CartScreen');
+BlackBox.warn('Low inventory', 'ProductCard');
+BlackBox.error('Payment failed', 'Checkout', { orderId: '123' });
+
+// Navigation tracking
+BlackBox.navigation('ProductDetail', 'Home');
+
+// Network monitoring
+BlackBox.networkRequest('GET', '/api/products', 200, 142);
+BlackBox.networkRequest('POST', '/api/order', 500, 3200);
+
+// State changes (Redux actions, context updates, etc.)
+BlackBox.stateChange('Cart cleared', { itemCount: 0 });
+
+// Render performance
+BlackBox.render('ProductList', 16.5);
+
+// Error capture (also feeds into YaverFeedback error buffer)
+BlackBox.captureError(new Error('Null ref'), false, { component: 'CartIcon' });
+
+// Console wrapping (opt-in — SDK never auto-hooks)
+BlackBox.wrapConsole();     // intercept console.log/warn/error
+BlackBox.unwrapConsole();   // restore originals
+
+// Error handler wrapper (pass-through, streams in real-time)
+const existing = ErrorUtils.getGlobalHandler();
+ErrorUtils.setGlobalHandler(BlackBox.wrapErrorHandler(existing));
+
+// Control
+BlackBox.stop();            // flush remaining events + stop timer
+BlackBox.isStreaming;       // check if active
+```
+
+### Event Types
+
+| Type | Description | Example |
+|------|-------------|---------|
+| `log` | Console output (info/warn/error) | `BlackBox.log('User signed in')` |
+| `error` | Caught exceptions with stack traces | `BlackBox.captureError(err)` |
+| `navigation` | Screen transitions | `BlackBox.navigation('Cart', 'Home')` |
+| `lifecycle` | App state (mount, background, foreground) | `BlackBox.lifecycle('app_background')` |
+| `network` | HTTP requests/responses | `BlackBox.networkRequest('POST', '/api/pay', 500)` |
+| `state` | State mutations | `BlackBox.stateChange('theme toggled')` |
+| `render` | Component render with duration | `BlackBox.render('FlatList', 32.1)` |
+
+### Resilience
+
+- Failed flushes re-add events to the buffer (capped at 2x maxBufferSize)
+- `YaverFeedback.setEnabled(false)` pauses BlackBox; `setEnabled(true)` resumes it
+- BlackBox shares auth config with YaverFeedback (no separate init needed)
+
 ## Device Discovery
 
-The SDK can auto-discover Yaver agents on your local network. It scans common LAN subnets (192.168.1.x, 192.168.0.x, 10.0.0.x, 10.0.1.x) by probing the `/health` endpoint with a 2s timeout.
+Three strategies (tried in order):
+
+1. **Convex cloud** — fetch agent IP from Convex device registry (for cloud machines or cross-network)
+2. **Stored connection** — try cached URL from last successful connection (AsyncStorage)
+3. **LAN scan** — probe common LAN subnets (`192.168.1.*`, `192.168.0.*`, `10.0.0.*`, `10.0.1.*`)
+
+### Convex discovery (recommended for teams)
+
+No hardcoded IP needed — the SDK fetches the agent's IP from Convex:
+
+```typescript
+YaverFeedback.init({
+  convexUrl: 'https://your-app.convex.site',
+  authToken: 'your-token',
+  preferredDeviceId: 'abc123',  // optional — first online device if omitted
+});
+```
 
 ### Auto-discovery (no agentUrl needed)
 
@@ -67,11 +260,11 @@ YaverFeedback.init({
 ```typescript
 import { YaverDiscovery } from '@yaver/feedback-react-native';
 
-// Scan the network
-const result = await YaverDiscovery.discover();
-if (result) {
-  console.log(`Found ${result.hostname} at ${result.url} (${result.latency}ms)`);
-}
+// Full discovery (Convex → stored → LAN scan)
+const result = await YaverDiscovery.discover({
+  convexUrl: 'https://your-app.convex.site',
+  authToken: 'your-token',
+});
 
 // Probe a specific URL
 const agent = await YaverDiscovery.probe('http://192.168.1.42:18080');
@@ -308,18 +501,28 @@ const isUp = await client.health();
 
 // Get agent info
 const info = await client.info();
+// { hostname: 'MacBook-Air', version: '1.45.0', platform: 'darwin' }
 
 // Upload feedback bundle
 const reportId = await client.uploadFeedback(bundle);
 
-// List builds
+// Builds
 const builds = await client.listBuilds();
-
-// Start a build
 const build = await client.startBuild('ios');
-
-// Get artifact URL
 const url = client.getArtifactUrl(build.id);
+
+// Voice
+const voiceCap = await client.voiceStatus();
+const { text, provider } = await client.transcribeVoice('/path/to/audio.wav');
+
+// Autonomous test sessions
+const { sessionId } = await client.startTestSession();
+const session = await client.getTestSession();
+await client.stopTestSession();
+
+// Update connection dynamically (e.g. after re-discovery)
+client.setBaseUrl('http://10.0.0.2:18080');
+client.setAuthToken('new-token');
 ```
 
 ## How It Works
@@ -386,6 +589,26 @@ YaverFeedback.setEnabled(false);
 | `store(result)` | Cache a discovery result |
 | `clear()` | Clear stored connection |
 
+### BlackBox
+
+| Method | Description |
+|--------|-------------|
+| `start(config?)` | Start streaming events to the agent |
+| `stop()` | Flush remaining events and stop |
+| `isStreaming` | Whether streaming is active (getter) |
+| `log(msg, source?, meta?)` | Log an info message |
+| `warn(msg, source?, meta?)` | Log a warning |
+| `error(msg, source?, meta?)` | Log an error |
+| `captureError(err, isFatal?, meta?)` | Capture error with stack trace |
+| `navigation(route, prevRoute?, meta?)` | Record screen navigation |
+| `lifecycle(event, meta?)` | Record app lifecycle event |
+| `networkRequest(method, url, status?, duration?, meta?)` | Record HTTP request |
+| `stateChange(description, meta?)` | Record state mutation |
+| `render(component, duration?, meta?)` | Record render event |
+| `wrapConsole()` | Intercept console.log/warn/error |
+| `unwrapConsole()` | Restore original console methods |
+| `wrapErrorHandler(next?)` | Pass-through error handler with real-time streaming |
+
 ### P2PClient
 
 | Method | Description |
@@ -397,6 +620,13 @@ YaverFeedback.setEnabled(false);
 | `listBuilds()` | List available builds |
 | `startBuild(platform)` | Start a build for the given platform |
 | `getArtifactUrl(buildId)` | Get download URL for a build artifact |
+| `voiceStatus()` | Get voice capability info |
+| `transcribeVoice(audioUri)` | Send audio for transcription |
+| `startTestSession()` | Start autonomous test session |
+| `stopTestSession()` | Stop test session |
+| `getTestSession()` | Get test session status + fixes |
+| `setBaseUrl(url)` | Update connection URL |
+| `setAuthToken(token)` | Update auth token |
 
 ### Components
 
@@ -414,6 +644,46 @@ YaverFeedback.setEnabled(false);
 | `startAudioRecording()` | Start recording a voice note |
 | `stopAudioRecording()` | Stop recording, returns `{ path, duration }` |
 | `uploadFeedback(url, token, bundle)` | Upload a feedback bundle to the agent |
+
+## Agent Endpoints
+
+The SDK communicates with these agent HTTP endpoints:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check (no auth) |
+| `/feedback` | POST | Upload feedback bundle (multipart) |
+| `/feedback/stream` | POST | Stream live feedback events |
+| `/blackbox/events` | POST | Batch stream Black Box events |
+| `/blackbox/subscribe` | GET | SSE live log stream |
+| `/blackbox/context` | GET | Get generated prompt context |
+| `/builds` | GET/POST | List or start builds |
+| `/voice/status` | GET | Voice capability info |
+| `/voice/transcribe` | POST | Send audio for transcription |
+| `/test-app/start` | POST | Start autonomous test session |
+| `/test-app/stop` | POST | Stop test session |
+| `/test-app/status` | GET | Test session status + fixes |
+
+## Architecture
+
+```
+┌──────────────────┐     HTTP (Bearer auth)     ┌──────────────────┐
+│  Your App        │────────────────────────────►│  Yaver Agent     │
+│  + Feedback SDK  │  feedback, blackbox events  │  (Go CLI)        │
+│  + BlackBox      │  screenshots, voice, video  │  on your machine │
+│                  │◄────────────────────────────│                  │
+│                  │  fixes, build status, voice │  runs AI agent   │
+└──────────────────┘                             └──────────────────┘
+       │                                                │
+       │  Auth only                                     │  Auth only
+       ▼                                                ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Convex Backend                               │
+│  Token validation + device registry (no task data stored)           │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+All feedback data flows P2P between your app and the agent. Convex handles only auth and device discovery.
 
 ## License
 

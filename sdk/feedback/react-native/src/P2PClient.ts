@@ -257,6 +257,31 @@ export class P2PClient {
     return response.json();
   }
 
+  /**
+   * Rotate the SDK token. The old token stays valid for 5 minutes (grace period).
+   * After rotation, the client automatically uses the new token.
+   * @returns The new token and its expiry time.
+   */
+  async rotateToken(): Promise<{ token: string; expiresAt: number }> {
+    const response = await fetch(`${this.baseUrl}/sdk/token/rotate`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`[P2PClient] Token rotation failed (${response.status}): ${text}`);
+    }
+
+    const result = await response.json();
+    // Auto-update to new token
+    this.authToken = result.token;
+    return { token: result.token, expiresAt: result.expiresAt };
+  }
+
   /** Internal helper for authenticated GET/POST requests. */
   private async request(method: string, path: string): Promise<Response> {
     const response = await fetch(`${this.baseUrl}${path}`, {

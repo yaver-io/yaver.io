@@ -31,6 +31,9 @@ type Config struct {
 	WebhookSecret string              `json:"webhook_secret,omitempty"`
 	HAURL         string              `json:"ha_url,omitempty"`
 	HAToken       string              `json:"ha_token,omitempty"`
+	AllowedIPs    []string            `json:"allowed_ips,omitempty"`     // IP allowlist CIDRs
+	TLSFingerprint string            `json:"tls_fingerprint,omitempty"` // SHA256 of TLS cert
+	TLSPort       int                 `json:"tls_port,omitempty"`       // HTTPS port (default 18443)
 }
 
 // ExecConfig controls remote command execution settings.

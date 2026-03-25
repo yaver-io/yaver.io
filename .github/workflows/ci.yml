@@ -19,6 +19,7 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       installer: ${{ steps.filter.outputs.installer }}
       mcp: ${{ steps.filter.outputs.mcp }}
+      sdk: ${{ steps.filter.outputs.sdk }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -39,6 +40,8 @@ jobs:
               - 'backend/**'
             installer:
               - 'desktop/installer/**'
+            sdk:
+              - 'sdk/**'
 
   version-check:
     runs-on: ubuntu-latest
@@ -118,3 +121,15 @@ jobs:
           node-version: "20"
       - name: Typecheck backend
         run: cd backend && npm ci && npx convex typecheck
+
+  sdk-tests:
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Test Feedback SDK (React Native)
+        run: cd sdk/feedback/react-native && npm ci && npm test -- --passWithNoTests

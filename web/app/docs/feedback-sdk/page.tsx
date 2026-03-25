@@ -118,6 +118,7 @@ export default function FeedbackSdkPage() {
               ["error-capture", "Error Capture"],
               ["black-box", "Black Box Streaming"],
               ["hot-reload", "Hot Reload Button"],
+              ["security", "Security"],
               ["agent-integration", "Agent Integration"],
               ["api-reference", "API Reference"],
             ].map(([id, label]) => (
@@ -744,6 +745,172 @@ PaymentError: gateway timeout
                 <InlineCode>window.location.reload()</InlineCode>.
               </p>
             </div>
+          </div>
+        </section>
+
+        {/* ─── Security ─── */}
+        <section className="mb-20">
+          <SectionHeading id="security">Security</SectionHeading>
+          <Prose>
+            The SDK uses a dedicated token system with 6 defense-in-depth
+            layers. SDK tokens are independent from CLI session tokens &mdash;
+            CLI reauth does not invalidate them.
+          </Prose>
+
+          <SubHeading>SDK Tokens</SubHeading>
+          <Prose>
+            SDK tokens are long-lived, scoped tokens that can only access
+            feedback-related endpoints. Even if stolen, they cannot execute
+            tasks, run commands, access the vault, or shut down the agent.
+          </Prose>
+
+          <Terminal title="Create SDK token">
+            <Comment># Default: feedback, blackbox, voice, builds scopes</Comment>
+            <Cmd>yaver sdk-token create --label &quot;AcmeStore dev&quot;</Cmd>
+            <Output>4a8f9c...b3c2</Output>
+            <Divider />
+            <Comment># Narrow scopes + IP binding + short expiry</Comment>
+            <Cmd>yaver sdk-token create --scopes feedback,blackbox --allowed-ips 192.168.1.0/24 --expires 7d</Cmd>
+          </Terminal>
+
+          <SubHeading>6 Security Layers</SubHeading>
+          <div className="space-y-4">
+            <div className="card">
+              <h4 className="mb-2 text-sm font-medium text-surface-200">
+                1. Scope Restriction
+              </h4>
+              <p className="text-sm leading-relaxed text-surface-400">
+                SDK tokens are limited to{" "}
+                <InlineCode>feedback</InlineCode>,{" "}
+                <InlineCode>blackbox</InlineCode>,{" "}
+                <InlineCode>voice</InlineCode>, and{" "}
+                <InlineCode>builds</InlineCode> endpoints. They cannot access{" "}
+                <InlineCode>/tasks</InlineCode>,{" "}
+                <InlineCode>/exec</InlineCode>,{" "}
+                <InlineCode>/vault</InlineCode>, or{" "}
+                <InlineCode>/agent/shutdown</InlineCode>.
+              </p>
+            </div>
+
+            <div className="card">
+              <h4 className="mb-2 text-sm font-medium text-surface-200">
+                2. IP Binding
+              </h4>
+              <p className="text-sm leading-relaxed text-surface-400">
+                Restrict tokens to specific networks with{" "}
+                <InlineCode>--allowed-ips</InlineCode>. Requests from
+                non-matching IPs are rejected with 403.
+              </p>
+            </div>
+
+            <div className="card">
+              <h4 className="mb-2 text-sm font-medium text-surface-200">
+                3. Agent IP Allowlist
+              </h4>
+              <p className="text-sm leading-relaxed text-surface-400">
+                Block all requests from outside your network with{" "}
+                <InlineCode>yaver serve --allow-ips 192.168.1.0/24</InlineCode>.
+                Applied before authentication &mdash; blocked IPs never reach
+                the auth layer.
+              </p>
+            </div>
+
+            <div className="card">
+              <h4 className="mb-2 text-sm font-medium text-surface-200">
+                4. Token Rotation
+              </h4>
+              <p className="text-sm leading-relaxed text-surface-400">
+                Rotate SDK tokens without downtime via{" "}
+                <InlineCode>POST /sdk/token/rotate</InlineCode>. The old token
+                stays valid for a 5-minute grace period so in-flight requests
+                are not interrupted.
+              </p>
+            </div>
+
+            <div className="card">
+              <h4 className="mb-2 text-sm font-medium text-surface-200">
+                5. New Device Alerts
+              </h4>
+              <p className="text-sm leading-relaxed text-surface-400">
+                When an SDK token is used from a previously unseen IP, a security
+                event is logged. Query events via{" "}
+                <InlineCode>GET /security/events</InlineCode>.
+              </p>
+            </div>
+
+            <div className="card">
+              <h4 className="mb-2 text-sm font-medium text-surface-200">
+                6. HTTPS on LAN
+              </h4>
+              <p className="text-sm leading-relaxed text-surface-400">
+                The agent auto-generates a self-signed TLS certificate with all
+                local IP SANs and serves HTTPS on port 18443. The cert
+                fingerprint is exposed via <InlineCode>/health</InlineCode> and
+                the LAN beacon for cert pinning. Disable with{" "}
+                <InlineCode>--no-tls</InlineCode>.
+              </p>
+            </div>
+          </div>
+
+          <SubHeading>Auth Middleware Architecture</SubHeading>
+          <Prose>
+            The agent has two auth middleware layers. Full-access endpoints
+            (tasks, exec, vault, shutdown) use <InlineCode>auth()</InlineCode>{" "}
+            which rejects SDK tokens. SDK-accessible endpoints (feedback,
+            blackbox, voice, builds) use{" "}
+            <InlineCode>authSDK()</InlineCode> which accepts SDK tokens with
+            scope and IP checks.
+          </Prose>
+
+          <Terminal title="Auth flow">
+            <Comment># Full-access (auth middleware &mdash; rejects SDK tokens)</Comment>
+            <div className="text-surface-400 pl-2">/tasks, /exec, /vault, /agent/*, /session/*</div>
+            <Divider />
+            <Comment># SDK-accessible (authSDK middleware &mdash; scope-checked)</Comment>
+            <div className="text-surface-400 pl-2">/feedback, /blackbox/*, /voice/*, /builds</div>
+            <Divider />
+            <Comment># Public (no auth)</Comment>
+            <div className="text-surface-400 pl-2">/health, /mcp</div>
+          </Terminal>
+
+          <SubHeading>Token Lifecycle</SubHeading>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-surface-500">
+                  <th className="pb-2">Event</th>
+                  <th className="pb-2">CLI Token</th>
+                  <th className="pb-2">SDK Token</th>
+                </tr>
+              </thead>
+              <tbody className="text-surface-300">
+                <tr className="border-t border-surface-800">
+                  <td className="py-2"><InlineCode>yaver auth</InlineCode> (reauth)</td>
+                  <td className="py-2">New token, old stays valid</td>
+                  <td className="py-2">Unaffected</td>
+                </tr>
+                <tr className="border-t border-surface-800">
+                  <td className="py-2"><InlineCode>yaver signout</InlineCode></td>
+                  <td className="py-2">Current session deleted</td>
+                  <td className="py-2">Unaffected</td>
+                </tr>
+                <tr className="border-t border-surface-800">
+                  <td className="py-2">SDK token revoke</td>
+                  <td className="py-2">Unaffected</td>
+                  <td className="py-2">Revoked</td>
+                </tr>
+                <tr className="border-t border-surface-800">
+                  <td className="py-2">Token rotation</td>
+                  <td className="py-2">Unaffected</td>
+                  <td className="py-2">New token, old valid 5min</td>
+                </tr>
+                <tr className="border-t border-surface-800">
+                  <td className="py-2">Expiry</td>
+                  <td className="py-2">1 year (auto-refreshed)</td>
+                  <td className="py-2">Custom (default 1 year)</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </section>
 

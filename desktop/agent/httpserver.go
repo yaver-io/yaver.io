@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	osexec "os/exec"
@@ -37,10 +39,22 @@ type HTTPServer struct {
 	blackboxMgr  *BlackBoxManager
 	multiUserMgr *MultiUserManager // nil in single-user mode
 	server       *http.Server
+	tlsServer    *http.Server
 	onShutdown   func() // called when mobile requests agent shutdown
 
-	// Cache validated tokens (token -> userId) to avoid repeated Convex calls
+	// Cache validated tokens (token -> cachedTokenInfo) to avoid repeated Convex calls
 	tokenCache sync.Map
+
+	// IP allowlist — if non-empty, only these CIDRs can access the agent
+	allowedCIDRs []*net.IPNet
+
+	// Track seen IPs per token prefix for new-device notifications
+	seenIPs sync.Map // "tokenPrefix_IP" -> true
+
+	// TLS config for HTTPS on LAN
+	tlsPort int
+	tlsCert tls.Certificate
+	tlsFingerprint string
 }
 
 // NewHTTPServer creates a new HTTP server bound to the given port.
@@ -104,17 +118,17 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/tests", s.auth(s.handleTests))
 	mux.HandleFunc("/tests/", s.auth(s.handleTestByID))
 
-	// Feedback (visual bug reports from device testing)
-	mux.HandleFunc("/feedback", s.auth(s.handleFeedback))
-	mux.HandleFunc("/feedback/stream", s.auth(s.handleFeedbackStream))
-	mux.HandleFunc("/feedback/", s.auth(s.handleFeedbackByID))
+	// Feedback (visual bug reports from device testing) — SDK-accessible
+	mux.HandleFunc("/feedback", s.authSDK(s.handleFeedback))
+	mux.HandleFunc("/feedback/stream", s.authSDK(s.handleFeedbackStream))
+	mux.HandleFunc("/feedback/", s.authSDK(s.handleFeedbackByID))
 
-	// Black box (flight-recorder streaming from device SDKs)
-	mux.HandleFunc("/blackbox/stream", s.auth(s.handleBlackBoxStream))
-	mux.HandleFunc("/blackbox/events", s.auth(s.handleBlackBoxEvents))
-	mux.HandleFunc("/blackbox/logs", s.auth(s.handleBlackBoxLogs))
-	mux.HandleFunc("/blackbox/subscribe", s.auth(s.handleBlackBoxSubscribe))
-	mux.HandleFunc("/blackbox/context", s.auth(s.handleBlackBoxContext))
+	// Black box (flight-recorder streaming from device SDKs) — SDK-accessible
+	mux.HandleFunc("/blackbox/stream", s.authSDK(s.handleBlackBoxStream))
+	mux.HandleFunc("/blackbox/events", s.authSDK(s.handleBlackBoxEvents))
+	mux.HandleFunc("/blackbox/logs", s.authSDK(s.handleBlackBoxLogs))
+	mux.HandleFunc("/blackbox/subscribe", s.authSDK(s.handleBlackBoxSubscribe))
+	mux.HandleFunc("/blackbox/context", s.authSDK(s.handleBlackBoxContext))
 
 	// Multi-user management (shared machines)
 	mux.HandleFunc("/users", s.auth(s.handleMultiUserList))
@@ -122,20 +136,20 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/users/", s.auth(s.handleMultiUserRemove))
 	mux.HandleFunc("/sessions", s.auth(s.handleMultiUserSessions))
 
-	// Voice (real-time speech-to-speech & transcription)
-	mux.HandleFunc("/voice/status", s.auth(s.handleVoiceStatus))
-	mux.HandleFunc("/voice/transcribe", s.auth(s.handleVoiceTranscribe))
-	mux.HandleFunc("/voice/providers", s.auth(s.handleVoiceProviders))
-	mux.HandleFunc("/voice/config", s.auth(s.handleVoiceConfig))
+	// Voice (real-time speech-to-speech & transcription) — SDK-accessible
+	mux.HandleFunc("/voice/status", s.authSDK(s.handleVoiceStatus))
+	mux.HandleFunc("/voice/transcribe", s.authSDK(s.handleVoiceTranscribe))
+	mux.HandleFunc("/voice/providers", s.authSDK(s.handleVoiceProviders))
+	mux.HandleFunc("/voice/config", s.authSDK(s.handleVoiceConfig))
 
 	// Agent context (repo switching)
 	mux.HandleFunc("/agent/workdir", s.auth(s.handleAgentWorkdir))
 	mux.HandleFunc("/agent/context", s.auth(s.handleAgentContext))
 
-	// Builds (remote build & artifact transfer)
-	mux.HandleFunc("/builds", s.auth(s.handleBuilds))
-	mux.HandleFunc("/builds/register", s.auth(s.handleBuildRegister))
-	mux.HandleFunc("/builds/", s.auth(s.handleBuildByID))
+	// Builds (remote build & artifact transfer) — SDK-accessible
+	mux.HandleFunc("/builds", s.authSDK(s.handleBuilds))
+	mux.HandleFunc("/builds/register", s.authSDK(s.handleBuildRegister))
+	mux.HandleFunc("/builds/", s.authSDK(s.handleBuildByID))
 
 	// Vault (P2P encrypted key sync)
 	mux.HandleFunc("/vault/list", s.auth(s.handleVaultList))
@@ -146,9 +160,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// MCP (Model Context Protocol) endpoint — JSON-RPC 2.0 over HTTP
 	mux.HandleFunc("/mcp", s.handleMCP)
 
+	handler := s.ipAllowlist(withCORS(mux))
+
 	s.server = &http.Server{
 		Addr:    fmt.Sprintf("0.0.0.0:%d", s.port),
-		Handler: withCORS(mux),
+		Handler: handler,
 	}
 
 	go func() {
@@ -156,9 +172,42 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		s.server.Shutdown(shutdownCtx)
+		if s.tlsServer != nil {
+			s.tlsServer.Shutdown(shutdownCtx)
+		}
 	}()
 
+	// Start TLS server alongside HTTP if configured
+	if s.tlsPort > 0 && s.tlsFingerprint != "" {
+		tlsCfg := &tls.Config{
+			Certificates: []tls.Certificate{s.tlsCert},
+			MinVersion:   tls.VersionTLS12,
+		}
+		s.tlsServer = &http.Server{
+			Addr:      fmt.Sprintf("0.0.0.0:%d", s.tlsPort),
+			Handler:   handler,
+			TLSConfig: tlsCfg,
+		}
+		go func() {
+			fpPreview := s.tlsFingerprint
+			if len(fpPreview) > 16 {
+				fpPreview = fpPreview[:16] + "..."
+			}
+			log.Printf("HTTPS server listening on 0.0.0.0:%d (fingerprint: %s)", s.tlsPort, fpPreview)
+			if err := s.tlsServer.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+				log.Printf("[TLS] HTTPS server error: %v", err)
+			}
+		}()
+	}
+
 	log.Printf("HTTP server listening on 0.0.0.0:%d", s.port)
+	if len(s.allowedCIDRs) > 0 {
+		cidrs := make([]string, len(s.allowedCIDRs))
+		for i, c := range s.allowedCIDRs {
+			cidrs[i] = c.String()
+		}
+		log.Printf("IP allowlist: %s", strings.Join(cidrs, ", "))
+	}
 	err := s.server.ListenAndServe()
 	if err == http.ErrServerClosed {
 		return nil
@@ -167,9 +216,116 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 }
 
 // ---------------------------------------------------------------------------
+// Cached token info
+// ---------------------------------------------------------------------------
+
+type cachedTokenInfo struct {
+	userID       string
+	isSdk        bool
+	scopes       []string
+	allowedCIDRs []string
+}
+
+// Scope-to-path mapping: which URL paths each scope grants access to.
+var scopePathPrefixes = map[string][]string{
+	"feedback": {"/feedback"},
+	"blackbox": {"/blackbox/"},
+	"voice":    {"/voice/"},
+	"builds":   {"/builds"},
+	"health":   {"/health"},
+}
+
+func pathAllowedByScopes(path string, scopes []string) bool {
+	for _, scope := range scopes {
+		prefixes, ok := scopePathPrefixes[scope]
+		if !ok {
+			continue
+		}
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(path, prefix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// clientIP extracts the remote IP from the request (strips port).
+func clientIP(r *http.Request) string {
+	// Check X-Forwarded-For for proxy/relay
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		return strings.TrimSpace(parts[0])
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// ipMatchesCIDRs checks if an IP is within any of the given CIDRs.
+func ipMatchesCIDRs(ipStr string, cidrs []*net.IPNet) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range cidrs {
+		if cidr.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseCIDRs parses a list of CIDR strings (also accepts plain IPs).
+func parseCIDRs(strs []string) []*net.IPNet {
+	var nets []*net.IPNet
+	for _, s := range strs {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		// If no /, treat as single IP
+		if !strings.Contains(s, "/") {
+			if strings.Contains(s, ":") {
+				s += "/128"
+			} else {
+				s += "/32"
+			}
+		}
+		_, cidr, err := net.ParseCIDR(s)
+		if err != nil {
+			log.Printf("[IP] Warning: invalid CIDR %q: %v", s, err)
+			continue
+		}
+		nets = append(nets, cidr)
+	}
+	return nets
+}
+
+// ---------------------------------------------------------------------------
 // Middleware
 // ---------------------------------------------------------------------------
 
+// ipAllowlist rejects requests from IPs not in the allowlist.
+// If the allowlist is empty, all IPs are allowed.
+func (s *HTTPServer) ipAllowlist(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if len(s.allowedCIDRs) > 0 {
+			ip := clientIP(r)
+			if !ipMatchesCIDRs(ip, s.allowedCIDRs) {
+				log.Printf("[IP] %s %s — blocked IP %s (not in allowlist)", r.Method, r.URL.Path, ip)
+				jsonError(w, http.StatusForbidden, "IP not allowed")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// auth is for full-access endpoints (tasks, exec, agent commands, vault, etc.).
+// Accepts the agent's own token and CLI session tokens. Rejects SDK tokens.
 func (s *HTTPServer) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
@@ -187,17 +343,22 @@ func (s *HTTPServer) auth(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		// Check token cache
-		if cachedUID, ok := s.tokenCache.Load(token); ok {
-			if cachedUID.(string) == s.ownerUserID {
+		if cached, ok := s.tokenCache.Load(token); ok {
+			info := cached.(*cachedTokenInfo)
+			if info.isSdk {
+				// SDK tokens not allowed for full-access endpoints
+				jsonError(w, http.StatusForbidden, "SDK tokens cannot access this endpoint")
+				return
+			}
+			if info.userID == s.ownerUserID {
 				next(w, r)
 				return
 			}
-			log.Printf("[AUTH] %s %s — token belongs to different user (cached)", r.Method, r.URL.Path)
 			jsonError(w, http.StatusForbidden, "token belongs to a different user")
 			return
 		}
 
-		// Validate against Convex and cache the result
+		// Validate session token via Convex
 		log.Printf("[AUTH] %s %s — validating token against Convex...", r.Method, r.URL.Path)
 		uid, err := ValidateTokenUser(s.convexURL, token)
 		if err != nil {
@@ -205,15 +366,131 @@ func (s *HTTPServer) auth(next http.HandlerFunc) http.HandlerFunc {
 			jsonError(w, http.StatusForbidden, "invalid token")
 			return
 		}
-		s.tokenCache.Store(token, uid)
-		log.Printf("[AUTH] %s %s — token validated, uid=%s (owner=%s)", r.Method, r.URL.Path, uid, s.ownerUserID)
+		s.tokenCache.Store(token, &cachedTokenInfo{userID: uid, isSdk: false})
 
 		if uid != s.ownerUserID {
-			log.Printf("[AUTH] %s %s — uid mismatch: got %s, want %s", r.Method, r.URL.Path, uid, s.ownerUserID)
 			jsonError(w, http.StatusForbidden, "token belongs to a different user")
 			return
 		}
 		next(w, r)
+	}
+}
+
+// authSDK is for SDK-accessible endpoints (feedback, blackbox, voice, builds).
+// Accepts all token types: agent's own, CLI session, and SDK tokens (with scope check).
+func (s *HTTPServer) authSDK(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			jsonError(w, http.StatusUnauthorized, "missing or invalid Authorization header")
+			return
+		}
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+
+		// Fast path: agent's own token (full access)
+		if token == s.token {
+			next(w, r)
+			return
+		}
+
+		// Check cache
+		if cached, ok := s.tokenCache.Load(token); ok {
+			info := cached.(*cachedTokenInfo)
+			if info.userID != s.ownerUserID {
+				jsonError(w, http.StatusForbidden, "token belongs to a different user")
+				return
+			}
+			if info.isSdk {
+				// Check scope
+				if !pathAllowedByScopes(r.URL.Path, info.scopes) {
+					jsonError(w, http.StatusForbidden, "SDK token scope does not allow this endpoint")
+					return
+				}
+				// Check IP binding
+				if len(info.allowedCIDRs) > 0 {
+					cidrs := parseCIDRs(info.allowedCIDRs)
+					if !ipMatchesCIDRs(clientIP(r), cidrs) {
+						jsonError(w, http.StatusForbidden, "SDK token not allowed from this IP")
+						return
+					}
+				}
+				// Track new device IPs
+				s.trackNewIP(token, r)
+			}
+			next(w, r)
+			return
+		}
+
+		// Try session token first
+		uid, err := ValidateTokenUser(s.convexURL, token)
+		if err == nil {
+			s.tokenCache.Store(token, &cachedTokenInfo{userID: uid, isSdk: false})
+			if uid != s.ownerUserID {
+				jsonError(w, http.StatusForbidden, "token belongs to a different user")
+				return
+			}
+			next(w, r)
+			return
+		}
+
+		// Try SDK token
+		sdkInfo, sdkErr := ValidateSdkTokenFull(s.convexURL, token)
+		if sdkErr != nil {
+			log.Printf("[AUTH] %s %s — all token validation failed", r.Method, r.URL.Path)
+			jsonError(w, http.StatusForbidden, "invalid token")
+			return
+		}
+
+		info := &cachedTokenInfo{
+			userID:       sdkInfo.UserID,
+			isSdk:        true,
+			scopes:       sdkInfo.Scopes,
+			allowedCIDRs: sdkInfo.AllowedCIDRs,
+		}
+		s.tokenCache.Store(token, info)
+
+		if sdkInfo.UserID != s.ownerUserID {
+			jsonError(w, http.StatusForbidden, "token belongs to a different user")
+			return
+		}
+
+		// Check scope
+		if !pathAllowedByScopes(r.URL.Path, sdkInfo.Scopes) {
+			jsonError(w, http.StatusForbidden, "SDK token scope does not allow this endpoint")
+			return
+		}
+
+		// Check IP binding
+		if len(sdkInfo.AllowedCIDRs) > 0 {
+			cidrs := parseCIDRs(sdkInfo.AllowedCIDRs)
+			if !ipMatchesCIDRs(clientIP(r), cidrs) {
+				jsonError(w, http.StatusForbidden, "SDK token not allowed from this IP")
+				return
+			}
+		}
+
+		// Track new device IPs
+		s.trackNewIP(token, r)
+
+		next(w, r)
+	}
+}
+
+// trackNewIP records the first time an SDK token is used from a new IP.
+func (s *HTTPServer) trackNewIP(token string, r *http.Request) {
+	ip := clientIP(r)
+	prefix := token
+	if len(prefix) > 8 {
+		prefix = prefix[:8]
+	}
+	seenKey := prefix + "_" + ip
+	if _, loaded := s.seenIPs.LoadOrStore(seenKey, true); !loaded {
+		log.Printf("[SECURITY] New IP %s for SDK token %s...", ip, prefix)
+		go ReportSecurityEvent(s.convexURL, s.token, "new_ip", map[string]interface{}{
+			"ip":          ip,
+			"tokenPrefix": prefix,
+			"path":        r.URL.Path,
+		})
 	}
 }
 
@@ -235,11 +512,16 @@ func withCORS(next http.Handler) http.Handler {
 // ---------------------------------------------------------------------------
 
 func (s *HTTPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
-	jsonReply(w, http.StatusOK, map[string]interface{}{
+	resp := map[string]interface{}{
 		"ok":       true,
 		"hostname": s.hostname,
 		"version":  version,
-	})
+	}
+	if s.tlsFingerprint != "" {
+		resp["tlsFingerprint"] = s.tlsFingerprint
+		resp["tlsPort"] = s.tlsPort
+	}
+	jsonReply(w, http.StatusOK, resp)
 }
 
 func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {

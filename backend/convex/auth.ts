@@ -441,6 +441,238 @@ export const deleteAccount = mutation({
   },
 });
 
+// ── SDK Tokens ──────────────────────────────────────────────────────
+
+/** Default scopes for SDK tokens — feedback-related only, no task execution. */
+const DEFAULT_SDK_SCOPES = ["feedback", "blackbox", "voice", "builds"];
+
+/**
+ * Create an SDK token for the Feedback SDK.
+ * Requires a valid CLI session token. The SDK token is independent —
+ * CLI reauth does not invalidate it.
+ */
+export const createSdkToken = mutation({
+  args: {
+    tokenHash: v.string(),
+    sessionTokenHash: v.string(),
+    label: v.optional(v.string()),
+    scopes: v.optional(v.array(v.string())),
+    allowedCIDRs: v.optional(v.array(v.string())),
+    expiresInMs: v.optional(v.number()), // custom expiry (default 1 year)
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.sessionTokenHash);
+    if (!session) throw new Error("Unauthorized");
+
+    const existing = await ctx.db
+      .query("sdkTokens")
+      .withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
+      .unique();
+    if (existing) throw new Error("SDK token already exists");
+
+    const expiresIn = args.expiresInMs ?? 365 * 24 * 60 * 60 * 1000;
+    const expiresAt = Date.now() + expiresIn;
+    await ctx.db.insert("sdkTokens", {
+      tokenHash: args.tokenHash,
+      userId: session.user._id,
+      label: args.label,
+      scopes: args.scopes ?? DEFAULT_SDK_SCOPES,
+      allowedCIDRs: args.allowedCIDRs,
+      expiresAt,
+      createdAt: Date.now(),
+    });
+    return { expiresAt };
+  },
+});
+
+/**
+ * Validate an SDK token. Returns user info, scopes, and allowedCIDRs.
+ * Handles rotation grace period: a replaced token is valid for 5 minutes.
+ */
+export const validateSdkToken = query({
+  args: {
+    tokenHash: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const sdkToken = await ctx.db
+      .query("sdkTokens")
+      .withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
+      .unique();
+
+    if (!sdkToken) return null;
+    if (sdkToken.expiresAt < Date.now()) return null;
+
+    // Rotation grace: replaced tokens valid for 5 minutes
+    if (sdkToken.replacedAt) {
+      const gracePeriod = 5 * 60 * 1000;
+      if (Date.now() - sdkToken.replacedAt > gracePeriod) return null;
+    }
+
+    const user = await ctx.db.get(sdkToken.userId);
+    if (!user) return null;
+
+    return {
+      userId: user.userId,
+      email: user.email,
+      fullName: user.fullName,
+      provider: user.provider,
+      scopes: sdkToken.scopes ?? DEFAULT_SDK_SCOPES,
+      allowedCIDRs: sdkToken.allowedCIDRs ?? [],
+    };
+  },
+});
+
+/**
+ * Rotate an SDK token: create a new one, mark old as replaced (5min grace).
+ * Called with the current SDK token hash (for auth) and a new token hash.
+ */
+export const rotateSdkToken = mutation({
+  args: {
+    currentTokenHash: v.string(),
+    newTokenHash: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const current = await ctx.db
+      .query("sdkTokens")
+      .withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.currentTokenHash))
+      .unique();
+    if (!current) throw new Error("Invalid token");
+    if (current.expiresAt < Date.now()) throw new Error("Token expired");
+    if (current.replacedAt) throw new Error("Token already rotated");
+
+    // Create new token inheriting scopes and allowedCIDRs
+    const expiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000;
+    await ctx.db.insert("sdkTokens", {
+      tokenHash: args.newTokenHash,
+      userId: current.userId,
+      label: current.label,
+      scopes: current.scopes,
+      allowedCIDRs: current.allowedCIDRs,
+      expiresAt,
+      createdAt: Date.now(),
+    });
+
+    // Mark old token as replaced (5min grace period)
+    await ctx.db.patch(current._id, {
+      replacedBy: args.newTokenHash,
+      replacedAt: Date.now(),
+    });
+
+    return { expiresAt };
+  },
+});
+
+/**
+ * List all SDK tokens for the authenticated user.
+ */
+export const listSdkTokens = query({
+  args: {
+    sessionTokenHash: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.sessionTokenHash);
+    if (!session) return [];
+
+    const tokens = await ctx.db
+      .query("sdkTokens")
+      .withIndex("by_userId", (q) => q.eq("userId", session.user._id))
+      .collect();
+
+    return tokens.map((t) => ({
+      label: t.label,
+      scopes: t.scopes,
+      allowedCIDRs: t.allowedCIDRs,
+      createdAt: t.createdAt,
+      expiresAt: t.expiresAt,
+      expired: t.expiresAt < Date.now(),
+      rotated: !!t.replacedAt,
+    }));
+  },
+});
+
+/**
+ * Revoke (delete) an SDK token.
+ */
+export const revokeSdkToken = mutation({
+  args: {
+    sessionTokenHash: v.string(),
+    sdkTokenHash: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.sessionTokenHash);
+    if (!session) throw new Error("Unauthorized");
+
+    const sdkToken = await ctx.db
+      .query("sdkTokens")
+      .withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.sdkTokenHash))
+      .unique();
+
+    if (!sdkToken) return;
+    if (sdkToken.userId !== session.user._id) {
+      throw new Error("Unauthorized");
+    }
+    await ctx.db.delete(sdkToken._id);
+  },
+});
+
+// ── Security Events ─────────────────────────────────────────────────
+
+/**
+ * Report a security event (new IP, token rotation, etc.).
+ */
+export const reportSecurityEvent = mutation({
+  args: {
+    tokenHash: v.string(), // for auth — can be session or SDK token
+    eventType: v.string(),
+    details: v.string(),   // JSON blob
+  },
+  handler: async (ctx, args) => {
+    // Validate via session first
+    let userId: Id<"users"> | null = null;
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (session) {
+      userId = session.user._id;
+    } else {
+      // Try SDK token
+      const sdkToken = await ctx.db
+        .query("sdkTokens")
+        .withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
+        .unique();
+      if (sdkToken && sdkToken.expiresAt >= Date.now()) {
+        userId = sdkToken.userId;
+      }
+    }
+    if (!userId) throw new Error("Unauthorized");
+
+    await ctx.db.insert("securityEvents", {
+      userId,
+      eventType: args.eventType,
+      details: args.details,
+      read: false,
+      createdAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * List unread security events for the authenticated user.
+ */
+export const listSecurityEvents = query({
+  args: {
+    tokenHash: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) return [];
+
+    return await ctx.db
+      .query("securityEvents")
+      .withIndex("by_userId", (q) => q.eq("userId", session.user._id))
+      .order("desc")
+      .take(50);
+  },
+});
+
 /** Look up a user by email (internal only — used by webhook handlers). */
 export const getUserByEmail = internalQuery({
   args: { email: v.string() },

@@ -1746,4 +1746,223 @@ http.route({
   }),
 });
 
+// ── SDK Tokens ──────────────────────────────────────────────────────
+
+/**
+ * POST /sdk/token — Create an SDK token for the Feedback SDK.
+ * Requires a valid CLI session token (Bearer auth).
+ * Body: { label?, scopes?, allowedCIDRs?, expiresInMs? }
+ * Returns: { token, expiresAt }
+ */
+http.route({
+  path: "/sdk/token",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const user = await authenticateRequest(ctx, request);
+    if (!user) return errorResponse("Unauthorized", 401);
+
+    const tokenBytes = new Uint8Array(32);
+    crypto.getRandomValues(tokenBytes);
+    const sdkToken = Array.from(tokenBytes)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    const sdkTokenHash = await sha256Hex(sdkToken);
+
+    const authHeader = request.headers.get("Authorization")!;
+    const sessionTokenHash = await sha256Hex(authHeader.slice(7));
+
+    let label: string | undefined;
+    let scopes: string[] | undefined;
+    let allowedCIDRs: string[] | undefined;
+    let expiresInMs: number | undefined;
+    try {
+      const body = await request.json();
+      label = body.label;
+      scopes = body.scopes;
+      allowedCIDRs = body.allowedCIDRs;
+      expiresInMs = body.expiresInMs;
+    } catch {
+      // No body — use defaults
+    }
+
+    const result = await ctx.runMutation(api.auth.createSdkToken, {
+      tokenHash: sdkTokenHash,
+      sessionTokenHash,
+      label,
+      scopes,
+      allowedCIDRs,
+      expiresInMs,
+    });
+
+    return jsonResponse({ token: sdkToken, expiresAt: result.expiresAt });
+  }),
+});
+
+http.route({
+  path: "/sdk/token",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      },
+    });
+  }),
+});
+
+/**
+ * GET /sdk/token/validate — Validate an SDK token (used by agent auth middleware).
+ * Returns: { user: { userId, email, fullName, provider, scopes, allowedCIDRs } }
+ */
+http.route({
+  path: "/sdk/token/validate",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+
+    const result = await ctx.runQuery(api.auth.validateSdkToken, { tokenHash });
+    if (!result) {
+      return errorResponse("Invalid or expired SDK token", 401);
+    }
+
+    return jsonResponse({ user: result });
+  }),
+});
+
+/**
+ * POST /sdk/token/rotate — Rotate an SDK token.
+ * Bearer auth: current SDK token.
+ * Returns: { token, expiresAt } (new token; old valid for 5min grace).
+ */
+http.route({
+  path: "/sdk/token/rotate",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const currentToken = authHeader.slice(7);
+    const currentTokenHash = await sha256Hex(currentToken);
+
+    // Generate new token
+    const tokenBytes = new Uint8Array(32);
+    crypto.getRandomValues(tokenBytes);
+    const newToken = Array.from(tokenBytes)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    const newTokenHash = await sha256Hex(newToken);
+
+    const result = await ctx.runMutation(api.auth.rotateSdkToken, {
+      currentTokenHash,
+      newTokenHash,
+    });
+
+    return jsonResponse({ token: newToken, expiresAt: result.expiresAt });
+  }),
+});
+
+http.route({
+  path: "/sdk/token/rotate",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      },
+    });
+  }),
+});
+
+/**
+ * POST /sdk/token/revoke — Revoke an SDK token.
+ * Bearer auth: CLI session token. Body: { sdkToken }
+ */
+http.route({
+  path: "/sdk/token/revoke",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const user = await authenticateRequest(ctx, request);
+    if (!user) return errorResponse("Unauthorized", 401);
+
+    const authHeader = request.headers.get("Authorization")!;
+    const sessionTokenHash = await sha256Hex(authHeader.slice(7));
+
+    let sdkToken: string;
+    try {
+      const body = await request.json();
+      sdkToken = body.sdkToken;
+    } catch {
+      return errorResponse("Missing sdkToken in body", 400);
+    }
+
+    const sdkTokenHash = await sha256Hex(sdkToken);
+    await ctx.runMutation(api.auth.revokeSdkToken, {
+      sessionTokenHash,
+      sdkTokenHash,
+    });
+
+    return jsonResponse({ ok: true });
+  }),
+});
+
+// ── Security Events ─────────────────────────────────────────────────
+
+/** POST /security/event — Report a security event from the agent. */
+http.route({
+  path: "/security/event",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+
+    let body: { eventType: string; details: string };
+    try {
+      body = await request.json();
+    } catch {
+      return errorResponse("Invalid body", 400);
+    }
+
+    await ctx.runMutation(api.auth.reportSecurityEvent, {
+      tokenHash,
+      eventType: body.eventType,
+      details: body.details,
+    });
+
+    return jsonResponse({ ok: true });
+  }),
+});
+
+/** GET /security/events — List recent security events for the authenticated user. */
+http.route({
+  path: "/security/events",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+
+    const events = await ctx.runQuery(api.auth.listSecurityEvents, { tokenHash });
+    return jsonResponse({ events });
+  }),
+});
+
 export default http;

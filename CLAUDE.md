@@ -206,6 +206,76 @@ yaver serve --multi-user --team team_abc  # Restrict to team members
 yaver serve --multi-user --max-users 10   # Limit concurrent users
 ```
 
+## SDK Token Security
+
+The Feedback SDK uses a dedicated token system with defense-in-depth security:
+
+### Token Types
+- **CLI session token**: Used by `yaver serve`, short-lived, full agent access
+- **SDK token**: Long-lived (configurable), scoped to feedback endpoints only, independent from CLI session
+- CLI reauth does NOT invalidate SDK tokens (they are separate sessions in Convex)
+
+### 6 Security Layers
+
+| Layer | What | How |
+|-------|------|-----|
+| **Scope restriction** | SDK tokens limited to feedback/blackbox/voice/builds | `authSDK()` middleware checks path against token scopes |
+| **IP binding** | Token restricted to specific networks | `allowedCIDRs` field on sdkTokens, checked per-request |
+| **Agent IP allowlist** | Block all external IPs | `--allow-ips` flag, outer middleware before auth |
+| **Token rotation** | Rotate without downtime | `POST /sdk/token/rotate`, 5-min grace period |
+| **New device alerts** | Detect token use from new IPs | `seenIPs` tracking, events sent to Convex |
+| **HTTPS on LAN** | Encrypt LAN traffic | Self-signed TLS cert, port 18443, fingerprint in beacon |
+
+### Auth Middleware Architecture
+```
+Request → ipAllowlist → CORS → auth()/authSDK()
+                                     │
+                  ┌──────────────────┼──────────────────┐
+                  │                  │                   │
+              auth()            authSDK()           /health
+          (full access)      (SDK-accessible)      (public)
+              │                  │
+          Accepts:           Accepts:
+          - Agent token      - Agent token (full)
+          - CLI session      - CLI session (full)
+          - Rejects SDK      - SDK token (scoped)
+              │                  │
+          Endpoints:         Endpoints:
+          /tasks             /feedback
+          /exec              /blackbox/*
+          /vault             /voice/*
+          /agent/*           /builds
+          /session/*
+          /tmux/*
+```
+
+### Key Files
+| File | Purpose |
+|------|---------|
+| `backend/convex/schema.ts` | `sdkTokens` table (scopes, allowedCIDRs, replacedBy/At) |
+| `backend/convex/auth.ts` | createSdkToken, validateSdkToken, rotateSdkToken, reportSecurityEvent |
+| `backend/convex/http.ts` | POST /sdk/token, GET /sdk/token/validate, POST /sdk/token/rotate |
+| `desktop/agent/httpserver.go` | auth(), authSDK(), ipAllowlist(), trackNewIP() middlewares |
+| `desktop/agent/auth.go` | ValidateSdkTokenFull(), CreateSdkToken(), ReportSecurityEvent() |
+| `desktop/agent/sdk_token.go` | CLI: `yaver sdk-token create` with --scopes, --allowed-ips, --expires |
+| `desktop/agent/tls.go` | Self-signed TLS cert generation with IP SANs |
+| `desktop/agent/sdk_token_test.go` | 25+ tests: scopes, IP allowlist, IP binding, TLS, cache isolation |
+
+### CLI Commands
+```bash
+# Create SDK token (default scopes, 1 year)
+yaver sdk-token create --label "AcmeStore dev"
+
+# Narrow scopes + IP binding + short expiry
+yaver sdk-token create --scopes feedback,blackbox --allowed-ips 192.168.1.0/24 --expires 7d
+
+# Agent IP allowlist
+yaver serve --allow-ips 192.168.1.0/24
+
+# Disable HTTPS
+yaver serve --no-tls
+```
+
 ## Networking Stack
 
 Yaver's networking has three layers that work together for instant, reliable connections:
@@ -336,6 +406,7 @@ Tests spin up real HTTP servers on random ports — no mocks, no external depend
 - Health, auth, CORS, task CRUD, agent status, ping/pong, shutdown
 - **Server-client integration**: two agents on the same machine, verifies token isolation and task separation
 - **MCP protocol**: initialize + tools/list JSON-RPC
+- **SDK token security** (`sdk_token_test.go`): scope restriction, IP allowlist, IP binding, TLS cert generation, token cache isolation, new device tracking, cross-user rejection (25+ tests)
 
 ### Integration Test Suite
 Full end-to-end test suite covering CLI-to-CLI connections via all transport modes, builds, and MCP.

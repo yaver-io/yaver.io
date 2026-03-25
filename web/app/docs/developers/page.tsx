@@ -126,6 +126,7 @@ export default function DevelopersPage() {
               ["session-transfer", "Session Transfer"],
               ["pr-rules", "Pull Request Rules"],
               ["feedback-sdk", "Feedback SDK & Test Loop"],
+              ["sdk-token-security", "SDK Token Security"],
               ["sdk", "SDK — Embed Yaver"],
               ["demo-app", "Demo App (AcmeStore)"],
               ["contributing", "Contributing"],
@@ -1988,6 +1989,127 @@ CLI Agent ◄──QUIC──────────────── Relay (:
             </Link>{" "}
             for quick start, API reference, agent integration, and configuration options.
           </Prose>
+        </section>
+
+        {/* ─── SDK Token Security ─── */}
+        <section className="mb-20">
+          <SectionHeading id="sdk-token-security">SDK Token Security</SectionHeading>
+          <Prose>
+            The Feedback SDK uses a dedicated token system with 6 defense-in-depth
+            security layers. SDK tokens are independent from CLI session tokens
+            &mdash; CLI reauth does not invalidate them, and they are scoped to
+            only access feedback-related endpoints.
+          </Prose>
+
+          <SubHeading>Token Types</SubHeading>
+          <div className="overflow-x-auto mb-6">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-surface-500">
+                  <th className="pb-2">Type</th>
+                  <th className="pb-2">Scope</th>
+                  <th className="pb-2">Lifetime</th>
+                  <th className="pb-2">Created by</th>
+                </tr>
+              </thead>
+              <tbody className="text-surface-300">
+                <tr className="border-t border-surface-800">
+                  <td className="py-2">CLI session</td>
+                  <td className="py-2">Full agent access</td>
+                  <td className="py-2">1 year (auto-refreshed)</td>
+                  <td className="py-2"><InlineCode>yaver auth</InlineCode></td>
+                </tr>
+                <tr className="border-t border-surface-800">
+                  <td className="py-2">SDK token</td>
+                  <td className="py-2">feedback, blackbox, voice, builds</td>
+                  <td className="py-2">Custom (default 1 year)</td>
+                  <td className="py-2"><InlineCode>yaver sdk-token create</InlineCode></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <SubHeading>Security Layers</SubHeading>
+          <div className="space-y-4 mb-8">
+            {[
+              { n: "1", title: "Scope Restriction", desc: "SDK tokens only access /feedback, /blackbox/*, /voice/*, /builds. Cannot reach /tasks, /exec, /vault, /agent/*." },
+              { n: "2", title: "IP Binding", desc: "Restrict tokens to specific CIDRs with --allowed-ips. Requests from non-matching IPs get 403." },
+              { n: "3", title: "Agent IP Allowlist", desc: "yaver serve --allow-ips blocks all requests before auth. Only matching IPs reach the agent." },
+              { n: "4", title: "Token Rotation", desc: "POST /sdk/token/rotate issues a new token. Old token has 5-minute grace period for in-flight requests." },
+              { n: "5", title: "New Device Alerts", desc: "First-seen IPs trigger security events in Convex. Query via GET /security/events." },
+              { n: "6", title: "HTTPS on LAN", desc: "Auto-generated self-signed TLS cert with IP SANs. Serves HTTPS on :18443. Fingerprint in /health and beacon." },
+            ].map((layer) => (
+              <div key={layer.n} className="card">
+                <h4 className="mb-2 text-sm font-medium text-surface-200">
+                  {layer.n}. {layer.title}
+                </h4>
+                <p className="text-sm leading-relaxed text-surface-400">
+                  {layer.desc}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <SubHeading>Auth Middleware</SubHeading>
+          <Prose>
+            The agent has two auth middlewares: <InlineCode>auth()</InlineCode>{" "}
+            for full-access endpoints (rejects SDK tokens) and{" "}
+            <InlineCode>authSDK()</InlineCode> for SDK-accessible endpoints
+            (checks scope + IP binding). An outer{" "}
+            <InlineCode>ipAllowlist()</InlineCode> middleware runs before both.
+          </Prose>
+
+          <Terminal title="CLI examples">
+            <Comment># Create SDK token with defaults (1 year, all SDK scopes)</Comment>
+            <Cmd>yaver sdk-token create --label &quot;AcmeStore dev&quot;</Cmd>
+            <Divider />
+            <Comment># Narrow scopes + IP binding + short expiry</Comment>
+            <Cmd>yaver sdk-token create --scopes feedback,blackbox --allowed-ips 192.168.1.0/24 --expires 7d</Cmd>
+            <Divider />
+            <Comment># Agent IP allowlist</Comment>
+            <Cmd>yaver serve --allow-ips 192.168.1.0/24,10.0.0.0/8</Cmd>
+            <Divider />
+            <Comment># Disable HTTPS</Comment>
+            <Cmd>yaver serve --no-tls</Cmd>
+          </Terminal>
+
+          <SubHeading>Key Files</SubHeading>
+          <div className="overflow-x-auto mb-6">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-surface-500">
+                  <th className="pb-2">File</th>
+                  <th className="pb-2">Purpose</th>
+                </tr>
+              </thead>
+              <tbody className="text-surface-300">
+                {[
+                  ["backend/convex/schema.ts", "sdkTokens + securityEvents tables"],
+                  ["backend/convex/auth.ts", "createSdkToken, validateSdkToken, rotateSdkToken"],
+                  ["backend/convex/http.ts", "/sdk/token/*, /security/* endpoints"],
+                  ["desktop/agent/httpserver.go", "auth(), authSDK(), ipAllowlist() middlewares"],
+                  ["desktop/agent/auth.go", "ValidateSdkTokenFull(), CreateSdkToken()"],
+                  ["desktop/agent/sdk_token.go", "yaver sdk-token CLI commands"],
+                  ["desktop/agent/tls.go", "Self-signed TLS cert generation"],
+                  ["desktop/agent/sdk_token_test.go", "25+ security tests"],
+                ].map(([file, purpose]) => (
+                  <tr key={file} className="border-t border-surface-800">
+                    <td className="py-2"><InlineCode>{file}</InlineCode></td>
+                    <td className="py-2 text-surface-400">{purpose}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <SubHeading>Tests</SubHeading>
+          <Terminal title="Run security tests">
+            <Comment># All 25+ security tests</Comment>
+            <Cmd>cd desktop/agent &amp;&amp; go test -v -run &quot;TestSDK|TestIP|TestTLS|TestParse|TestPath&quot;</Cmd>
+            <Divider />
+            <Comment># TypeScript SDK token tests</Comment>
+            <Cmd>cd sdk/feedback/react-native &amp;&amp; npm test -- SDKToken</Cmd>
+          </Terminal>
         </section>
 
         {/* ─── SDK — Embed Yaver ─── */}

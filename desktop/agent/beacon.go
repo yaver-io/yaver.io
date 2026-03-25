@@ -24,6 +24,8 @@ type beaconPayload struct {
 	Name             string `json:"n"`
 	TokenFingerprint string `json:"th"`            // first 8 chars of SHA256(userId)
 	VoiceCapable     bool   `json:"vc,omitempty"`  // true if voice transcription is available
+	TLSFingerprint   string `json:"tf,omitempty"`  // SHA256 of TLS cert
+	TLSPort          int    `json:"tp,omitempty"`  // HTTPS port
 }
 
 // tokenFingerprint returns the first 8 hex chars of SHA256(userId).

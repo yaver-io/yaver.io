@@ -120,6 +120,8 @@ func main() {
 		runClean(os.Args[2:])
 	case "cloud":
 		runCloud(os.Args[2:])
+	case "sdk-token":
+		runSdkToken(os.Args[2:])
 	case "doctor":
 		runDoctor()
 	case "completion":
@@ -835,6 +837,9 @@ func runServe(args []string) {
 	multiUser := fs.Bool("multi-user", false, "Enable multi-user mode (shared machines)")
 	teamID := fs.String("team", "", "Restrict access to team members (requires --multi-user)")
 	maxUsers := fs.Int("max-users", 0, "Max concurrent users in multi-user mode (0 = unlimited)")
+	allowIPs := fs.String("allow-ips", "", "IP allowlist: comma-separated CIDRs (e.g. 192.168.1.0/24)")
+	tlsPort := fs.Int("tls-port", 18443, "HTTPS server port (0 to disable)")
+	noTLS := fs.Bool("no-tls", false, "Disable HTTPS server")
 	fs.Parse(args)
 
 	if *workDir == "." {
@@ -907,6 +912,14 @@ func runServe(args []string) {
 		}
 		if *vaultPass != "" {
 			childArgs = append(childArgs, fmt.Sprintf("--vault-passphrase=%s", *vaultPass))
+		}
+		if *allowIPs != "" {
+			childArgs = append(childArgs, fmt.Sprintf("--allow-ips=%s", *allowIPs))
+		}
+		if *noTLS {
+			childArgs = append(childArgs, "--no-tls")
+		} else {
+			childArgs = append(childArgs, fmt.Sprintf("--tls-port=%d", *tlsPort))
 		}
 
 		cmd := osexec.Command(execPath, childArgs...)
@@ -1294,6 +1307,29 @@ func runServe(args []string) {
 
 	// Start HTTP server (V1 — primary, also serves MCP)
 	httpServer := NewHTTPServer(*httpPort, cfg.AuthToken, ownerUserID, cfg.ConvexSiteURL, hostname, taskMgr)
+
+	// IP allowlist (from flag or config)
+	allowIPsList := *allowIPs
+	if allowIPsList == "" && len(cfg.AllowedIPs) > 0 {
+		allowIPsList = strings.Join(cfg.AllowedIPs, ",")
+	}
+	if allowIPsList != "" {
+		httpServer.allowedCIDRs = parseCIDRs(strings.Split(allowIPsList, ","))
+	}
+
+	// TLS setup
+	if !*noTLS {
+		cert, fingerprint, err := EnsureTLSCert()
+		if err != nil {
+			log.Printf("Warning: TLS disabled — %v", err)
+		} else {
+			httpServer.tlsCert = cert
+			httpServer.tlsFingerprint = fingerprint
+			httpServer.tlsPort = *tlsPort
+			log.Printf("TLS cert ready (fingerprint: %s...)", fingerprint[:16])
+		}
+	}
+
 	httpServer.execMgr = NewExecManager(taskMgr.workDir, cfg.Sandbox)
 	httpServer.scheduler = NewScheduler(taskMgr)
 	httpServer.scheduler.Start(ctx)

@@ -32,9 +32,9 @@ const docs = [
   {
     title: "Feedback SDK",
     description:
-      "Error capture, black box streaming, and visual bug reports. Screen recording + voice + stack traces sent directly to your AI agent.",
+      "Error capture, black box streaming, and visual bug reports with 6-layer security: scoped tokens, IP binding, HTTPS on LAN, rotation, and new-device alerts.",
     href: "/docs/feedback-sdk",
-    tags: ["SDK", "React Native", "Flutter", "Errors"],
+    tags: ["SDK", "React Native", "Flutter", "Security"],
   },
   {
     title: "Cloud machines",
