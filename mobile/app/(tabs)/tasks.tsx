@@ -560,6 +560,29 @@ export default function TasksScreen() {
     };
   }, []);
 
+  // Idle detection: if task is "running" but no new output for 20s, re-fetch status.
+  // This catches the case where the agent finishes but the status update was missed.
+  const lastOutputTimeRef = useRef<number>(Date.now());
+  useEffect(() => {
+    lastOutputTimeRef.current = Date.now();
+  }, [selectedTask?.output.length]);
+
+  useEffect(() => {
+    if (!selectedTask || selectedTask.status !== "running") return;
+    const interval = setInterval(async () => {
+      const idleMs = Date.now() - lastOutputTimeRef.current;
+      if (idleMs > 20000) {
+        // Agent has been silent for 20s — force refresh task status
+        const fresh = await quicClient.getTask(selectedTask.id);
+        if (fresh && fresh.status !== "running") {
+          setSelectedTask(fresh);
+          setTasks(prev => prev.map(t => t.id === fresh.id ? fresh : t));
+        }
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [selectedTask?.id, selectedTask?.status]);
+
   // Auto-scroll chat when output changes
   useEffect(() => {
     if (selectedTask) {
@@ -1511,11 +1534,7 @@ export default function TasksScreen() {
                       <Text style={[s.chatHeaderStatus, { color: STATUS_COLORS[selectedTask.status] }]}>
                         {selectedTask.status}
                       </Text>
-                      {selectedTask.costUsd != null && selectedTask.costUsd > 0 && (
-                        <Text style={[s.chatHeaderCost, { color: c.textMuted }]}>
-                          ${selectedTask.costUsd.toFixed(3)}
-                        </Text>
-                      )}
+                      {/* Cost hidden — Yaver is positioned as part of the free/open-source AI tool stack */}
                     </View>
                     {activeDevice && (
                       <Text style={{ fontSize: 10, color: c.textMuted, marginTop: 2 }} numberOfLines={1}>

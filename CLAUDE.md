@@ -24,6 +24,19 @@ grep -rn '37\.27\|5SJZ4KA39A\|77Z6B543D5\|7bd9329e\|NJ2VE6KEM55' . --include='*.
 git add -A && git commit -m "Update open-source release" && git push --force origin main
 ```
 
+## Dev Server Proxy (Hot Reload to Phone)
+When a user asks to "run an app on my phone", "hot reload", or "load the app on my phone":
+1. **Do NOT tell the user to run commands manually.** The user only runs `yaver auth` and `yaver serve`.
+2. **Use the agent's HTTP API**: Send `POST http://localhost:18080/dev/start` with `{"framework":"expo","workDir":"/path/to/app"}` to start a dev server.
+3. The agent proxies the dev server at `/dev/*`, accessible through the relay.
+4. The Yaver mobile app automatically detects the dev server and shows a "Dev Preview" banner.
+5. The user taps the banner to open the app in a WebView — no QR codes, no manual commands.
+6. For hot reload: `POST http://localhost:18080/dev/reload`
+7. For status: `GET http://localhost:18080/dev/status`
+8. To stop: `POST http://localhost:18080/dev/stop`
+
+**Never output raw `exp://` URLs or tell the user to scan QR codes.** The dev server proxy handles everything through the P2P/relay channel.
+
 ## What is Yaver?
 Yaver is an open-source P2P tool that lets developers use any AI coding agent (Claude Code, Codex, Aider, Ollama, etc.) from their mobile device or any terminal, connecting directly to their development machines. Task data flows peer-to-peer between your devices — servers only handle auth and peer discovery.
 

@@ -6,6 +6,7 @@ scripts/
 sdk/
 relay/
 keys/
+demo/
 .github/
 
 # Dependencies and build output — Vercel runs npm install and build
