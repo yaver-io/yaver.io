@@ -131,6 +131,15 @@ When they ask to "start", "load", "run", or "hot reload" an app on their phone:
 
 8. The dev server proxy supports: Expo, React Native, Flutter, Vite, Next.js.
    It auto-detects the framework from the project files.
+
+9. After calling /dev/start, ALWAYS verify the server is running:
+   curl -s http://localhost:18080/dev/status
+   Wait for "running":true in the response. If not ready, wait 10s and retry up to 5 times.
+   Only tell the user "app is ready" when /dev/status shows running:true.
+
+10. If /dev/start fails or times out, check if another process is using the port:
+    lsof -i:8081
+    Kill any stale expo/metro processes before retrying.
 `)
 
 	return sb.String()

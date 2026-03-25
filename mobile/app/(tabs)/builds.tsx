@@ -6,14 +6,16 @@ import {
   NativeModules,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
-import { quicClient } from "../../src/lib/quic";
+import { quicClient, type DevServerStatus } from "../../src/lib/quic";
 import type { BuildSummary, DownloadProgress } from "../../src/lib/builds";
 import {
   downloadArtifact,
@@ -172,7 +174,7 @@ function BuildItem({ build, onRefresh }: { build: BuildSummary; onRefresh: () =>
 
 export default function BuildsScreen() {
   const c = useColors();
-  const { connectionStatus } = useDevice();
+  const { connectionStatus, activeDevice } = useDevice();
   const [builds, setBuilds] = useState<BuildSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -209,6 +211,69 @@ export default function BuildsScreen() {
     [fetchBuilds],
   );
 
+  // ── Repositories (discovered projects on the machine) ──
+  const router = useRouter();
+  const [projects, setProjects] = useState<{ name: string; path: string; branch?: string; framework?: string; gitRemote?: string }[]>([]);
+  const [devStatus, setDevStatus] = useState<DevServerStatus | null>(null);
+  const [discovering, setDiscovering] = useState(false);
+  const [startingProject, setStartingProject] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isConnected) { setProjects([]); setDevStatus(null); return; }
+    let mounted = true;
+    const poll = async () => {
+      try {
+        const [list, ds] = await Promise.all([
+          quicClient.listProjects(),
+          quicClient.getDevServerStatus(),
+        ]);
+        if (mounted) {
+          setProjects(list);
+          setDevStatus(ds?.running ? ds : null);
+        }
+      } catch {}
+    };
+    poll();
+    const interval = setInterval(poll, 5000);
+    return () => { mounted = false; clearInterval(interval); };
+  }, [isConnected]);
+
+  const handleDiscover = useCallback(async () => {
+    setDiscovering(true);
+    try {
+      // Trigger fresh project discovery via a task
+      await quicClient.sendTask(
+        "Discover all projects on this machine",
+        "Run yaver discover to scan for git repositories and update the project list.",
+      );
+    } catch {}
+    setTimeout(() => setDiscovering(false), 3000);
+  }, []);
+
+  const handleStartProject = useCallback(async (name: string, path: string) => {
+    const isRunning = devStatus?.workDir === path;
+    if (isRunning) {
+      // Already running — reload with latest code
+      try {
+        await quicClient.reloadDevServer();
+      } catch {}
+      router.navigate("/(tabs)/apps");
+      return;
+    }
+    setStartingProject(name);
+    try {
+      await quicClient.sendTask(
+        `Run ${name} on my phone`,
+        `Start the dev server for ${name} at ${path} and load it on the phone via the Yaver P2P channel.`,
+      );
+      router.navigate("/(tabs)/tasks");
+    } catch (e) {
+      Alert.alert("Failed", String(e));
+    } finally {
+      setStartingProject(null);
+    }
+  }, [devStatus, router]);
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]} edges={["bottom"]}>
       {!isConnected ? (
@@ -217,21 +282,97 @@ export default function BuildsScreen() {
             Connect to a device to view builds
           </Text>
         </View>
-      ) : loading && builds.length === 0 ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={c.textMuted} />
-        </View>
-      ) : builds.length === 0 ? (
-        <View style={styles.center}>
-          <Text style={[styles.emptyText, { color: c.textMuted }]}>No builds yet</Text>
-        </View>
       ) : (
-        <FlatList
-          data={builds}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          contentContainerStyle={styles.list}
-        />
+        <ScrollView contentContainerStyle={styles.list}>
+          {/* ── Machine + Discover ── */}
+          {activeDevice && (
+            <View style={[styles.machineCard, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+              <View style={[styles.machineDot, { backgroundColor: c.success || "#22c55e" }]} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.machineName, { color: c.textPrimary }]}>
+                  {activeDevice.name?.replace(/\.local$/, "")}
+                </Text>
+                <Text style={{ fontSize: 11, color: c.textMuted }}>
+                  {projects.length} projects · {activeDevice.os || "unknown"}
+                </Text>
+              </View>
+              <Pressable onPress={handleDiscover} disabled={discovering}>
+                <Text style={{ color: c.accent, fontSize: 12, fontWeight: "600" }}>
+                  {discovering ? "Scanning..." : "Discover"}
+                </Text>
+              </Pressable>
+            </View>
+          )}
+
+          {/* ── Project Cards (green = serving, gray = discovered) ── */}
+          {projects.map((p) => {
+            const isRunning = devStatus?.workDir === p.path;
+            const isStarting = startingProject === p.name;
+            return (
+              <Pressable
+                key={p.path}
+                style={[styles.repoCard, {
+                  backgroundColor: isRunning ? "#0f1a0f" : c.bgCard,
+                  borderColor: isRunning ? "#22c55e44" : c.border,
+                }]}
+                onPress={() => handleStartProject(p.name, p.path)}
+                disabled={isStarting}
+              >
+                <View style={styles.repoRow}>
+                  <View style={[styles.repoDot, { backgroundColor: isRunning ? "#22c55e" : "#555" }]} />
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                      <Text style={[styles.repoName, { color: isRunning ? "#fff" : c.textSecondary }]}>{p.name}</Text>
+                      {p.framework && (
+                        <View style={[styles.frameworkChip, isRunning && { backgroundColor: "#22c55e22", borderColor: "#22c55e44" }]}>
+                          <Text style={[styles.frameworkChipText, isRunning && { color: "#22c55e" }]}>{p.framework}</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={{ fontSize: 11, color: isRunning ? "#22c55e88" : c.textMuted, marginTop: 2 }} numberOfLines={1}>
+                      {p.branch ? `${p.branch} · ` : ""}{p.path}
+                    </Text>
+                  </View>
+                  {isStarting ? (
+                    <ActivityIndicator size="small" color={c.accent} />
+                  ) : isRunning ? (
+                    <View style={styles.repoRunningBadge}>
+                      <Text style={styles.repoRunningText}>{"\u21BB"} Reload</Text>
+                    </View>
+                  ) : (
+                    <Text style={{ color: "#888", fontSize: 12, fontWeight: "600" }}>{"\u25B6"}</Text>
+                  )}
+                </View>
+              </Pressable>
+            );
+          })}
+
+          {projects.length === 0 && !loading && (
+            <View style={{ padding: 40, alignItems: "center" }}>
+              <Text style={{ color: c.textMuted, fontSize: 13, textAlign: "center" }}>
+                No projects found.{"\n"}Tap "Discover" to scan your machine.
+              </Text>
+            </View>
+          )}
+
+          {/* ── Build Artifacts ── */}
+          {builds.length > 0 && (
+            <>
+              <View style={[styles.sectionHeader, { marginTop: 16 }]}>
+                <Text style={[styles.sectionTitle, { color: c.textMuted }]}>Build Artifacts</Text>
+              </View>
+              {builds.map((build) => (
+                <BuildItem key={build.id} build={build} onRefresh={fetchBuilds} />
+              ))}
+            </>
+          )}
+
+          {loading && builds.length === 0 && projects.length === 0 && (
+            <View style={{ padding: 40, alignItems: "center" }}>
+              <ActivityIndicator size="large" color={c.textMuted} />
+            </View>
+          )}
+        </ScrollView>
       )}
     </SafeAreaView>
   );
@@ -332,4 +473,58 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "600",
   },
+  // Machine + Repo cards
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  sectionTitle: {
+    fontSize: 11,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  machineCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    gap: 10,
+    marginBottom: 12,
+  },
+  machineDot: { width: 8, height: 8, borderRadius: 4 },
+  machineName: { fontSize: 14, fontWeight: "700" },
+  repoCard: {
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 12,
+    marginBottom: 6,
+  },
+  repoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  repoDot: { width: 8, height: 8, borderRadius: 4 },
+  repoName: { fontSize: 14, fontWeight: "600" },
+  repoRunningBadge: {
+    backgroundColor: "#22c55e22",
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  repoRunningText: { color: "#22c55e", fontSize: 12, fontWeight: "600" },
+  frameworkChip: {
+    backgroundColor: "#6366f115",
+    borderWidth: 1,
+    borderColor: "#6366f130",
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  frameworkChipText: { color: "#818cf8", fontSize: 10, fontWeight: "600" },
 });

@@ -198,6 +198,60 @@ func DetectProjectInfo(workDir string) ProjectInfo {
 	return info
 }
 
+// DetectProjectTags returns tags/chips for a project (e.g. "mobile", "supabase", "firebase").
+func DetectProjectTags(dir string) []string {
+	var tags []string
+
+	// Mobile
+	if fileExists(filepath.Join(dir, "ios")) || fileExists(filepath.Join(dir, "android")) {
+		tags = append(tags, "mobile")
+	}
+	if fileExists(filepath.Join(dir, "pubspec.yaml")) {
+		tags = append(tags, "mobile")
+	}
+
+	// Backend/services
+	if fileExists(filepath.Join(dir, "supabase")) || fileExists(filepath.Join(dir, "supabase.json")) {
+		tags = append(tags, "supabase")
+	}
+	if fileExists(filepath.Join(dir, "firebase.json")) || fileExists(filepath.Join(dir, ".firebaserc")) {
+		tags = append(tags, "firebase")
+	}
+	if fileExists(filepath.Join(dir, "docker-compose.yml")) || fileExists(filepath.Join(dir, "docker-compose.yaml")) || fileExists(filepath.Join(dir, "Dockerfile")) {
+		tags = append(tags, "docker")
+	}
+	if fileExists(filepath.Join(dir, "convex")) {
+		tags = append(tags, "convex")
+	}
+	if fileExists(filepath.Join(dir, "prisma")) {
+		tags = append(tags, "prisma")
+	}
+	if fileExists(filepath.Join(dir, "drizzle.config.ts")) || fileExists(filepath.Join(dir, "drizzle.config.js")) {
+		tags = append(tags, "drizzle")
+	}
+
+	// Language indicators
+	if fileExists(filepath.Join(dir, "go.mod")) {
+		tags = append(tags, "go")
+	}
+	if fileExists(filepath.Join(dir, "Cargo.toml")) {
+		tags = append(tags, "rust")
+	}
+	if fileExists(filepath.Join(dir, "requirements.txt")) || fileExists(filepath.Join(dir, "pyproject.toml")) {
+		tags = append(tags, "python")
+	}
+	if fileExists(filepath.Join(dir, "tsconfig.json")) {
+		tags = append(tags, "typescript")
+	}
+
+	// Web
+	if fileExists(filepath.Join(dir, "tailwind.config.js")) || fileExists(filepath.Join(dir, "tailwind.config.ts")) {
+		tags = append(tags, "tailwind")
+	}
+
+	return tags
+}
+
 // detectFramework checks common framework indicators.
 func detectFramework(dir string) string {
 	checks := []struct {
@@ -235,8 +289,8 @@ func detectFramework(dir string) string {
 }
 
 func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func readSmallFile(path string) ([]byte, error) {

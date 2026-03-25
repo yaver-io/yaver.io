@@ -11,8 +11,10 @@ function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boo
     Tasks: "T",
     Todos: "\u2610",
     Apps: "\u25B6",
+    Repos: "\u{1F4C2}",
     Builds: "B",
     Devices: "D",
+    More: "\u22EF",
     Settings: "S",
   };
   return (
@@ -88,13 +90,6 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="todos"
-        options={{
-          title: "Todos",
-          tabBarIcon: ({ focused }) => <TabIcon label="Todos" focused={focused} />,
-        }}
-      />
-      <Tabs.Screen
         name="apps"
         options={{
           title: "Apps",
@@ -106,8 +101,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="builds"
         options={{
-          title: "Builds",
-          tabBarIcon: ({ focused }) => <TabIcon label="Builds" focused={focused} />,
+          title: "Repos",
+          tabBarIcon: ({ focused }) => <TabIcon label="Repos" focused={focused} />,
         }}
       />
       <Tabs.Screen
@@ -118,12 +113,14 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="settings"
+        name="more"
         options={{
-          title: "Settings",
-          tabBarIcon: ({ focused }) => <TabIcon label="Settings" focused={focused} />,
+          title: "More",
+          tabBarIcon: ({ focused }) => <TabIcon label="More" focused={focused} />,
         }}
       />
+      <Tabs.Screen name="todos" options={{ href: null }} />
+      <Tabs.Screen name="settings" options={{ href: null }} />
     </Tabs>
   );
 }

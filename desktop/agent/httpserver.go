@@ -646,16 +646,44 @@ func (s *HTTPServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 
 	projects := listDiscoveredProjects()
 	type projectResp struct {
-		Name   string `json:"name"`
-		Path   string `json:"path"`
-		Branch string `json:"branch,omitempty"`
+		Name      string   `json:"name"`
+		Path      string   `json:"path"`
+		Branch    string   `json:"branch,omitempty"`
+		Framework string   `json:"framework,omitempty"`
+		GitRemote string   `json:"gitRemote,omitempty"`
+		Tags      []string `json:"tags,omitempty"`
 	}
+	// Filter out dotfiles, config dirs, and non-project directories
+	skipPrefixes := []string{".", "_"}
+	skipNames := map[string]bool{
+		"node_modules": true, "vendor": true, "dist": true, "build": true,
+		"Library": true, "Applications": true, "Music": true, "Movies": true,
+		"Pictures": true, "Documents": true, "Public": true,
+	}
+
 	result := make([]projectResp, 0, len(projects))
 	for _, p := range projects {
+		name := filepath.Base(p.Path)
+		// Skip dotfiles and config dirs
+		skip := false
+		for _, prefix := range skipPrefixes {
+			if strings.HasPrefix(name, prefix) {
+				skip = true
+				break
+			}
+		}
+		if skip || skipNames[name] {
+			continue
+		}
+		info := DetectProjectInfo(p.Path)
+		tags := DetectProjectTags(p.Path)
 		result = append(result, projectResp{
-			Name:   filepath.Base(p.Path),
-			Path:   p.Path,
-			Branch: p.Branch,
+			Name:      name,
+			Path:      p.Path,
+			Branch:    p.Branch,
+			Framework: info.Framework,
+			GitRemote: info.GitRemote,
+			Tags:      tags,
 		})
 	}
 

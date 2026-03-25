@@ -5,8 +5,10 @@ import {
   FlatList,
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { WebView } from "react-native-webview";
@@ -22,6 +24,8 @@ interface ProjectItem {
   name: string;
   path: string;
   branch?: string;
+  framework?: string;
+  tags?: string[];
 }
 
 // ── Apps Tab ───────────────────────────────────────────────────────
@@ -38,6 +42,8 @@ export default function AppsScreen() {
   const [showWebView, setShowWebView] = useState(false);
   const [webViewKey, setWebViewKey] = useState(0);
   const [webViewLoading, setWebViewLoading] = useState(false);
+  const [search, setSearch] = useState("");
+  const [activeFilter, setActiveFilter] = useState<string | null>(null);
   const webViewRef = useRef<WebView>(null);
 
   // Poll dev server status + projects
@@ -107,16 +113,30 @@ export default function AppsScreen() {
   const handleStartProject = useCallback(async (projectName: string) => {
     setStartingProject(projectName);
     try {
-      // Create a task so the agent handles everything (npm install, dev server, etc.)
+      // Signal CLI directly: switch project + start dev server
+      const result = await quicClient.switchProject(projectName, true);
+      if (result.devServer?.running) {
+        // Dev server started directly — stay on Apps, it'll show the green card
+        setStartingProject(null);
+        return;
+      }
+      // Dev server didn't start instantly (needs npm install, etc.) — create a task
       await quicClient.sendTask(
         `Run ${projectName} on my phone`,
         `Start the dev server for ${projectName} and load it on the phone via the Yaver P2P channel.`,
       );
-      // Navigate to Tasks so user sees the progress
       router.navigate("/(tabs)/tasks");
-      // When dev server starts, _layout auto-navigates back to Apps tab
     } catch (e) {
-      Alert.alert("Failed", String(e));
+      // Fallback: create task for the agent to handle
+      try {
+        await quicClient.sendTask(
+          `Run ${projectName} on my phone`,
+          `Start the dev server for ${projectName} and load it on the phone via the Yaver P2P channel.`,
+        );
+        router.navigate("/(tabs)/tasks");
+      } catch {
+        Alert.alert("Failed", String(e));
+      }
     } finally {
       setStartingProject(null);
     }
@@ -195,13 +215,73 @@ export default function AppsScreen() {
           </View>
         )}
 
-        {/* Projects list */}
-        <Text style={[s.sectionTitle, { color: c.textMuted }]}>
-          Projects on {activeDevice?.name?.replace(/\.local$/, "") ?? "device"}
-        </Text>
+        {/* Search + Projects list */}
+        <View style={[s.searchRow, { borderColor: c.border }]}>
+          <Text style={{ color: c.textMuted, fontSize: 14 }}>{"\u{1F50D}"}</Text>
+          <TextInput
+            style={[s.searchInput, { color: c.textPrimary }]}
+            placeholder="Search projects..."
+            placeholderTextColor={c.textMuted}
+            value={search}
+            onChangeText={setSearch}
+            autoCorrect={false}
+            autoCapitalize="none"
+          />
+          {search.length > 0 && (
+            <Pressable onPress={() => setSearch("")}>
+              <Text style={{ color: c.textMuted, fontSize: 14 }}>{"\u2715"}</Text>
+            </Pressable>
+          )}
+        </View>
+
+        {/* Tag filter chips */}
+        {(() => {
+          const allTags = new Set<string>();
+          projects.forEach((p) => {
+            if (p.framework) allTags.add(p.framework);
+            (p.tags ?? []).forEach((t: string) => allTags.add(t));
+          });
+          const tags = Array.from(allTags).sort();
+          if (tags.length === 0) return null;
+          return (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filterRow} contentContainerStyle={s.filterRowContent}>
+              <Pressable
+                style={[s.filterChip, !activeFilter && s.filterChipActive]}
+                onPress={() => setActiveFilter(null)}
+              >
+                <Text style={[s.filterChipText, !activeFilter && s.filterChipTextActive]}>All</Text>
+              </Pressable>
+              {tags.map((tag) => (
+                <Pressable
+                  key={tag}
+                  style={[s.filterChip, activeFilter === tag && s.filterChipActive]}
+                  onPress={() => setActiveFilter(activeFilter === tag ? null : tag)}
+                >
+                  <Text style={[s.filterChipText, activeFilter === tag && s.filterChipTextActive]}>{tag}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          );
+        })()}
 
         <FlatList
-          data={projects}
+          data={projects.filter((p) => {
+            // Fuzzy search
+            if (search.trim()) {
+              const q = search.toLowerCase();
+              const match = p.name.toLowerCase().includes(q) ||
+                (p.branch?.toLowerCase().includes(q)) ||
+                p.path.toLowerCase().includes(q) ||
+                (p.framework?.toLowerCase().includes(q)) ||
+                (p.tags ?? []).some((t: string) => t.toLowerCase().includes(q));
+              if (!match) return false;
+            }
+            // Tag filter
+            if (activeFilter) {
+              return p.framework === activeFilter || (p.tags ?? []).includes(activeFilter);
+            }
+            return true;
+          })}
           keyExtractor={(item) => item.path}
           contentContainerStyle={s.listContent}
           renderItem={({ item }) => {
@@ -225,6 +305,15 @@ export default function AppsScreen() {
                   <View style={[s.statusDot, { backgroundColor: isRunning ? "#22c55e" : c.textMuted }]} />
                   <View style={s.cardTitleContainer}>
                     <Text style={[s.projectName, { color: c.textPrimary }]}>{item.name}</Text>
+                    {((item.framework ? [item.framework] : []).concat(item.tags ?? [])).length > 0 && (
+                      <View style={s.tagRow}>
+                        {[...(item.framework ? [item.framework] : []), ...(item.tags ?? [])].filter((v, i, a) => a.indexOf(v) === i).map((tag) => (
+                          <View key={tag} style={s.tag}>
+                            <Text style={s.tagText}>{tag}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
                     <Text style={[s.projectMeta, { color: c.textMuted }]} numberOfLines={1}>
                       {item.branch ? `${item.branch} · ` : ""}{item.path}
                     </Text>
@@ -295,6 +384,46 @@ export default function AppsScreen() {
 const s = StyleSheet.create({
   safe: { flex: 1 },
   container: { flex: 1 },
+
+  // Search
+  searchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    gap: 8,
+  },
+  searchInput: { flex: 1, fontSize: 14, paddingVertical: 0 },
+
+  // Filter chips
+  filterRow: { marginHorizontal: 16, marginBottom: 8 },
+  filterRowContent: { gap: 6 },
+  filterChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: "#111",
+    borderWidth: 1,
+    borderColor: "#222",
+  },
+  filterChipActive: { backgroundColor: "#6366f122", borderColor: "#6366f1" },
+  filterChipText: { fontSize: 11, fontWeight: "600", color: "#888" },
+  filterChipTextActive: { color: "#818cf8" },
+
+  // Tag chips on cards
+  tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 3 },
+  tag: {
+    backgroundColor: "#6366f115",
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  tagText: { color: "#818cf8", fontSize: 9, fontWeight: "600" },
 
   // Active app card
   card: { marginHorizontal: 16, borderRadius: 12, padding: 14, marginBottom: 8 },

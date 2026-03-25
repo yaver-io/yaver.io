@@ -560,7 +560,7 @@ export class QuicClient {
   // ── Projects (discovery + switching) ────────────────────────────
 
   /** List discovered projects on the machine. */
-  async listProjects(): Promise<{ name: string; path: string; branch?: string }[]> {
+  async listProjects(): Promise<{ name: string; path: string; branch?: string; framework?: string; gitRemote?: string; tags?: string[] }[]> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/projects`, {
       headers: this.authHeaders,

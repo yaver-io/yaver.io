@@ -409,7 +409,7 @@ func (b *baseDevServer) startProcess(ctx context.Context, name string, args []st
 	b.mu.Unlock()
 
 	// Wait for dev server to become ready (poll health/readiness)
-	deadline := time.After(60 * time.Second)
+	deadline := time.After(120 * time.Second) // Expo web first build can take 2+ min
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -501,16 +501,17 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		gen.Run() // best-effort
 	}
 
-	// Start Expo with web support — serves both native bundle and web app
-	// --web: enables web platform
-	// --lan: binds to LAN IP (needed for proxy)
-	// No --no-dev: keep dev mode for hot reload and source maps
+	// Start Expo web — serves the app as a web page for the WebView
+	// --web: enables web platform (webpack/metro web)
+	// --host 0.0.0.0: bind to all interfaces (needed for proxy + LAN access)
+	// No --no-dev: keep dev mode for hot reload
 	args := []string{"expo", "start",
 		"--web",
 		"--port", fmt.Sprintf("%d", e.port),
-		"--lan",
+		"--host", "0.0.0.0",
 	}
 
+	// Expo web serves on the same port as Metro
 	readyURL := fmt.Sprintf("http://127.0.0.1:%d", e.port)
 	return e.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
 }
