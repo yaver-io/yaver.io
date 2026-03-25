@@ -748,7 +748,38 @@ func (s *HTTPServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		info := DetectProjectInfo(p.Path)
-		tags := DetectProjectTags(p.Path)
+		// Derive tags from actions — covers monorepos (mobile/ + web/ + backend/)
+		actions := DetectProjectActions(p.Path)
+		tagSet := map[string]bool{}
+		for _, a := range actions {
+			if a.Framework != "" {
+				tagSet[a.Framework] = true
+			}
+			if a.Platform != "" {
+				tagSet[a.Platform] = true
+			}
+			// Infer high-level tags
+			switch a.Type {
+			case "dev-server":
+				if a.Framework == "expo" || a.Framework == "flutter" {
+					tagSet["mobile"] = true
+				} else {
+					tagSet["web"] = true
+				}
+			case "deploy":
+				if a.Platform == "testflight" || a.Platform == "playstore" {
+					tagSet["mobile"] = true
+				}
+			}
+		}
+		// Also add language-level tags
+		for _, t := range DetectProjectTags(p.Path) {
+			tagSet[t] = true
+		}
+		tags := make([]string, 0, len(tagSet))
+		for t := range tagSet {
+			tags = append(tags, t)
+		}
 		result = append(result, projectResp{
 			Name:      name,
 			Path:      p.Path,
