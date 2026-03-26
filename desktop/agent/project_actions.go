@@ -19,6 +19,7 @@ type ProjectAction struct {
 
 // DetectProjectActions scans a project directory and returns all available actions.
 // Checks root dir + immediate subdirectories for deployable targets.
+// Deduplicates actions with the same label+platform (monorepo subdirs can overlap).
 func DetectProjectActions(projectPath string) []ProjectAction {
 	var actions []ProjectAction
 
@@ -28,7 +29,11 @@ func DetectProjectActions(projectPath string) []ProjectAction {
 	if err == nil {
 		for _, e := range entries {
 			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") && !strings.HasPrefix(e.Name(), "_") {
-				if e.Name() == "node_modules" || e.Name() == "vendor" || e.Name() == "dist" || e.Name() == "build" {
+				skip := map[string]bool{
+					"node_modules": true, "vendor": true, "dist": true, "build": true,
+					"ios": true, "android": true, ".expo": true, "pods": true,
+				}
+				if skip[e.Name()] {
 					continue
 				}
 				dirs = append(dirs, filepath.Join(projectPath, e.Name()))
@@ -36,13 +41,22 @@ func DetectProjectActions(projectPath string) []ProjectAction {
 		}
 	}
 
+	seen := map[string]bool{}
 	for _, dir := range dirs {
 		rel := "."
 		if dir != projectPath {
 			rel = filepath.Base(dir) + "/"
 		}
 
-		actions = append(actions, detectActionsInDir(dir, rel)...)
+		for _, a := range detectActionsInDir(dir, rel) {
+			// Deduplicate by label+platform — keep the first (root wins over subdir)
+			key := a.Label + "|" + a.Platform + "|" + a.Framework
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			actions = append(actions, a)
+		}
 	}
 
 	return actions
