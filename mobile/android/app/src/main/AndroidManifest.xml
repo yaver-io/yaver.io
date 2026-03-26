@@ -6,8 +6,10 @@
   <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
   <uses-permission android:name="android.permission.VIBRATE"/>
   <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
-  <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
-  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
+  <!-- Remove permissions pulled in by dependencies that the mobile app doesn't use -->
+  <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" tools:node="remove"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" tools:node="remove"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" tools:node="remove"/>
   <queries>
     <intent>
       <action android:name="android.intent.action.VIEW"/>
@@ -47,9 +49,5 @@
             android:name="android.support.FILE_PROVIDER_PATHS"
             android:resource="@xml/file_paths"/>
     </provider>
-    <service
-        android:name="androidx.media.MediaBrowserServiceCompat"
-        android:foregroundServiceType="mediaProjection"
-        android:exported="false" />
   </application>
 </manifest>

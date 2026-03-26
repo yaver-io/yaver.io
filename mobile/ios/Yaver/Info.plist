@@ -34,7 +34,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>87</string>
+	<string>88</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>12.0</string>
 	<key>LSRequiresIPhoneOS</key>
@@ -46,10 +46,16 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_yaver._udp</string>
+	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Yaver needs camera access to take photos for tasks.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Allow $(PRODUCT_NAME) to access your Face ID biometric data.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Yaver discovers your development machine on the local network for direct, low-latency connections.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Yaver uses your microphone for voice input — send tasks by speaking instead of typing.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
