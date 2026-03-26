@@ -64,7 +64,7 @@ func DetectProjectActions(projectPath string) []ProjectAction {
 
 func detectActionsInDir(dir, rel string) []ProjectAction {
 	var actions []ProjectAction
-	name := filepath.Base(dir)
+	_ = filepath.Base(dir)
 
 	// Mobile (Expo / React Native)
 	if hasFile(dir, "app.json") || hasFile(dir, "app.config.js") || hasFile(dir, "app.config.ts") {
@@ -164,7 +164,12 @@ func detectActionsInDir(dir, rel string) []ProjectAction {
 	}
 
 	// Go binary
-	if hasFile(dir, "go.mod") && (name != "." && !pkgHas(dir, "expo")) {
+	if hasFile(dir, "go.mod") && !pkgHas(dir, "expo") {
+		actions = append(actions, ProjectAction{
+			Label: "Run", Target: rel, Type: "run",
+			Framework: "go", Icon: "\U0001F4BB",
+			Command: "go run .",
+		})
 		actions = append(actions, ProjectAction{
 			Label: "Build", Target: rel, Type: "build",
 			Framework: "go", Icon: "\U0001F528",
@@ -175,21 +180,61 @@ func detectActionsInDir(dir, rel string) []ProjectAction {
 	// Rust
 	if hasFile(dir, "Cargo.toml") {
 		actions = append(actions, ProjectAction{
+			Label: "Run", Target: rel, Type: "run",
+			Framework: "rust", Icon: "\U0001F4BB",
+			Command: "cargo run",
+		})
+		actions = append(actions, ProjectAction{
 			Label: "Build", Target: rel, Type: "build",
-			Framework: "rust", Icon: "\U0001F980",
+			Framework: "rust", Icon: "\U0001F528",
 			Command: "cargo build --release",
 		})
 	}
 
-	// Python
-	if hasFile(dir, "pyproject.toml") || hasFile(dir, "setup.py") {
-		actions = append(actions, ProjectAction{
-			Label: "Run", Target: rel, Type: "build",
-			Framework: "python", Icon: "\U0001F40D",
-		})
+	// Python — find entry point
+	if hasFile(dir, "pyproject.toml") || hasFile(dir, "setup.py") || hasFile(dir, "requirements.txt") {
+		entryPoint := findPythonEntry(dir)
+		if entryPoint != "" {
+			actions = append(actions, ProjectAction{
+				Label: "Run", Target: rel, Type: "run",
+				Framework: "python", Icon: "\U0001F4BB",
+				Command: "python3 " + entryPoint,
+			})
+		}
 	}
 
 	return actions
+}
+
+// findPythonEntry finds the main entry point for a Python project.
+func findPythonEntry(dir string) string {
+	// Common entry points in priority order
+	candidates := []string{
+		"main.py", "app.py", "run.py", "server.py", "manage.py",
+		"cli.py", "src/main.py", "src/app.py",
+	}
+	for _, c := range candidates {
+		if hasFile(dir, c) {
+			return c
+		}
+	}
+	// Check if there's a __main__.py (runnable package)
+	if hasFile(dir, "__main__.py") {
+		return "__main__.py"
+	}
+	// Look for any .py with if __name__ == "__main__"
+	entries, err := os.ReadDir(dir)
+	if err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".py") {
+				data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+				if err == nil && strings.Contains(string(data), `__name__`) && strings.Contains(string(data), `__main__`) {
+					return e.Name()
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func hasFile(dir, name string) bool {

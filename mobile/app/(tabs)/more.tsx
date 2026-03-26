@@ -56,13 +56,13 @@ export default function MoreScreen() {
 
       {/* Tutorials list modal */}
       <Modal visible={showTutorials && !tutorialUrl} animationType="slide">
-        <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["top"]}>
-          <View style={[s.modalHeader, { borderBottomColor: c.border }]}>
-            <Pressable onPress={() => setShowTutorials(false)}>
-              <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>Back</Text>
+        <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["top", "bottom"]}>
+          <View style={[s.modalHeader, { borderBottomColor: c.border, paddingTop: 8 }]}>
+            <Pressable onPress={() => setShowTutorials(false)} style={{ paddingVertical: 8 }}>
+              <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
             </Pressable>
             <Text style={[s.modalTitle, { color: c.textPrimary }]}>Tutorials</Text>
-            <View style={{ width: 40 }} />
+            <View style={{ width: 50 }} />
           </View>
           <ScrollView contentContainerStyle={s.list}>
             {TUTORIALS.map((t) => (
@@ -85,10 +85,10 @@ export default function MoreScreen() {
 
       {/* Tutorial content WebView */}
       <Modal visible={!!tutorialUrl} animationType="slide">
-        <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["top"]}>
-          <View style={[s.modalHeader, { borderBottomColor: c.border }]}>
-            <Pressable onPress={() => setTutorialUrl(null)}>
-              <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>Back</Text>
+        <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["top", "bottom"]}>
+          <View style={[s.modalHeader, { borderBottomColor: c.border, paddingTop: 8 }]}>
+            <Pressable onPress={() => setTutorialUrl(null)} style={{ paddingVertical: 8 }}>
+              <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
             </Pressable>
             <Text style={[s.modalTitle, { color: c.textPrimary }]}>
               {TUTORIALS.find(t => t.url === tutorialUrl)?.label ?? "Tutorial"}
