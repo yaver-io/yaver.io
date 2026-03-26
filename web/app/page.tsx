@@ -1116,6 +1116,102 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* ── Section: Browse your apps. Take action. ── */}
+      <section className="border-t border-surface-800/60 px-6 py-24">
+        <div className="mx-auto max-w-5xl">
+          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
+            All your projects. One tap to ship.
+          </h2>
+          <p className="mx-auto mb-12 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
+            Your phone discovers every project on your dev machine over P2P. AI detects the framework, finds every deployable target, and gives you one-tap actions &mdash; hot reload, deploy, build.
+          </p>
+
+          {/* Flow visualization */}
+          <div className="mx-auto mb-12 max-w-3xl">
+            <div className="flex flex-wrap items-center justify-center gap-2 text-sm">
+              {[
+                { label: "Phone connects P2P", icon: "\uD83D\uDCF1" },
+                { label: "Agent scans repos", icon: "\uD83D\uDD0D" },
+                { label: "AI detects targets", icon: "\u2699" },
+                { label: "You tap an action", icon: "\u25B6" },
+                { label: "Deployed", icon: "\u2713" },
+              ].map((step, i) => (
+                <div key={step.label} className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 rounded-full border border-surface-700 bg-surface-900 px-3 py-1.5">
+                    <span>{step.icon}</span>
+                    <span className="text-surface-300">{step.label}</span>
+                  </div>
+                  {i < 4 && <span className="text-surface-600">&rarr;</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* What the agent detects */}
+          <div className="mb-10 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {[
+              { framework: "Expo / React Native", actions: "Hot Reload, Build iOS, Build Android", platforms: "TestFlight, Play Store", icon: "\uD83D\uDCF1", color: "text-[#a78bfa] bg-[#a78bfa]/10" },
+              { framework: "Flutter", actions: "Hot Reload, Build iOS, Build Android", platforms: "TestFlight, Play Store", icon: "\uD83D\uDCF1", color: "text-[#60a5fa] bg-[#60a5fa]/10" },
+              { framework: "Next.js", actions: "Dev Server, Deploy", platforms: "Vercel", icon: "\u25B2", color: "text-surface-300 bg-surface-800" },
+              { framework: "Vite", actions: "Dev Server, Deploy", platforms: "Vercel", icon: "\u26A1", color: "text-[#fbbf24] bg-[#fbbf24]/10" },
+              { framework: "Convex", actions: "Deploy Backend", platforms: "Convex Cloud", icon: "\uD83E\uDDE0", color: "text-[#f87171] bg-[#f87171]/10" },
+              { framework: "Docker", actions: "Run Container", platforms: "Any server", icon: "\uD83D\uDC33", color: "text-[#60a5fa] bg-[#60a5fa]/10" },
+            ].map((f) => (
+              <div key={f.framework} className="rounded-xl border border-surface-800 bg-surface-900/50 p-4">
+                <div className="mb-2 flex items-center gap-2">
+                  <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-sm ${f.color}`}>{f.icon}</div>
+                  <span className="text-sm font-semibold text-surface-100">{f.framework}</span>
+                </div>
+                <p className="text-xs text-surface-400">{f.actions}</p>
+                <p className="mt-1 text-[11px] text-surface-500">&rarr; {f.platforms}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Monorepo callout */}
+          <div className="mx-auto max-w-3xl rounded-xl border border-[#6366f1]/20 bg-[#6366f1]/5 p-5">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+              <div className="flex-1">
+                <p className="text-sm font-medium text-surface-100">Monorepo-aware</p>
+                <p className="mt-1 text-xs leading-relaxed text-surface-400">
+                  One project, multiple targets. The agent scans subdirectories and finds every deployable piece &mdash; <code className="rounded bg-surface-800 px-1 py-0.5 text-[11px] text-surface-300">mobile/</code> gets Hot Reload + TestFlight, <code className="rounded bg-surface-800 px-1 py-0.5 text-[11px] text-surface-300">web/</code> gets Vercel deploy, <code className="rounded bg-surface-800 px-1 py-0.5 text-[11px] text-surface-300">backend/</code> gets Convex deploy. All from one project card on your phone.
+                </p>
+              </div>
+              <div className="shrink-0 rounded-lg border border-surface-800 bg-surface-900/80 p-3">
+                <div className="space-y-1.5 font-mono text-[11px]">
+                  <div className="text-surface-500">my-app/</div>
+                  <div className="flex items-center gap-2 pl-3"><span className="text-[#a78bfa]">mobile/</span> <span className="rounded bg-[#a78bfa]/10 px-1.5 py-0.5 text-[9px] text-[#a78bfa]">expo</span> <span className="rounded bg-[#22c55e]/10 px-1.5 py-0.5 text-[9px] text-[#22c55e]">testflight</span></div>
+                  <div className="flex items-center gap-2 pl-3"><span className="text-surface-300">web/</span> <span className="rounded bg-surface-700 px-1.5 py-0.5 text-[9px] text-surface-400">nextjs</span> <span className="rounded bg-surface-700 px-1.5 py-0.5 text-[9px] text-surface-400">vercel</span></div>
+                  <div className="flex items-center gap-2 pl-3"><span className="text-[#f87171]">backend/</span> <span className="rounded bg-[#f87171]/10 px-1.5 py-0.5 text-[9px] text-[#f87171]">convex</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Features grid */}
+          <div className="mt-10 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
+              <p className="text-sm font-semibold text-surface-200">Fuzzy search + tags</p>
+              <p className="mt-1 text-xs text-surface-400">
+                Search by name, path, or framework. Filter by tags: expo, nextjs, flutter, vercel, convex, docker. Projects discovered automatically &mdash; no config files.
+              </p>
+            </div>
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
+              <p className="text-sm font-semibold text-surface-200">One-tap quick actions</p>
+              <p className="mt-1 text-xs text-surface-400">
+                Running app shows action buttons: Ship It (version bump + build + deploy + changelog), Polish UI (design pass + hot reload), Fix All Bugs (test suite + fix + reload).
+              </p>
+            </div>
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
+              <p className="text-sm font-semibold text-surface-200">Zero config</p>
+              <p className="mt-1 text-xs text-surface-400">
+                No manifest. No project file. The agent reads package.json, pubspec.yaml, go.mod, Cargo.toml, Dockerfile &mdash; and figures out the rest.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* ── Section 4: 60-Second Install ── */}
       <section id="features" className="border-t border-surface-800/60 px-6 py-24">
         <div className="mx-auto max-w-3xl">
@@ -1587,24 +1683,22 @@ if (isDev) {
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="card">
-              <h3 className="mb-2 text-sm font-semibold text-surface-100">From the couch</h3>
+              <h3 className="mb-2 text-sm font-semibold text-surface-100">Browse apps, deploy from the couch</h3>
               <p className="text-sm leading-relaxed text-surface-400">
-                Start Aider or Ollama in tmux on your laptop. Walk away.
-                Pick it up from your phone. Context intact. No reconnect.
+                Open the Apps tab. All your projects are there &mdash; auto-discovered. Tap your app, hot reload to your phone, fix a bug with the Feedback SDK, deploy to Vercel. Laptop stays closed.
               </p>
             </div>
             <div className="card">
-              <h3 className="mb-2 text-sm font-semibold text-surface-100">On a commute</h3>
+              <h3 className="mb-2 text-sm font-semibold text-surface-100">Ship on a commute</h3>
               <p className="text-sm leading-relaxed text-surface-400">
-                Queue a refactor on the bus. Machine runs it while you&apos;re moving.
-                Review the diff. Approve or reject. Laptop never opened.
+                Tap &ldquo;Ship It&rdquo; on the bus &mdash; version bump, build iOS + Android, upload to TestFlight + Play Store, deploy Convex backend. Review the changelog when you arrive.
               </p>
             </div>
             <div className="card">
               <h3 className="mb-2 text-sm font-semibold text-surface-100">Headless server</h3>
               <p className="text-sm leading-relaxed text-surface-400">
                 <code className="rounded bg-surface-800 px-1.5 py-0.5 text-xs text-surface-300">yaver serve</code> on a Linux box or Raspberry Pi.
-                Run AI tasks remotely. Get results on your phone. No SSH session juggling.
+                Browse projects, trigger builds, deploy backends. No SSH session juggling.
               </p>
             </div>
             <div className="card">
@@ -1627,16 +1721,16 @@ if (isDev) {
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {[
+              { name: "Browse & Deploy Apps", desc: "Auto-discover projects, one-tap deploy to Vercel, TestFlight, Play Store, Convex" },
+              { name: "Hot Reload to Phone", desc: "Preview Expo, Vite, Next.js, Flutter apps live on your device over P2P" },
+              { name: "Smart Actions", desc: "AI detects frameworks — shows Ship It, Build, Deploy, Hot Reload per target" },
               { name: "Session Transfer", desc: "Move AI sessions between machines mid-task" },
               { name: "Remote Exec", desc: "Run agents on any dev machine" },
               { name: "Adopt Running Sessions", desc: "Start tmux anywhere, continue on phone" },
               { name: "Task Scheduling", desc: "Cron-like scheduling, GitHub/GitLab webhook triggers" },
               { name: "Git Operations", desc: "Status, diff, commit from mobile" },
-              { name: "File Search", desc: "Search across your codebase remotely" },
-              { name: "Screen Capture", desc: "Capture and share terminal output" },
               { name: "Notifications", desc: "Telegram, Discord, Slack" },
               { name: "CLI-to-CLI", desc: "yaver connect from any terminal, no phone needed" },
-              { name: "Multi-machine", desc: "Transfer sessions, shared GPU server with isolated agents" },
               { name: "Agent Chaining", desc: "Ollama writes, Claude Code reviews, Aider applies" },
               { name: "P2P Key Vault", desc: "API keys, SSH keys, signing certs synced phone to machine" },
             ].map((cap) => (
@@ -2251,8 +2345,8 @@ await for (final chunk in c.streamOutput(task.id)) {
               answer="After deploying a build to your phone, you test it and record bugs — screen recording + voice narration. The report goes back to your AI agent via P2P, which sees the recording, reads your transcript, and fixes the issues. Three modes: Live (agent watches in real-time and comments), Narrated (record + send), and Batch (full dump). You can also embed our feedback SDK (@yaver/feedback-web, @yaver/feedback-react-native, yaver_feedback) in your app for shake-to-report during development."
             />
             <FAQItem
-              question="How does repo switching work?"
-              answer="Yaver auto-discovers git repos on your machine (scans ~/). Say 'switch to my-app' from your phone or run 'yaver repo switch my-app' from CLI. The agent changes its working directory to your project — no manual path typing. Works with any git repo, no GitHub/GitLab integration needed."
+              question="How does the Apps tab work?"
+              answer="The agent scans your home directory for projects with build systems (package.json, pubspec.yaml, go.mod, Cargo.toml, Dockerfile, etc.). AI detects the framework (Expo, Next.js, Vite, Flutter, Convex, Docker) and lists all deployable targets — including subdirectories for monorepos. You see every project on your phone with fuzzy search and tag filters. Tap a project to start its dev server, deploy to Vercel, push to TestFlight, or run any detected action. Zero config — no manifest files, no project setup."
             />
             <FAQItem
               question="Can I run tests from my phone?"

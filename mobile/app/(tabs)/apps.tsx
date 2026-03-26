@@ -383,8 +383,10 @@ export default function AppsScreen() {
                     <ActivityIndicator size="small" color={c.accent} />
                   ) : isRunning ? (
                     <Text style={{ color: "#22c55e", fontSize: 12, fontWeight: "600" }}>Running</Text>
-                  ) : (
+                  ) : item.framework === "expo" || item.framework === "flutter" || item.framework === "nextjs" || item.framework === "vite" ? (
                     <Text style={{ color: c.accent, fontSize: 12, fontWeight: "600" }}>Start</Text>
+                  ) : (
+                    <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600" }}>{"\u25B6"}</Text>
                   )}
                 </View>
               </Pressable>
