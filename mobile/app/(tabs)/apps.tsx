@@ -44,6 +44,12 @@ export default function AppsScreen() {
   const [webViewLoading, setWebViewLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
+  const [actionSheet, setActionSheet] = useState<{
+    project: string;
+    path: string;
+    actions: { label: string; target: string; type: string; framework?: string; platform?: string; command?: string; icon?: string }[];
+  } | null>(null);
+  const [loadingActions, setLoadingActions] = useState(false);
   const webViewRef = useRef<WebView>(null);
 
   // Poll dev server status + projects
@@ -110,37 +116,76 @@ export default function AppsScreen() {
 
   const router = useRouter();
 
-  const handleStartProject = useCallback(async (projectName: string) => {
-    setStartingProject(projectName);
-    try {
-      // Signal CLI directly: switch project + start dev server
-      const result = await quicClient.switchProject(projectName, true);
-      if (result.devServer?.running) {
-        // Dev server started directly — stay on Apps, it'll show the green card
-        setStartingProject(null);
-        return;
-      }
-      // Dev server didn't start instantly (needs npm install, etc.) — create a task
-      await quicClient.sendTask(
-        `Run ${projectName} on my phone`,
-        `Start the dev server for ${projectName} and load it on the phone via the Yaver P2P channel.`,
-      );
-      router.navigate("/(tabs)/tasks");
-    } catch (e) {
-      // Fallback: create task for the agent to handle
-      try {
-        await quicClient.sendTask(
-          `Run ${projectName} on my phone`,
-          `Start the dev server for ${projectName} and load it on the phone via the Yaver P2P channel.`,
-        );
-        router.navigate("/(tabs)/tasks");
-      } catch {
-        Alert.alert("Failed", String(e));
-      }
-    } finally {
-      setStartingProject(null);
+  // Tap project → fetch actions from CLI → show action sheet
+  const handleTapProject = useCallback(async (projectName: string) => {
+    const isRunning = devStatus?.workDir?.endsWith(projectName);
+    if (isRunning) {
+      handleOpen();
+      return;
     }
-  }, [router]);
+
+    setLoadingActions(true);
+    try {
+      const result = await quicClient.getProjectActions(projectName);
+      if (result.actions.length === 0) {
+        // No known actions — fall back to AI task
+        await quicClient.sendTask(`Run ${projectName} on my phone`, "");
+        router.navigate("/(tabs)/tasks");
+      } else {
+        setActionSheet(result);
+      }
+    } catch {
+      // Fallback
+      await quicClient.sendTask(`Run ${projectName} on my phone`, "").catch(() => {});
+      router.navigate("/(tabs)/tasks");
+    } finally {
+      setLoadingActions(false);
+    }
+  }, [devStatus, router]);
+
+  // Execute a specific action from the action sheet
+  const handleExecuteAction = useCallback(async (action: { label: string; target: string; type: string; framework?: string; platform?: string; command?: string }) => {
+    const project = actionSheet?.project ?? "";
+    const path = actionSheet?.path ?? "";
+    setActionSheet(null);
+
+    if (action.type === "dev-server") {
+      // Direct dev server start
+      setStartingProject(project);
+      try {
+        const targetPath = action.target === "." ? path : `${path}/${action.target}`.replace(/\/+$/, "");
+        await quicClient.switchProject(project, true);
+        // If it didn't start instantly, create a task
+        const status = await quicClient.getDevServerStatus();
+        if (!status?.running) {
+          await quicClient.sendTask(
+            `Hot reload ${project} (${action.framework}) on my phone`,
+            `Start the dev server for ${action.target} in ${path}`,
+          );
+          router.navigate("/(tabs)/tasks");
+        }
+      } catch {
+        await quicClient.sendTask(`Hot reload ${project} on my phone`, "").catch(() => {});
+        router.navigate("/(tabs)/tasks");
+      } finally {
+        setStartingProject(null);
+      }
+    } else if (action.command) {
+      // Direct command
+      await quicClient.sendTask(
+        `${action.label} — ${project}`,
+        `cd ${path}/${action.target} && ${action.command}`,
+      ).catch(() => {});
+      router.navigate("/(tabs)/tasks");
+    } else {
+      // AI handles it
+      await quicClient.sendTask(
+        `${action.label} for ${project}`,
+        `Project: ${path}/${action.target}. Platform: ${action.platform || action.framework || "auto"}. Do it.`,
+      ).catch(() => {});
+      router.navigate("/(tabs)/tasks");
+    }
+  }, [actionSheet, router]);
 
   const handleOpen = useCallback(() => {
     setShowWebView(true);
@@ -314,14 +359,8 @@ export default function AppsScreen() {
               <Pressable
                 style={[s.card, s.projectCard, { backgroundColor: c.bgCard, borderColor: c.border },
                   isRunning && { borderColor: "#22c55e44" }]}
-                onPress={() => {
-                  if (isRunning) {
-                    handleOpen();
-                  } else {
-                    handleStartProject(item.name);
-                  }
-                }}
-                disabled={isStarting}
+                onPress={() => handleTapProject(item.name)}
+                disabled={isStarting || loadingActions}
               >
                 <View style={s.cardHeader}>
                   <View style={[s.statusDot, { backgroundColor: isRunning ? "#22c55e" : c.textMuted }]} />
@@ -360,6 +399,38 @@ export default function AppsScreen() {
           }
         />
       </View>
+
+      {/* Action sheet — shows available actions for a project */}
+      <Modal visible={!!actionSheet} animationType="slide" transparent>
+        <Pressable style={s.actionSheetOverlay} onPress={() => setActionSheet(null)}>
+          <View style={[s.actionSheetContainer, { backgroundColor: c.bgCard }]}>
+            <View style={s.actionSheetHandle} />
+            <Text style={[s.actionSheetTitle, { color: c.textPrimary }]}>
+              {actionSheet?.project}
+            </Text>
+            <Text style={[s.actionSheetSubtitle, { color: c.textMuted }]}>
+              What do you want to do?
+            </Text>
+            <ScrollView style={s.actionSheetScroll}>
+              {actionSheet?.actions.map((action, i) => (
+                <Pressable
+                  key={`${action.label}-${i}`}
+                  style={[s.actionSheetItem, { borderColor: c.border }]}
+                  onPress={() => handleExecuteAction(action)}
+                >
+                  <Text style={s.actionSheetIcon}>{action.icon || "\u25B6"}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[s.actionSheetLabel, { color: c.textPrimary }]}>{action.label}</Text>
+                    <Text style={[s.actionSheetMeta, { color: c.textMuted }]}>
+                      {action.target}{action.framework ? ` · ${action.framework}` : ""}{action.platform ? ` → ${action.platform}` : ""}
+                    </Text>
+                  </View>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        </Pressable>
+      </Modal>
 
       {/* Full-screen WebView */}
       <Modal visible={showWebView} animationType="slide" presentationStyle="fullScreen">
@@ -461,6 +532,18 @@ const s = StyleSheet.create({
   },
   quickIcon: { fontSize: 18, marginBottom: 2 },
   quickLabel: { fontSize: 9, color: "#999", fontWeight: "600" },
+
+  // Action sheet
+  actionSheetOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
+  actionSheetContainer: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 40, maxHeight: "70%" },
+  actionSheetHandle: { width: 36, height: 4, backgroundColor: "#333", borderRadius: 2, alignSelf: "center", marginBottom: 16 },
+  actionSheetTitle: { fontSize: 20, fontWeight: "700", marginBottom: 2 },
+  actionSheetSubtitle: { fontSize: 13, marginBottom: 16 },
+  actionSheetScroll: {},
+  actionSheetItem: { flexDirection: "row", alignItems: "center", paddingVertical: 14, borderBottomWidth: 1, gap: 12 },
+  actionSheetIcon: { fontSize: 22 },
+  actionSheetLabel: { fontSize: 15, fontWeight: "600" },
+  actionSheetMeta: { fontSize: 11, marginTop: 1 },
 
   // Active app card
   card: { marginHorizontal: 16, borderRadius: 12, padding: 14, marginBottom: 8 },
