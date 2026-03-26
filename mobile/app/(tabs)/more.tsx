@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { WebView } from "react-native-webview";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
 
@@ -21,6 +21,7 @@ export default function MoreScreen() {
   const [showTutorials, setShowTutorials] = useState(false);
   const [tutorialUrl, setTutorialUrl] = useState<string | null>(null);
 
+  const insets = useSafeAreaInsets();
   const handleTodos = useCallback(() => router.navigate("/(tabs)/todos" as any), [router]);
   const handleSettings = useCallback(() => router.navigate("/(tabs)/settings" as any), [router]);
   const handleTutorials = useCallback(() => setShowTutorials(true), []);
@@ -56,8 +57,8 @@ export default function MoreScreen() {
 
       {/* Tutorials list modal */}
       <Modal visible={showTutorials && !tutorialUrl} animationType="slide">
-        <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["top", "bottom"]}>
-          <View style={[s.modalHeader, { borderBottomColor: c.border, paddingTop: 12 }]}>
+        <View style={[s.safe, { backgroundColor: c.bg }]}>
+          <View style={[s.modalHeader, { borderBottomColor: c.border, paddingTop: insets.top + 12 }]}>
             <Pressable onPress={() => setShowTutorials(false)} style={{ paddingVertical: 8 }}>
               <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
             </Pressable>
@@ -80,13 +81,13 @@ export default function MoreScreen() {
               </Pressable>
             ))}
           </ScrollView>
-        </SafeAreaView>
+        </View>
       </Modal>
 
       {/* Tutorial content WebView */}
       <Modal visible={!!tutorialUrl} animationType="slide">
-        <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["top", "bottom"]}>
-          <View style={[s.modalHeader, { borderBottomColor: c.border, paddingTop: 12 }]}>
+        <View style={[s.safe, { backgroundColor: c.bg }]}>
+          <View style={[s.modalHeader, { borderBottomColor: c.border, paddingTop: insets.top + 12 }]}>
             <Pressable onPress={() => setTutorialUrl(null)} style={{ paddingVertical: 8 }}>
               <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
             </Pressable>
@@ -103,7 +104,7 @@ export default function MoreScreen() {
               domStorageEnabled
             />
           )}
-        </SafeAreaView>
+        </View>
       </Modal>
     </SafeAreaView>
   );

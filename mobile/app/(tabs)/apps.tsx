@@ -12,7 +12,7 @@ import {
   View,
 } from "react-native";
 import { WebView } from "react-native-webview";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
@@ -32,6 +32,7 @@ interface ProjectItem {
 
 export default function AppsScreen() {
   const c = useColors();
+  const insets = useSafeAreaInsets();
   const { activeDevice, connectionStatus } = useDevice();
   const isConnected = connectionStatus === "connected" && !!activeDevice;
 
@@ -455,8 +456,8 @@ export default function AppsScreen() {
 
       {/* Vibing modal — AI pair programming widget */}
       <Modal visible={!!vibingState} animationType="slide">
-        <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["top", "bottom"]}>
-          <View style={[s.vibingHeader, { borderBottomColor: c.border }]}>
+        <View style={[s.safe, { backgroundColor: c.bg }]}>
+          <View style={[s.vibingHeader, { borderBottomColor: c.border, paddingTop: insets.top + 8 }]}>
             <Pressable onPress={() => { setVibingState(null); setCustomTask(""); setVibingTaskStatus(""); setVibingTaskId(null); }} style={{ paddingVertical: 8 }}>
               <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
             </Pressable>
@@ -611,13 +612,13 @@ export default function AppsScreen() {
               </>
             )}
           </ScrollView>
-        </SafeAreaView>
+        </View>
       </Modal>
 
       {/* Full-screen WebView */}
       <Modal visible={showWebView} animationType="slide" presentationStyle="fullScreen">
-        <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["top"]}>
-          <View style={[s.webViewHeader, { borderBottomColor: c.border }]}>
+        <View style={[s.safe, { backgroundColor: c.bg }]}>
+          <View style={[s.webViewHeader, { borderBottomColor: c.border, paddingTop: insets.top + 8 }]}>
             <Pressable onPress={() => setShowWebView(false)}>
               <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>Back</Text>
             </Pressable>
@@ -648,7 +649,7 @@ export default function AppsScreen() {
             domStorageEnabled
             allowsInlineMediaPlayback
           />
-        </SafeAreaView>
+        </View>
       </Modal>
     </SafeAreaView>
   );
