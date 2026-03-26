@@ -159,19 +159,19 @@ export default function AppsScreen() {
     setActionSheet(null);
 
     if (action.type === "vibing") {
-      // Open vibing mode — fetch AI suggestions
-      try {
-        const state = await quicClient.getVibingState(project);
-        console.log("[vibing] Got state:", state?.project, state?.suggestions?.length, "suggestions");
-        if (state) {
-          setVibingState(state);
-        } else {
-          Alert.alert("No data", "Vibing returned empty state");
+      // Open vibing mode — delay to let action sheet modal fully close first
+      setTimeout(async () => {
+        try {
+          const state = await quicClient.getVibingState(project);
+          if (state) {
+            setVibingState(state);
+          } else {
+            Alert.alert("No data", "Vibing returned empty state");
+          }
+        } catch (e) {
+          Alert.alert("Failed", String(e));
         }
-      } catch (e) {
-        console.log("[vibing] Error:", e);
-        Alert.alert("Failed", String(e));
-      }
+      }, 400);
       return;
     }
 
@@ -431,7 +431,7 @@ export default function AppsScreen() {
       {/* Action sheet — shows available actions for a project */}
       <Modal visible={!!actionSheet} animationType="slide" transparent>
         <Pressable style={s.actionSheetOverlay} onPress={() => setActionSheet(null)}>
-          <View style={[s.actionSheetContainer, { backgroundColor: c.bgCard }]}>
+          <Pressable style={[s.actionSheetContainer, { backgroundColor: c.bgCard }]} onPress={(e) => e.stopPropagation()}>
             <View style={s.actionSheetHandle} />
             <Text style={[s.actionSheetTitle, { color: c.textPrimary }]}>
               {actionSheet?.project}
@@ -456,7 +456,7 @@ export default function AppsScreen() {
                 </Pressable>
               ))}
             </ScrollView>
-          </View>
+          </Pressable>
         </Pressable>
       </Modal>
 
