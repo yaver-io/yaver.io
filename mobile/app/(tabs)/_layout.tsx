@@ -98,13 +98,7 @@ export default function TabLayout() {
           ),
         }}
       />
-      <Tabs.Screen
-        name="builds"
-        options={{
-          title: "Repos",
-          tabBarIcon: ({ focused }) => <TabIcon label="Repos" focused={focused} />,
-        }}
-      />
+      <Tabs.Screen name="builds" options={{ href: null }} />
       <Tabs.Screen
         name="devices"
         options={{
