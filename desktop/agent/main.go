@@ -4663,6 +4663,11 @@ func runMCPStdio(taskMgr *TaskManager, aclMgr *ACLManager, emailMgr *EmailManage
 		resp.JSONRPC = "2.0"
 		resp.ID = req.ID
 
+		// Notifications (method starts with "notifications/") have no id and must not receive a response.
+		if strings.HasPrefix(req.Method, "notifications/") {
+			continue
+		}
+
 		switch req.Method {
 		case "initialize":
 			resp.Result = map[string]interface{}{
@@ -4675,8 +4680,6 @@ func runMCPStdio(taskMgr *TaskManager, aclMgr *ACLManager, emailMgr *EmailManage
 			resp.Result = srv.getMCPToolsList()
 		case "tools/call":
 			resp.Result = srv.handleMCPToolCall(req.Params)
-		case "notifications/initialized":
-			resp.Result = map[string]interface{}{}
 		default:
 			resp.Error = &mcpError{Code: -32601, Message: "Method not found: " + req.Method}
 		}
