@@ -262,18 +262,21 @@ jobs:
         run: |
           REPO="${{ secrets.YAVER_CLI_REPO || github.repository }}"
           mkdir -p assets
-          for BINARY in yaver-darwin-arm64 yaver-darwin-amd64 yaver-linux-arm64 yaver-linux-amd64 yaver-windows-amd64.exe; do
-            gh release download "v${VERSION}" --repo "$REPO" --pattern "$BINARY" --dir assets
+
+          # Download tar.gz archives (macOS/Linux) and exe (Windows)
+          for ASSET in yaver-darwin-arm64.tar.gz yaver-darwin-amd64.tar.gz yaver-linux-arm64.tar.gz yaver-linux-amd64.tar.gz yaver-windows-amd64.exe; do
+            gh release download "v${VERSION}" --repo "$REPO" --pattern "$ASSET" --dir assets
           done
+
           cd assets
           sha256sum * > ../checksums.txt
           cat ../checksums.txt
 
-          # Export hashes as env vars
-          echo "SHA_DARWIN_ARM64=$(sha256sum yaver-darwin-arm64 | cut -d' ' -f1)" >> "$GITHUB_ENV"
-          echo "SHA_DARWIN_AMD64=$(sha256sum yaver-darwin-amd64 | cut -d' ' -f1)" >> "$GITHUB_ENV"
-          echo "SHA_LINUX_ARM64=$(sha256sum yaver-linux-arm64 | cut -d' ' -f1)" >> "$GITHUB_ENV"
-          echo "SHA_LINUX_AMD64=$(sha256sum yaver-linux-amd64 | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          # Export hashes — brew/AUR use tar.gz hashes, Scoop/Winget/Choco use exe hash
+          echo "SHA_DARWIN_ARM64=$(sha256sum yaver-darwin-arm64.tar.gz | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "SHA_DARWIN_AMD64=$(sha256sum yaver-darwin-amd64.tar.gz | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "SHA_LINUX_ARM64=$(sha256sum yaver-linux-arm64.tar.gz | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "SHA_LINUX_AMD64=$(sha256sum yaver-linux-amd64.tar.gz | cut -d' ' -f1)" >> "$GITHUB_ENV"
           echo "SHA_WINDOWS_AMD64=$(sha256sum yaver-windows-amd64.exe | cut -d' ' -f1)" >> "$GITHUB_ENV"
 
       - name: Update Homebrew tap
@@ -291,27 +294,26 @@ jobs:
 
             on_macos do
               if Hardware::CPU.arm?
-                url "https://github.com/${REPO}/releases/download/v${VERSION}/yaver-darwin-arm64"
+                url "https://github.com/${REPO}/releases/download/v${VERSION}/yaver-darwin-arm64.tar.gz"
                 sha256 "${SHA_DARWIN_ARM64}"
               else
-                url "https://github.com/${REPO}/releases/download/v${VERSION}/yaver-darwin-amd64"
+                url "https://github.com/${REPO}/releases/download/v${VERSION}/yaver-darwin-amd64.tar.gz"
                 sha256 "${SHA_DARWIN_AMD64}"
               end
             end
 
             on_linux do
               if Hardware::CPU.arm?
-                url "https://github.com/${REPO}/releases/download/v${VERSION}/yaver-linux-arm64"
+                url "https://github.com/${REPO}/releases/download/v${VERSION}/yaver-linux-arm64.tar.gz"
                 sha256 "${SHA_LINUX_ARM64}"
               else
-                url "https://github.com/${REPO}/releases/download/v${VERSION}/yaver-linux-amd64"
+                url "https://github.com/${REPO}/releases/download/v${VERSION}/yaver-linux-amd64.tar.gz"
                 sha256 "${SHA_LINUX_AMD64}"
               end
             end
 
             def install
-              binary = Dir["yaver-*"].first
-              bin.install binary => "yaver"
+              bin.install "yaver"
             end
 
             test do
@@ -383,18 +385,14 @@ jobs:
           license=('MIT')
           provides=('yaver')
 
-          source_x86_64=("https://github.com/${REPO}/releases/download/v\${pkgver}/yaver-linux-amd64")
-          source_aarch64=("https://github.com/${REPO}/releases/download/v\${pkgver}/yaver-linux-arm64")
+          source_x86_64=("https://github.com/${REPO}/releases/download/v\${pkgver}/yaver-linux-amd64.tar.gz")
+          source_aarch64=("https://github.com/${REPO}/releases/download/v\${pkgver}/yaver-linux-arm64.tar.gz")
 
           sha256sums_x86_64=('${SHA_LINUX_AMD64}')
           sha256sums_aarch64=('${SHA_LINUX_ARM64}')
 
           package() {
-              if [ "\$CARCH" = "x86_64" ]; then
-                  install -Dm755 yaver-linux-amd64 "\$pkgdir/usr/bin/yaver"
-              else
-                  install -Dm755 yaver-linux-arm64 "\$pkgdir/usr/bin/yaver"
-              fi
+              install -Dm755 yaver "\$pkgdir/usr/bin/yaver"
           }
           PKGBUILD_BODY
           cd aur-yaver
