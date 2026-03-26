@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { WebView } from "react-native-webview";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -21,29 +21,37 @@ export default function MoreScreen() {
   const [showTutorials, setShowTutorials] = useState(false);
   const [tutorialUrl, setTutorialUrl] = useState<string | null>(null);
 
-  const items = [
-    { label: "Todos", icon: "\u2610", desc: "Task queue — Run All for sleep mode", route: "/(tabs)/todos" },
-    { label: "Tutorials", icon: "\u{1F4DA}", desc: "Guides for setup, deploy, voice AI", action: () => setShowTutorials(true) },
-    { label: "Settings", icon: "\u2699", desc: "Theme, speech, preferences", route: "/(tabs)/settings" },
-  ];
+  const handleTodos = useCallback(() => router.navigate("/(tabs)/todos" as any), [router]);
+  const handleSettings = useCallback(() => router.navigate("/(tabs)/settings" as any), [router]);
+  const handleTutorials = useCallback(() => setShowTutorials(true), []);
 
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <ScrollView contentContainerStyle={s.list}>
-        {items.map((item) => (
-          <Pressable
-            key={item.label}
-            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-            onPress={() => item.action ? item.action() : item.route && router.push(item.route as any)}
-          >
-            <Text style={[s.icon, { color: c.textMuted }]}>{item.icon}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={[s.label, { color: c.textPrimary }]}>{item.label}</Text>
-              <Text style={[s.desc, { color: c.textMuted }]}>{item.desc}</Text>
-            </View>
-            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-          </Pressable>
-        ))}
+        <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleTodos}>
+          <Text style={[s.icon, { color: c.textMuted }]}>{"\u2610"}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[s.label, { color: c.textPrimary }]}>Todos</Text>
+            <Text style={[s.desc, { color: c.textMuted }]}>Task queue — Run All for sleep mode</Text>
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+        </Pressable>
+        <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleTutorials}>
+          <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F4DA}"}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[s.label, { color: c.textPrimary }]}>Tutorials</Text>
+            <Text style={[s.desc, { color: c.textMuted }]}>Guides for setup, deploy, voice AI</Text>
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+        </Pressable>
+        <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleSettings}>
+          <Text style={[s.icon, { color: c.textMuted }]}>{"\u2699"}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[s.label, { color: c.textPrimary }]}>Settings</Text>
+            <Text style={[s.desc, { color: c.textMuted }]}>Theme, speech, preferences</Text>
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+        </Pressable>
       </ScrollView>
 
       {/* Tutorials list modal */}
