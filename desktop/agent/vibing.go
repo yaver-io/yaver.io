@@ -37,16 +37,18 @@ type VibingState struct {
 // generateQuickActions returns always-available actions for any project.
 func generateQuickActions(projectPath, projectName, framework string) []VibingSuggestion {
 	actions := []VibingSuggestion{
-		{ID: "tests", Icon: "\U0001F9EA", Label: "Run Tests", Desc: "Run the test suite and report results", Category: "test",
+		{ID: "tests", Icon: "\U0001F9EA", Label: "Run Tests", Desc: "Run test suite", Category: "test",
 			Prompt: fmt.Sprintf("Run all tests for %s. Report which pass and which fail. Fix any failures.", projectName), Priority: 1},
-		{ID: "bugfix", Icon: "\U0001F41B", Label: "Bug Analysis", Desc: "Scan for common bugs and issues", Category: "bugfix",
+		{ID: "bugfix", Icon: "\U0001F41B", Label: "Bug Analysis", Desc: "Scan for bugs", Category: "bugfix",
 			Prompt: fmt.Sprintf("Analyze %s for common bugs: null checks, error handling, race conditions, security issues. List what you find and fix the critical ones.", projectName), Priority: 2},
-		{ID: "refactor", Icon: "\u2728", Label: "Clean Up Code", Desc: "Refactor for readability and maintainability", Category: "refactor",
+		{ID: "refactor", Icon: "\u2728", Label: "Clean Up", Desc: "Refactor code", Category: "refactor",
 			Prompt: fmt.Sprintf("Do a code quality pass on %s: remove dead code, simplify complex functions, improve naming. Don't change behavior.", projectName), Priority: 3},
-		{ID: "docs", Icon: "\U0001F4DD", Label: "Write Docs", Desc: "Generate or update documentation", Category: "docs",
+		{ID: "docs", Icon: "\U0001F4DD", Label: "Write Docs", Desc: "Update README", Category: "docs",
 			Prompt: fmt.Sprintf("Update the README.md for %s. Add setup instructions, usage examples, and architecture overview based on the actual code.", projectName), Priority: 3},
-		{ID: "custom", Icon: "\U0001F4AC", Label: "Custom Task", Desc: "Tell the agent what to do", Category: "feature",
-			Prompt: "", Priority: 3}, // empty prompt = user types their own
+		{ID: "add-tests", Icon: "\u2705", Label: "Add Tests", Desc: "Create unit tests", Category: "test",
+			Prompt: fmt.Sprintf("Add unit tests for %s. Create a test file for each major module. Use the project's testing framework.", projectName), Priority: 3},
+		{ID: "deps", Icon: "\U0001F4E6", Label: "Update Deps", Desc: "Check outdated packages", Category: "refactor",
+			Prompt: fmt.Sprintf("Check %s for outdated dependencies. Update safe ones (patch/minor). Don't update major versions without checking.", projectName), Priority: 3},
 	}
 
 	// Add deploy actions based on framework

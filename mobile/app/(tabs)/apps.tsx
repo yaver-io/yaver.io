@@ -728,7 +728,7 @@ const s = StyleSheet.create({
   actionSheetMeta: { fontSize: 11, marginTop: 1 },
 
   // Vibing
-  vibingHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 1 },
+  vibingHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 12, paddingBottom: 10, borderBottomWidth: 1 },
   vibingTitle: { fontSize: 17, fontWeight: "700" },
   vibingContent: { padding: 16, paddingBottom: 40 },
   vibingSectionTitle: { fontSize: 11, fontWeight: "600", textTransform: "uppercase" as const, letterSpacing: 1, marginBottom: 8 },
@@ -791,7 +791,7 @@ const s = StyleSheet.create({
   emptyList: { padding: 40, alignItems: "center" },
 
   // WebView header
-  webViewHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1 },
+  webViewHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 12, paddingBottom: 10, borderBottomWidth: 1 },
   webViewHeaderCenter: { flexDirection: "row", alignItems: "center", gap: 6 },
   webViewTitle: { fontSize: 15, fontWeight: "700" },
   webViewHeaderActions: { flexDirection: "row", alignItems: "center" },
