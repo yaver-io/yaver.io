@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -67,8 +68,33 @@ func generateQuickActions(projectPath, projectName, framework string) []VibingSu
 	return actions
 }
 
+// getRecentGitActivity returns recent commit messages and active files for smart suggestions.
+func getRecentGitActivity(projectPath string) (commits []string, activeFiles []string) {
+	// Recent commit messages
+	if out, err := exec.Command("git", "-C", projectPath, "log", "--oneline", "-15", "--no-merges").Output(); err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if line != "" {
+				// Strip hash prefix
+				parts := strings.SplitN(line, " ", 2)
+				if len(parts) == 2 {
+					commits = append(commits, parts[1])
+				}
+			}
+		}
+	}
+	// Most recently changed files
+	if out, err := exec.Command("git", "-C", projectPath, "diff", "--name-only", "HEAD~5", "HEAD").Output(); err == nil {
+		for _, f := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if f != "" && !strings.Contains(f, "node_modules") && !strings.Contains(f, ".lock") {
+				activeFiles = append(activeFiles, f)
+			}
+		}
+	}
+	return
+}
+
 // generateAISuggestions creates project-specific suggestions by reading the codebase.
-// This is the "smart" part — reads README, package.json, recent git log to propose ideas.
+// Reads README, package.json, git log, TODOs to propose smart ideas.
 func generateAISuggestions(projectPath, projectName string) []VibingSuggestion {
 	var suggestions []VibingSuggestion
 
@@ -88,7 +114,36 @@ func generateAISuggestions(projectPath, projectName string) []VibingSuggestion {
 		pkgDeps = string(data)
 	}
 
-	// Check for TODO/FIXME/HACK comments
+	// Git activity — what's been worked on recently
+	commits, activeFiles := getRecentGitActivity(projectPath)
+
+	// Smart "What's Next" based on git activity
+	if len(commits) > 0 {
+		// Build a context string from recent commits
+		recentWork := strings.Join(commits, "; ")
+		if len(recentWork) > 300 {
+			recentWork = recentWork[:300]
+		}
+		suggestions = append(suggestions, VibingSuggestion{
+			ID: "whats-next", Icon: "\U0001F52E", Label: "What's Next?",
+			Desc: fmt.Sprintf("Based on recent work: %s", commits[0]),
+			Category: "feature", Priority: 1,
+			Prompt: fmt.Sprintf("I've been working on %s. Recent commits: %s\n\nBased on this momentum, what should I build next? Suggest 3 concrete features or improvements that naturally follow from what I've been doing. For each one, give a one-liner and ask which one to start.", projectName, recentWork),
+		})
+	}
+
+	// Active area suggestion
+	if len(activeFiles) > 3 {
+		area := filepath.Dir(activeFiles[0])
+		suggestions = append(suggestions, VibingSuggestion{
+			ID: "active-area", Icon: "\U0001F525", Label: fmt.Sprintf("Hot area: %s", area),
+			Desc: fmt.Sprintf("%d files changed recently", len(activeFiles)),
+			Category: "feature", Priority: 2,
+			Prompt: fmt.Sprintf("The most active area in %s is around %s (%d files changed recently). Look at this area, understand what's being built, and suggest improvements or the next logical step.", projectName, area, len(activeFiles)),
+		})
+	}
+
+	// Check for TODO/FIXME comments
 	todoCount := countPatternInDir(projectPath, "TODO")
 	fixmeCount := countPatternInDir(projectPath, "FIXME")
 	_ = countPatternInDir(projectPath, "HACK")
@@ -241,6 +296,73 @@ func (s *HTTPServer) handleVibing(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[vibing] Generated %d suggestions + %d quick actions for %s", len(suggestions), len(quickActions), projectName)
 	jsonReply(w, http.StatusOK, state)
+}
+
+// handleVibingSurprise asks the AI to analyze the project and suggest features.
+// Returns structured suggestions as JSON (not a task — stays in vibing mode).
+func (s *HTTPServer) handleVibingSurprise(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+
+	var req struct {
+		ProjectPath string `json:"projectPath"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	projectName := filepath.Base(req.ProjectPath)
+	commits, _ := getRecentGitActivity(req.ProjectPath)
+	info := DetectProjectInfo(req.ProjectPath)
+
+	// Read README
+	readme := ""
+	for _, name := range []string{"README.md", "readme.md"} {
+		if data, err := os.ReadFile(filepath.Join(req.ProjectPath, name)); err == nil {
+			readme = string(data)
+			if len(readme) > 2000 {
+				readme = readme[:2000]
+			}
+			break
+		}
+	}
+
+	recentWork := ""
+	if len(commits) > 0 {
+		recentWork = strings.Join(commits, "\n")
+	}
+
+	// Build prompt for the AI
+	prompt := fmt.Sprintf(`Analyze this project and suggest 5 concrete features to build next.
+
+Project: %s
+Framework: %s
+Git branch: %s
+
+Recent commits:
+%s
+
+README excerpt:
+%s
+
+Return ONLY a JSON array, no markdown, no explanation. Each item must have these exact fields:
+[{"icon":"emoji","label":"short title","desc":"one line description","category":"feature|bugfix|refactor|test","prompt":"detailed instruction for implementing this"}]`, projectName, info.Framework, info.GitBranch, recentWork, readme)
+
+	// Run as a task but capture the output
+	task, err := s.taskMgr.CreateTask(prompt, "", "", "vibing-surprise", "", "", nil)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":     true,
+		"taskId": task.ID,
+		"message": "AI is analyzing your project. Check task output for suggestions.",
+	})
 }
 
 // handleVibingExecute runs a vibing suggestion as a task.

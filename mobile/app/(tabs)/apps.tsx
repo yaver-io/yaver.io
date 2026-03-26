@@ -59,6 +59,8 @@ export default function AppsScreen() {
     history: string[];
   } | null>(null);
   const [customTask, setCustomTask] = useState("");
+  const [vibingTaskId, setVibingTaskId] = useState<string | null>(null);
+  const [vibingTaskStatus, setVibingTaskStatus] = useState<string>("");
   const webViewRef = useRef<WebView>(null);
 
   // Poll dev server status + projects
@@ -466,6 +468,48 @@ export default function AppsScreen() {
           </View>
 
           <ScrollView contentContainerStyle={s.vibingContent}>
+            {/* Dice — surprise me */}
+            <Pressable
+              style={[s.vibingDice, { borderColor: c.border }]}
+              onPress={async () => {
+                if (!vibingState) return;
+                setVibingTaskStatus("AI is analyzing your project...");
+                try {
+                  const res = await fetch(`${(quicClient as any).baseUrl}/vibing/surprise`, {
+                    method: "POST",
+                    headers: { ...(quicClient as any).authHeaders, "Content-Type": "application/json" },
+                    body: JSON.stringify({ projectPath: vibingState.path }),
+                  });
+                  const data = await res.json();
+                  if (data.taskId) {
+                    setVibingTaskId(data.taskId);
+                    setVibingTaskStatus("Thinking...");
+                  }
+                } catch {
+                  setVibingTaskStatus("");
+                }
+              }}
+            >
+              <Text style={s.vibingDiceIcon}>{"\u{1F3B2}"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.vibingDiceLabel, { color: c.textPrimary }]}>Surprise Me</Text>
+                <Text style={{ color: c.textMuted, fontSize: 11 }}>AI reads your code + git history and proposes features</Text>
+              </View>
+            </Pressable>
+
+            {/* Running task status */}
+            {vibingTaskStatus ? (
+              <View style={[s.vibingStatus, { backgroundColor: c.accent + "11", borderColor: c.accent + "33" }]}>
+                <ActivityIndicator size="small" color={c.accent} />
+                <Text style={{ color: c.accent, fontSize: 12, flex: 1 }}>{vibingTaskStatus}</Text>
+                {vibingTaskId && (
+                  <Pressable onPress={() => { setVibingState(null); router.navigate("/(tabs)/tasks"); }}>
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>View task</Text>
+                  </Pressable>
+                )}
+              </View>
+            ) : null}
+
             {/* AI Suggestions */}
             {(vibingState?.suggestions ?? []).length > 0 && (
               <>
@@ -476,9 +520,9 @@ export default function AppsScreen() {
                     style={[s.vibingCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
                     onPress={async () => {
                       try {
-                        await quicClient.executeVibingSuggestion(sg.prompt, vibingState!.path);
-                        setVibingState(null);
-                        router.navigate("/(tabs)/tasks");
+                        const result = await quicClient.executeVibingSuggestion(sg.prompt, vibingState!.path);
+                        setVibingTaskId(result.taskId);
+                        setVibingTaskStatus(`Running: ${sg.label}`);
                       } catch {}
                     }}
                   >
@@ -502,14 +546,11 @@ export default function AppsScreen() {
                 key={qa.id}
                 style={[s.vibingCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
                 onPress={async () => {
-                  if (qa.id === "custom") {
-                    // Focus custom task input — just scroll down
-                    return;
-                  }
+                  if (qa.id === "custom") return;
                   try {
-                    await quicClient.executeVibingSuggestion(qa.prompt, vibingState!.path);
-                    setVibingState(null);
-                    router.navigate("/(tabs)/tasks");
+                    const result = await quicClient.executeVibingSuggestion(qa.prompt, vibingState!.path);
+                    setVibingTaskId(result.taskId);
+                    setVibingTaskStatus(`Running: ${qa.label}`);
                   } catch {}
                 }}
               >
@@ -694,6 +735,10 @@ const s = StyleSheet.create({
   vibingCustomInput: { flex: 1, fontSize: 14, minHeight: 40, paddingVertical: 4 },
   vibingCustomSend: { borderRadius: 8, paddingHorizontal: 16, paddingVertical: 10 },
   vibingHistoryItem: { fontSize: 12, paddingVertical: 4 },
+  vibingDice: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 12, gap: 12, borderStyle: "dashed" as const },
+  vibingDiceIcon: { fontSize: 28 },
+  vibingDiceLabel: { fontSize: 15, fontWeight: "700" },
+  vibingStatus: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 12, gap: 8 },
 
   // Active app card
   card: { marginHorizontal: 16, borderRadius: 12, padding: 14, marginBottom: 8 },

@@ -146,6 +146,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/projects/actions", s.auth(s.handleProjectActions))
 	mux.HandleFunc("/vibing", s.auth(s.handleVibing))
 	mux.HandleFunc("/vibing/execute", s.auth(s.handleVibingExecute))
+	mux.HandleFunc("/vibing/surprise", s.auth(s.handleVibingSurprise))
 
 	// Todo list (queued bug reports for batch implementation) — SDK-accessible for add/list/count
 	mux.HandleFunc("/todolist", s.authSDK(s.handleTodoList))
