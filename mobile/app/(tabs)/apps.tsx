@@ -176,22 +176,27 @@ export default function AppsScreen() {
     }
 
     if (action.type === "dev-server") {
-      // Direct dev server start
+      // Direct dev server start — use the exact target path (handles monorepos like talos/mobile)
       setStartingProject(project);
       try {
         const targetPath = action.target === "." ? path : `${path}/${action.target}`.replace(/\/+$/, "");
-        await quicClient.switchProject(project, true);
-        // If it didn't start instantly, create a task
+        await quicClient.startDevServer({
+          framework: action.framework || "",
+          workDir: targetPath,
+          platform: action.platform || "",
+        });
+        // Check if it started
         const status = await quicClient.getDevServerStatus();
         if (!status?.running) {
           await quicClient.sendTask(
             `Hot reload ${project} (${action.framework}) on my phone`,
-            `Start the dev server for ${action.target} in ${path}`,
+            `Start the dev server for ${action.target} in ${targetPath}`,
           );
           router.navigate("/(tabs)/tasks");
         }
       } catch {
-        await quicClient.sendTask(`Hot reload ${project} on my phone`, "").catch(() => {});
+        const targetPath = action.target === "." ? path : `${path}/${action.target}`.replace(/\/+$/, "");
+        await quicClient.sendTask(`Hot reload ${project} on my phone`, `Start dev server in ${targetPath}`).catch(() => {});
         router.navigate("/(tabs)/tasks");
       } finally {
         setStartingProject(null);
@@ -476,11 +481,16 @@ export default function AppsScreen() {
 
           <ScrollView contentContainerStyle={s.vibingContent}>
 
-            {/* Running task status bar */}
+            {/* Running task / thinking indicator */}
             {vibingTaskStatus ? (
               <View style={[s.vibingStatus, { backgroundColor: c.accent + "11", borderColor: c.accent + "33" }]}>
-                <ActivityIndicator size="small" color={c.accent} />
-                <Text style={{ color: c.accent, fontSize: 12, flex: 1 }}>{vibingTaskStatus}</Text>
+                <ActivityIndicator size="small" color={c.accent} style={{ marginTop: 2 }} />
+                <Text
+                  style={{ color: c.textSecondary, fontSize: 13, flex: 1, lineHeight: 18 }}
+                  numberOfLines={3}
+                >
+                  {vibingTaskStatus}
+                </Text>
                 {vibingTaskId && (
                   <Pressable onPress={() => { setVibingState(null); router.navigate("/(tabs)/tasks"); }}>
                     <Text style={{ color: c.accent, fontSize: 11, fontWeight: "600" }}>Details {"\u203A"}</Text>
@@ -539,9 +549,10 @@ export default function AppsScreen() {
               style={s.vibingDiceBtn}
               onPress={async () => {
                 if (!vibingState) return;
-                setVibingTaskStatus("Analyzing project...");
-                // Clear existing suggestions to show new ones arriving
-                setVibingState((prev: any) => prev ? { ...prev, suggestions: [] } : prev);
+                setVibingTaskStatus("Starting deep analysis...");
+                // Keep existing suggestions visible (dimmed) until new ones arrive
+                // Mark them as "old" by not clearing — new ones accumulate via SSE
+                let gotNewSuggestions = false;
                 try {
                   const res = await fetch(`${(quicClient as any).baseUrl}/vibing/surprise`, {
                     method: "POST",
@@ -567,15 +578,23 @@ export default function AppsScreen() {
                       } else if (line.startsWith("data: ") && eventType) {
                         try {
                           const data = JSON.parse(line.slice(6));
-                          if (eventType === "status") {
+                          if (eventType === "thinking") {
+                            // Show AI's actual thinking — typewriter style (overwrite previous)
+                            const step = data.step ? `${data.step} ` : "";
+                            setVibingTaskStatus(`${step}${data.text}`);
+                          } else if (eventType === "status") {
                             const step = data.step ? ` (${data.step})` : "";
                             setVibingTaskStatus(data.message + step);
                           } else if (eventType === "suggestion") {
-                            // Add suggestion one by one with animation feel
+                            // Clear old suggestions on first new one
+                            if (!gotNewSuggestions) {
+                              gotNewSuggestions = true;
+                              setVibingState((prev: any) => prev ? { ...prev, suggestions: [] } : prev);
+                            }
+                            // Add suggestion one by one
                             setVibingState((prev: any) => {
                               if (!prev) return prev;
                               const existing = prev.suggestions || [];
-                              // Avoid duplicates by label
                               if (existing.some((s: any) => s.label === data.label)) return prev;
                               return { ...prev, suggestions: [...existing, { ...data, id: data.id || `dice-${existing.length}` }] };
                             });

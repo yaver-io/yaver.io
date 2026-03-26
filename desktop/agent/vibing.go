@@ -457,6 +457,12 @@ Priority: 1=game-changer, 2=impressive, 3=cool.`, projectName,
 // runVibingTask creates a task, waits for it to finish, and returns the output.
 // This is the bridge between the vibing system and any AI agent — agent-agnostic.
 func runVibingTask(taskMgr *TaskManager, workDir, prompt string, timeout time.Duration) (string, error) {
+	return runVibingTaskStreaming(taskMgr, workDir, prompt, timeout, nil)
+}
+
+// runVibingTaskStreaming runs a vibing task and calls onLine for each output line as it arrives.
+// This enables real-time streaming of the AI's thinking to the mobile client.
+func runVibingTaskStreaming(taskMgr *TaskManager, workDir, prompt string, timeout time.Duration, onLine func(line string)) (string, error) {
 	// Temporarily switch workDir for this task
 	taskMgr.mu.Lock()
 	origDir := taskMgr.workDir
@@ -474,19 +480,47 @@ func runVibingTask(taskMgr *TaskManager, workDir, prompt string, timeout time.Du
 		return "", fmt.Errorf("create task: %w", err)
 	}
 
-	// Wait for task to finish (or timeout)
+	// Wait for task to finish (or timeout), streaming output lines
 	taskObj, ok := taskMgr.GetTask(task.ID)
 	if !ok {
 		return "", fmt.Errorf("task %s not found after creation", task.ID)
 	}
 
-	select {
-	case <-taskObj.doneCh:
-	case <-time.After(timeout):
-		_ = taskMgr.StopTask(task.ID)
-		return "", fmt.Errorf("task %s timed out after %v", task.ID, timeout)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	for {
+		select {
+		case line, ok := <-taskObj.outputCh:
+			if !ok {
+				// Channel closed — task is done
+				goto done
+			}
+			if onLine != nil && strings.TrimSpace(line) != "" {
+				onLine(line)
+			}
+		case <-taskObj.doneCh:
+			// Drain remaining output
+			for {
+				select {
+				case line, ok := <-taskObj.outputCh:
+					if !ok {
+						goto done
+					}
+					if onLine != nil && strings.TrimSpace(line) != "" {
+						onLine(line)
+					}
+				default:
+					goto done
+				}
+			}
+		case <-timer.C:
+			_ = taskMgr.StopTask(task.ID)
+			return "", fmt.Errorf("task %s timed out after %v", task.ID, timeout)
+		}
 	}
 
+done:
 	// Get the output
 	taskObj, ok = taskMgr.GetTask(task.ID)
 	if !ok {
@@ -806,7 +840,27 @@ Make the reasoning compelling and specific to this project — not generic.`, pr
 		prompt := step.prompt(outputs)
 		log.Printf("[vibing-dice] %s step %d/%d: %s", projectName, i+1, len(steps), step.name)
 
-		output, err := runVibingTask(s.taskMgr, projectPath, prompt, 3*time.Minute)
+		// Stream the AI's output lines to mobile as "thinking" events
+		onLine := func(line string) {
+			// Clean up runner-specific formatting (stream-json artifacts, etc.)
+			clean := strings.TrimSpace(line)
+			if clean == "" || strings.HasPrefix(clean, "{\"type\"") || strings.HasPrefix(clean, "```") {
+				return
+			}
+			// Strip common AI output prefixes
+			for _, prefix := range []string{"- ", "* ", "> "} {
+				clean = strings.TrimPrefix(clean, prefix)
+			}
+			if len(clean) > 200 {
+				clean = clean[:200] + "..."
+			}
+			sendSSE("thinking", map[string]string{
+				"text": clean,
+				"step": fmt.Sprintf("%d/%d", i+1, len(steps)),
+			})
+		}
+
+		output, err := runVibingTaskStreaming(s.taskMgr, projectPath, prompt, 3*time.Minute, onLine)
 		if err != nil {
 			log.Printf("[vibing-dice] %s step %d failed: %v", projectName, i+1, err)
 			sendSSE("error", map[string]string{"message": fmt.Sprintf("Step %d failed: %v", i+1, err)})

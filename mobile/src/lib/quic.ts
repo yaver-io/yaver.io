@@ -44,6 +44,7 @@ export interface Task {
   resultText?: string;    // Extracted clean result from Claude
   costUsd?: number;       // Total API cost in USD
   runnerId?: string;      // Which runner executed this task (claude, codex, aider)
+  source?: string;        // Task origin: "mobile", "mcp", "cli", "vibing", "vibing-cache", "todolist"
   turns?: ConversationTurn[];  // Full conversation history
   createdAt: number;
   updatedAt: number;
@@ -1188,6 +1189,224 @@ export class QuicClient {
     } catch {
       // Silent fail — vault sync is best-effort
     }
+  }
+
+  // ── Quality Gates ──────────────────────────────────────────────────
+
+  /** Detect available quality checks for a project. */
+  async detectQualityChecks(workDir?: string): Promise<{type: string; available: boolean; command: string; framework: string}[]> {
+    this.assertConnected();
+    const params = workDir ? `?workDir=${encodeURIComponent(workDir)}` : '';
+    const res = await fetch(`${this.baseUrl}/quality/detect${params}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Failed to detect quality checks: ${res.status}`);
+    return res.json();
+  }
+
+  /** Run a single quality check. */
+  async runQualityCheck(type: string, workDir?: string): Promise<{id: string; type: string; status: string}> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/quality/run`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, workDir }),
+    });
+    if (!res.ok) throw new Error(`Failed to run quality check: ${res.status}`);
+    return res.json();
+  }
+
+  /** Run all available quality checks. */
+  async runAllQualityChecks(workDir?: string): Promise<{id: string; type: string; status: string}[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/quality/run-all`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workDir }),
+    });
+    if (!res.ok) throw new Error(`Failed to run quality checks: ${res.status}`);
+    return res.json();
+  }
+
+  /** Get all quality check results. */
+  async getQualityResults(): Promise<any[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/quality/results`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    return res.json();
+  }
+
+  /** Get a single quality check result by ID. */
+  async getQualityResult(id: string): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/quality/results/${id}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Failed to get quality result: ${res.status}`);
+    return res.json();
+  }
+
+  // ── Health Monitor ────────────────────────────────────────────────
+
+  /** Get all health monitoring targets with current status. */
+  async getHealthTargets(): Promise<any[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/healthmon`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    return res.json();
+  }
+
+  /** Add a new health monitoring target. */
+  async addHealthTarget(url: string, label?: string, interval?: number): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/healthmon`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, label, interval: interval || 60 }),
+    });
+    if (!res.ok) throw new Error(`Failed to add health target: ${res.status}`);
+    return res.json();
+  }
+
+  /** Remove a health monitoring target. */
+  async removeHealthTarget(id: string): Promise<void> {
+    this.assertConnected();
+    await fetch(`${this.baseUrl}/healthmon/${id}`, { method: 'DELETE', headers: this.authHeaders });
+  }
+
+  /** Force an immediate health check on a target. */
+  async checkHealthTarget(id: string): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/healthmon/${id}/check`, {
+      method: 'POST',
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to check health target: ${res.status}`);
+    return res.json();
+  }
+
+  // ── Git Operations ────────────────────────────────────────────────
+
+  /** Get git status for a project. */
+  async gitStatus(workDir?: string): Promise<{branch: string; ahead: number; behind: number; clean: boolean; staged: any[]; modified: any[]; untracked: any[]}> {
+    this.assertConnected();
+    const params = workDir ? `?workDir=${encodeURIComponent(workDir)}` : '';
+    const res = await fetch(`${this.baseUrl}/git/status${params}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Failed to get git status: ${res.status}`);
+    return res.json();
+  }
+
+  /** Get git log for a project. */
+  async gitLog(workDir?: string, limit?: number): Promise<{hash: string; shortHash: string; message: string; author: string; date: string}[]> {
+    this.assertConnected();
+    const params = new URLSearchParams();
+    if (workDir) params.set('workDir', workDir);
+    if (limit) params.set('limit', String(limit));
+    const q = params.toString() ? `?${params}` : '';
+    const res = await fetch(`${this.baseUrl}/git/log${q}`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    return res.json();
+  }
+
+  /** Get git diff for a project. */
+  async gitDiff(workDir?: string, file?: string): Promise<{diff: string}> {
+    this.assertConnected();
+    const params = new URLSearchParams();
+    if (workDir) params.set('workDir', workDir);
+    if (file) params.set('file', file);
+    const q = params.toString() ? `?${params}` : '';
+    const res = await fetch(`${this.baseUrl}/git/diff${q}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Failed to get git diff: ${res.status}`);
+    return res.json();
+  }
+
+  /** List git branches for a project. */
+  async gitBranches(workDir?: string): Promise<{name: string; current: boolean; remote?: string}[]> {
+    this.assertConnected();
+    const params = workDir ? `?workDir=${encodeURIComponent(workDir)}` : '';
+    const res = await fetch(`${this.baseUrl}/git/branches${params}`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    return res.json();
+  }
+
+  /** Create a git commit. */
+  async gitCommit(message: string, files?: string[], workDir?: string): Promise<{hash: string; message: string}> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/commit`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, files, workDir }),
+    });
+    if (!res.ok) throw new Error(`Failed to commit: ${res.status}`);
+    return res.json();
+  }
+
+  /** Push to remote. */
+  async gitPush(workDir?: string): Promise<{success: boolean; output: string}> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/push`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workDir }),
+    });
+    if (!res.ok) throw new Error(`Failed to push: ${res.status}`);
+    return res.json();
+  }
+
+  /** Pull from remote. */
+  async gitPull(workDir?: string): Promise<{success: boolean; output: string}> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/pull`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workDir }),
+    });
+    if (!res.ok) throw new Error(`Failed to pull: ${res.status}`);
+    return res.json();
+  }
+
+  /** Checkout a branch. */
+  async gitCheckout(branch: string, workDir?: string): Promise<{success: boolean}> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/checkout`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ branch, workDir }),
+    });
+    if (!res.ok) throw new Error(`Failed to checkout: ${res.status}`);
+    return res.json();
+  }
+
+  /** Stash changes. */
+  async gitStash(workDir?: string): Promise<{success: boolean; output: string}> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/stash`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workDir }),
+    });
+    if (!res.ok) throw new Error(`Failed to stash: ${res.status}`);
+    return res.json();
+  }
+
+  /** Pop stashed changes. */
+  async gitStashPop(workDir?: string): Promise<{success: boolean; output: string}> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/stash-pop`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workDir }),
+    });
+    if (!res.ok) throw new Error(`Failed to pop stash: ${res.status}`);
+    return res.json();
+  }
+
+  /** Revert a commit by hash. */
+  async gitRevert(hash: string, workDir?: string): Promise<{success: boolean; output: string}> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/revert`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hash, workDir }),
+    });
+    if (!res.ok) throw new Error(`Failed to revert: ${res.status}`);
+    return res.json();
   }
 
   // ── EventEmitter ───────────────────────────────────────────────────

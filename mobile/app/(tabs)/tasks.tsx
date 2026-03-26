@@ -322,6 +322,7 @@ export default function TasksScreen() {
     return onLogsChanged(() => setLogs(getLogEntries()));
   }, []);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [statusFilter, setStatusFilter] = useState<"running" | "completed" | "failed" | "all">("running");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showNewTask, setShowNewTask] = useState(false);
   const [newTaskText, setNewTaskText] = useState("");
@@ -505,9 +506,9 @@ export default function TasksScreen() {
   const fetchTasks = useCallback(async () => {
     try {
       const list = await quicClient.listTasks();
-      // Filter out locally-deleted tasks so they don't reappear
+      // Filter out locally-deleted tasks and internal vibing-cache tasks
       const deletedIds = await getDeletedTaskIds();
-      const filtered = deletedIds.size > 0 ? list.filter((t) => !deletedIds.has(t.id)) : list;
+      const filtered = list.filter((t) => !deletedIds.has(t.id) && t.source !== "vibing-cache");
       setTasks(filtered);
       // Keep selected task in sync with latest data
       setSelectedTask((prev) => {
@@ -518,6 +519,12 @@ export default function TasksScreen() {
   }, []);
 
   const hasRunningTask = tasks.some(t => t.status === "running" || t.status === "queued");
+  // Auto-switch to "all" if no running tasks and filter is "running"
+  const effectiveFilter = statusFilter === "running" && !hasRunningTask && tasks.length > 0 ? "all" : statusFilter;
+  const displayTasks = effectiveFilter === "all" ? tasks
+    : effectiveFilter === "running" ? tasks.filter(t => t.status === "running" || t.status === "queued")
+    : effectiveFilter === "completed" ? tasks.filter(t => t.status === "completed")
+    : tasks.filter(t => t.status === "failed" || t.status === "stopped");
   useEffect(() => {
     fetchTasks();
     // Poll less frequently when a task is running (streaming handles live output)
@@ -1192,31 +1199,53 @@ export default function TasksScreen() {
           </Pressable>
         )}
 
-        {/* Action bar */}
+        {/* Filter chips + action bar */}
         {isEffectivelyConnected && (
           <View style={[s.actionBar, { borderBottomColor: c.border }]}>
-            {tasks.some(t => t.status === "running") && (
-              <Pressable style={[s.actionButton, { backgroundColor: "#ef444418" }]} onPress={handleStopAll}>
-                <Text style={[s.actionButtonText, { color: "#ef4444" }]}>Stop All</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingHorizontal: 2 }}>
+              {([
+                { key: "running" as const, label: "Running", color: "#6366f1", count: tasks.filter(t => t.status === "running" || t.status === "queued").length },
+                { key: "completed" as const, label: "Completed", color: "#22c55e", count: tasks.filter(t => t.status === "completed").length },
+                { key: "failed" as const, label: "Failed", color: "#ef4444", count: tasks.filter(t => t.status === "failed" || t.status === "stopped").length },
+                { key: "all" as const, label: "All", color: c.textMuted, count: tasks.length },
+              ] as const).map(chip => (
+                <Pressable
+                  key={chip.key}
+                  onPress={() => setStatusFilter(chip.key)}
+                  style={[s.actionButton, {
+                    backgroundColor: (effectiveFilter === chip.key) ? `${chip.color}22` : c.bgCardElevated,
+                    borderWidth: 1,
+                    borderColor: (effectiveFilter === chip.key) ? `${chip.color}66` : "transparent",
+                  }]}
+                >
+                  <Text style={[s.actionButtonText, { color: (effectiveFilter === chip.key) ? chip.color : c.textMuted }]}>
+                    {chip.label}{chip.count > 0 ? ` ${chip.count}` : ""}
+                  </Text>
+                </Pressable>
+              ))}
+              {tasks.some(t => t.status === "running") && (
+                <Pressable style={[s.actionButton, { backgroundColor: "#ef444418" }]} onPress={handleStopAll}>
+                  <Text style={[s.actionButtonText, { color: "#ef4444" }]}>Stop All</Text>
+                </Pressable>
+              )}
+              {tasks.some(t => t.status !== "running" && t.status !== "queued") && (
+                <Pressable style={[s.actionButton, { backgroundColor: c.bgCardElevated }]} onPress={handleDeleteAll}>
+                  <Text style={[s.actionButtonText, { color: c.textMuted }]}>Clear</Text>
+                </Pressable>
+              )}
+              <Pressable style={[s.actionButton, { backgroundColor: "#8b5cf618" }]} onPress={handleOpenTmuxSessions}>
+                <Text style={[s.actionButtonText, { color: "#8b5cf6" }]}>Tmux</Text>
               </Pressable>
-            )}
-            {tasks.some(t => t.status !== "running" && t.status !== "queued") && (
-              <Pressable style={[s.actionButton, { backgroundColor: c.bgCardElevated }]} onPress={handleDeleteAll}>
-                <Text style={[s.actionButtonText, { color: c.textMuted }]}>Clear History</Text>
-              </Pressable>
-            )}
-            <Pressable style={[s.actionButton, { backgroundColor: "#8b5cf618" }]} onPress={handleOpenTmuxSessions}>
-              <Text style={[s.actionButtonText, { color: "#8b5cf6" }]}>Tmux</Text>
-            </Pressable>
+            </ScrollView>
           </View>
         )}
 
         {/* Task list */}
         <FlatList
-          data={tasks}
+          data={displayTasks}
           keyExtractor={(item) => item.id}
           alwaysBounceVertical
-          contentContainerStyle={[s.listContent, tasks.length === 0 && s.listContentEmpty]}
+          contentContainerStyle={[s.listContent, displayTasks.length === 0 && s.listContentEmpty]}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.accent} colors={[c.accent]} progressBackgroundColor={c.bgCard} />
           }

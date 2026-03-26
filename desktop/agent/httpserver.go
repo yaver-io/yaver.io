@@ -60,6 +60,12 @@ type HTTPServer struct {
 
 	// Autopilot (auto-driving) mode
 	autopilot *AutopilotManager
+
+	// Quality gates (lint + typecheck + format)
+	qualityMgr *QualityManager
+
+	// Health monitor (production URL pinging)
+	healthMon *HealthMonitor
 }
 
 // NewHTTPServer creates a new HTTP server bound to the given port.
@@ -159,6 +165,30 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/todolist/implement-all", s.auth(s.handleTodoListImplementAll))
 	mux.HandleFunc("/todolist/", s.authSDK(s.handleTodoListByID))
 	mux.HandleFunc("/autopilot", s.auth(s.handleAutopilot))
+
+	// Quality gates (lint + typecheck + format + test)
+	mux.HandleFunc("/quality/detect", s.auth(s.handleQualityDetect))
+	mux.HandleFunc("/quality/run", s.auth(s.handleQualityRun))
+	mux.HandleFunc("/quality/run-all", s.auth(s.handleQualityRunAll))
+	mux.HandleFunc("/quality/results", s.auth(s.handleQualityResults))
+	mux.HandleFunc("/quality/results/", s.auth(s.handleQualityResultByID))
+
+	// Health monitor (production URL pinging)
+	mux.HandleFunc("/healthmon", s.auth(s.handleHealthMon))
+	mux.HandleFunc("/healthmon/", s.auth(s.handleHealthMonByID))
+
+	// Git operations (read-only + safe writes)
+	mux.HandleFunc("/git/status", s.auth(s.handleGitStatus))
+	mux.HandleFunc("/git/log", s.auth(s.handleGitLog))
+	mux.HandleFunc("/git/diff", s.auth(s.handleGitDiff))
+	mux.HandleFunc("/git/branches", s.auth(s.handleGitBranches))
+	mux.HandleFunc("/git/stash", s.auth(s.handleGitStash))
+	mux.HandleFunc("/git/stash-pop", s.auth(s.handleGitStashPop))
+	mux.HandleFunc("/git/checkout", s.auth(s.handleGitCheckout))
+	mux.HandleFunc("/git/commit", s.auth(s.handleGitCommit))
+	mux.HandleFunc("/git/push", s.auth(s.handleGitPush))
+	mux.HandleFunc("/git/pull", s.auth(s.handleGitPull))
+	mux.HandleFunc("/git/revert", s.auth(s.handleGitRevert))
 
 	// Multi-user management (shared machines)
 	mux.HandleFunc("/users", s.auth(s.handleMultiUserList))
@@ -580,6 +610,7 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"hostname": hostname,
 		"version":  version,
 		"workDir":  s.taskMgr.workDir,
+		"hwid":     HardwareID(),
 	}
 
 	// Project metadata

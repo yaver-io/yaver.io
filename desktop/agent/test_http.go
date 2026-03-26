@@ -122,6 +122,9 @@ func (s *HTTPServer) handleAgentWorkdir(w http.ResponseWriter, r *http.Request) 
 	if s.testMgr != nil {
 		s.testMgr.workDir = req.WorkDir
 	}
+	if s.qualityMgr != nil {
+		s.qualityMgr.workDir = req.WorkDir
+	}
 
 	jsonReply(w, http.StatusOK, map[string]string{"ok": "true", "workDir": req.WorkDir})
 }

@@ -15,6 +15,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useDevice } from "../../src/context/DeviceContext";
+import { useColors } from "../../src/context/ThemeContext";
 import { quicClient } from "../../src/lib/quic";
 import { getTodos, saveTodos, Todo } from "../../src/lib/storage";
 
@@ -36,13 +37,14 @@ function PulsingCircle() {
     return () => pulse.stop();
   }, [anim]);
   return (
-    <Animated.View style={[s.checkbox, { borderColor: "#1a73e8", backgroundColor: "#1a73e8", opacity: anim }]}>
+    <Animated.View style={[s.checkbox, { borderColor: "#6366f1", backgroundColor: "#6366f1", opacity: anim }]}>
       <View style={s.pulseInner} />
     </Animated.View>
   );
 }
 
 export default function TodosScreen() {
+  const c = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { connectionStatus } = useDevice();
@@ -55,6 +57,8 @@ export default function TodosScreen() {
   const [showCompleted, setShowCompleted] = useState(false);
   const [autopilot, setAutopilot] = useState(false);
   const [sending, setSending] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
 
   useEffect(() => {
     getTodos().then(setTodos);
@@ -148,6 +152,21 @@ export default function TodosScreen() {
     ]);
   }, [todos, persist]);
 
+  const handleEdit = useCallback((todo: Todo) => {
+    setEditingId(todo.id);
+    setEditText(todo.title);
+  }, []);
+
+  const handleSaveEdit = useCallback(async () => {
+    if (!editingId) return;
+    const trimmed = editText.trim();
+    if (trimmed) {
+      await persist(todos.map(t => t.id === editingId ? { ...t, title: trimmed } : t));
+    }
+    setEditingId(null);
+    setEditText("");
+  }, [editingId, editText, todos, persist]);
+
   const handleRunOne = useCallback(async (todo: Todo) => {
     if (!isConnected) {
       Alert.alert("Not connected", "Connect to a device first.");
@@ -228,31 +247,75 @@ export default function TodosScreen() {
   const pending = todos.filter(t => !t.done);
   const done = todos.filter(t => t.done);
 
-  const renderPendingItem = ({ item }: { item: Todo }) => (
-    <Pressable
-      style={s.row}
-      onLongPress={() => handleDelete(item.id)}
-      delayLongPress={500}
-    >
-      <Pressable style={s.checkArea} onPress={() => handleToggle(item.id)}>
-        {item.agentStatus === "implementing" ? (
-          <PulsingCircle />
-        ) : (
-          <View style={[s.checkbox, { borderColor: "#dadce0" }]} />
+  const renderPendingItem = ({ item }: { item: Todo }) => {
+    const isEditing = editingId === item.id;
+    return (
+      <Pressable
+        style={[s.row, { borderBottomColor: c.border }]}
+        onPress={() => !isEditing && handleEdit(item)}
+        onLongPress={() => handleDelete(item.id)}
+        delayLongPress={500}
+      >
+        <Pressable style={s.checkArea} onPress={() => handleToggle(item.id)}>
+          {item.agentStatus === "implementing" ? (
+            <PulsingCircle />
+          ) : (
+            <View style={[s.checkbox, { borderColor: c.textMuted }]} />
+          )}
+        </Pressable>
+        <View style={{ flex: 1 }}>
+          {isEditing ? (
+            <TextInput
+              style={[s.rowTitle, { color: c.textPrimary, padding: 0 }]}
+              value={editText}
+              onChangeText={setEditText}
+              onSubmitEditing={handleSaveEdit}
+              onBlur={handleSaveEdit}
+              autoFocus
+              returnKeyType="done"
+              multiline={false}
+            />
+          ) : (
+            <Text style={[s.rowTitle, { color: c.textPrimary }]} numberOfLines={2}>{item.title}</Text>
+          )}
+          {/* Status chips */}
+          {item.agentStatus && item.agentStatus !== "pending" && (
+            <View style={{ flexDirection: "row", gap: 6, marginTop: 4 }}>
+              <View style={[s.statusChip, {
+                backgroundColor: item.agentStatus === "implementing" ? "#6366f122" :
+                  item.agentStatus === "done" ? "#22c55e22" : "#ef444422"
+              }]}>
+                <Text style={[s.statusChipText, {
+                  color: item.agentStatus === "implementing" ? "#6366f1" :
+                    item.agentStatus === "done" ? "#22c55e" : "#ef4444"
+                }]}>
+                  {item.agentStatus === "implementing" ? "Working..." :
+                    item.agentStatus === "done" ? "Done" : "Failed"}
+                </Text>
+              </View>
+              {item.taskId && (
+                <Pressable
+                  style={[s.statusChip, { backgroundColor: c.bgCardElevated }]}
+                  onPress={() => router.push({ pathname: "/(tabs)/tasks", params: { taskId: item.taskId } })}
+                >
+                  <Text style={[s.statusChipText, { color: c.accent }]}>View task {"\u203A"}</Text>
+                </Pressable>
+              )}
+            </View>
+          )}
+        </View>
+        {!autopilot && isConnected && !isEditing && !item.agentStatus && (
+          <Pressable style={[s.implementBtn, { backgroundColor: c.accent + "18" }]} onPress={() => handleRunOne(item)}>
+            <Text style={[s.implementText, { color: c.accent }]}>Implement</Text>
+          </Pressable>
         )}
       </Pressable>
-      <Text style={s.rowTitle} numberOfLines={2}>{item.title}</Text>
-      {!autopilot && isConnected && (
-        <Pressable style={s.playBtn} onPress={() => handleRunOne(item)}>
-          <Text style={s.playIcon}>{"\u25B6"}</Text>
-        </Pressable>
-      )}
-    </Pressable>
-  );
+    );
+  };
 
   const renderDoneItem = ({ item }: { item: Todo }) => (
     <Pressable
-      style={s.row}
+      style={[s.row, { borderBottomColor: c.border }]}
       onPress={() => {
         if (item.taskId) {
           router.push({ pathname: "/(tabs)/tasks", params: { taskId: item.taskId } });
@@ -265,8 +328,8 @@ export default function TodosScreen() {
         <View style={[
           s.checkbox,
           item.agentStatus === "failed"
-            ? { borderColor: "#d93025", backgroundColor: "#d93025" }
-            : { borderColor: "#1a73e8", backgroundColor: "#1a73e8" },
+            ? { borderColor: "#ef4444", backgroundColor: "#ef4444" }
+            : { borderColor: "#6366f1", backgroundColor: "#6366f1" },
         ]}>
           {item.agentStatus === "failed" ? (
             <Text style={s.checkmark}>!</Text>
@@ -275,27 +338,27 @@ export default function TodosScreen() {
           )}
         </View>
       </Pressable>
-      <Text style={[s.rowTitle, s.rowTitleDone]} numberOfLines={2}>{item.title}</Text>
-      {item.taskId && <Text style={s.chevron}>{"\u203A"}</Text>}
+      <Text style={[s.rowTitle, s.rowTitleDone, { color: c.textMuted }]} numberOfLines={2}>{item.title}</Text>
+      {item.taskId && <Text style={[s.chevron, { color: c.textMuted }]}>{"\u203A"}</Text>}
     </Pressable>
   );
 
   return (
-    <View style={s.container}>
+    <View style={[s.container, { backgroundColor: c.bg }]}>
       {/* Header */}
-      <View style={[s.header, { paddingTop: insets.top + 12 }]}>
-        <Text style={s.headerTitle}>My Tasks</Text>
+      <View style={[s.header, { paddingTop: insets.top + 12, borderBottomColor: c.border }]}>
+        <Text style={[s.headerTitle, { color: c.textPrimary }]}>My Tasks</Text>
         <View style={s.headerRight}>
           {isConnected && pending.length > 0 && (
             <Pressable
-              style={[s.autopilotBtn, autopilot && s.autopilotBtnActive, sending && { opacity: 0.5 }]}
+              style={[s.autopilotBtn, { backgroundColor: c.bgCardElevated }, autopilot && { backgroundColor: "#6366f122" }, sending && { opacity: 0.5 }]}
               onPress={handleAutopilot}
               disabled={sending}
             >
-              <Text style={[s.autopilotIcon, autopilot && s.autopilotIconActive]}>
-                {autopilot ? "\u26A1" : "\u26A1"}
+              <Text style={s.autopilotIcon}>
+                {"\u26A1"}
               </Text>
-              <Text style={[s.autopilotText, autopilot && s.autopilotTextActive]}>
+              <Text style={[s.autopilotText, { color: c.textMuted }, autopilot && { color: "#6366f1", fontWeight: "600" }]}>
                 {autopilot ? "Driving" : "Auto-Drive"}
               </Text>
             </Pressable>
@@ -305,13 +368,13 @@ export default function TodosScreen() {
 
       {/* Inline input */}
       {showInput && (
-        <View style={s.inputRow}>
-          <View style={[s.checkbox, { borderColor: "#dadce0" }]} />
+        <View style={[s.inputRow, { borderBottomColor: c.border }]}>
+          <View style={[s.checkbox, { borderColor: c.textMuted }]} />
           <TextInput
             ref={inputRef}
-            style={s.inputText}
+            style={[s.inputText, { color: c.textPrimary }]}
             placeholder="New task"
-            placeholderTextColor="#9aa0a6"
+            placeholderTextColor={c.textMuted}
             value={newText}
             onChangeText={setNewText}
             onSubmitEditing={handleAdd}
@@ -332,8 +395,8 @@ export default function TodosScreen() {
         ListEmptyComponent={
           !showInput ? (
             <View style={s.empty}>
-              <Text style={s.emptyTitle}>No tasks yet</Text>
-              <Text style={s.emptySubtitle}>
+              <Text style={[s.emptyTitle, { color: c.textPrimary }]}>No tasks yet</Text>
+              <Text style={[s.emptySubtitle, { color: c.textMuted }]}>
                 Tap + to add tasks.{"\n"}Hit Auto-Drive and go to sleep.
               </Text>
             </View>
@@ -345,16 +408,16 @@ export default function TodosScreen() {
             {done.length > 0 && (
               <>
                 <Pressable
-                  style={s.completedHeader}
+                  style={[s.completedHeader, { borderBottomColor: c.border }]}
                   onPress={() => setShowCompleted(!showCompleted)}
                 >
-                  <Text style={s.completedChevron}>
+                  <Text style={[s.completedChevron, { color: c.textMuted }]}>
                     {showCompleted ? "\u25BC" : "\u25B6"}
                   </Text>
-                  <Text style={s.completedText}>Completed ({done.length})</Text>
+                  <Text style={[s.completedText, { color: c.textMuted }]}>Completed ({done.length})</Text>
                   <View style={{ flex: 1 }} />
                   <Pressable onPress={handleClearDone} hitSlop={8}>
-                    <Text style={s.clearText}>Clear</Text>
+                    <Text style={[s.clearText, { color: c.accent }]}>Clear</Text>
                   </Pressable>
                 </Pressable>
                 {showCompleted && done.map(item => (
@@ -368,10 +431,10 @@ export default function TodosScreen() {
 
       {/* FAB */}
       <Pressable
-        style={[s.fab, { bottom: insets.bottom + 16 }]}
+        style={[s.fab, { bottom: insets.bottom + 16, backgroundColor: c.bgCard, borderColor: c.border }]}
         onPress={handleFAB}
       >
-        <Text style={s.fabIcon}>+</Text>
+        <Text style={[s.fabIcon, { color: c.accent }]}>+</Text>
       </Pressable>
     </View>
   );
@@ -380,7 +443,6 @@ export default function TodosScreen() {
 const s = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#ffffff",
   },
 
   // Header
@@ -391,12 +453,10 @@ const s = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#e0e0e0",
   },
   headerTitle: {
     fontSize: 22,
     fontWeight: "600",
-    color: "#202124",
   },
   headerRight: {
     flexDirection: "row",
@@ -411,26 +471,14 @@ const s = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
-    backgroundColor: "#f1f3f4",
     gap: 4,
   },
-  autopilotBtnActive: {
-    backgroundColor: "#e8f0fe",
-  },
   autopilotIcon: {
-    fontSize: 13,
-  },
-  autopilotIconActive: {
     fontSize: 13,
   },
   autopilotText: {
     fontSize: 13,
     fontWeight: "500",
-    color: "#5f6368",
-  },
-  autopilotTextActive: {
-    color: "#1a73e8",
-    fontWeight: "600",
   },
 
   // Input row
@@ -440,13 +488,11 @@ const s = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#e0e0e0",
     gap: 14,
   },
   inputText: {
     flex: 1,
     fontSize: 16,
-    color: "#202124",
     padding: 0,
   },
 
@@ -462,7 +508,6 @@ const s = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#e0e0e0",
     gap: 14,
   },
   checkArea: {
@@ -490,28 +535,31 @@ const s = StyleSheet.create({
   rowTitle: {
     flex: 1,
     fontSize: 16,
-    color: "#202124",
     fontWeight: "400",
   },
   rowTitleDone: {
     textDecorationLine: "line-through" as const,
-    color: "#9aa0a6",
   },
-  playBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#f1f3f4",
+  implementBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
   },
-  playIcon: {
-    fontSize: 10,
-    color: "#5f6368",
+  implementText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  statusChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  statusChipText: {
+    fontSize: 11,
+    fontWeight: "500",
   },
   chevron: {
     fontSize: 20,
-    color: "#dadce0",
     fontWeight: "300",
   },
 
@@ -522,21 +570,17 @@ const s = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#e0e0e0",
     gap: 8,
   },
   completedChevron: {
     fontSize: 10,
-    color: "#5f6368",
   },
   completedText: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#5f6368",
   },
   clearText: {
     fontSize: 13,
-    color: "#1a73e8",
   },
 
   // Empty state
@@ -548,14 +592,12 @@ const s = StyleSheet.create({
   emptyTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#202124",
     marginBottom: 8,
   },
   emptySubtitle: {
     fontSize: 14,
     textAlign: "center",
     lineHeight: 20,
-    color: "#9aa0a6",
   },
 
   // FAB
@@ -565,7 +607,6 @@ const s = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 16,
-    backgroundColor: "#ffffff",
     alignItems: "center",
     justifyContent: "center",
     ...Platform.select({
@@ -580,11 +621,9 @@ const s = StyleSheet.create({
       },
     }),
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#e0e0e0",
   },
   fabIcon: {
     fontSize: 28,
-    color: "#1a73e8",
     fontWeight: "300",
   },
 });

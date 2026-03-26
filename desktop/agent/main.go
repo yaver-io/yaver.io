@@ -29,7 +29,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.55.0"
+const version = "1.56.0"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
@@ -1435,6 +1435,14 @@ func runServe(args []string) {
 	httpServer.buildMgr = NewBuildManager(httpServer.execMgr, taskMgr.workDir)
 	httpServer.tunnelMgr = NewTunnelManager()
 	httpServer.testMgr = NewTestManager(httpServer.execMgr, taskMgr.workDir)
+	httpServer.qualityMgr = NewQualityManager(httpServer.execMgr, taskMgr.workDir)
+	log.Printf("Quality gate manager ready")
+	if hmMgr, err := NewHealthMonitor(); err != nil {
+		log.Printf("Warning: health monitor unavailable: %v", err)
+	} else {
+		httpServer.healthMon = hmMgr
+		log.Printf("Health monitor ready")
+	}
 	if fbMgr, err := NewFeedbackManager(); err != nil {
 		log.Printf("Warning: feedback unavailable: %v", err)
 	} else {

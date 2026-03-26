@@ -36,6 +36,21 @@ export const CUSTOM_RELAYS_KEY = "@yaver/custom_relays";
 export const CUSTOM_TUNNELS_KEY = "@yaver/custom_tunnels";
 const RELAY_ONBOARDING_KEY = "@yaver/relay_onboarding_done";
 
+const DETACHED_DEVICES_KEY = "@yaver/detached_devices";
+
+async function getDetachedDevices(): Promise<Set<string>> {
+  try {
+    const raw = await AsyncStorage.getItem(DETACHED_DEVICES_KEY);
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch { return new Set(); }
+}
+
+async function addDetachedDevice(key: string): Promise<void> {
+  const detached = await getDetachedDevices();
+  detached.add(key);
+  await AsyncStorage.setItem(DETACHED_DEVICES_KEY, JSON.stringify([...detached]));
+}
+
 let _debugLogsEnabled = false;
 // Load debug preference on module init
 AsyncStorage.getItem("@yaver/debug_logs_enabled").then((val) => {
@@ -71,6 +86,8 @@ export interface Device {
   runners: RunnerInfo[];
   /** true when device is discovered via LAN beacon (same network) */
   local?: boolean;
+  /** stable hardware ID (P2P only, never sent to Convex) */
+  hwid?: string;
 }
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
@@ -87,6 +104,7 @@ interface DeviceState {
   selectDevice: (device: Device) => Promise<void>;
   disconnect: () => void;
   refreshDevices: () => Promise<void>;
+  detachDevice: (device: Device) => Promise<void>;
 }
 
 const DeviceContext = createContext<DeviceState | undefined>(undefined);
@@ -198,13 +216,23 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             runners: d.runners ?? [],
           };
         });
-        // Deduplicate by name — keep the entry with the latest lastSeen
+        // Deduplicate by hardware ID (stable, survives IP/hostname changes)
+        // Fall back to name-based dedup if hwid not available
         const seen = new Map<string, Device>();
         for (const d of mapped) {
-          const existing = seen.get(d.name);
-          if (!existing || d.lastSeen > existing.lastSeen) seen.set(d.name, d);
+          const key = d.hwid || d.name; // prefer hwid, fall back to name
+          const existing = seen.get(key);
+          if (!existing || d.lastSeen > existing.lastSeen) {
+            seen.set(key, d);
+          }
         }
-        setDevices([...seen.values()]);
+        // Filter out detached devices
+        const detached = await getDetachedDevices();
+        const finalDevices = [...seen.values()].filter(d => {
+          const key = d.hwid || d.name;
+          return !detached.has(key);
+        });
+        setDevices(finalDevices);
       } else {
         appLog("warn", `/devices/list failed: ${devicesRes.status}`);
       }
@@ -247,6 +275,17 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         }));
         setConnectionStatus("connected");
         setLastError(null);
+        // Fetch hwid from /info for dedup (P2P only, never sent to Convex)
+        try {
+          const info = await quicClient.getInfo();
+          if (info && (info as any).hwid) {
+            const hwid = (info as any).hwid as string;
+            setActiveDevice((prev) => prev ? { ...prev, hwid } : prev);
+            setDevices((prev) => prev.map((d) => d.id === device.id ? { ...d, hwid } : d));
+          }
+        } catch {
+          // Best-effort — hwid fetch failure is not fatal
+        }
       } catch (e) {
         const errMsg = e instanceof Error ? e.message : String(e);
         sendTelemetry(token, "connect-fail", `Connection failed: ${errMsg}`, JSON.stringify({
@@ -269,6 +308,18 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     setConnectionStatus("disconnected");
     setUserDisconnected(true);
   }, []);
+
+  const handleDetachDevice = useCallback(async (device: Device) => {
+    const key = device.hwid || device.name;
+    await addDetachedDevice(key);
+    // If detaching the active device, disconnect first
+    if (activeDevice?.id === device.id) {
+      quicClient.disconnect();
+      setActiveDevice(null);
+      setConnectionStatus("disconnected");
+    }
+    setDevices((prev) => prev.filter((d) => (d.hwid || d.name) !== key));
+  }, [activeDevice]);
 
   // Sync DeviceContext state with QUIC client's internal state changes
   // (e.g., polling failures trigger reconnection inside the QUIC client)
@@ -461,7 +512,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       setDevices((prev) =>
         prev.map((d) => {
           if (d.id.startsWith(discovered.deviceId)) {
-            return { ...d, host: discovered.ip, port: discovered.port, online: true, local: true };
+            return { ...d, host: discovered.ip, port: discovered.port, online: true, local: true, hwid: discovered.hwid || d.hwid };
           }
           return d;
         })
@@ -550,8 +601,9 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       selectDevice,
       disconnect,
       refreshDevices,
+      detachDevice: handleDetachDevice,
     }),
-    [devices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, selectDevice, disconnect, refreshDevices]
+    [devices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, selectDevice, disconnect, refreshDevices, handleDetachDevice]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

@@ -20,6 +20,7 @@ export interface DiscoveredDevice {
   port: number;      // HTTP port advertised in beacon
   name: string;      // hostname
   lastSeen: number;  // timestamp
+  hwid?: string;     // stable hardware ID from beacon
 }
 
 interface BeaconPayload {
@@ -28,6 +29,7 @@ interface BeaconPayload {
   p: number;   // HTTP port
   n: string;   // hostname
   th: string;  // token fingerprint
+  hw?: string; // stable hardware ID (P2P only)
 }
 
 type DiscoveryCallback = (device: DiscoveredDevice) => void;
@@ -177,6 +179,7 @@ class BeaconListener {
         port: payload.p,
         name: payload.n,
         lastSeen: Date.now(),
+        hwid: payload.hw,
       };
 
       this.devices.set(payload.id, device);

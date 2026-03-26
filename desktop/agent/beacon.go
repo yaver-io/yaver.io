@@ -26,6 +26,7 @@ type beaconPayload struct {
 	VoiceCapable     bool   `json:"vc,omitempty"`  // true if voice transcription is available
 	TLSFingerprint   string `json:"tf,omitempty"`  // SHA256 of TLS cert
 	TLSPort          int    `json:"tp,omitempty"`  // HTTPS port
+	HardwareID       string `json:"hw,omitempty"`  // stable hardware identifier (P2P only, never sent to Convex)
 }
 
 // tokenFingerprint returns the first 8 hex chars of SHA256(userId).
@@ -52,6 +53,7 @@ func startBeacon(ctx context.Context, deviceID string, httpPort int, hostname st
 		Port:             httpPort,
 		Name:             hostname,
 		TokenFingerprint: fp,
+		HardwareID:       HardwareID(),
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

@@ -42,11 +42,13 @@ function DeviceCard({
   device,
   isActive,
   onSelect,
+  onLongPress,
   token,
 }: {
   device: Device;
   isActive: boolean;
   onSelect: () => void;
+  onLongPress: () => void;
   token: string | null;
 }) {
   const c = useColors();
@@ -145,6 +147,7 @@ function DeviceCard({
         pressed && styles.cardPressed,
       ]}
       onPress={onSelect}
+      onLongPress={onLongPress}
     >
       <View style={styles.cardRow}>
         <View style={styles.cardInfo}>
@@ -415,6 +418,7 @@ export default function DevicesScreen() {
     selectDevice,
     disconnect,
     refreshDevices,
+    detachDevice,
   } = useDevice();
 
   // Device polling is handled by DeviceContext (every 3s from any screen)
@@ -449,6 +453,16 @@ export default function DevicesScreen() {
               device={item}
               isActive={activeDevice?.id === item.id}
               onSelect={() => selectDevice(item)}
+              onLongPress={() => {
+                Alert.alert(
+                  item.name,
+                  "Remove this device from your list? It will reappear if it connects again.",
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    { text: "Detach", style: "destructive", onPress: () => detachDevice(item) },
+                  ]
+                );
+              }}
               token={token}
             />
           )}
