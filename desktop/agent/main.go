@@ -1450,6 +1450,8 @@ func runServe(args []string) {
 		})
 		log.Printf("Todo list manager ready (%d existing items, auto-consume=on)", len(tlMgr.ListItems()))
 	}
+	// Pre-warm vibing cache for recently modified projects
+	go PrewarmVibingCache(taskMgr)
 	if *multiUser {
 		muMgr, err := NewMultiUserManager(MultiUserConfig{
 			TeamID:   *teamID,

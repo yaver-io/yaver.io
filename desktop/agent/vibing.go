@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -209,6 +210,81 @@ func countPatternInDir(dir, pattern string) int {
 	return count
 }
 
+// vibingCache stores pre-generated vibing states keyed by project path.
+var vibingCache = struct {
+	mu    sync.RWMutex
+	cache map[string]*VibingState
+}{cache: make(map[string]*VibingState)}
+
+// PrewarmVibingCache generates vibing suggestions for recently modified projects in background.
+func PrewarmVibingCache(taskMgr *TaskManager) {
+	projects := listDiscoveredProjects()
+	if len(projects) == 0 {
+		return
+	}
+
+	// Sort by most recently modified (check .git/HEAD mtime as proxy)
+	type projectMod struct {
+		path    string
+		modTime int64
+	}
+	var sorted []projectMod
+	for _, p := range projects {
+		gitHead := filepath.Join(p.Path, ".git", "HEAD")
+		info, err := os.Stat(gitHead)
+		if err != nil {
+			continue
+		}
+		sorted = append(sorted, projectMod{path: p.Path, modTime: info.ModTime().Unix()})
+	}
+	// Sort by most recent first
+	for i := 0; i < len(sorted); i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			if sorted[j].modTime > sorted[i].modTime {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+
+	// Cache top 5 most recent
+	limit := 5
+	if len(sorted) < limit {
+		limit = len(sorted)
+	}
+	for _, pm := range sorted[:limit] {
+		projectName := filepath.Base(pm.path)
+		info := DetectProjectInfo(pm.path)
+		quickActions := generateQuickActions(pm.path, projectName, info.Framework)
+		suggestions := generateAISuggestions(pm.path, projectName)
+
+		var history []string
+		if taskMgr != nil {
+			for _, t := range taskMgr.ListTasks() {
+				if len(history) >= 10 {
+					break
+				}
+				history = append(history, t.Title)
+			}
+		}
+
+		state := &VibingState{
+			Project:      projectName,
+			Path:         pm.path,
+			Framework:    info.Framework,
+			Suggestions:  suggestions,
+			QuickActions: quickActions,
+			History:      history,
+			GeneratedAt:  time.Now().UTC().Format(time.RFC3339),
+		}
+
+		vibingCache.mu.Lock()
+		vibingCache.cache[pm.path] = state
+		vibingCache.mu.Unlock()
+
+		log.Printf("[vibing-cache] Pre-warmed %s (%d suggestions)", projectName, len(suggestions))
+	}
+}
+
 // handleVibing returns vibing state for a project — suggestions, quick actions, history.
 func (s *HTTPServer) handleVibing(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -231,24 +307,58 @@ func (s *HTTPServer) handleVibing(w http.ResponseWriter, r *http.Request) {
 		path = s.taskMgr.workDir
 	}
 
+	// Check cache first
+	vibingCache.mu.RLock()
+	cached, hasCached := vibingCache.cache[path]
+	vibingCache.mu.RUnlock()
+
+	if hasCached {
+		// Refresh history from live task list
+		var history []string
+		for _, t := range s.taskMgr.ListTasks() {
+			if len(history) >= 10 {
+				break
+			}
+			history = append(history, t.Title)
+		}
+		cached.History = history
+		log.Printf("[vibing] Served from cache: %s (%d suggestions)", cached.Project, len(cached.Suggestions))
+		jsonReply(w, http.StatusOK, cached)
+
+		// Refresh cache in background for next time
+		go func() {
+			projectName := filepath.Base(path)
+			info := DetectProjectInfo(path)
+			state := &VibingState{
+				Project:      projectName,
+				Path:         path,
+				Framework:    info.Framework,
+				Suggestions:  generateAISuggestions(path, projectName),
+				QuickActions: generateQuickActions(path, projectName, info.Framework),
+				GeneratedAt:  time.Now().UTC().Format(time.RFC3339),
+			}
+			vibingCache.mu.Lock()
+			vibingCache.cache[path] = state
+			vibingCache.mu.Unlock()
+		}()
+		return
+	}
+
+	// No cache — generate fresh
 	projectName := filepath.Base(path)
 	info := DetectProjectInfo(path)
-
-	// Generate suggestions
 	quickActions := generateQuickActions(path, projectName, info.Framework)
 	suggestions := generateAISuggestions(path, projectName)
 
-	// Get recent task history for this project
 	var history []string
-	tasks := s.taskMgr.ListTasks()
-	for _, t := range tasks {
+	for _, t := range s.taskMgr.ListTasks() {
 		if len(history) >= 10 {
 			break
 		}
 		history = append(history, t.Title)
 	}
 
-	state := VibingState{
+	state := &VibingState{
 		Project:      projectName,
 		Path:         path,
 		Framework:    info.Framework,
@@ -257,6 +367,11 @@ func (s *HTTPServer) handleVibing(w http.ResponseWriter, r *http.Request) {
 		History:      history,
 		GeneratedAt:  time.Now().UTC().Format(time.RFC3339),
 	}
+
+	// Cache it
+	vibingCache.mu.Lock()
+	vibingCache.cache[path] = state
+	vibingCache.mu.Unlock()
 
 	log.Printf("[vibing] Generated %d suggestions + %d quick actions for %s", len(suggestions), len(quickActions), projectName)
 	jsonReply(w, http.StatusOK, state)
