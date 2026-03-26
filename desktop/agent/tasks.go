@@ -230,6 +230,7 @@ type ClaudeEvent struct {
 	Event     json.RawMessage `json:"event,omitempty"` // For stream_event wrapper
 	RawResult json.RawMessage `json:"result,omitempty"`
 	TotalCost float64         `json:"total_cost_usd,omitempty"`
+	Errors    []string        `json:"errors,omitempty"` // e.g. ["No conversation found with session ID: ..."]
 	// Tool result (for "user" type events with tool output)
 	ToolUseResult *ToolUseResult `json:"tool_use_result,omitempty"`
 }
@@ -539,6 +540,7 @@ type TaskManager struct {
 
 	// Warm session: forked at startup, reused for all tasks
 	warmSessionID  string     // Claude session ID from warmup
+	warmCreatedAt  time.Time  // when the warm session was established
 	warmPID        int        // PID of the warmup process (0 if not running)
 	warmReady      bool       // true once warmup completed successfully
 }
@@ -638,6 +640,7 @@ func (tm *TaskManager) WarmUp() {
 			if json.Unmarshal(line, &event) == nil && event.SessionID != "" {
 				tm.mu.Lock()
 				tm.warmSessionID = event.SessionID
+				tm.warmCreatedAt = time.Now()
 				tm.mu.Unlock()
 				log.Printf("[warmup] Got session ID: %s", event.SessionID)
 			}
@@ -1203,10 +1206,21 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	runner := task.runner
 	args := buildRunnerArgs(runner, prompt)
 
-	// Use warm session if available (resume = same rate-limit bucket)
+	// Use warm session if available (resume = same rate-limit bucket).
+	// Expire warm sessions after 1 hour — Claude Code purges them and resume
+	// will fail with "No conversation found with session ID".
+	const warmSessionMaxAge = 1 * time.Hour
 	tm.mu.RLock()
 	warmSID := tm.warmSessionID
+	warmAge := time.Since(tm.warmCreatedAt)
 	tm.mu.RUnlock()
+	if warmSID != "" && warmAge > warmSessionMaxAge {
+		log.Printf("[task %s] Warm session %s expired (age=%v) — skipping resume", task.ID, warmSID, warmAge.Round(time.Second))
+		tm.mu.Lock()
+		tm.warmSessionID = ""
+		tm.mu.Unlock()
+		warmSID = ""
+	}
 	if warmSID != "" && runner.ResumeSupported && len(runner.ResumeArgs) > 0 {
 		for _, ra := range runner.ResumeArgs {
 			args = append(args, strings.ReplaceAll(ra, "{sessionId}", warmSID))
@@ -1215,7 +1229,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		if runner.RunnerID == "claude" {
 			args = append(args, "--fork-session", "--session-id", uuid.New().String())
 		}
-		log.Printf("[task %s] Resuming warm session %s", task.ID, warmSID)
+		log.Printf("[task %s] Resuming warm session %s (age=%v)", task.ID, warmSID, warmAge.Round(time.Second))
 	}
 
 	// Override model if specified on the task (e.g. "opus", "sonnet", "haiku").
@@ -1635,6 +1649,17 @@ func (tm *TaskManager) readStreamJSON(task *Task, r io.Reader) {
 			}
 
 		case "result":
+			// If Claude reports a session-related error, invalidate the warm session
+			// so retries don't hit the same stale session.
+			for _, e := range event.Errors {
+				if strings.Contains(e, "No conversation found with session ID") {
+					log.Printf("[task %s] Warm session invalid: %s — clearing for retries", task.ID, e)
+					tm.mu.Lock()
+					tm.warmSessionID = ""
+					tm.mu.Unlock()
+					break
+				}
+			}
 			// Final result — extract clean text and cost.
 			if len(event.RawResult) > 0 {
 				var resultStr string
@@ -1663,6 +1688,41 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "..."
+}
+
+// isAskingToContinue checks if Claude's result text is asking for permission
+// to continue rather than genuinely being done. Used by autopilot mode.
+func isAskingToContinue(resultText string) bool {
+	lower := strings.ToLower(resultText)
+	// Check the last 500 chars — the question is always at the end
+	if len(lower) > 500 {
+		lower = lower[len(lower)-500:]
+	}
+	patterns := []string{
+		"should i continue",
+		"shall i continue",
+		"would you like me to continue",
+		"would you like me to proceed",
+		"should i proceed",
+		"shall i proceed",
+		"want me to continue",
+		"want me to proceed",
+		"continue with the remaining",
+		"move on to the next",
+		"should i move on",
+		"ready to proceed",
+		"let me know if you'd like",
+		"let me know if you want",
+		"do you want me to",
+		"shall i go ahead",
+		"should i go ahead",
+	}
+	for _, p := range patterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // StopTask stops a running task by cancelling the context (kills the process).

@@ -148,6 +148,9 @@ func (s *HTTPServer) autoConsumeItem(item *TodoItem) {
 	}
 
 	prompt := s.todolistMgr.GenerateSingleFixPrompt(item)
+	if s.autopilot.IsEnabled() {
+		prompt += autopilotContext()
+	}
 
 	var images []ImageAttachment
 	for _, ssPath := range item.Screenshots {
@@ -168,7 +171,9 @@ func (s *HTTPServer) autoConsumeItem(item *TodoItem) {
 	}
 
 	s.todolistMgr.MarkImplementing([]string{item.ID}, task.ID)
-	go s.watchTodoTaskCompletion(task.ID, []string{item.ID})
+	if !s.autopilot.IsEnabled() {
+		go s.watchTodoTaskCompletion(task.ID, []string{item.ID})
+	}
 }
 
 // handleTodoListCount handles GET /todolist/count.
@@ -505,5 +510,27 @@ func mimeTypeFromPath(path string) string {
 		return "image/webp"
 	default:
 		return "application/octet-stream"
+	}
+}
+
+// markLinkedTodos marks todolist items linked to a task as done or failed.
+func (s *HTTPServer) markLinkedTodos(taskID string, success bool) {
+	if s.todolistMgr == nil {
+		return
+	}
+	items := s.todolistMgr.ListItems()
+	var ids []string
+	for _, item := range items {
+		if item.TaskID == taskID && item.Status == TodoStatusImplementing {
+			ids = append(ids, item.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	if success {
+		s.todolistMgr.MarkDone(ids)
+	} else {
+		s.todolistMgr.MarkFailed(ids)
 	}
 }

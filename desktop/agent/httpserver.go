@@ -54,9 +54,12 @@ type HTTPServer struct {
 	seenIPs sync.Map // "tokenPrefix_IP" -> true
 
 	// TLS config for HTTPS on LAN
-	tlsPort int
-	tlsCert tls.Certificate
+	tlsPort        int
+	tlsCert        tls.Certificate
 	tlsFingerprint string
+
+	// Autopilot (auto-driving) mode
+	autopilot *AutopilotManager
 }
 
 // NewHTTPServer creates a new HTTP server bound to the given port.
@@ -155,6 +158,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/todolist/auto-consume", s.auth(s.handleTodoListAutoConsume))
 	mux.HandleFunc("/todolist/implement-all", s.auth(s.handleTodoListImplementAll))
 	mux.HandleFunc("/todolist/", s.authSDK(s.handleTodoListByID))
+	mux.HandleFunc("/autopilot", s.auth(s.handleAutopilot))
 
 	// Multi-user management (shared machines)
 	mux.HandleFunc("/users", s.auth(s.handleMultiUserList))

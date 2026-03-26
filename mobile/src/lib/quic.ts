@@ -715,6 +715,32 @@ export class QuicClient {
     if (!res.ok) throw new Error(`Failed to set auto-consume: ${res.status}`);
   }
 
+  /** Get autopilot (auto-driving) mode status. */
+  async getAutopilot(): Promise<boolean> {
+    this.assertConnected();
+    try {
+      const res = await fetch(`${this.baseUrl}/autopilot`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      return data.enabled ?? false;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Toggle autopilot (auto-driving) mode. */
+  async setAutopilot(enabled: boolean): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/autopilot`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!res.ok) throw new Error(`Failed to set autopilot: ${res.status}`);
+  }
+
   /** Smart chat: auto-classifies message as todo item, continuation, or immediate action. */
   async smartChat(message: string, source: string = 'mobile'): Promise<{
     intent: 'todo' | 'action' | 'continuation';

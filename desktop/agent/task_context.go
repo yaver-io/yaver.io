@@ -144,3 +144,19 @@ When they ask to "start", "load", "run", or "hot reload" an app on their phone:
 
 	return sb.String()
 }
+
+// autopilotContext returns instructions injected into task prompts when autopilot is on.
+func autopilotContext() string {
+	return `
+
+[AUTOPILOT MODE — Auto-Driving]
+You are in autopilot mode. The user has queued multiple tasks and gone away.
+- Complete ALL items without stopping to ask for confirmation.
+- Do NOT ask "should I continue?", "shall I proceed?", or similar questions.
+- After finishing one item, immediately move to the next.
+- If something fails, note the error briefly and move on to the next item.
+- When all items are done, state clearly: "All items completed."
+- The autopilot supervisor will resume this session with remaining items if you stop early.
+  Each follow-up will list what's COMPLETED and what's REMAINING — pick up where you left off.
+`
+}

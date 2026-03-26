@@ -493,17 +493,20 @@ export default function AppsScreen() {
             {(vibingState?.suggestions ?? []).length > 0 && (
               <>
                 <Text style={[s.vibingSectionTitle, { color: c.textMuted }]}>Proposed for you</Text>
-                {vibingState!.suggestions.slice(0, 3).map((sg) => (
+                {vibingState!.suggestions.slice(0, 6).map((sg: any) => (
                   <Pressable
                     key={sg.id}
                     style={[s.vibingFeatureCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
                     onPress={() => {
+                      const reasoning = sg.reasoning
+                        ? `\n\nWhy this idea:\n${sg.reasoning}`
+                        : "";
                       Alert.alert(
-                        sg.label,
-                        sg.desc + "\n\n" + sg.prompt.slice(0, 200) + (sg.prompt.length > 200 ? "..." : ""),
+                        sg.icon + " " + sg.label,
+                        sg.desc + reasoning,
                         [
-                          { text: "Cancel", style: "cancel" },
-                          { text: "Run", onPress: async () => {
+                          { text: "Close", style: "cancel" },
+                          { text: "Build it", style: "default", onPress: async () => {
                             try {
                               const result = await quicClient.executeVibingSuggestion(sg.prompt, vibingState!.path);
                               setVibingTaskId(result.taskId);
@@ -531,30 +534,69 @@ export default function AppsScreen() {
               </>
             )}
 
-            {/* ── Dice: shuffle new ideas ── */}
+            {/* ── Dice: iterative deep idea generation ── */}
             <Pressable
               style={s.vibingDiceBtn}
               onPress={async () => {
                 if (!vibingState) return;
-                setVibingTaskStatus("AI is reading your code...");
+                setVibingTaskStatus("Analyzing project...");
+                // Clear existing suggestions to show new ones arriving
+                setVibingState((prev: any) => prev ? { ...prev, suggestions: [] } : prev);
                 try {
                   const res = await fetch(`${(quicClient as any).baseUrl}/vibing/surprise`, {
                     method: "POST",
                     headers: { ...(quicClient as any).authHeaders, "Content-Type": "application/json" },
                     body: JSON.stringify({ projectPath: vibingState.path }),
                   });
-                  const data = await res.json();
-                  if (data.taskId) {
-                    setVibingTaskId(data.taskId);
-                    setVibingTaskStatus("Generating new ideas...");
+                  // Read SSE stream
+                  const reader = res.body?.getReader();
+                  const decoder = new TextDecoder();
+                  if (!reader) { setVibingTaskStatus(""); return; }
+                  let buffer = "";
+                  while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    // Parse SSE events from buffer
+                    const lines = buffer.split("\n");
+                    buffer = lines.pop() || "";
+                    let eventType = "";
+                    for (const line of lines) {
+                      if (line.startsWith("event: ")) {
+                        eventType = line.slice(7).trim();
+                      } else if (line.startsWith("data: ") && eventType) {
+                        try {
+                          const data = JSON.parse(line.slice(6));
+                          if (eventType === "status") {
+                            const step = data.step ? ` (${data.step})` : "";
+                            setVibingTaskStatus(data.message + step);
+                          } else if (eventType === "suggestion") {
+                            // Add suggestion one by one with animation feel
+                            setVibingState((prev: any) => {
+                              if (!prev) return prev;
+                              const existing = prev.suggestions || [];
+                              // Avoid duplicates by label
+                              if (existing.some((s: any) => s.label === data.label)) return prev;
+                              return { ...prev, suggestions: [...existing, { ...data, id: data.id || `dice-${existing.length}` }] };
+                            });
+                          } else if (eventType === "done") {
+                            setVibingTaskStatus("");
+                          } else if (eventType === "error") {
+                            setVibingTaskStatus(data.message || "Step failed, continuing...");
+                          }
+                        } catch {}
+                        eventType = "";
+                      }
+                    }
                   }
+                  setVibingTaskStatus("");
                 } catch {
                   setVibingTaskStatus("");
                 }
               }}
             >
               <Text style={s.vibingDiceBtnIcon}>{"\u{1F3B2}"}</Text>
-              <Text style={s.vibingDiceBtnText}>Shuffle</Text>
+              <Text style={s.vibingDiceBtnText}>Deep Shuffle</Text>
             </Pressable>
 
             {/* ── Grid: Dev actions (2 columns) ── */}

@@ -120,6 +120,9 @@ export interface Todo {
   notes?: string;
   done: boolean;
   createdAt: number;
+  agentStatus?: "pending" | "implementing" | "done" | "failed";
+  taskId?: string;
+  agentItemId?: string;
 }
 
 const TODO_KEYS = {

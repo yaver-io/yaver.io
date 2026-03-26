@@ -15,13 +15,14 @@ import (
 
 // VibingSuggestion is a structured suggestion from the AI for the Vibing widget.
 type VibingSuggestion struct {
-	ID       string `json:"id"`
-	Icon     string `json:"icon"`
-	Label    string `json:"label"`
-	Desc     string `json:"desc"`
-	Category string `json:"category"` // "feature", "bugfix", "test", "deploy", "refactor", "docs"
-	Prompt   string `json:"prompt"`   // full prompt to send to the agent
-	Priority int    `json:"priority"` // 1=high, 2=medium, 3=low
+	ID        string `json:"id"`
+	Icon      string `json:"icon"`
+	Label     string `json:"label"`
+	Desc      string `json:"desc"`
+	Category  string `json:"category"`  // "feature", "bugfix", "test", "deploy", "refactor", "docs"
+	Prompt    string `json:"prompt"`    // full prompt to send to the agent
+	Priority  int    `json:"priority"`  // 1=high, 2=medium, 3=low
+	Reasoning string `json:"reasoning"` // why this idea, use cases, why it's exciting — shown on card tap
 }
 
 // VibingState holds the state of a vibing session for a project.
@@ -217,6 +218,8 @@ var vibingCache = struct {
 }{cache: make(map[string]*VibingState)}
 
 // PrewarmVibingCache generates vibing suggestions for recently modified projects in background.
+// It runs up to 5 iterative passes with the AI agent per project, each building on the previous
+// output to produce increasingly deep and useful suggestions.
 func PrewarmVibingCache(taskMgr *TaskManager) {
 	projects := listDiscoveredProjects()
 	if len(projects) == 0 {
@@ -246,8 +249,8 @@ func PrewarmVibingCache(taskMgr *TaskManager) {
 		}
 	}
 
-	// Cache top 5 most recent
-	limit := 5
+	// Cache top 3 most recent (fewer projects, deeper analysis per project)
+	limit := 3
 	if len(sorted) < limit {
 		limit = len(sorted)
 	}
@@ -255,6 +258,8 @@ func PrewarmVibingCache(taskMgr *TaskManager) {
 		projectName := filepath.Base(pm.path)
 		info := DetectProjectInfo(pm.path)
 		quickActions := generateQuickActions(pm.path, projectName, info.Framework)
+
+		// Start with static suggestions (instant, no AI needed)
 		suggestions := generateAISuggestions(pm.path, projectName)
 
 		var history []string
@@ -277,12 +282,255 @@ func PrewarmVibingCache(taskMgr *TaskManager) {
 			GeneratedAt:  time.Now().UTC().Format(time.RFC3339),
 		}
 
+		// Store initial static cache immediately (fast response if user asks now)
 		vibingCache.mu.Lock()
 		vibingCache.cache[pm.path] = state
 		vibingCache.mu.Unlock()
+		log.Printf("[vibing-cache] Pre-warmed %s with %d static suggestions", projectName, len(suggestions))
 
-		log.Printf("[vibing-cache] Pre-warmed %s (%d suggestions)", projectName, len(suggestions))
+		// Now run iterative deep analysis with the AI agent (5 steps)
+		if taskMgr != nil {
+			deepSuggestions := runDeepVibingAnalysis(taskMgr, pm.path, projectName, info)
+			if len(deepSuggestions) > 0 {
+				vibingCache.mu.Lock()
+				cached := vibingCache.cache[pm.path]
+				if cached != nil {
+					cached.Suggestions = append(cached.Suggestions, deepSuggestions...)
+					cached.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
+				}
+				vibingCache.mu.Unlock()
+				log.Printf("[vibing-cache] Deep analysis done for %s: %d AI suggestions added", projectName, len(deepSuggestions))
+			}
+		}
 	}
+}
+
+// runDeepVibingAnalysis runs 5 iterative steps with the AI agent to produce
+// deep, context-rich suggestions. Each step feeds into the next.
+//
+// Step 1: Analyze project structure and key areas
+// Step 2: Identify gaps and missing features
+// Step 3: Find bugs and quality issues
+// Step 4: Propose next features based on momentum
+// Step 5: Synthesize into prioritized action items
+func runDeepVibingAnalysis(taskMgr *TaskManager, projectPath, projectName string, info ProjectInfo) []VibingSuggestion {
+	commits, activeFiles := getRecentGitActivity(projectPath)
+	recentWork := ""
+	if len(commits) > 0 {
+		recentWork = strings.Join(commits[:min(10, len(commits))], "\n")
+	}
+
+	readme := ""
+	for _, name := range []string{"README.md", "readme.md"} {
+		if data, err := os.ReadFile(filepath.Join(projectPath, name)); err == nil {
+			readme = string(data)
+			if len(readme) > 3000 {
+				readme = readme[:3000]
+			}
+			break
+		}
+	}
+
+	activeFilesStr := ""
+	if len(activeFiles) > 0 {
+		activeFilesStr = strings.Join(activeFiles[:min(15, len(activeFiles))], "\n")
+	}
+
+	// Common preamble for all steps
+	preamble := fmt.Sprintf("Project: %s\nFramework: %s\nRecent commits:\n%s\nActive files:\n%s\n",
+		projectName, info.Framework, recentWork, activeFilesStr)
+
+	// Step prompts — each references output from previous steps
+	steps := []struct {
+		name   string
+		prompt func(prevOutputs []string) string
+	}{
+		{
+			name: "structure",
+			prompt: func(_ []string) string {
+				return fmt.Sprintf(`%s
+README excerpt:
+%s
+
+Analyze this project. List:
+1. The 5 most important modules/areas and what they do (1 line each)
+2. The tech stack and key dependencies
+3. What the project does well
+4. Gaps you notice
+
+Be concise — bullet points only, no code.`, preamble, readme)
+			},
+		},
+		{
+			name: "gaps",
+			prompt: func(prev []string) string {
+				return fmt.Sprintf(`%s
+Previous analysis:
+%s
+
+Based on this analysis, identify the 5 most impactful missing features or improvements.
+For each one: one line describing what to build and why it matters.
+Focus on things users would actually notice. Be specific, not generic.`, preamble, truncate(prev[0], 2000))
+			},
+		},
+		{
+			name: "quality",
+			prompt: func(prev []string) string {
+				return fmt.Sprintf(`%s
+Project structure:
+%s
+
+Read the most active files and identify:
+1. Top 3 bugs or error handling issues
+2. Top 3 code quality improvements (dead code, complexity, naming)
+3. Top 3 missing tests
+
+One line each. Be specific — name the file and function.`, preamble, truncate(prev[0], 1500))
+			},
+		},
+		{
+			name: "features",
+			prompt: func(prev []string) string {
+				return fmt.Sprintf(`%s
+What the project needs (from analysis):
+%s
+
+Quality issues found:
+%s
+
+What are the 5 most impactful things to build next? Consider:
+- Recent momentum (what's being actively worked on)
+- Gaps identified above
+- Quality issues that need fixing
+- Features users would notice
+
+For each: one line with concrete scope (not vague).`, preamble, truncate(prev[1], 1500), truncate(prev[2], 1500))
+			},
+		},
+		{
+			name: "synthesize",
+			prompt: func(prev []string) string {
+				return fmt.Sprintf(`Based on this deep analysis of %s:
+
+Structure: %s
+Gaps: %s
+Quality: %s
+Feature ideas: %s
+
+Think BIG. Generate the most exciting, ambitious, "wow that would be cool" feature ideas.
+Not boring stuff like "add tests" or "clean up code" — think features that would make users say "whoa".
+Think viral features, delightful UX, smart automations, things that feel like magic.
+
+Return ONLY a JSON array with 8 bombastic ideas. No markdown, no explanation.
+Each item must have ALL these fields:
+[{"icon":"emoji","label":"catchy title (max 5 words)","desc":"one exciting sentence","category":"feature|bugfix|refactor","prompt":"detailed 2-3 sentence instruction for an AI agent to implement this","priority":1,"reasoning":"2-3 sentences: WHY this idea is brilliant for this project specifically. What use cases does it unlock? Why would users love it? What makes it a perfect fit given the current codebase and momentum?"}]
+Priority: 1=game-changer, 2=impressive, 3=cool.`, projectName,
+					truncate(prev[0], 800), truncate(prev[1], 800),
+					truncate(prev[2], 800), truncate(prev[3], 800))
+			},
+		},
+	}
+
+	var outputs []string
+	for i, step := range steps {
+		prompt := step.prompt(outputs)
+		log.Printf("[vibing-deep] %s step %d/%d: %s", projectName, i+1, len(steps), step.name)
+
+		output, err := runVibingTask(taskMgr, projectPath, prompt, 3*time.Minute)
+		if err != nil {
+			log.Printf("[vibing-deep] %s step %d failed: %v — stopping", projectName, i+1, err)
+			break
+		}
+		outputs = append(outputs, output)
+		log.Printf("[vibing-deep] %s step %d done (%d chars)", projectName, i+1, len(output))
+	}
+
+	// Parse the final step's output as JSON suggestions
+	if len(outputs) < len(steps) {
+		return nil // didn't complete all steps
+	}
+
+	finalOutput := outputs[len(outputs)-1]
+	return parseVibingSuggestions(finalOutput)
+}
+
+// runVibingTask creates a task, waits for it to finish, and returns the output.
+// This is the bridge between the vibing system and any AI agent — agent-agnostic.
+func runVibingTask(taskMgr *TaskManager, workDir, prompt string, timeout time.Duration) (string, error) {
+	// Temporarily switch workDir for this task
+	taskMgr.mu.Lock()
+	origDir := taskMgr.workDir
+	taskMgr.workDir = workDir
+	taskMgr.mu.Unlock()
+
+	task, err := taskMgr.CreateTask(prompt, "", "haiku", "vibing-cache", "", "", nil)
+
+	// Restore workDir
+	taskMgr.mu.Lock()
+	taskMgr.workDir = origDir
+	taskMgr.mu.Unlock()
+
+	if err != nil {
+		return "", fmt.Errorf("create task: %w", err)
+	}
+
+	// Wait for task to finish (or timeout)
+	taskObj, ok := taskMgr.GetTask(task.ID)
+	if !ok {
+		return "", fmt.Errorf("task %s not found after creation", task.ID)
+	}
+
+	select {
+	case <-taskObj.doneCh:
+	case <-time.After(timeout):
+		_ = taskMgr.StopTask(task.ID)
+		return "", fmt.Errorf("task %s timed out after %v", task.ID, timeout)
+	}
+
+	// Get the output
+	taskObj, ok = taskMgr.GetTask(task.ID)
+	if !ok {
+		return "", fmt.Errorf("task %s disappeared", task.ID)
+	}
+
+	if taskObj.Status == TaskStatusFailed {
+		return "", fmt.Errorf("task %s failed", task.ID)
+	}
+
+	// Prefer ResultText (clean), fall back to Output (raw)
+	output := taskObj.ResultText
+	if output == "" {
+		output = taskObj.Output
+	}
+	return output, nil
+}
+
+// parseVibingSuggestions extracts structured suggestions from AI output.
+// The AI should return a JSON array but might wrap it in markdown code fences.
+func parseVibingSuggestions(output string) []VibingSuggestion {
+	// Strip markdown code fences if present
+	cleaned := output
+	if idx := strings.Index(cleaned, "["); idx >= 0 {
+		cleaned = cleaned[idx:]
+	}
+	if idx := strings.LastIndex(cleaned, "]"); idx >= 0 {
+		cleaned = cleaned[:idx+1]
+	}
+
+	var suggestions []VibingSuggestion
+	if err := json.Unmarshal([]byte(cleaned), &suggestions); err != nil {
+		log.Printf("[vibing-deep] Failed to parse suggestions JSON: %v", err)
+		return nil
+	}
+
+	// Assign IDs if missing
+	for i := range suggestions {
+		if suggestions[i].ID == "" {
+			suggestions[i].ID = fmt.Sprintf("deep-%d", i+1)
+		}
+	}
+
+	return suggestions
 }
 
 // handleVibing returns vibing state for a project — suggestions, quick actions, history.
@@ -377,8 +625,8 @@ func (s *HTTPServer) handleVibing(w http.ResponseWriter, r *http.Request) {
 	jsonReply(w, http.StatusOK, state)
 }
 
-// handleVibingSurprise asks the AI to analyze the project and suggest features.
-// Returns structured suggestions as JSON (not a task — stays in vibing mode).
+// handleVibingSurprise runs iterative deep analysis and streams suggestions via SSE.
+// Each step produces ideas that appear one-by-one in the mobile UI.
 func (s *HTTPServer) handleVibingSurprise(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonError(w, http.StatusMethodNotAllowed, "use POST")
@@ -393,55 +641,209 @@ func (s *HTTPServer) handleVibingSurprise(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	projectName := filepath.Base(req.ProjectPath)
-	commits, _ := getRecentGitActivity(req.ProjectPath)
-	info := DetectProjectInfo(req.ProjectPath)
+	projectPath := req.ProjectPath
+	projectName := filepath.Base(projectPath)
+	info := DetectProjectInfo(projectPath)
 
-	// Read README
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, canFlush := w.(http.Flusher)
+
+	sendSSE := func(event string, data interface{}) {
+		jsonBytes, _ := json.Marshal(data)
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, string(jsonBytes))
+		if canFlush {
+			flusher.Flush()
+		}
+	}
+
+	// Send status updates as we go
+	sendSSE("status", map[string]string{"message": "Analyzing project structure..."})
+
+	commits, activeFiles := getRecentGitActivity(projectPath)
+	recentWork := ""
+	if len(commits) > 0 {
+		recentWork = strings.Join(commits[:min(10, len(commits))], "\n")
+	}
+
 	readme := ""
 	for _, name := range []string{"README.md", "readme.md"} {
-		if data, err := os.ReadFile(filepath.Join(req.ProjectPath, name)); err == nil {
+		if data, err := os.ReadFile(filepath.Join(projectPath, name)); err == nil {
 			readme = string(data)
-			if len(readme) > 2000 {
-				readme = readme[:2000]
+			if len(readme) > 3000 {
+				readme = readme[:3000]
 			}
 			break
 		}
 	}
 
-	recentWork := ""
-	if len(commits) > 0 {
-		recentWork = strings.Join(commits, "\n")
+	activeFilesStr := ""
+	if len(activeFiles) > 0 {
+		activeFilesStr = strings.Join(activeFiles[:min(15, len(activeFiles))], "\n")
 	}
 
-	// Build prompt for the AI
-	prompt := fmt.Sprintf(`Analyze this project and suggest 5 concrete features to build next.
+	preamble := fmt.Sprintf("Project: %s\nFramework: %s\nRecent commits:\n%s\nActive files:\n%s\n",
+		projectName, info.Framework, recentWork, activeFilesStr)
 
-Project: %s
-Framework: %s
-Git branch: %s
-
-Recent commits:
-%s
-
-README excerpt:
-%s
-
-Return ONLY a JSON array, no markdown, no explanation. Each item must have these exact fields:
-[{"icon":"emoji","label":"short title","desc":"one line description","category":"feature|bugfix|refactor|test","prompt":"detailed instruction for implementing this"}]`, projectName, info.Framework, info.GitBranch, recentWork, readme)
-
-	// Run as a task but capture the output
-	task, err := s.taskMgr.CreateTask(prompt, "", "", "vibing-surprise", "", "", nil)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, err.Error())
-		return
+	// 5 iterative steps — each one can produce suggestions that stream to the client
+	type diceStep struct {
+		name    string
+		status  string
+		prompt  func(prevOutputs []string) string
+		extract bool // try to extract suggestions from output
 	}
 
-	jsonReply(w, http.StatusOK, map[string]interface{}{
-		"ok":     true,
-		"taskId": task.ID,
-		"message": "AI is analyzing your project. Check task output for suggestions.",
-	})
+	steps := []diceStep{
+		{
+			name:   "explore",
+			status: "Reading codebase and understanding architecture...",
+			prompt: func(_ []string) string {
+				return fmt.Sprintf(`%s
+README:
+%s
+
+You are a creative product visionary analyzing this project. Identify:
+1. What this project does and who uses it
+2. The 3 most interesting technical capabilities
+3. What's unique about the architecture
+4. What adjacent problems users might have
+
+Be concise — bullet points. Think like a startup founder looking for the next big thing.`, preamble, readme)
+			},
+		},
+		{
+			name:   "wild-ideas",
+			status: "Brainstorming wild ideas...",
+			prompt: func(prev []string) string {
+				return fmt.Sprintf(`%s
+
+Project analysis:
+%s
+
+Think WILD. What are 5 features that would make people tweet about this project?
+Not incremental improvements — think "holy shit that's cool" features.
+Think: AI-powered features, real-time collaboration, smart automations, viral mechanics, delightful surprises.
+For each: one catchy name + one sentence why it's exciting.`, preamble, truncate(prev[0], 2000))
+			},
+			extract: true,
+		},
+		{
+			name:   "practical-magic",
+			status: "Finding practical magic...",
+			prompt: func(prev []string) string {
+				return fmt.Sprintf(`%s
+
+Wild ideas brainstorm:
+%s
+
+Now ground these in reality. For the most feasible ones, what would make them ACTUALLY work
+with this codebase? Also think of 3 NEW ideas that are:
+- Buildable in a few hours
+- Would genuinely surprise users
+- Leverage what's already built
+
+For each: catchy name + why it fits THIS project specifically.`, preamble, truncate(prev[1], 2000))
+			},
+			extract: true,
+		},
+		{
+			name:   "moonshots",
+			status: "Dreaming up moonshots...",
+			prompt: func(prev []string) string {
+				return fmt.Sprintf(`%s
+
+Previous ideas:
+%s
+
+%s
+
+Now combine the wildest ideas with the practical ones. Generate 4 "moonshot" features that are:
+- Technically ambitious but achievable
+- Would genuinely differentiate this project
+- Feel like magic to users
+- Have clear use cases
+
+For each: name + one sentence + the "wow" factor.`, preamble, truncate(prev[1], 1500), truncate(prev[2], 1500))
+			},
+			extract: true,
+		},
+		{
+			name:    "final",
+			status:  "Crafting final suggestions...",
+			extract: true,
+			prompt: func(prev []string) string {
+				return fmt.Sprintf(`You've deeply analyzed %s. Here's what you found:
+
+Architecture: %s
+Wild ideas: %s
+Practical magic: %s
+Moonshots: %s
+
+Pick the 8 BEST ideas — the ones that would make someone say "I need to build this RIGHT NOW."
+Mix of quick wins (buildable today) and ambitious features (worth the effort).
+
+Return ONLY a JSON array. No markdown, no explanation.
+Each item MUST have ALL these fields:
+[{"icon":"emoji","label":"catchy title (max 5 words)","desc":"one exciting sentence that sells it","category":"feature|bugfix|refactor","prompt":"detailed 2-3 sentence instruction for an AI agent to implement this feature","priority":1,"reasoning":"2-3 sentences explaining: WHY is this brilliant for %s specifically? What use cases does it unlock? Why would users love it? What makes it a perfect fit given the codebase?"}]
+
+Priority: 1=build this tonight, 2=build this week, 3=add to roadmap.
+Make the reasoning compelling and specific to this project — not generic.`, projectName,
+					truncate(prev[0], 600), truncate(prev[1], 600),
+					truncate(prev[2], 600), truncate(prev[3], 600), projectName)
+			},
+		},
+	}
+
+	var outputs []string
+	for i, step := range steps {
+		sendSSE("status", map[string]string{
+			"message": step.status,
+			"step":    fmt.Sprintf("%d/%d", i+1, len(steps)),
+		})
+
+		prompt := step.prompt(outputs)
+		log.Printf("[vibing-dice] %s step %d/%d: %s", projectName, i+1, len(steps), step.name)
+
+		output, err := runVibingTask(s.taskMgr, projectPath, prompt, 3*time.Minute)
+		if err != nil {
+			log.Printf("[vibing-dice] %s step %d failed: %v", projectName, i+1, err)
+			sendSSE("error", map[string]string{"message": fmt.Sprintf("Step %d failed: %v", i+1, err)})
+			outputs = append(outputs, "")
+			continue
+		}
+		outputs = append(outputs, output)
+
+		// Try to extract and stream intermediate suggestions
+		if step.extract && i < len(steps)-1 {
+			// For intermediate steps, try to parse any inline suggestions
+			// (won't always work since they're not always JSON, but worth trying)
+			if sgs := parseVibingSuggestions(output); len(sgs) > 0 {
+				for _, sg := range sgs {
+					sendSSE("suggestion", sg)
+				}
+			}
+		}
+	}
+
+	// Parse and stream final suggestions
+	if len(outputs) >= len(steps) && outputs[len(outputs)-1] != "" {
+		finalSuggestions := parseVibingSuggestions(outputs[len(outputs)-1])
+		for _, sg := range finalSuggestions {
+			sendSSE("suggestion", sg)
+		}
+
+		// Also update the vibing cache
+		vibingCache.mu.Lock()
+		if cached, ok := vibingCache.cache[projectPath]; ok {
+			cached.Suggestions = finalSuggestions
+			cached.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
+		}
+		vibingCache.mu.Unlock()
+	}
+
+	sendSSE("done", map[string]string{"message": "Done!"})
 }
 
 // handleVibingExecute runs a vibing suggestion as a task.

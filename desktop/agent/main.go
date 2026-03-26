@@ -29,7 +29,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.54.0"
+const version = "1.55.0"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
@@ -920,6 +920,7 @@ func runServe(args []string) {
 	tlsPort := fs.Int("tls-port", 18443, "HTTPS server port (0 to disable)")
 	noTLS := fs.Bool("no-tls", false, "Disable HTTPS server")
 	installSystemd := fs.Bool("install-systemd", false, "Install and enable systemd user service, then exit")
+	noAutopilot := fs.Bool("no-autopilot", false, "Disable auto-driving mode (enabled by default)")
 	fs.Parse(args)
 
 	// Install systemd service and exit
@@ -1006,6 +1007,9 @@ func runServe(args []string) {
 			childArgs = append(childArgs, "--no-tls")
 		} else {
 			childArgs = append(childArgs, fmt.Sprintf("--tls-port=%d", *tlsPort))
+		}
+		if *noAutopilot {
+			childArgs = append(childArgs, "--no-autopilot")
 		}
 
 		cmd := osexec.Command(execPath, childArgs...)
@@ -1454,6 +1458,13 @@ func runServe(args []string) {
 			httpServer.autoConsumeItem(item)
 		})
 		log.Printf("Todo list manager ready (%d existing items, auto-consume=on)", len(tlMgr.ListItems()))
+		// Autopilot manager — agent-agnostic orchestrator, persists to ~/.yaver/autopilot.json
+		// Enabled by default; disable with --no-autopilot
+		httpServer.autopilot = NewAutopilotManager(taskMgr, tlMgr)
+		if *noAutopilot {
+			httpServer.autopilot.Disable()
+		}
+		log.Printf("Autopilot manager ready (enabled=%v)", httpServer.autopilot.IsEnabled())
 	}
 	// Pre-warm vibing cache for recently modified projects
 	go PrewarmVibingCache(taskMgr)
@@ -1493,6 +1504,11 @@ func runServe(args []string) {
 			dur = int(task.FinishedAt.Sub(*task.StartedAt).Seconds())
 		}
 		httpServer.notifyMgr.NotifyTaskCompleted(task.ID, task.Title, string(task.Status), task.CostUSD, dur)
+
+		// Autopilot: drive the next todo item
+		if httpServer.autopilot != nil && httpServer.autopilot.IsEnabled() && task.Source == "todolist" {
+			httpServer.autopilot.OnTaskDone(task)
+		}
 	}
 	httpServer.execMgr.OnExecDone = func(command string, exitCode int) {
 		status := "completed"
