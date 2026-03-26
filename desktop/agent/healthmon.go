@@ -22,13 +22,16 @@ const (
 
 // HealthTarget represents a URL to monitor.
 type HealthTarget struct {
-	ID           string `json:"id"`
-	URL          string `json:"url"`
-	Label        string `json:"label,omitempty"`
-	Method       string `json:"method,omitempty"`       // GET (default) or HEAD
-	Interval     int    `json:"interval"`                // seconds, default 60
-	TimeoutMs    int    `json:"timeoutMs"`               // default 5000
-	ExpectStatus int    `json:"expectStatus,omitempty"`  // default 200
+	ID              string `json:"id"`
+	URL             string `json:"url"`
+	Label           string `json:"label,omitempty"`
+	Method          string `json:"method,omitempty"`       // GET (default) or HEAD
+	Interval        int    `json:"interval"`                // seconds, default 60
+	TimeoutMs       int    `json:"timeoutMs"`               // default 5000
+	ExpectStatus    int    `json:"expectStatus,omitempty"`  // default 200
+	WarnThresholdMs int    `json:"warnThresholdMs,omitempty"` // response time above this = warning (default: half of timeoutMs)
+	NotifyOnFailure bool   `json:"notifyOnFailure,omitempty"`
+	NotifyOnWarning bool   `json:"notifyOnWarning,omitempty"`
 }
 
 // HealthStatus holds the current status of a monitored target.
@@ -37,17 +40,20 @@ type HealthStatus struct {
 	URL           string       `json:"url"`
 	Label         string       `json:"label,omitempty"`
 	Up            bool         `json:"up"`
+	Status        string       `json:"status"` // "up", "warning", "down"
 	StatusCode    int          `json:"statusCode,omitempty"`
 	ResponseMs    int64        `json:"responseMs,omitempty"`
 	Error         string       `json:"error,omitempty"`
 	CheckedAt     string       `json:"checkedAt"`
 	UptimePercent float64      `json:"uptimePercent"`
 	History       []HealthPing `json:"history,omitempty"`
+	prevStatus    string       // not serialized — tracks previous status for notification transitions
 }
 
 // HealthPing records a single health check result.
 type HealthPing struct {
 	Up         bool   `json:"up"`
+	Status     string `json:"status"` // "up", "warning", "down"
 	StatusCode int    `json:"statusCode,omitempty"`
 	ResponseMs int64  `json:"responseMs"`
 	CheckedAt  string `json:"checkedAt"`
@@ -61,6 +67,7 @@ type HealthMonitor struct {
 	statuses   map[string]*HealthStatus
 	stopChs    map[string]chan struct{}
 	configFile string
+	notifyMgr  *NotificationManager
 }
 
 // NewHealthMonitor creates a new health monitor and loads saved targets.
@@ -281,22 +288,37 @@ func (hm *HealthMonitor) checkTarget(target *HealthTarget) {
 		CheckedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 
+	// Determine warning threshold
+	warnMs := int64(target.WarnThresholdMs)
+	if warnMs <= 0 {
+		warnMs = int64(timeoutMs / 2) // default: half of timeout
+	}
+
 	start := time.Now()
 	req, err := http.NewRequest(method, target.URL, nil)
 	if err != nil {
 		ping.Error = err.Error()
 		ping.Up = false
+		ping.Status = "down"
 	} else {
 		req.Header.Set("User-Agent", "Yaver-HealthMon/1.0")
 		resp, err := client.Do(req)
 		if err != nil {
 			ping.Error = err.Error()
 			ping.Up = false
+			ping.Status = "down"
 		} else {
 			resp.Body.Close()
 			ping.StatusCode = resp.StatusCode
 			ping.ResponseMs = time.Since(start).Milliseconds()
 			ping.Up = resp.StatusCode == expectStatus
+			if !ping.Up {
+				ping.Status = "down"
+			} else if ping.ResponseMs > warnMs {
+				ping.Status = "warning"
+			} else {
+				ping.Status = "up"
+			}
 		}
 	}
 
@@ -307,11 +329,15 @@ func (hm *HealthMonitor) checkTarget(target *HealthTarget) {
 		return
 	}
 
+	prevStatus := status.prevStatus
+
 	status.Up = ping.Up
+	status.Status = ping.Status
 	status.StatusCode = ping.StatusCode
 	status.ResponseMs = ping.ResponseMs
 	status.Error = ping.Error
 	status.CheckedAt = ping.CheckedAt
+	status.prevStatus = ping.Status
 
 	// Add to history ring buffer
 	status.History = append(status.History, ping)
@@ -319,9 +345,29 @@ func (hm *HealthMonitor) checkTarget(target *HealthTarget) {
 		status.History = status.History[len(status.History)-healthMonMaxHistory:]
 	}
 
-	// Calculate 24h uptime
+	// Calculate 24h uptime — also flag warning if uptime 95-99%
 	status.UptimePercent = calcUptime(status.History)
+	if status.Status == "up" && status.UptimePercent < 99 && status.UptimePercent >= 95 {
+		status.Status = "warning"
+	}
+
 	hm.mu.Unlock()
+
+	// Notify on status transitions (avoid alert storms)
+	if hm.notifyMgr != nil && prevStatus != "" && prevStatus != ping.Status {
+		label := target.Label
+		if label == "" {
+			label = target.URL
+		}
+		if ping.Status == "down" && target.NotifyOnFailure {
+			hm.notifyMgr.NotifyHealthCheck(label, target.URL, "down", ping.ResponseMs)
+		} else if ping.Status == "warning" && target.NotifyOnWarning {
+			hm.notifyMgr.NotifyHealthCheck(label, target.URL, "warning", ping.ResponseMs)
+		} else if ping.Status == "up" && (prevStatus == "down" || prevStatus == "warning") {
+			// Recovery notification
+			hm.notifyMgr.NotifyHealthCheck(label, target.URL, "recovered", ping.ResponseMs)
+		}
+	}
 }
 
 // calcUptime calculates uptime percentage from ping history.

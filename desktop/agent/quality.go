@@ -48,10 +48,11 @@ type QualityResult struct {
 
 // QualityManager manages quality check runs.
 type QualityManager struct {
-	mu      sync.RWMutex
-	results map[string]*QualityResult
-	execMgr *ExecManager
-	workDir string
+	mu        sync.RWMutex
+	results   map[string]*QualityResult
+	execMgr   *ExecManager
+	workDir   string
+	notifyMgr *NotificationManager
 }
 
 // NewQualityManager creates a new quality manager.
@@ -265,11 +266,21 @@ func (qm *QualityManager) monitorCheck(result *QualityResult, session *ExecSessi
 		result.Status = "passed"
 		result.Issues = 0
 	} else {
-		result.Status = "failed"
 		result.Issues = countQualityIssues(stdout)
+		// Warning: lint/format with few issues (1-5) is a warning, not a hard failure
+		if (result.Type == QualityLint || result.Type == QualityFormat) && result.Issues > 0 && result.Issues <= 5 {
+			result.Status = "warning"
+		} else {
+			result.Status = "failed"
+		}
 	}
 
 	log.Printf("[quality] %s %s finished: %s (%d issues)", result.Type, result.ID, result.Status, result.Issues)
+
+	// Notify on failure or warning
+	if qm.notifyMgr != nil && (result.Status == "failed" || result.Status == "warning") {
+		qm.notifyMgr.NotifyQualityCheck(string(result.Type), result.Status, result.Issues)
+	}
 }
 
 // GetResult returns a quality result by ID.

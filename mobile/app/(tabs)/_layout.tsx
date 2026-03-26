@@ -124,6 +124,8 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen name="todos" options={{ href: null, headerShown: false }} />
+      <Tabs.Screen name="healthmon" options={{ href: null, headerShown: false }} />
+      <Tabs.Screen name="qualitygates" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="settings" options={{ href: null, headerShown: false }} />
     </Tabs>
   );

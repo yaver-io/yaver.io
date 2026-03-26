@@ -163,6 +163,58 @@ func (nm *NotificationManager) NotifyAgentEvent(event, detail string) {
 	nm.sendAll(msg)
 }
 
+// NotifyHealthCheck sends a notification when a health check changes status.
+func (nm *NotificationManager) NotifyHealthCheck(label, url, status string, responseMs int64) {
+	icon := "🔴"
+	switch status {
+	case "warning":
+		icon = "🟡"
+	case "recovered":
+		icon = "🟢"
+	}
+
+	msg := fmt.Sprintf("%s Health: %s\nURL: %s\nStatus: %s", icon, label, url, status)
+	if responseMs > 0 {
+		msg += fmt.Sprintf("\nResponse: %dms", responseMs)
+	}
+	nm.sendAll(msg)
+
+	// Trigger PagerDuty/Opsgenie for "down" status
+	if status == "down" {
+		if nm.config.PagerDuty != nil && nm.config.PagerDuty.Enabled {
+			go nm.sendPagerDuty(label+" health check failed", msg)
+		}
+		if nm.config.Opsgenie != nil && nm.config.Opsgenie.Enabled {
+			go nm.sendOpsgenie(label+" health check failed", msg)
+		}
+	}
+
+	// Send email if configured
+	if globalEmailMgr != nil && nm.config.Email != nil && nm.config.Email.Enabled && nm.config.Email.To != "" {
+		go func() {
+			subject := fmt.Sprintf("Health %s: %s", status, label)
+			_ = globalEmailMgr.SendEmail(nm.config.Email.To, subject, msg, "")
+		}()
+	}
+}
+
+// NotifyQualityCheck sends a notification when a quality check fails or warns.
+func (nm *NotificationManager) NotifyQualityCheck(checkType, status string, issues int) {
+	icon := "🔴"
+	if status == "warning" {
+		icon = "🟡"
+	}
+	msg := fmt.Sprintf("%s Quality Gate: %s\nStatus: %s\nIssues: %d", icon, checkType, status, issues)
+	nm.sendAll(msg)
+
+	if globalEmailMgr != nil && nm.config.Email != nil && nm.config.Email.Enabled && nm.config.Email.To != "" {
+		go func() {
+			subject := fmt.Sprintf("Quality %s: %s (%d issues)", status, checkType, issues)
+			_ = globalEmailMgr.SendEmail(nm.config.Email.To, subject, msg, "")
+		}()
+	}
+}
+
 // sendAll sends a message to all configured notification channels.
 func (nm *NotificationManager) sendAll(message string) {
 	if nm.config.Telegram != nil && nm.config.Telegram.Enabled {

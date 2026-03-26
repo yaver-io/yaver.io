@@ -20,12 +20,15 @@ func (s *HTTPServer) handleHealthMon(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost:
 		var req struct {
-			URL          string `json:"url"`
-			Label        string `json:"label"`
-			Method       string `json:"method"`
-			Interval     int    `json:"interval"`
-			TimeoutMs    int    `json:"timeoutMs"`
-			ExpectStatus int    `json:"expectStatus"`
+			URL             string `json:"url"`
+			Label           string `json:"label"`
+			Method          string `json:"method"`
+			Interval        int    `json:"interval"`
+			TimeoutMs       int    `json:"timeoutMs"`
+			ExpectStatus    int    `json:"expectStatus"`
+			WarnThresholdMs int    `json:"warnThresholdMs"`
+			NotifyOnFailure bool   `json:"notifyOnFailure"`
+			NotifyOnWarning bool   `json:"notifyOnWarning"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -37,6 +40,10 @@ func (s *HTTPServer) handleHealthMon(w http.ResponseWriter, r *http.Request) {
 		}
 
 		target := s.healthMon.AddTarget(req.URL, req.Label, req.Method, req.Interval, req.TimeoutMs, req.ExpectStatus)
+		target.WarnThresholdMs = req.WarnThresholdMs
+		target.NotifyOnFailure = req.NotifyOnFailure
+		target.NotifyOnWarning = req.NotifyOnWarning
+		s.healthMon.persist()
 		jsonReply(w, http.StatusOK, target)
 
 	default:

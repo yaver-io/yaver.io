@@ -1550,44 +1550,34 @@ export default function MoreScreen() {
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <ScrollView contentContainerStyle={s.list}>
-        {/* Quality Gates */}
+        {/* Quality Gates — navigate to dedicated screen */}
         {connected && (
-          <View>
-            <Pressable
-              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-              onPress={() => toggleSection("quality")}
-            >
-              <Text style={[s.icon, { color: c.textMuted }]}>{"\u2714"}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.label, { color: c.textPrimary }]}>Quality Gates</Text>
-                <Text style={[s.desc, { color: c.textMuted }]}>Run tests, lint, typecheck, format</Text>
-              </View>
-              <Text style={{ color: c.textMuted, fontSize: 16 }}>
-                {expandedSection === "quality" ? "\u2304" : "\u203A"}
-              </Text>
-            </Pressable>
-            {expandedSection === "quality" && <QualityGatesSection c={c} />}
-          </View>
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/qualitygates" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u2714"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Quality Gates</Text>
+              <Text style={[s.desc, { color: c.textMuted }]}>Run tests, lint, typecheck, format</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
         )}
 
-        {/* Health Monitor */}
+        {/* Health Monitor — navigate to dedicated screen */}
         {connected && (
-          <View>
-            <Pressable
-              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-              onPress={() => toggleSection("health")}
-            >
-              <Text style={[s.icon, { color: c.textMuted }]}>{"\u2661"}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.label, { color: c.textPrimary }]}>Health Monitor</Text>
-                <Text style={[s.desc, { color: c.textMuted }]}>Monitor production URLs</Text>
-              </View>
-              <Text style={{ color: c.textMuted, fontSize: 16 }}>
-                {expandedSection === "health" ? "\u2304" : "\u203A"}
-              </Text>
-            </Pressable>
-            {expandedSection === "health" && <HealthMonitorSection c={c} />}
-          </View>
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/healthmon" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u2661"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Health Monitor</Text>
+              <Text style={[s.desc, { color: c.textMuted }]}>Monitor production URLs</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
         )}
 
         {/* Git Providers */}

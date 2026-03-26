@@ -1440,10 +1440,12 @@ func runServe(args []string) {
 	httpServer.tunnelMgr = NewTunnelManager()
 	httpServer.testMgr = NewTestManager(httpServer.execMgr, taskMgr.workDir)
 	httpServer.qualityMgr = NewQualityManager(httpServer.execMgr, taskMgr.workDir)
+	httpServer.qualityMgr.notifyMgr = httpServer.notifyMgr
 	log.Printf("Quality gate manager ready")
 	if hmMgr, err := NewHealthMonitor(); err != nil {
 		log.Printf("Warning: health monitor unavailable: %v", err)
 	} else {
+		hmMgr.notifyMgr = httpServer.notifyMgr
 		httpServer.healthMon = hmMgr
 		log.Printf("Health monitor ready")
 	}
