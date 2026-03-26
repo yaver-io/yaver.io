@@ -678,6 +678,362 @@ function GitSection({ c }: { c: ReturnType<typeof useColors> }) {
   );
 }
 
+// ── Repo Sync Section ────────────────────────────────────────────
+
+interface RepoInfoItem {
+  name: string;
+  path: string;
+  branch: string;
+  remote: string;
+  lastCommit: string;
+  dirty: boolean;
+}
+
+interface CredentialHost {
+  host: string;
+  username: string;
+  hasToken: boolean;
+}
+
+function RepoSyncSection({ c }: { c: ReturnType<typeof useColors> }) {
+  const [repos, setRepos] = useState<RepoInfoItem[]>([]);
+  const [creds, setCreds] = useState<CredentialHost[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+  // Clone form
+  const [showClone, setShowClone] = useState(false);
+  const [cloneUrl, setCloneUrl] = useState("");
+  const [cloneDir, setCloneDir] = useState("");
+  const [cloneBranch, setCloneBranch] = useState("");
+
+  // Credential form
+  const [showAddCred, setShowAddCred] = useState(false);
+  const [credHost, setCredHost] = useState("");
+  const [credToken, setCredToken] = useState("");
+  const [credUsername, setCredUsername] = useState("");
+
+  // Expanded repo
+  const [expandedRepo, setExpandedRepo] = useState<string | null>(null);
+
+  const loadData = useCallback(async () => {
+    try {
+      const [repoList, credList] = await Promise.all([
+        quicClient.listRepos(),
+        quicClient.listRepoCredentials(),
+      ]);
+      setRepos(repoList);
+      setCreds(credList);
+    } catch {
+      // silent
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const handleClone = useCallback(async () => {
+    if (!cloneUrl.trim()) return;
+    setActionLoading("Clone");
+    try {
+      const result = await quicClient.cloneRepo(
+        cloneUrl.trim(),
+        cloneDir.trim() || undefined,
+        cloneBranch.trim() || undefined,
+      );
+      Alert.alert("Cloned", `Repository cloned to:\n${result.path}`);
+      setCloneUrl("");
+      setCloneDir("");
+      setCloneBranch("");
+      setShowClone(false);
+      await loadData();
+    } catch (e) {
+      Alert.alert("Clone Failed", e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setActionLoading(null);
+    }
+  }, [cloneUrl, cloneDir, cloneBranch, loadData]);
+
+  const handlePull = useCallback(async (workDir: string) => {
+    setActionLoading(`pull-${workDir}`);
+    try {
+      const result = await quicClient.pullRepo(workDir);
+      Alert.alert("Pulled", result.output || "Already up to date.");
+      await loadData();
+    } catch (e) {
+      Alert.alert("Pull Failed", e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setActionLoading(null);
+    }
+  }, [loadData]);
+
+  const handleAddCred = useCallback(async () => {
+    if (!credHost.trim() || !credToken.trim()) return;
+    setActionLoading("AddCred");
+    try {
+      await quicClient.setRepoCredential(
+        credHost.trim(),
+        credToken.trim(),
+        credUsername.trim() || undefined,
+      );
+      setCredHost("");
+      setCredToken("");
+      setCredUsername("");
+      setShowAddCred(false);
+      await loadData();
+    } catch (e) {
+      Alert.alert("Error", e instanceof Error ? e.message : "Failed to save credential");
+    } finally {
+      setActionLoading(null);
+    }
+  }, [credHost, credToken, credUsername, loadData]);
+
+  const handleRemoveCred = useCallback((host: string) => {
+    Alert.alert("Remove Credential", `Remove token for ${host}?`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await quicClient.removeRepoCredential(host);
+            await loadData();
+          } catch (e) {
+            Alert.alert("Error", e instanceof Error ? e.message : "Failed to remove");
+          }
+        },
+      },
+    ]);
+  }, [loadData]);
+
+  if (loading) {
+    return (
+      <View style={{ padding: 16, alignItems: "center" }}>
+        <ActivityIndicator color={c.accent} />
+      </View>
+    );
+  }
+
+  return (
+    <View style={{ paddingHorizontal: 14, paddingBottom: 8 }}>
+      {/* Action buttons */}
+      <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
+        <Pressable
+          style={[s.actionBtn, { backgroundColor: c.bgCard, borderWidth: 1, borderColor: c.border }]}
+          onPress={() => setShowClone(!showClone)}
+        >
+          <Text style={[s.actionBtnText, { color: c.textPrimary }]}>Clone Repo</Text>
+        </Pressable>
+        <Pressable
+          style={[s.actionBtn, { backgroundColor: c.bgCard, borderWidth: 1, borderColor: c.border }]}
+          onPress={() => setShowAddCred(!showAddCred)}
+        >
+          <Text style={[s.actionBtnText, { color: c.textPrimary }]}>Add Token</Text>
+        </Pressable>
+        <Pressable
+          style={[s.actionBtn, { backgroundColor: c.bgCard, borderWidth: 1, borderColor: c.border }]}
+          onPress={loadData}
+        >
+          <Text style={[s.actionBtnText, { color: c.textPrimary }]}>Refresh</Text>
+        </Pressable>
+      </View>
+
+      {/* Clone form */}
+      {showClone && (
+        <View style={{ marginBottom: 10, gap: 6 }}>
+          <TextInput
+            style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
+            placeholder="https://github.com/user/repo.git"
+            placeholderTextColor={c.textMuted}
+            value={cloneUrl}
+            onChangeText={setCloneUrl}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <TextInput
+            style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
+            placeholder="Directory (optional, default ~/Projects)"
+            placeholderTextColor={c.textMuted}
+            value={cloneDir}
+            onChangeText={setCloneDir}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <TextInput
+            style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
+            placeholder="Branch (optional)"
+            placeholderTextColor={c.textMuted}
+            value={cloneBranch}
+            onChangeText={setCloneBranch}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Pressable
+              style={[s.actionBtn, { backgroundColor: c.accent, flex: 1 }]}
+              onPress={handleClone}
+              disabled={!cloneUrl.trim() || actionLoading === "Clone"}
+            >
+              {actionLoading === "Clone" ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={[s.actionBtnText, { color: "#fff" }]}>Clone</Text>
+              )}
+            </Pressable>
+            <Pressable
+              style={[s.actionBtn, { backgroundColor: c.bgCard, borderWidth: 1, borderColor: c.border, flex: 1 }]}
+              onPress={() => { setShowClone(false); setCloneUrl(""); setCloneDir(""); setCloneBranch(""); }}
+            >
+              <Text style={[s.actionBtnText, { color: c.textPrimary }]}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      {/* Add credential form */}
+      {showAddCred && (
+        <View style={{ marginBottom: 10, gap: 6 }}>
+          <TextInput
+            style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
+            placeholder="Host (e.g. github.com)"
+            placeholderTextColor={c.textMuted}
+            value={credHost}
+            onChangeText={setCredHost}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <TextInput
+            style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
+            placeholder="Personal Access Token"
+            placeholderTextColor={c.textMuted}
+            value={credToken}
+            onChangeText={setCredToken}
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry
+          />
+          <TextInput
+            style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
+            placeholder="Username (optional)"
+            placeholderTextColor={c.textMuted}
+            value={credUsername}
+            onChangeText={setCredUsername}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Pressable
+              style={[s.actionBtn, { backgroundColor: c.accent, flex: 1 }]}
+              onPress={handleAddCred}
+              disabled={!credHost.trim() || !credToken.trim() || actionLoading === "AddCred"}
+            >
+              {actionLoading === "AddCred" ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={[s.actionBtnText, { color: "#fff" }]}>Save</Text>
+              )}
+            </Pressable>
+            <Pressable
+              style={[s.actionBtn, { backgroundColor: c.bgCard, borderWidth: 1, borderColor: c.border, flex: 1 }]}
+              onPress={() => { setShowAddCred(false); setCredHost(""); setCredToken(""); setCredUsername(""); }}
+            >
+              <Text style={[s.actionBtnText, { color: c.textPrimary }]}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      {/* Credentials list */}
+      {creds.length > 0 && (
+        <View style={{ marginBottom: 10 }}>
+          <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", marginBottom: 4 }}>
+            Credentials ({creds.length})
+          </Text>
+          {creds.map((cr) => (
+            <Pressable
+              key={cr.host}
+              style={[s.resultRow, { borderBottomColor: c.border }]}
+              onLongPress={() => handleRemoveCred(cr.host)}
+            >
+              <Text style={{ color: "#22c55e", fontSize: 14, width: 20 }}>{"\u2713"}</Text>
+              <Text style={{ color: c.textPrimary, fontSize: 13, flex: 1 }}>{cr.host}</Text>
+              {cr.username ? (
+                <Text style={{ color: c.textMuted, fontSize: 11 }}>{cr.username}</Text>
+              ) : null}
+            </Pressable>
+          ))}
+          <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 2 }}>
+            Long press to remove
+          </Text>
+        </View>
+      )}
+
+      {/* Repos list */}
+      {repos.length > 0 ? (
+        <View>
+          <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", marginBottom: 4 }}>
+            Repos ({repos.length})
+          </Text>
+          {repos.map((repo) => (
+            <View key={repo.path}>
+              <Pressable
+                style={[s.resultRow, { borderBottomColor: c.border }]}
+                onPress={() => setExpandedRepo(expandedRepo === repo.path ? null : repo.path)}
+              >
+                <Text style={{ color: repo.dirty ? "#f59e0b" : "#22c55e", fontSize: 14, width: 20 }}>
+                  {repo.dirty ? "\u25CF" : "\u25CF"}
+                </Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "500" }}>{repo.name}</Text>
+                  <Text style={{ color: c.textMuted, fontSize: 11 }}>{repo.branch}</Text>
+                </View>
+                <Text style={{ color: c.textMuted, fontSize: 14 }}>
+                  {expandedRepo === repo.path ? "\u2304" : "\u203A"}
+                </Text>
+              </Pressable>
+              {expandedRepo === repo.path && (
+                <View style={{ paddingLeft: 24, paddingVertical: 6, gap: 4 }}>
+                  <Text style={{ color: c.textMuted, fontSize: 11, fontFamily: "Courier" }} numberOfLines={1}>
+                    {repo.path}
+                  </Text>
+                  {repo.remote ? (
+                    <Text style={{ color: c.textMuted, fontSize: 11, fontFamily: "Courier" }} numberOfLines={1}>
+                      {repo.remote}
+                    </Text>
+                  ) : null}
+                  {repo.lastCommit ? (
+                    <Text style={{ color: c.textPrimary, fontSize: 12, marginTop: 2 }} numberOfLines={2}>
+                      {repo.lastCommit}
+                    </Text>
+                  ) : null}
+                  <Pressable
+                    style={[s.actionBtn, { backgroundColor: c.bgCard, borderWidth: 1, borderColor: c.border, alignSelf: "flex-start", marginTop: 4 }]}
+                    onPress={() => handlePull(repo.path)}
+                    disabled={actionLoading === `pull-${repo.path}`}
+                  >
+                    {actionLoading === `pull-${repo.path}` ? (
+                      <ActivityIndicator size="small" color={c.accent} />
+                    ) : (
+                      <Text style={[s.actionBtnText, { color: c.textPrimary }]}>Pull</Text>
+                    )}
+                  </Pressable>
+                </View>
+              )}
+            </View>
+          ))}
+        </View>
+      ) : (
+        <Text style={{ color: c.textMuted, fontSize: 13, paddingVertical: 4 }}>
+          No repos found. Clone one or check ~/Projects.
+        </Text>
+      )}
+    </View>
+  );
+}
+
 // ── Main Screen ────────────────────────────────────────────────────
 
 export default function MoreScreen() {
@@ -761,6 +1117,26 @@ export default function MoreScreen() {
               </Text>
             </Pressable>
             {expandedSection === "git" && <GitSection c={c} />}
+          </View>
+        )}
+
+        {/* Repo Sync */}
+        {connected && (
+          <View>
+            <Pressable
+              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+              onPress={() => toggleSection("repos")}
+            >
+              <Text style={[s.icon, { color: c.textMuted }]}>{"\u21BB"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.label, { color: c.textPrimary }]}>Repo Sync</Text>
+                <Text style={[s.desc, { color: c.textMuted }]}>Clone, pull, manage git credentials</Text>
+              </View>
+              <Text style={{ color: c.textMuted, fontSize: 16 }}>
+                {expandedSection === "repos" ? "\u2304" : "\u203A"}
+              </Text>
+            </Pressable>
+            {expandedSection === "repos" && <RepoSyncSection c={c} />}
           </View>
         )}
 

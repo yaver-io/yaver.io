@@ -11,6 +11,7 @@ function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boo
     Tasks: "T",
     Todos: "\u2610",
     Apps: "\u25B6",
+    Reload: "\uD83D\uDD25",
     Repos: "\u{1F4C2}",
     Builds: "B",
     Devices: "D",
@@ -54,7 +55,7 @@ export default function TabLayout() {
           // Auto-navigate to Apps tab when dev server first starts
           if (running && !wasRunning.current) {
             wasRunning.current = true;
-            router.navigate("/(tabs)/apps");
+            router.navigate("/(tabs)/hotreload");
           }
           if (!running) wasRunning.current = false;
         }
@@ -95,6 +96,15 @@ export default function TabLayout() {
           title: "Apps",
           tabBarIcon: ({ focused }) => (
             <TabIcon label="Apps" focused={focused} showGreenDot={devServerRunning} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="hotreload"
+        options={{
+          title: "Reload",
+          tabBarIcon: ({ focused }) => (
+            <TabIcon label="Reload" focused={focused} showGreenDot={devServerRunning} />
           ),
         }}
       />

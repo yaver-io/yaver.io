@@ -1116,6 +1116,70 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* ── Built for Monorepos ── */}
+      <section className="border-t border-surface-800/60 px-6 py-24">
+        <div className="mx-auto max-w-4xl">
+          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
+            Full-stack from your phone.
+          </h2>
+          <p className="mb-12 text-center text-sm text-surface-400">
+            Yaver shines when your web frontend, mobile app, backend, and infrastructure all live in one repo.
+          </p>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            {[
+              {
+                icon: "\u21BB",
+                color: "text-[#fbbf24] bg-[#fbbf24]/10",
+                label: "Hot reload any layer",
+                copy: "Tap a subdirectory and Yaver starts the right dev server &mdash; Expo for mobile/, Vite for web/, Next.js for dashboard/. See changes on your phone instantly.",
+              },
+              {
+                icon: "\uD83E\uDDEA",
+                color: "text-[#a78bfa] bg-[#a78bfa]/10",
+                label: "Test across your stack",
+                copy: "Run backend + frontend + mobile tests in one tap. The agent figures out the test runner for each subdirectory and reports results together.",
+              },
+              {
+                icon: "\uD83D\uDE80",
+                color: "text-[#22c55e] bg-[#22c55e]/10",
+                label: "Deploy everything from one place",
+                copy: "Ship web/ to Vercel, mobile/ to TestFlight and Play Store, backend/ to Convex &mdash; all from one project card on your phone.",
+              },
+              {
+                icon: "\u2699",
+                color: "text-[#60a5fa] bg-[#60a5fa]/10",
+                label: "Zero config detection",
+                copy: "The agent reads package.json, pubspec.yaml, next.config.ts, vite.config.ts in each subdirectory. No manifest files, no project setup.",
+              },
+              {
+                icon: "\uD83C\uDFAF",
+                color: "text-[#f87171] bg-[#f87171]/10",
+                label: "Perfect for Convex + Expo + Vercel",
+                copy: "The most common solo-founder stack. One repo, three deploy targets, all managed from your phone while you walk the dog.",
+              },
+              {
+                icon: "\uD83D\uDCE6",
+                color: "text-surface-300 bg-surface-800",
+                label: "Works with any structure",
+                copy: "Monorepo with Turborepo, Nx, or just plain directories. Yaver scans recursively and finds every deployable piece.",
+              },
+            ].map((item) => (
+              <div
+                key={item.label}
+                className="flex items-start gap-3 rounded-xl border border-surface-800 bg-surface-900/50 p-5"
+              >
+                <div className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-sm ${item.color}`}>{item.icon}</div>
+                <div>
+                  <p className="text-sm font-semibold text-surface-200">{item.label}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-surface-400" dangerouslySetInnerHTML={{ __html: item.copy }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* ── Section: Browse your apps. Take action. ── */}
       <section className="border-t border-surface-800/60 px-6 py-24">
         <div className="mx-auto max-w-5xl">

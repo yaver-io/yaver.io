@@ -1409,6 +1409,76 @@ export class QuicClient {
     return res.json();
   }
 
+  // ── Repo Sync ─────────────────────────────────────────────────────
+
+  /** Clone a repo to the dev machine. */
+  async cloneRepo(url: string, dir?: string, branch?: string): Promise<{ok: boolean; path: string; output: string}> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/repos/clone`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, dir, branch }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      throw new Error(err.error || `Clone failed: ${res.status}`);
+    }
+    return res.json();
+  }
+
+  /** Pull latest in a repo directory. */
+  async pullRepo(workDir?: string): Promise<{ok: boolean; output: string; branch: string}> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/repos/pull`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workDir }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      throw new Error(err.error || `Pull failed: ${res.status}`);
+    }
+    return res.json();
+  }
+
+  /** List repos on dev machine. */
+  async listRepos(): Promise<{name: string; path: string; branch: string; remote: string; lastCommit: string; dirty: boolean}[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/repos/list`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Failed to list repos: ${res.status}`);
+    return res.json();
+  }
+
+  /** Store git credential (PAT) on the dev machine. */
+  async setRepoCredential(host: string, token: string, username?: string): Promise<{ok: boolean}> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/repos/credentials`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host, token, username }),
+    });
+    if (!res.ok) throw new Error(`Failed to set credential: ${res.status}`);
+    return res.json();
+  }
+
+  /** List configured credential hosts (tokens are never returned). */
+  async listRepoCredentials(): Promise<{host: string; username: string; hasToken: boolean}[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/repos/credentials`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Failed to list credentials: ${res.status}`);
+    return res.json();
+  }
+
+  /** Remove a credential for a host. */
+  async removeRepoCredential(host: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/repos/credentials/${encodeURIComponent(host)}`, {
+      method: 'DELETE',
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to remove credential: ${res.status}`);
+  }
+
   // ── EventEmitter ───────────────────────────────────────────────────
 
   /** Register a listener for output lines. Returns an unsubscribe function. */

@@ -190,6 +190,13 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/git/pull", s.auth(s.handleGitPull))
 	mux.HandleFunc("/git/revert", s.auth(s.handleGitRevert))
 
+	// Repo sync (clone/pull repos, manage git credentials — P2P only)
+	mux.HandleFunc("/repos/clone", s.auth(s.handleRepoClone))
+	mux.HandleFunc("/repos/pull", s.auth(s.handleRepoPull))
+	mux.HandleFunc("/repos/list", s.auth(s.handleRepoList))
+	mux.HandleFunc("/repos/credentials", s.auth(s.handleRepoCredentials))
+	mux.HandleFunc("/repos/credentials/", s.auth(s.handleRepoCredentialByHost))
+
 	// Multi-user management (shared machines)
 	mux.HandleFunc("/users", s.auth(s.handleMultiUserList))
 	mux.HandleFunc("/users/me", s.auth(s.handleMultiUserMe))
