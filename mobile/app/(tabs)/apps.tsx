@@ -50,6 +50,15 @@ export default function AppsScreen() {
     actions: { label: string; target: string; type: string; framework?: string; platform?: string; command?: string; icon?: string }[];
   } | null>(null);
   const [loadingActions, setLoadingActions] = useState(false);
+
+  // Vibing
+  const [vibingState, setVibingState] = useState<{
+    project: string; path: string;
+    suggestions: { id: string; icon: string; label: string; desc: string; category: string; prompt: string }[];
+    quickActions: { id: string; icon: string; label: string; desc: string; category: string; prompt: string }[];
+    history: string[];
+  } | null>(null);
+  const [customTask, setCustomTask] = useState("");
   const webViewRef = useRef<WebView>(null);
 
   // Poll dev server status + projects
@@ -127,13 +136,10 @@ export default function AppsScreen() {
     setLoadingActions(true);
     try {
       const result = await quicClient.getProjectActions(projectName);
-      if (result.actions.length === 0) {
-        // No known actions — fall back to AI task
-        await quicClient.sendTask(`Run ${projectName} on my phone`, "");
-        router.navigate("/(tabs)/tasks");
-      } else {
-        setActionSheet(result);
-      }
+      // Always prepend "Vibing" as the first option
+      const vibingAction = { label: "Vibing", target: ".", type: "vibing", icon: "\u{1F3B5}", framework: "", platform: "", command: "" };
+      result.actions = [vibingAction, ...result.actions];
+      setActionSheet(result);
     } catch {
       // Fallback
       await quicClient.sendTask(`Run ${projectName} on my phone`, "").catch(() => {});
@@ -148,6 +154,17 @@ export default function AppsScreen() {
     const project = actionSheet?.project ?? "";
     const path = actionSheet?.path ?? "";
     setActionSheet(null);
+
+    if (action.type === "vibing") {
+      // Open vibing mode — fetch AI suggestions
+      try {
+        const state = await quicClient.getVibingState(project);
+        setVibingState(state);
+      } catch {
+        Alert.alert("Failed", "Could not load vibing state");
+      }
+      return;
+    }
 
     if (action.type === "dev-server") {
       // Direct dev server start
@@ -434,6 +451,121 @@ export default function AppsScreen() {
         </Pressable>
       </Modal>
 
+      {/* Vibing modal — AI pair programming widget */}
+      <Modal visible={!!vibingState} animationType="slide">
+        <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["top", "bottom"]}>
+          <View style={[s.vibingHeader, { borderBottomColor: c.border }]}>
+            <Pressable onPress={() => { setVibingState(null); setCustomTask(""); }} style={{ paddingVertical: 8 }}>
+              <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
+            </Pressable>
+            <View style={{ alignItems: "center" }}>
+              <Text style={[s.vibingTitle, { color: c.textPrimary }]}>{"\u{1F3B5}"} Vibing</Text>
+              <Text style={{ color: c.textMuted, fontSize: 11 }}>{vibingState?.project}</Text>
+            </View>
+            <View style={{ width: 50 }} />
+          </View>
+
+          <ScrollView contentContainerStyle={s.vibingContent}>
+            {/* AI Suggestions */}
+            {(vibingState?.suggestions ?? []).length > 0 && (
+              <>
+                <Text style={[s.vibingSectionTitle, { color: c.textMuted }]}>Suggestions for you</Text>
+                {vibingState!.suggestions.map((sg) => (
+                  <Pressable
+                    key={sg.id}
+                    style={[s.vibingCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
+                    onPress={async () => {
+                      try {
+                        await quicClient.executeVibingSuggestion(sg.prompt, vibingState!.path);
+                        setVibingState(null);
+                        router.navigate("/(tabs)/tasks");
+                      } catch {}
+                    }}
+                  >
+                    <Text style={s.vibingCardIcon}>{sg.icon}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[s.vibingCardLabel, { color: c.textPrimary }]}>{sg.label}</Text>
+                      <Text style={[s.vibingCardDesc, { color: c.textMuted }]}>{sg.desc}</Text>
+                    </View>
+                    <View style={[s.vibingCategoryChip, { backgroundColor: sg.category === "bugfix" ? "#ef444422" : sg.category === "feature" ? "#6366f122" : sg.category === "test" ? "#22c55e22" : sg.category === "deploy" ? "#f59e0b22" : "#88888822" }]}>
+                      <Text style={[s.vibingCategoryText, { color: sg.category === "bugfix" ? "#ef4444" : sg.category === "feature" ? "#818cf8" : sg.category === "test" ? "#22c55e" : sg.category === "deploy" ? "#f59e0b" : "#888" }]}>{sg.category}</Text>
+                    </View>
+                  </Pressable>
+                ))}
+              </>
+            )}
+
+            {/* Quick Actions */}
+            <Text style={[s.vibingSectionTitle, { color: c.textMuted, marginTop: 16 }]}>Quick Actions</Text>
+            {(vibingState?.quickActions ?? []).map((qa) => (
+              <Pressable
+                key={qa.id}
+                style={[s.vibingCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
+                onPress={async () => {
+                  if (qa.id === "custom") {
+                    // Focus custom task input — just scroll down
+                    return;
+                  }
+                  try {
+                    await quicClient.executeVibingSuggestion(qa.prompt, vibingState!.path);
+                    setVibingState(null);
+                    router.navigate("/(tabs)/tasks");
+                  } catch {}
+                }}
+              >
+                <Text style={s.vibingCardIcon}>{qa.icon}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.vibingCardLabel, { color: c.textPrimary }]}>{qa.label}</Text>
+                  <Text style={[s.vibingCardDesc, { color: c.textMuted }]}>{qa.desc}</Text>
+                </View>
+                <View style={[s.vibingCategoryChip, { backgroundColor: qa.category === "deploy" ? "#f59e0b22" : "#88888822" }]}>
+                  <Text style={[s.vibingCategoryText, { color: qa.category === "deploy" ? "#f59e0b" : "#888" }]}>{qa.category}</Text>
+                </View>
+              </Pressable>
+            ))}
+
+            {/* Custom task input */}
+            <View style={[s.vibingCustomRow, { borderColor: c.border }]}>
+              <TextInput
+                style={[s.vibingCustomInput, { color: c.textPrimary }]}
+                placeholder="Tell the agent what to do..."
+                placeholderTextColor={c.textMuted}
+                value={customTask}
+                onChangeText={setCustomTask}
+                multiline
+              />
+              <Pressable
+                style={[s.vibingCustomSend, { backgroundColor: c.accent }, !customTask.trim() && { opacity: 0.3 }]}
+                disabled={!customTask.trim()}
+                onPress={async () => {
+                  if (!customTask.trim()) return;
+                  try {
+                    await quicClient.executeVibingSuggestion(customTask, vibingState!.path);
+                    setCustomTask("");
+                    setVibingState(null);
+                    router.navigate("/(tabs)/tasks");
+                  } catch {}
+                }}
+              >
+                <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>Run</Text>
+              </Pressable>
+            </View>
+
+            {/* Recent history */}
+            {(vibingState?.history ?? []).length > 0 && (
+              <>
+                <Text style={[s.vibingSectionTitle, { color: c.textMuted, marginTop: 16 }]}>Recent</Text>
+                {vibingState!.history.slice(0, 5).map((h, i) => (
+                  <Text key={i} style={[s.vibingHistoryItem, { color: c.textMuted }]} numberOfLines={1}>
+                    {h}
+                  </Text>
+                ))}
+              </>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
       {/* Full-screen WebView */}
       <Modal visible={showWebView} animationType="slide" presentationStyle="fullScreen">
         <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["top"]}>
@@ -546,6 +678,22 @@ const s = StyleSheet.create({
   actionSheetIcon: { fontSize: 22 },
   actionSheetLabel: { fontSize: 15, fontWeight: "600" },
   actionSheetMeta: { fontSize: 11, marginTop: 1 },
+
+  // Vibing
+  vibingHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 1 },
+  vibingTitle: { fontSize: 17, fontWeight: "700" },
+  vibingContent: { padding: 16, paddingBottom: 40 },
+  vibingSectionTitle: { fontSize: 11, fontWeight: "600", textTransform: "uppercase" as const, letterSpacing: 1, marginBottom: 8 },
+  vibingCard: { flexDirection: "row", alignItems: "center", borderRadius: 10, borderWidth: 1, padding: 12, marginBottom: 6, gap: 10 },
+  vibingCardIcon: { fontSize: 20 },
+  vibingCardLabel: { fontSize: 14, fontWeight: "600" },
+  vibingCardDesc: { fontSize: 11, marginTop: 1 },
+  vibingCategoryChip: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
+  vibingCategoryText: { fontSize: 9, fontWeight: "600" },
+  vibingCustomRow: { flexDirection: "row", alignItems: "flex-end", borderWidth: 1, borderRadius: 10, marginTop: 16, padding: 8, gap: 8 },
+  vibingCustomInput: { flex: 1, fontSize: 14, minHeight: 40, paddingVertical: 4 },
+  vibingCustomSend: { borderRadius: 8, paddingHorizontal: 16, paddingVertical: 10 },
+  vibingHistoryItem: { fontSize: 12, paddingVertical: 4 },
 
   // Active app card
   card: { marginHorizontal: 16, borderRadius: 12, padding: 14, marginBottom: 8 },

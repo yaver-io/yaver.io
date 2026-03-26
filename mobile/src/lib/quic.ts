@@ -603,6 +603,37 @@ export class QuicClient {
     return res.json();
   }
 
+  // ── Vibing (AI pair programming widget) ─────────────────────────
+
+  /** Get vibing state: AI-generated suggestions, quick actions, history for a project. */
+  async getVibingState(query: string): Promise<{
+    project: string;
+    path: string;
+    framework?: string;
+    suggestions: { id: string; icon: string; label: string; desc: string; category: string; prompt: string; priority: number }[];
+    quickActions: { id: string; icon: string; label: string; desc: string; category: string; prompt: string; priority: number }[];
+    history: string[];
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/vibing?query=${encodeURIComponent(query)}`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to get vibing state: ${res.status}`);
+    return res.json();
+  }
+
+  /** Execute a vibing suggestion as a task. */
+  async executeVibingSuggestion(prompt: string, projectPath: string): Promise<{ taskId: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/vibing/execute`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, projectPath }),
+    });
+    if (!res.ok) throw new Error(`Failed to execute: ${res.status}`);
+    return res.json();
+  }
+
   // ── Todo List (queued bug reports for batch implementation) ──────
 
   /** Get the count of pending todo items. */
