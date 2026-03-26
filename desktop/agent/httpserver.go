@@ -738,16 +738,28 @@ func (s *HTTPServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 		if skip {
 			continue
 		}
-		// Only show projects that look deployable (have a build system)
-		hasPackageJson := fileExists(filepath.Join(p.Path, "package.json"))
-		hasPubspec := fileExists(filepath.Join(p.Path, "pubspec.yaml"))
-		hasGoMod := fileExists(filepath.Join(p.Path, "go.mod"))
-		hasCargo := fileExists(filepath.Join(p.Path, "Cargo.toml"))
-		hasDockerfile := fileExists(filepath.Join(p.Path, "Dockerfile"))
-		hasDockerCompose := fileExists(filepath.Join(p.Path, "docker-compose.yml")) || fileExists(filepath.Join(p.Path, "docker-compose.yaml"))
-		hasPyProject := fileExists(filepath.Join(p.Path, "pyproject.toml")) || fileExists(filepath.Join(p.Path, "requirements.txt"))
-		hasMakefile := fileExists(filepath.Join(p.Path, "Makefile"))
-		if !hasPackageJson && !hasPubspec && !hasGoMod && !hasCargo && !hasDockerfile && !hasDockerCompose && !hasPyProject && !hasMakefile {
+		// Only show projects that look deployable
+		// Check root AND immediate subdirs for build system files (monorepo support)
+		hasDeployable := false
+		dirsToCheck := []string{p.Path}
+		if subs, err := os.ReadDir(p.Path); err == nil {
+			for _, sub := range subs {
+				if sub.IsDir() && !strings.HasPrefix(sub.Name(), ".") && sub.Name() != "node_modules" {
+					dirsToCheck = append(dirsToCheck, filepath.Join(p.Path, sub.Name()))
+				}
+			}
+		}
+		for _, dir := range dirsToCheck {
+			if fileExists(filepath.Join(dir, "package.json")) || fileExists(filepath.Join(dir, "pubspec.yaml")) ||
+				fileExists(filepath.Join(dir, "go.mod")) || fileExists(filepath.Join(dir, "Cargo.toml")) ||
+				fileExists(filepath.Join(dir, "Dockerfile")) || fileExists(filepath.Join(dir, "docker-compose.yml")) ||
+				fileExists(filepath.Join(dir, "docker-compose.yaml")) || fileExists(filepath.Join(dir, "pyproject.toml")) ||
+				fileExists(filepath.Join(dir, "requirements.txt")) || fileExists(filepath.Join(dir, "Makefile")) {
+				hasDeployable = true
+				break
+			}
+		}
+		if !hasDeployable {
 			continue
 		}
 		info := DetectProjectInfo(p.Path)
