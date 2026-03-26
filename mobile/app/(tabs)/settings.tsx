@@ -638,8 +638,8 @@ export default function SettingsScreen() {
     <View style={[styles.safeArea, { backgroundColor: c.bg }]}>
       {/* Header */}
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: insets.top + 8, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: c.border }}>
-        <Pressable onPress={() => router.back()} style={{ paddingVertical: 8 }}>
-          <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
+        <Pressable onPress={() => router.navigate("/(tabs)/more")} style={{ paddingVertical: 8 }}>
+          <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} More</Text>
         </Pressable>
         <Text style={{ fontSize: 17, fontWeight: "700", color: c.textPrimary }}>Settings</Text>
         <View style={{ width: 50 }} />

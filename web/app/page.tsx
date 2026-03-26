@@ -1253,7 +1253,7 @@ export default function HomePage() {
           </div>
 
           {/* Features grid */}
-          <div className="mt-10 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="mt-10 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
               <p className="text-sm font-semibold text-surface-200">Fuzzy search + tags</p>
               <p className="mt-1 text-xs text-surface-400">
@@ -1264,6 +1264,12 @@ export default function HomePage() {
               <p className="text-sm font-semibold text-surface-200">One-tap quick actions</p>
               <p className="mt-1 text-xs text-surface-400">
                 Running app shows action buttons: Ship It (version bump + build + deploy + changelog), Polish UI (design pass + hot reload), Fix All Bugs (test suite + fix + reload).
+              </p>
+            </div>
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
+              <p className="text-sm font-semibold text-surface-200">Clone repos from your phone</p>
+              <p className="mt-1 text-xs text-surface-400">
+                Yaver auto-detects GitHub and GitLab credentials on your dev machine. Browse your repos from the app and clone to a headless server &mdash; no SSH, no manual git setup.
               </p>
             </div>
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">

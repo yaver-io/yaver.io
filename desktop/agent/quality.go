@@ -43,7 +43,7 @@ type QualityResult struct {
 	Issues     int              `json:"issues"`
 	StartedAt  string           `json:"startedAt"`
 	FinishedAt string           `json:"finishedAt,omitempty"`
-	Duration   string           `json:"duration,omitempty"`
+	Duration   int64            `json:"duration,omitempty"` // milliseconds
 }
 
 // QualityManager manages quality check runs.
@@ -65,7 +65,7 @@ func NewQualityManager(execMgr *ExecManager, workDir string) *QualityManager {
 
 // DetectQualityChecks returns all available quality checks for a project.
 func DetectQualityChecks(workDir string) []QualityCheck {
-	var checks []QualityCheck
+	checks := make([]QualityCheck, 0)
 
 	hasFile := func(name string) bool {
 		_, err := os.Stat(filepath.Join(workDir, name))
@@ -256,7 +256,7 @@ func (qm *QualityManager) monitorCheck(result *QualityResult, session *ExecSessi
 	result.FinishedAt = now.Format(time.RFC3339)
 
 	startTime, _ := time.Parse(time.RFC3339, result.StartedAt)
-	result.Duration = now.Sub(startTime).Round(time.Millisecond).String()
+	result.Duration = now.Sub(startTime).Milliseconds()
 
 	result.Output = stdout
 	result.ExitCode = exitCode

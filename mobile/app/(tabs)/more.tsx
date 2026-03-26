@@ -97,8 +97,8 @@ function QualityGatesSection({ c }: { c: ReturnType<typeof useColors> }) {
         quicClient.detectQualityChecks(),
         quicClient.getQualityResults(),
       ]);
-      setChecks(detectedChecks);
-      setResults(existingResults);
+      setChecks(detectedChecks || []);
+      setResults(existingResults || []);
     } catch {
       // silent
     } finally {
@@ -260,6 +260,24 @@ function QualityGatesSection({ c }: { c: ReturnType<typeof useColors> }) {
 
 // ── Health Monitor Section ─────────────────────────────────────────
 
+const HEALTH_STATUS_COLORS: Record<string, string> = {
+  up: "#22c55e",
+  down: "#ef4444",
+  unknown: "#a1a1aa",
+};
+
+function formatHealthTime(time: string) {
+  try {
+    const diff = Date.now() - new Date(time).getTime();
+    if (diff < 60_000) return "just now";
+    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+    return `${Math.floor(diff / 86_400_000)}d ago`;
+  } catch {
+    return time;
+  }
+}
+
 function HealthMonitorSection({ c }: { c: ReturnType<typeof useColors> }) {
   const [targets, setTargets] = useState<HealthTarget[]>([]);
   const [loading, setLoading] = useState(true);
@@ -267,6 +285,7 @@ function HealthMonitorSection({ c }: { c: ReturnType<typeof useColors> }) {
   const [newUrl, setNewUrl] = useState("");
   const [newLabel, setNewLabel] = useState("");
   const [expandedTarget, setExpandedTarget] = useState<string | null>(null);
+  const [checkingId, setCheckingId] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadTargets = useCallback(async () => {
@@ -320,11 +339,14 @@ function HealthMonitorSection({ c }: { c: ReturnType<typeof useColors> }) {
   }, [loadTargets]);
 
   const handleCheck = useCallback(async (id: string) => {
+    setCheckingId(id);
     try {
       await quicClient.checkHealthTarget(id);
-      loadTargets();
+      await loadTargets();
     } catch {
       // silent
+    } finally {
+      setCheckingId(null);
     }
   }, [loadTargets]);
 
@@ -337,10 +359,10 @@ function HealthMonitorSection({ c }: { c: ReturnType<typeof useColors> }) {
   }
 
   return (
-    <View style={{ paddingHorizontal: 14, paddingBottom: 8 }}>
-      {/* Add URL button / form */}
+    <View style={{ paddingHorizontal: 14, paddingBottom: 8, gap: 10 }}>
+      {/* Add URL form / button */}
       {addingUrl ? (
-        <View style={{ marginBottom: 10, gap: 6 }}>
+        <View style={[hs.addForm, { backgroundColor: c.bgCard, borderColor: c.border }]}>
           <TextInput
             style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
             placeholder="https://example.com/health"
@@ -350,6 +372,7 @@ function HealthMonitorSection({ c }: { c: ReturnType<typeof useColors> }) {
             autoCapitalize="none"
             autoCorrect={false}
             keyboardType="url"
+            autoFocus
           />
           <TextInput
             style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
@@ -375,85 +398,232 @@ function HealthMonitorSection({ c }: { c: ReturnType<typeof useColors> }) {
         </View>
       ) : (
         <Pressable
-          style={[s.actionBtn, { backgroundColor: c.bgCard, borderWidth: 1, borderColor: c.border, marginBottom: 10 }]}
+          style={[hs.addBtn, { backgroundColor: c.bgCard, borderColor: c.border }]}
           onPress={() => setAddingUrl(true)}
         >
-          <Text style={[s.actionBtnText, { color: c.textPrimary }]}>+ Add URL</Text>
+          <Text style={{ color: c.accent, fontSize: 18, fontWeight: "300" }}>+</Text>
+          <Text style={{ color: c.textMuted, fontSize: 13 }}>Add URL to monitor</Text>
         </Pressable>
       )}
 
       {targets.length === 0 && !addingUrl && (
-        <Text style={{ color: c.textMuted, fontSize: 13, paddingVertical: 4 }}>
-          No health targets configured.
-        </Text>
+        <View style={{ paddingVertical: 20, alignItems: "center" }}>
+          <Text style={{ color: c.textMuted, fontSize: 13 }}>
+            No health targets yet. Add a URL to start monitoring.
+          </Text>
+        </View>
       )}
 
-      {/* Targets list */}
+      {/* Target cards — task-card style */}
       {targets.map((t) => {
         const isUp = t.status === "up" || t.statusCode === 200;
-        const statusDot = isUp ? "\u25CF" : "\u25CF";
-        const dotColor = t.status ? (isUp ? "#22c55e" : "#ef4444") : c.textMuted;
+        const statusKey = t.status ? (isUp ? "up" : "down") : "unknown";
+        const statusColor = HEALTH_STATUS_COLORS[statusKey] || HEALTH_STATUS_COLORS.unknown;
+        const isExpanded = expandedTarget === t.id;
+        const isChecking = checkingId === t.id;
 
         return (
-          <View key={t.id}>
-            <Pressable
-              style={[s.resultRow, { borderBottomColor: c.border }]}
-              onPress={() => setExpandedTarget(expandedTarget === t.id ? null : t.id)}
-              onLongPress={() => handleRemove(t.id, t.label || t.url)}
-            >
-              <Text style={{ color: dotColor, fontSize: 14, width: 24 }}>{statusDot}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "500" }} numberOfLines={1}>
-                  {t.label || t.url}
-                </Text>
-                {t.label && (
-                  <Text style={{ color: c.textMuted, fontSize: 11 }} numberOfLines={1}>{t.url}</Text>
-                )}
+          <Pressable
+            key={t.id}
+            style={[hs.targetCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => setExpandedTarget(isExpanded ? null : t.id)}
+            onLongPress={() => handleRemove(t.id, t.label || t.url)}
+          >
+            {/* Header row — badges */}
+            <View style={hs.targetHeader}>
+              <View style={[hs.statusBadge, { backgroundColor: statusColor + "22" }]}>
+                <Text style={[hs.statusText, { color: statusColor }]}>{statusKey}</Text>
               </View>
+              {t.statusCode != null && (
+                <View style={[hs.statusBadge, { backgroundColor: (isUp ? "#22c55e" : "#ef4444") + "22" }]}>
+                  <Text style={[hs.statusText, { color: isUp ? "#22c55e" : "#ef4444" }]}>{t.statusCode}</Text>
+                </View>
+              )}
               {t.responseMs != null && (
-                <Text style={{ color: c.textMuted, fontSize: 12 }}>{t.responseMs}ms</Text>
+                <View style={[hs.statusBadge, { backgroundColor: "#6366f122" }]}>
+                  <Text style={[hs.statusText, { color: "#6366f1" }]}>{t.responseMs}ms</Text>
+                </View>
               )}
-              {t.uptimePercent != null && (
-                <Text style={{ color: c.textMuted, fontSize: 12, marginLeft: 6 }}>
-                  {t.uptimePercent.toFixed(1)}%
+              {isChecking && <ActivityIndicator size="small" color={c.accent} />}
+            </View>
+
+            {/* Title — label or URL */}
+            <Text style={[hs.targetTitle, { color: c.textPrimary }]} numberOfLines={1}>
+              {t.label || t.url}
+            </Text>
+            {t.label && (
+              <Text style={[hs.targetUrl, { color: c.textMuted }]} numberOfLines={1}>{t.url}</Text>
+            )}
+
+            {/* Uptime bar */}
+            {t.uptimePercent != null && (
+              <View style={hs.uptimeRow}>
+                <View style={[hs.uptimeBarBg, { backgroundColor: c.border }]}>
+                  <View
+                    style={[hs.uptimeBarFill, {
+                      width: `${Math.min(t.uptimePercent, 100)}%`,
+                      backgroundColor: t.uptimePercent >= 99 ? "#22c55e" : t.uptimePercent >= 95 ? "#f59e0b" : "#ef4444",
+                    }]}
+                  />
+                </View>
+                <Text style={[hs.uptimeText, { color: c.textMuted }]}>
+                  {t.uptimePercent.toFixed(1)}% uptime
                 </Text>
-              )}
-              <Text style={{ color: c.textMuted, fontSize: 14, marginLeft: 8 }}>
-                {expandedTarget === t.id ? "\u2304" : "\u203A"}
-              </Text>
-            </Pressable>
-            {expandedTarget === t.id && (
-              <View style={{ paddingLeft: 24, paddingVertical: 6, gap: 4 }}>
-                <Pressable
-                  style={[s.actionBtn, { backgroundColor: c.bgCard, borderWidth: 1, borderColor: c.border, alignSelf: "flex-start" }]}
-                  onPress={() => handleCheck(t.id)}
-                >
-                  <Text style={[s.actionBtnText, { color: c.textPrimary }]}>Check Now</Text>
-                </Pressable>
-                {t.history && t.history.length > 0 && (
-                  <View style={{ marginTop: 4 }}>
-                    {t.history.slice(0, 10).map((h, i) => (
-                      <View key={i} style={{ flexDirection: "row", gap: 8, paddingVertical: 2 }}>
-                        <Text style={{ color: h.status === "up" ? "#22c55e" : "#ef4444", fontSize: 11, width: 16 }}>
-                          {h.status === "up" ? "\u25CF" : "\u25CF"}
-                        </Text>
-                        <Text style={{ color: c.textMuted, fontSize: 11 }}>{h.responseMs}ms</Text>
-                        <Text style={{ color: c.textMuted, fontSize: 11 }}>{h.time}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-                <Pressable onPress={() => handleRemove(t.id, t.label || t.url)}>
-                  <Text style={{ color: "#ef4444", fontSize: 13, marginTop: 4 }}>Remove</Text>
-                </Pressable>
               </View>
             )}
-          </View>
+
+            {/* Timestamp */}
+            {t.lastChecked && (
+              <Text style={[hs.targetTimestamp, { color: c.textMuted }]}>
+                checked {formatHealthTime(t.lastChecked)}
+              </Text>
+            )}
+
+            {/* Expanded details */}
+            {isExpanded && (
+              <View style={[hs.expandedSection, { borderTopColor: c.border }]}>
+                {/* Action buttons */}
+                <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
+                  <Pressable
+                    style={[s.actionBtn, { backgroundColor: c.accent, flex: 1 }]}
+                    onPress={() => handleCheck(t.id)}
+                    disabled={isChecking}
+                  >
+                    {isChecking ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={[s.actionBtnText, { color: "#fff" }]}>Check Now</Text>
+                    )}
+                  </Pressable>
+                  <Pressable
+                    style={[s.actionBtn, { backgroundColor: "#ef444422", flex: 1 }]}
+                    onPress={() => handleRemove(t.id, t.label || t.url)}
+                  >
+                    <Text style={[s.actionBtnText, { color: "#ef4444" }]}>Remove</Text>
+                  </Pressable>
+                </View>
+
+                {/* History */}
+                {t.history && t.history.length > 0 && (
+                  <View style={{ gap: 2 }}>
+                    <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "600", marginBottom: 4 }}>
+                      Recent Checks
+                    </Text>
+                    {t.history.slice(0, 10).map((h, i) => {
+                      const hUp = h.status === "up";
+                      return (
+                        <View key={i} style={hs.historyRow}>
+                          <View style={[hs.historyDot, { backgroundColor: hUp ? "#22c55e" : "#ef4444" }]} />
+                          <Text style={{ color: c.textPrimary, fontSize: 12, flex: 1 }}>
+                            {h.responseMs}ms
+                          </Text>
+                          <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                            {formatHealthTime(h.time)}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+            )}
+          </Pressable>
         );
       })}
     </View>
   );
 }
+
+const hs = StyleSheet.create({
+  addForm: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+    gap: 8,
+  },
+  addBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    padding: 14,
+    justifyContent: "center",
+  },
+  targetCard: {
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+  },
+  targetHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+    gap: 8,
+  },
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: "600",
+    textTransform: "uppercase",
+  },
+  targetTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  targetUrl: {
+    fontSize: 12,
+    marginTop: 2,
+    fontFamily: "monospace",
+  },
+  uptimeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 10,
+  },
+  uptimeBarBg: {
+    flex: 1,
+    height: 4,
+    borderRadius: 2,
+    overflow: "hidden",
+  },
+  uptimeBarFill: {
+    height: "100%",
+    borderRadius: 2,
+  },
+  uptimeText: {
+    fontSize: 11,
+    fontWeight: "500",
+    minWidth: 80,
+    textAlign: "right",
+  },
+  targetTimestamp: {
+    fontSize: 11,
+    marginTop: 8,
+  },
+  expandedSection: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  historyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 3,
+  },
+  historyDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+});
 
 // ── Git Section ────────────────────────────────────────────────────
 

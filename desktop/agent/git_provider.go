@@ -121,12 +121,17 @@ func detectGitHubToken() string {
 		}
 	}
 
-	// 3. Yaver's own git-credentials.json
+	// 3. git credential fill (queries osxkeychain, credential-manager, etc.)
+	if token := gitCredentialFill("github.com"); token != "" {
+		return token
+	}
+
+	// 4. Yaver's own git-credentials.json
 	if cred := findCredentialForHost("github.com"); cred != nil && cred.Token != "" {
 		return cred.Token
 	}
 
-	// 4. Yaver's git-providers.json
+	// 5. Yaver's git-providers.json
 	if p := findProvider("github.com"); p != nil && p.Token != "" {
 		return p.Token
 	}
@@ -151,7 +156,12 @@ func detectGitLabToken(host string) string {
 		}
 	}
 
-	// 3. Yaver's own stores
+	// 3. git credential fill (queries osxkeychain, credential-manager, etc.)
+	if token := gitCredentialFill(host); token != "" {
+		return token
+	}
+
+	// 4. Yaver's own stores
 	if cred := findCredentialForHost(host); cred != nil && cred.Token != "" {
 		return cred.Token
 	}
@@ -159,6 +169,27 @@ func detectGitLabToken(host string) string {
 		return p.Token
 	}
 
+	return ""
+}
+
+// gitCredentialFill queries git's native credential helpers (osxkeychain,
+// credential-manager, etc.) for a stored password/token for the given host.
+func gitCredentialFill(host string) string {
+	cmd := osexec.Command("git", "credential", "fill")
+	cmd.Stdin = strings.NewReader("protocol=https\nhost=" + host + "\n\n")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "password=") {
+			token := strings.TrimPrefix(line, "password=")
+			token = strings.TrimSpace(token)
+			if token != "" {
+				return token
+			}
+		}
+	}
 	return ""
 }
 

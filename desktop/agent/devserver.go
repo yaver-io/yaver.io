@@ -62,6 +62,7 @@ type DevServerStatus struct {
 	Port       int    `json:"port"`
 	BundleURL  string `json:"bundleUrl"`
 	DeepLink   string `json:"deepLink,omitempty"`
+	DevMode    string `json:"devMode,omitempty"`    // "dev-client", "web", "expo-go", "" (for non-Expo)
 	StartedAt  string `json:"startedAt,omitempty"`
 	Error      string `json:"error,omitempty"`
 	PID        int    `json:"pid,omitempty"`
@@ -542,6 +543,7 @@ func (w *devLogWriter) Write(p []byte) (int, error) {
 
 type ExpoDevServer struct {
 	baseDevServer
+	devMode string // "dev-client", "web", "expo-go"
 }
 
 func (e *ExpoDevServer) Detect(workDir string) bool {
@@ -583,18 +585,54 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		gen.Run() // best-effort
 	}
 
-	// Start Metro bundler with web support enabled.
-	// --web serves BOTH native JS bundles (for Expo Go) AND web (for WebView preview).
-	// Native app (TestFlight) connects via exp:// deep link → full camera, BLE, QR.
-	// WebView fallback loads the web version at /dev/ for quick preview.
-	// --host 0.0.0.0: bind to all interfaces (proxy + LAN + Expo Go access)
+	// Smart mode selection:
+	// 1. If native build exists (ios/ dir with prebuild) → dev-client mode (best: any SDK, all native modules)
+	// 2. If no native build → auto-prebuild it, then dev-client mode
+	// 3. Fallback: Expo Go mode (SDK must match)
+
+	hasIOSBuild := fileExists(filepath.Join(opts.WorkDir, "ios", "Podfile"))
+	hasAndroidBuild := fileExists(filepath.Join(opts.WorkDir, "android", "build.gradle"))
+	hasDevBuild := hasIOSBuild || hasAndroidBuild
+
+	if !hasDevBuild {
+		// No native build — run expo prebuild to create one
+		log.Printf("[dev:expo] No native build found — running 'expo prebuild' to create dev client...")
+		prebuild := exec.CommandContext(ctx, "npx", "expo", "prebuild", "--no-install")
+		prebuild.Dir = opts.WorkDir
+		prebuildLog := &devLogWriter{prefix: "[dev:expo:prebuild]"}
+		prebuild.Stdout = prebuildLog
+		prebuild.Stderr = prebuildLog
+		if err := prebuild.Run(); err != nil {
+			log.Printf("[dev:expo] Prebuild failed: %v — falling back to Expo Go mode", err)
+		} else {
+			hasDevBuild = true
+			// Install pods for iOS
+			if fileExists(filepath.Join(opts.WorkDir, "ios", "Podfile")) {
+				log.Printf("[dev:expo] Installing CocoaPods...")
+				pods := exec.CommandContext(ctx, "pod", "install")
+				pods.Dir = filepath.Join(opts.WorkDir, "ios")
+				podsLog := &devLogWriter{prefix: "[dev:expo:pods]"}
+				pods.Stdout = podsLog
+				pods.Stderr = podsLog
+				pods.Run() // best-effort
+			}
+		}
+	}
+
 	args := []string{"expo", "start",
-		"--web",
 		"--port", fmt.Sprintf("%d", e.port),
 		"--host", "0.0.0.0",
 	}
 
-	// Metro bundler health check
+	if hasDevBuild {
+		args = append(args, "--dev-client")
+		log.Printf("[dev:expo] Dev client mode — full native hot reload (camera, BLE, QR)")
+		e.devMode = "dev-client"
+	} else {
+		log.Printf("[dev:expo] Expo Go mode — SDK version must match Expo Go on phone")
+		e.devMode = "expo-go"
+	}
+
 	readyURL := fmt.Sprintf("http://127.0.0.1:%d", e.port)
 	return e.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
 }
@@ -617,8 +655,8 @@ func (e *ExpoDevServer) SupportsHotReload() bool { return true }
 
 func (e *ExpoDevServer) Status() DevServerStatus {
 	s := e.baseDevServer.Status()
-	// Include deep link for Expo Go — native app loads bundle through this
-	if s.Running {
+	s.DevMode = e.devMode
+	if s.Running || s.Framework != "" {
 		localIP := getLocalIP()
 		s.DeepLink = fmt.Sprintf("exp://%s:%d", localIP, e.port)
 	}
