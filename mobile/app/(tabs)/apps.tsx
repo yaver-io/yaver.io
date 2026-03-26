@@ -524,9 +524,9 @@ export default function AppsScreen() {
               </>
             )}
 
-            {/* ── Dice: propose new things ── */}
+            {/* ── Dice: shuffle new ideas ── */}
             <Pressable
-              style={[s.vibingDice, { borderColor: c.border }]}
+              style={s.vibingDiceBtn}
               onPress={async () => {
                 if (!vibingState) return;
                 setVibingTaskStatus("AI is reading your code...");
@@ -546,11 +546,8 @@ export default function AppsScreen() {
                 }
               }}
             >
-              <Text style={s.vibingDiceIcon}>{"\u{1F3B2}"}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.vibingDiceLabel, { color: c.textPrimary }]}>Surprise Me</Text>
-                <Text style={{ color: c.textMuted, fontSize: 11 }}>Roll new ideas from your codebase</Text>
-              </View>
+              <Text style={s.vibingDiceBtnIcon}>{"\u{1F3B2}"}</Text>
+              <Text style={s.vibingDiceBtnText}>Shuffle</Text>
             </Pressable>
 
             {/* ── Grid: Dev actions (2 columns) ── */}
@@ -749,9 +746,9 @@ const s = StyleSheet.create({
   vibingCustomInput: { flex: 1, fontSize: 14, minHeight: 40, paddingVertical: 4 },
   vibingCustomSend: { borderRadius: 8, paddingHorizontal: 16, paddingVertical: 10 },
   vibingHistoryItem: { fontSize: 12, paddingVertical: 4 },
-  vibingDice: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 12, gap: 12, borderStyle: "dashed" as const },
-  vibingDiceIcon: { fontSize: 28 },
-  vibingDiceLabel: { fontSize: 15, fontWeight: "700" },
+  vibingDiceBtn: { alignSelf: "center", flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#1a1a2e", borderRadius: 20, paddingHorizontal: 20, paddingVertical: 10, marginBottom: 16, marginTop: 4 },
+  vibingDiceBtnIcon: { fontSize: 18 },
+  vibingDiceBtnText: { color: "#818cf8", fontSize: 13, fontWeight: "700" },
   vibingStatus: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 12, gap: 8 },
 
   // Active app card

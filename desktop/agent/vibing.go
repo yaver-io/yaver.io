@@ -108,12 +108,6 @@ func generateAISuggestions(projectPath, projectName string) []VibingSuggestion {
 		}
 	}
 
-	// Read package.json for deps
-	pkgDeps := ""
-	if data, err := os.ReadFile(filepath.Join(projectPath, "package.json")); err == nil {
-		pkgDeps = string(data)
-	}
-
 	// Git activity — what's been worked on recently
 	commits, activeFiles := getRecentGitActivity(projectPath)
 
@@ -143,72 +137,40 @@ func generateAISuggestions(projectPath, projectName string) []VibingSuggestion {
 		})
 	}
 
-	// Check for TODO/FIXME comments
-	todoCount := countPatternInDir(projectPath, "TODO")
-	fixmeCount := countPatternInDir(projectPath, "FIXME")
-	_ = countPatternInDir(projectPath, "HACK")
-
-	if todoCount > 0 {
+	// Feature ideas based on git momentum + README context
+	if len(commits) > 2 {
+		// Recent work pattern → next logical feature
+		recentWork := strings.Join(commits[:min(5, len(commits))], "; ")
 		suggestions = append(suggestions, VibingSuggestion{
-			ID: "todos", Icon: "\U0001F4CB", Label: fmt.Sprintf("Fix %d TODOs", todoCount),
-			Desc: "Address TODO comments in the codebase", Category: "bugfix", Priority: 1,
-			Prompt: fmt.Sprintf("Find all TODO comments in %s, list them, and implement/fix as many as you can. Remove the TODO comment after fixing each one.", projectName),
-		})
-	}
-	if fixmeCount > 0 {
-		suggestions = append(suggestions, VibingSuggestion{
-			ID: "fixmes", Icon: "\U0001F6A8", Label: fmt.Sprintf("Fix %d FIXMEs", fixmeCount),
-			Desc: "Critical fixes flagged in code", Category: "bugfix", Priority: 1,
-			Prompt: fmt.Sprintf("Find all FIXME comments in %s and fix them. These are critical issues flagged by the developer.", projectName),
+			ID: "next-feature", Icon: "\U0001F4A1", Label: "Continue momentum",
+			Desc: fmt.Sprintf("You've been working on: %s", commits[0]),
+			Category: "feature", Priority: 1,
+			Prompt: fmt.Sprintf("I've been working on %s. Recent commits: %s\n\nWhat's the most impactful thing to build next? Give me ONE concrete feature that follows from this work. Describe it in 2 sentences and start implementing it.", projectName, recentWork),
 		})
 	}
 
-	// Check for missing tests
-	hasTests := hasFile(projectPath, "__tests__") || hasFile(projectPath, "test") || hasFile(projectPath, "tests") ||
-		hasFile(projectPath, "spec") || hasFile(projectPath, "_test.go")
-	if !hasTests {
-		suggestions = append(suggestions, VibingSuggestion{
-			ID: "add-tests", Icon: "\U0001F9EA", Label: "Add Tests",
-			Desc: "No test directory found — add unit tests", Category: "test", Priority: 2,
-			Prompt: fmt.Sprintf("Add unit tests for %s. Create a test file for each major module. Use the project's testing framework or set up one if missing.", projectName),
-		})
-	}
-
-	// Check for missing .gitignore
-	if !hasFile(projectPath, ".gitignore") {
-		suggestions = append(suggestions, VibingSuggestion{
-			ID: "gitignore", Icon: "\U0001F6AB", Label: "Add .gitignore",
-			Desc: "No .gitignore found", Category: "docs", Priority: 2,
-			Prompt: fmt.Sprintf("Create a .gitignore for %s based on the project's stack.", projectName),
-		})
-	}
-
-	// Check for outdated deps
-	if strings.Contains(pkgDeps, "dependencies") {
-		suggestions = append(suggestions, VibingSuggestion{
-			ID: "deps", Icon: "\U0001F4E6", Label: "Update Dependencies",
-			Desc: "Check for outdated packages", Category: "refactor", Priority: 3,
-			Prompt: fmt.Sprintf("Check %s for outdated npm dependencies. List what's outdated and update the safe ones (patch/minor). Don't update major versions without checking for breaking changes.", projectName),
-		})
-	}
-
-	// Feature suggestion based on README
+	// README-based feature idea
 	if readmeContent != "" && len(readmeContent) > 100 {
+		truncatedReadme := readmeContent
+		if len(truncatedReadme) > 1500 {
+			truncatedReadme = truncatedReadme[:1500]
+		}
 		suggestions = append(suggestions, VibingSuggestion{
-			ID: "feature", Icon: "\U0001F4A1", Label: "Suggest Features",
-			Desc: "AI reads your README and proposes what to build next", Category: "feature", Priority: 2,
-			Prompt: fmt.Sprintf("Read the README and codebase of %s. Based on what the project does and what's already built, suggest 3-5 features that would make it better. For each feature, explain what it does and roughly how to implement it. Ask which one I want to build.", projectName),
+			ID: "readme-feature", Icon: "\U0001F52E", Label: "What's missing?",
+			Desc: "AI analyzes your project and finds gaps",
+			Category: "feature", Priority: 1,
+			Prompt: fmt.Sprintf("Read the codebase and README of %s:\n\n%s\n\nWhat's the most obvious missing feature that users would expect? Describe it and implement it.", projectName, truncatedReadme),
 		})
 	}
 
-	// Accessibility check for mobile/web
-	info := DetectProjectInfo(projectPath)
-	if info.Framework == "expo" || info.Framework == "react-native" || info.Framework == "flutter" ||
-		info.Framework == "nextjs" || info.Framework == "vite" || info.Framework == "react" {
+	// Active area — where the action is
+	if len(activeFiles) > 2 {
+		area := filepath.Dir(activeFiles[0])
 		suggestions = append(suggestions, VibingSuggestion{
-			ID: "a11y", Icon: "\u267F", Label: "Accessibility Check",
-			Desc: "Check for a11y issues in the UI", Category: "bugfix", Priority: 3,
-			Prompt: fmt.Sprintf("Scan %s for accessibility issues: missing alt text, missing labels, color contrast, touch target sizes, screen reader support. Fix what you find.", projectName),
+			ID: "hot-area", Icon: "\U0001F525", Label: fmt.Sprintf("Improve %s", area),
+			Desc: fmt.Sprintf("%d files changed recently in this area", len(activeFiles)),
+			Category: "feature", Priority: 2,
+			Prompt: fmt.Sprintf("The hottest area in %s is %s (%d files changed recently: %s). Look at what's being built there and make it better — add error handling, improve the UX, or add a missing feature.", projectName, area, len(activeFiles), strings.Join(activeFiles[:min(5, len(activeFiles))], ", ")),
 		})
 	}
 
