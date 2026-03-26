@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"strings"
 )
 
@@ -63,14 +62,16 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Return immediately — server starts in background, mobile polls /dev/status
 	status := s.devServerMgr.Status()
-
-	// Emit control signal to any running task so the mobile app can auto-route
-	if s.taskMgr != nil {
-		project := filepath.Base(req.WorkDir)
-		controlSignal := fmt.Sprintf(`{"yaver_control":"dev_server_ready","project":%q,"framework":%q,"port":%d}`,
-			project, status.Framework, status.Port)
-		s.taskMgr.BroadcastControlSignal(controlSignal)
+	if status == nil {
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"running":   false,
+			"framework": req.Framework,
+			"workDir":   req.WorkDir,
+			"starting":  true,
+		})
+		return
 	}
 
 	jsonReply(w, http.StatusOK, status)

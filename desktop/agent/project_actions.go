@@ -85,6 +85,23 @@ func detectActionsInDir(dir, rel string) []ProjectAction {
 		}
 	}
 
+	// Bare React Native (without Expo)
+	if pkgHas(dir, "react-native") && !pkgHas(dir, "expo") {
+		actions = append(actions, ProjectAction{
+			Label: "Hot Reload", Target: rel, Type: "dev-server",
+			Framework: "react-native", Icon: "\U0001F4F1",
+			Command: "/dev/start",
+		})
+		actions = append(actions, ProjectAction{
+			Label: "Build iOS", Target: rel, Type: "build",
+			Framework: "react-native", Platform: "testflight", Icon: "\U0001F34E",
+		})
+		actions = append(actions, ProjectAction{
+			Label: "Build Android", Target: rel, Type: "build",
+			Framework: "react-native", Platform: "playstore", Icon: "\U0001F916",
+		})
+	}
+
 	// Flutter
 	if hasFile(dir, "pubspec.yaml") {
 		actions = append(actions, ProjectAction{

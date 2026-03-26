@@ -347,7 +347,10 @@ export default function TodosScreen() {
     <View style={[s.container, { backgroundColor: c.bg }]}>
       {/* Header */}
       <View style={[s.header, { paddingTop: insets.top + 12, borderBottomColor: c.border }]}>
-        <Text style={[s.headerTitle, { color: c.textPrimary }]}>My Tasks</Text>
+        <Pressable onPress={() => router.back()} style={{ paddingVertical: 4 }}>
+          <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
+        </Pressable>
+        <Text style={[s.headerTitle, { color: c.textPrimary }]}>Todos</Text>
         <View style={s.headerRight}>
           {isConnected && pending.length > 0 && (
             <Pressable
@@ -455,8 +458,8 @@ const s = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   headerTitle: {
-    fontSize: 22,
-    fontWeight: "600",
+    fontSize: 17,
+    fontWeight: "700",
   },
   headerRight: {
     flexDirection: "row",

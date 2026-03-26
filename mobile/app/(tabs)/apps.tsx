@@ -55,13 +55,16 @@ export default function AppsScreen() {
   // Vibing
   const [vibingState, setVibingState] = useState<{
     project: string; path: string;
-    suggestions: { id: string; icon: string; label: string; desc: string; category: string; prompt: string }[];
+    suggestions: { id: string; icon: string; label: string; desc: string; category: string; prompt: string; reasoning?: string }[];
     quickActions: { id: string; icon: string; label: string; desc: string; category: string; prompt: string }[];
     history: string[];
   } | null>(null);
   const [customTask, setCustomTask] = useState("");
   const [vibingTaskId, setVibingTaskId] = useState<string | null>(null);
   const [vibingTaskStatus, setVibingTaskStatus] = useState<string>("");
+  const [deepShuffleActive, setDeepShuffleActive] = useState(false);
+  const [deepShuffleText, setDeepShuffleText] = useState("");
+  const [deepShuffleStep, setDeepShuffleStep] = useState("");
   const webViewRef = useRef<WebView>(null);
 
   // Poll dev server status + projects
@@ -481,7 +484,7 @@ export default function AppsScreen() {
 
           <ScrollView contentContainerStyle={s.vibingContent}>
 
-            {/* Running task / thinking indicator */}
+            {/* Running task indicator */}
             {vibingTaskStatus ? (
               <View style={[s.vibingStatus, { backgroundColor: c.accent + "11", borderColor: c.accent + "33" }]}>
                 <ActivityIndicator size="small" color={c.accent} style={{ marginTop: 2 }} />
@@ -499,29 +502,126 @@ export default function AppsScreen() {
               </View>
             ) : null}
 
-            {/* ── Top: Feature proposals (3 cards) ── */}
+            {/* ── Deep Shuffle ── */}
+            <Pressable
+              style={[s.vibingDiceBtn, deepShuffleActive && { backgroundColor: "#1a1a2e", borderColor: c.accent + "44", borderWidth: 1 }]}
+              disabled={deepShuffleActive}
+              onPress={() => {
+                if (!vibingState) return;
+                setDeepShuffleActive(true);
+                setDeepShuffleText("Analyzing project structure...");
+                setDeepShuffleStep("1/5");
+                setVibingState((prev: any) => prev ? { ...prev, suggestions: [] } : prev);
+
+                // Use XMLHttpRequest for SSE — fetch().body.getReader() doesn't work in React Native
+                const xhr = new XMLHttpRequest();
+                const url = `${(quicClient as any).baseUrl}/vibing/surprise`;
+                xhr.open("POST", url, true);
+                const headers = (quicClient as any).authHeaders || {};
+                Object.keys(headers).forEach((k) => xhr.setRequestHeader(k, headers[k]));
+                xhr.setRequestHeader("Content-Type", "application/json");
+
+                let lastIndex = 0;
+                let currentEventType = "";
+
+                xhr.onprogress = () => {
+                  const newText = xhr.responseText.substring(lastIndex);
+                  lastIndex = xhr.responseText.length;
+                  const lines = newText.split("\n");
+                  for (const line of lines) {
+                    if (line.startsWith("event: ")) {
+                      currentEventType = line.slice(7).trim();
+                    } else if (line.startsWith("data: ") && currentEventType) {
+                      try {
+                        const data = JSON.parse(line.slice(6));
+                        if (currentEventType === "thinking") {
+                          setDeepShuffleText(data.text || "");
+                          if (data.step) setDeepShuffleStep(data.step);
+                        } else if (currentEventType === "status") {
+                          setDeepShuffleText(data.message || "");
+                          if (data.step) setDeepShuffleStep(data.step);
+                        } else if (currentEventType === "suggestion") {
+                          setVibingState((prev: any) => {
+                            if (!prev) return prev;
+                            const existing = prev.suggestions || [];
+                            if (existing.some((s: any) => s.label === data.label)) return prev;
+                            return { ...prev, suggestions: [...existing, { ...data, id: data.id || `dice-${existing.length}` }] };
+                          });
+                        } else if (currentEventType === "done") {
+                          setDeepShuffleActive(false);
+                          setDeepShuffleText("");
+                          setDeepShuffleStep("");
+                        } else if (currentEventType === "error") {
+                          setDeepShuffleText(data.message || "Retrying...");
+                        }
+                      } catch {}
+                      currentEventType = "";
+                    }
+                  }
+                };
+
+                xhr.onloadend = () => {
+                  setDeepShuffleActive(false);
+                  setDeepShuffleText("");
+                  setDeepShuffleStep("");
+                };
+
+                xhr.onerror = () => {
+                  setDeepShuffleActive(false);
+                  setDeepShuffleText("");
+                  setDeepShuffleStep("");
+                };
+
+                xhr.send(JSON.stringify({ projectPath: vibingState.path }));
+              }}
+            >
+              <Text style={s.vibingDiceBtnIcon}>{deepShuffleActive ? "\u2728" : "\u{1F3B2}"}</Text>
+              <Text style={s.vibingDiceBtnText}>{deepShuffleActive ? "Analyzing..." : "Deep Shuffle"}</Text>
+            </Pressable>
+
+            {/* ── Deep Shuffle streaming card ── */}
+            {deepShuffleActive && (
+              <View style={[s.deepShuffleCard, { backgroundColor: c.bgCard, borderColor: c.accent + "33" }]}>
+                <View style={s.deepShuffleHeader}>
+                  <ActivityIndicator size="small" color={c.accent} />
+                  <Text style={[s.deepShuffleStepText, { color: c.accent }]}>{deepShuffleStep}</Text>
+                </View>
+                <Text style={[s.deepShuffleStreamText, { color: c.textSecondary }]} numberOfLines={4}>
+                  {deepShuffleText}
+                </Text>
+              </View>
+            )}
+
+            {/* ── Deep Shuffle results ── */}
             {(vibingState?.suggestions ?? []).length > 0 && (
               <>
-                <Text style={[s.vibingSectionTitle, { color: c.textMuted }]}>Proposed for you</Text>
-                {vibingState!.suggestions.slice(0, 6).map((sg: any) => (
+                {vibingState!.suggestions.map((sg: any) => (
                   <Pressable
                     key={sg.id}
                     style={[s.vibingFeatureCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
-                    onPress={() => {
-                      const reasoning = sg.reasoning
-                        ? `\n\nWhy this idea:\n${sg.reasoning}`
-                        : "";
+                    onPress={async () => {
+                      try {
+                        const result = await quicClient.executeVibingSuggestion(sg.prompt, vibingState!.path);
+                        setVibingTaskId(result.taskId);
+                        setVibingTaskStatus(`Running: ${sg.label}`);
+                      } catch {}
+                    }}
+                    onLongPress={() => {
                       Alert.alert(
                         sg.icon + " " + sg.label,
-                        sg.desc + reasoning,
+                        sg.desc + (sg.reasoning ? `\n\n${sg.reasoning}` : ""),
                         [
-                          { text: "Close", style: "cancel" },
-                          { text: "Build it", style: "default", onPress: async () => {
+                          { text: "Cancel", style: "cancel" },
+                          { text: "Add to Todo", onPress: async () => {
                             try {
-                              const result = await quicClient.executeVibingSuggestion(sg.prompt, vibingState!.path);
-                              setVibingTaskId(result.taskId);
-                              setVibingTaskStatus(`Running: ${sg.label}`);
+                              await quicClient.sendTask(sg.label, sg.prompt + (sg.reasoning ? `\n\nContext: ${sg.reasoning}` : ""));
                             } catch {}
+                          }},
+                          { text: "Delete", style: "destructive", onPress: () => {
+                            setVibingState((prev: any) => {
+                              if (!prev) return prev;
+                              return { ...prev, suggestions: prev.suggestions.filter((s: any) => s.id !== sg.id) };
+                            });
                           }},
                         ]
                       );
@@ -530,7 +630,7 @@ export default function AppsScreen() {
                     <Text style={s.vibingFeatureIcon}>{sg.icon}</Text>
                     <View style={{ flex: 1 }}>
                       <Text style={[s.vibingFeatureLabel, { color: c.textPrimary }]}>{sg.label}</Text>
-                      <Text style={[s.vibingFeatureDesc, { color: c.textMuted }]}>{sg.desc}</Text>
+                      <Text style={[s.vibingFeatureDesc, { color: c.textMuted }]} numberOfLines={2}>{sg.desc}</Text>
                     </View>
                     <View style={[s.vibingCategoryChip, {
                       backgroundColor: sg.category === "bugfix" ? "#ef444422" : sg.category === "feature" ? "#6366f122" : "#22c55e22"
@@ -544,82 +644,8 @@ export default function AppsScreen() {
               </>
             )}
 
-            {/* ── Dice: iterative deep idea generation ── */}
-            <Pressable
-              style={s.vibingDiceBtn}
-              onPress={async () => {
-                if (!vibingState) return;
-                setVibingTaskStatus("Starting deep analysis...");
-                // Keep existing suggestions visible (dimmed) until new ones arrive
-                // Mark them as "old" by not clearing — new ones accumulate via SSE
-                let gotNewSuggestions = false;
-                try {
-                  const res = await fetch(`${(quicClient as any).baseUrl}/vibing/surprise`, {
-                    method: "POST",
-                    headers: { ...(quicClient as any).authHeaders, "Content-Type": "application/json" },
-                    body: JSON.stringify({ projectPath: vibingState.path }),
-                  });
-                  // Read SSE stream
-                  const reader = res.body?.getReader();
-                  const decoder = new TextDecoder();
-                  if (!reader) { setVibingTaskStatus(""); return; }
-                  let buffer = "";
-                  while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    buffer += decoder.decode(value, { stream: true });
-                    // Parse SSE events from buffer
-                    const lines = buffer.split("\n");
-                    buffer = lines.pop() || "";
-                    let eventType = "";
-                    for (const line of lines) {
-                      if (line.startsWith("event: ")) {
-                        eventType = line.slice(7).trim();
-                      } else if (line.startsWith("data: ") && eventType) {
-                        try {
-                          const data = JSON.parse(line.slice(6));
-                          if (eventType === "thinking") {
-                            // Show AI's actual thinking — typewriter style (overwrite previous)
-                            const step = data.step ? `${data.step} ` : "";
-                            setVibingTaskStatus(`${step}${data.text}`);
-                          } else if (eventType === "status") {
-                            const step = data.step ? ` (${data.step})` : "";
-                            setVibingTaskStatus(data.message + step);
-                          } else if (eventType === "suggestion") {
-                            // Clear old suggestions on first new one
-                            if (!gotNewSuggestions) {
-                              gotNewSuggestions = true;
-                              setVibingState((prev: any) => prev ? { ...prev, suggestions: [] } : prev);
-                            }
-                            // Add suggestion one by one
-                            setVibingState((prev: any) => {
-                              if (!prev) return prev;
-                              const existing = prev.suggestions || [];
-                              if (existing.some((s: any) => s.label === data.label)) return prev;
-                              return { ...prev, suggestions: [...existing, { ...data, id: data.id || `dice-${existing.length}` }] };
-                            });
-                          } else if (eventType === "done") {
-                            setVibingTaskStatus("");
-                          } else if (eventType === "error") {
-                            setVibingTaskStatus(data.message || "Step failed, continuing...");
-                          }
-                        } catch {}
-                        eventType = "";
-                      }
-                    }
-                  }
-                  setVibingTaskStatus("");
-                } catch {
-                  setVibingTaskStatus("");
-                }
-              }}
-            >
-              <Text style={s.vibingDiceBtnIcon}>{"\u{1F3B2}"}</Text>
-              <Text style={s.vibingDiceBtnText}>Deep Shuffle</Text>
-            </Pressable>
-
             {/* ── Grid: Dev actions (2 columns) ── */}
-            <Text style={[s.vibingSectionTitle, { color: c.textMuted, marginTop: 8 }]}>Dev Actions</Text>
+            <Text style={[s.vibingSectionTitle, { color: c.textMuted, marginTop: 12 }]}>Dev Actions</Text>
             <View style={s.vibingGrid}>
               {(vibingState?.quickActions ?? []).filter(qa => qa.id !== "custom").map((qa) => (
                 <Pressable
@@ -639,7 +665,7 @@ export default function AppsScreen() {
               ))}
             </View>
 
-            {/* ── Custom input (vibing API, not direct task) ── */}
+            {/* ── Custom input ── */}
             <Text style={[s.vibingSectionTitle, { color: c.textMuted, marginTop: 16 }]}>Chat</Text>
             <View style={[s.vibingCustomRow, { borderColor: c.border }]}>
               <TextInput
@@ -814,10 +840,14 @@ const s = StyleSheet.create({
   vibingCustomInput: { flex: 1, fontSize: 14, minHeight: 40, paddingVertical: 4 },
   vibingCustomSend: { borderRadius: 8, paddingHorizontal: 16, paddingVertical: 10 },
   vibingHistoryItem: { fontSize: 12, paddingVertical: 4 },
-  vibingDiceBtn: { alignSelf: "center", flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#1a1a2e", borderRadius: 20, paddingHorizontal: 20, paddingVertical: 10, marginBottom: 16, marginTop: 4 },
+  vibingDiceBtn: { alignSelf: "center", flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#1a1a2e", borderRadius: 20, paddingHorizontal: 20, paddingVertical: 10, marginBottom: 12, marginTop: 4 },
   vibingDiceBtnIcon: { fontSize: 18 },
   vibingDiceBtnText: { color: "#818cf8", fontSize: 13, fontWeight: "700" },
   vibingStatus: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 12, gap: 8 },
+  deepShuffleCard: { borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 12 },
+  deepShuffleHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
+  deepShuffleStepText: { fontSize: 11, fontWeight: "700", letterSpacing: 0.5 },
+  deepShuffleStreamText: { fontSize: 13, lineHeight: 19 },
 
   // Active app card
   card: { marginHorizontal: 16, borderRadius: 12, padding: 14, marginBottom: 8 },

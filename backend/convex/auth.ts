@@ -243,7 +243,12 @@ export const refreshSession = mutation({
       .unique();
 
     if (!session) return null;
-    if (session.expiresAt < Date.now()) return null;
+
+    // Allow refresh of sessions expired within the last 90 days (grace period).
+    // This prevents "session expired" on machines that were off for a while.
+    // Only signout (deleteSession) should permanently kill a session.
+    const gracePeriod = 90 * 24 * 60 * 60 * 1000; // 90 days
+    if (session.expiresAt < Date.now() - gracePeriod) return null;
 
     const newExpiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000; // 1 year
     await ctx.db.patch(session._id, { expiresAt: newExpiresAt });

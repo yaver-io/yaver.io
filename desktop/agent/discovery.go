@@ -272,11 +272,18 @@ func writeProjects(sb *strings.Builder) {
 		return
 	}
 
-	// Run find with 10s timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Run find with 30s timeout — deeper scan to catch nested monorepo projects
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "find", home, "-name", ".git", "-maxdepth", "4", "-type", "d")
+	cmd := exec.CommandContext(ctx, "find", home, "-name", ".git", "-maxdepth", "6", "-type", "d",
+		"-not", "-path", "*/node_modules/*",
+		"-not", "-path", "*/.cache/*",
+		"-not", "-path", "*/Library/*",
+		"-not", "-path", "*/.local/*",
+		"-not", "-path", "*/.cargo/*",
+		"-not", "-path", "*/Pods/*",
+	)
 	out, err := cmd.Output()
 	if err != nil {
 		// find may return non-zero if some dirs are inaccessible — that's OK

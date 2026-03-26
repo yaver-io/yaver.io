@@ -108,7 +108,7 @@ export default function TabLayout() {
           ),
         }}
       />
-      <Tabs.Screen name="builds" options={{ href: null }} />
+      <Tabs.Screen name="builds" options={{ href: null, headerShown: false }} />
       <Tabs.Screen
         name="devices"
         options={{
@@ -123,8 +123,8 @@ export default function TabLayout() {
           tabBarIcon: ({ focused }) => <TabIcon label="More" focused={focused} />,
         }}
       />
-      <Tabs.Screen name="todos" options={{ href: null }} />
-      <Tabs.Screen name="settings" options={{ href: null }} />
+      <Tabs.Screen name="todos" options={{ href: null, headerShown: false }} />
+      <Tabs.Screen name="settings" options={{ href: null, headerShown: false }} />
     </Tabs>
   );
 }

@@ -519,8 +519,7 @@ export default function TasksScreen() {
   }, []);
 
   const hasRunningTask = tasks.some(t => t.status === "running" || t.status === "queued");
-  // Auto-switch to "all" if no running tasks and filter is "running"
-  const effectiveFilter = statusFilter === "running" && !hasRunningTask && tasks.length > 0 ? "all" : statusFilter;
+  const effectiveFilter = statusFilter;
   const displayTasks = effectiveFilter === "all" ? tasks
     : effectiveFilter === "running" ? tasks.filter(t => t.status === "running" || t.status === "queued")
     : effectiveFilter === "completed" ? tasks.filter(t => t.status === "completed")

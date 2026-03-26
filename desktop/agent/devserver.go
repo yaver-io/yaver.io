@@ -115,6 +115,7 @@ func getDevServerByName(name string) DevServer {
 
 func init() {
 	registerDevServer(&ExpoDevServer{})
+	registerDevServer(&ReactNativeDevServer{})
 	registerDevServer(&FlutterDevServer{})
 	registerDevServer(&ViteDevServer{})
 	registerDevServer(&NextDevServer{})
@@ -143,6 +144,8 @@ func NewDevServerManager() *DevServerManager {
 }
 
 // Start launches a dev server for the given framework in the given directory.
+// For fast frameworks (Vite, Next.js), blocks until ready.
+// For slow frameworks (Flutter, Expo), launches async and returns immediately.
 func (m *DevServerManager) Start(framework, workDir, platform string, port int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -157,6 +160,10 @@ func (m *DevServerManager) Start(framework, workDir, platform string, port int) 
 	var ds DevServer
 	if framework != "" {
 		ds = getDevServerByName(framework)
+		if ds == nil {
+			// Name lookup failed (name set at Start time) — fall back to auto-detection
+			ds = detectDevServer(workDir)
+		}
 		if ds == nil {
 			return fmt.Errorf("unknown framework: %s", framework)
 		}
@@ -176,36 +183,63 @@ func (m *DevServerManager) Start(framework, workDir, platform string, port int) 
 		Platform: platform,
 	}
 
-	if err := ds.Start(ctx, opts); err != nil {
-		cancel()
-		return fmt.Errorf("start %s: %w", ds.Name(), err)
-	}
-
-	// Create reverse proxy to the dev server
-	target, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", ds.Port()))
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	// Don't log proxy errors for every request
-	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		http.Error(w, "dev server unavailable", http.StatusBadGateway)
-	}
-
+	// Set up the session immediately so Status() returns "starting"
 	m.active = &devServerSession{
 		server: ds,
-		proxy:  proxy,
 		ctx:    ctx,
 		cancel: cancel,
 	}
 
-	log.Printf("[dev] %s ready on port %d", ds.Name(), ds.Port())
-
-	// Emit ready event
+	// Emit starting event
 	m.emit(DevServerEvent{
-		Type:      "ready",
+		Type:      "starting",
 		Framework: ds.Name(),
-		BundleURL: ds.BundleURL(platform),
-		Message:   fmt.Sprintf("%s dev server ready", ds.Name()),
+		Message:   fmt.Sprintf("Starting %s dev server...", ds.Name()),
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
+
+	// Launch start in background — don't block the HTTP response
+	go func() {
+		if err := ds.Start(ctx, opts); err != nil {
+			log.Printf("[dev] %s failed to start: %v", ds.Name(), err)
+			m.mu.Lock()
+			if m.active != nil && m.active.server == ds {
+				m.active.cancel()
+				m.active = nil
+			}
+			m.mu.Unlock()
+			m.emit(DevServerEvent{
+				Type:      "error",
+				Framework: ds.Name(),
+				Message:   fmt.Sprintf("Failed to start %s: %v", ds.Name(), err),
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+			})
+			return
+		}
+
+		// Create reverse proxy to the dev server
+		target, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", ds.Port()))
+		proxy := httputil.NewSingleHostReverseProxy(target)
+		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, "dev server unavailable", http.StatusBadGateway)
+		}
+
+		m.mu.Lock()
+		if m.active != nil && m.active.server == ds {
+			m.active.proxy = proxy
+		}
+		m.mu.Unlock()
+
+		log.Printf("[dev] %s ready on port %d", ds.Name(), ds.Port())
+
+		m.emit(DevServerEvent{
+			Type:      "ready",
+			Framework: ds.Name(),
+			BundleURL: ds.BundleURL(platform),
+			Message:   fmt.Sprintf("%s dev server ready", ds.Name()),
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		})
+	}()
 
 	return nil
 }
@@ -533,10 +567,94 @@ func (e *ExpoDevServer) Reload() error {
 	return nil
 }
 
+// ─── React Native (bare) Dev Server ────────────────────────────────────
+
+// ReactNativeDevServer handles bare React Native projects (without Expo).
+// Uses `npx react-native start` with Metro bundler, serving the web bundle.
+// For RN projects with react-native-web, this enables hot reload via WebView.
+type ReactNativeDevServer struct {
+	baseDevServer
+}
+
+func (rn *ReactNativeDevServer) Name() string { return "react-native" }
+
+func (rn *ReactNativeDevServer) Detect(workDir string) bool {
+	pkg := filepath.Join(workDir, "package.json")
+	data, err := os.ReadFile(pkg)
+	if err != nil {
+		return false
+	}
+	content := string(data)
+	// Has react-native but NOT expo (Expo is handled by ExpoDevServer)
+	return strings.Contains(content, `"react-native"`) && !strings.Contains(content, `"expo"`)
+}
+
+func (rn *ReactNativeDevServer) Start(ctx context.Context, opts DevServerOpts) error {
+	rn.name = "react-native"
+	rn.port = opts.Port
+	if rn.port == 0 {
+		rn.port = 8081
+	}
+
+	// Install deps if needed
+	if _, err := os.Stat(filepath.Join(opts.WorkDir, "node_modules")); os.IsNotExist(err) {
+		log.Printf("[dev] Installing dependencies in %s...", opts.WorkDir)
+		install := exec.CommandContext(ctx, "npm", "install", "--legacy-peer-deps")
+		install.Dir = opts.WorkDir
+		install.Stdout = os.Stdout
+		install.Stderr = os.Stderr
+		if err := install.Run(); err != nil {
+			return fmt.Errorf("npm install failed: %w", err)
+		}
+	}
+
+	// Try npx expo start --web first (works if expo CLI is available, even for bare RN)
+	// Fall back to npx react-native start if expo isn't available
+	args := []string{"expo", "start",
+		"--web",
+		"--port", fmt.Sprintf("%d", rn.port),
+		"--host", "0.0.0.0",
+	}
+
+	readyURL := fmt.Sprintf("http://127.0.0.1:%d", rn.port)
+	err := rn.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
+	if err != nil {
+		// Fallback: use Metro bundler directly
+		log.Printf("[dev] Expo CLI not available, falling back to Metro bundler")
+		args = []string{"react-native", "start",
+			"--port", fmt.Sprintf("%d", rn.port),
+			"--host", "0.0.0.0",
+		}
+		return rn.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
+	}
+	return nil
+}
+
+func (rn *ReactNativeDevServer) BundleURL(platform string) string {
+	return "/dev/"
+}
+
+func (rn *ReactNativeDevServer) SupportsHotReload() bool { return true }
+
+func (rn *ReactNativeDevServer) Reload() error {
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/reload", rn.port))
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
 // ─── Flutter Dev Server ────────────────────────────────────────────────
 
 type FlutterDevServer struct {
 	baseDevServer
+	stdinPipe *stdinWriter
+}
+
+// stdinWriter wraps an io.WriteCloser for sending commands to the Flutter process.
+type stdinWriter struct {
+	w interface{ Write([]byte) (int, error) }
 }
 
 func (f *FlutterDevServer) Detect(workDir string) bool {
@@ -556,12 +674,71 @@ func (f *FlutterDevServer) Start(ctx context.Context, opts DevServerOpts) error 
 		platform = "web"
 	}
 
-	args := []string{"run", "-d", platform,
-		"--web-port", fmt.Sprintf("%d", f.port),
+	args := []string{"run", "-d", platform}
+
+	// --web-port only applies to web platform
+	if platform == "web" || platform == "chrome" {
+		args = append(args, "--web-port", fmt.Sprintf("%d", f.port))
 	}
 
 	readyURL := fmt.Sprintf("http://127.0.0.1:%d/", f.port)
-	return f.startProcess(ctx, "flutter", args, opts.WorkDir, nil, readyURL)
+	return f.startProcessWithStdin(ctx, "flutter", args, opts.WorkDir, nil, readyURL)
+}
+
+// startProcessWithStdin is like startProcess but saves the stdin pipe for hot reload.
+func (f *FlutterDevServer) startProcessWithStdin(ctx context.Context, name string, args []string, workDir string, env []string, readyURL string) error {
+	f.mu.Lock()
+	f.workDir = workDir
+	f.mu.Unlock()
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = workDir
+	cmd.Env = append(os.Environ(), env...)
+
+	logWriter := &devLogWriter{prefix: fmt.Sprintf("[dev:%s]", f.name)}
+	cmd.Stdout = logWriter
+	cmd.Stderr = logWriter
+
+	// Create stdin pipe and save it for Reload()
+	pipe, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("stdin pipe: %w", err)
+	}
+	f.stdinPipe = &stdinWriter{w: pipe}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("exec %s: %w", name, err)
+	}
+
+	f.mu.Lock()
+	f.cmd = cmd
+	f.startedAt = time.Now()
+	f.mu.Unlock()
+
+	// Wait for dev server to become ready
+	deadline := time.After(180 * time.Second) // Flutter web first build can take 3+ min
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline:
+			return fmt.Errorf("%s did not become ready within 180s", name)
+		case <-ticker.C:
+			resp, err := http.Get(readyURL)
+			if err == nil {
+				resp.Body.Close()
+				if resp.StatusCode < 500 {
+					f.mu.Lock()
+					f.running = true
+					f.mu.Unlock()
+					return nil
+				}
+			}
+		}
+	}
 }
 
 func (f *FlutterDevServer) BundleURL(platform string) string {
@@ -571,16 +748,12 @@ func (f *FlutterDevServer) BundleURL(platform string) string {
 func (f *FlutterDevServer) SupportsHotReload() bool { return true }
 
 func (f *FlutterDevServer) Reload() error {
-	// Flutter hot reload via stdin "r" - needs the process stdin
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.cmd != nil && f.cmd.Process != nil {
-		// Send "r" to stdin for hot reload
-		if stdin, ok := f.cmd.Stdin.(*os.File); ok {
-			stdin.WriteString("r\n")
-		}
+	// Flutter hot reload via stdin "r"
+	if f.stdinPipe != nil && f.stdinPipe.w != nil {
+		_, err := f.stdinPipe.w.Write([]byte("r\n"))
+		return err
 	}
-	return nil
+	return fmt.Errorf("flutter process stdin not available")
 }
 
 // ─── Vite Dev Server ───────────────────────────────────────────────────

@@ -25,10 +25,12 @@ interface ProjectItem {
   tags?: string[];
 }
 
-const DEV_FRAMEWORKS = ["expo", "flutter", "nextjs", "vite"];
+const DEV_FRAMEWORKS = ["expo", "flutter", "nextjs", "vite", "react-native", "react"];
 
 const FRAMEWORK_ICONS: Record<string, string> = {
   expo: "\uD83D\uDCF1",
+  "react-native": "\u269B",
+  react: "\u269B",
   flutter: "\uD83D\uDC26",
   nextjs: "\u25B2",
   vite: "\u26A1",
@@ -50,7 +52,7 @@ export default function HotReloadScreen() {
   const [webViewLoading, setWebViewLoading] = useState(false);
   const webViewRef = useRef<WebView>(null);
 
-  // Poll dev server status + projects
+  // Poll dev server status + mobile projects
   useEffect(() => {
     if (!isConnected) return;
     let mounted = true;
@@ -58,20 +60,37 @@ export default function HotReloadScreen() {
     const poll = async () => {
       try {
         const status = await quicClient.getDevServerStatus();
-        if (mounted) setDevStatus(status?.running ? status : null);
+        if (mounted) setDevStatus(status?.running || status?.framework ? status : null);
       } catch {
         if (mounted) setDevStatus(null);
       }
+    };
 
+    // Fetch mobile projects from dedicated scanner (cached, refreshes in background)
+    const fetchMobileProjects = async () => {
       try {
-        const list = await quicClient.listProjects();
-        if (mounted) setProjects(list);
+        const baseUrl = (quicClient as any).baseUrl;
+        const headers = (quicClient as any).authHeaders;
+        const res = await fetch(`${baseUrl}/projects/mobile`, { headers });
+        const data = await res.json();
+        if (mounted && data.ok && data.projects) {
+          setProjects(data.projects.map((p: any) => ({
+            name: p.name,
+            path: p.path,
+            branch: p.branch,
+            framework: p.framework,
+            tags: [p.framework],
+          })));
+        }
       } catch {}
     };
 
     poll();
+    fetchMobileProjects();
     const interval = setInterval(poll, 3000);
-    return () => { mounted = false; clearInterval(interval); };
+    // Refresh mobile project list every 30s (cache is 10min on server)
+    const projectInterval = setInterval(fetchMobileProjects, 30000);
+    return () => { mounted = false; clearInterval(interval); clearInterval(projectInterval); };
   }, [isConnected]);
 
   // SSE auto-reload
@@ -173,10 +192,8 @@ export default function HotReloadScreen() {
   const bundleUrl = devStatus ? quicClient.getDevServerBundleUrl(devStatus.bundleUrl || "/dev/") : "";
   const runningProject = devStatus?.workDir?.split("/").pop() ?? devStatus?.framework ?? "App";
 
-  // Filter to dev-server capable projects
-  const devProjects = projects.filter((p) =>
-    p.framework && DEV_FRAMEWORKS.includes(p.framework)
-  );
+  // All projects from /projects/mobile are already mobile-only
+  const devProjects = projects;
 
   if (!isConnected) {
     return (
@@ -196,29 +213,34 @@ export default function HotReloadScreen() {
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <View style={s.container}>
 
-        {/* Running dev server — green card */}
+        {/* Running / starting dev server card */}
         {devStatus && (
-          <View style={[s.card, s.activeCard]}>
+          <View style={[s.card, s.activeCard, !devStatus.running && { borderColor: "#f59e0b44", backgroundColor: "#1a150f" }]}>
             <View style={s.cardHeader}>
-              <View style={[s.statusDot, { backgroundColor: "#22c55e" }]} />
+              <View style={[s.statusDot, { backgroundColor: devStatus.running ? "#22c55e" : "#f59e0b" }]} />
               <View style={s.cardTitleContainer}>
                 <Text style={s.cardTitle}>{runningProject}</Text>
                 <Text style={s.cardMeta}>
-                  {devStatus.framework} · port {devStatus.port} · hot reload {devStatus.hotReload ? "on" : "off"}
+                  {devStatus.running
+                    ? `${devStatus.framework} · port ${devStatus.port} · hot reload ${devStatus.hotReload ? "on" : "off"}`
+                    : `${devStatus.framework} · starting...`}
                 </Text>
               </View>
+              {!devStatus.running && <ActivityIndicator size="small" color="#f59e0b" />}
             </View>
-            <View style={s.cardActions}>
-              <Pressable style={[s.actionBtn, s.openBtn]} onPress={handleOpen}>
-                <Text style={s.openBtnText}>Open App</Text>
-              </Pressable>
-              <Pressable style={[s.actionBtn, s.reloadBtn]} onPress={handleReload}>
-                <Text style={s.reloadBtnText}>{"\u21BB"} Reload</Text>
-              </Pressable>
-              <Pressable style={[s.actionBtn, s.stopBtn]} onPress={handleStop}>
-                <Text style={s.stopBtnText}>Stop</Text>
-              </Pressable>
-            </View>
+            {devStatus.running && (
+              <View style={s.cardActions}>
+                <Pressable style={[s.actionBtn, s.openBtn]} onPress={handleOpen}>
+                  <Text style={s.openBtnText}>Open App</Text>
+                </Pressable>
+                <Pressable style={[s.actionBtn, s.reloadBtn]} onPress={handleReload}>
+                  <Text style={s.reloadBtnText}>{"\u21BB"} Reload</Text>
+                </Pressable>
+                <Pressable style={[s.actionBtn, s.stopBtn]} onPress={handleStop}>
+                  <Text style={s.stopBtnText}>Stop</Text>
+                </Pressable>
+              </View>
+            )}
           </View>
         )}
 

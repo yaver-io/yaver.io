@@ -259,9 +259,6 @@ func PrewarmVibingCache(taskMgr *TaskManager) {
 		info := DetectProjectInfo(pm.path)
 		quickActions := generateQuickActions(pm.path, projectName, info.Framework)
 
-		// Start with static suggestions (instant, no AI needed)
-		suggestions := generateAISuggestions(pm.path, projectName)
-
 		var history []string
 		if taskMgr != nil {
 			for _, t := range taskMgr.ListTasks() {
@@ -276,26 +273,26 @@ func PrewarmVibingCache(taskMgr *TaskManager) {
 			Project:      projectName,
 			Path:         pm.path,
 			Framework:    info.Framework,
-			Suggestions:  suggestions,
+			Suggestions:  nil,
 			QuickActions: quickActions,
 			History:      history,
 			GeneratedAt:  time.Now().UTC().Format(time.RFC3339),
 		}
 
-		// Store initial static cache immediately (fast response if user asks now)
+		// Store cache immediately (fast response — suggestions come from Deep Shuffle on demand)
 		vibingCache.mu.Lock()
 		vibingCache.cache[pm.path] = state
 		vibingCache.mu.Unlock()
-		log.Printf("[vibing-cache] Pre-warmed %s with %d static suggestions", projectName, len(suggestions))
+		log.Printf("[vibing-cache] Pre-warmed %s with %d quick actions (suggestions via Deep Shuffle)", projectName, len(quickActions))
 
-		// Now run iterative deep analysis with the AI agent (5 steps)
+		// Run iterative deep analysis in background (pre-warm Deep Shuffle results)
 		if taskMgr != nil {
 			deepSuggestions := runDeepVibingAnalysis(taskMgr, pm.path, projectName, info)
 			if len(deepSuggestions) > 0 {
 				vibingCache.mu.Lock()
 				cached := vibingCache.cache[pm.path]
 				if cached != nil {
-					cached.Suggestions = append(cached.Suggestions, deepSuggestions...)
+					cached.Suggestions = deepSuggestions
 					cached.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
 				}
 				vibingCache.mu.Unlock()
@@ -594,44 +591,7 @@ func (s *HTTPServer) handleVibing(w http.ResponseWriter, r *http.Request) {
 	cached, hasCached := vibingCache.cache[path]
 	vibingCache.mu.RUnlock()
 
-	if hasCached {
-		// Refresh history from live task list
-		var history []string
-		for _, t := range s.taskMgr.ListTasks() {
-			if len(history) >= 10 {
-				break
-			}
-			history = append(history, t.Title)
-		}
-		cached.History = history
-		log.Printf("[vibing] Served from cache: %s (%d suggestions)", cached.Project, len(cached.Suggestions))
-		jsonReply(w, http.StatusOK, cached)
-
-		// Refresh cache in background for next time
-		go func() {
-			projectName := filepath.Base(path)
-			info := DetectProjectInfo(path)
-			state := &VibingState{
-				Project:      projectName,
-				Path:         path,
-				Framework:    info.Framework,
-				Suggestions:  generateAISuggestions(path, projectName),
-				QuickActions: generateQuickActions(path, projectName, info.Framework),
-				GeneratedAt:  time.Now().UTC().Format(time.RFC3339),
-			}
-			vibingCache.mu.Lock()
-			vibingCache.cache[path] = state
-			vibingCache.mu.Unlock()
-		}()
-		return
-	}
-
-	// No cache — generate fresh
-	projectName := filepath.Base(path)
-	info := DetectProjectInfo(path)
-	quickActions := generateQuickActions(path, projectName, info.Framework)
-	suggestions := generateAISuggestions(path, projectName)
-
+	// Build history from live task list
 	var history []string
 	for _, t := range s.taskMgr.ListTasks() {
 		if len(history) >= 10 {
@@ -640,11 +600,24 @@ func (s *HTTPServer) handleVibing(w http.ResponseWriter, r *http.Request) {
 		history = append(history, t.Title)
 	}
 
+	if hasCached {
+		// Return cached suggestions (from Deep Shuffle) + fresh history
+		cached.History = history
+		log.Printf("[vibing] Served from cache: %s (%d suggestions)", cached.Project, len(cached.Suggestions))
+		jsonReply(w, http.StatusOK, cached)
+		return
+	}
+
+	// No cache — return quick actions only (suggestions come from Deep Shuffle)
+	projectName := filepath.Base(path)
+	info := DetectProjectInfo(path)
+	quickActions := generateQuickActions(path, projectName, info.Framework)
+
 	state := &VibingState{
 		Project:      projectName,
 		Path:         path,
 		Framework:    info.Framework,
-		Suggestions:  suggestions,
+		Suggestions:  nil,
 		QuickActions: quickActions,
 		History:      history,
 		GeneratedAt:  time.Now().UTC().Format(time.RFC3339),
@@ -655,7 +628,7 @@ func (s *HTTPServer) handleVibing(w http.ResponseWriter, r *http.Request) {
 	vibingCache.cache[path] = state
 	vibingCache.mu.Unlock()
 
-	log.Printf("[vibing] Generated %d suggestions + %d quick actions for %s", len(suggestions), len(quickActions), projectName)
+	log.Printf("[vibing] Generated %d quick actions for %s (suggestions via Deep Shuffle)", len(quickActions), projectName)
 	jsonReply(w, http.StatusOK, state)
 }
 

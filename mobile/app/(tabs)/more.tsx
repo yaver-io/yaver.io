@@ -1034,6 +1034,354 @@ function RepoSyncSection({ c }: { c: ReturnType<typeof useColors> }) {
   );
 }
 
+// ── Git Provider Section ────────────────────────────────────────────
+
+interface GitProviderInfo {
+  host: string;
+  provider: string;
+  username: string;
+  avatarUrl?: string;
+  hasSsh: boolean;
+  setupAt: string;
+}
+
+function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
+  const [providers, setProviders] = useState<GitProviderInfo[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showSetup, setShowSetup] = useState<"github" | "gitlab" | null>(null);
+  const [token, setToken] = useState("");
+  const [host, setHost] = useState("");
+  const [generateSSH, setGenerateSSH] = useState(true);
+  const [setupLoading, setSetupLoading] = useState(false);
+  const [repos, setRepos] = useState<any[]>([]);
+  const [showRepos, setShowRepos] = useState<string | null>(null);
+  const [reposLoading, setReposLoading] = useState(false);
+  const [cloning, setCloning] = useState<string | null>(null);
+  const [repoSearch, setRepoSearch] = useState("");
+
+  const loadProviders = useCallback(async () => {
+    try {
+      const baseUrl = (quicClient as any).baseUrl;
+      const headers = (quicClient as any).authHeaders;
+      const res = await fetch(`${baseUrl}/git/provider/status`, { headers });
+      const data = await res.json();
+      if (data.ok) setProviders(data.providers || []);
+    } catch {
+      // silent
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadProviders(); }, [loadProviders]);
+
+  const handleSetup = useCallback(async (provider: "github" | "gitlab") => {
+    if (!token.trim()) return;
+    setSetupLoading(true);
+    try {
+      const baseUrl = (quicClient as any).baseUrl;
+      const headers = { ...(quicClient as any).authHeaders, "Content-Type": "application/json" };
+      const res = await fetch(`${baseUrl}/git/provider/setup`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          provider,
+          token: token.trim(),
+          host: host.trim() || undefined,
+          generateSsh: generateSSH,
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        Alert.alert(
+          "Connected",
+          `Signed in as ${data.username} on ${data.host}${data.sshKey ? "\nSSH key generated and added." : ""}`,
+        );
+        setToken("");
+        setHost("");
+        setShowSetup(null);
+        await loadProviders();
+      } else {
+        Alert.alert("Error", data.error || "Setup failed");
+      }
+    } catch (e) {
+      Alert.alert("Error", e instanceof Error ? e.message : "Setup failed");
+    } finally {
+      setSetupLoading(false);
+    }
+  }, [token, host, generateSSH, loadProviders]);
+
+  const handleRemove = useCallback((providerHost: string) => {
+    Alert.alert("Disconnect", `Remove ${providerHost}?`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove", style: "destructive", onPress: async () => {
+          try {
+            const baseUrl = (quicClient as any).baseUrl;
+            const headers = (quicClient as any).authHeaders;
+            await fetch(`${baseUrl}/git/provider/${encodeURIComponent(providerHost)}`, {
+              method: "DELETE", headers,
+            });
+            await loadProviders();
+          } catch {}
+        },
+      },
+    ]);
+  }, [loadProviders]);
+
+  const handleBrowseRepos = useCallback(async (providerHost: string) => {
+    if (showRepos === providerHost) { setShowRepos(null); return; }
+    setShowRepos(providerHost);
+    setReposLoading(true);
+    setRepoSearch("");
+    try {
+      const baseUrl = (quicClient as any).baseUrl;
+      const headers = (quicClient as any).authHeaders;
+      const res = await fetch(`${baseUrl}/git/provider/repos?host=${encodeURIComponent(providerHost)}&per_page=50`, { headers });
+      const data = await res.json();
+      if (data.ok) setRepos(data.repos || []);
+    } catch {
+      Alert.alert("Error", "Failed to load repos");
+    } finally {
+      setReposLoading(false);
+    }
+  }, [showRepos]);
+
+  const handleClone = useCallback(async (repo: any) => {
+    setCloning(repo.fullName);
+    try {
+      const baseUrl = (quicClient as any).baseUrl;
+      const headers = { ...(quicClient as any).authHeaders, "Content-Type": "application/json" };
+      const res = await fetch(`${baseUrl}/repos/clone`, {
+        method: "POST", headers,
+        body: JSON.stringify({ url: repo.sshUrl || repo.cloneUrl }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        const meta = data.metadata;
+        Alert.alert(
+          data.alreadyExisted ? "Already Cloned" : "Cloned",
+          `${repo.fullName}\n${data.path}${meta?.framework ? `\nFramework: ${meta.framework}` : ""}${meta?.languages ? `\nLanguages: ${meta.languages.join(", ")}` : ""}`,
+        );
+      } else {
+        Alert.alert("Clone Failed", data.error || "Unknown error");
+      }
+    } catch (e) {
+      Alert.alert("Error", e instanceof Error ? e.message : "Clone failed");
+    } finally {
+      setCloning(null);
+    }
+  }, []);
+
+  const filteredRepos = repoSearch.trim()
+    ? repos.filter((r: any) =>
+        r.name.toLowerCase().includes(repoSearch.toLowerCase()) ||
+        r.fullName.toLowerCase().includes(repoSearch.toLowerCase()))
+    : repos;
+
+  if (loading) {
+    return <View style={{ padding: 16, alignItems: "center" }}><ActivityIndicator color={c.accent} /></View>;
+  }
+
+  return (
+    <View style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
+      {/* Privacy notice */}
+      <View style={{ backgroundColor: c.accent + "11", borderRadius: 8, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: c.accent + "22" }}>
+        <Text style={{ color: c.textSecondary, fontSize: 12, lineHeight: 17 }}>
+          All credentials are stored locally on your device and agent. Never sent to Yaver servers. Your code stays private — P2P only.
+        </Text>
+      </View>
+
+      {/* Connected providers */}
+      {providers.map((p) => (
+        <View key={p.host} style={{ marginBottom: 10, backgroundColor: c.bgCard, borderRadius: 10, borderWidth: 1, borderColor: c.border, overflow: "hidden" }}>
+          <View style={{ flexDirection: "row", alignItems: "center", padding: 12, gap: 10 }}>
+            <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: p.provider === "github" ? "#24292e" : "#fc6d26", alignItems: "center", justifyContent: "center" }}>
+              <Text style={{ color: "#fff", fontSize: 16, fontWeight: "700" }}>{p.provider === "github" ? "G" : "L"}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600" }}>{p.username}</Text>
+              <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                {p.host}{p.hasSsh ? " \u00B7 SSH" : " \u00B7 HTTPS"}
+              </Text>
+            </View>
+            <Pressable onPress={() => handleBrowseRepos(p.host)}>
+              <Text style={{ color: c.accent, fontSize: 12, fontWeight: "600" }}>
+                {showRepos === p.host ? "Hide" : "Repos"}
+              </Text>
+            </Pressable>
+            <Pressable onPress={() => handleRemove(p.host)}>
+              <Text style={{ color: "#ef4444", fontSize: 12, fontWeight: "600" }}>Remove</Text>
+            </Pressable>
+          </View>
+
+          {/* Repo browser */}
+          {showRepos === p.host && (
+            <View style={{ borderTopWidth: 1, borderTopColor: c.border }}>
+              {/* Search */}
+              <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 8, gap: 8 }}>
+                <TextInput
+                  style={{ flex: 1, fontSize: 13, color: c.textPrimary, backgroundColor: c.bg, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: c.border }}
+                  placeholder="Search repos..."
+                  placeholderTextColor={c.textMuted}
+                  value={repoSearch}
+                  onChangeText={setRepoSearch}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+
+              {reposLoading ? (
+                <View style={{ padding: 16, alignItems: "center" }}><ActivityIndicator color={c.accent} /></View>
+              ) : filteredRepos.length === 0 ? (
+                <Text style={{ color: c.textMuted, fontSize: 13, padding: 12 }}>No repos found.</Text>
+              ) : (
+                <ScrollView style={{ maxHeight: 300 }}>
+                  {filteredRepos.map((repo: any) => (
+                    <Pressable
+                      key={repo.fullName}
+                      style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: c.border, gap: 8 }}
+                      onPress={() => handleClone(repo)}
+                      disabled={cloning === repo.fullName}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                          <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600" }}>{repo.name}</Text>
+                          {repo.private && (
+                            <View style={{ backgroundColor: "#f59e0b22", borderRadius: 3, paddingHorizontal: 4, paddingVertical: 1 }}>
+                              <Text style={{ color: "#f59e0b", fontSize: 9, fontWeight: "600" }}>private</Text>
+                            </View>
+                          )}
+                          {repo.language && (
+                            <Text style={{ color: c.textMuted, fontSize: 10 }}>{repo.language}</Text>
+                          )}
+                        </View>
+                        {repo.description ? (
+                          <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 1 }} numberOfLines={1}>{repo.description}</Text>
+                        ) : null}
+                      </View>
+                      {cloning === repo.fullName ? (
+                        <ActivityIndicator size="small" color={c.accent} />
+                      ) : (
+                        <Text style={{ color: c.accent, fontSize: 12, fontWeight: "600" }}>Clone</Text>
+                      )}
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              )}
+            </View>
+          )}
+        </View>
+      ))}
+
+      {/* Add provider buttons */}
+      <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
+        {!providers.some(p => p.host === "github.com") && (
+          <Pressable
+            style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "#24292e", borderRadius: 10, paddingVertical: 12 }}
+            onPress={() => { setShowSetup("github"); setHost(""); }}
+          >
+            <Text style={{ color: "#fff", fontSize: 16, fontWeight: "700" }}>G</Text>
+            <Text style={{ color: "#fff", fontSize: 13, fontWeight: "600" }}>Connect GitHub</Text>
+          </Pressable>
+        )}
+        {!providers.some(p => p.host === "gitlab.com") && (
+          <Pressable
+            style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "#fc6d26", borderRadius: 10, paddingVertical: 12 }}
+            onPress={() => { setShowSetup("gitlab"); setHost(""); }}
+          >
+            <Text style={{ color: "#fff", fontSize: 16, fontWeight: "700" }}>L</Text>
+            <Text style={{ color: "#fff", fontSize: 13, fontWeight: "600" }}>Connect GitLab</Text>
+          </Pressable>
+        )}
+      </View>
+
+      {/* Self-hosted option */}
+      {!showSetup && (
+        <Pressable onPress={() => { setShowSetup("gitlab"); setHost("gitlab.example.com"); }}>
+          <Text style={{ color: c.textMuted, fontSize: 11, textAlign: "center" }}>
+            Using self-hosted GitLab? Tap here.
+          </Text>
+        </Pressable>
+      )}
+
+      {/* Setup form */}
+      {showSetup && (
+        <View style={{ marginTop: 8, backgroundColor: c.bgCard, borderRadius: 10, borderWidth: 1, borderColor: c.border, padding: 14, gap: 10 }}>
+          <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "700" }}>
+            {showSetup === "github" ? "Connect GitHub" : "Connect GitLab"}
+          </Text>
+          <Text style={{ color: c.textMuted, fontSize: 12, lineHeight: 17 }}>
+            {showSetup === "github"
+              ? "Create a Personal Access Token at github.com/settings/tokens with 'repo' and 'admin:public_key' scopes."
+              : "Create a Personal Access Token at your GitLab instance with 'api' scope."}
+          </Text>
+
+          {showSetup === "gitlab" && (
+            <TextInput
+              style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
+              placeholder="Host (default: gitlab.com)"
+              placeholderTextColor={c.textMuted}
+              value={host}
+              onChangeText={setHost}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          )}
+
+          <TextInput
+            style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
+            placeholder="Personal Access Token"
+            placeholderTextColor={c.textMuted}
+            value={token}
+            onChangeText={setToken}
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry
+          />
+
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <View>
+              <Text style={{ color: c.textPrimary, fontSize: 13 }}>Generate SSH key</Text>
+              <Text style={{ color: c.textMuted, fontSize: 11 }}>Auto-add to your {showSetup === "github" ? "GitHub" : "GitLab"} account</Text>
+            </View>
+            <Pressable
+              onPress={() => setGenerateSSH(!generateSSH)}
+              style={{ width: 44, height: 24, borderRadius: 12, backgroundColor: generateSSH ? c.accent : c.border, justifyContent: "center", padding: 2 }}
+            >
+              <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: "#fff", alignSelf: generateSSH ? "flex-end" : "flex-start" }} />
+            </Pressable>
+          </View>
+
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Pressable
+              style={[s.actionBtn, { backgroundColor: c.accent, flex: 1, opacity: (!token.trim() || setupLoading) ? 0.4 : 1 }]}
+              onPress={() => handleSetup(showSetup)}
+              disabled={!token.trim() || setupLoading}
+            >
+              {setupLoading ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={[s.actionBtnText, { color: "#fff" }]}>Connect</Text>
+              )}
+            </Pressable>
+            <Pressable
+              style={[s.actionBtn, { backgroundColor: c.bgCard, borderWidth: 1, borderColor: c.border, flex: 1 }]}
+              onPress={() => { setShowSetup(null); setToken(""); setHost(""); }}
+            >
+              <Text style={[s.actionBtnText, { color: c.textPrimary }]}>Cancel</Text>
+            </Pressable>
+          </View>
+
+          <Text style={{ color: c.textMuted, fontSize: 10, textAlign: "center", lineHeight: 14 }}>
+            Token is stored locally on your agent ({"\u{1F512}"} ~/.yaver/git-providers.json).{"\n"}Never uploaded to Yaver servers.
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
 // ── Main Screen ────────────────────────────────────────────────────
 
 export default function MoreScreen() {
@@ -1100,43 +1448,23 @@ export default function MoreScreen() {
           </View>
         )}
 
-        {/* Git */}
+        {/* Git Providers */}
         {connected && (
           <View>
             <Pressable
               style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-              onPress={() => toggleSection("git")}
+              onPress={() => toggleSection("git-providers")}
             >
-              <Text style={[s.icon, { color: c.textMuted }]}>{"\u2442"}</Text>
+              <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F511}"}</Text>
               <View style={{ flex: 1 }}>
-                <Text style={[s.label, { color: c.textPrimary }]}>Git</Text>
-                <Text style={[s.desc, { color: c.textMuted }]}>Branch, diff, commit, push</Text>
+                <Text style={[s.label, { color: c.textPrimary }]}>Git Providers</Text>
+                <Text style={[s.desc, { color: c.textMuted }]}>GitHub / GitLab — browse repos, clone to machine</Text>
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>
-                {expandedSection === "git" ? "\u2304" : "\u203A"}
+                {expandedSection === "git-providers" ? "\u2304" : "\u203A"}
               </Text>
             </Pressable>
-            {expandedSection === "git" && <GitSection c={c} />}
-          </View>
-        )}
-
-        {/* Repo Sync */}
-        {connected && (
-          <View>
-            <Pressable
-              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-              onPress={() => toggleSection("repos")}
-            >
-              <Text style={[s.icon, { color: c.textMuted }]}>{"\u21BB"}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.label, { color: c.textPrimary }]}>Repo Sync</Text>
-                <Text style={[s.desc, { color: c.textMuted }]}>Clone, pull, manage git credentials</Text>
-              </View>
-              <Text style={{ color: c.textMuted, fontSize: 16 }}>
-                {expandedSection === "repos" ? "\u2304" : "\u203A"}
-              </Text>
-            </Pressable>
-            {expandedSection === "repos" && <RepoSyncSection c={c} />}
+            {expandedSection === "git-providers" && <GitProviderSection c={c} />}
           </View>
         )}
 

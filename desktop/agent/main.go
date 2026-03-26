@@ -29,7 +29,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.57.0"
+const version = "1.58.0"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
@@ -3981,8 +3981,8 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 		log.Println("[auth] Token refreshed (extended 30 days).")
 	}
 
-	// Also refresh weekly
-	refreshTicker := time.NewTicker(7 * 24 * time.Hour)
+	// Refresh token daily (extends to 1 year each time — prevents expiry even on long-running agents)
+	refreshTicker := time.NewTicker(24 * time.Hour)
 	defer refreshTicker.Stop()
 
 	lastIP := getLocalIP()

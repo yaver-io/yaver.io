@@ -151,6 +151,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 
 	// Projects (discovery + workdir switching + actions)
 	mux.HandleFunc("/projects", s.auth(s.handleProjects))
+	mux.HandleFunc("/projects/refresh", s.auth(s.handleProjectsRefresh))
+	mux.HandleFunc("/projects/mobile", s.auth(s.handleMobileProjects))
 	mux.HandleFunc("/projects/switch", s.auth(s.handleProjectSwitch))
 	mux.HandleFunc("/projects/actions", s.auth(s.handleProjectActions))
 	mux.HandleFunc("/vibing", s.auth(s.handleVibing))
@@ -191,11 +193,17 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/git/revert", s.auth(s.handleGitRevert))
 
 	// Repo sync (clone/pull repos, manage git credentials — P2P only)
-	mux.HandleFunc("/repos/clone", s.auth(s.handleRepoClone))
+	mux.HandleFunc("/repos/clone", s.auth(s.handleRepoCloneWithMetadata))
 	mux.HandleFunc("/repos/pull", s.auth(s.handleRepoPull))
 	mux.HandleFunc("/repos/list", s.auth(s.handleRepoList))
 	mux.HandleFunc("/repos/credentials", s.auth(s.handleRepoCredentials))
 	mux.HandleFunc("/repos/credentials/", s.auth(s.handleRepoCredentialByHost))
+
+	// Git provider setup (GitHub/GitLab token + SSH key — all stored locally)
+	mux.HandleFunc("/git/provider/setup", s.auth(s.handleGitProviderSetup))
+	mux.HandleFunc("/git/provider/status", s.auth(s.handleGitProviderStatus))
+	mux.HandleFunc("/git/provider/repos", s.auth(s.handleGitProviderRepos))
+	mux.HandleFunc("/git/provider/", s.auth(s.handleGitProviderRemove))
 
 	// Multi-user management (shared machines)
 	mux.HandleFunc("/users", s.auth(s.handleMultiUserList))
@@ -715,7 +723,17 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 	jsonReply(w, http.StatusOK, info)
 }
 
-// handleAgentStatus returns detailed agent and runner health status.
+// handleProjectsRefresh forces a re-scan of projects on the machine.
+// POST /projects/refresh
+func (s *HTTPServer) handleProjectsRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+	go discoverProjects()
+	jsonReply(w, http.StatusOK, map[string]interface{}{"ok": true, "message": "discovery started"})
+}
+
 // handleProjects lists discovered projects on this machine.
 func (s *HTTPServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

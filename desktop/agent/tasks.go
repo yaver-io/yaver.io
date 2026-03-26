@@ -479,6 +479,7 @@ type Task struct {
 	StartedAt   *time.Time `json:"started_at,omitempty"`
 	FinishedAt  *time.Time `json:"finished_at,omitempty"`
 
+	WorkDir      string `json:"workDir,omitempty"`     // per-task workDir (auto-detected from prompt)
 	TmuxSession  string `json:"tmuxSession,omitempty"` // tmux session name (for adopted sessions)
 	IsAdopted    bool   `json:"isAdopted,omitempty"`   // true if adopted from an existing tmux session
 
@@ -1144,7 +1145,12 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	// Inject Yaver dev server proxy context so the runner knows to use /dev/start.
 	// This is critical: the runner must NEVER output exp:// URLs or tell the user
 	// to install Expo Go. Everything flows through the Yaver P2P channel.
-	prompt += yaverDevServerContext(tm.workDir)
+	// Use per-task workDir if detected, otherwise global
+	contextDir := tm.workDir
+	if task.WorkDir != "" {
+		contextDir = task.WorkDir
+	}
+	prompt += yaverDevServerContext(contextDir)
 
 	// Append speech context if the user sent this task via voice
 	if sc := task.SpeechContext; sc != nil {
@@ -1248,12 +1254,18 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	}
 
 	cmd := exec.CommandContext(ctx, runner.Command, args...)
-	cmd.Dir = tm.workDir
+
+	// Use per-task workDir if auto-detected from prompt, otherwise global workDir
+	taskDir := tm.workDir
+	if task.WorkDir != "" {
+		taskDir = task.WorkDir
+	}
+	cmd.Dir = taskDir
 
 	// Ensure common tool paths are in PATH for background processes.
 	cmd.Env = append(os.Environ(), "PATH="+expandedPath())
 
-	log.Printf("[task %s] Launching: %s %v (dir=%s)", task.ID, runner.Command, args[:2], tm.workDir)
+	log.Printf("[task %s] Launching: %s %v (dir=%s)", task.ID, runner.Command, args[:2], taskDir)
 
 	// Dev log: task launch
 	go SendDevLog(tm.ConvexURL, tm.AuthToken, tm.OwnerEmail, "task-launch",
