@@ -1311,6 +1311,9 @@ func runServe(args []string) {
 	log.Printf("Scanning for local projects (stored in ~/.yaver/PROJECTS.md, never uploaded)...")
 	go ensureProjectDiscovery()
 
+	// Scan mobile projects + pre-build dev clients for Expo/RN (background)
+	go PrewarmMobileProjects()
+
 	// Clean old session files (>7 days)
 	go cleanOldSessions()
 

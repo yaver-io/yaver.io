@@ -15,6 +15,8 @@
 - **Notifications** — Telegram, Discord, Slack alerts when tasks complete.
 - **MCP Tools** — 473 tools: file search, git ops, exec, screenshots, session transfer — usable from Claude Desktop, Cursor, VS Code, Windsurf, Zed.
 - **CI/CD Webhooks** — Trigger AI tasks from GitHub Actions, GitLab CI, or any webhook.
+- **Hot Reload** — Expo, Flutter, Vite, Next.js — start dev servers and hot reload from your phone over P2P. Native app preview in a WebView, works through any network.
+- **Git Providers** — Auto-detects GitHub and GitLab credentials on your dev machine. Browse repos from the app and clone to a headless server — no SSH, no manual git setup.
 - **Free Relay** — Every user gets a free relay server (public.yaver.io). Self-host your own anytime.
 - **SDKs** — Go, Python, JS/TS, Flutter/Dart, C — embed Yaver in your own apps.
 
@@ -348,6 +350,58 @@ Each agent instance has:
 - Own sandbox configuration
 - Independent relay connections
 - Auth-aware LAN beacon (only same-user devices discover each other)
+
+## Hot Reload — Dev Server to Phone
+
+Start a dev server on your machine and preview the app on your phone in real time — all through the P2P channel. Works on any network (Wi-Fi, 4G, behind NAT).
+
+```bash
+# From the Yaver mobile app: tap a project → Hot Reload
+# Or from CLI:
+yaver dev start --framework expo     # Expo / React Native
+yaver dev start --framework flutter  # Flutter
+yaver dev start --framework vite     # Vite
+yaver dev start --framework nextjs   # Next.js
+```
+
+The agent starts the framework's dev server locally, then proxies it through the P2P channel. Your phone loads the web version in a full-screen WebView. Save a file → the app auto-reloads on your phone.
+
+**Supported frameworks:**
+
+| Framework | Dev Server | Hot Reload |
+|-----------|-----------|------------|
+| Expo / React Native | Metro (`npx expo start`) | Auto (Metro watches files) |
+| Flutter | `flutter run -d web` | Auto (`r` keystroke) |
+| Vite | `npx vite` | Auto (Vite HMR) |
+| Next.js | `npx next dev` | Auto (Fast Refresh) |
+
+**Expo modes:** Web preview (default), Expo Go deep link (`exp://` for full native modules), or dev client (custom native build with all native modules).
+
+## Git Providers — Clone Repos from Your Phone
+
+Yaver auto-detects GitHub and GitLab credentials already on your dev machine — from `gh` CLI, `glab` CLI, macOS Keychain, git credential helpers, or environment variables. No tokens ever leave the machine.
+
+```
+Phone (Yaver app)                         Dev Machine
+┌──────────────┐                      ┌──────────────┐
+│ Browse repos │──GET /git/repos────►│ Agent queries │
+│ from GitHub  │                      │ GitHub/GitLab │
+│ or GitLab    │                      │ API with      │
+│              │◄─repo list──────────│ local creds   │
+│              │                      │               │
+│ Tap "Clone"  │──POST /git/clone───►│ git clone     │
+│              │                      │ on machine    │
+└──────────────┘                      └──────────────┘
+```
+
+This is useful for headless dev machines (cloud VPS, Mac Mini) where you haven't cloned a repo yet. Browse your GitHub/GitLab repos from the app, tap clone, and the dev machine pulls it down using its own credentials. Then start coding from your phone immediately.
+
+```bash
+# Or from CLI:
+yaver git providers        # List detected providers
+yaver git repos            # Browse repos
+yaver git clone <repo>     # Clone to dev machine
+```
 
 ## Email Connectors
 

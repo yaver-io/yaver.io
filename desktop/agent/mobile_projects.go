@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -14,12 +15,22 @@ import (
 
 // MobileProject represents a discovered mobile project on the dev machine.
 type MobileProject struct {
-	Name      string `json:"name"`
-	Path      string `json:"path"`
-	Framework string `json:"framework"` // "flutter", "expo", "react-native"
-	Branch    string `json:"branch,omitempty"`
-	Remote    string `json:"remote,omitempty"`
-	SizeHuman string `json:"size,omitempty"`
+	Name       string `json:"name"`
+	Path       string `json:"path"`
+	Framework  string `json:"framework"`            // "flutter", "expo", "react-native"
+	SDKVersion string `json:"sdkVersion,omitempty"`  // e.g. "52.0.0", "55.0.6"
+	HasDevBuild bool  `json:"hasDevBuild"`           // true if ios/ or android/ prebuild exists
+	Branch     string `json:"branch,omitempty"`
+	Remote     string `json:"remote,omitempty"`
+	SizeHuman  string `json:"size,omitempty"`
+}
+
+// Known Expo SDK versions and their compatibility
+var knownExpoSDKs = map[string]string{
+	"52": "React Native 0.76",
+	"53": "React Native 0.77",
+	"54": "React Native 0.78",
+	"55": "React Native 0.79",
 }
 
 // ── Mobile project cache ──────────────────────────────────────────────
@@ -155,10 +166,17 @@ func scanMobileProjects() []MobileProject {
 			appName = filepath.Base(dir)
 		}
 
+		// Detect SDK version and dev build status
+		sdkVersion := detectExpoSDK(dir, framework)
+		hasDevBuild := fileExists(filepath.Join(dir, "ios", "Podfile")) ||
+			fileExists(filepath.Join(dir, "android", "build.gradle"))
+
 		proj := MobileProject{
-			Name:      appName,
-			Path:      dir,
-			Framework: framework,
+			Name:        appName,
+			Path:        dir,
+			Framework:   framework,
+			SDKVersion:  sdkVersion,
+			HasDevBuild: hasDevBuild,
 		}
 
 		// Get git info (fast — just reads local files)
@@ -217,6 +235,121 @@ func dirSizeHuman(dir string) string {
 	default:
 		return fmt.Sprintf("%.1fG", float64(total)/(1024*1024*1024))
 	}
+}
+
+// ── SDK detection ─────────────────────────────────────────────────────
+
+// detectExpoSDK reads the Expo SDK version from package.json.
+func detectExpoSDK(dir, framework string) string {
+	if framework != "expo" && framework != "react-native" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		return ""
+	}
+	var pkg map[string]interface{}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return ""
+	}
+	deps, _ := pkg["dependencies"].(map[string]interface{})
+	if deps == nil {
+		return ""
+	}
+	expoVer, _ := deps["expo"].(string)
+	// Strip semver prefix: "~52.0.0" → "52.0.0", "^55.0.6" → "55.0.6"
+	expoVer = strings.TrimLeft(expoVer, "~^>=<")
+	return expoVer
+}
+
+// ── Startup prebuild ──────────────────────────────────────────────────
+
+// PrewarmMobileProjects runs on `yaver serve` startup.
+// Scans all mobile projects, checks dev builds, and pre-builds missing ones in background.
+func PrewarmMobileProjects() {
+	log.Println("[mobile-scan] Scanning for mobile projects...")
+	projects := scanMobileProjects()
+
+	mobileProjectCache.mu.Lock()
+	mobileProjectCache.projects = projects
+	mobileProjectCache.scannedAt = time.Now()
+	mobileProjectCache.mu.Unlock()
+
+	log.Printf("[mobile-scan] Found %d mobile projects", len(projects))
+
+	// Log summary
+	for _, p := range projects {
+		status := "ready"
+		if !p.HasDevBuild {
+			status = "needs prebuild"
+		}
+		sdk := p.SDKVersion
+		if sdk == "" {
+			sdk = "n/a"
+		}
+		log.Printf("[mobile-scan]   %s (%s, SDK %s) — %s [%s]", p.Name, p.Framework, sdk, status, p.Path)
+	}
+
+	// Pre-build dev clients for Expo/RN projects that don't have one
+	// This runs in background — user can start hot reload immediately for projects that already have builds
+	for _, p := range projects {
+		if (p.Framework == "expo" || p.Framework == "react-native") && !p.HasDevBuild {
+			go prebuildExpoProject(p)
+		}
+	}
+}
+
+// prebuildExpoProject runs `npx expo prebuild` + `pod install` for a project.
+func prebuildExpoProject(p MobileProject) {
+	log.Printf("[mobile-prebuild] Pre-building %s (%s SDK %s)...", p.Name, p.Framework, p.SDKVersion)
+
+	// Check if node_modules exist, install if not
+	if !fileExists(filepath.Join(p.Path, "node_modules")) {
+		log.Printf("[mobile-prebuild] Installing deps for %s...", p.Name)
+		install := exec.Command("npm", "install", "--legacy-peer-deps")
+		install.Dir = p.Path
+		logW := &devLogWriter{prefix: fmt.Sprintf("[prebuild:%s:npm]", p.Name)}
+		install.Stdout = logW
+		install.Stderr = logW
+		if err := install.Run(); err != nil {
+			log.Printf("[mobile-prebuild] npm install failed for %s: %v", p.Name, err)
+			return
+		}
+	}
+
+	// Run expo prebuild
+	prebuild := exec.Command("npx", "expo", "prebuild", "--no-install")
+	prebuild.Dir = p.Path
+	logW := &devLogWriter{prefix: fmt.Sprintf("[prebuild:%s]", p.Name)}
+	prebuild.Stdout = logW
+	prebuild.Stderr = logW
+	if err := prebuild.Run(); err != nil {
+		log.Printf("[mobile-prebuild] Prebuild failed for %s: %v", p.Name, err)
+		return
+	}
+
+	// Install CocoaPods for iOS
+	if fileExists(filepath.Join(p.Path, "ios", "Podfile")) {
+		log.Printf("[mobile-prebuild] Installing pods for %s...", p.Name)
+		pods := exec.Command("pod", "install")
+		pods.Dir = filepath.Join(p.Path, "ios")
+		podsLog := &devLogWriter{prefix: fmt.Sprintf("[prebuild:%s:pods]", p.Name)}
+		pods.Stdout = podsLog
+		pods.Stderr = podsLog
+		pods.Run() // best-effort
+	}
+
+	// Update cache
+	mobileProjectCache.mu.Lock()
+	for i := range mobileProjectCache.projects {
+		if mobileProjectCache.projects[i].Path == p.Path {
+			mobileProjectCache.projects[i].HasDevBuild = true
+			break
+		}
+	}
+	mobileProjectCache.mu.Unlock()
+
+	log.Printf("[mobile-prebuild] %s ready for hot reload", p.Name)
 }
 
 // ── App name parsing ──────────────────────────────────────────────────

@@ -111,6 +111,9 @@ export default function DevelopersPage() {
           </h3>
           <nav className="space-y-2 text-sm">
             {[
+              ["whats-new", "What's New"],
+              ["hot-reload", "Hot Reload — Dev Server to Phone"],
+              ["git-providers", "Git Providers — Clone from Phone"],
               ["project-structure", "Project Structure"],
               ["software-stack", "Software Stack"],
               ["network-stack", "Network Stack"],
@@ -141,6 +144,174 @@ export default function DevelopersPage() {
             ))}
           </nav>
         </div>
+
+        {/* ─── What's New ─── */}
+        <section className="mb-20">
+          <SectionHeading id="whats-new">{"What's New"}</SectionHeading>
+          <Prose>
+            Latest features in CLI v1.58.0&ndash;v1.60.0 and mobile v1.14.0&ndash;v1.15.0.
+          </Prose>
+          <div className="space-y-4">
+            {[
+              {
+                title: "Hot Reload to Phone",
+                desc: "Start Expo, Flutter, Vite, or Next.js dev servers and preview your app on your phone in real time through the P2P channel. Works on any network.",
+              },
+              {
+                title: "Git Provider Auto-Detection",
+                desc: "Yaver detects GitHub and GitLab credentials on your dev machine (gh CLI, glab, macOS Keychain, env vars). Browse repos and clone to headless servers from the mobile app — no SSH, no manual setup.",
+              },
+              {
+                title: "Smart Expo Dev Client",
+                desc: "Auto-prebuild if no native build exists. Dev client mode (--dev-client) for full native modules (camera, BLE, QR). Expo Go deep links for quick iteration.",
+              },
+              {
+                title: "Mobile Project Scanner",
+                desc: "Dedicated /projects/mobile endpoint recursively walks $HOME to find all Flutter, Expo, and React Native projects. Monorepo-aware with subdirectory detection.",
+              },
+              {
+                title: "Async Dev Server Start",
+                desc: "Dev server starts return immediately. Mobile polls for readiness and shows a \"Starting...\" card. No more blocking waits.",
+              },
+              {
+                title: "Dynamic Project Switching",
+                desc: "Say \"fix login in my-app\" and the agent auto-switches to the right project directory using brute-force word matching against discovered projects.",
+              },
+            ].map((item) => (
+              <div
+                key={item.title}
+                className="rounded-lg border border-surface-800 bg-surface-900/50 p-4"
+              >
+                <p className="text-sm font-semibold text-surface-200">
+                  {item.title}
+                </p>
+                <p className="mt-1 text-xs text-surface-400">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* ─── Hot Reload ─── */}
+        <section className="mb-20">
+          <SectionHeading id="hot-reload">
+            Hot Reload &mdash; Dev Server to Phone
+          </SectionHeading>
+          <Prose>
+            Start a dev server on your machine and preview the app on your phone
+            in real time &mdash; all through the P2P channel. Works on any
+            network (Wi-Fi, 4G, behind NAT). The agent proxies the dev server
+            through the relay so your phone loads the app in a full-screen
+            WebView.
+          </Prose>
+
+          <SubHeading>How it works</SubHeading>
+          <Terminal title="hot-reload-flow">
+            <pre className="text-surface-300">{`Phone (Yaver app)          Relay              Dev Machine
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│  WebView     │─────│  QUIC relay  │─────│  Agent :18080│
+│  loads app   │     │  (pass-thru) │     │    │         │
+│  through     │     │              │     │    ▼         │
+│  relay URL   │     └──────────────┘     │  /dev/* proxy│
+└──────────────┘                          │    │         │
+                                          │    ▼         │
+                                          │  Metro :8081 │
+                                          │  (or Vite,   │
+                                          │   Flutter)   │
+                                          └──────────────┘`}</pre>
+          </Terminal>
+
+          <SubHeading>Supported frameworks</SubHeading>
+          <div className="mb-6 overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-surface-800 text-surface-400">
+                  <th className="pb-2 pr-4">Framework</th>
+                  <th className="pb-2 pr-4">Dev Server</th>
+                  <th className="pb-2">Hot Reload</th>
+                </tr>
+              </thead>
+              <tbody className="text-surface-300">
+                {[
+                  ["Expo / React Native", "Metro (npx expo start)", "Auto (Metro watches files)"],
+                  ["Flutter", "flutter run -d web", "Auto (r keystroke)"],
+                  ["Vite", "npx vite", "Auto (Vite HMR)"],
+                  ["Next.js", "npx next dev", "Auto (Fast Refresh)"],
+                ].map(([fw, dev, hr]) => (
+                  <tr key={fw} className="border-b border-surface-800/50">
+                    <td className="py-2 pr-4 font-medium text-surface-200">{fw}</td>
+                    <td className="py-2 pr-4"><InlineCode>{dev}</InlineCode></td>
+                    <td className="py-2">{hr}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <SubHeading>Expo modes</SubHeading>
+          <Prose>
+            Three modes depending on what you need: <strong>Web preview</strong>{" "}
+            (default, works everywhere), <strong>Expo Go</strong> deep link
+            (exp:// URL for full native hot reload with camera, BLE, QR), or{" "}
+            <strong>Dev client</strong> (custom native build with all native
+            modules, auto-prebuild if needed).
+          </Prose>
+
+          <SubHeading>Key files</SubHeading>
+          <div className="mb-6 space-y-1 font-mono text-xs text-surface-400">
+            <div><InlineCode>desktop/agent/devserver.go</InlineCode> &mdash; DevServer interface, framework implementations</div>
+            <div><InlineCode>desktop/agent/devserver_http.go</InlineCode> &mdash; HTTP handlers: /dev/start, /dev/stop, /dev/* proxy</div>
+            <div><InlineCode>mobile/src/components/DevPreview.tsx</InlineCode> &mdash; Banner + WebView + SSE auto-reload</div>
+            <div><InlineCode>mobile/src/lib/quic.ts</InlineCode> &mdash; getDevServerStatus(), startDevServer()</div>
+          </div>
+        </section>
+
+        {/* ─── Git Providers ─── */}
+        <section className="mb-20">
+          <SectionHeading id="git-providers">
+            Git Providers &mdash; Clone Repos from Your Phone
+          </SectionHeading>
+          <Prose>
+            Yaver auto-detects GitHub and GitLab credentials already on your dev
+            machine &mdash; from <InlineCode>gh</InlineCode> CLI,{" "}
+            <InlineCode>glab</InlineCode> CLI, macOS Keychain, git credential
+            helpers, or environment variables. Credentials never leave the
+            machine. You can browse your repos from the mobile app and clone to a
+            headless server without SSH or manual git setup.
+          </Prose>
+
+          <SubHeading>How it works</SubHeading>
+          <Terminal title="git-clone-flow">
+            <pre className="text-surface-300">{`Phone (Yaver app)                         Dev Machine
+┌──────────────┐                      ┌──────────────┐
+│ Browse repos │──GET /git/repos────►│ Agent queries │
+│ from GitHub  │                      │ GitHub/GitLab │
+│ or GitLab    │                      │ API with      │
+│              │◄─repo list──────────│ local creds   │
+│              │                      │               │
+│ Tap "Clone"  │──POST /git/clone───►│ git clone     │
+│              │                      │ on machine    │
+└──────────────┘                      └──────────────┘`}</pre>
+          </Terminal>
+
+          <SubHeading>Credential detection order</SubHeading>
+          <div className="mb-6 space-y-1 font-mono text-xs text-surface-400">
+            <div><strong className="text-surface-200">GitHub:</strong> gh auth token → GITHUB_TOKEN / GH_TOKEN → git credential fill → git-credentials.json</div>
+            <div><strong className="text-surface-200">GitLab:</strong> GITLAB_TOKEN / GITLAB_PRIVATE_TOKEN → glab config → git credential fill → git-credentials.json</div>
+          </div>
+
+          <Prose>
+            This is especially useful for headless dev machines (cloud VPS, Mac
+            Mini) where you haven&apos;t cloned a repo yet. Pick a repo from the
+            app, tap clone, and the dev machine pulls it using its own git
+            credentials. Then start coding from your phone immediately.
+          </Prose>
+
+          <SubHeading>Key files</SubHeading>
+          <div className="mb-6 space-y-1 font-mono text-xs text-surface-400">
+            <div><InlineCode>desktop/agent/git_provider.go</InlineCode> &mdash; Auto-detect, verify, save providers; SSH keygen; repo browser; clone</div>
+            <div><InlineCode>desktop/agent/repos_http.go</InlineCode> &mdash; Git credential storage</div>
+          </div>
+        </section>
 
         {/* ─── Section 1: Project Structure ─── */}
         <section className="mb-20">
