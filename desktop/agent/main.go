@@ -1029,6 +1029,11 @@ func runServe(args []string) {
 		fmt.Printf("Yaver agent started (PID %d).\n", cmd.Process.Pid)
 		fmt.Println()
 
+		// Auto-register as system service (launchd/systemd/schtasks)
+		if msg := ensureAutoStart(execPath, *workDir); msg != "" {
+			fmt.Printf("  %s\n", msg)
+		}
+
 		// Auto-configure MCP for detected editors
 		autoSetupMCP()
 
@@ -1634,6 +1639,9 @@ func runStop() {
 
 	os.Remove(pidFilePath())
 	fmt.Printf("Yaver agent stopped (was PID %d).\n", pid)
+
+	// Stop system service so it doesn't auto-restart
+	stopAutoStartService()
 
 	// Kill any orphan runner processes that may have survived
 	killOrphanRunners()

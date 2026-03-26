@@ -372,6 +372,157 @@ WantedBy=default.target
 	return nil
 }
 
+// isAutoStartInstalled checks if the auto-start service file exists.
+func isAutoStartInstalled() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		_, err := os.Stat(filepath.Join(home, "Library", "LaunchAgents", "io.yaver.agent.plist"))
+		return err == nil
+	case "linux":
+		_, err := os.Stat(filepath.Join(home, ".config", "systemd", "user", "yaver.service"))
+		return err == nil
+	}
+	return false
+}
+
+// ensureAutoStart registers the agent as a system service (launchd/systemd)
+// without starting it — the caller already has the agent running.
+// Returns a user-facing message describing what was set up, or "" if skipped.
+func ensureAutoStart(exePath, workDir string) string {
+	if isAutoStartInstalled() {
+		return "" // already registered
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		msg, _ := ensureAutoStartDarwin(exePath, workDir)
+		return msg
+	case "linux":
+		msg, _ := ensureAutoStartLinux(exePath, workDir)
+		return msg
+	}
+	return ""
+}
+
+func ensureAutoStartDarwin(exePath, workDir string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	logDir := filepath.Join(home, ".yaver")
+	os.MkdirAll(logDir, 0700)
+
+	plistDir := filepath.Join(home, "Library", "LaunchAgents")
+	os.MkdirAll(plistDir, 0755)
+	plistPath := filepath.Join(plistDir, "io.yaver.agent.plist")
+
+	plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>io.yaver.agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>%s</string>
+        <string>serve</string>
+        <string>--debug</string>
+        <string>--work-dir=%s</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>%s</string>
+    <key>StandardErrorPath</key>
+    <string>%s</string>
+</dict>
+</plist>
+`, exePath, workDir,
+		filepath.Join(logDir, "launchd-stdout.log"),
+		filepath.Join(logDir, "launchd-stderr.log"))
+
+	if err := os.WriteFile(plistPath, []byte(plist), 0644); err != nil {
+		return "", err
+	}
+
+	// Don't load/start — the agent is already running from the fork.
+	// launchd will pick it up on next login/reboot.
+	return "Registered as macOS LaunchAgent (will auto-start on login).", nil
+}
+
+func ensureAutoStartLinux(exePath, workDir string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	unitDir := filepath.Join(home, ".config", "systemd", "user")
+	os.MkdirAll(unitDir, 0755)
+	unitPath := filepath.Join(unitDir, "yaver.service")
+
+	unit := fmt.Sprintf(`[Unit]
+Description=Yaver Agent — AI coding from your phone
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=%s serve --debug --work-dir=%s
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+`, exePath, workDir)
+
+	if err := os.WriteFile(unitPath, []byte(unit), 0644); err != nil {
+		return "", err
+	}
+
+	// Reload and enable but don't start — the agent is already running.
+	osexec.Command("systemctl", "--user", "daemon-reload").Run()
+	osexec.Command("systemctl", "--user", "enable", "yaver").Run()
+
+	// Enable linger so user services run without login
+	user := os.Getenv("USER")
+	if user != "" {
+		osexec.Command("loginctl", "enable-linger", user).Run()
+	}
+
+	return "Registered as systemd user service (will auto-start on login/boot).", nil
+}
+
+// stopAutoStartService stops the system service (but doesn't uninstall it).
+// Used by `yaver stop` to prevent systemd/launchd from restarting the agent.
+func stopAutoStartService() {
+	switch runtime.GOOS {
+	case "darwin":
+		home, _ := os.UserHomeDir()
+		if home != "" {
+			plistPath := filepath.Join(home, "Library", "LaunchAgents", "io.yaver.agent.plist")
+			if _, err := os.Stat(plistPath); err == nil {
+				osexec.Command("launchctl", "unload", plistPath).Run()
+				fmt.Println("  LaunchAgent unloaded (use 'yaver serve' to re-enable).")
+			}
+		}
+	case "linux":
+		home, _ := os.UserHomeDir()
+		if home != "" {
+			unitPath := filepath.Join(home, ".config", "systemd", "user", "yaver.service")
+			if _, err := os.Stat(unitPath); err == nil {
+				osexec.Command("systemctl", "--user", "stop", "yaver").Run()
+				osexec.Command("systemctl", "--user", "disable", "yaver").Run()
+				fmt.Println("  Systemd service stopped and disabled (use 'yaver serve' to re-enable).")
+			}
+		}
+	}
+}
+
 // removeAutoStart removes auto-start registration.
 func removeAutoStart() {
 	switch runtime.GOOS {

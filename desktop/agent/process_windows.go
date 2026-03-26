@@ -237,6 +237,32 @@ func getSystemMemoryMB() (int64, error) {
 	return 0, fmt.Errorf("could not determine memory")
 }
 
+// isAutoStartInstalled checks if the Windows Scheduled Task exists.
+func isAutoStartInstalled() bool {
+	err := osexec.Command("schtasks", "/Query", "/TN", taskName).Run()
+	return err == nil
+}
+
+// ensureAutoStart registers the agent as a Windows Scheduled Task
+// without starting it — the caller already has the agent running.
+func ensureAutoStart(exePath, workDir string) string {
+	if isAutoStartInstalled() {
+		return ""
+	}
+	if err := installAutoStart(exePath, workDir); err != nil {
+		return ""
+	}
+	return "Registered as Windows Scheduled Task (will auto-start on login)."
+}
+
+// stopAutoStartService disables the Windows Scheduled Task.
+func stopAutoStartService() {
+	if isAutoStartInstalled() {
+		osexec.Command("schtasks", "/Change", "/TN", taskName, "/Disable").Run()
+		fmt.Println("  Scheduled Task disabled (use 'yaver serve' to re-enable).")
+	}
+}
+
 // removeAutoStart removes the Windows Scheduled Task.
 func removeAutoStart() {
 	osexec.Command("schtasks", "/Delete", "/TN", taskName, "/F").Run()
