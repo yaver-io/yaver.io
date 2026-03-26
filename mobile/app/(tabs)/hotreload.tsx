@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Linking,
   Modal,
   Pressable,
   StyleSheet,
@@ -132,10 +133,33 @@ export default function HotReloadScreen() {
   }, [showWebView, devStatus?.running]);
 
   const handleOpen = useCallback(() => {
-    setShowWebView(true);
-    setWebViewLoading(true);
-    setWebViewKey(k => k + 1);
-  }, []);
+    // For Expo/RN: open Expo Go with deep link for full native experience (camera, BLE, etc.)
+    // For Flutter/Vite/Next: open WebView with web build
+    const isExpo = devStatus?.framework === "expo" || devStatus?.framework === "react-native";
+    if (isExpo && devStatus?.deepLink) {
+      Alert.alert(
+        "Open App",
+        "Choose how to load your app:",
+        [
+          {
+            text: "Expo Go (Native)",
+            onPress: () => Linking.openURL(devStatus.deepLink!).catch(() => {
+              Alert.alert("Expo Go not installed", "Install Expo Go from the App Store to get full native hot reload with camera, BLE, QR, etc.");
+            }),
+          },
+          {
+            text: "WebView (Preview)",
+            onPress: () => { setShowWebView(true); setWebViewLoading(true); setWebViewKey(k => k + 1); },
+          },
+          { text: "Cancel", style: "cancel" },
+        ],
+      );
+    } else {
+      setShowWebView(true);
+      setWebViewLoading(true);
+      setWebViewKey(k => k + 1);
+    }
+  }, [devStatus]);
 
   const handleReload = useCallback(async () => {
     setWebViewLoading(true);
@@ -156,9 +180,9 @@ export default function HotReloadScreen() {
     ]);
   }, []);
 
-  // Tap project → fetch actions, find dev-server action, start it
+  // Tap project → start dev server directly using path + framework from scanner
   const handleStartProject = useCallback(async (project: ProjectItem) => {
-    const isRunning = devStatus?.workDir?.endsWith(project.name);
+    const isRunning = devStatus?.workDir === project.path;
     if (isRunning) {
       handleOpen();
       return;
@@ -166,22 +190,11 @@ export default function HotReloadScreen() {
 
     setStartingProject(project.name);
     try {
-      const result = await quicClient.getProjectActions(project.name);
-      const devAction = result.actions.find((a: any) => a.type === "dev-server");
-      if (devAction) {
-        const targetPath = devAction.target === "." ? result.path : `${result.path}/${devAction.target}`.replace(/\/+$/, "");
-        await quicClient.startDevServer({
-          framework: devAction.framework || "",
-          workDir: targetPath,
-          platform: devAction.platform || "",
-        });
-      } else {
-        // Fallback: start with detected framework
-        await quicClient.startDevServer({
-          framework: project.framework || "",
-          workDir: project.path,
-        });
-      }
+      // Use the exact path from the mobile scanner — no name-based lookup needed
+      await quicClient.startDevServer({
+        framework: project.framework || "",
+        workDir: project.path,
+      });
     } catch {
       Alert.alert("Failed", `Could not start dev server for ${project.name}`);
     } finally {
@@ -190,7 +203,13 @@ export default function HotReloadScreen() {
   }, [devStatus, handleOpen]);
 
   const bundleUrl = devStatus ? quicClient.getDevServerBundleUrl(devStatus.bundleUrl || "/dev/") : "";
-  const runningProject = devStatus?.workDir?.split("/").pop() ?? devStatus?.framework ?? "App";
+  // Match running workDir to project list to get the real app name (not directory name)
+  const runningProject = (() => {
+    if (!devStatus?.workDir) return devStatus?.framework ?? "App";
+    const match = projects.find(p => p.path === devStatus.workDir);
+    if (match) return match.name;
+    return devStatus.workDir.split("/").pop() ?? "App";
+  })();
 
   // All projects from /projects/mobile are already mobile-only
   const devProjects = projects;
@@ -228,19 +247,21 @@ export default function HotReloadScreen() {
               </View>
               {!devStatus.running && <ActivityIndicator size="small" color="#f59e0b" />}
             </View>
-            {devStatus.running && (
-              <View style={s.cardActions}>
-                <Pressable style={[s.actionBtn, s.openBtn]} onPress={handleOpen}>
-                  <Text style={s.openBtnText}>Open App</Text>
-                </Pressable>
-                <Pressable style={[s.actionBtn, s.reloadBtn]} onPress={handleReload}>
-                  <Text style={s.reloadBtnText}>{"\u21BB"} Reload</Text>
-                </Pressable>
-                <Pressable style={[s.actionBtn, s.stopBtn]} onPress={handleStop}>
-                  <Text style={s.stopBtnText}>Stop</Text>
-                </Pressable>
-              </View>
-            )}
+            <View style={s.cardActions}>
+              {devStatus.running && (
+                <>
+                  <Pressable style={[s.actionBtn, s.openBtn]} onPress={handleOpen}>
+                    <Text style={s.openBtnText}>Open App</Text>
+                  </Pressable>
+                  <Pressable style={[s.actionBtn, s.reloadBtn]} onPress={handleReload}>
+                    <Text style={s.reloadBtnText}>{"\u21BB"} Reload</Text>
+                  </Pressable>
+                </>
+              )}
+              <Pressable style={[s.actionBtn, s.stopBtn]} onPress={handleStop}>
+                <Text style={s.stopBtnText}>Stop</Text>
+              </Pressable>
+            </View>
           </View>
         )}
 
@@ -250,7 +271,7 @@ export default function HotReloadScreen() {
         </Text>
 
         <FlatList
-          data={devProjects.filter((p) => !devStatus?.workDir?.endsWith(p.name))}
+          data={devProjects.filter((p) => devStatus?.workDir !== p.path)}
           keyExtractor={(item) => item.path}
           contentContainerStyle={s.listContent}
           renderItem={({ item }) => {

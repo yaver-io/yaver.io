@@ -199,7 +199,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/repos/credentials", s.auth(s.handleRepoCredentials))
 	mux.HandleFunc("/repos/credentials/", s.auth(s.handleRepoCredentialByHost))
 
-	// Git provider setup (GitHub/GitLab token + SSH key — all stored locally)
+	// Git provider (GitHub/GitLab — auto-detect from dev machine's existing credentials)
+	mux.HandleFunc("/git/provider/detect", s.auth(s.handleGitProviderAutoDetect))
 	mux.HandleFunc("/git/provider/setup", s.auth(s.handleGitProviderSetup))
 	mux.HandleFunc("/git/provider/status", s.auth(s.handleGitProviderStatus))
 	mux.HandleFunc("/git/provider/repos", s.auth(s.handleGitProviderRepos))

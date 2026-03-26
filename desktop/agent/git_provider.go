@@ -100,6 +100,69 @@ func findProvider(host string) *GitProvider {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-detect tokens from dev machine's existing tooling
+// ---------------------------------------------------------------------------
+
+// detectGitHubToken tries to find a GitHub token from the dev machine.
+// Checks: gh CLI, git credential helpers, env vars, git-credentials file.
+func detectGitHubToken() string {
+	// 1. gh CLI (most common for devs)
+	if out, err := osexec.Command("gh", "auth", "token").Output(); err == nil {
+		token := strings.TrimSpace(string(out))
+		if token != "" {
+			return token
+		}
+	}
+
+	// 2. Environment variables
+	for _, env := range []string{"GITHUB_TOKEN", "GH_TOKEN"} {
+		if token := os.Getenv(env); token != "" {
+			return token
+		}
+	}
+
+	// 3. Yaver's own git-credentials.json
+	if cred := findCredentialForHost("github.com"); cred != nil && cred.Token != "" {
+		return cred.Token
+	}
+
+	// 4. Yaver's git-providers.json
+	if p := findProvider("github.com"); p != nil && p.Token != "" {
+		return p.Token
+	}
+
+	return ""
+}
+
+// detectGitLabToken tries to find a GitLab token from the dev machine.
+func detectGitLabToken(host string) string {
+	// 1. GITLAB_TOKEN env var
+	for _, env := range []string{"GITLAB_TOKEN", "GITLAB_PRIVATE_TOKEN"} {
+		if token := os.Getenv(env); token != "" {
+			return token
+		}
+	}
+
+	// 2. glab CLI
+	if out, err := osexec.Command("glab", "config", "get", "token", "-h", host).Output(); err == nil {
+		token := strings.TrimSpace(string(out))
+		if token != "" {
+			return token
+		}
+	}
+
+	// 3. Yaver's own stores
+	if cred := findCredentialForHost(host); cred != nil && cred.Token != "" {
+		return cred.Token
+	}
+	if p := findProvider(host); p != nil && p.Token != "" {
+		return p.Token
+	}
+
+	return ""
+}
+
+// ---------------------------------------------------------------------------
 // GitHub / GitLab API helpers
 // ---------------------------------------------------------------------------
 
@@ -456,6 +519,85 @@ func generateRepoMetadata(repoPath string) map[string]interface{} {
 // ---------------------------------------------------------------------------
 // HTTP handlers
 // ---------------------------------------------------------------------------
+
+// handleGitProviderAutoDetect handles GET /git/provider/detect.
+// Auto-detects GitHub/GitLab tokens from the dev machine's existing tooling (gh CLI, env vars, etc.)
+// No input from mobile needed — the dev machine already has credentials.
+func (s *HTTPServer) handleGitProviderAutoDetect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "use GET or POST")
+		return
+	}
+
+	type detectedProvider struct {
+		Provider  string `json:"provider"`
+		Host      string `json:"host"`
+		Username  string `json:"username"`
+		AvatarURL string `json:"avatarUrl,omitempty"`
+		HasToken  bool   `json:"hasToken"`
+	}
+
+	var detected []detectedProvider
+
+	// Try GitHub
+	if token := detectGitHubToken(); token != "" {
+		if username, avatar, err := verifyGitHubToken(token); err == nil {
+			detected = append(detected, detectedProvider{
+				Provider: "github", Host: "github.com",
+				Username: username, AvatarURL: avatar, HasToken: true,
+			})
+			// Auto-save to providers if not already there
+			saveDetectedProvider("github", "github.com", username, avatar, token)
+		}
+	}
+
+	// Try GitLab
+	if token := detectGitLabToken("gitlab.com"); token != "" {
+		if username, avatar, err := verifyGitLabToken("gitlab.com", token); err == nil {
+			detected = append(detected, detectedProvider{
+				Provider: "gitlab", Host: "gitlab.com",
+				Username: username, AvatarURL: avatar, HasToken: true,
+			})
+			saveDetectedProvider("gitlab", "gitlab.com", username, avatar, token)
+		}
+	}
+
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":        true,
+		"providers": detected,
+	})
+}
+
+// saveDetectedProvider saves an auto-detected provider (idempotent).
+func saveDetectedProvider(provider, host, username, avatarURL, token string) {
+	providers, _ := loadGitProviders()
+	for _, p := range providers {
+		if strings.EqualFold(p.Host, host) {
+			return // already saved
+		}
+	}
+	providers = append(providers, GitProvider{
+		Host:      host,
+		Provider:  provider,
+		Username:  username,
+		Token:     token,
+		AvatarURL: avatarURL,
+		SetupAt:   time.Now().UTC().Format(time.RFC3339),
+	})
+	saveGitProviders(providers)
+
+	// Also save as git credential for clone
+	creds, _ := loadGitCredentials()
+	for _, c := range creds {
+		if strings.EqualFold(c.Host, host) {
+			return
+		}
+	}
+	creds = append(creds, GitCredential{Host: host, Username: username, Token: token})
+	saveGitCredentials(creds)
+
+	log.Printf("[git-provider] Auto-detected %s: user=%s", provider, username)
+}
 
 // handleGitProviderSetup handles POST /git/provider/setup.
 // Verifies token, saves provider config, optionally generates SSH key.

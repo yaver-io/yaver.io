@@ -145,6 +145,25 @@ func detectActionsInDir(dir, rel string) []ProjectAction {
 		})
 	}
 
+	// Vercel (static site or any project with vercel.json)
+	if hasFile(dir, "vercel.json") {
+		// Don't add if we already detected Next.js or Vite deploy above
+		hasDeploy := false
+		for _, a := range actions {
+			if a.Type == "deploy" && a.Platform == "vercel" {
+				hasDeploy = true
+				break
+			}
+		}
+		if !hasDeploy {
+			actions = append(actions, ProjectAction{
+				Label: "Deploy Frontend", Target: rel, Type: "deploy",
+				Platform: "vercel", Icon: "\U0001F680",
+				Command: "vercel --prod",
+			})
+		}
+	}
+
 	// Convex
 	if hasFile(dir, "convex") {
 		actions = append(actions, ProjectAction{

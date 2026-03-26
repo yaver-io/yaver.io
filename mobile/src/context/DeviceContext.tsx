@@ -295,7 +295,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         // Stop any background reconnection attempts
         quicClient.disconnect();
         setConnectionStatus("disconnected");
-        setActiveDevice(null);
+        // Keep activeDevice so Retry button works — don't null it
         setLastError(errMsg);
       }
     },

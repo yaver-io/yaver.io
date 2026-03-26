@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -148,8 +149,14 @@ func scanMobileProjects() []MobileProject {
 			}
 		}
 
+		// Parse real app name from framework config files
+		appName := parseAppName(dir, framework)
+		if appName == "" {
+			appName = filepath.Base(dir)
+		}
+
 		proj := MobileProject{
-			Name:      filepath.Base(dir),
+			Name:      appName,
 			Path:      dir,
 			Framework: framework,
 		}
@@ -210,6 +217,85 @@ func dirSizeHuman(dir string) string {
 	default:
 		return fmt.Sprintf("%.1fG", float64(total)/(1024*1024*1024))
 	}
+}
+
+// ── App name parsing ──────────────────────────────────────────────────
+
+// parseAppName reads the real app name from framework config files.
+// - Expo/RN: app.json → expo.name or name; app.config.js not parsed (JS)
+// - Flutter: pubspec.yaml → name: field
+func parseAppName(dir, framework string) string {
+	switch framework {
+	case "expo", "react-native":
+		return parseExpoAppName(dir)
+	case "flutter":
+		return parseFlutterAppName(dir)
+	}
+	return ""
+}
+
+func parseExpoAppName(dir string) string {
+	// Try app.json first
+	for _, fname := range []string{"app.json", "app.config.json"} {
+		data, err := os.ReadFile(filepath.Join(dir, fname))
+		if err != nil {
+			continue
+		}
+		// Parse as JSON — could be { "expo": { "name": "X" } } or { "name": "X" }
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(data, &raw); err != nil {
+			continue
+		}
+		// Check expo.name first
+		if expoRaw, ok := raw["expo"]; ok {
+			var expo map[string]interface{}
+			if err := json.Unmarshal(expoRaw, &expo); err == nil {
+				if name, ok := expo["name"].(string); ok && name != "" {
+					return name
+				}
+			}
+		}
+		// Fallback: top-level name
+		if nameRaw, ok := raw["name"]; ok {
+			var name string
+			if err := json.Unmarshal(nameRaw, &name); err == nil && name != "" {
+				return name
+			}
+		}
+	}
+
+	// Fallback: package.json name
+	data, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		return ""
+	}
+	var pkg map[string]interface{}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return ""
+	}
+	if name, ok := pkg["name"].(string); ok {
+		return name
+	}
+	return ""
+}
+
+func parseFlutterAppName(dir string) string {
+	data, err := os.ReadFile(filepath.Join(dir, "pubspec.yaml"))
+	if err != nil {
+		return ""
+	}
+	// Simple YAML parsing — just find "name: X" at the top level (no indentation)
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "name:") {
+			name := strings.TrimSpace(strings.TrimPrefix(line, "name:"))
+			name = strings.Trim(name, `"'`)
+			if name != "" {
+				return name
+			}
+		}
+	}
+	return ""
 }
 
 // ── HTTP handler ──────────────────────────────────────────────────────

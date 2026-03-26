@@ -29,7 +29,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.58.0"
+const version = "1.59.0"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
@@ -937,12 +937,13 @@ func runServe(args []string) {
 		*workDir = wd
 	}
 
-	// Check if already running (skip in debug mode — the forked child runs with --debug)
+	// If already running, stop the old instance and restart with new binary
 	if !*debug {
 		if pid, running := isAgentRunning(); running {
-			fmt.Printf("Yaver agent is already running (PID %d).\n", pid)
-			fmt.Println("Use 'yaver stop' to stop it, or 'yaver logs' to view logs.")
-			return
+			fmt.Printf("Restarting Yaver agent (stopping PID %d)...\n", pid)
+			runStop()
+			// Brief pause to let the port be released
+			time.Sleep(500 * time.Millisecond)
 		}
 	}
 

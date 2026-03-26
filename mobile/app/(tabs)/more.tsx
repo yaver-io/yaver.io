@@ -1048,16 +1048,15 @@ interface GitProviderInfo {
 function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
   const [providers, setProviders] = useState<GitProviderInfo[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showSetup, setShowSetup] = useState<"github" | "gitlab" | null>(null);
-  const [token, setToken] = useState("");
-  const [host, setHost] = useState("");
-  const [generateSSH, setGenerateSSH] = useState(true);
-  const [setupLoading, setSetupLoading] = useState(false);
+  const [detecting, setDetecting] = useState(false);
   const [repos, setRepos] = useState<any[]>([]);
   const [showRepos, setShowRepos] = useState<string | null>(null);
   const [reposLoading, setReposLoading] = useState(false);
   const [cloning, setCloning] = useState<string | null>(null);
   const [repoSearch, setRepoSearch] = useState("");
+  // Fallback: manual token entry (only if auto-detect fails)
+  const [showManualSetup, setShowManualSetup] = useState<"github" | "gitlab" | null>(null);
+  const [token, setToken] = useState("");
 
   const loadProviders = useCallback(async () => {
     try {
@@ -1075,31 +1074,52 @@ function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
 
   useEffect(() => { loadProviders(); }, [loadProviders]);
 
-  const handleSetup = useCallback(async (provider: "github" | "gitlab") => {
+  // Auto-detect: ask the CLI to find tokens from gh/glab CLI, env vars, etc.
+  const handleAutoDetect = useCallback(async () => {
+    setDetecting(true);
+    try {
+      const baseUrl = (quicClient as any).baseUrl;
+      const headers = (quicClient as any).authHeaders;
+      const res = await fetch(`${baseUrl}/git/provider/detect`, { headers });
+      const data = await res.json();
+      if (data.ok && data.providers?.length > 0) {
+        await loadProviders();
+        const names = data.providers.map((p: any) => `${p.provider}: ${p.username}`).join("\n");
+        Alert.alert("Found", `Detected from your dev machine:\n${names}`);
+      } else {
+        Alert.alert(
+          "No credentials found",
+          "Your dev machine doesn't have gh CLI or GitLab CLI logged in.\n\nInstall gh CLI and run 'gh auth login', or enter a token manually below.",
+          [
+            { text: "OK" },
+            { text: "Enter GitHub token", onPress: () => setShowManualSetup("github") },
+            { text: "Enter GitLab token", onPress: () => setShowManualSetup("gitlab") },
+          ],
+        );
+      }
+    } catch (e) {
+      Alert.alert("Error", e instanceof Error ? e.message : "Detection failed");
+    } finally {
+      setDetecting(false);
+    }
+  }, [loadProviders]);
+
+  // Manual token entry (fallback when auto-detect fails)
+  const handleManualSetup = useCallback(async (provider: "github" | "gitlab") => {
     if (!token.trim()) return;
-    setSetupLoading(true);
+    setDetecting(true);
     try {
       const baseUrl = (quicClient as any).baseUrl;
       const headers = { ...(quicClient as any).authHeaders, "Content-Type": "application/json" };
       const res = await fetch(`${baseUrl}/git/provider/setup`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          provider,
-          token: token.trim(),
-          host: host.trim() || undefined,
-          generateSsh: generateSSH,
-        }),
+        method: "POST", headers,
+        body: JSON.stringify({ provider, token: token.trim() }),
       });
       const data = await res.json();
       if (data.ok) {
-        Alert.alert(
-          "Connected",
-          `Signed in as ${data.username} on ${data.host}${data.sshKey ? "\nSSH key generated and added." : ""}`,
-        );
+        Alert.alert("Connected", `Signed in as ${data.username}`);
         setToken("");
-        setHost("");
-        setShowSetup(null);
+        setShowManualSetup(null);
         await loadProviders();
       } else {
         Alert.alert("Error", data.error || "Setup failed");
@@ -1107,9 +1127,9 @@ function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
     } catch (e) {
       Alert.alert("Error", e instanceof Error ? e.message : "Setup failed");
     } finally {
-      setSetupLoading(false);
+      setDetecting(false);
     }
-  }, [token, host, generateSSH, loadProviders]);
+  }, [token, loadProviders]);
 
   const handleRemove = useCallback((providerHost: string) => {
     Alert.alert("Disconnect", `Remove ${providerHost}?`, [
@@ -1274,61 +1294,32 @@ function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
         </View>
       ))}
 
-      {/* Add provider buttons */}
-      <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
-        {!providers.some(p => p.host === "github.com") && (
-          <Pressable
-            style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "#24292e", borderRadius: 10, paddingVertical: 12 }}
-            onPress={() => { setShowSetup("github"); setHost(""); }}
-          >
-            <Text style={{ color: "#fff", fontSize: 16, fontWeight: "700" }}>G</Text>
-            <Text style={{ color: "#fff", fontSize: 13, fontWeight: "600" }}>Connect GitHub</Text>
-          </Pressable>
-        )}
-        {!providers.some(p => p.host === "gitlab.com") && (
-          <Pressable
-            style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "#fc6d26", borderRadius: 10, paddingVertical: 12 }}
-            onPress={() => { setShowSetup("gitlab"); setHost(""); }}
-          >
-            <Text style={{ color: "#fff", fontSize: 16, fontWeight: "700" }}>L</Text>
-            <Text style={{ color: "#fff", fontSize: 13, fontWeight: "600" }}>Connect GitLab</Text>
-          </Pressable>
-        )}
-      </View>
-
-      {/* Self-hosted option */}
-      {!showSetup && (
-        <Pressable onPress={() => { setShowSetup("gitlab"); setHost("gitlab.example.com"); }}>
-          <Text style={{ color: c.textMuted, fontSize: 11, textAlign: "center" }}>
-            Using self-hosted GitLab? Tap here.
-          </Text>
+      {/* Auto-detect button */}
+      {providers.length === 0 && (
+        <Pressable
+          style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: c.accent, borderRadius: 10, paddingVertical: 12, marginBottom: 8, opacity: detecting ? 0.5 : 1 }}
+          onPress={handleAutoDetect}
+          disabled={detecting}
+        >
+          {detecting ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Text style={{ color: "#fff", fontSize: 13, fontWeight: "600" }}>Detect from Dev Machine</Text>
+          )}
         </Pressable>
       )}
 
-      {/* Setup form */}
-      {showSetup && (
+      {/* Manual token entry (fallback) */}
+      {showManualSetup && (
         <View style={{ marginTop: 8, backgroundColor: c.bgCard, borderRadius: 10, borderWidth: 1, borderColor: c.border, padding: 14, gap: 10 }}>
           <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "700" }}>
-            {showSetup === "github" ? "Connect GitHub" : "Connect GitLab"}
+            {showManualSetup === "github" ? "GitHub Token" : "GitLab Token"}
           </Text>
           <Text style={{ color: c.textMuted, fontSize: 12, lineHeight: 17 }}>
-            {showSetup === "github"
-              ? "Create a Personal Access Token at github.com/settings/tokens with 'repo' and 'admin:public_key' scopes."
-              : "Create a Personal Access Token at your GitLab instance with 'api' scope."}
+            {showManualSetup === "github"
+              ? "Create a token at github.com/settings/tokens with 'repo' scope."
+              : "Create a token at gitlab.com/-/user_settings/personal_access_tokens with 'api' scope."}
           </Text>
-
-          {showSetup === "gitlab" && (
-            <TextInput
-              style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
-              placeholder="Host (default: gitlab.com)"
-              placeholderTextColor={c.textMuted}
-              value={host}
-              onChangeText={setHost}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-          )}
-
           <TextInput
             style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
             placeholder="Personal Access Token"
@@ -1339,42 +1330,23 @@ function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
             autoCorrect={false}
             secureTextEntry
           />
-
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-            <View>
-              <Text style={{ color: c.textPrimary, fontSize: 13 }}>Generate SSH key</Text>
-              <Text style={{ color: c.textMuted, fontSize: 11 }}>Auto-add to your {showSetup === "github" ? "GitHub" : "GitLab"} account</Text>
-            </View>
-            <Pressable
-              onPress={() => setGenerateSSH(!generateSSH)}
-              style={{ width: 44, height: 24, borderRadius: 12, backgroundColor: generateSSH ? c.accent : c.border, justifyContent: "center", padding: 2 }}
-            >
-              <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: "#fff", alignSelf: generateSSH ? "flex-end" : "flex-start" }} />
-            </Pressable>
-          </View>
-
           <View style={{ flexDirection: "row", gap: 8 }}>
             <Pressable
-              style={[s.actionBtn, { backgroundColor: c.accent, flex: 1, opacity: (!token.trim() || setupLoading) ? 0.4 : 1 }]}
-              onPress={() => handleSetup(showSetup)}
-              disabled={!token.trim() || setupLoading}
+              style={[s.actionBtn, { backgroundColor: c.accent, flex: 1, opacity: (!token.trim() || detecting) ? 0.4 : 1 }]}
+              onPress={() => handleManualSetup(showManualSetup)}
+              disabled={!token.trim() || detecting}
             >
-              {setupLoading ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Text style={[s.actionBtnText, { color: "#fff" }]}>Connect</Text>
-              )}
+              {detecting ? <ActivityIndicator size="small" color="#fff" /> : <Text style={[s.actionBtnText, { color: "#fff" }]}>Connect</Text>}
             </Pressable>
             <Pressable
               style={[s.actionBtn, { backgroundColor: c.bgCard, borderWidth: 1, borderColor: c.border, flex: 1 }]}
-              onPress={() => { setShowSetup(null); setToken(""); setHost(""); }}
+              onPress={() => { setShowManualSetup(null); setToken(""); }}
             >
               <Text style={[s.actionBtnText, { color: c.textPrimary }]}>Cancel</Text>
             </Pressable>
           </View>
-
-          <Text style={{ color: c.textMuted, fontSize: 10, textAlign: "center", lineHeight: 14 }}>
-            Token is stored locally on your agent ({"\u{1F512}"} ~/.yaver/git-providers.json).{"\n"}Never uploaded to Yaver servers.
+          <Text style={{ color: c.textMuted, fontSize: 10, textAlign: "center" }}>
+            Stored locally on your dev machine. Never sent to Yaver servers.
           </Text>
         </View>
       )}

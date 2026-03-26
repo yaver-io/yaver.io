@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -39,6 +40,8 @@ type DevServer interface {
 	SupportsHotReload() bool
 	// Reload triggers a hot reload if supported.
 	Reload() error
+	// PreStart sets the name/port/workDir before async Start (for immediate Status).
+	PreStart(name string, port int, workDir string)
 	// Status returns the current state.
 	Status() DevServerStatus
 }
@@ -174,7 +177,40 @@ func (m *DevServerManager) Start(framework, workDir, platform string, port int) 
 		}
 	}
 
-	log.Printf("[dev] Starting %s dev server in %s", ds.Name(), workDir)
+	// Pre-set name/port/workDir so Status() returns meaningful data immediately
+	// (before the async Start goroutine sets them again inside Start())
+	frameworkName := framework
+	if frameworkName == "" {
+		// Derive name from the detected dev server type
+		switch ds.(type) {
+		case *ExpoDevServer:
+			frameworkName = "expo"
+		case *ReactNativeDevServer:
+			frameworkName = "react-native"
+		case *FlutterDevServer:
+			frameworkName = "flutter"
+		case *ViteDevServer:
+			frameworkName = "vite"
+		case *NextDevServer:
+			frameworkName = "nextjs"
+		}
+	}
+	defaultPort := port
+	if defaultPort == 0 {
+		switch frameworkName {
+		case "expo", "react-native":
+			defaultPort = 8081
+		case "flutter":
+			defaultPort = 9100
+		case "vite":
+			defaultPort = 5173
+		case "nextjs":
+			defaultPort = 3000
+		}
+	}
+	ds.PreStart(frameworkName, defaultPort, workDir)
+
+	log.Printf("[dev] Starting %s dev server in %s", frameworkName, workDir)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	opts := DevServerOpts{
@@ -193,7 +229,7 @@ func (m *DevServerManager) Start(framework, workDir, platform string, port int) 
 	// Emit starting event
 	m.emit(DevServerEvent{
 		Type:      "starting",
-		Framework: ds.Name(),
+		Framework: frameworkName,
 		Message:   fmt.Sprintf("Starting %s dev server...", ds.Name()),
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
@@ -377,6 +413,18 @@ type baseDevServer struct {
 func (b *baseDevServer) Name() string { return b.name }
 func (b *baseDevServer) Port() int    { return b.port }
 
+// PreStart sets the name, port, and workDir before the async Start goroutine.
+// This ensures Status() returns meaningful data immediately.
+func (b *baseDevServer) PreStart(name string, port int, workDir string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.name = name
+	if port > 0 {
+		b.port = port
+	}
+	b.workDir = workDir
+}
+
 func (b *baseDevServer) Status() DevServerStatus {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -535,27 +583,48 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		gen.Run() // best-effort
 	}
 
-	// Start Expo web — serves the app as a web page for the WebView
-	// --web: enables web platform (webpack/metro web)
-	// --host 0.0.0.0: bind to all interfaces (needed for proxy + LAN access)
-	// No --no-dev: keep dev mode for hot reload
+	// Start Metro bundler with web support enabled.
+	// --web serves BOTH native JS bundles (for Expo Go) AND web (for WebView preview).
+	// Native app (TestFlight) connects via exp:// deep link → full camera, BLE, QR.
+	// WebView fallback loads the web version at /dev/ for quick preview.
+	// --host 0.0.0.0: bind to all interfaces (proxy + LAN + Expo Go access)
 	args := []string{"expo", "start",
 		"--web",
 		"--port", fmt.Sprintf("%d", e.port),
 		"--host", "0.0.0.0",
 	}
 
-	// Expo web serves on the same port as Metro
+	// Metro bundler health check
 	readyURL := fmt.Sprintf("http://127.0.0.1:%d", e.port)
 	return e.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
 }
 
 func (e *ExpoDevServer) BundleURL(platform string) string {
-	// Web version served at root — this is what loads in the WebView
+	// Metro bundler — Expo Go / dev client connects via this URL.
+	// The Yaver agent proxies /dev/* to Metro, so Expo Go loads native
+	// JS bundles through the relay. Full native: camera, BLE, QR, etc.
 	return "/dev/"
 }
 
+// ExpoDeepLink returns the exp:// URL to open this dev server in Expo Go.
+// The native app connects to Metro through the agent's HTTP proxy.
+func (e *ExpoDevServer) ExpoDeepLink(agentHost string) string {
+	// exp://HOST:PORT — Expo Go opens and connects to Metro at this address
+	return fmt.Sprintf("exp://%s:%d", agentHost, e.port)
+}
+
 func (e *ExpoDevServer) SupportsHotReload() bool { return true }
+
+func (e *ExpoDevServer) Status() DevServerStatus {
+	s := e.baseDevServer.Status()
+	// Include deep link for Expo Go — native app loads bundle through this
+	if s.Running {
+		localIP := getLocalIP()
+		s.DeepLink = fmt.Sprintf("exp://%s:%d", localIP, e.port)
+	}
+	s.BundleURL = "/dev/"
+	return s
+}
 
 func (e *ExpoDevServer) Reload() error {
 	// Metro auto-reloads on file change; this is a manual force
@@ -669,20 +738,100 @@ func (f *FlutterDevServer) Start(ctx context.Context, opts DevServerOpts) error 
 		f.port = 9100
 	}
 
-	platform := opts.Platform
-	if platform == "" {
-		platform = "web"
+	// Find a real mobile device (iOS/Android) for native hot reload.
+	// Flutter is a mobile framework — run natively, not as web.
+	deviceID := opts.Platform
+	if deviceID == "" || deviceID == "web" || deviceID == "chrome" || deviceID == "web-server" {
+		detected := detectFlutterMobileDevice(ctx)
+		if detected != "" {
+			deviceID = detected
+		} else {
+			// No mobile device found — fall back to web-server
+			log.Printf("[dev:flutter] No mobile device found, falling back to web-server")
+			deviceID = "web-server"
+		}
 	}
 
-	args := []string{"run", "-d", platform}
+	args := []string{"run", "-d", deviceID}
 
-	// --web-port only applies to web platform
-	if platform == "web" || platform == "chrome" {
-		args = append(args, "--web-port", fmt.Sprintf("%d", f.port))
+	// Web-server needs port config; native devices don't
+	if deviceID == "web-server" || deviceID == "chrome" {
+		args = append(args, "--web-port", fmt.Sprintf("%d", f.port), "--web-hostname", "0.0.0.0")
 	}
 
-	readyURL := fmt.Sprintf("http://127.0.0.1:%d/", f.port)
-	return f.startProcessWithStdin(ctx, "flutter", args, opts.WorkDir, nil, readyURL)
+	log.Printf("[dev:flutter] Starting on device: %s", deviceID)
+
+	if deviceID == "web-server" || deviceID == "chrome" {
+		// Web mode — wait for HTTP readiness
+		readyURL := fmt.Sprintf("http://127.0.0.1:%d/", f.port)
+		return f.startProcessWithStdin(ctx, "flutter", args, opts.WorkDir, nil, readyURL)
+	}
+
+	// Native mode — no HTTP readiness check, just wait for "is available" in output
+	return f.startNativeProcess(ctx, "flutter", args, opts.WorkDir)
+}
+
+// detectFlutterMobileDevice runs `flutter devices --machine` and returns the first iOS/Android device ID.
+func detectFlutterMobileDevice(ctx context.Context) string {
+	out, err := exec.CommandContext(ctx, "flutter", "devices", "--machine").Output()
+	if err != nil {
+		return ""
+	}
+
+	var devices []struct {
+		Name           string `json:"name"`
+		ID             string `json:"id"`
+		TargetPlatform string `json:"targetPlatform"`
+	}
+	if err := json.Unmarshal(out, &devices); err != nil {
+		return ""
+	}
+
+	// Prefer iOS, then Android — skip desktop/web
+	for _, d := range devices {
+		if d.TargetPlatform == "ios" || strings.HasPrefix(d.TargetPlatform, "android") {
+			log.Printf("[dev:flutter] Found mobile device: %s (%s) [%s]", d.Name, d.ID, d.TargetPlatform)
+			return d.ID
+		}
+	}
+	return ""
+}
+
+// startNativeProcess starts a native Flutter process (no HTTP readiness — watches stdout for "ready" signals).
+func (f *FlutterDevServer) startNativeProcess(ctx context.Context, name string, args []string, workDir string) error {
+	f.mu.Lock()
+	f.workDir = workDir
+	f.mu.Unlock()
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = workDir
+	cmd.Env = append(os.Environ())
+
+	// Create stdin pipe for hot reload ("r") and hot restart ("R")
+	pipe, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("stdin pipe: %w", err)
+	}
+	f.stdinPipe = &stdinWriter{w: pipe}
+
+	// Capture stdout to detect when app is ready + log output
+	logWriter := &devLogWriter{prefix: "[dev:flutter]"}
+	cmd.Stdout = logWriter
+	cmd.Stderr = logWriter
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("exec %s: %w", name, err)
+	}
+
+	f.mu.Lock()
+	f.cmd = cmd
+	f.startedAt = time.Now()
+	// Mark as running immediately for native — the app will build and deploy
+	f.running = true
+	f.mu.Unlock()
+
+	log.Printf("[dev:flutter] Native process started (PID %d) — building and deploying to device...", cmd.Process.Pid)
+	return nil
 }
 
 // startProcessWithStdin is like startProcess but saves the stdin pipe for hot reload.
