@@ -162,9 +162,15 @@ export default function AppsScreen() {
       // Open vibing mode — fetch AI suggestions
       try {
         const state = await quicClient.getVibingState(project);
-        setVibingState(state);
-      } catch {
-        Alert.alert("Failed", "Could not load vibing state");
+        console.log("[vibing] Got state:", state?.project, state?.suggestions?.length, "suggestions");
+        if (state) {
+          setVibingState(state);
+        } else {
+          Alert.alert("No data", "Vibing returned empty state");
+        }
+      } catch (e) {
+        console.log("[vibing] Error:", e);
+        Alert.alert("Failed", String(e));
       }
       return;
     }

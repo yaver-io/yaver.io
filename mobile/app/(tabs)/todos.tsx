@@ -11,7 +11,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
@@ -24,6 +24,7 @@ function uuid() {
 
 export default function TodosScreen() {
   const c = useColors();
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const { connectionStatus } = useDevice();
   const isConnected = connectionStatus === "connected";
@@ -117,7 +118,16 @@ export default function TodosScreen() {
   const done = todos.filter(t => t.done);
 
   return (
-    <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
+    <View style={[s.safe, { backgroundColor: c.bg }]}>
+      {/* Header */}
+      <View style={[s.header, { paddingTop: insets.top + 8, borderBottomColor: c.border }]}>
+        <Pressable onPress={() => router.back()} style={{ paddingVertical: 8 }}>
+          <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
+        </Pressable>
+        <Text style={[s.headerTitle, { color: c.textPrimary }]}>Todos</Text>
+        <View style={{ width: 50 }} />
+      </View>
+
       {/* Input */}
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <View style={[s.inputRow, { borderColor: c.border }]}>
@@ -204,12 +214,14 @@ export default function TodosScreen() {
           <Text style={{ color: c.textMuted, fontSize: 12 }}>Clear {done.length} done</Text>
         </Pressable>
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 
 const s = StyleSheet.create({
   safe: { flex: 1 },
+  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingBottom: 10, borderBottomWidth: 1 },
+  headerTitle: { fontSize: 17, fontWeight: "700" },
   inputRow: {
     flexDirection: "row",
     alignItems: "center",

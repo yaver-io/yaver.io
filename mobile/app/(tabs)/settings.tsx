@@ -16,7 +16,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth } from "../../src/context/AuthContext";
 import { useDevice } from "../../src/context/DeviceContext";
@@ -40,6 +40,7 @@ export default function SettingsScreen() {
   const { activeDevice, connectionStatus, disconnect, selectDevice } = useDevice();
   const { isDark, toggleTheme } = useTheme();
   const c = useColors();
+  const insets = useSafeAreaInsets();
   // Name is "empty" if it equals the email or is blank
   const displayName = user?.name && user.name !== user.email ? user.name : null;
   const [isEditingName, setIsEditingName] = useState(false);
@@ -634,7 +635,15 @@ export default function SettingsScreen() {
   };
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: c.bg }]} edges={["bottom"]}>
+    <View style={[styles.safeArea, { backgroundColor: c.bg }]}>
+      {/* Header */}
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: insets.top + 8, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: c.border }}>
+        <Pressable onPress={() => router.back()} style={{ paddingVertical: 8 }}>
+          <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
+        </Pressable>
+        <Text style={{ fontSize: 17, fontWeight: "700", color: c.textPrimary }}>Settings</Text>
+        <View style={{ width: 50 }} />
+      </View>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -2417,7 +2426,7 @@ export default function SettingsScreen() {
         </View>
       </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </View>
   );
 }
 
