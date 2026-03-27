@@ -133,28 +133,50 @@ export default function HotReloadScreen() {
   }, [showWebView, devStatus?.running]);
 
   const handleOpen = useCallback(() => {
-    // For Expo/RN: open Expo Go with deep link for full native experience (camera, BLE, etc.)
-    // For Flutter/Vite/Next: open WebView with web build
     const isExpo = devStatus?.framework === "expo" || devStatus?.framework === "react-native";
-    if (isExpo && devStatus?.deepLink) {
+
+    if (isExpo) {
+      // Construct Metro URL through the Yaver agent (works over relay too).
+      // The agent proxies /dev/* to Metro, including WebSocket for HMR.
+      const agentUrl = (quicClient as any).baseUrl as string; // direct IP or relay URL
+      // For dev client: use the agent URL as Metro URL (proxied)
+      const metroUrl = encodeURIComponent(agentUrl);
+
+      // Also try direct deep link for same-network (faster)
+      const directLink = devStatus?.deepLink || "";
+
       Alert.alert(
         "Open App",
-        "Choose how to load your app:",
+        devStatus?.devMode === "dev-client"
+          ? "Native dev client — full camera, BLE, QR support"
+          : "Choose how to open:",
         [
           {
-            text: "Expo Go (Native)",
-            onPress: () => Linking.openURL(devStatus.deepLink!).catch(() => {
-              Alert.alert("Expo Go not installed", "Install Expo Go from the App Store to get full native hot reload with camera, BLE, QR, etc.");
-            }),
+            text: "Native (Dev Client)",
+            onPress: () => {
+              // Try Expo dev client deep link with the agent URL as Metro server
+              // Format: exp+<slug>://expo-development-client/?url=<metro-url>
+              // Fallback: direct exp:// link for Expo Go
+              const devClientUrl = `exp://expo-development-client/?url=${metroUrl}`;
+              Linking.openURL(devClientUrl).catch(() => {
+                // Fallback to direct exp:// link
+                if (directLink) {
+                  Linking.openURL(directLink).catch(() => {
+                    Alert.alert("Not installed", "Build a dev client first by tapping Start on the project.");
+                  });
+                }
+              });
+            },
           },
           {
-            text: "WebView (Preview)",
+            text: "WebView Preview",
             onPress: () => { setShowWebView(true); setWebViewLoading(true); setWebViewKey(k => k + 1); },
           },
           { text: "Cancel", style: "cancel" },
         ],
       );
     } else {
+      // Flutter/Vite/Next → WebView
       setShowWebView(true);
       setWebViewLoading(true);
       setWebViewKey(k => k + 1);
@@ -344,7 +366,10 @@ export default function HotReloadScreen() {
           <WebView
             ref={webViewRef}
             key={webViewKey}
-            source={{ uri: bundleUrl }}
+            source={{
+              uri: bundleUrl,
+              headers: (quicClient as any).authHeaders || {},
+            }}
             style={{ flex: 1, backgroundColor: c.bg }}
             onLoadEnd={() => setWebViewLoading(false)}
             onError={() => setWebViewLoading(false)}

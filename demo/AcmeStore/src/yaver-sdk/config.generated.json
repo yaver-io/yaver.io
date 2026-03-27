@@ -1,5 +1,10 @@
 {
-  "authToken": "f44556a65742764e1560194470ee0bf85b32c28d72a30bc7866dad0ad6fcced2",
+  "authToken": "0b05d2b320c4256b604af8af9e90e0b64dccbab637a2a647fbc2ce495d2b118c",
   "convexUrl": "https://shocking-echidna-394.eu-west-1.convex.site",
-  "agentUrl": "http://192.168.111.11:18080"
+  "agentUrl": "http://192.168.111.11:18080",
+  "project": {
+    "name": "acmestore",
+    "version": "1.0.0",
+    "path": "/Users/kivanccakmak/Workspace/yaver.io/demo/AcmeStore"
+  }
 }

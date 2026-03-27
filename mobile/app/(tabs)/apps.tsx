@@ -506,73 +506,73 @@ export default function AppsScreen() {
             <Pressable
               style={[s.vibingDiceBtn, deepShuffleActive && { backgroundColor: "#1a1a2e", borderColor: c.accent + "44", borderWidth: 1 }]}
               disabled={deepShuffleActive}
-              onPress={() => {
+              onPress={async () => {
                 if (!vibingState) return;
                 setDeepShuffleActive(true);
-                setDeepShuffleText("Analyzing project structure...");
+                setDeepShuffleText("Analyzing project...");
                 setDeepShuffleStep("1/5");
-                setVibingState((prev: any) => prev ? { ...prev, suggestions: [] } : prev);
 
-                // Use XMLHttpRequest for SSE — fetch().body.getReader() doesn't work in React Native
-                const xhr = new XMLHttpRequest();
-                const url = `${(quicClient as any).baseUrl}/vibing/surprise`;
-                xhr.open("POST", url, true);
-                const headers = (quicClient as any).authHeaders || {};
-                Object.keys(headers).forEach((k) => xhr.setRequestHeader(k, headers[k]));
-                xhr.setRequestHeader("Content-Type", "application/json");
+                try {
+                  // Start Deep Shuffle as a task — poll for output (SSE broken in RN)
+                  const baseUrl = (quicClient as any).baseUrl;
+                  const headers = { ...(quicClient as any).authHeaders, "Content-Type": "application/json" };
 
-                let lastIndex = 0;
-                let currentEventType = "";
+                  const res = await fetch(`${baseUrl}/vibing/surprise`, {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify({ projectPath: vibingState.path }),
+                  });
 
-                xhr.onprogress = () => {
-                  const newText = xhr.responseText.substring(lastIndex);
-                  lastIndex = xhr.responseText.length;
-                  const lines = newText.split("\n");
-                  for (const line of lines) {
-                    if (line.startsWith("event: ")) {
-                      currentEventType = line.slice(7).trim();
-                    } else if (line.startsWith("data: ") && currentEventType) {
-                      try {
-                        const data = JSON.parse(line.slice(6));
-                        if (currentEventType === "thinking") {
-                          setDeepShuffleText(data.text || "");
-                          if (data.step) setDeepShuffleStep(data.step);
-                        } else if (currentEventType === "status") {
-                          setDeepShuffleText(data.message || "");
-                          if (data.step) setDeepShuffleStep(data.step);
-                        } else if (currentEventType === "suggestion") {
-                          setVibingState((prev: any) => {
-                            if (!prev) return prev;
-                            const existing = prev.suggestions || [];
-                            if (existing.some((s: any) => s.label === data.label)) return prev;
-                            return { ...prev, suggestions: [...existing, { ...data, id: data.id || `dice-${existing.length}` }] };
-                          });
-                        } else if (currentEventType === "done") {
-                          setDeepShuffleActive(false);
-                          setDeepShuffleText("");
-                          setDeepShuffleStep("");
-                        } else if (currentEventType === "error") {
-                          setDeepShuffleText(data.message || "Retrying...");
-                        }
-                      } catch {}
-                      currentEventType = "";
+                  // The endpoint blocks until done (SSE), but we read the final response
+                  // In the meantime, poll the vibing cache for intermediate results
+                  const pollInterval = setInterval(async () => {
+                    try {
+                      const stateRes = await fetch(`${baseUrl}/vibing?path=${encodeURIComponent(vibingState.path)}`, { headers: (quicClient as any).authHeaders });
+                      const stateData = await stateRes.json();
+                      if (stateData?.suggestions?.length > 0) {
+                        setVibingState((prev: any) => {
+                          if (!prev) return prev;
+                          return { ...prev, suggestions: stateData.suggestions };
+                        });
+                      }
+                    } catch {}
+                  }, 3000);
+
+                  // Animate the status text while waiting
+                  const steps = [
+                    { step: "1/5", text: "Reading codebase and architecture..." },
+                    { step: "2/5", text: "Brainstorming wild ideas..." },
+                    { step: "3/5", text: "Finding practical magic..." },
+                    { step: "4/5", text: "Dreaming up moonshots..." },
+                    { step: "5/5", text: "Crafting final suggestions..." },
+                  ];
+                  let stepIdx = 0;
+                  const stepInterval = setInterval(() => {
+                    if (stepIdx < steps.length) {
+                      setDeepShuffleStep(steps[stepIdx].step);
+                      setDeepShuffleText(steps[stepIdx].text);
+                      stepIdx++;
                     }
-                  }
-                };
+                  }, 15000); // advance step every 15s
 
-                xhr.onloadend = () => {
+                  // Wait for the response (blocks during analysis)
+                  const text = await res.text();
+                  clearInterval(pollInterval);
+                  clearInterval(stepInterval);
+
+                  // Final: refresh vibing state from cache (server updated it)
+                  try {
+                    const finalRes = await fetch(`${baseUrl}/vibing?path=${encodeURIComponent(vibingState.path)}`, { headers: (quicClient as any).authHeaders });
+                    const finalData = await finalRes.json();
+                    if (finalData?.suggestions?.length > 0) {
+                      setVibingState((prev: any) => prev ? { ...prev, suggestions: finalData.suggestions } : prev);
+                    }
+                  } catch {}
+                } catch {} finally {
                   setDeepShuffleActive(false);
                   setDeepShuffleText("");
                   setDeepShuffleStep("");
-                };
-
-                xhr.onerror = () => {
-                  setDeepShuffleActive(false);
-                  setDeepShuffleText("");
-                  setDeepShuffleStep("");
-                };
-
-                xhr.send(JSON.stringify({ projectPath: vibingState.path }));
+                }
               }}
             >
               <Text style={s.vibingDiceBtnIcon}>{deepShuffleActive ? "\u2728" : "\u{1F3B2}"}</Text>

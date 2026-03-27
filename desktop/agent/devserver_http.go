@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"strings"
 )
@@ -155,6 +157,7 @@ func (s *HTTPServer) handleDevServerEvents(w http.ResponseWriter, r *http.Reques
 
 // handleDevServerProxy reverse-proxies requests to the local dev server.
 // /dev/* → http://127.0.0.1:{devServerPort}/*
+// Supports both HTTP and WebSocket (needed for Metro HMR hot reload).
 func (s *HTTPServer) handleDevServerProxy(w http.ResponseWriter, r *http.Request) {
 	if s.devServerMgr == nil {
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
@@ -173,5 +176,58 @@ func (s *HTTPServer) handleDevServerProxy(w http.ResponseWriter, r *http.Request
 		r.URL.Path = "/"
 	}
 
+	// WebSocket upgrade — Metro uses WS for HMR (/hot) and debugger (/debugger-proxy)
+	if isWebSocketUpgrade(r) {
+		port := s.devServerMgr.DevServerPort()
+		s.proxyWebSocket(w, r, fmt.Sprintf("127.0.0.1:%d", port))
+		return
+	}
+
 	proxy.ServeHTTP(w, r)
+}
+
+func isWebSocketUpgrade(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+}
+
+// proxyWebSocket tunnels a WebSocket connection to the target.
+func (s *HTTPServer) proxyWebSocket(w http.ResponseWriter, r *http.Request, target string) {
+	// Connect to the backend
+	backendConn, err := net.Dial("tcp", target)
+	if err != nil {
+		http.Error(w, "backend unavailable", http.StatusBadGateway)
+		return
+	}
+	defer backendConn.Close()
+
+	// Hijack the client connection
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "websocket not supported", http.StatusInternalServerError)
+		return
+	}
+	clientConn, clientBuf, err := hijacker.Hijack()
+	if err != nil {
+		http.Error(w, "hijack failed", http.StatusInternalServerError)
+		return
+	}
+	defer clientConn.Close()
+
+	// Forward the original HTTP upgrade request to backend
+	if err := r.Write(backendConn); err != nil {
+		return
+	}
+
+	// Flush any buffered data from the client
+	if clientBuf.Reader.Buffered() > 0 {
+		buffered := make([]byte, clientBuf.Reader.Buffered())
+		clientBuf.Read(buffered)
+		backendConn.Write(buffered)
+	}
+
+	// Bidirectional copy
+	done := make(chan struct{}, 2)
+	go func() { io.Copy(clientConn, backendConn); done <- struct{}{} }()
+	go func() { io.Copy(backendConn, clientConn); done <- struct{}{} }()
+	<-done
 }

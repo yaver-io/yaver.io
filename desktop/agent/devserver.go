@@ -363,6 +363,16 @@ func (m *DevServerManager) Proxy() *httputil.ReverseProxy {
 	return m.active.proxy
 }
 
+// DevServerPort returns the local port of the active dev server.
+func (m *DevServerManager) DevServerPort() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.active == nil {
+		return 0
+	}
+	return m.active.server.Port()
+}
+
 // Subscribe returns a channel that receives dev server events.
 func (m *DevServerManager) Subscribe() chan DevServerEvent {
 	m.subsMu.Lock()
@@ -585,56 +595,101 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		gen.Run() // best-effort
 	}
 
-	// Smart mode selection:
-	// 1. If native build exists (ios/ dir with prebuild) → dev-client mode (best: any SDK, all native modules)
-	// 2. If no native build → auto-prebuild it, then dev-client mode
-	// 3. Fallback: Expo Go mode (SDK must match)
+	// Check if a dev client app is already installed on the phone.
+	// We track this via a marker file in ~/.yaver/builds/<project-hash>.
+	projectHash := strings.ReplaceAll(filepath.Base(opts.WorkDir), " ", "_")
+	buildMarker := filepath.Join(yaverBuildsDir(), projectHash+".built")
+	hasInstalledBuild := fileExists(buildMarker)
 
-	hasIOSBuild := fileExists(filepath.Join(opts.WorkDir, "ios", "Podfile"))
-	hasAndroidBuild := fileExists(filepath.Join(opts.WorkDir, "android", "build.gradle"))
-	hasDevBuild := hasIOSBuild || hasAndroidBuild
+	hasNativeProject := fileExists(filepath.Join(opts.WorkDir, "ios", "Podfile")) ||
+		fileExists(filepath.Join(opts.WorkDir, "android", "build.gradle"))
 
-	if !hasDevBuild {
-		// No native build — run expo prebuild to create one
-		log.Printf("[dev:expo] No native build found — running 'expo prebuild' to create dev client...")
-		prebuild := exec.CommandContext(ctx, "npx", "expo", "prebuild", "--no-install")
-		prebuild.Dir = opts.WorkDir
-		prebuildLog := &devLogWriter{prefix: "[dev:expo:prebuild]"}
-		prebuild.Stdout = prebuildLog
-		prebuild.Stderr = prebuildLog
-		if err := prebuild.Run(); err != nil {
-			log.Printf("[dev:expo] Prebuild failed: %v — falling back to Expo Go mode", err)
-		} else {
-			hasDevBuild = true
-			// Install pods for iOS
-			if fileExists(filepath.Join(opts.WorkDir, "ios", "Podfile")) {
-				log.Printf("[dev:expo] Installing CocoaPods...")
-				pods := exec.CommandContext(ctx, "pod", "install")
-				pods.Dir = filepath.Join(opts.WorkDir, "ios")
-				podsLog := &devLogWriter{prefix: "[dev:expo:pods]"}
-				pods.Stdout = podsLog
-				pods.Stderr = podsLog
-				pods.Run() // best-effort
+	if hasInstalledBuild && hasNativeProject {
+		// Dev client already built and installed → just start Metro
+		log.Printf("[dev:expo] Dev client already installed — starting Metro only")
+		e.devMode = "dev-client"
+		args := []string{"expo", "start",
+			"--dev-client",
+			"--port", fmt.Sprintf("%d", e.port),
+			"--host", "0.0.0.0",
+		}
+		readyURL := fmt.Sprintf("http://127.0.0.1:%d", e.port)
+		return e.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
+	}
+
+	// First time (or no build marker) → build + install dev client on phone.
+	// `expo run:ios` does everything: prebuild + xcode build + install on device + start Metro.
+	// Detects connected iOS device automatically.
+	log.Printf("[dev:expo] Building dev client (first time — installs native app on phone)...")
+	e.devMode = "dev-client"
+
+	// Determine target: iOS device if available, otherwise iOS simulator
+	device := detectIOSDevice(ctx)
+	args := []string{"expo", "run:ios",
+		"--port", fmt.Sprintf("%d", e.port),
+	}
+	if device != "" {
+		args = append(args, "--device", device)
+		log.Printf("[dev:expo] Target: %s", device)
+	} else {
+		log.Printf("[dev:expo] No iOS device found — using simulator")
+	}
+
+	logW := &devLogWriter{prefix: "[dev:expo:build]"}
+	cmd := exec.CommandContext(ctx, "npx", args...)
+	cmd.Dir = opts.WorkDir
+	cmd.Stdout = logW
+	cmd.Stderr = logW
+	cmd.Env = append(os.Environ(), fmt.Sprintf("RCT_METRO_PORT=%d", e.port))
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("expo run:ios failed to start: %w", err)
+	}
+
+	e.mu.Lock()
+	e.cmd = cmd
+	e.startedAt = time.Now()
+	e.running = true // mark as running — Metro starts as part of expo run:ios
+	e.mu.Unlock()
+
+	// Create build marker so next time we skip the build
+	os.MkdirAll(yaverBuildsDir(), 0755)
+	os.WriteFile(buildMarker, []byte(time.Now().UTC().Format(time.RFC3339)), 0644)
+
+	log.Printf("[dev:expo] Build started (PID %d) — app will install on phone when ready", cmd.Process.Pid)
+	return nil
+}
+
+// detectIOSDevice finds a connected iOS device (USB or wireless).
+func detectIOSDevice(ctx context.Context) string {
+	// Use xcrun to list devices
+	out, err := exec.CommandContext(ctx, "xcrun", "xctrace", "list", "devices").Output()
+	if err != nil {
+		return ""
+	}
+	// Parse output: lines like "Kıvanç's iPhone (18.3.1) (00008110-001A515426FB801E)"
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		// Skip simulators and headers
+		if strings.Contains(line, "Simulator") || !strings.Contains(line, "(") {
+			continue
+		}
+		// Extract UDID from parentheses at end
+		if idx := strings.LastIndex(line, "("); idx > 0 {
+			udid := strings.TrimSuffix(line[idx+1:], ")")
+			// UDIDs are hex strings, 24+ chars
+			if len(udid) > 20 && !strings.Contains(udid, " ") && !strings.Contains(udid, ".") {
+				return udid
 			}
 		}
 	}
+	return ""
+}
 
-	args := []string{"expo", "start",
-		"--port", fmt.Sprintf("%d", e.port),
-		"--host", "0.0.0.0",
-	}
-
-	if hasDevBuild {
-		args = append(args, "--dev-client")
-		log.Printf("[dev:expo] Dev client mode — full native hot reload (camera, BLE, QR)")
-		e.devMode = "dev-client"
-	} else {
-		log.Printf("[dev:expo] Expo Go mode — SDK version must match Expo Go on phone")
-		e.devMode = "expo-go"
-	}
-
-	readyURL := fmt.Sprintf("http://127.0.0.1:%d", e.port)
-	return e.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
+// yaverBuildsDir returns the directory for build markers.
+func yaverBuildsDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".yaver", "builds")
 }
 
 func (e *ExpoDevServer) BundleURL(platform string) string {
@@ -656,10 +711,9 @@ func (e *ExpoDevServer) SupportsHotReload() bool { return true }
 func (e *ExpoDevServer) Status() DevServerStatus {
 	s := e.baseDevServer.Status()
 	s.DevMode = e.devMode
-	if s.Running || s.Framework != "" {
-		localIP := getLocalIP()
-		s.DeepLink = fmt.Sprintf("exp://%s:%d", localIP, e.port)
-	}
+	// Deep link: the mobile app will replace {agent} with its own baseUrl
+	// (which is either the direct IP or the relay URL)
+	s.DeepLink = fmt.Sprintf("exp://%s:%d", getLocalIP(), e.port)
 	s.BundleURL = "/dev/"
 	return s
 }

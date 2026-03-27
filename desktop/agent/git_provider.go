@@ -149,7 +149,7 @@ func detectGitLabToken(host string) string {
 	}
 
 	// 2. glab CLI
-	if out, err := osexec.Command("glab", "config", "get", "token", "-h", host).Output(); err == nil {
+	if out, err := osexec.Command("glab", "config", "get", "token", "--host", host).Output(); err == nil {
 		token := strings.TrimSpace(string(out))
 		if token != "" {
 			return token

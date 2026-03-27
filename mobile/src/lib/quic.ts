@@ -2030,6 +2030,7 @@ export interface DevServerStatus {
   port: number;
   bundleUrl: string;
   deepLink?: string;
+  devMode?: string;
   startedAt?: string;
   error?: string;
   pid?: number;
