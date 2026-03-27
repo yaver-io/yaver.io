@@ -91,7 +91,7 @@ android {
         applicationId 'io.yaver.mobile'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 131
+        versionCode 132
         versionName "1.15.0"
     }
     signingConfigs {
