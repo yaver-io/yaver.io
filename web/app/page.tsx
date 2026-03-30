@@ -1131,8 +1131,8 @@ export default function HomePage() {
               {
                 icon: "\u21BB",
                 color: "text-[#fbbf24] bg-[#fbbf24]/10",
-                label: "Hot reload any layer",
-                copy: "Tap a subdirectory and Yaver starts the right dev server &mdash; Expo for mobile/, Vite for web/, Next.js for dashboard/. See changes on your phone instantly.",
+                label: "Native hot reload on your phone",
+                copy: "React Native apps run inside Yaver with full native access &mdash; camera, BLE, GPS, sensors. Your CLI pushes code, the app reloads instantly. Works over WiFi, 4G, or any network through the relay.",
               },
               {
                 icon: "\uD83E\uDDEA",
@@ -1214,11 +1214,11 @@ export default function HomePage() {
           {/* What the agent detects */}
           <div className="mb-10 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {[
-              { framework: "Expo / React Native", actions: "Hot Reload, Build iOS, Build Android", platforms: "TestFlight, Play Store", icon: "\uD83D\uDCF1", color: "text-[#a78bfa] bg-[#a78bfa]/10" },
-              { framework: "Flutter", actions: "Hot Reload, Build iOS, Build Android", platforms: "TestFlight, Play Store", icon: "\uD83D\uDCF1", color: "text-[#60a5fa] bg-[#60a5fa]/10" },
+              { framework: "React Native / Expo", actions: "Native Hot Reload inside Yaver, Build iOS, Build Android", platforms: "Camera, BLE, GPS — full native access", icon: "\uD83D\uDCF1", color: "text-[#a78bfa] bg-[#a78bfa]/10" },
               { framework: "Next.js", actions: "Dev Server, Deploy", platforms: "Vercel", icon: "\u25B2", color: "text-surface-300 bg-surface-800" },
               { framework: "Vite", actions: "Dev Server, Deploy", platforms: "Vercel", icon: "\u26A1", color: "text-[#fbbf24] bg-[#fbbf24]/10" },
               { framework: "Convex", actions: "Deploy Backend", platforms: "Convex Cloud", icon: "\uD83E\uDDE0", color: "text-[#f87171] bg-[#f87171]/10" },
+              { framework: "Supabase", actions: "Deploy Backend", platforms: "Supabase Cloud", icon: "\u26A1", color: "text-[#22c55e] bg-[#22c55e]/10" },
               { framework: "Docker", actions: "Run Container", platforms: "Any server", icon: "\uD83D\uDC33", color: "text-[#60a5fa] bg-[#60a5fa]/10" },
             ].map((f) => (
               <div key={f.framework} className="rounded-xl border border-surface-800 bg-surface-900/50 p-4">
@@ -1499,7 +1499,7 @@ export default function HomePage() {
           <div className="mb-10 grid grid-cols-1 gap-3 sm:grid-cols-2">
             {[
               { icon: ">", color: "text-surface-300 bg-surface-800", label: "Message back and forth", desc: "Send tasks, see agent responses in real-time" },
-              { icon: "\u21BB", color: "text-[#fbbf24] bg-[#fbbf24]/10", label: "Hot Reload", desc: "One tap after agent fixes code" },
+              { icon: "\u21BB", color: "text-[#fbbf24] bg-[#fbbf24]/10", label: "Native Hot Reload", desc: "React Native apps run inside Yaver with camera, BLE, GPS — hot reload over WiFi or 4G" },
               { icon: "\u2692", color: "text-[#60a5fa] bg-[#60a5fa]/10", label: "Build + Deploy", desc: "One button: iOS + Android to TestFlight + Play Store" },
               { icon: "\uD83D\uDC1B", color: "text-[#f87171] bg-[#f87171]/10", label: "Bug Report", desc: "Auto-screenshot (SDK overlay hidden), AI analyzes, pushes fix" },
               { icon: "\u25B6", color: "text-[#a78bfa] bg-[#a78bfa]/10", label: "Autonomous Test Loop", desc: "Agent reads codebase, navigates app on device/emulator, catches crashes, writes fixes, hot reloads, and repeats — no human in the loop" },
@@ -1792,7 +1792,7 @@ if (isDev) {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {[
               { name: "Browse & Deploy Apps", desc: "Auto-discover projects, one-tap deploy to Vercel, TestFlight, Play Store, Convex" },
-              { name: "Hot Reload to Phone", desc: "Preview Expo, Vite, Next.js, Flutter apps live on your device over P2P" },
+              { name: "Native Hot Reload", desc: "Run React Native apps inside Yaver with full native access — camera, BLE, GPS. Hot reload over any network." },
               { name: "Smart Actions", desc: "AI detects frameworks — shows Ship It, Build, Deploy, Hot Reload per target" },
               { name: "Session Transfer", desc: "Move AI sessions between machines mid-task" },
               { name: "Remote Exec", desc: "Run agents on any dev machine" },
@@ -2416,7 +2416,7 @@ await for (final chunk in c.streamOutput(task.id)) {
             />
             <FAQItem
               question="How does the Apps tab work?"
-              answer="The agent scans your home directory for projects with build systems (package.json, pubspec.yaml, go.mod, Cargo.toml, Dockerfile, etc.). AI detects the framework (Expo, Next.js, Vite, Flutter, Convex, Docker) and lists all deployable targets — including subdirectories for monorepos. You see every project on your phone with fuzzy search and tag filters. Tap a project to start its dev server, deploy to Vercel, push to TestFlight, or run any detected action. Zero config — no manifest files, no project setup."
+              answer="The agent scans your home directory for projects and detects their stack — React Native, Next.js, Vite, Convex, Supabase, Docker, etc. For React Native apps, you get native hot reload right inside the Yaver app with full device access (camera, BLE, GPS). For web apps, the dev server loads in a WebView. For backends, you get one-tap deploy. Works over WiFi or 4G through the relay. Zero config — no manifest files, no project setup."
             />
             <FAQItem
               question="Can I run tests from my phone?"
