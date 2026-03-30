@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -191,6 +192,25 @@ func (t *TunnelClient) handleRequest(stream quic.Stream) {
 
 	for k, v := range req.Headers {
 		httpReq.Header.Set(k, v)
+	}
+
+	// Check if WebSocket upgrade (Metro HMR, debugger)
+	if strings.EqualFold(req.Headers["Upgrade"], "websocket") {
+		backendConn, err := net.Dial("tcp", t.agentAddr)
+		if err != nil {
+			t.sendErrorResponse(stream, req.ID, 502, fmt.Sprintf("agent unavailable: %v", err))
+			return
+		}
+		defer backendConn.Close()
+		if err := httpReq.Write(backendConn); err != nil {
+			t.sendErrorResponse(stream, req.ID, 502, fmt.Sprintf("write upgrade: %v", err))
+			return
+		}
+		done := make(chan struct{}, 2)
+		go func() { io.Copy(backendConn, stream); done <- struct{}{} }()
+		go func() { io.Copy(stream, backendConn); done <- struct{}{} }()
+		<-done
+		return
 	}
 
 	// Check if this is an SSE request (task output, dev server events, blackbox subscribe)

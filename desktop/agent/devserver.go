@@ -595,33 +595,30 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		gen.Run() // best-effort
 	}
 
-	// Platform determines the mode:
-	// - "web" or "" (default from Yaver mobile): start in web mode for WebView hot reload
-	// - "ios"/"android": start in dev-client mode for native builds
-	if opts.Platform == "ios" || opts.Platform == "android" {
-		// Native dev-client mode — requires Expo Dev Client installed on phone.
-		// Check if a dev client is already built and installed.
-		projectHash := strings.ReplaceAll(filepath.Base(opts.WorkDir), " ", "_")
-		buildMarker := filepath.Join(yaverBuildsDir(), projectHash+".built")
-		hasInstalledBuild := fileExists(buildMarker)
+	// Check if a dev client app is already installed on the phone.
+	projectHash := strings.ReplaceAll(filepath.Base(opts.WorkDir), " ", "_")
+	buildMarker := filepath.Join(yaverBuildsDir(), projectHash+".built")
+	hasInstalledBuild := fileExists(buildMarker)
 
-		hasNativeProject := fileExists(filepath.Join(opts.WorkDir, "ios", "Podfile")) ||
-			fileExists(filepath.Join(opts.WorkDir, "android", "build.gradle"))
+	hasNativeProject := fileExists(filepath.Join(opts.WorkDir, "ios", "Podfile")) ||
+		fileExists(filepath.Join(opts.WorkDir, "android", "build.gradle"))
 
-		if hasInstalledBuild && hasNativeProject {
-			log.Printf("[dev:expo] Dev client already installed — starting Metro only")
-			e.devMode = "dev-client"
-			args := []string{"expo", "start",
-				"--dev-client",
-				"--port", fmt.Sprintf("%d", e.port),
-				"--host", "0.0.0.0",
-			}
-			readyURL := fmt.Sprintf("http://127.0.0.1:%d", e.port)
-			return e.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
+	if hasInstalledBuild && hasNativeProject {
+		// Dev client already built → just start Metro in dev-client mode
+		log.Printf("[dev:expo] Dev client already installed — starting Metro only")
+		e.devMode = "dev-client"
+		args := []string{"expo", "start",
+			"--dev-client",
+			"--port", fmt.Sprintf("%d", e.port),
+			"--host", "0.0.0.0",
 		}
+		readyURL := fmt.Sprintf("http://127.0.0.1:%d", e.port)
+		return e.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
+	}
 
-		// First time → build + install dev client
-		log.Printf("[dev:expo] Building dev client for %s...", opts.Platform)
+	if hasNativeProject {
+		// First time: build + install dev client on phone
+		log.Printf("[dev:expo] Building dev client (first time)...")
 		e.devMode = "dev-client"
 
 		device := detectIOSDevice(ctx)
@@ -657,8 +654,8 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		return nil
 	}
 
-	// Default: web mode for Yaver WebView hot reload (works through relay)
-	log.Printf("[dev:expo] Starting Expo web server (WebView mode)...")
+	// No native project (ios/android dirs) → use web mode for WebView preview
+	log.Printf("[dev:expo] No native project found — starting in web mode")
 	e.devMode = "web"
 	args := []string{"expo", "start",
 		"--web",

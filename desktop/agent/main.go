@@ -29,7 +29,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.63.0"
+const version = "1.64.0"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
@@ -4522,6 +4522,31 @@ func relayHandleProxiedRequest(stream quic.Stream, agentAddr string, client *htt
 
 	for k, v := range req.Headers {
 		httpReq.Header.Set(k, v)
+	}
+
+	// Check if WebSocket upgrade (Metro HMR, debugger)
+	isWebSocket := strings.EqualFold(req.Headers["Upgrade"], "websocket")
+	if isWebSocket {
+		// Open raw TCP to the local agent HTTP server and bidirectionally proxy
+		backendConn, err := net.Dial("tcp", agentAddr)
+		if err != nil {
+			relaySendError(stream, req.ID, 502, fmt.Sprintf("agent unavailable: %v", err))
+			return
+		}
+		defer backendConn.Close()
+
+		// Forward the original HTTP upgrade request
+		if err := httpReq.Write(backendConn); err != nil {
+			relaySendError(stream, req.ID, 502, fmt.Sprintf("write upgrade: %v", err))
+			return
+		}
+
+		// Bidirectional copy between QUIC stream and local TCP
+		done := make(chan struct{}, 2)
+		go func() { io.Copy(backendConn, stream); done <- struct{}{} }()
+		go func() { io.Copy(stream, backendConn); done <- struct{}{} }()
+		<-done
+		return
 	}
 
 	// Check if SSE request (must match relay/server.go detection)

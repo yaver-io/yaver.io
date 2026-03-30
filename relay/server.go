@@ -570,6 +570,9 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if this is a WebSocket upgrade (Metro HMR, debugger)
+	isWebSocket := strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+
 	// Send request
 	reqData, _ := json.Marshal(tunnelReq)
 	if _, err := stream.Write(reqData); err != nil {
@@ -578,7 +581,14 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "tunnel write error", http.StatusBadGateway)
 		return
 	}
-	stream.Close() // signal done writing
+
+	// WebSocket: keep stream open for bidirectional proxy
+	if isWebSocket {
+		s.proxyWebSocket(w, r, stream, tunnel.deviceID)
+		return
+	}
+
+	stream.Close() // signal done writing (non-WS only)
 
 	// Check if this is an SSE request (task output, dev server events, blackbox subscribe)
 	isSSE := r.Method == "GET" && (strings.Contains(forwardPath, "/output") ||
@@ -645,6 +655,42 @@ func (s *RelayServer) proxySSE(w http.ResponseWriter, r *http.Request, stream qu
 			return
 		}
 	}
+}
+
+// proxyWebSocket hijacks the HTTP connection and bidirectionally proxies
+// between the client and the QUIC stream to the agent. This enables Metro HMR
+// WebSocket connections to work through the relay.
+func (s *RelayServer) proxyWebSocket(w http.ResponseWriter, r *http.Request, stream quic.Stream, deviceID string) {
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "websocket proxy not supported", http.StatusInternalServerError)
+		stream.Close()
+		return
+	}
+
+	// Read the initial response from the agent (WebSocket upgrade response)
+	// The agent sends raw HTTP response bytes for WS upgrades
+	clientConn, clientBuf, err := hijacker.Hijack()
+	if err != nil {
+		log.Printf("[RELAY] hijack failed for WS to %s: %v", deviceID[:8], err)
+		stream.Close()
+		return
+	}
+	defer clientConn.Close()
+	defer stream.Close()
+
+	// Flush any buffered data from the client to the stream
+	if clientBuf.Reader.Buffered() > 0 {
+		buffered := make([]byte, clientBuf.Reader.Buffered())
+		clientBuf.Read(buffered)
+		stream.Write(buffered)
+	}
+
+	// Bidirectional copy between client TCP and QUIC stream
+	done := make(chan struct{}, 2)
+	go func() { io.Copy(clientConn, stream); done <- struct{}{} }()
+	go func() { io.Copy(stream, clientConn); done <- struct{}{} }()
+	<-done
 }
 
 func (s *RelayServer) logTunnels(ctx context.Context) {

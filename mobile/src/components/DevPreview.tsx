@@ -101,6 +101,8 @@ export function DevPreview() {
     return () => controller.abort();
   }, [showPreview, status?.running]);
 
+  const isNativeMode = status?.devMode === "dev-client";
+
   const handleOpen = useCallback(() => {
     setShowPreview(true);
     setLoading(true);
@@ -151,7 +153,7 @@ export function DevPreview() {
           </View>
         </View>
         <View style={styles.bannerRight}>
-          <Text style={styles.bannerAction}>Open App</Text>
+          <Text style={styles.bannerAction}>{isNativeMode ? "Controls" : "Open App"}</Text>
           <Text style={styles.bannerArrow}>{"\u203A"}</Text>
         </View>
       </Pressable>
@@ -182,40 +184,66 @@ export function DevPreview() {
             </View>
           </View>
 
-          {/* WebView */}
-          <WebView
-            ref={webViewRef}
-            key={webViewKey}
-            source={{ uri: bundleUrl }}
-            style={styles.webview}
-            onLoadStart={() => setLoading(true)}
-            onLoadEnd={() => setLoading(false)}
-            onError={(e) => {
-              setLoading(false);
-              Alert.alert("Load Error", e.nativeEvent.description || "Could not load the app");
-            }}
-            javaScriptEnabled
-            domStorageEnabled
-            allowsInlineMediaPlayback
-            originWhitelist={["*"]}
-            startInLoadingState
-            renderLoading={() => (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#818cf8" />
-                <Text style={styles.loadingText}>
-                  Loading {status.workDir?.split("/").pop() || "app"}...
-                </Text>
-                <Text style={styles.loadingSubtext}>
-                  Through {(quicClient as any)._connectionMode === "relay" ? "relay" : "direct"} connection
-                </Text>
+          {isNativeMode ? (
+            /* Native dev-client mode: show controls instead of WebView */
+            <View style={styles.nativeControls}>
+              <View style={styles.nativeStatus}>
+                <View style={[styles.dot, { backgroundColor: "#22c55e", width: 14, height: 14, borderRadius: 7 }]} />
+                <Text style={styles.nativeTitle}>Native App Running</Text>
               </View>
-            )}
-          />
-
-          {loading && (
-            <View style={styles.loadingBar}>
-              <View style={styles.loadingBarFill} />
+              <Text style={styles.nativeSubtext}>
+                The app is running natively on your phone with full device access (camera, sensors, etc.).
+                Metro is serving hot reload updates.
+              </Text>
+              <Text style={styles.nativeSubtext}>
+                {status.workDir?.split("/").pop() || "app"} — {status.framework}
+              </Text>
+              <View style={styles.nativeButtons}>
+                <Pressable onPress={handleReload} style={[styles.nativeBtn, { backgroundColor: "#1a2e1a" }]}>
+                  <Text style={[styles.nativeBtnText, { color: "#22c55e" }]}>Reload</Text>
+                </Pressable>
+                <Pressable onPress={handleStop} style={[styles.nativeBtn, { backgroundColor: "#2e1a1a" }]}>
+                  <Text style={[styles.nativeBtnText, { color: "#ef4444" }]}>Stop Server</Text>
+                </Pressable>
+              </View>
             </View>
+          ) : (
+            /* Web mode: load app in WebView */
+            <>
+              <WebView
+                ref={webViewRef}
+                key={webViewKey}
+                source={{ uri: bundleUrl }}
+                style={styles.webview}
+                onLoadStart={() => setLoading(true)}
+                onLoadEnd={() => setLoading(false)}
+                onError={(e) => {
+                  setLoading(false);
+                  Alert.alert("Load Error", e.nativeEvent.description || "Could not load the app");
+                }}
+                javaScriptEnabled
+                domStorageEnabled
+                allowsInlineMediaPlayback
+                originWhitelist={["*"]}
+                startInLoadingState
+                renderLoading={() => (
+                  <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color="#818cf8" />
+                    <Text style={styles.loadingText}>
+                      Loading {status.workDir?.split("/").pop() || "app"}...
+                    </Text>
+                    <Text style={styles.loadingSubtext}>
+                      Through {(quicClient as any)._connectionMode === "relay" ? "relay" : "direct"} connection
+                    </Text>
+                  </View>
+                )}
+              />
+              {loading && (
+                <View style={styles.loadingBar}>
+                  <View style={styles.loadingBarFill} />
+                </View>
+              )}
+            </>
           )}
         </View>
       </Modal>
@@ -321,5 +349,43 @@ const styles = StyleSheet.create({
     height: "100%",
     width: "60%",
     backgroundColor: "#22c55e",
+  },
+  nativeControls: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 32,
+    gap: 20,
+    backgroundColor: "#050508",
+  },
+  nativeStatus: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  nativeTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#e4e4e7",
+  },
+  nativeSubtext: {
+    fontSize: 14,
+    color: "#888",
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  nativeButtons: {
+    flexDirection: "row",
+    gap: 16,
+    marginTop: 20,
+  },
+  nativeBtn: {
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  nativeBtnText: {
+    fontSize: 16,
+    fontWeight: "700",
   },
 });
