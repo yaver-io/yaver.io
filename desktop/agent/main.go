@@ -29,7 +29,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.60.0"
+const version = "1.61.0"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
@@ -4524,8 +4524,10 @@ func relayHandleProxiedRequest(stream quic.Stream, agentAddr string, client *htt
 		httpReq.Header.Set(k, v)
 	}
 
-	// Check if SSE request
-	isSSE := strings.HasSuffix(req.Path, "/output") && req.Method == "GET"
+	// Check if SSE request (must match relay/server.go detection)
+	isSSE := req.Method == "GET" && (strings.Contains(req.Path, "/output") ||
+		strings.HasSuffix(req.Path, "/dev/events") ||
+		strings.HasSuffix(req.Path, "/subscribe"))
 
 	if isSSE {
 		sseClient := &http.Client{Timeout: 10 * time.Minute}
