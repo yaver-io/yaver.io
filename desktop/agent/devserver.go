@@ -662,7 +662,8 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 	log.Printf("[dev:expo] Building native dev client (first time)...")
 	e.devMode = "dev-client"
 	device := detectIOSDevice(ctx)
-	buildArgs := []string{"expo", "run:ios", "--port", fmt.Sprintf("%d", e.port), "--no-bundler"}
+	// --no-bundler and --port are mutually exclusive in Expo, so just use --no-bundler
+	buildArgs := []string{"expo", "run:ios", "--no-bundler"}
 	if device != "" {
 		buildArgs = append(buildArgs, "--device", device)
 		log.Printf("[dev:expo] Target: %s", device)
@@ -670,26 +671,22 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 
 	e.mu.Lock()
 	e.startedAt = time.Now()
-	e.running = true
+	// NOT marking as running yet — build hasn't started Metro
 	e.mu.Unlock()
 
-	log.Printf("[dev:expo] Building...")
+	log.Printf("[dev:expo] Building (this takes 3-5 min first time)...")
 
-	// Run build synchronously in background, then start Metro with --host lan
+	// Run build in background, then start Metro with --host lan
 	go func() {
 		logW := &devLogWriter{prefix: "[dev:expo:build]"}
 		buildCmd := exec.CommandContext(ctx, "npx", buildArgs...)
 		buildCmd.Dir = opts.WorkDir
 		buildCmd.Stdout = logW
 		buildCmd.Stderr = logW
-		buildCmd.Env = append(os.Environ(), fmt.Sprintf("RCT_METRO_PORT=%d", e.port))
 
 		if err := buildCmd.Run(); err != nil {
 			log.Printf("[dev:expo] Build failed: %v", err)
 			os.Remove(buildMarker)
-			e.mu.Lock()
-			e.running = false
-			e.mu.Unlock()
 			return
 		}
 
@@ -698,7 +695,7 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		os.WriteFile(buildMarker, []byte(time.Now().UTC().Format(time.RFC3339)), 0644)
 		log.Printf("[dev:expo] Build succeeded — starting Metro with --host lan")
 
-		// Now start Metro with --host lan so the phone can reach it
+		// Start Metro with --host lan so the phone can reach it via Bonjour
 		metroArgs := []string{"expo", "start",
 			"--dev-client",
 			"--port", fmt.Sprintf("%d", e.port),
