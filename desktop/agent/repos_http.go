@@ -303,7 +303,8 @@ func detectStack(dir string) RepoStack {
 	}
 
 	// Derive available actions from detected stack
-	if hasMobile {
+	// Hot reload only for React Native/Expo (runs inside Yaver app with native access)
+	if containsAny(s.Frameworks, "expo", "react-native") {
 		s.Actions = append(s.Actions, "hot-reload")
 	}
 	if containsAny(s.Services, "convex") {

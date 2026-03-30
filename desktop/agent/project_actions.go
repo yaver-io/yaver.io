@@ -15,6 +15,8 @@ type ProjectAction struct {
 	Platform  string `json:"platform,omitempty"`   // "vercel", "convex", "supabase", "docker", "testflight", "playstore"
 	Command   string `json:"command,omitempty"`    // direct command if known
 	Icon      string `json:"icon,omitempty"`       // emoji for mobile UI
+	Supported bool   `json:"supported"`            // false = shown but disabled ("not supported yet")
+	Reason    string `json:"reason,omitempty"`     // why it's not supported
 }
 
 // DetectProjectActions scans a project directory and returns all available actions.
@@ -72,15 +74,15 @@ func detectActionsInDir(dir, rel string) []ProjectAction {
 			actions = append(actions, ProjectAction{
 				Label: "Hot Reload", Target: rel, Type: "dev-server",
 				Framework: "expo", Icon: "\U0001F4F1",
-				Command: "/dev/start",
+				Command: "/dev/start", Supported: true,
 			})
 			actions = append(actions, ProjectAction{
 				Label: "Build iOS", Target: rel, Type: "build",
-				Framework: "expo", Platform: "testflight", Icon: "\U0001F34E",
+				Framework: "expo", Platform: "testflight", Icon: "\U0001F34E", Supported: true,
 			})
 			actions = append(actions, ProjectAction{
 				Label: "Build Android", Target: rel, Type: "build",
-				Framework: "expo", Platform: "playstore", Icon: "\U0001F916",
+				Framework: "expo", Platform: "playstore", Icon: "\U0001F916", Supported: true,
 			})
 		}
 	}
@@ -90,32 +92,58 @@ func detectActionsInDir(dir, rel string) []ProjectAction {
 		actions = append(actions, ProjectAction{
 			Label: "Hot Reload", Target: rel, Type: "dev-server",
 			Framework: "react-native", Icon: "\U0001F4F1",
-			Command: "/dev/start",
+			Command: "/dev/start", Supported: true,
 		})
 		actions = append(actions, ProjectAction{
 			Label: "Build iOS", Target: rel, Type: "build",
-			Framework: "react-native", Platform: "testflight", Icon: "\U0001F34E",
+			Framework: "react-native", Platform: "testflight", Icon: "\U0001F34E", Supported: true,
 		})
 		actions = append(actions, ProjectAction{
 			Label: "Build Android", Target: rel, Type: "build",
-			Framework: "react-native", Platform: "playstore", Icon: "\U0001F916",
+			Framework: "react-native", Platform: "playstore", Icon: "\U0001F916", Supported: true,
 		})
 	}
 
-	// Flutter
+	// Flutter — hot reload shown but disabled, builds supported
 	if hasFile(dir, "pubspec.yaml") {
 		actions = append(actions, ProjectAction{
 			Label: "Hot Reload", Target: rel, Type: "dev-server",
 			Framework: "flutter", Icon: "\U0001F4F1",
-			Command: "/dev/start",
+			Supported: false, Reason: "Flutter hot reload coming soon",
 		})
 		actions = append(actions, ProjectAction{
 			Label: "Build iOS", Target: rel, Type: "build",
-			Framework: "flutter", Platform: "testflight", Icon: "\U0001F34E",
+			Framework: "flutter", Platform: "testflight", Icon: "\U0001F34E", Supported: true,
 		})
 		actions = append(actions, ProjectAction{
 			Label: "Build Android", Target: rel, Type: "build",
-			Framework: "flutter", Platform: "playstore", Icon: "\U0001F916",
+			Framework: "flutter", Platform: "playstore", Icon: "\U0001F916", Supported: true,
+		})
+	}
+
+	// Swift (native iOS) — shown but hot reload not supported
+	if hasFile(dir, "Package.swift") || (hasFile(dir, "*.xcodeproj") || hasDir(dir, ".xcodeproj")) {
+		actions = append(actions, ProjectAction{
+			Label: "Hot Reload", Target: rel, Type: "dev-server",
+			Framework: "swift", Icon: "\U0001F34E",
+			Supported: false, Reason: "Native Swift hot reload coming soon",
+		})
+		actions = append(actions, ProjectAction{
+			Label: "Build iOS", Target: rel, Type: "build",
+			Framework: "swift", Platform: "testflight", Icon: "\U0001F34E", Supported: true,
+		})
+	}
+
+	// Kotlin (native Android) — shown but hot reload not supported
+	if hasFile(dir, "build.gradle.kts") && !pkgHas(dir, "react-native") && !hasFile(dir, "pubspec.yaml") {
+		actions = append(actions, ProjectAction{
+			Label: "Hot Reload", Target: rel, Type: "dev-server",
+			Framework: "kotlin", Icon: "\U0001F916",
+			Supported: false, Reason: "Native Kotlin hot reload coming soon",
+		})
+		actions = append(actions, ProjectAction{
+			Label: "Build Android", Target: rel, Type: "build",
+			Framework: "kotlin", Platform: "playstore", Icon: "\U0001F916", Supported: true,
 		})
 	}
 
@@ -124,11 +152,11 @@ func detectActionsInDir(dir, rel string) []ProjectAction {
 		actions = append(actions, ProjectAction{
 			Label: "Dev Server", Target: rel, Type: "dev-server",
 			Framework: "nextjs", Icon: "\u25B2",
-			Command: "/dev/start",
+			Command: "/dev/start", Supported: true,
 		})
 		actions = append(actions, ProjectAction{
 			Label: "Deploy", Target: rel, Type: "deploy",
-			Framework: "nextjs", Platform: "vercel", Icon: "\U0001F680",
+			Framework: "nextjs", Platform: "vercel", Icon: "\U0001F680", Supported: true,
 		})
 	}
 
@@ -137,11 +165,11 @@ func detectActionsInDir(dir, rel string) []ProjectAction {
 		actions = append(actions, ProjectAction{
 			Label: "Dev Server", Target: rel, Type: "dev-server",
 			Framework: "vite", Icon: "\u26A1",
-			Command: "/dev/start",
+			Command: "/dev/start", Supported: true,
 		})
 		actions = append(actions, ProjectAction{
 			Label: "Deploy", Target: rel, Type: "deploy",
-			Framework: "vite", Platform: "vercel", Icon: "\U0001F680",
+			Framework: "vite", Platform: "vercel", Icon: "\U0001F680", Supported: true,
 		})
 	}
 
@@ -158,7 +186,7 @@ func detectActionsInDir(dir, rel string) []ProjectAction {
 		if !hasDeploy {
 			actions = append(actions, ProjectAction{
 				Label: "Deploy Frontend", Target: rel, Type: "deploy",
-				Platform: "vercel", Icon: "\U0001F680",
+				Platform: "vercel", Icon: "\U0001F680", Supported: true,
 				Command: "vercel --prod",
 			})
 		}
@@ -168,7 +196,7 @@ func detectActionsInDir(dir, rel string) []ProjectAction {
 	if hasFile(dir, "convex") {
 		actions = append(actions, ProjectAction{
 			Label: "Deploy Backend", Target: rel, Type: "deploy",
-			Platform: "convex", Icon: "\U0001F9E0",
+			Platform: "convex", Icon: "\U0001F9E0", Supported: true,
 			Command: "npx convex deploy --yes",
 		})
 	}
@@ -177,7 +205,7 @@ func detectActionsInDir(dir, rel string) []ProjectAction {
 	if hasFile(dir, "supabase") || hasFile(dir, "supabase.json") {
 		actions = append(actions, ProjectAction{
 			Label: "Deploy DB", Target: rel, Type: "deploy",
-			Platform: "supabase", Icon: "\U0001F5C4",
+			Platform: "supabase", Icon: "\U0001F5C4", Supported: true,
 			Command: "supabase db push",
 		})
 	}
@@ -186,7 +214,7 @@ func detectActionsInDir(dir, rel string) []ProjectAction {
 	if hasFile(dir, "firebase.json") {
 		actions = append(actions, ProjectAction{
 			Label: "Deploy", Target: rel, Type: "deploy",
-			Platform: "firebase", Icon: "\U0001F525",
+			Platform: "firebase", Icon: "\U0001F525", Supported: true,
 			Command: "firebase deploy",
 		})
 	}
@@ -195,7 +223,7 @@ func detectActionsInDir(dir, rel string) []ProjectAction {
 	if hasFile(dir, "Dockerfile") || hasFile(dir, "docker-compose.yml") || hasFile(dir, "docker-compose.yaml") {
 		actions = append(actions, ProjectAction{
 			Label: "Run Container", Target: rel, Type: "deploy",
-			Platform: "docker", Icon: "\U0001F433",
+			Platform: "docker", Icon: "\U0001F433", Supported: true,
 		})
 	}
 
@@ -203,12 +231,12 @@ func detectActionsInDir(dir, rel string) []ProjectAction {
 	if hasFile(dir, "go.mod") && !pkgHas(dir, "expo") {
 		actions = append(actions, ProjectAction{
 			Label: "Run", Target: rel, Type: "run",
-			Framework: "go", Icon: "\U0001F4BB",
+			Framework: "go", Icon: "\U0001F4BB", Supported: true,
 			Command: "go run .",
 		})
 		actions = append(actions, ProjectAction{
 			Label: "Build", Target: rel, Type: "build",
-			Framework: "go", Icon: "\U0001F528",
+			Framework: "go", Icon: "\U0001F528", Supported: true,
 			Command: "go build ./...",
 		})
 	}
@@ -217,12 +245,12 @@ func detectActionsInDir(dir, rel string) []ProjectAction {
 	if hasFile(dir, "Cargo.toml") {
 		actions = append(actions, ProjectAction{
 			Label: "Run", Target: rel, Type: "run",
-			Framework: "rust", Icon: "\U0001F4BB",
+			Framework: "rust", Icon: "\U0001F4BB", Supported: true,
 			Command: "cargo run",
 		})
 		actions = append(actions, ProjectAction{
 			Label: "Build", Target: rel, Type: "build",
-			Framework: "rust", Icon: "\U0001F528",
+			Framework: "rust", Icon: "\U0001F528", Supported: true,
 			Command: "cargo build --release",
 		})
 	}
@@ -233,7 +261,7 @@ func detectActionsInDir(dir, rel string) []ProjectAction {
 		if entryPoint != "" {
 			actions = append(actions, ProjectAction{
 				Label: "Run", Target: rel, Type: "run",
-				Framework: "python", Icon: "\U0001F4BB",
+				Framework: "python", Icon: "\U0001F4BB", Supported: true,
 				Command: "python3 " + entryPoint,
 			})
 		}
@@ -276,6 +304,20 @@ func findPythonEntry(dir string) string {
 func hasFile(dir, name string) bool {
 	_, err := os.Stat(filepath.Join(dir, name))
 	return err == nil
+}
+
+// hasDir checks if dir contains a subdirectory matching the suffix (e.g. ".xcodeproj").
+func hasDir(dir, suffix string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() && strings.HasSuffix(e.Name(), suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 func pkgHas(dir, dep string) bool {
