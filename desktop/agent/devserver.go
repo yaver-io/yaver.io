@@ -677,9 +677,25 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 	e.startedAt = time.Now()
 	e.running = true
 	e.mu.Unlock()
-	os.MkdirAll(yaverBuildsDir(), 0755)
-	os.WriteFile(buildMarker, []byte(time.Now().UTC().Format(time.RFC3339)), 0644)
+
+	// DON'T create build marker yet — wait for build to succeed in background
 	log.Printf("[dev:expo] Build started (PID %d) — native app will install on phone", cmd.Process.Pid)
+
+	// Monitor build completion in background
+	go func() {
+		err := cmd.Wait()
+		if err != nil {
+			log.Printf("[dev:expo] Build failed: %v", err)
+			// Clean up stale marker if it somehow exists
+			os.Remove(buildMarker)
+		} else {
+			// Build succeeded — create marker so next time we skip build
+			os.MkdirAll(yaverBuildsDir(), 0755)
+			os.WriteFile(buildMarker, []byte(time.Now().UTC().Format(time.RFC3339)), 0644)
+			log.Printf("[dev:expo] Build succeeded — native app installed on phone")
+		}
+	}()
+
 	return nil
 }
 
