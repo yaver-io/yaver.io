@@ -1485,8 +1485,9 @@ func runServe(args []string) {
 		}
 		log.Printf("Autopilot manager ready (enabled=%v)", httpServer.autopilot.IsEnabled())
 	}
-	// Pre-warm vibing cache for recently modified projects
-	go PrewarmVibingCache(taskMgr)
+	// Vibing pre-warm disabled — was running 5 LLM calls × 3 projects on every startup.
+	// Deep Shuffle is now on-demand only (user taps the dice button).
+	// Quick actions (no LLM) are generated on first /vibing request.
 	if *multiUser {
 		muMgr, err := NewMultiUserManager(MultiUserConfig{
 			TeamID:   *teamID,
