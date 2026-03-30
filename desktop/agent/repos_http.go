@@ -27,12 +27,22 @@ type GitCredential struct {
 
 // RepoInfo describes a git repository discovered on the dev machine.
 type RepoInfo struct {
-	Name       string `json:"name"`
-	Path       string `json:"path"`
-	Branch     string `json:"branch"`
-	Remote     string `json:"remote"`
-	LastCommit string `json:"lastCommit"`
-	Dirty      bool   `json:"dirty"`
+	Name       string    `json:"name"`
+	Path       string    `json:"path"`
+	Branch     string    `json:"branch"`
+	Remote     string    `json:"remote"`
+	LastCommit string    `json:"lastCommit"`
+	Dirty      bool      `json:"dirty"`
+	Stack      RepoStack `json:"stack,omitempty"`
+}
+
+// RepoStack describes the detected software stack of a repository.
+// Lightweight detection: only checks for marker files, never reads file contents.
+type RepoStack struct {
+	Type       string   `json:"type"`                 // "mobile", "web", "backend", "monorepo", "library", "cli"
+	Frameworks []string `json:"frameworks,omitempty"`  // e.g. ["expo", "react-native", "next.js"]
+	Services   []string `json:"services,omitempty"`    // e.g. ["convex", "supabase", "firebase"]
+	Actions    []string `json:"actions,omitempty"`     // e.g. ["hot-reload", "convex-deploy", "vercel-deploy"]
 }
 
 // ---------------------------------------------------------------------------
@@ -195,7 +205,141 @@ func getRepoInfo(repoPath, name string) RepoInfo {
 	if out, err := runGit(repoPath, "status", "--porcelain"); err == nil {
 		info.Dirty = out != ""
 	}
+	info.Stack = detectStack(repoPath)
 	return info
+}
+
+// detectStack does lightweight project stack detection by checking marker files.
+// Never reads file contents — only checks for file/directory existence.
+func detectStack(dir string) RepoStack {
+	s := RepoStack{}
+	has := func(rel string) bool {
+		_, err := os.Stat(filepath.Join(dir, rel))
+		return err == nil
+	}
+
+	// Frameworks
+	if has("app.json") && has("node_modules/expo") {
+		s.Frameworks = append(s.Frameworks, "expo")
+	} else if has("app.json") && has("package.json") {
+		// Could be Expo without node_modules yet
+		if has("babel.config.js") || has("metro.config.js") {
+			s.Frameworks = append(s.Frameworks, "expo")
+		}
+	}
+	if has("android/build.gradle") || has("ios/Podfile") {
+		s.Frameworks = append(s.Frameworks, "react-native")
+	}
+	if has("pubspec.yaml") {
+		s.Frameworks = append(s.Frameworks, "flutter")
+	}
+	if has("next.config.js") || has("next.config.ts") || has("next.config.mjs") {
+		s.Frameworks = append(s.Frameworks, "next.js")
+	}
+	if has("vite.config.ts") || has("vite.config.js") || has("vite.config.mjs") {
+		s.Frameworks = append(s.Frameworks, "vite")
+	}
+	if has("nuxt.config.ts") || has("nuxt.config.js") {
+		s.Frameworks = append(s.Frameworks, "nuxt")
+	}
+	if has("svelte.config.js") || has("svelte.config.ts") {
+		s.Frameworks = append(s.Frameworks, "svelte")
+	}
+	if has("go.mod") {
+		s.Frameworks = append(s.Frameworks, "go")
+	}
+	if has("Cargo.toml") {
+		s.Frameworks = append(s.Frameworks, "rust")
+	}
+	if has("requirements.txt") || has("pyproject.toml") || has("setup.py") {
+		s.Frameworks = append(s.Frameworks, "python")
+	}
+
+	// Services / backends
+	if has("convex/") || has("convex.json") {
+		s.Services = append(s.Services, "convex")
+	}
+	if has("supabase/") || has("supabase/config.toml") {
+		s.Services = append(s.Services, "supabase")
+	}
+	if has("firebase.json") || has(".firebaserc") {
+		s.Services = append(s.Services, "firebase")
+	}
+	if has("vercel.json") || has(".vercel/") {
+		s.Services = append(s.Services, "vercel")
+	}
+	if has("netlify.toml") {
+		s.Services = append(s.Services, "netlify")
+	}
+	if has("docker-compose.yml") || has("docker-compose.yaml") || has("Dockerfile") {
+		s.Services = append(s.Services, "docker")
+	}
+	if has("prisma/") || has("prisma/schema.prisma") {
+		s.Services = append(s.Services, "prisma")
+	}
+	if has("drizzle.config.ts") || has("drizzle/") {
+		s.Services = append(s.Services, "drizzle")
+	}
+
+	// Determine type
+	isMonorepo := has("pnpm-workspace.yaml") || has("lerna.json") || has("turbo.json") ||
+		(has("packages/") && has("package.json"))
+	hasMobile := containsAny(s.Frameworks, "expo", "react-native", "flutter")
+	hasWeb := containsAny(s.Frameworks, "next.js", "vite", "nuxt", "svelte")
+
+	switch {
+	case isMonorepo:
+		s.Type = "monorepo"
+	case hasMobile && hasWeb:
+		s.Type = "monorepo"
+	case hasMobile:
+		s.Type = "mobile"
+	case hasWeb:
+		s.Type = "web"
+	case containsAny(s.Frameworks, "go", "rust", "python"):
+		s.Type = "backend"
+	default:
+		s.Type = "unknown"
+	}
+
+	// Derive available actions from detected stack
+	if hasMobile {
+		s.Actions = append(s.Actions, "hot-reload")
+	}
+	if containsAny(s.Services, "convex") {
+		s.Actions = append(s.Actions, "convex-deploy")
+	}
+	if containsAny(s.Services, "supabase") {
+		s.Actions = append(s.Actions, "supabase-deploy")
+	}
+	if containsAny(s.Services, "firebase") {
+		s.Actions = append(s.Actions, "firebase-deploy")
+	}
+	if containsAny(s.Services, "vercel") {
+		s.Actions = append(s.Actions, "vercel-deploy")
+	}
+	if containsAny(s.Services, "netlify") {
+		s.Actions = append(s.Actions, "netlify-deploy")
+	}
+	if containsAny(s.Services, "docker") {
+		s.Actions = append(s.Actions, "docker-build")
+	}
+	if hasWeb {
+		s.Actions = append(s.Actions, "dev-server")
+	}
+
+	return s
+}
+
+func containsAny(slice []string, items ...string) bool {
+	for _, s := range slice {
+		for _, item := range items {
+			if s == item {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------

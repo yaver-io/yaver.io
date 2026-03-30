@@ -178,19 +178,11 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       setIsLoadingDevices(true);
     }
     try {
-      // Fetch devices and settings in parallel
-      const [devicesRes, settings] = await Promise.all([
-        fetch(`${CONVEX_SITE_URL}/devices/list`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
-        getUserSettings(token),
-      ]);
+      // Only fetch device list — settings are loaded once on startup, not every poll
+      const devicesRes = await fetch(`${CONVEX_SITE_URL}/devices/list`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       appLog("info", `/devices/list status: ${devicesRes.status}`);
-
-      // Apply forceRelay setting
-      if (settings.forceRelay !== undefined) {
-        quicClient.setForceRelay(settings.forceRelay);
-      }
 
       if (devicesRes.ok) {
         const data = await devicesRes.json();
@@ -423,60 +415,40 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     fetchRelayServers();
   }, [connectionStatus, fetchRelayServers]);
 
-  // Fetch Cloudflare Tunnels from local storage or Convex user settings
-  const tunnelsFetched = useRef(false);
-  useEffect(() => {
-    if (tunnelsFetched.current) return;
-    tunnelsFetched.current = true;
-    (async () => {
-      try {
-        // 1. Check local storage first
-        const customRaw = await AsyncStorage.getItem(TUNNELS_KEY);
-        if (customRaw) {
-          const customTunnels: TunnelServer[] = JSON.parse(customRaw);
-          if (customTunnels.length > 0) {
-            quicClient.setTunnelServers(customTunnels);
-            console.log("[DeviceContext] Using", customTunnels.length, "custom tunnel(s)");
-            return;
-          }
-        }
-
-        // 2. Check Convex user settings for synced tunnel URL
-        if (token) {
-          try {
-            const settings = await getUserSettings(token);
-            if (settings.tunnelUrl) {
-              const accountTunnel: TunnelServer = {
-                id: "account",
-                url: settings.tunnelUrl,
-                priority: 1,
-              };
-              quicClient.setTunnelServers([accountTunnel]);
-              await AsyncStorage.setItem(TUNNELS_KEY, JSON.stringify([accountTunnel]));
-              console.log("[DeviceContext] Loaded tunnel from Convex user settings:", settings.tunnelUrl);
-            }
-          } catch {
-            // Best-effort
-          }
-        }
-      } catch {
-        // Best-effort
-      }
-    })();
-  }, [token]);
-
-  // Load user settings (forceRelay) on startup
+  // Load all user settings once on startup (single API call instead of 3+ separate ones)
   const settingsLoaded = useRef(false);
   useEffect(() => {
     if (!token || settingsLoaded.current) return;
     settingsLoaded.current = true;
-    getUserSettings(token).then((s) => {
-      if (s.forceRelay !== undefined) {
-        quicClient.setForceRelay(s.forceRelay);
-        appLog("info", `[settings] forceRelay=${s.forceRelay}`);
+    (async () => {
+      try {
+        const settings = await getUserSettings(token);
+
+        // Apply forceRelay
+        if (settings.forceRelay !== undefined) {
+          quicClient.setForceRelay(settings.forceRelay);
+          appLog("info", `[settings] forceRelay=${settings.forceRelay}`);
+        }
+
+        // Apply tunnel from settings (if no local override)
+        if (settings.tunnelUrl) {
+          const customRaw = await AsyncStorage.getItem(TUNNELS_KEY);
+          if (!customRaw || JSON.parse(customRaw).length === 0) {
+            const accountTunnel: TunnelServer = {
+              id: "account",
+              url: settings.tunnelUrl,
+              priority: 1,
+            };
+            quicClient.setTunnelServers([accountTunnel]);
+            await AsyncStorage.setItem(TUNNELS_KEY, JSON.stringify([accountTunnel]));
+            console.log("[DeviceContext] Loaded tunnel from Convex user settings:", settings.tunnelUrl);
+          }
+        }
+      } catch {
+        // Best-effort — settings will use defaults
       }
-    });
-  }, [token]);
+    })();
+  }, [token, TUNNELS_KEY]);
 
   // One-time relay onboarding alert after first login
   const onboardingChecked = useRef(false);
@@ -535,12 +507,12 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     return () => { unsubDiscover(); unsubLost(); };
   }, [token]);
 
-  // Fetch devices when token becomes available + auto-poll every 3s
+  // Fetch devices when token becomes available + poll every 30s (lightweight)
   useEffect(() => {
     if (token) {
       refreshDevices();
-      // Poll every 3s so device status changes are picked up from any screen
-      const interval = setInterval(refreshDevices, 3000);
+      // Poll every 30s — beacon handles instant LAN discovery, this is just for online status
+      const interval = setInterval(refreshDevices, 30000);
       return () => clearInterval(interval);
     } else {
       setDevices([]);

@@ -159,11 +159,12 @@ func findContinuation(msg string, items []*TodoItem) string {
 
 // ProjectInfo contains metadata about the current project/workspace.
 type ProjectInfo struct {
-	Name      string `json:"name"`                // directory name
-	Path      string `json:"path"`                // full path
-	GitBranch string `json:"gitBranch,omitempty"`  // current git branch
-	GitRemote string `json:"gitRemote,omitempty"`  // origin URL (sanitized)
-	Framework string `json:"framework,omitempty"`  // detected framework
+	Name      string    `json:"name"`                // directory name
+	Path      string    `json:"path"`                // full path
+	GitBranch string    `json:"gitBranch,omitempty"`  // current git branch
+	GitRemote string    `json:"gitRemote,omitempty"`  // origin URL (sanitized)
+	Framework string    `json:"framework,omitempty"`  // detected framework
+	Stack     RepoStack `json:"stack,omitempty"`      // full stack detection
 }
 
 // DetectProjectInfo extracts project metadata from a working directory.
@@ -194,6 +195,9 @@ func DetectProjectInfo(workDir string) ProjectInfo {
 
 	// Framework detection
 	info.Framework = detectFramework(workDir)
+
+	// Full stack detection (lightweight — only checks marker files)
+	info.Stack = detectStack(workDir)
 
 	return info
 }
