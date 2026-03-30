@@ -643,21 +643,16 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 
 	if hasInstalledBuild {
 		// Dev client already on phone → just start Metro
-		log.Printf("[dev:expo] Dev client installed — starting Metro")
+		// Dev client discovers Metro via Bonjour on same WiFi — no proxy URL needed
+		log.Printf("[dev:expo] Dev client installed — starting Metro (port %d)", e.port)
 		e.devMode = "dev-client"
 		args := []string{"expo", "start",
 			"--dev-client",
 			"--port", fmt.Sprintf("%d", e.port),
 			"--host", "lan",
 		}
-		// Set proxy URL so dev client connects through relay (works from 4G)
-		var envSlice []string
-		if agentURL, ok := opts.Env["YAVER_AGENT_URL"]; ok && agentURL != "" {
-			envSlice = append(envSlice, "EXPO_PACKAGER_PROXY_URL="+agentURL+"/dev")
-			log.Printf("[dev:expo] Metro proxy: %s/dev", agentURL)
-		}
 		readyURL := fmt.Sprintf("http://127.0.0.1:%d", e.port)
-		return e.startProcess(ctx, "npx", args, opts.WorkDir, envSlice, readyURL)
+		return e.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
 	}
 
 	// First time: build + install native dev client on phone
