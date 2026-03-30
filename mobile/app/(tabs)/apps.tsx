@@ -48,7 +48,7 @@ export default function AppsScreen() {
   const [actionSheet, setActionSheet] = useState<{
     project: string;
     path: string;
-    actions: { label: string; target: string; type: string; framework?: string; platform?: string; command?: string; icon?: string }[];
+    actions: { label: string; target: string; type: string; framework?: string; platform?: string; command?: string; icon?: string; supported?: boolean; reason?: string }[];
   } | null>(null);
   const [loadingActions, setLoadingActions] = useState(false);
 
@@ -87,7 +87,7 @@ export default function AppsScreen() {
     };
 
     poll();
-    const interval = setInterval(poll, 3000);
+    const interval = setInterval(poll, 15000); // 15s — beacon handles instant LAN discovery
     return () => { mounted = false; clearInterval(interval); };
   }, [isConnected]);
 
@@ -156,7 +156,13 @@ export default function AppsScreen() {
   }, [devStatus, router]);
 
   // Execute a specific action from the action sheet
-  const handleExecuteAction = useCallback(async (action: { label: string; target: string; type: string; framework?: string; platform?: string; command?: string }) => {
+  const handleExecuteAction = useCallback(async (action: { label: string; target: string; type: string; framework?: string; platform?: string; command?: string; supported?: boolean; reason?: string }) => {
+    // Block unsupported actions
+    if (action.supported === false) {
+      Alert.alert("Not Supported Yet", action.reason || `${action.label} for ${action.framework} is coming soon.`);
+      return;
+    }
+
     const project = actionSheet?.project ?? "";
     const path = actionSheet?.path ?? "";
     setActionSheet(null);
@@ -448,21 +454,26 @@ export default function AppsScreen() {
               What do you want to do?
             </Text>
             <ScrollView style={s.actionSheetScroll}>
-              {actionSheet?.actions.map((action, i) => (
-                <Pressable
-                  key={`${action.label}-${i}`}
-                  style={[s.actionSheetItem, { borderColor: c.border }]}
-                  onPress={() => handleExecuteAction(action)}
-                >
-                  <Text style={s.actionSheetIcon}>{action.icon || "\u25B6"}</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[s.actionSheetLabel, { color: c.textPrimary }]}>{action.label}</Text>
-                    <Text style={[s.actionSheetMeta, { color: c.textMuted }]}>
-                      {action.target}{action.framework ? ` · ${action.framework}` : ""}{action.platform ? ` → ${action.platform}` : ""}
-                    </Text>
-                  </View>
-                </Pressable>
-              ))}
+              {actionSheet?.actions.map((action, i) => {
+                const disabled = action.supported === false;
+                return (
+                  <Pressable
+                    key={`${action.label}-${i}`}
+                    style={[s.actionSheetItem, { borderColor: c.border }, disabled && { opacity: 0.4 }]}
+                    onPress={() => handleExecuteAction(action)}
+                  >
+                    <Text style={s.actionSheetIcon}>{action.icon || "\u25B6"}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[s.actionSheetLabel, { color: disabled ? c.textMuted : c.textPrimary }]}>
+                        {action.label}{disabled ? " (coming soon)" : ""}
+                      </Text>
+                      <Text style={[s.actionSheetMeta, { color: c.textMuted }]}>
+                        {disabled && action.reason ? action.reason : `${action.target}${action.framework ? ` · ${action.framework}` : ""}${action.platform ? ` → ${action.platform}` : ""}`}
+                      </Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
             </ScrollView>
           </Pressable>
         </Pressable>

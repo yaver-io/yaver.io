@@ -193,18 +193,11 @@ func getRepoInfo(repoPath, name string) RepoInfo {
 		Name: name,
 		Path: repoPath,
 	}
+	// Lightweight: only get branch (fast, single git call). Skip log/status/remote for speed.
 	if branch, err := runGit(repoPath, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
 		info.Branch = branch
 	}
-	if remote, err := runGit(repoPath, "config", "--get", "remote.origin.url"); err == nil {
-		info.Remote = remote
-	}
-	if out, err := runGit(repoPath, "log", "-1", "--format=%h - %s"); err == nil {
-		info.LastCommit = out
-	}
-	if out, err := runGit(repoPath, "status", "--porcelain"); err == nil {
-		info.Dirty = out != ""
-	}
+	// Stack detection is cheap — just os.Stat calls, no file reads except package.json
 	info.Stack = detectStack(repoPath)
 	return info
 }
