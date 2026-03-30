@@ -656,44 +656,57 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 	}
 
 	// First time: build + install native dev client on phone
+	// Two steps: 1) expo run:ios (build+install), 2) expo start --dev-client --host lan
+	// expo run:ios starts its own Metro on localhost which the phone can't reach.
+	// After build we kill it and restart with --host lan so the phone discovers it.
 	log.Printf("[dev:expo] Building native dev client (first time)...")
 	e.devMode = "dev-client"
 	device := detectIOSDevice(ctx)
-	args := []string{"expo", "run:ios", "--port", fmt.Sprintf("%d", e.port)}
+	buildArgs := []string{"expo", "run:ios", "--port", fmt.Sprintf("%d", e.port), "--no-bundler"}
 	if device != "" {
-		args = append(args, "--device", device)
+		buildArgs = append(buildArgs, "--device", device)
 		log.Printf("[dev:expo] Target: %s", device)
 	}
-	logW := &devLogWriter{prefix: "[dev:expo:build]"}
-	cmd := exec.CommandContext(ctx, "npx", args...)
-	cmd.Dir = opts.WorkDir
-	cmd.Stdout = logW
-	cmd.Stderr = logW
-	cmd.Env = append(os.Environ(), fmt.Sprintf("RCT_METRO_PORT=%d", e.port))
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("expo run:ios failed: %w", err)
-	}
+
 	e.mu.Lock()
-	e.cmd = cmd
 	e.startedAt = time.Now()
 	e.running = true
 	e.mu.Unlock()
 
-	// DON'T create build marker yet — wait for build to succeed in background
-	log.Printf("[dev:expo] Build started (PID %d) — native app will install on phone", cmd.Process.Pid)
+	log.Printf("[dev:expo] Building...")
 
-	// Monitor build completion in background
+	// Run build synchronously in background, then start Metro with --host lan
 	go func() {
-		err := cmd.Wait()
-		if err != nil {
+		logW := &devLogWriter{prefix: "[dev:expo:build]"}
+		buildCmd := exec.CommandContext(ctx, "npx", buildArgs...)
+		buildCmd.Dir = opts.WorkDir
+		buildCmd.Stdout = logW
+		buildCmd.Stderr = logW
+		buildCmd.Env = append(os.Environ(), fmt.Sprintf("RCT_METRO_PORT=%d", e.port))
+
+		if err := buildCmd.Run(); err != nil {
 			log.Printf("[dev:expo] Build failed: %v", err)
-			// Clean up stale marker if it somehow exists
 			os.Remove(buildMarker)
-		} else {
-			// Build succeeded — create marker so next time we skip build
-			os.MkdirAll(yaverBuildsDir(), 0755)
-			os.WriteFile(buildMarker, []byte(time.Now().UTC().Format(time.RFC3339)), 0644)
-			log.Printf("[dev:expo] Build succeeded — native app installed on phone")
+			e.mu.Lock()
+			e.running = false
+			e.mu.Unlock()
+			return
+		}
+
+		// Build succeeded — create marker
+		os.MkdirAll(yaverBuildsDir(), 0755)
+		os.WriteFile(buildMarker, []byte(time.Now().UTC().Format(time.RFC3339)), 0644)
+		log.Printf("[dev:expo] Build succeeded — starting Metro with --host lan")
+
+		// Now start Metro with --host lan so the phone can reach it
+		metroArgs := []string{"expo", "start",
+			"--dev-client",
+			"--port", fmt.Sprintf("%d", e.port),
+			"--host", "lan",
+		}
+		readyURL := fmt.Sprintf("http://127.0.0.1:%d", e.port)
+		if err := e.startProcess(ctx, "npx", metroArgs, opts.WorkDir, nil, readyURL); err != nil {
+			log.Printf("[dev:expo] Metro start failed: %v", err)
 		}
 	}()
 
