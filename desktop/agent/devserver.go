@@ -608,82 +608,14 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		gen.Run() // best-effort
 	}
 
-	// Check if a dev client app is already installed on the phone.
-	projectHash := strings.ReplaceAll(filepath.Base(opts.WorkDir), " ", "_")
-	buildMarker := filepath.Join(yaverBuildsDir(), projectHash+".built")
-	hasInstalledBuild := fileExists(buildMarker)
-
-	hasNativeProject := fileExists(filepath.Join(opts.WorkDir, "ios", "Podfile")) ||
-		fileExists(filepath.Join(opts.WorkDir, "android", "build.gradle"))
-
-	if hasInstalledBuild && hasNativeProject {
-		// Dev client already built → just start Metro in dev-client mode
-		log.Printf("[dev:expo] Dev client already installed — starting Metro only")
-		e.devMode = "dev-client"
-		args := []string{"expo", "start",
-			"--dev-client",
-			"--port", fmt.Sprintf("%d", e.port),
-			"--host", "0.0.0.0",
-		}
-
-		// If agent URL is available (relay/direct), set it as Metro's packager proxy
-		// so dev clients connect through the relay instead of local IP
-		var envSlice []string
-		if agentURL, ok := opts.Env["YAVER_AGENT_URL"]; ok && agentURL != "" {
-			envSlice = append(envSlice, "EXPO_PACKAGER_PROXY_URL="+agentURL+"/dev")
-			log.Printf("[dev:expo] Metro proxy URL set to %s/dev (reachable via relay)", agentURL)
-		}
-
-		readyURL := fmt.Sprintf("http://127.0.0.1:%d", e.port)
-		return e.startProcess(ctx, "npx", args, opts.WorkDir, envSlice, readyURL)
-	}
-
-	if hasNativeProject {
-		// First time: build + install dev client on phone
-		log.Printf("[dev:expo] Building dev client (first time)...")
-		e.devMode = "dev-client"
-
-		device := detectIOSDevice(ctx)
-		args := []string{"expo", "run:ios",
-			"--port", fmt.Sprintf("%d", e.port),
-		}
-		if device != "" {
-			args = append(args, "--device", device)
-			log.Printf("[dev:expo] Target: %s", device)
-		}
-
-		logW := &devLogWriter{prefix: "[dev:expo:build]"}
-		cmd := exec.CommandContext(ctx, "npx", args...)
-		cmd.Dir = opts.WorkDir
-		cmd.Stdout = logW
-		cmd.Stderr = logW
-		buildEnv := append(os.Environ(), fmt.Sprintf("RCT_METRO_PORT=%d", e.port))
-		// Set proxy URL so the built dev client connects through relay
-		if agentURL, ok := opts.Env["YAVER_AGENT_URL"]; ok && agentURL != "" {
-			buildEnv = append(buildEnv, "EXPO_PACKAGER_PROXY_URL="+agentURL+"/dev")
-			log.Printf("[dev:expo] Build with proxy URL: %s/dev", agentURL)
-		}
-		cmd.Env = buildEnv
-
-		if err := cmd.Start(); err != nil {
-			return fmt.Errorf("expo run:ios failed to start: %w", err)
-		}
-
-		e.mu.Lock()
-		e.cmd = cmd
-		e.startedAt = time.Now()
-		e.running = true
-		e.mu.Unlock()
-
-		os.MkdirAll(yaverBuildsDir(), 0755)
-		os.WriteFile(buildMarker, []byte(time.Now().UTC().Format(time.RFC3339)), 0644)
-
-		log.Printf("[dev:expo] Build started (PID %d)", cmd.Process.Pid)
-		return nil
-	}
-
-	// No native project (ios/android dirs) → use web mode for WebView preview
-	log.Printf("[dev:expo] No native project found — starting in web mode")
+	// Always start in web mode — the Yaver mobile app loads the app in a WebView
+	// via the /dev/* proxy (which works through relay, Tailscale, or direct).
+	// Web mode serves a renderable web version with Vite-style HMR.
+	// This is version-agnostic: any React/RN version works.
+	//
+	// Native dev-client mode (expo run:ios) is only used when explicitly
+	// requested via CLI: yaver dev start --platform ios
+	log.Printf("[dev:expo] Starting Expo web server...")
 	e.devMode = "web"
 	args := []string{"expo", "start",
 		"--web",

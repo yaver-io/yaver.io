@@ -29,7 +29,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.68.0"
+const version = "1.69.0"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
@@ -1462,16 +1462,12 @@ func runServe(args []string) {
 		log.Printf("Black box manager ready")
 	}
 	httpServer.devServerMgr = NewDevServerManager()
-	// Set agent URL so dev servers can advertise a relay-reachable URL for Metro
-	if len(relayServers) > 0 && cfg.DeviceID != "" {
-		httpServer.devServerMgr.AgentURL = fmt.Sprintf("%s/d/%s",
-			strings.TrimRight(relayServers[0].HttpURL, "/"), cfg.DeviceID)
-		log.Printf("Dev server proxy URL: %s", httpServer.devServerMgr.AgentURL)
-	} else {
-		// Direct mode — use local IP
-		httpServer.devServerMgr.AgentURL = fmt.Sprintf("http://%s:%d", getLocalIP(), *httpPort)
-	}
-	log.Printf("Dev server manager ready")
+	// Always use local IP for Metro proxy URL — the phone discovers the agent
+	// via beacon (same WiFi) or relay (different network). The dev client app
+	// connects to Metro at the local IP when on same WiFi, and through relay
+	// when not. Using relay URL here breaks when DNS isn't configured.
+	httpServer.devServerMgr.AgentURL = fmt.Sprintf("http://%s:%d", getLocalIP(), *httpPort)
+	log.Printf("Dev server manager ready (agent URL: %s)", httpServer.devServerMgr.AgentURL)
 	if tlMgr, err := NewTodoListManager(); err != nil {
 		log.Printf("Warning: todolist unavailable: %v", err)
 	} else {
