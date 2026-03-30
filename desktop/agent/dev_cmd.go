@@ -25,6 +25,10 @@ func runDev(args []string) {
 		runDevStatus()
 	case "reload":
 		runDevReload()
+	case "rebuild":
+		runDevRebuild(args[1:])
+	case "builds":
+		runDevBuilds()
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown dev subcommand: %s\n\n", args[0])
 		printDevUsage()
@@ -124,6 +128,55 @@ func runDevReload() {
 	}
 }
 
+func runDevRebuild(args []string) {
+	project := ""
+	if len(args) > 0 {
+		project = args[0]
+	}
+
+	if project != "" {
+		// Clear specific build marker
+		marker := fmt.Sprintf("%s/%s.built", yaverBuildsDir(), project)
+		if err := os.Remove(marker); err != nil {
+			fmt.Fprintf(os.Stderr, "No build marker for %s\n", project)
+			os.Exit(1)
+		}
+		fmt.Printf("Cleared build marker for %s — next hot reload will rebuild.\n", project)
+	} else {
+		// Clear all
+		entries, _ := os.ReadDir(yaverBuildsDir())
+		count := 0
+		for _, e := range entries {
+			if fmt.Sprintf("%s", e.Name()) != "" {
+				os.Remove(fmt.Sprintf("%s/%s", yaverBuildsDir(), e.Name()))
+				count++
+			}
+		}
+		fmt.Printf("Cleared %d build marker(s) — next hot reload will rebuild all.\n", count)
+	}
+}
+
+func runDevBuilds() {
+	entries, err := os.ReadDir(yaverBuildsDir())
+	if err != nil || len(entries) == 0 {
+		fmt.Println("No build markers found.")
+		return
+	}
+	fmt.Println("Build markers (next hot reload skips build for these):")
+	for _, e := range entries {
+		info, _ := e.Info()
+		builtAt := "unknown"
+		if info != nil {
+			builtAt = info.ModTime().Format("2006-01-02 15:04:05")
+		}
+		name := e.Name()
+		if len(name) > 6 {
+			name = name[:len(name)-6] // strip ".built"
+		}
+		fmt.Printf("  %s  (built %s)\n", name, builtAt)
+	}
+}
+
 func printDevUsage() {
 	fmt.Println(`Usage: yaver dev <command>
 
@@ -132,6 +185,8 @@ Commands:
   stop        Stop the running dev server
   status      Show dev server status
   reload      Trigger hot reload
+  rebuild     Clear build marker (force rebuild on next hot reload)
+  builds      List build markers
 
 Start options:
   --framework expo|flutter|vite|nextjs  Framework (auto-detect if omitted)

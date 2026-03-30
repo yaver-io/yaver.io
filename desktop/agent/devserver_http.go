@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -47,6 +49,7 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 		WorkDir   string `json:"workDir"`
 		Platform  string `json:"platform"` // "ios", "android", "web"
 		Port      int    `json:"port"`
+		Rebuild   bool   `json:"rebuild"`  // force rebuild (clear build marker)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -54,10 +57,17 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 	}
 
 	if req.WorkDir == "" {
-		// Default to task manager's work dir
 		if s.taskMgr != nil {
 			req.WorkDir = s.taskMgr.workDir
 		}
+	}
+
+	// Clear build marker if rebuild requested
+	if req.Rebuild && req.WorkDir != "" {
+		projectHash := strings.ReplaceAll(filepath.Base(req.WorkDir), " ", "_")
+		marker := filepath.Join(yaverBuildsDir(), projectHash+".built")
+		os.Remove(marker)
+		log.Printf("[dev] Cleared build marker for %s (rebuild requested)", projectHash)
 	}
 
 	if err := s.devServerMgr.Start(req.Framework, req.WorkDir, req.Platform, req.Port); err != nil {
@@ -185,6 +195,54 @@ func (s *HTTPServer) handleDevServerProxy(w http.ResponseWriter, r *http.Request
 	}
 
 	proxy.ServeHTTP(w, r)
+}
+
+// handleDevServerBuilds lists or clears build markers.
+// GET /dev/builds — list all build markers
+// DELETE /dev/builds?project=AcmeStore — clear a specific build marker
+// DELETE /dev/builds — clear all build markers
+func (s *HTTPServer) handleDevServerBuilds(w http.ResponseWriter, r *http.Request) {
+	buildsDir := yaverBuildsDir()
+
+	if r.Method == http.MethodDelete {
+		project := r.URL.Query().Get("project")
+		if project != "" {
+			marker := filepath.Join(buildsDir, project+".built")
+			os.Remove(marker)
+			jsonReply(w, http.StatusOK, map[string]string{"ok": "true", "cleared": project})
+		} else {
+			// Clear all
+			entries, _ := os.ReadDir(buildsDir)
+			count := 0
+			for _, e := range entries {
+				if strings.HasSuffix(e.Name(), ".built") {
+					os.Remove(filepath.Join(buildsDir, e.Name()))
+					count++
+				}
+			}
+			jsonReply(w, http.StatusOK, map[string]interface{}{"ok": true, "cleared": count})
+		}
+		return
+	}
+
+	// GET — list
+	entries, _ := os.ReadDir(buildsDir)
+	var builds []map[string]string
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".built") {
+			name := strings.TrimSuffix(e.Name(), ".built")
+			info, _ := e.Info()
+			builtAt := ""
+			if info != nil {
+				builtAt = info.ModTime().UTC().Format("2006-01-02 15:04:05")
+			}
+			builds = append(builds, map[string]string{"project": name, "builtAt": builtAt})
+		}
+	}
+	if builds == nil {
+		builds = []map[string]string{}
+	}
+	jsonReply(w, http.StatusOK, builds)
 }
 
 // handleDevServerCompatibility checks if the user's project is compatible with

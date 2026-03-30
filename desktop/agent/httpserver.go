@@ -148,6 +148,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/dev/reload", s.authSDK(s.handleDevServerReload))
 	mux.HandleFunc("/dev/events", s.authSDK(s.handleDevServerEvents))
 	mux.HandleFunc("/dev/compatibility", s.authSDK(s.handleDevServerCompatibility))
+	mux.HandleFunc("/dev/builds", s.auth(s.handleDevServerBuilds))
 	mux.HandleFunc("/dev/", s.handleDevServerProxy) // No auth — serves app bundle in WebView (not sensitive)
 
 	// Projects (discovery + workdir switching + actions)
