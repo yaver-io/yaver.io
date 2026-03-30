@@ -10,6 +10,7 @@ import (
 	osexec "os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -456,6 +457,15 @@ func (s *HTTPServer) handleRepoPull(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Repo list cache — avoid re-scanning directories every request.
+// Cache is invalidated when any scanned directory has a newer mod time.
+var repoCache struct {
+	mu       sync.Mutex
+	repos    []RepoInfo
+	dirTimes map[string]time.Time // dir path → last mod time at scan
+	cachedAt time.Time
+}
+
 // handleRepoList handles GET /repos/list.
 func (s *HTTPServer) handleRepoList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -472,15 +482,40 @@ func (s *HTTPServer) handleRepoList(w http.ResponseWriter, r *http.Request) {
 		filepath.Join(home, "src"),
 		filepath.Join(home, "dev"),
 	}
-	// Add agent workDir if set
 	if s.taskMgr != nil && s.taskMgr.workDir != "" {
 		scanDirs = append(scanDirs, s.taskMgr.workDir)
 	}
 
+	// Check cache — if all directory mod times match, return cached result
+	repoCache.mu.Lock()
+	if repoCache.repos != nil && time.Since(repoCache.cachedAt) < 60*time.Second {
+		cacheValid := true
+		for dir, cachedTime := range repoCache.dirTimes {
+			if info, err := os.Stat(dir); err == nil {
+				if info.ModTime().After(cachedTime) {
+					cacheValid = false
+					break
+				}
+			}
+		}
+		if cacheValid {
+			result := repoCache.repos
+			repoCache.mu.Unlock()
+			jsonReply(w, http.StatusOK, result)
+			return
+		}
+	}
+	repoCache.mu.Unlock()
+
+	// Cache miss — scan directories
 	seen := make(map[string]bool)
 	var repos []RepoInfo
+	dirTimes := make(map[string]time.Time)
 
 	for _, dir := range scanDirs {
+		if info, err := os.Stat(dir); err == nil {
+			dirTimes[dir] = info.ModTime()
+		}
 		for _, repo := range scanDirForRepos(dir) {
 			if !seen[repo.Path] {
 				seen[repo.Path] = true
@@ -501,6 +536,13 @@ func (s *HTTPServer) handleRepoList(w http.ResponseWriter, r *http.Request) {
 	if repos == nil {
 		repos = []RepoInfo{}
 	}
+
+	// Update cache
+	repoCache.mu.Lock()
+	repoCache.repos = repos
+	repoCache.dirTimes = dirTimes
+	repoCache.cachedAt = time.Now()
+	repoCache.mu.Unlock()
 
 	jsonReply(w, http.StatusOK, repos)
 }
