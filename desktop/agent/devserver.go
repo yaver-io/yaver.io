@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -584,6 +585,16 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 	if e.port == 0 {
 		e.port = 8081
 	}
+	// If the default port is taken, find a free one
+	if isPortInUse(e.port) {
+		for p := e.port + 1; p < e.port+20; p++ {
+			if !isPortInUse(p) {
+				log.Printf("[dev:expo] Port %d in use, using %d instead", e.port, p)
+				e.port = p
+				break
+			}
+		}
+	}
 
 	// Install deps if needed
 	if _, err := os.Stat(filepath.Join(opts.WorkDir, "node_modules")); os.IsNotExist(err) {
@@ -673,23 +684,40 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 }
 
 // detectIOSDevice finds a connected iOS device (USB or wireless).
+// Skips the Mac itself, simulators, and headers. Returns iPhone/iPad UDID.
 func detectIOSDevice(ctx context.Context) string {
-	// Use xcrun to list devices
 	out, err := exec.CommandContext(ctx, "xcrun", "xctrace", "list", "devices").Output()
 	if err != nil {
 		return ""
 	}
-	// Parse output: lines like "Kıvanç's iPhone (18.3.1) (00008110-001A515426FB801E)"
+	inSimulators := false
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
-		// Skip simulators and headers
-		if strings.Contains(line, "Simulator") || !strings.Contains(line, "(") {
+		// Track section
+		if line == "== Simulators ==" {
+			inSimulators = true
 			continue
 		}
-		// Extract UDID from parentheses at end
+		if line == "== Devices ==" {
+			inSimulators = false
+			continue
+		}
+		if inSimulators || line == "" || strings.HasPrefix(line, "==") {
+			continue
+		}
+		// Skip MacBook/Mac entries — we want iPhone/iPad only
+		if strings.Contains(line, "MacBook") || strings.Contains(line, "Mac ") ||
+			strings.Contains(line, "iMac") || strings.Contains(line, "Mac Pro") ||
+			strings.Contains(line, "Mac mini") || strings.Contains(line, "Mac Studio") {
+			continue
+		}
+		// Must have a version number in parens (e.g. "(18.3.1)") to be a real device
+		if !strings.Contains(line, ".") {
+			continue
+		}
+		// Extract UDID from last parentheses
 		if idx := strings.LastIndex(line, "("); idx > 0 {
 			udid := strings.TrimSuffix(line[idx+1:], ")")
-			// UDIDs are hex strings, 24+ chars
 			if len(udid) > 20 && !strings.Contains(udid, " ") && !strings.Contains(udid, ".") {
 				return udid
 			}
@@ -729,6 +757,16 @@ func (e *ExpoDevServer) Status() DevServerStatus {
 // ExpoDeepLink returns the exp:// URL for the dev client.
 func (e *ExpoDevServer) ExpoDeepLink(agentHost string) string {
 	return fmt.Sprintf("exp://%s:%d", agentHost, e.port)
+}
+
+// isPortInUse checks if a TCP port is already bound.
+func isPortInUse(port int) bool {
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return true
+	}
+	ln.Close()
+	return false
 }
 
 func (e *ExpoDevServer) Reload() error {
