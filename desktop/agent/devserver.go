@@ -608,23 +608,31 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		gen.Run() // best-effort
 	}
 
-	// Native dev-client mode: the Expo dev client app runs on the phone with
-	// full native access (camera, BLE, GPS). Metro serves the JS bundle and
-	// HMR updates. The dev client connects to Metro at the local IP.
-	//
-	// For relay/4G: needs DNS for the relay domain (e.g. public.yaver.io).
-	// For same WiFi: works directly via local IP.
-
+	// Always native dev-client mode — Yaver is a debugger tool.
+	// The native app runs separately on the phone with full hardware access.
+	// Yaver mobile shows controls (Reload/Stop), never opens a WebView for this.
 	hasNativeProject := fileExists(filepath.Join(opts.WorkDir, "ios", "Podfile")) ||
 		fileExists(filepath.Join(opts.WorkDir, "android", "build.gradle"))
+
+	if !hasNativeProject {
+		// No native dirs — run expo prebuild first
+		log.Printf("[dev:expo] No native project — running expo prebuild...")
+		prebuild := exec.CommandContext(ctx, "npx", "expo", "prebuild", "--platform", "ios")
+		prebuild.Dir = opts.WorkDir
+		prebuild.Stdout = &devLogWriter{prefix: "[dev:expo:prebuild]"}
+		prebuild.Stderr = &devLogWriter{prefix: "[dev:expo:prebuild]"}
+		if err := prebuild.Run(); err != nil {
+			return fmt.Errorf("expo prebuild failed: %w", err)
+		}
+	}
 
 	projectHash := strings.ReplaceAll(filepath.Base(opts.WorkDir), " ", "_")
 	buildMarker := filepath.Join(yaverBuildsDir(), projectHash+".built")
 	hasInstalledBuild := fileExists(buildMarker)
 
-	if hasInstalledBuild && hasNativeProject {
-		// Dev client already built → just start Metro
-		log.Printf("[dev:expo] Dev client installed — starting Metro (dev-client mode)")
+	if hasInstalledBuild {
+		// Dev client already on phone → just start Metro
+		log.Printf("[dev:expo] Dev client installed — starting Metro")
 		e.devMode = "dev-client"
 		args := []string{"expo", "start",
 			"--dev-client",
@@ -635,54 +643,33 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		return e.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
 	}
 
-	if hasNativeProject {
-		// First time: build + install dev client on phone
-		log.Printf("[dev:expo] Building dev client (first time — native app on phone)...")
-		e.devMode = "dev-client"
-
-		device := detectIOSDevice(ctx)
-		args := []string{"expo", "run:ios",
-			"--port", fmt.Sprintf("%d", e.port),
-		}
-		if device != "" {
-			args = append(args, "--device", device)
-			log.Printf("[dev:expo] Target device: %s", device)
-		}
-
-		logW := &devLogWriter{prefix: "[dev:expo:build]"}
-		cmd := exec.CommandContext(ctx, "npx", args...)
-		cmd.Dir = opts.WorkDir
-		cmd.Stdout = logW
-		cmd.Stderr = logW
-		cmd.Env = append(os.Environ(), fmt.Sprintf("RCT_METRO_PORT=%d", e.port))
-
-		if err := cmd.Start(); err != nil {
-			return fmt.Errorf("expo run:ios failed: %w", err)
-		}
-
-		e.mu.Lock()
-		e.cmd = cmd
-		e.startedAt = time.Now()
-		e.running = true
-		e.mu.Unlock()
-
-		os.MkdirAll(yaverBuildsDir(), 0755)
-		os.WriteFile(buildMarker, []byte(time.Now().UTC().Format(time.RFC3339)), 0644)
-
-		log.Printf("[dev:expo] Build started (PID %d) — app will install on phone when ready", cmd.Process.Pid)
-		return nil
+	// First time: build + install native dev client on phone
+	log.Printf("[dev:expo] Building native dev client (first time)...")
+	e.devMode = "dev-client"
+	device := detectIOSDevice(ctx)
+	args := []string{"expo", "run:ios", "--port", fmt.Sprintf("%d", e.port)}
+	if device != "" {
+		args = append(args, "--device", device)
+		log.Printf("[dev:expo] Target: %s", device)
 	}
-
-	// No native project → fall back to web mode for WebView preview
-	log.Printf("[dev:expo] No ios/android dirs — starting web mode")
-	e.devMode = "web"
-	args := []string{"expo", "start",
-		"--web",
-		"--port", fmt.Sprintf("%d", e.port),
-		"--host", "0.0.0.0",
+	logW := &devLogWriter{prefix: "[dev:expo:build]"}
+	cmd := exec.CommandContext(ctx, "npx", args...)
+	cmd.Dir = opts.WorkDir
+	cmd.Stdout = logW
+	cmd.Stderr = logW
+	cmd.Env = append(os.Environ(), fmt.Sprintf("RCT_METRO_PORT=%d", e.port))
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("expo run:ios failed: %w", err)
 	}
-	readyURL := fmt.Sprintf("http://127.0.0.1:%d", e.port)
-	return e.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
+	e.mu.Lock()
+	e.cmd = cmd
+	e.startedAt = time.Now()
+	e.running = true
+	e.mu.Unlock()
+	os.MkdirAll(yaverBuildsDir(), 0755)
+	os.WriteFile(buildMarker, []byte(time.Now().UTC().Format(time.RFC3339)), 0644)
+	log.Printf("[dev:expo] Build started (PID %d) — native app will install on phone", cmd.Process.Pid)
+	return nil
 }
 
 // detectIOSDevice finds a connected iOS device (USB or wireless).
