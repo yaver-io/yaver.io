@@ -133,6 +133,11 @@ type DevServerManager struct {
 	active  *devServerSession
 	subs    []chan DevServerEvent
 	subsMu  sync.Mutex
+
+	// Agent's externally reachable URL (for Metro proxy URL).
+	// Set by the HTTP server after relay connection is established.
+	// Examples: "http://192.168.1.10:18080", "https://public.yaver.io/d/abc123"
+	AgentURL string
 }
 
 type devServerSession struct {
@@ -218,6 +223,14 @@ func (m *DevServerManager) Start(framework, workDir, platform string, port int) 
 		WorkDir:  workDir,
 		Port:     port,
 		Platform: platform,
+	}
+
+	// Pass the agent's reachable URL so Metro can tell dev clients to connect
+	// through the relay instead of hardcoding the local IP.
+	if m.AgentURL != "" {
+		opts.Env = map[string]string{
+			"YAVER_AGENT_URL": m.AgentURL,
+		}
 	}
 
 	// Set up the session immediately so Status() returns "starting"
@@ -612,8 +625,17 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 			"--port", fmt.Sprintf("%d", e.port),
 			"--host", "0.0.0.0",
 		}
+
+		// If agent URL is available (relay/direct), set it as Metro's packager proxy
+		// so dev clients connect through the relay instead of local IP
+		var envSlice []string
+		if agentURL, ok := opts.Env["YAVER_AGENT_URL"]; ok && agentURL != "" {
+			envSlice = append(envSlice, "EXPO_PACKAGER_PROXY_URL="+agentURL+"/dev")
+			log.Printf("[dev:expo] Metro proxy URL set to %s/dev (reachable via relay)", agentURL)
+		}
+
 		readyURL := fmt.Sprintf("http://127.0.0.1:%d", e.port)
-		return e.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
+		return e.startProcess(ctx, "npx", args, opts.WorkDir, envSlice, readyURL)
 	}
 
 	if hasNativeProject {
@@ -635,7 +657,13 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		cmd.Dir = opts.WorkDir
 		cmd.Stdout = logW
 		cmd.Stderr = logW
-		cmd.Env = append(os.Environ(), fmt.Sprintf("RCT_METRO_PORT=%d", e.port))
+		buildEnv := append(os.Environ(), fmt.Sprintf("RCT_METRO_PORT=%d", e.port))
+		// Set proxy URL so the built dev client connects through relay
+		if agentURL, ok := opts.Env["YAVER_AGENT_URL"]; ok && agentURL != "" {
+			buildEnv = append(buildEnv, "EXPO_PACKAGER_PROXY_URL="+agentURL+"/dev")
+			log.Printf("[dev:expo] Build with proxy URL: %s/dev", agentURL)
+		}
+		cmd.Env = buildEnv
 
 		if err := cmd.Start(); err != nil {
 			return fmt.Errorf("expo run:ios failed to start: %w", err)
