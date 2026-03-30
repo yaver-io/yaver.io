@@ -648,7 +648,7 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		args := []string{"expo", "start",
 			"--dev-client",
 			"--port", fmt.Sprintf("%d", e.port),
-			"--host", "0.0.0.0",
+			"--host", "lan",
 		}
 		readyURL := fmt.Sprintf("http://127.0.0.1:%d", e.port)
 		return e.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
@@ -825,7 +825,7 @@ func (rn *ReactNativeDevServer) Start(ctx context.Context, opts DevServerOpts) e
 	args := []string{"expo", "start",
 		"--web",
 		"--port", fmt.Sprintf("%d", rn.port),
-		"--host", "0.0.0.0",
+		"--host", "lan",
 	}
 
 	readyURL := fmt.Sprintf("http://127.0.0.1:%d", rn.port)
@@ -835,7 +835,7 @@ func (rn *ReactNativeDevServer) Start(ctx context.Context, opts DevServerOpts) e
 		log.Printf("[dev] Expo CLI not available, falling back to Metro bundler")
 		args = []string{"react-native", "start",
 			"--port", fmt.Sprintf("%d", rn.port),
-			"--host", "0.0.0.0",
+			"--host", "lan",
 		}
 		return rn.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
 	}
@@ -1072,7 +1072,7 @@ func (v *ViteDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 
 	args := []string{"vite",
 		"--port", fmt.Sprintf("%d", v.port),
-		"--host", "0.0.0.0",
+		"--host", "lan",
 	}
 
 	readyURL := fmt.Sprintf("http://127.0.0.1:%d/", v.port)
