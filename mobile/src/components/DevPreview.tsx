@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Modal,
   Pressable,
   StyleSheet,
@@ -11,7 +12,6 @@ import {
 import { WebView } from "react-native-webview";
 import { quicClient, type DevServerStatus } from "../lib/quic";
 import { useColors } from "../context/ThemeContext";
-import { loadApp, buildNativeBundleUrl, onBundleEvent } from "../lib/bundleLoader";
 
 /**
  * Dev Preview — banner + full-screen WebView for previewing apps
@@ -115,21 +115,9 @@ export function DevPreview() {
 
   const handleOpen = useCallback(() => {
     if (isNativeMode) {
-      // Load the RN bundle natively inside Yaver (super host mode)
-      setNativeLoading(true);
-      const baseUrl = (quicClient as any).baseUrl;
-      if (!baseUrl) {
-        Alert.alert("Error", "Not connected to agent");
-        setNativeLoading(false);
-        return;
-      }
-      const nativeBundleUrl = buildNativeBundleUrl(baseUrl);
-      loadApp(nativeBundleUrl, "main")
-        .then(() => setNativeLoading(false))
-        .catch((e) => {
-          setNativeLoading(false);
-          Alert.alert("Load Error", e.message || "Could not load the app");
-        });
+      // Dev-client mode: show controls panel (the native app runs separately)
+      // Don't open WebView — Metro in dev-client mode redirects to exp:// which WebView can't handle
+      setShowPreview(true);
       return;
     }
     // Web mode: open in WebView
@@ -220,19 +208,35 @@ export function DevPreview() {
           </View>
 
           {isNativeMode ? (
-            /* Native dev-client mode: show controls instead of WebView */
+            /* Native dev-client mode: Yaver is control plane, native app runs separately */
             <View style={styles.nativeControls}>
               <View style={styles.nativeStatus}>
                 <View style={[styles.dot, { backgroundColor: "#22c55e", width: 14, height: 14, borderRadius: 7 }]} />
-                <Text style={styles.nativeTitle}>Native App Running</Text>
+                <Text style={styles.nativeTitle}>Metro Running</Text>
               </View>
               <Text style={styles.nativeSubtext}>
-                The app is running natively on your phone with full device access (camera, sensors, etc.).
-                Metro is serving hot reload updates.
+                Port {status.port} — {status.workDir?.split("/").pop() || "app"} ({status.framework})
               </Text>
               <Text style={styles.nativeSubtext}>
-                {status.workDir?.split("/").pop() || "app"} — {status.framework}
+                Open the app from your home screen. It connects to Metro automatically on the same WiFi.
               </Text>
+
+              {/* Open App button — launches the Expo dev client */}
+              <Pressable
+                onPress={() => {
+                  if (status.deepLink) {
+                    Linking.openURL(status.deepLink).catch(() =>
+                      Alert.alert("Open App", "Open the app from your home screen — it will connect to Metro automatically.")
+                    );
+                  } else {
+                    Alert.alert("Open App", "Open the app from your home screen — it will connect to Metro automatically.");
+                  }
+                }}
+                style={[styles.nativeBtn, { backgroundColor: "#1a1a2e", paddingHorizontal: 40, marginTop: 12 }]}
+              >
+                <Text style={[styles.nativeBtnText, { color: "#818cf8" }]}>Open App</Text>
+              </Pressable>
+
               <View style={styles.nativeButtons}>
                 <Pressable onPress={handleReload} style={[styles.nativeBtn, { backgroundColor: "#1a2e1a" }]}>
                   <Text style={[styles.nativeBtnText, { color: "#22c55e" }]}>Reload</Text>
