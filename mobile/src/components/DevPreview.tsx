@@ -215,21 +215,39 @@ export function DevPreview() {
                 <Text style={styles.nativeTitle}>Metro Running</Text>
               </View>
               <Text style={styles.nativeSubtext}>
-                Port {status.port} — {status.workDir?.split("/").pop() || "app"} ({status.framework})
-              </Text>
-              <Text style={styles.nativeSubtext}>
-                Open the app from your home screen. It connects to Metro automatically on the same WiFi.
+                {status.workDir?.split("/").pop() || "app"} — {status.framework} — port {status.port}
               </Text>
 
-              {/* Open App button — launches the Expo dev client */}
+              {/* Metro URL — tap to copy */}
+              {status.deepLink && (
+                <Pressable
+                  onPress={() => {
+                    const url = status.deepLink!;
+                    import("expo-clipboard").then(({ setStringAsync }) => {
+                      setStringAsync(url);
+                      Alert.alert("Copied", url);
+                    }).catch(() => {});
+                  }}
+                  style={{ marginTop: 12, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10, backgroundColor: "#111", borderWidth: 1, borderColor: "#333" }}
+                >
+                  <Text style={{ fontFamily: "monospace", fontSize: 14, color: "#22c55e", textAlign: "center" }}>
+                    {status.deepLink}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: "#666", textAlign: "center", marginTop: 4 }}>
+                    Tap to copy — paste in dev client if Bonjour fails
+                  </Text>
+                </Pressable>
+              )}
+
+              {/* Open App */}
               <Pressable
                 onPress={() => {
                   if (status.deepLink) {
                     Linking.openURL(status.deepLink).catch(() =>
-                      Alert.alert("Open App", "Open the app from your home screen — it will connect to Metro automatically.")
+                      Alert.alert("Open App", "Open the app from your home screen.")
                     );
                   } else {
-                    Alert.alert("Open App", "Open the app from your home screen — it will connect to Metro automatically.");
+                    Alert.alert("Open App", "Open the app from your home screen.");
                   }
                 }}
                 style={[styles.nativeBtn, { backgroundColor: "#1a1a2e", paddingHorizontal: 40, marginTop: 12 }]}
