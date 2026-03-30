@@ -1462,12 +1462,16 @@ func runServe(args []string) {
 		log.Printf("Black box manager ready")
 	}
 	httpServer.devServerMgr = NewDevServerManager()
-	// Always use local IP for Metro proxy URL — the phone discovers the agent
-	// via beacon (same WiFi) or relay (different network). The dev client app
-	// connects to Metro at the local IP when on same WiFi, and through relay
-	// when not. Using relay URL here breaks when DNS isn't configured.
-	httpServer.devServerMgr.AgentURL = fmt.Sprintf("http://%s:%d", getLocalIP(), *httpPort)
-	log.Printf("Dev server manager ready (agent URL: %s)", httpServer.devServerMgr.AgentURL)
+	// Use relay URL if relay is available (works from 4G/any network).
+	// Fall back to local IP for direct/LAN connections.
+	if len(relayServers) > 0 && cfg.DeviceID != "" {
+		httpServer.devServerMgr.AgentURL = fmt.Sprintf("%s/d/%s",
+			strings.TrimRight(relayServers[0].HttpURL, "/"), cfg.DeviceID)
+		log.Printf("Dev server proxy URL: %s (relay — works from 4G)", httpServer.devServerMgr.AgentURL)
+	} else {
+		httpServer.devServerMgr.AgentURL = fmt.Sprintf("http://%s:%d", getLocalIP(), *httpPort)
+		log.Printf("Dev server proxy URL: %s (direct — same WiFi only)", httpServer.devServerMgr.AgentURL)
+	}
 	if tlMgr, err := NewTodoListManager(); err != nil {
 		log.Printf("Warning: todolist unavailable: %v", err)
 	} else {
