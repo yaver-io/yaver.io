@@ -699,6 +699,11 @@ func yaverBuildsDir() string {
 }
 
 func (e *ExpoDevServer) BundleURL(platform string) string {
+	// In dev-client mode (super-host), return the platform-specific Metro bundle path
+	// so the Yaver app can load it natively via the secondary RCTBridge
+	if e.devMode == "dev-client" && (platform == "ios" || platform == "android") {
+		return fmt.Sprintf("/dev/index.bundle?platform=%s&dev=true&minify=false", platform)
+	}
 	return "/dev/"
 }
 

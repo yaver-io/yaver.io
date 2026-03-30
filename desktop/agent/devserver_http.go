@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -184,6 +185,85 @@ func (s *HTTPServer) handleDevServerProxy(w http.ResponseWriter, r *http.Request
 	}
 
 	proxy.ServeHTTP(w, r)
+}
+
+// handleDevServerCompatibility checks if the user's project is compatible with
+// the Yaver super-host (i.e., all required native modules are available).
+// POST /dev/compatibility { "availableModules": ["expo-camera", ...] }
+func (s *HTTPServer) handleDevServerCompatibility(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "use POST"})
+		return
+	}
+
+	var req struct {
+		AvailableModules []string `json:"availableModules"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+
+	// Get the work dir from dev server or task manager
+	workDir := ""
+	if s.devServerMgr != nil {
+		if status := s.devServerMgr.Status(); status != nil {
+			workDir = status.WorkDir
+		}
+	}
+	if workDir == "" && s.taskMgr != nil {
+		workDir = s.taskMgr.workDir
+	}
+	if workDir == "" {
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"compatible": true, "missingModules": []string{},
+		})
+		return
+	}
+
+	// Read user project's package.json to find native dependencies
+	pkgPath := workDir + "/package.json"
+	data, err := os.ReadFile(pkgPath)
+	if err != nil {
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"compatible": true, "missingModules": []string{},
+		})
+		return
+	}
+
+	available := make(map[string]bool)
+	for _, m := range req.AvailableModules {
+		available[m] = true
+	}
+
+	// Check which native deps the user project needs that Yaver doesn't have
+	var missing []string
+	nativeDeps := []string{
+		"expo-camera", "expo-location", "expo-sensors", "expo-haptics",
+		"expo-brightness", "expo-battery", "expo-device", "expo-constants",
+		"expo-barcode-scanner", "expo-notifications", "expo-file-system",
+		"expo-asset", "expo-font", "expo-clipboard", "expo-linking",
+		"expo-secure-store", "expo-av", "expo-image-picker", "expo-speech",
+		"expo-web-browser", "expo-apple-authentication",
+		"react-native-maps", "react-native-ble-plx",
+		"react-native-reanimated", "react-native-gesture-handler",
+		"react-native-screens", "react-native-safe-area-context",
+		"react-native-webview", "@react-native-async-storage/async-storage",
+		"@react-native-community/netinfo",
+	}
+
+	content := string(data)
+	for _, dep := range nativeDeps {
+		// If the user's project uses this dep but Yaver doesn't have it
+		if strings.Contains(content, `"`+dep+`"`) && !available[dep] {
+			missing = append(missing, dep)
+		}
+	}
+
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"compatible":     len(missing) == 0,
+		"missingModules": missing,
+	})
 }
 
 func isWebSocketUpgrade(r *http.Request) bool {

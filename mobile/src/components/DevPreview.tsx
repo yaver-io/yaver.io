@@ -11,6 +11,7 @@ import {
 import { WebView } from "react-native-webview";
 import { quicClient, type DevServerStatus } from "../lib/quic";
 import { useColors } from "../context/ThemeContext";
+import { loadApp, buildNativeBundleUrl, onBundleEvent } from "../lib/bundleLoader";
 
 /**
  * Dev Preview — banner + full-screen WebView for previewing apps
@@ -102,12 +103,40 @@ export function DevPreview() {
   }, [showPreview, status?.running]);
 
   const isNativeMode = status?.devMode === "dev-client";
+  const [nativeLoading, setNativeLoading] = useState(false);
+
+  // Listen for bundle unload events (user pressed "Back to Yaver")
+  useEffect(() => {
+    const sub = onBundleEvent("onBundleUnloaded", () => {
+      setNativeLoading(false);
+    });
+    return () => sub.remove();
+  }, []);
 
   const handleOpen = useCallback(() => {
+    if (isNativeMode) {
+      // Load the RN bundle natively inside Yaver (super host mode)
+      setNativeLoading(true);
+      const baseUrl = (quicClient as any).baseUrl;
+      if (!baseUrl) {
+        Alert.alert("Error", "Not connected to agent");
+        setNativeLoading(false);
+        return;
+      }
+      const nativeBundleUrl = buildNativeBundleUrl(baseUrl);
+      loadApp(nativeBundleUrl, "main")
+        .then(() => setNativeLoading(false))
+        .catch((e) => {
+          setNativeLoading(false);
+          Alert.alert("Load Error", e.message || "Could not load the app");
+        });
+      return;
+    }
+    // Web mode: open in WebView
     setShowPreview(true);
     setLoading(true);
     setWebViewKey(k => k + 1);
-  }, []);
+  }, [isNativeMode]);
 
   const handleReload = useCallback(async () => {
     setLoading(true);
@@ -153,8 +182,14 @@ export function DevPreview() {
           </View>
         </View>
         <View style={styles.bannerRight}>
-          <Text style={styles.bannerAction}>{isNativeMode ? "Controls" : "Open App"}</Text>
-          <Text style={styles.bannerArrow}>{"\u203A"}</Text>
+          {nativeLoading ? (
+            <ActivityIndicator size="small" color="#22c55e" />
+          ) : (
+            <>
+              <Text style={styles.bannerAction}>{isNativeMode ? "Run Native" : "Open App"}</Text>
+              <Text style={styles.bannerArrow}>{"\u203A"}</Text>
+            </>
+          )}
         </View>
       </Pressable>
 
