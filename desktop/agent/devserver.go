@@ -608,14 +608,73 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		gen.Run() // best-effort
 	}
 
-	// Always start in web mode — the Yaver mobile app loads the app in a WebView
-	// via the /dev/* proxy (which works through relay, Tailscale, or direct).
-	// Web mode serves a renderable web version with Vite-style HMR.
-	// This is version-agnostic: any React/RN version works.
+	// Native dev-client mode: the Expo dev client app runs on the phone with
+	// full native access (camera, BLE, GPS). Metro serves the JS bundle and
+	// HMR updates. The dev client connects to Metro at the local IP.
 	//
-	// Native dev-client mode (expo run:ios) is only used when explicitly
-	// requested via CLI: yaver dev start --platform ios
-	log.Printf("[dev:expo] Starting Expo web server...")
+	// For relay/4G: needs DNS for the relay domain (e.g. public.yaver.io).
+	// For same WiFi: works directly via local IP.
+
+	hasNativeProject := fileExists(filepath.Join(opts.WorkDir, "ios", "Podfile")) ||
+		fileExists(filepath.Join(opts.WorkDir, "android", "build.gradle"))
+
+	projectHash := strings.ReplaceAll(filepath.Base(opts.WorkDir), " ", "_")
+	buildMarker := filepath.Join(yaverBuildsDir(), projectHash+".built")
+	hasInstalledBuild := fileExists(buildMarker)
+
+	if hasInstalledBuild && hasNativeProject {
+		// Dev client already built → just start Metro
+		log.Printf("[dev:expo] Dev client installed — starting Metro (dev-client mode)")
+		e.devMode = "dev-client"
+		args := []string{"expo", "start",
+			"--dev-client",
+			"--port", fmt.Sprintf("%d", e.port),
+			"--host", "0.0.0.0",
+		}
+		readyURL := fmt.Sprintf("http://127.0.0.1:%d", e.port)
+		return e.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
+	}
+
+	if hasNativeProject {
+		// First time: build + install dev client on phone
+		log.Printf("[dev:expo] Building dev client (first time — native app on phone)...")
+		e.devMode = "dev-client"
+
+		device := detectIOSDevice(ctx)
+		args := []string{"expo", "run:ios",
+			"--port", fmt.Sprintf("%d", e.port),
+		}
+		if device != "" {
+			args = append(args, "--device", device)
+			log.Printf("[dev:expo] Target device: %s", device)
+		}
+
+		logW := &devLogWriter{prefix: "[dev:expo:build]"}
+		cmd := exec.CommandContext(ctx, "npx", args...)
+		cmd.Dir = opts.WorkDir
+		cmd.Stdout = logW
+		cmd.Stderr = logW
+		cmd.Env = append(os.Environ(), fmt.Sprintf("RCT_METRO_PORT=%d", e.port))
+
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("expo run:ios failed: %w", err)
+		}
+
+		e.mu.Lock()
+		e.cmd = cmd
+		e.startedAt = time.Now()
+		e.running = true
+		e.mu.Unlock()
+
+		os.MkdirAll(yaverBuildsDir(), 0755)
+		os.WriteFile(buildMarker, []byte(time.Now().UTC().Format(time.RFC3339)), 0644)
+
+		log.Printf("[dev:expo] Build started (PID %d) — app will install on phone when ready", cmd.Process.Pid)
+		return nil
+	}
+
+	// No native project → fall back to web mode for WebView preview
+	log.Printf("[dev:expo] No ios/android dirs — starting web mode")
 	e.devMode = "web"
 	args := []string{"expo", "start",
 		"--web",
@@ -673,11 +732,16 @@ func (e *ExpoDevServer) Status() DevServerStatus {
 	s := e.baseDevServer.Status()
 	s.DevMode = e.devMode
 	s.BundleURL = "/dev/"
-	// Only include deep link for native dev-client mode
 	if e.devMode == "dev-client" {
+		// Metro URL for same-network dev client connections
 		s.DeepLink = fmt.Sprintf("exp://%s:%d", getLocalIP(), e.port)
 	}
 	return s
+}
+
+// ExpoDeepLink returns the exp:// URL for the dev client.
+func (e *ExpoDevServer) ExpoDeepLink(agentHost string) string {
+	return fmt.Sprintf("exp://%s:%d", agentHost, e.port)
 }
 
 func (e *ExpoDevServer) Reload() error {
