@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -542,9 +544,21 @@ func (b *baseDevServer) startProcess(ctx context.Context, name string, args []st
 }
 
 // devLogWriter writes dev server output to the agent log with a prefix.
+// Also captures output for post-hoc inspection (e.g., checking for "Build Succeeded").
 type devLogWriter struct {
-	prefix string
-	buf    []byte
+	prefix  string
+	buf     []byte
+	history []string
+}
+
+// Contains returns true if any logged line contains the given substring.
+func (w *devLogWriter) Contains(substr string) bool {
+	for _, line := range w.history {
+		if strings.Contains(line, substr) {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *devLogWriter) Write(p []byte) (int, error) {
@@ -556,8 +570,10 @@ func (w *devLogWriter) Write(p []byte) (int, error) {
 		}
 		line := string(w.buf[:idx])
 		w.buf = w.buf[idx+1:]
-		if strings.TrimSpace(line) != "" {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
 			log.Printf("%s %s", w.prefix, line)
+			w.history = append(w.history, trimmed)
 		}
 	}
 	return len(p), nil
@@ -639,9 +655,34 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 
 	projectHash := strings.ReplaceAll(filepath.Base(opts.WorkDir), " ", "_")
 	buildMarker := filepath.Join(yaverBuildsDir(), projectHash+".built")
-	hasInstalledBuild := fileExists(buildMarker)
 
-	if hasInstalledBuild {
+	// Detect connected device for build targeting
+	device := detectIOSDevice(ctx)
+
+	// Smart build marker: validates deps hash + device UDID.
+	// Marker invalidates when package.json/Podfile.lock changes or device changes
+	// (e.g., TestFlight overwrites dev client, or new dependencies added).
+	currentDepsHash := expoDepsHash(opts.WorkDir)
+	hasValidBuild := false
+	if data, err := os.ReadFile(buildMarker); err == nil {
+		var marker struct {
+			DepsHash string `json:"depsHash"`
+			Device   string `json:"device"`
+		}
+		if json.Unmarshal(data, &marker) == nil && marker.DepsHash != "" {
+			hasValidBuild = marker.DepsHash == currentDepsHash && (device == "" || marker.Device == device)
+			if !hasValidBuild {
+				if marker.DepsHash != currentDepsHash {
+					log.Printf("[dev:expo] Dependencies changed — rebuilding")
+				} else {
+					log.Printf("[dev:expo] Device changed (%s → %s) — rebuilding", marker.Device, device)
+				}
+			}
+		}
+		// Legacy marker (plain timestamp) — treat as invalid, rebuild
+	}
+
+	if hasValidBuild {
 		// Dev client already on phone → just start Metro
 		// Dev client discovers Metro via Bonjour on same WiFi — no proxy URL needed
 		log.Printf("[dev:expo] Dev client installed — starting Metro (port %d)", e.port)
@@ -655,13 +696,12 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		return e.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
 	}
 
-	// First time: build + install native dev client on phone
+	// Build + install native dev client on phone
 	// Two steps: 1) expo run:ios (build+install), 2) expo start --dev-client --host lan
 	// expo run:ios starts its own Metro on localhost which the phone can't reach.
 	// After build we kill it and restart with --host lan so the phone discovers it.
-	log.Printf("[dev:expo] Building native dev client (first time)...")
+	log.Printf("[dev:expo] Building native dev client...")
 	e.devMode = "dev-client"
-	device := detectIOSDevice(ctx)
 	// --no-bundler and --port are mutually exclusive in Expo, so just use --no-bundler
 	buildArgs := []string{"expo", "run:ios", "--no-bundler"}
 	if device != "" {
@@ -684,15 +724,27 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		buildCmd.Stdout = logW
 		buildCmd.Stderr = logW
 
-		if err := buildCmd.Run(); err != nil {
-			log.Printf("[dev:expo] Build failed: %v", err)
+		buildErr := buildCmd.Run()
+		// expo run:ios may exit non-zero even when build succeeds (e.g., device locked,
+		// app launch failed). Check the log output for "Build Succeeded" to distinguish.
+		buildSucceeded := logW.Contains("Build Succeeded")
+		if buildErr != nil && !buildSucceeded {
+			log.Printf("[dev:expo] Build failed: %v", buildErr)
 			os.Remove(buildMarker)
 			return
 		}
+		if buildErr != nil && buildSucceeded {
+			log.Printf("[dev:expo] Build succeeded but launch failed (device locked?) — continuing to Metro")
+		}
 
-		// Build succeeded — create marker
+		// Build succeeded — write smart marker with deps hash + device
 		os.MkdirAll(yaverBuildsDir(), 0755)
-		os.WriteFile(buildMarker, []byte(time.Now().UTC().Format(time.RFC3339)), 0644)
+		markerData, _ := json.Marshal(map[string]string{
+			"depsHash": currentDepsHash,
+			"device":   device,
+			"builtAt":  time.Now().UTC().Format(time.RFC3339),
+		})
+		os.WriteFile(buildMarker, markerData, 0644)
 		log.Printf("[dev:expo] Build succeeded — starting Metro with --host lan")
 
 		// Start Metro with --host lan so the phone can reach it via Bonjour
@@ -757,6 +809,19 @@ func detectIOSDevice(ctx context.Context) string {
 func yaverBuildsDir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".yaver", "builds")
+}
+
+// expoDepsHash returns a hash of package.json + Podfile.lock content.
+// Changes when dependencies are added/removed/updated, triggering a rebuild.
+func expoDepsHash(workDir string) string {
+	h := sha256.New()
+	for _, name := range []string{"package.json", filepath.Join("ios", "Podfile.lock")} {
+		data, err := os.ReadFile(filepath.Join(workDir, name))
+		if err == nil {
+			h.Write(data)
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
 func (e *ExpoDevServer) BundleURL(platform string) string {

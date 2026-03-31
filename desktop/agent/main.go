@@ -1070,13 +1070,20 @@ func runServe(args []string) {
 	}
 
 	// Get owner userId and email for multi-token auth and dev logging
+	var ownerUserID, ownerEmail string
+	offlineMode := false
 	ownerInfo, err := ValidateTokenInfo(cfg.ConvexSiteURL, cfg.AuthToken)
 	if err != nil {
-		log.Fatalf("failed to get owner info: %v", err)
+		log.Printf("Warning: token validation failed (%v) — starting in offline mode", err)
+		log.Printf("Run 'yaver auth' to re-authenticate. Local features (dev server, tasks) still work.")
+		offlineMode = true
+		ownerUserID = "offline"
+		ownerEmail = "offline"
+	} else {
+		ownerUserID = ownerInfo.UserID
+		ownerEmail = ownerInfo.Email
+		log.Printf("Token validated. Owner: %s (%s)", ownerUserID, ownerEmail)
 	}
-	ownerUserID := ownerInfo.UserID
-	ownerEmail := ownerInfo.Email
-	log.Printf("Token validated. Owner: %s (%s)", ownerUserID, ownerEmail)
 
 	// Register device
 	hostname, _ := os.Hostname()
@@ -1086,36 +1093,44 @@ func runServe(args []string) {
 	}
 	localIP := getLocalIP()
 
-	log.Printf("Registering device %s (%s) at %s:%d...", hostname, cfg.DeviceID, localIP, *httpPort)
-	if err := RegisterDevice(cfg.ConvexSiteURL, RegisterDeviceRequest{
-		Token:    cfg.AuthToken,
-		DeviceID: cfg.DeviceID,
-		Name:     hostname,
-		Platform: platform,
-		QuicHost: localIP,
-		QuicPort: *httpPort,
-	}); err != nil {
-		if strings.Contains(err.Error(), "belongs to another user") {
-			log.Printf("Device ID conflict — generating new device ID")
-			cfg.DeviceID = uuid.New().String()
-			if saveErr := SaveConfig(cfg); saveErr != nil {
-				log.Fatalf("save config after device ID reset: %v", saveErr)
+	if !offlineMode {
+		log.Printf("Registering device %s (%s) at %s:%d...", hostname, cfg.DeviceID, localIP, *httpPort)
+		if err := RegisterDevice(cfg.ConvexSiteURL, RegisterDeviceRequest{
+			Token:    cfg.AuthToken,
+			DeviceID: cfg.DeviceID,
+			Name:     hostname,
+			Platform: platform,
+			QuicHost: localIP,
+			QuicPort: *httpPort,
+		}); err != nil {
+			if strings.Contains(err.Error(), "belongs to another user") {
+				log.Printf("Device ID conflict — generating new device ID")
+				cfg.DeviceID = uuid.New().String()
+				if saveErr := SaveConfig(cfg); saveErr != nil {
+					log.Fatalf("save config after device ID reset: %v", saveErr)
+				}
+				if err2 := RegisterDevice(cfg.ConvexSiteURL, RegisterDeviceRequest{
+					Token:    cfg.AuthToken,
+					DeviceID: cfg.DeviceID,
+					Name:     hostname,
+					Platform: platform,
+					QuicHost: localIP,
+					QuicPort: *httpPort,
+				}); err2 != nil {
+					log.Printf("Warning: device registration failed: %v", err2)
+					offlineMode = true
+				}
+			} else {
+				log.Printf("Warning: device registration failed: %v", err)
+				offlineMode = true
 			}
-			if err2 := RegisterDevice(cfg.ConvexSiteURL, RegisterDeviceRequest{
-				Token:    cfg.AuthToken,
-				DeviceID: cfg.DeviceID,
-				Name:     hostname,
-				Platform: platform,
-				QuicHost: localIP,
-				QuicPort: *httpPort,
-			}); err2 != nil {
-				log.Fatalf("device registration failed after reset: %v", err2)
-			}
-		} else {
-			log.Fatalf("device registration failed: %v", err)
 		}
+		if !offlineMode {
+			log.Println("Device registered.")
+		}
+	} else {
+		log.Printf("Skipping device registration (offline mode)")
 	}
-	log.Println("Device registered.")
 
 	// Fetch platform config (relay servers, runners, models) from Convex
 	var relayServers []RelayServerInfo
