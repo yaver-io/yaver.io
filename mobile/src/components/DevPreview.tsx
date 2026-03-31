@@ -12,6 +12,7 @@ import {
 import { WebView } from "react-native-webview";
 import { quicClient, type DevServerStatus } from "../lib/quic";
 import { useColors } from "../context/ThemeContext";
+import { loadApp, onBundleEvent, buildNativeBundleUrl } from "../lib/bundleLoader";
 
 /**
  * Dev Preview — banner + full-screen WebView for previewing apps
@@ -126,6 +127,25 @@ export function DevPreview() {
     setWebViewKey(k => k + 1);
   }, [isNativeMode]);
 
+  // Load the app inside Yaver via the secondary RCTBridge (super-host mode).
+  // This gives full native module access (camera, BLE, GPS, etc.) without
+  // needing a separate dev client app installed on the phone.
+  const handleRunInYaver = useCallback(async () => {
+    const baseUrl = (quicClient as any).baseUrl;
+    if (!baseUrl) {
+      Alert.alert("Error", "Not connected to agent");
+      return;
+    }
+    setNativeLoading(true);
+    try {
+      const bundleUrl = buildNativeBundleUrl(baseUrl);
+      await loadApp(bundleUrl, "main");
+    } catch (err: any) {
+      setNativeLoading(false);
+      Alert.alert("Load Failed", err?.message || "Could not load bundle in Yaver");
+    }
+  }, []);
+
   const handleReload = useCallback(async () => {
     setLoading(true);
     await quicClient.reloadDevServer();
@@ -239,21 +259,35 @@ export function DevPreview() {
                 </Pressable>
               )}
 
-              {/* Open App */}
+              {/* Run in Yaver (super-host: load bundle inside Yaver's RCTBridge) */}
               <Pressable
-                onPress={() => {
-                  if (status.deepLink) {
-                    Linking.openURL(status.deepLink).catch(() =>
+                onPress={handleRunInYaver}
+                disabled={nativeLoading}
+                style={[styles.nativeBtn, { backgroundColor: "#1a2e1a", paddingHorizontal: 40, marginTop: 12 }]}
+              >
+                {nativeLoading ? (
+                  <ActivityIndicator size="small" color="#22c55e" />
+                ) : (
+                  <Text style={[styles.nativeBtnText, { color: "#22c55e" }]}>Run in Yaver</Text>
+                )}
+              </Pressable>
+              <Text style={{ fontSize: 11, color: "#555", textAlign: "center", marginTop: 4 }}>
+                Full native access — camera, BLE, GPS, etc.
+              </Text>
+
+              {/* Open in separate dev client (if installed) */}
+              {status.deepLink && (
+                <Pressable
+                  onPress={() => {
+                    Linking.openURL(status.deepLink!).catch(() =>
                       Alert.alert("Open App", "Open the app from your home screen.")
                     );
-                  } else {
-                    Alert.alert("Open App", "Open the app from your home screen.");
-                  }
-                }}
-                style={[styles.nativeBtn, { backgroundColor: "#1a1a2e", paddingHorizontal: 40, marginTop: 12 }]}
-              >
-                <Text style={[styles.nativeBtnText, { color: "#818cf8" }]}>Open App</Text>
-              </Pressable>
+                  }}
+                  style={[styles.nativeBtn, { backgroundColor: "#1a1a2e", paddingHorizontal: 40, marginTop: 8 }]}
+                >
+                  <Text style={[styles.nativeBtnText, { color: "#818cf8" }]}>Open Dev Client</Text>
+                </Pressable>
+              )}
 
               <View style={styles.nativeButtons}>
                 <Pressable onPress={handleReload} style={[styles.nativeBtn, { backgroundColor: "#1a2e1a" }]}>

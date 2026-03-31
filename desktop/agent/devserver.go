@@ -525,7 +525,7 @@ func (b *baseDevServer) startProcess(ctx context.Context, name string, args []st
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline:
-			return fmt.Errorf("%s did not become ready within 60s", name)
+			return fmt.Errorf("%s did not become ready within 120s", name)
 		case <-ticker.C:
 			resp, err := http.Get(readyURL)
 			if err == nil {
