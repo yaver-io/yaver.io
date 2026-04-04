@@ -159,44 +159,9 @@ export default function HotReloadScreen() {
       }
     };
 
-    if (!isExpo) {
-      // Flutter/Vite/Next → WebView
-      setShowWebView(true);
-      setWebViewLoading(true);
-      setWebViewKey(k => k + 1);
-      return;
-    }
-
-    const options: any[] = [
-      {
-        text: "Run in Yaver",
-        onPress: openNativeInYaver,
-      },
-      {
-        text: "WebView Preview",
-        onPress: () => { setShowWebView(true); setWebViewLoading(true); setWebViewKey(k => k + 1); },
-      },
-    ];
-
-    // On LAN with deep link available, also offer opening the separate dev client
-    if (directLink && isLAN) {
-      options.unshift({
-        text: "Open Dev Client",
-        onPress: () => {
-          Linking.openURL(directLink).catch(() => {
-            Alert.alert("Not installed", "Build a dev client first by tapping Start on the project.");
-          });
-        },
-      });
-    }
-
-    options.push({ text: "Cancel", style: "cancel" });
-
-    Alert.alert(
-      "Open App",
-      "Choose how to open:",
-      options,
-    );
+    // Always load natively in Yaver (super-host mode)
+    // Works over any connection — relay, tunnel, direct
+    openNativeInYaver();
   }, [devStatus]);
 
   const handleReload = useCallback(async () => {
