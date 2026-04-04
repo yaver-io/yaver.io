@@ -74,13 +74,17 @@ export function DevPreview() {
         const reader = res.body?.getReader();
         if (!reader) return;
         const decoder = new TextDecoder();
+        let incomplete = "";
 
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          const text = decoder.decode(value);
-          // SSE format: "data: {...}\n\n"
+          // Accumulate across chunks to handle SSE frames split across TCP packets
+          const text = incomplete + decoder.decode(value, { stream: true });
           const lines = text.split("\n");
+          // Last element may be an incomplete line — carry it over
+          incomplete = lines.pop() || "";
+
           for (const line of lines) {
             if (line.startsWith("data: ")) {
               try {
@@ -148,9 +152,21 @@ export function DevPreview() {
 
   const handleReload = useCallback(async () => {
     setLoading(true);
-    await quicClient.reloadDevServer();
-    setWebViewKey(k => k + 1);
-  }, []);
+    const ok = await quicClient.reloadDevServer();
+    if (!ok) {
+      setLoading(false);
+      Alert.alert("Reload Failed", "Could not reload — is the dev server still running?");
+      return;
+    }
+    // SSE "reload" event will trigger WebView key increment.
+    // Fallback: if SSE is not connected (e.g., relay mode), reload directly.
+    if (!showPreview || !status?.running) {
+      setWebViewKey(k => k + 1);
+    } else {
+      // Give SSE 500ms to deliver the reload event, then force reload as fallback
+      setTimeout(() => setWebViewKey(k => k + 1), 500);
+    }
+  }, [showPreview, status?.running]);
 
   const handleStop = useCallback(async () => {
     Alert.alert("Stop Dev Server", "This will stop the dev server and close the preview.", [
