@@ -15,6 +15,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient, type DevServerStatus } from "../../src/lib/quic";
+import { loadApp, buildNativeBundleUrl } from "../../src/lib/bundleLoader";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -135,40 +136,67 @@ export default function HotReloadScreen() {
     return () => controller.abort();
   }, [showWebView, devStatus?.running]);
 
+  const [nativeLoading, setNativeLoading] = useState(false);
+
   const handleOpen = useCallback(() => {
     const isExpo = devStatus?.framework === "expo" || devStatus?.framework === "react-native";
     const directLink = devStatus?.deepLink || "";
-    const connectionMode = (quicClient as any)._connectionMode as string; // "direct" or "relay"
+    const connectionMode = (quicClient as any)._connectionMode as string;
     const isLAN = connectionMode === "direct" || connectionMode === "lan";
+    const baseUrl = (quicClient as any).baseUrl as string;
 
-    if (isExpo && directLink && isLAN) {
-      // Same network: open directly in Expo dev client via LAN deep link
-      // This is the fastest path — no relay needed
-      Alert.alert(
-        "Open App",
-        "Native dev client — full camera, BLE, QR support",
-        [
-          {
-            text: "Native (Dev Client)",
-            onPress: () => {
-              Linking.openURL(directLink).catch(() => {
-                Alert.alert("Not installed", "Build a dev client first by tapping Start on the project.");
-              });
-            },
-          },
-          {
-            text: "WebView Preview",
-            onPress: () => { setShowWebView(true); setWebViewLoading(true); setWebViewKey(k => k + 1); },
-          },
-          { text: "Cancel", style: "cancel" },
-        ],
-      );
-    } else {
-      // Relay / tunnel / no deep link → WebView (works over any connection)
+    const openNativeInYaver = async () => {
+      // Load bundle inside Yaver's RCTBridge (super-host mode)
+      // Works over any connection — relay, tunnel, direct
+      setNativeLoading(true);
+      try {
+        const bundleUrl = buildNativeBundleUrl(baseUrl);
+        await loadApp(bundleUrl, "main");
+      } catch (err: any) {
+        Alert.alert("Load Failed", err?.message || "Could not load bundle in Yaver");
+      } finally {
+        setNativeLoading(false);
+      }
+    };
+
+    if (!isExpo) {
+      // Flutter/Vite/Next → WebView
       setShowWebView(true);
       setWebViewLoading(true);
       setWebViewKey(k => k + 1);
+      return;
     }
+
+    const options: any[] = [
+      {
+        text: "Run in Yaver",
+        onPress: openNativeInYaver,
+      },
+      {
+        text: "WebView Preview",
+        onPress: () => { setShowWebView(true); setWebViewLoading(true); setWebViewKey(k => k + 1); },
+      },
+    ];
+
+    // On LAN with deep link available, also offer opening the separate dev client
+    if (directLink && isLAN) {
+      options.unshift({
+        text: "Open Dev Client",
+        onPress: () => {
+          Linking.openURL(directLink).catch(() => {
+            Alert.alert("Not installed", "Build a dev client first by tapping Start on the project.");
+          });
+        },
+      });
+    }
+
+    options.push({ text: "Cancel", style: "cancel" });
+
+    Alert.alert(
+      "Open App",
+      "Choose how to open:",
+      options,
+    );
   }, [devStatus]);
 
   const handleReload = useCallback(async () => {

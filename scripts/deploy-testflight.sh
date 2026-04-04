@@ -49,18 +49,21 @@ cat > /tmp/ExportOptions.plist <<EOF
 </plist>
 EOF
 
-# Export & upload
+# Export & upload (destination=upload sends directly to App Store Connect)
 echo "Exporting & uploading..."
-xcodebuild -exportArchive -archivePath /tmp/Yaver.xcarchive \
+EXPORT_OUTPUT=$(xcodebuild -exportArchive -archivePath /tmp/Yaver.xcarchive \
   -exportOptionsPlist /tmp/ExportOptions.plist \
   -exportPath /tmp/YaverExport -allowProvisioningUpdates \
   -authenticationKeyPath "$AUTH_KEY" \
   -authenticationKeyID "$AUTH_KEY_ID" \
-  -authenticationKeyIssuerID "$AUTH_KEY_ISSUER" 2>&1 | tail -1
+  -authenticationKeyIssuerID "$AUTH_KEY_ISSUER" 2>&1)
+EXPORT_EXIT=$?
 
-# Verify export produced an IPA or upload log
-if [ ! -d /tmp/YaverExport ]; then
-  echo "ERROR: Export/upload failed"
+echo "$EXPORT_OUTPUT" | tail -3
+
+# Check for success: either exit 0, or "Redundant Binary" (already uploaded)
+if [ $EXPORT_EXIT -ne 0 ] && ! echo "$EXPORT_OUTPUT" | grep -q "Redundant Binary Upload"; then
+  echo "ERROR: Export/upload failed (exit $EXPORT_EXIT)"
   exit 1
 fi
 
