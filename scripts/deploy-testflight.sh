@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -eo pipefail
 
 cd "$(dirname "$0")/../mobile/ios"
 
@@ -15,6 +15,9 @@ NEW_BUILD=$((CURRENT_BUILD + 1))
 /usr/libexec/PlistBuddy -c "Set CFBundleVersion $NEW_BUILD" "$PLIST"
 echo "Build $CURRENT_BUILD → $NEW_BUILD"
 
+# Clean stale archive so a failed build can't silently reuse it
+rm -rf /tmp/Yaver.xcarchive
+
 # Archive
 echo "Archiving..."
 xcodebuild -workspace Yaver.xcworkspace -scheme Yaver -configuration Release \
@@ -24,7 +27,13 @@ xcodebuild -workspace Yaver.xcworkspace -scheme Yaver -configuration Release \
   -authenticationKeyPath "$AUTH_KEY" \
   -authenticationKeyID "$AUTH_KEY_ID" \
   -authenticationKeyIssuerID "$AUTH_KEY_ISSUER" \
-  -derivedDataPath /tmp/YaverBuild 2>&1 | tail -1
+  -derivedDataPath /tmp/YaverBuild 2>&1 | tail -3
+
+# Verify archive was created
+if [ ! -d /tmp/Yaver.xcarchive ]; then
+  echo "ERROR: Archive failed — no .xcarchive produced"
+  exit 1
+fi
 
 # ExportOptions (no single-quote on EOF so APPLE_TEAM_ID expands)
 cat > /tmp/ExportOptions.plist <<EOF
@@ -48,5 +57,11 @@ xcodebuild -exportArchive -archivePath /tmp/Yaver.xcarchive \
   -authenticationKeyPath "$AUTH_KEY" \
   -authenticationKeyID "$AUTH_KEY_ID" \
   -authenticationKeyIssuerID "$AUTH_KEY_ISSUER" 2>&1 | tail -1
+
+# Verify export produced an IPA or upload log
+if [ ! -d /tmp/YaverExport ]; then
+  echo "ERROR: Export/upload failed"
+  exit 1
+fi
 
 echo "✓ TestFlight build $NEW_BUILD uploaded"

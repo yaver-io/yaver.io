@@ -24,7 +24,7 @@
         ],
         "NSMicrophoneUsageDescription": "Yaver uses your microphone for voice input — send tasks by speaking instead of typing.",
         "NSSpeechRecognitionUsageDescription": "Yaver uses speech recognition to transcribe your voice into task descriptions.",
-        "NSCameraUsageDescription": "Yaver uses your camera for photos, barcode scanning, and running apps that need camera access.",
+        "NSCameraUsageDescription": "Yaver uses your camera for photos and running apps that need camera access.",
         "NSPhotoLibraryUsageDescription": "Yaver uses your photo library to attach screenshots and images to coding tasks.",
         "NSLocationWhenInUseUsageDescription": "Yaver provides location access to apps you run for testing.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Yaver provides location access to apps you run for testing.",
@@ -90,7 +90,7 @@
         }
       ],
       "expo-sensors",
-      "expo-barcode-scanner",
+
       [
         "expo-notifications",
         {
