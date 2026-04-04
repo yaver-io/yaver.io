@@ -110,11 +110,14 @@ export default function HotReloadScreen() {
         const reader = res.body?.getReader();
         if (!reader) return;
         const decoder = new TextDecoder();
+        let incomplete = "";
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          const text = decoder.decode(value);
-          for (const line of text.split("\n")) {
+          const text = incomplete + decoder.decode(value, { stream: true });
+          const lines = text.split("\n");
+          incomplete = lines.pop() || "";
+          for (const line of lines) {
             if (line.startsWith("data: ")) {
               try {
                 const event = JSON.parse(line.slice(6));
@@ -134,37 +137,22 @@ export default function HotReloadScreen() {
 
   const handleOpen = useCallback(() => {
     const isExpo = devStatus?.framework === "expo" || devStatus?.framework === "react-native";
+    const directLink = devStatus?.deepLink || "";
+    const connectionMode = (quicClient as any)._connectionMode as string; // "direct" or "relay"
+    const isLAN = connectionMode === "direct" || connectionMode === "lan";
 
-    if (isExpo) {
-      // Construct Metro URL through the Yaver agent (works over relay too).
-      // The agent proxies /dev/* to Metro, including WebSocket for HMR.
-      const agentUrl = (quicClient as any).baseUrl as string; // direct IP or relay URL
-      // For dev client: use the agent URL as Metro URL (proxied)
-      const metroUrl = encodeURIComponent(agentUrl);
-
-      // Also try direct deep link for same-network (faster)
-      const directLink = devStatus?.deepLink || "";
-
+    if (isExpo && directLink && isLAN) {
+      // Same network: open directly in Expo dev client via LAN deep link
+      // This is the fastest path — no relay needed
       Alert.alert(
         "Open App",
-        devStatus?.devMode === "dev-client"
-          ? "Native dev client — full camera, BLE, QR support"
-          : "Choose how to open:",
+        "Native dev client — full camera, BLE, QR support",
         [
           {
             text: "Native (Dev Client)",
             onPress: () => {
-              // Try Expo dev client deep link with the agent URL as Metro server
-              // Format: exp+<slug>://expo-development-client/?url=<metro-url>
-              // Fallback: direct exp:// link for Expo Go
-              const devClientUrl = `exp://expo-development-client/?url=${metroUrl}`;
-              Linking.openURL(devClientUrl).catch(() => {
-                // Fallback to direct exp:// link
-                if (directLink) {
-                  Linking.openURL(directLink).catch(() => {
-                    Alert.alert("Not installed", "Build a dev client first by tapping Start on the project.");
-                  });
-                }
+              Linking.openURL(directLink).catch(() => {
+                Alert.alert("Not installed", "Build a dev client first by tapping Start on the project.");
               });
             },
           },
@@ -176,7 +164,7 @@ export default function HotReloadScreen() {
         ],
       );
     } else {
-      // Flutter/Vite/Next → WebView
+      // Relay / tunnel / no deep link → WebView (works over any connection)
       setShowWebView(true);
       setWebViewLoading(true);
       setWebViewKey(k => k + 1);
