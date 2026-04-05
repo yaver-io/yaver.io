@@ -51,18 +51,18 @@ class YaverBundleLoaderModule(reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun loadBundle(urlString: String, moduleName: String, promise: Promise) {
-        val activity = currentActivity
+        val activity = reactApplicationContext.currentActivity
         if (activity == null) {
             promise.reject("NO_ACTIVITY", "No current activity")
             return
         }
 
         try {
-            // Build a secondary ReactInstanceManager with the remote bundle URL
-            val packages: List<ReactPackage> = PackageList(activity.application).packages
+            val app = activity.application
+            val packages: List<ReactPackage> = PackageList(app).packages
 
             val instanceManager = ReactInstanceManager.builder()
-                .setApplication(activity.application)
+                .setApplication(app)
                 .setJSBundleFile(urlString)
                 .addPackages(packages)
                 .setUseDeveloperSupport(true)
@@ -73,7 +73,6 @@ class YaverBundleLoaderModule(reactContext: ReactApplicationContext) :
             pendingBundleUrl = urlString
             pendingModuleName = moduleName
 
-            // Launch the host activity
             val intent = Intent(activity, YaverBundleHostActivity::class.java)
             activity.startActivity(intent)
 
@@ -88,7 +87,8 @@ class YaverBundleLoaderModule(reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun unloadBundle(promise: Promise) {
-        val activity = currentActivity
+        @Suppress("UNUSED_VARIABLE")
+        val activity = reactApplicationContext.currentActivity
         // Send broadcast to close the host activity
         loadedInstanceManager?.destroy()
         loadedInstanceManager = null
