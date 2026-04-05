@@ -15,6 +15,7 @@
 		6C14694BF3B023E182EEC337 /* YaverInfo.m in Sources */ = {isa = PBXBuildFile; fileRef = 0164C4E1814C83FA4EA7EE66 /* YaverInfo.m */; };
 		6D1B73A5432ABE301C3BD5FC /* YaverHTTPServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA98858350D5EC9E2187C1EE /* YaverHTTPServer.swift */; };
 		75096125B674AB0D29AE02AC /* YaverBundleLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97047227A457584A52C75D70 /* YaverBundleLoader.swift */; };
+		A1B2C3D4E5F60001DEADBEEF /* YaverBundleValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60002DEADBEEF /* YaverBundleValidator.swift */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
 		C3F40E7C2219114E034B128C /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02B1D3AE60FAC95D8F162620 /* ExpoModulesProvider.swift */; };
 		DB1FFFA1C35434307CD5FD2C /* sdk-manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 3A027291C28B8C619D5DCBBC /* sdk-manifest.json */; };
@@ -32,6 +33,7 @@
 		415536B78C32721035E86A5D /* YaverBundleLoader.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = YaverBundleLoader.m; path = Yaver/YaverBundleLoader.m; sourceTree = "<group>"; };
 		6A2F41372579DD8DC9D6912E /* YaverInfo.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Yaver/YaverInfo.swift; sourceTree = "<group>"; };
 		97047227A457584A52C75D70 /* YaverBundleLoader.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = YaverBundleLoader.swift; path = Yaver/YaverBundleLoader.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60002DEADBEEF /* YaverBundleValidator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Yaver/YaverBundleValidator.swift; sourceTree = "<group>"; };
 		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = Yaver/SplashScreen.storyboard; sourceTree = "<group>"; };
 		AC887EE616ACA6170AEBCC9F /* libPods-Yaver.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-Yaver.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		BA98858350D5EC9E2187C1EE /* YaverHTTPServer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Yaver/YaverHTTPServer.swift; sourceTree = "<group>"; };
@@ -110,6 +112,7 @@
 				180012A5E2DB8D5AEDBDE67C /* Pods */,
 				9A7C2F350CFDA70D88A519C7 /* ExpoModulesProviders */,
 				97047227A457584A52C75D70 /* YaverBundleLoader.swift */,
+				A1B2C3D4E5F60002DEADBEEF /* YaverBundleValidator.swift */,
 				415536B78C32721035E86A5D /* YaverBundleLoader.m */,
 			);
 			indentWidth = 2;
@@ -363,6 +366,7 @@
 				F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */,
 				C3F40E7C2219114E034B128C /* ExpoModulesProvider.swift in Sources */,
 				75096125B674AB0D29AE02AC /* YaverBundleLoader.swift in Sources */,
+				A1B2C3D4E5F60001DEADBEEF /* YaverBundleValidator.swift in Sources */,
 				F07CE48FD595B0ACD2F8B805 /* YaverBundleLoader.m in Sources */,
 				6D1B73A5432ABE301C3BD5FC /* YaverHTTPServer.swift in Sources */,
 				4A7B250A91EA8FF2C570B433 /* YaverInfo.swift in Sources */,

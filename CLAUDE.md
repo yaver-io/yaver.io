@@ -3,7 +3,7 @@
 ## Important Rules
 - **Never push or commit without explicit user permission.** Vercel auto-deploys from GitHub on push to `main`.
 - **Vercel deploy size guard**: `web/` must stay under 10 MB (currently ~2.5 MB). The deploy script enforces this. Do not add large assets to `web/`. The biggest file is `web/public/demo.mp4` (~1.2 MB, compressed from 8 MB original). If adding videos, compress aggressively first: `ffmpeg -i input.mp4 -vcodec libx264 -crf 32 -preset veryslow -vf "scale=720:-2" -an output.mp4`. Prefer external hosting (YouTube embed, GitHub releases CDN) for anything over 1 MB.
-- **NEVER use WebView to load third-party apps.** All app loading must be native (real UIView/android.view.View via RCTBridge). When "Open App" is tapped, use `/dev/build-native` to compile a Hermes bytecode bundle and load it into a native RCTBridge — never a WebView. WebView is only acceptable for web content (landing pages, docs), never for React Native apps.
+- **NEVER use WebView to load third-party apps.** All app loading must be native (real UIView/android.view.View via ExpoReactNativeFactory with New Architecture). When "Open App" is tapped, use `/dev/build-native` to compile a Hermes bytecode bundle and load it into a native bridge with full TurboModule support — never a WebView. WebView is only acceptable for web content (landing pages, docs), never for React Native apps.
 - **NEVER commit credentials, IPs, API keys, or secrets to the repo.** The repo is open-source on GitHub. All credentials must go in `.env.test` (gitignored), env vars, or GitHub Actions secrets. This includes Hetzner server IPs, Apple Developer keys, SSH key paths, relay passwords, Tailscale IPs. If you see a hardcoded credential, replace it with an env var or placeholder immediately.
 
 ## Repository & Deployment
@@ -164,10 +164,45 @@ The `sdk-manifest.json` must be kept in sync across:
 When updating native modules in `mobile/package.json`, update the manifest and copy to all locations.
 
 ### Hermes Bytecode Validation
-Both CLI and device validate Hermes bytecode version matches. The CLI ships its own `hermesc` (or falls back to the project's react-native hermesc). Magic bytes: `0x1F1903C1` at offset 0, BC version at offset 4 (uint32 LE).
+Both CLI and device validate Hermes bytecode version matches. The CLI ships its own `hermesc` (from RN 0.81.5, located at `cli/hermesc/`) to guarantee BC version match. HBC header format: magic `0x1F1903C1` at offset 4, BC version at offset 8 (uint32 LE, currently 96). Validation is done by `ValidateHBC()` in `desktop/agent/bundlecheck.go` (Go side) and `YaverBundleValidator.swift` (iOS side).
 
 ### Safe Bridge Reload
-When a bundle is pushed, `safeReloadBridge` invalidates the old bridge and waits 0.6s before creating a new one. The delay lets Hermes HadesGC thread finish — without it, GC touches freed memory → SIGABRT on TestFlight.
+When a bundle is pushed, `safeReloadBridge` invalidates the old bridge and polls for deallocation (weak-reference check, up to 3s timeout) before creating a new one. The wait lets Hermes HadesGC thread finish — without it, GC touches freed memory → SIGABRT on TestFlight. The new guest bridge is created via `ExpoReactNativeFactory` + `RCTAppDependencyProvider` (same pattern as the primary app), which provides full New Architecture support including TurboModules, Fabric, and JSI. This is required for RN 0.81+ apps that use `TurboModuleRegistry.getEnforcing()` for core modules like `PlatformConstants`.
+
+### Platform Support for Push to Device
+
+React Native / Expo is the **only** framework with full push-to-device container support. Other frameworks have hot reload (dev server proxy) or build-only support.
+
+| Platform | Push to Device | Hot Reload | Build & Upload | Implementation |
+|----------|:-:|:-:|:-:|-----|
+| **React Native / Expo** | Yes | Yes | Yes | `cli/src/bundler.js` → hermesc → HTTP POST to phone. Guest bridge via `ExpoReactNativeFactory`. |
+| **Flutter** | -- | Yes | Yes | `devserver.go` `FlutterDevServer`: `flutter run -d <device>`, hot reload via stdin `r`. |
+| **Vite** | -- | Yes | -- | `devserver.go` `ViteDevServer`: dev server on port 5173, proxied via P2P. WebView on phone. |
+| **Next.js** | -- | Yes | -- | `devserver.go` `NextDevServer`: dev server on port 3000, proxied via P2P. WebView on phone. |
+| **Swift / Xcode** | -- | -- | Yes | `build_cmd.go`: `xcodebuild` → TestFlight via `testflight.go`. Full binary each time. |
+| **Kotlin / Gradle** | -- | -- | Yes | `build_cmd.go`: Gradle APK/AAB → Play Store via `testflight.go`. Full binary each time. |
+
+**Why only React Native?** RN apps are JavaScript — you can compile JS into Hermes bytecode and load it into a pre-built native container (like Expo Go). Flutter uses Dart VM, Swift/Kotlin compile to machine code. These can't be injected into a container app.
+
+### Technical Glossary (React Native Internals)
+
+Reference for understanding the push-to-device pipeline and bridge architecture.
+
+- **Hermes** — Meta's JavaScript engine for React Native. Pre-compiles JS into bytecode for fast startup. Ships as part of the RN binary.
+- **Hermes Bytecode (HBC)** — Compiled JS output. Header: magic `0x1F1903C1` at offset 4, BC version (e.g. 96) at offset 8. Both CLI and phone validate these match. Mismatch = crash (like running Java 21 bytecode on Java 8 JVM).
+- **hermesc** — The Hermes compiler binary. Takes JS input, outputs `.jsbundle` HBC file. Yaver embeds its own hermesc (from RN 0.81.5) to guarantee BC version match. Located at `cli/hermesc/`.
+- **Metro** — React Native's JavaScript bundler (like webpack). Combines all source files + node_modules into a single JS bundle. Yaver's CLI calls `npx react-native bundle` which uses Metro under the hood.
+- **RCTBridge** — The old-architecture bridge between JS and native. Passes JSON messages asynchronously. **Do not use for guest apps** — lacks TurboModule support, crashes on RN 0.81+.
+- **ExpoReactNativeFactory** — Expo's factory that creates a bridge with full New Architecture support. Used for both Yaver's own app and guest apps. Configured with `RCTAppDependencyProvider` which registers all TurboModules.
+- **RCTAppDependencyProvider** — Registers TurboModules (PlatformConstants, DeviceInfo, etc.) into the bridge's JSI runtime. Without it, `TurboModuleRegistry.getEnforcing()` throws → crash.
+- **TurboModules** — New Architecture native modules that use JSI for synchronous, direct JS↔native calls (vs old bridge's async JSON). RN 0.81+ uses TurboModules by default for all core modules.
+- **Fabric** — New Architecture rendering system. Uses JSI for direct communication between JS and native UI. Replaces the old async "shadow thread" approach.
+- **JSI (JavaScript Interface)** — C++ API that lets native code interact directly with the JS runtime. Foundation for TurboModules and Fabric. Much faster than the old JSON bridge.
+- **New Architecture** — Umbrella term for TurboModules + Fabric + JSI. Enabled by default in RN 0.76+. Yaver's `sdk-manifest.json` has `newArch: true, fabric: true`.
+- **Native Container** — Yaver's phone app with 40+ native modules pre-compiled in. Guest apps run inside it using the pre-installed modules. Same concept as Expo Go.
+- **sdk-manifest.json** — Declares what's available in the container: RN version, Hermes BC version, architecture flags, and all pre-installed native modules with versions. Must match between CLI and phone.
+- **Safe Bridge Reload** — The sequence: invalidate old bridge → poll for deallocation (Hermes GC cleanup) → create new bridge via factory. Skipping the wait → SIGABRT from GC touching freed memory.
+- **HadesGC** — Hermes's concurrent garbage collector. Runs on a background thread. After bridge invalidation, the GC thread may still be running — must wait for it to finish before creating a new bridge.
 
 ## What is Yaver?
 Yaver is an open-source P2P tool that lets developers use any AI coding agent (Claude Code, Codex, Aider, Ollama, etc.) from their mobile device or any terminal, connecting directly to their development machines. Task data flows peer-to-peer between your devices — servers only handle auth and peer discovery.
