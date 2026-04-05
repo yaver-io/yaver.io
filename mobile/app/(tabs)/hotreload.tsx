@@ -151,7 +151,8 @@ export default function HotReloadScreen() {
       setNativeLoading(true);
       try {
         const bundleUrl = buildNativeBundleUrl(baseUrl);
-        await loadApp(bundleUrl, "main");
+        const headers = (quicClient as any).authHeaders as Record<string, string>;
+        await loadApp(bundleUrl, "main", headers);
       } catch (err: any) {
         Alert.alert("Load Failed", err?.message || "Could not load bundle in Yaver");
       } finally {

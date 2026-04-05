@@ -34,7 +34,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>117</string>
+	<string>134</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>12.0</string>
 	<key>LSRequiresIPhoneOS</key>
@@ -50,16 +50,10 @@
 	<string>Yaver provides Bluetooth access to apps you run for testing.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>Yaver provides Bluetooth access to apps you run for testing.</string>
-	<key>NSBonjourServices</key>
-	<array>
-		<string>_yaver._udp</string>
-	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Yaver needs camera access to take photos for tasks.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Allow $(PRODUCT_NAME) to access your Face ID biometric data.</string>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Yaver discovers your development machine on the local network for direct, low-latency connections.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Yaver provides location access to apps you run for testing.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
@@ -78,6 +72,8 @@
 	<array>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).expo.index_route</string>
 	</array>
+	<key>RCTNewArchEnabled</key>
+	<true/>
 	<key>UILaunchStoryboardName</key>
 	<string>SplashScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>

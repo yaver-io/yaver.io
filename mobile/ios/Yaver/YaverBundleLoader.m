@@ -5,6 +5,7 @@
 
 RCT_EXTERN_METHOD(loadBundle:(NSString *)urlString
                   moduleName:(NSString *)moduleName
+                  headers:(NSDictionary *)headers
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 
