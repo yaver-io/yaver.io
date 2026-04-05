@@ -1157,7 +1157,7 @@ Projects and tools in the same problem space. Yaver is compatible with most of t
 - [Privacy Policy](https://yaver.io/privacy)
 - [Terms of Service](https://yaver.io/terms)
 
-Developed by **SIMKAB ELEKTRIK** — Istanbul, Turkey
+Developed by **[SIMKAB ELEKTRIK](https://simkab.com/)** — Istanbul, Turkey
 
 Contact: kivanc.cakmak@simkab.com
 
