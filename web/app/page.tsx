@@ -902,11 +902,11 @@ export default function HomePage() {
           </h2>
 
           <div className="grid gap-6 md:grid-cols-3">
-            {/* Column 1: Install CLI */}
+            {/* Column 1: Install + Connect Agent (merged) */}
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
               <div className="mb-3 flex items-center gap-2">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">1</span>
-                <span className="text-sm font-semibold text-surface-100">Install &amp; start</span>
+                <span className="text-sm font-semibold text-surface-100">Install &amp; connect</span>
               </div>
               <div className="terminal">
                 <div className="terminal-header">
@@ -918,39 +918,21 @@ export default function HomePage() {
                   <div><span className="text-surface-400">$</span> <span className="text-surface-200">brew install kivanccakmak/yaver/yaver</span></div>
                   <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver auth</span></div>
                   <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver serve</span></div>
+                  <div className="my-1 h-px bg-surface-800/60" />
+                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver mcp setup claude</span></div>
+                  <div className="text-[11px] text-green-400/80">{"MCP configured \u2713"}</div>
                 </div>
               </div>
               <p className="mt-3 text-[11px] text-surface-500">
-                Also: curl, apt, AUR, Docker, Nix, Scoop &mdash; <a href="#install-methods" className="underline hover:text-surface-300">all methods</a>
+                Works with: Claude Code, Codex, Aider, Ollama, Goose, Amp, or any tmux session.
+                {" "}Also: <a href="#install-methods" className="underline hover:text-surface-300">curl, apt, AUR, Docker, Nix, Scoop</a>
               </p>
             </div>
 
-            {/* Column 2: Connect agent */}
+            {/* Column 2: Get the app */}
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
               <div className="mb-3 flex items-center gap-2">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">2</span>
-                <span className="text-sm font-semibold text-surface-100">Connect your agent</span>
-              </div>
-              <div className="terminal">
-                <div className="terminal-header">
-                  <div className="terminal-dot bg-[#ff5f57]" />
-                  <div className="terminal-dot bg-[#febc2e]" />
-                  <div className="terminal-dot bg-[#28c840]" />
-                </div>
-                <div className="terminal-body space-y-1 text-[12px]">
-                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver mcp setup claude</span></div>
-                  <div className="text-[11px] text-green-400/80">MCP configured for Claude Desktop</div>
-                </div>
-              </div>
-              <p className="mt-3 text-[11px] text-surface-500">
-                Works with: Claude Code, Codex, Aider, Ollama, Goose, Amp, or any tmux session
-              </p>
-            </div>
-
-            {/* Column 3: Get the app */}
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <div className="mb-3 flex items-center gap-2">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">3</span>
                 <span className="text-sm font-semibold text-surface-100">Get the app</span>
               </div>
               <div className="mt-1 flex flex-col gap-2">
@@ -966,15 +948,41 @@ export default function HomePage() {
                 </a>
               </div>
               <p className="mt-3 text-[11px] text-surface-500">
-                Sign in with Apple, Google, or Microsoft. Your machine appears automatically.
+                Sign in with Apple, Google, or Microsoft. Your machine appears automatically on your phone.
+              </p>
+            </div>
+
+            {/* Column 3: Test your app on device */}
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
+              <div className="mb-3 flex items-center gap-2">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">3</span>
+                <span className="text-sm font-semibold text-surface-100">Test your app on device</span>
+              </div>
+              <div className="terminal">
+                <div className="terminal-header">
+                  <div className="terminal-dot bg-[#ff5f57]" />
+                  <div className="terminal-dot bg-[#febc2e]" />
+                  <div className="terminal-dot bg-[#28c840]" />
+                </div>
+                <div className="terminal-body space-y-1 text-[12px]">
+                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">cd my-app</span></div>
+                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">npx yaver-cli init</span></div>
+                  <div className="text-[11px] text-green-400/80">{"React Native 0.81 \u2705 Hermes \u2705"}</div>
+                  <div className="my-1 h-px bg-surface-800/60" />
+                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">npx yaver-cli push</span></div>
+                  <div className="text-[11px] text-green-400/80">{"\uD83D\uDE80 On device in 4.1s"}</div>
+                </div>
+              </div>
+              <p className="mt-3 text-[11px] text-surface-500">
+                Push any existing React Native project to the Yaver app for real-device testing. No project modifications. 40+ native modules pre-installed.
               </p>
             </div>
           </div>
 
-          {/* Optional: Feedback SDK quick start */}
+          {/* Feedback SDK install */}
           <div className="mt-6 rounded-xl border border-surface-800 bg-surface-900/30 p-5">
             <p className="mb-2 text-sm font-medium text-surface-200">
-              Optional: Add the Feedback SDK to your app
+              Optional: Add the Feedback SDK to your app for shake-to-report + AI bug fixing
             </p>
             <div className="flex flex-wrap gap-2 text-xs">
               <code className="rounded bg-surface-800 px-2 py-1 text-surface-300 select-all">npm install @yaver/feedback-react-native</code>
