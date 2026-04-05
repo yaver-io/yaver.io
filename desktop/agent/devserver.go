@@ -75,11 +75,12 @@ type DevServerStatus struct {
 
 // DevServerEvent is pushed via SSE on /dev/events.
 type DevServerEvent struct {
-	Type      string `json:"type"`                // "ready", "reload", "error", "stopped", "file_changed"
+	Type      string `json:"type"`                // "ready", "reload", "error", "stopped", "file_changed", "log"
 	Framework string `json:"framework"`
 	BundleURL string `json:"bundleUrl,omitempty"`
 	DeepLink  string `json:"deepLink,omitempty"`
 	Message   string `json:"message,omitempty"`
+	LogLine   string `json:"logLine,omitempty"`   // single build output line (type="log")
 	Timestamp string `json:"timestamp"`
 }
 
@@ -218,6 +219,11 @@ func (m *DevServerManager) Start(framework, workDir, platform string, port int) 
 		}
 	}
 	ds.PreStart(frameworkName, defaultPort, workDir)
+
+	// Inject SSE log emitter into the dev server so build output streams to mobile
+	if setter, ok := ds.(interface{ SetEmitFn(func(DevServerEvent)) }); ok {
+		setter.SetEmitFn(m.emit)
+	}
 
 	log.Printf("[dev] Starting %s dev server in %s", frameworkName, workDir)
 
@@ -435,10 +441,12 @@ type baseDevServer struct {
 	workDir   string
 	err       string
 	mu        sync.Mutex
+	emitFn    func(DevServerEvent) // set by DevServerManager to stream log lines via SSE
 }
 
-func (b *baseDevServer) Name() string { return b.name }
-func (b *baseDevServer) Port() int    { return b.port }
+func (b *baseDevServer) Name() string                    { return b.name }
+func (b *baseDevServer) Port() int                       { return b.port }
+func (b *baseDevServer) SetEmitFn(fn func(DevServerEvent)) { b.emitFn = fn }
 
 // PreStart sets the name, port, and workDir before the async Start goroutine.
 // This ensures Status() returns meaningful data immediately.
@@ -499,8 +507,20 @@ func (b *baseDevServer) startProcess(ctx context.Context, name string, args []st
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(), env...)
 
-	// Pipe output to log with [dev] prefix
+	// Pipe output to log with [dev] prefix, and stream to SSE subscribers
 	logWriter := &devLogWriter{prefix: fmt.Sprintf("[dev:%s]", b.name)}
+	if b.emitFn != nil {
+		emitFn := b.emitFn
+		framework := b.name
+		logWriter.onLogLine = func(line string) {
+			emitFn(DevServerEvent{
+				Type:      "log",
+				Framework: framework,
+				LogLine:   line,
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+			})
+		}
+	}
 	cmd.Stdout = logWriter
 	cmd.Stderr = logWriter
 
@@ -545,10 +565,12 @@ func (b *baseDevServer) startProcess(ctx context.Context, name string, args []st
 
 // devLogWriter writes dev server output to the agent log with a prefix.
 // Also captures output for post-hoc inspection (e.g., checking for "Build Succeeded").
+// When onLogLine is set, each output line is also emitted as a "log" SSE event.
 type devLogWriter struct {
-	prefix  string
-	buf     []byte
-	history []string
+	prefix    string
+	buf       []byte
+	history   []string
+	onLogLine func(line string) // callback to emit log events to SSE subscribers
 }
 
 // Contains returns true if any logged line contains the given substring.
@@ -574,6 +596,9 @@ func (w *devLogWriter) Write(p []byte) (int, error) {
 		if trimmed != "" {
 			log.Printf("%s %s", w.prefix, line)
 			w.history = append(w.history, trimmed)
+			if w.onLogLine != nil {
+				w.onLogLine(trimmed)
+			}
 		}
 	}
 	return len(p), nil
