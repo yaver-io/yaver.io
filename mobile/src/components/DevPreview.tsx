@@ -57,9 +57,9 @@ export function DevPreview() {
     return () => { mounted = false; clearInterval(interval); };
   }, [showPreview]);
 
-  // Subscribe to SSE events for auto-reload
+  // Subscribe to SSE events for auto-reload + log streaming
   useEffect(() => {
-    if (!showPreview || !status?.running) return;
+    if (!status?.running) return;
 
     const controller = new AbortController();
     const baseUrl = (quicClient as any).baseUrl;
@@ -93,6 +93,9 @@ export function DevPreview() {
                   // Force WebView reload
                   setWebViewKey(k => k + 1);
                   setLoading(true);
+                  setLastLogLine("");
+                } else if (event.type === "log" && event.logLine) {
+                  setLastLogLine(event.logLine);
                 }
               } catch {}
             }
@@ -105,10 +108,11 @@ export function DevPreview() {
     listenSSE();
 
     return () => controller.abort();
-  }, [showPreview, status?.running]);
+  }, [status?.running]);
 
   const isNativeMode = status?.devMode === "dev-client";
   const [nativeLoading, setNativeLoading] = useState(false);
+  const [lastLogLine, setLastLogLine] = useState<string>("");
 
   // Listen for bundle unload events (user pressed "Back to Yaver")
   useEffect(() => {
@@ -142,7 +146,20 @@ export function DevPreview() {
     }
     setNativeLoading(true);
     try {
+      // Build the Metro bundle URL through the agent's /dev/* proxy
       const bundleUrl = buildNativeBundleUrl(baseUrl);
+
+      // Pre-check: verify the bundle URL is reachable before loading
+      try {
+        const checkRes = await fetch(bundleUrl, { method: "HEAD", headers: (quicClient as any).authHeaders });
+        if (!checkRes.ok) {
+          throw new Error(`Bundle not ready (HTTP ${checkRes.status}). Is Metro running?`);
+        }
+      } catch (checkErr: any) {
+        if (checkErr.message?.includes("Bundle not ready")) throw checkErr;
+        // Network error — try anyway, loadApp will handle it
+      }
+
       await loadApp(bundleUrl, "main");
     } catch (err: any) {
       setNativeLoading(false);
@@ -203,6 +220,11 @@ export function DevPreview() {
                 {status.workDir.split("/").pop()}
               </Text>
             )}
+            {lastLogLine ? (
+              <Text style={[styles.bannerSubtitle, { color: "#6b7280", fontSize: 10, marginTop: 2 }]} numberOfLines={1}>
+                {lastLogLine}
+              </Text>
+            ) : null}
           </View>
         </View>
         <View style={styles.bannerRight}>
