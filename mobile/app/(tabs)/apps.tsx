@@ -30,7 +30,26 @@ interface ProjectItem {
   tags?: string[];
 }
 
-// ── Apps Tab ───────────────────────────────────────────────────────
+const FRAMEWORK_ICONS: Record<string, string> = {
+  expo: "\uD83D\uDCF1",
+  "react-native": "\u269B",
+  react: "\u269B",
+  flutter: "\uD83D\uDC26",
+  nextjs: "\u25B2",
+  vite: "\u26A1",
+};
+
+const MOBILE_FRAMEWORKS = ["expo", "react-native", "flutter"];
+const WEB_FRAMEWORKS = ["nextjs", "vite", "react"];
+
+function getProjectCategory(framework?: string): "mobile" | "web" | "other" {
+  if (!framework) return "other";
+  if (MOBILE_FRAMEWORKS.includes(framework)) return "mobile";
+  if (WEB_FRAMEWORKS.includes(framework)) return "web";
+  return "other";
+}
+
+// ── Projects Tab ──────────────────────────────────────────────────
 
 export default function AppsScreen() {
   const c = useColors();
@@ -69,28 +88,32 @@ export default function AppsScreen() {
   const [deepShuffleStep, setDeepShuffleStep] = useState("");
   const webViewRef = useRef<WebView>(null);
 
-  // Poll dev server status + projects
+  // Poll dev server status + all projects
   useEffect(() => {
     if (!isConnected) return;
     let mounted = true;
 
-    const poll = async () => {
+    const pollStatus = async () => {
       try {
         const status = await quicClient.getDevServerStatus();
         if (mounted) setDevStatus(status?.running ? status : null);
       } catch {
         if (mounted) setDevStatus(null);
       }
+    };
 
+    const fetchProjects = async () => {
       try {
         const list = await quicClient.listProjects();
         if (mounted) setProjects(list);
       } catch {}
     };
 
-    poll();
-    const interval = setInterval(poll, 15000); // 15s — beacon handles instant LAN discovery
-    return () => { mounted = false; clearInterval(interval); };
+    pollStatus();
+    fetchProjects();
+    const statusInterval = setInterval(pollStatus, 3000);
+    const projectInterval = setInterval(fetchProjects, 30000);
+    return () => { mounted = false; clearInterval(statusInterval); clearInterval(projectInterval); };
   }, [isConnected]);
 
   // SSE auto-reload
@@ -137,7 +160,7 @@ export default function AppsScreen() {
   const handleTapProject = useCallback(async (projectName: string) => {
     const isRunning = devStatus?.workDir?.endsWith(projectName);
     if (isRunning) {
-      handleOpenNative(devStatus!.workDir);
+      handleOpenNative(devStatus!.workDir!);
       return;
     }
 
@@ -232,6 +255,8 @@ export default function AppsScreen() {
   const [nativeLoading, setNativeLoading] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState("");
 
+  const [buildProgress, setBuildProgress] = useState(0);
+
   // Open app natively: Go agent builds Hermes bytecode → phone loads into RCTBridge
   const handleOpenNative = useCallback(async (workDir: string) => {
     const baseUrl = (quicClient as any).baseUrl;
@@ -241,16 +266,54 @@ export default function AppsScreen() {
     }
 
     setNativeLoading(true);
+    setBuildProgress(0);
     const headers = {
       ...(quicClient as any).authHeaders,
       "Content-Type": "application/json",
     };
+
+    // Listen to SSE for real-time build progress from Go agent
+    const sseController = new AbortController();
+    const listenSSE = async () => {
+      try {
+        const res = await fetch(`${baseUrl}/dev/events`, {
+          headers: (quicClient as any).authHeaders,
+          signal: sseController.signal,
+        });
+        const reader = res.body?.getReader();
+        if (!reader) return;
+        const decoder = new TextDecoder();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const text = decoder.decode(value);
+          for (const line of text.split("\n")) {
+            if (line.startsWith("data: ")) {
+              try {
+                const event = JSON.parse(line.slice(6));
+                if (event.type === "log" && event.message) {
+                  const msg = event.message;
+                  setLoadingStatus(msg);
+                  // Map known build stages to progress percentage
+                  if (msg.includes("Installing dependencies")) setBuildProgress(0.1);
+                  else if (msg.includes("Bundling")) setBuildProgress(0.3);
+                  else if (msg.includes("Compiling Hermes")) setBuildProgress(0.7);
+                  else if (msg.includes("Bundle ready")) setBuildProgress(0.95);
+                }
+              } catch {}
+            }
+          }
+        }
+      } catch {}
+    };
+    listenSSE();
 
     try {
       // 1. Ensure dev server is running for this project
       const currentStatus = await quicClient.getDevServerStatus();
       if (!currentStatus?.running || !currentStatus.workDir?.includes(workDir.split("/").pop() || "")) {
         setLoadingStatus("Starting dev server...");
+        setBuildProgress(0.05);
         await quicClient.startDevServer({
           framework: "expo",
           workDir: workDir,
@@ -266,6 +329,7 @@ export default function AppsScreen() {
 
       // 2. Build native Hermes bytecode bundle via Go agent
       setLoadingStatus("Building native bundle...");
+      setBuildProgress(0.15);
       const buildRes = await fetch(`${baseUrl}/dev/build-native`, {
         method: "POST",
         headers,
@@ -278,16 +342,21 @@ export default function AppsScreen() {
       }
 
       // 3. Load compiled bytecode into native RCTBridge (NOT WebView)
-      setLoadingStatus("Loading on device...");
+      const sizeKB = Math.round((buildResult.size || 0) / 1024);
+      setLoadingStatus(`Downloading ${sizeKB}KB bundle...`);
+      setBuildProgress(0.95);
       const bundleUrl = `${baseUrl}${buildResult.bundleUrl}`;
       const moduleName = buildResult.moduleName || "main";
-      // Pass auth headers so relay-proxied download works
       await loadApp(bundleUrl, moduleName, (quicClient as any).authHeaders);
+      setBuildProgress(1);
+      setLoadingStatus("Loaded!");
     } catch (err: any) {
       Alert.alert("Load Failed", err?.message || "Could not load app in Yaver");
     } finally {
+      sseController.abort();
       setNativeLoading(false);
-      setLoadingStatus("");
+      setBuildProgress(0);
+      setTimeout(() => setLoadingStatus(""), 2000);
     }
   }, []);
 
@@ -325,7 +394,7 @@ export default function AppsScreen() {
           <Text style={[s.emptyIcon, { color: c.textMuted }]}>{"\u{1F4F1}"}</Text>
           <Text style={[s.emptyTitle, { color: c.textPrimary }]}>Not connected</Text>
           <Text style={[s.emptySubtitle, { color: c.textSecondary }]}>
-            Connect to a device to see your apps
+            Connect to a device to see your projects
           </Text>
         </View>
       </SafeAreaView>
@@ -354,8 +423,8 @@ export default function AppsScreen() {
               <Pressable style={[s.actionBtn, s.openBtn]} onPress={handleOpen} disabled={nativeLoading}>
                 {nativeLoading ? (
                   <>
-                    <ActivityIndicator size="small" color="#fff" />
-                    {loadingStatus ? <Text style={[s.openBtnText, { fontSize: 11, marginLeft: 8 }]}>{loadingStatus}</Text> : null}
+                    <ActivityIndicator size="small" color="#000" />
+                    <Text style={[s.openBtnText, { fontSize: 11, marginLeft: 6 }]}>Building...</Text>
                   </>
                 ) : (
                   <Text style={s.openBtnText}>Open App</Text>
@@ -368,6 +437,18 @@ export default function AppsScreen() {
                 <Text style={s.stopBtnText}>Stop</Text>
               </Pressable>
             </View>
+
+            {/* Build progress bar — shows during HBC compilation */}
+            {nativeLoading && (
+              <View style={s.progressContainer}>
+                <View style={s.progressTrack}>
+                  <View style={[s.progressFill, { width: `${Math.max(buildProgress * 100, 5)}%` }]} />
+                </View>
+                {loadingStatus ? (
+                  <Text style={s.progressText} numberOfLines={1}>{loadingStatus}</Text>
+                ) : null}
+              </View>
+            )}
 
             {/* Quick actions */}
             <View style={s.quickActions}>
@@ -412,30 +493,34 @@ export default function AppsScreen() {
           )}
         </View>
 
-        {/* Tag filter chips */}
+        {/* Category + framework filter chips */}
         {(() => {
-          const allTags = new Set<string>();
+          const categories = new Map<string, number>();
           projects.forEach((p) => {
-            if (p.framework) allTags.add(p.framework);
-            (p.tags ?? []).forEach((t: string) => allTags.add(t));
+            const cat = getProjectCategory(p.framework);
+            categories.set(cat, (categories.get(cat) || 0) + 1);
           });
-          const tags = Array.from(allTags).sort();
-          if (tags.length === 0) return null;
+          const categoryOrder = ["mobile", "web", "other"] as const;
+          const categoryLabels: Record<string, string> = { mobile: "Mobile", web: "Web", other: "Other" };
+          const visibleCategories = categoryOrder.filter((c) => categories.has(c));
+          if (visibleCategories.length <= 1 && projects.length > 0) return null;
           return (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filterRow} contentContainerStyle={s.filterRowContent}>
               <Pressable
                 style={[s.filterChip, !activeFilter && s.filterChipActive]}
                 onPress={() => setActiveFilter(null)}
               >
-                <Text style={[s.filterChipText, !activeFilter && s.filterChipTextActive]}>All</Text>
+                <Text style={[s.filterChipText, !activeFilter && s.filterChipTextActive]}>All ({projects.length})</Text>
               </Pressable>
-              {tags.map((tag) => (
+              {visibleCategories.map((cat) => (
                 <Pressable
-                  key={tag}
-                  style={[s.filterChip, activeFilter === tag && s.filterChipActive]}
-                  onPress={() => setActiveFilter(activeFilter === tag ? null : tag)}
+                  key={cat}
+                  style={[s.filterChip, activeFilter === cat && s.filterChipActive]}
+                  onPress={() => setActiveFilter(activeFilter === cat ? null : cat)}
                 >
-                  <Text style={[s.filterChipText, activeFilter === tag && s.filterChipTextActive]}>{tag}</Text>
+                  <Text style={[s.filterChipText, activeFilter === cat && s.filterChipTextActive]}>
+                    {categoryLabels[cat]} ({categories.get(cat)})
+                  </Text>
                 </Pressable>
               ))}
             </ScrollView>
@@ -454,9 +539,9 @@ export default function AppsScreen() {
                 (p.tags ?? []).some((t: string) => t.toLowerCase().includes(q));
               if (!match) return false;
             }
-            // Tag filter
+            // Category filter
             if (activeFilter) {
-              return p.framework === activeFilter || (p.tags ?? []).includes(activeFilter);
+              return getProjectCategory(p.framework) === activeFilter;
             }
             return true;
           })}
@@ -465,6 +550,8 @@ export default function AppsScreen() {
           renderItem={({ item }) => {
             const isRunning = devStatus?.workDir === item.path;
             const isStarting = startingProject === item.name;
+            const category = getProjectCategory(item.framework);
+            const fwIcon = FRAMEWORK_ICONS[item.framework || ""] || (category === "mobile" ? "\uD83D\uDCF1" : category === "web" ? "\u{1F310}" : "\u{1F4C2}");
 
             return (
               <Pressable
@@ -474,16 +561,14 @@ export default function AppsScreen() {
                 disabled={isStarting || loadingActions}
               >
                 <View style={s.cardHeader}>
-                  <View style={[s.statusDot, { backgroundColor: isRunning ? "#22c55e" : c.textMuted }]} />
+                  <Text style={s.frameworkIcon}>{fwIcon}</Text>
                   <View style={s.cardTitleContainer}>
                     <Text style={[s.projectName, { color: c.textPrimary }]}>{item.name}</Text>
-                    {((item.framework ? [item.framework] : []).concat(item.tags ?? [])).length > 0 && (
+                    {item.framework && (
                       <View style={s.tagRow}>
-                        {[...(item.framework ? [item.framework] : []), ...(item.tags ?? [])].filter((v, i, a) => a.indexOf(v) === i).map((tag) => (
-                          <View key={tag} style={s.tag}>
-                            <Text style={s.tagText}>{tag}</Text>
-                          </View>
-                        ))}
+                        <View style={s.tag}>
+                          <Text style={s.tagText}>{item.framework}</Text>
+                        </View>
                       </View>
                     )}
                     <Text style={[s.projectMeta, { color: c.textMuted }]} numberOfLines={1}>
@@ -931,6 +1016,25 @@ const s = StyleSheet.create({
   deepShuffleStepText: { fontSize: 11, fontWeight: "700", letterSpacing: 0.5 },
   deepShuffleStreamText: { fontSize: 13, lineHeight: 19 },
 
+  // Build progress
+  progressContainer: { marginTop: 10 },
+  progressTrack: {
+    height: 4,
+    backgroundColor: "#22c55e22",
+    borderRadius: 2,
+    overflow: "hidden" as const,
+  },
+  progressFill: {
+    height: 4,
+    backgroundColor: "#22c55e",
+    borderRadius: 2,
+  },
+  progressText: {
+    fontSize: 11,
+    color: "#9ca3af",
+    marginTop: 4,
+  },
+
   // Active app card
   card: { marginHorizontal: 16, borderRadius: 12, padding: 14, marginBottom: 8 },
   activeCard: {
@@ -944,10 +1048,11 @@ const s = StyleSheet.create({
   cardTitle: { fontSize: 16, fontWeight: "700", color: "#fff" },
   cardMeta: { fontSize: 11, color: "#666", marginTop: 2 },
   statusDot: { width: 8, height: 8, borderRadius: 4 },
+  frameworkIcon: { fontSize: 20 },
 
   cardActions: { flexDirection: "row", gap: 8, marginTop: 12 },
   actionBtn: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8 },
-  openBtn: { backgroundColor: "#22c55e", flex: 1, alignItems: "center" },
+  openBtn: { backgroundColor: "#22c55e", flex: 1, alignItems: "center", flexDirection: "row" as const, justifyContent: "center", gap: 4 },
   openBtnText: { color: "#000", fontSize: 13, fontWeight: "700" },
   reloadBtn: { backgroundColor: "#22c55e22", flex: 1, alignItems: "center" },
   reloadBtnText: { color: "#22c55e", fontSize: 13, fontWeight: "600" },
