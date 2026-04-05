@@ -145,24 +145,32 @@ export function DevPreview() {
       return;
     }
     setNativeLoading(true);
+    setLastLogLine("Building native bundle...");
     try {
-      // Build the Metro bundle URL through the agent's /dev/* proxy
-      const bundleUrl = buildNativeBundleUrl(baseUrl);
+      // Ask the Go agent to build a production Hermes bytecode bundle
+      const platform = require("react-native").Platform.OS;
+      const headers = {
+        ...(quicClient as any).authHeaders,
+        "Content-Type": "application/json",
+      };
+      const buildRes = await fetch(`${baseUrl}/dev/build-native`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ platform }),
+      });
+      const buildResult = await buildRes.json();
 
-      // Pre-check: verify the bundle URL is reachable before loading
-      try {
-        const checkRes = await fetch(bundleUrl, { method: "HEAD", headers: (quicClient as any).authHeaders });
-        if (!checkRes.ok) {
-          throw new Error(`Bundle not ready (HTTP ${checkRes.status}). Is Metro running?`);
-        }
-      } catch (checkErr: any) {
-        if (checkErr.message?.includes("Bundle not ready")) throw checkErr;
-        // Network error — try anyway, loadApp will handle it
+      if (buildResult.status !== "ok") {
+        throw new Error(buildResult.error || "Build failed");
       }
 
+      // Load the compiled native bundle
+      setLastLogLine("Loading bundle on device...");
+      const bundleUrl = `${baseUrl}${buildResult.bundleUrl}`;
       await loadApp(bundleUrl, "main");
     } catch (err: any) {
       setNativeLoading(false);
+      setLastLogLine("");
       Alert.alert("Load Failed", err?.message || "Could not load bundle in Yaver");
     }
   }, []);

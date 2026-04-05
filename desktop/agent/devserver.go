@@ -417,6 +417,15 @@ func (m *DevServerManager) Unsubscribe(ch chan DevServerEvent) {
 	}
 }
 
+// EmitLog emits a "log" event with the given line to all SSE subscribers.
+func (m *DevServerManager) EmitLog(line string) {
+	m.emit(DevServerEvent{
+		Type:      "log",
+		LogLine:   line,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
 func (m *DevServerManager) emit(event DevServerEvent) {
 	m.subsMu.Lock()
 	defer m.subsMu.Unlock()

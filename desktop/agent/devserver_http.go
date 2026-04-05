@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -195,6 +196,167 @@ func (s *HTTPServer) handleDevServerProxy(w http.ResponseWriter, r *http.Request
 	}
 
 	proxy.ServeHTTP(w, r)
+}
+
+// handleBuildNativeBundle builds a production Hermes bytecode bundle for the active project.
+// POST /dev/build-native { "platform": "ios" }
+// Returns { "status": "ok", "bundleUrl": "/dev/native-bundle" } on success.
+func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Request) {
+	if s.devServerMgr == nil {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
+		return
+	}
+
+	status := s.devServerMgr.Status()
+	if status == nil || status.WorkDir == "" {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "no active dev server — start one first"})
+		return
+	}
+
+	var req struct {
+		Platform string `json:"platform"`
+	}
+	if r.Body != nil {
+		json.NewDecoder(r.Body).Decode(&req)
+	}
+	if req.Platform == "" {
+		req.Platform = "ios"
+	}
+
+	workDir := status.WorkDir
+	buildDir := filepath.Join(workDir, ".yaver-build")
+	bundlePath := filepath.Join(buildDir, "main.jsbundle")
+
+	// Emit starting event
+	s.devServerMgr.EmitLog("Building native bundle...")
+
+	// 1. Run react-native bundle
+	os.MkdirAll(buildDir, 0o755)
+
+	// Find entry file
+	entryFile := "index.js"
+	for _, candidate := range []string{"index.js", "index.tsx", "index.ts", "src/index.js", "src/index.tsx"} {
+		if _, err := os.Stat(filepath.Join(workDir, candidate)); err == nil {
+			entryFile = candidate
+			break
+		}
+	}
+
+	// Check if this is an Expo project (uses expo-router)
+	pkgData, _ := os.ReadFile(filepath.Join(workDir, "package.json"))
+	if strings.Contains(string(pkgData), "expo-router") {
+		// Expo Router entry point
+		entryFile = "node_modules/expo-router/entry.js"
+		if _, err := os.Stat(filepath.Join(workDir, entryFile)); err != nil {
+			entryFile = "index.js" // fallback
+		}
+	}
+
+	s.devServerMgr.EmitLog(fmt.Sprintf("Bundling %s for %s...", entryFile, req.Platform))
+
+	bundleCmd := fmt.Sprintf("npx react-native bundle --platform %s --entry-file %s --bundle-output %s --assets-dest %s --dev false --minify true --reset-cache",
+		req.Platform, entryFile, bundlePath, filepath.Join(buildDir, "assets"))
+
+	cmd := exec.Command("sh", "-c", bundleCmd)
+	cmd.Dir = workDir
+	cmd.Env = append(os.Environ(), "NODE_ENV=production")
+
+	logW := &devLogWriter{prefix: "[dev:build-native]"}
+	if s.devServerMgr != nil {
+		logW.onLogLine = func(line string) { s.devServerMgr.EmitLog(line) }
+	}
+	cmd.Stdout = logW
+	cmd.Stderr = logW
+
+	if err := cmd.Run(); err != nil {
+		s.devServerMgr.EmitLog(fmt.Sprintf("Bundle failed: %v", err))
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("react-native bundle failed: %v", err)})
+		return
+	}
+
+	// 2. Compile with hermesc
+	s.devServerMgr.EmitLog("Compiling Hermes bytecode...")
+
+	hermescPath := findHermesc(workDir)
+	if hermescPath == "" {
+		// Skip hermesc — serve plain JS bundle (still works, just slower)
+		s.devServerMgr.EmitLog("hermesc not found — serving plain JS bundle")
+	} else {
+		tmpPath := bundlePath + ".tmp"
+		os.Rename(bundlePath, tmpPath)
+
+		hermesCmd := exec.Command(hermescPath, "-emit-binary", "-out", bundlePath, "-O", tmpPath)
+		hermesCmd.Dir = workDir
+		hermesLogW := &devLogWriter{prefix: "[dev:hermesc]"}
+		hermesCmd.Stdout = hermesLogW
+		hermesCmd.Stderr = hermesLogW
+
+		if err := hermesCmd.Run(); err != nil {
+			// Fallback: use plain JS
+			os.Rename(tmpPath, bundlePath)
+			s.devServerMgr.EmitLog(fmt.Sprintf("hermesc failed, using plain JS: %v", err))
+		} else {
+			os.Remove(tmpPath)
+			s.devServerMgr.EmitLog("Hermes bytecode compiled")
+		}
+	}
+
+	// Check bundle size
+	info, err := os.Stat(bundlePath)
+	if err != nil {
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "bundle file not found after build"})
+		return
+	}
+
+	s.devServerMgr.EmitLog(fmt.Sprintf("Bundle ready: %d KB", info.Size()/1024))
+
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"status":    "ok",
+		"bundleUrl": "/dev/native-bundle",
+		"size":      info.Size(),
+		"platform":  req.Platform,
+	})
+}
+
+// handleServeNativeBundle serves the compiled native bundle file.
+// GET /dev/native-bundle
+func (s *HTTPServer) handleServeNativeBundle(w http.ResponseWriter, r *http.Request) {
+	if s.devServerMgr == nil {
+		http.Error(w, "no dev server", http.StatusServiceUnavailable)
+		return
+	}
+
+	status := s.devServerMgr.Status()
+	if status == nil || status.WorkDir == "" {
+		http.Error(w, "no active project", http.StatusBadRequest)
+		return
+	}
+
+	bundlePath := filepath.Join(status.WorkDir, ".yaver-build", "main.jsbundle")
+	if _, err := os.Stat(bundlePath); err != nil {
+		http.Error(w, "no native bundle — call POST /dev/build-native first", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename=main.jsbundle")
+	http.ServeFile(w, r, bundlePath)
+}
+
+// findHermesc looks for hermesc in the project's react-native installation.
+func findHermesc(workDir string) string {
+	candidates := []string{
+		filepath.Join(workDir, "node_modules", "react-native", "sdks", "hermesc", "osx-bin", "hermesc"),
+		filepath.Join(workDir, "node_modules", "react-native", "sdks", "hermesc", "linux64-bin", "hermesc"),
+		filepath.Join(workDir, "node_modules", "hermes-engine", "osx-bin", "hermesc"),
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			os.Chmod(c, 0o755)
+			return c
+		}
+	}
+	return ""
 }
 
 // handleDevServerBuilds lists or clears build markers.
