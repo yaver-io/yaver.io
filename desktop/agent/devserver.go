@@ -142,6 +142,10 @@ type DevServerManager struct {
 	// Set by the HTTP server after relay connection is established.
 	// Examples: "http://192.168.1.10:18080", "https://public.yaver.io/d/abc123"
 	AgentURL string
+
+	// bundleMetaJSON stores the last validated bundle's metadata JSON.
+	// Set by handleBuildNativeBundle, read by handleServeNativeBundle.
+	bundleMetaJSON string
 }
 
 type devServerSession struct {
@@ -415,6 +419,20 @@ func (m *DevServerManager) Unsubscribe(ch chan DevServerEvent) {
 			return
 		}
 	}
+}
+
+// SetBundleMetadata stores validated bundle metadata JSON for the native-bundle endpoint.
+func (m *DevServerManager) SetBundleMetadata(metaJSON string) {
+	m.mu.Lock()
+	m.bundleMetaJSON = metaJSON
+	m.mu.Unlock()
+}
+
+// GetBundleMetadata returns the last stored bundle metadata JSON.
+func (m *DevServerManager) GetBundleMetadata() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.bundleMetaJSON
 }
 
 // EmitLog emits a "log" event with the given line to all SSE subscribers.

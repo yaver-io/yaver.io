@@ -336,19 +336,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 			s.devServerMgr.EmitLog(fmt.Sprintf("hermesc failed, using plain JS: %v", err))
 		} else {
 			os.Remove(tmpPath)
-
-			// Verify and log bytecode version
-			// Hermes HBC format: magic at offset 4, BC version at offset 8
-			if data, err := os.ReadFile(bundlePath); err == nil && len(data) >= 12 {
-				magic := uint32(data[4]) | uint32(data[5])<<8 | uint32(data[6])<<16 | uint32(data[7])<<24
-				bcVersion := uint32(data[8]) | uint32(data[9])<<8 | uint32(data[10])<<16 | uint32(data[11])<<24
-				if magic == 0x1F1903C1 {
-					log.Printf("[super-host] Hermes bytecode version: BC%d", bcVersion)
-					s.devServerMgr.EmitLog(fmt.Sprintf("Hermes BC%d (embedded hermesc)", bcVersion))
-				} else {
-					log.Printf("[super-host] WARNING: Not Hermes bytecode (magic=0x%08X)", magic)
-				}
-			}
+			log.Printf("[super-host] hermesc compile complete")
 		}
 	}
 
@@ -356,30 +344,45 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	moduleName := detectModuleName(bundlePath, workDir)
 	log.Printf("[super-host] detected module name: %s", moduleName)
 
-	// ── Check bundle size ──
-	info, err := os.Stat(bundlePath)
-	if err != nil {
-		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "bundle file not found after build"})
+	// ── Validate bundle integrity (magic, BC version, size, MD5) ──
+	// expectedBCVersion 96 = Yaver's embedded Hermes from RN 0.81.5
+	meta, valErr := ValidateHBC(bundlePath, 96)
+	if valErr != nil {
+		errMsg := fmt.Sprintf("Bundle validation failed: %v", valErr)
+		log.Printf("[super-host] %s", errMsg)
+		s.devServerMgr.EmitLog(errMsg)
+		jsonReply(w, http.StatusInternalServerError, map[string]string{
+			"error": errMsg,
+			"code":  "BUNDLE_VALIDATION_FAILED",
+		})
 		return
 	}
+	meta.ModuleName = moduleName
+	log.Printf("[super-host] bundle validated: %d bytes, MD5=%s, BC%d, module=%s",
+		meta.Size, meta.MD5, meta.HermesBCVersion, meta.ModuleName)
+
+	// Store metadata for the /dev/native-bundle endpoint to attach as header
+	s.devServerMgr.SetBundleMetadata(meta.JSON())
 
 	// ── Check for assets ──
 	assetsDir := filepath.Join(buildDir, "assets")
 	hasAssets := false
 	if info, err := os.Stat(assetsDir); err == nil && info.IsDir() {
-		// Check if there are actual files in the assets directory
 		entries, _ := os.ReadDir(assetsDir)
 		hasAssets = len(entries) > 0
 	}
 	log.Printf("[super-host] hasAssets=%v", hasAssets)
 
-	s.devServerMgr.EmitLog(fmt.Sprintf("Bundle ready: %d KB, module: %s", info.Size()/1024, moduleName))
+	s.devServerMgr.EmitLog(fmt.Sprintf("Bundle ready: %d KB, MD5 verified, BC%d, module: %s",
+		meta.Size/1024, meta.HermesBCVersion, moduleName))
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"status":     "ok",
 		"bundleUrl":  "/dev/native-bundle",
 		"assetsUrl":  "/dev/native-assets",
-		"size":       info.Size(),
+		"size":       meta.Size,
+		"md5":        meta.MD5,
+		"bcVersion":  meta.HermesBCVersion,
 		"platform":   req.Platform,
 		"moduleName": moduleName,
 		"hasAssets":  hasAssets,
@@ -408,6 +411,14 @@ func (s *HTTPServer) handleServeNativeBundle(w http.ResponseWriter, r *http.Requ
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename=main.jsbundle")
+
+	// Attach bundle metadata header for integrity validation on phone
+	if s.devServerMgr != nil {
+		if metaJSON := s.devServerMgr.GetBundleMetadata(); metaJSON != "" {
+			w.Header().Set("X-Yaver-Bundle-Metadata", metaJSON)
+		}
+	}
+
 	http.ServeFile(w, r, bundlePath)
 }
 
@@ -482,7 +493,12 @@ func (s *HTTPServer) handleServeNativeAssets(w http.ResponseWriter, r *http.Requ
 			return nil
 		}
 		relPath, _ := filepath.Rel(assetsDir, path)
-		f, err := zipW.Create(relPath)
+		// Use Store (no compression) so the phone can extract without zlib
+		header := &zip.FileHeader{
+			Name:   relPath,
+			Method: zip.Store,
+		}
+		f, err := zipW.CreateHeader(header)
 		if err != nil {
 			return err
 		}

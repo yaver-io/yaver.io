@@ -3,19 +3,17 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  Linking,
-  Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { WebView } from "react-native-webview";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient, type DevServerStatus } from "../../src/lib/quic";
-import { loadApp, buildNativeBundleUrl, getAvailableModules } from "../../src/lib/bundleLoader";
+import { loadApp } from "../../src/lib/bundleLoader";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -42,17 +40,12 @@ const FRAMEWORK_ICONS: Record<string, string> = {
 
 export default function HotReloadScreen() {
   const c = useColors();
-  const insets = useSafeAreaInsets();
   const { activeDevice, connectionStatus } = useDevice();
   const isConnected = connectionStatus === "connected" && !!activeDevice;
 
   const [devStatus, setDevStatus] = useState<DevServerStatus | null>(null);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [startingProject, setStartingProject] = useState<string | null>(null);
-  const [showWebView, setShowWebView] = useState(false);
-  const [webViewKey, setWebViewKey] = useState(0);
-  const [webViewLoading, setWebViewLoading] = useState(false);
-  const webViewRef = useRef<WebView>(null);
 
   // Poll dev server status + mobile projects
   useEffect(() => {
@@ -95,108 +88,76 @@ export default function HotReloadScreen() {
     return () => { mounted = false; clearInterval(interval); clearInterval(projectInterval); };
   }, [isConnected]);
 
-  // SSE auto-reload
-  useEffect(() => {
-    if (!showWebView || !devStatus?.running) return;
-    const controller = new AbortController();
-    const baseUrl = (quicClient as any).baseUrl;
-    if (!baseUrl) return;
-
-    const listen = async () => {
-      try {
-        const res = await fetch(`${baseUrl}/dev/events`, {
-          headers: (quicClient as any).authHeaders,
-          signal: controller.signal,
-        });
-        const reader = res.body?.getReader();
-        if (!reader) return;
-        const decoder = new TextDecoder();
-        let incomplete = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const text = incomplete + decoder.decode(value, { stream: true });
-          const lines = text.split("\n");
-          incomplete = lines.pop() || "";
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              try {
-                const event = JSON.parse(line.slice(6));
-                if (event.type === "reload" || event.type === "ready") {
-                  setWebViewKey(k => k + 1);
-                  setWebViewLoading(true);
-                }
-              } catch {}
-            }
-          }
-        }
-      } catch {}
-    };
-    listen();
-    return () => controller.abort();
-  }, [showWebView, devStatus?.running]);
 
   const [nativeLoading, setNativeLoading] = useState(false);
 
-  const handleOpen = useCallback(() => {
-    const isExpo = devStatus?.framework === "expo" || devStatus?.framework === "react-native";
-    const directLink = devStatus?.deepLink || "";
-    const connectionMode = (quicClient as any)._connectionMode as string;
-    const isLAN = connectionMode === "direct" || connectionMode === "lan";
+  const handleOpen = useCallback(async () => {
     const baseUrl = (quicClient as any).baseUrl as string;
+    if (!baseUrl) {
+      Alert.alert("Error", "Not connected to agent");
+      return;
+    }
 
-    const doLoadApp = async () => {
-      const bundleUrl = buildNativeBundleUrl(baseUrl);
-      const headers = (quicClient as any).authHeaders as Record<string, string>;
-      await loadApp(bundleUrl, "main", headers);
-    };
+    setNativeLoading(true);
+    setLoadingStatus("Building HBC bundle...");
+    try {
+      const headers = {
+        ...(quicClient as any).authHeaders,
+        "Content-Type": "application/json",
+      };
 
-    const openNativeInYaver = async () => {
-      // Load bundle inside Yaver's RCTBridge (super-host mode)
-      // Works over any connection — relay, tunnel, direct
-      setNativeLoading(true);
-      try {
-        // Pre-flight: check if the target app is compatible with this host
-        const availableModules = await getAvailableModules();
-        const headers = (quicClient as any).authHeaders as Record<string, string>;
+      // Step 1: Build production Hermes bytecode bundle (embedded hermesc BC96)
+      const platform = Platform.OS;
+      const buildRes = await fetch(`${baseUrl}/dev/build-native`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ platform }),
+      });
+      const buildResult = await buildRes.json();
 
-        const compatRes = await fetch(`${baseUrl}/dev/compatibility`, {
-          method: "POST",
-          headers: { ...headers, "Content-Type": "application/json" },
-          body: JSON.stringify({ availableModules }),
-        });
-        const compat = await compatRes.json();
-
-        if (!compat.compatible && compat.missingModules?.length > 0) {
-          Alert.alert(
-            "Missing Native Modules",
-            `This app requires native modules not available in Yaver:\n\n${compat.missingModules.join("\n")}\n\nThe app may crash or have limited functionality.`,
-            [
-              { text: "Load Anyway", onPress: () => doLoadApp().catch(() => {}) },
-              { text: "Cancel", style: "cancel" },
-            ]
-          );
-          setNativeLoading(false);
-          return;
-        }
-
-        await doLoadApp();
-      } catch (err: any) {
-        Alert.alert("Load Failed", err?.message || "Could not load bundle in Yaver");
-      } finally {
-        setNativeLoading(false);
+      if (buildResult.status !== "ok") {
+        throw new Error(buildResult.error || "Build failed");
       }
-    };
 
-    // Always load natively in Yaver (super-host mode)
-    // Works over any connection — relay, tunnel, direct
-    openNativeInYaver();
+      const sizeKB = Math.round((buildResult.size || 0) / 1024);
+      setLoadingStatus(`Built ${sizeKB}KB BC${buildResult.bcVersion || "?"}`);
+
+      // Step 2: Download assets if available
+      if (buildResult.hasAssets && buildResult.assetsUrl) {
+        setLoadingStatus("Downloading assets...");
+        try {
+          const assetsRes = await fetch(`${baseUrl}${buildResult.assetsUrl}`, { headers });
+          if (assetsRes.ok) {
+            const assetsBlob = await assetsRes.blob();
+            await fetch(`http://localhost:8347/assets`, {
+              method: "POST",
+              body: assetsBlob,
+              headers: { "Content-Type": "application/zip" },
+            });
+          }
+        } catch {
+          // Non-fatal
+        }
+      }
+
+      // Step 3: Download + validate HBC bundle (integrity checked via X-Yaver-Bundle-Metadata)
+      setLoadingStatus(`Downloading ${sizeKB}KB bundle...`);
+      const bundleUrl = `${baseUrl}${buildResult.bundleUrl}`;
+      const moduleName = buildResult.moduleName || "main";
+      await loadApp(bundleUrl, moduleName, (quicClient as any).authHeaders);
+
+      // If we get here, bundle was validated (MD5 + BC version match)
+      setLoadingStatus(`Loaded! MD5: ${(buildResult.md5 || "").slice(0, 8)}...`);
+    } catch (err: any) {
+      setLoadingStatus("");
+      Alert.alert("Load Failed", err?.message || "Could not load bundle in Yaver");
+    } finally {
+      setNativeLoading(false);
+    }
   }, [devStatus]);
 
   const handleReload = useCallback(async () => {
-    setWebViewLoading(true);
     await quicClient.reloadDevServer();
-    setWebViewKey(k => k + 1);
   }, []);
 
   const handleStop = useCallback(() => {
@@ -205,7 +166,6 @@ export default function HotReloadScreen() {
       {
         text: "Stop", style: "destructive", onPress: async () => {
           await quicClient.stopDevServer();
-          setShowWebView(false);
           setDevStatus(null);
         }
       },
@@ -234,7 +194,7 @@ export default function HotReloadScreen() {
     }
   }, [devStatus, handleOpen]);
 
-  const bundleUrl = devStatus ? quicClient.getDevServerBundleUrl(devStatus.bundleUrl || "/dev/") : "";
+  const [loadingStatus, setLoadingStatus] = useState("");
   // Match running workDir to project list to get the real app name (not directory name)
   const runningProject = (() => {
     if (!devStatus?.workDir) return devStatus?.framework ?? "App";
@@ -279,11 +239,18 @@ export default function HotReloadScreen() {
               </View>
               {!devStatus.running && <ActivityIndicator size="small" color="#f59e0b" />}
             </View>
+            {loadingStatus ? (
+              <Text style={{ color: "#9ca3af", fontSize: 11, marginTop: 4 }}>{loadingStatus}</Text>
+            ) : null}
             <View style={s.cardActions}>
               {devStatus.running && (
                 <>
-                  <Pressable style={[s.actionBtn, s.openBtn]} onPress={handleOpen}>
-                    <Text style={s.openBtnText}>Open App</Text>
+                  <Pressable style={[s.actionBtn, s.openBtn]} onPress={handleOpen} disabled={nativeLoading}>
+                    {nativeLoading ? (
+                      <ActivityIndicator size="small" color="#000" />
+                    ) : (
+                      <Text style={s.openBtnText}>Open App</Text>
+                    )}
                   </Pressable>
                   <Pressable style={[s.actionBtn, s.reloadBtn]} onPress={handleReload}>
                     <Text style={s.reloadBtnText}>{"\u21BB"} Reload</Text>
@@ -350,45 +317,6 @@ export default function HotReloadScreen() {
         />
       </View>
 
-      {/* Full-screen WebView */}
-      <Modal visible={showWebView} animationType="slide" presentationStyle="fullScreen">
-        <View style={[s.safe, { backgroundColor: c.bg }]}>
-          <View style={[s.webViewHeader, { borderBottomColor: c.border, paddingTop: insets.top + 8 }]}>
-            <Pressable onPress={() => setShowWebView(false)}>
-              <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>Back</Text>
-            </Pressable>
-            <View style={s.webViewHeaderCenter}>
-              <View style={[s.statusDot, { backgroundColor: "#22c55e" }]} />
-              <Text style={[s.webViewTitle, { color: c.textPrimary }]}>{runningProject}</Text>
-            </View>
-            <View style={s.webViewHeaderActions}>
-              <Pressable onPress={handleReload}>
-                <Text style={{ color: c.accent, fontSize: 14, fontWeight: "600" }}>Reload</Text>
-              </Pressable>
-              <Pressable onPress={handleStop}>
-                <Text style={{ color: c.error, fontSize: 14, fontWeight: "600", marginLeft: 16 }}>Stop</Text>
-              </Pressable>
-            </View>
-          </View>
-          {webViewLoading && (
-            <View style={[s.loadingBar, { backgroundColor: c.accent }]} />
-          )}
-          <WebView
-            ref={webViewRef}
-            key={webViewKey}
-            source={{
-              uri: bundleUrl,
-              headers: (quicClient as any).authHeaders || {},
-            }}
-            style={{ flex: 1, backgroundColor: c.bg }}
-            onLoadEnd={() => setWebViewLoading(false)}
-            onError={() => setWebViewLoading(false)}
-            javaScriptEnabled
-            domStorageEnabled
-            allowsInlineMediaPlayback
-          />
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -459,10 +387,4 @@ const s = StyleSheet.create({
   emptySubtitle: { fontSize: 13, textAlign: "center", lineHeight: 20 },
   emptyList: { padding: 40, alignItems: "center" },
 
-  // WebView header
-  webViewHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 12, paddingBottom: 10, borderBottomWidth: 1 },
-  webViewHeaderCenter: { flexDirection: "row", alignItems: "center", gap: 6 },
-  webViewTitle: { fontSize: 15, fontWeight: "700" },
-  webViewHeaderActions: { flexDirection: "row", alignItems: "center" },
-  loadingBar: { height: 2, opacity: 0.6 },
 });

@@ -438,13 +438,13 @@ yaver-push push
 🚀 Done in 4.1s — app loading on device
 ```
 
-**What this is NOT:** Not a WebView. Every `<View>` renders as a real `UIView` / `android.view.View`. Not Metro dev server — the phone runs a production App Store binary with 40+ pre-installed native modules.
+**What this is NOT:** Not a WebView. Every `<View>` renders as a real `UIView` / `android.view.View` with full New Architecture support (TurboModules, Fabric). Not Metro dev server — the phone runs a production App Store binary with 40+ pre-installed native modules.
 
 ### How It Works
 
 1. **`yaver-push init`** reads your `package.json`, compares against the SDK manifest (React Native version, Hermes bytecode version, native modules), and reports compatibility
 2. **`yaver-push push`** bundles your JS with `react-native bundle`, compiles to Hermes bytecode with the CLI's own `hermesc`, validates the bytecode version matches the phone app, and pushes via HTTP to the phone's on-device server (port 8347)
-3. The phone validates the Hermes bytecode, saves it, and safely reloads the React Native bridge (with a 0.6s delay for Hermes GC teardown)
+3. The phone validates the Hermes bytecode, saves it, and safely reloads the React Native bridge — polling for old bridge deallocation (Hermes GC teardown), then creating a new bridge with full New Architecture support (TurboModules, Fabric, JSI)
 
 ### CLI Commands
 
@@ -477,6 +477,58 @@ if (!isYaver) {
 ### SDK Manifest
 
 The yaver.io app ships with 40+ pre-installed native modules including: `react-native-screens`, `react-native-reanimated`, `react-native-gesture-handler`, `react-native-svg`, `react-native-webview`, `react-native-maps`, `@shopify/react-native-skia`, `expo-camera`, `expo-location`, `expo-notifications`, and more. Run `yaver-push modules` for the full list.
+
+### Platform Support
+
+React Native has first-class push-to-device support. Other frameworks have hot reload or build-only support.
+
+| Platform | Push to Device | Hot Reload | Build & Upload | How |
+|----------|:-:|:-:|:-:|-----|
+| **React Native / Expo** | **Yes** | **Yes** | **Yes** | JS bundled + Hermes bytecode compiled + pushed to native container. Full New Arch. |
+| **Flutter** | -- | **Yes** | **Yes** | `flutter run` to real device with hot reload via stdin. No container push. |
+| **Vite** | -- | **Yes** | -- | Dev server proxied through P2P. Web preview on phone. |
+| **Next.js** | -- | **Yes** | -- | Dev server proxied through P2P. Web preview on phone. |
+| **Swift / Xcode** | -- | -- | **Yes** | `xcodebuild` + TestFlight upload. Full native build each time. |
+| **Kotlin / Gradle** | -- | -- | **Yes** | Gradle APK/AAB build + Play Store upload. Full native build each time. |
+
+**Why React Native is special:** React Native apps are JavaScript at their core. Yaver compiles your JS into Hermes bytecode and loads it into a pre-built native container on the phone -- same principle as Expo Go. Other frameworks compile to machine code (Swift, Kotlin) or use their own VM (Flutter's Dart VM), so there's no way to "inject" your app into a container without building the entire binary.
+
+### How Push to Device Works (Under the Hood)
+
+If you've never worked with React Native internals, here's what's happening when you run `yaver-push push`:
+
+```
+Your Code (JSX/TypeScript)
+        |
+        v
+   Metro Bundler ---- combines all your files into one big JS file
+        |
+        v
+   Hermes Compiler (hermesc) ---- converts JS into compact bytecode (like .class files in Java)
+        |
+        v
+   Hermes Bytecode (.jsbundle) ---- ~60% smaller, loads 2x faster than raw JS
+        |
+        v
+   HTTP push to phone (port 8347) ---- sent over Wi-Fi to Yaver app
+        |
+        v
+   Yaver app validates + loads ---- checks bytecode version, MD5, then hot-swaps the bridge
+```
+
+**Key concepts:**
+
+**Hermes** is a JavaScript engine built by Meta specifically for React Native. Instead of parsing JavaScript text at runtime (slow), Hermes pre-compiles it into bytecode (fast). Think of it like the difference between running Python source code vs. a compiled `.pyc` file, or Java source vs. `.class` bytecode.
+
+**Hermes Bytecode (HBC)** is the compiled output. The file starts with a magic number (`0x1F1903C1`) and a version number (currently BC96 for RN 0.81). If the version in your compiled bundle doesn't match the version compiled into the phone app, it will crash -- like trying to run Java 21 bytecode on a Java 8 JVM.
+
+**The Bridge** is how JavaScript talks to native code (UIKit on iOS, Android Views on Android). When you write `<View>`, the JS side sends a message across the bridge saying "create a native view." The native side creates a real `UIView` or `android.view.View`. This is NOT a WebView -- every component is a real native component.
+
+**New Architecture (TurboModules + Fabric)** is React Native's modern runtime. Old RN used an async JSON bridge (slow). New Architecture uses JSI (JavaScript Interface) for synchronous, direct communication between JS and native -- like calling a C function from JS instead of sending a message. TurboModules are native modules that use this fast path. Fabric is the new rendering system. Yaver's container supports both.
+
+**The Native Container** is Yaver's phone app with 40+ native modules pre-compiled in. When you push your JS bundle, it runs inside this container using all the pre-installed native modules (cameras, maps, sensors, etc.). If your app uses a native module that isn't pre-installed, that specific feature won't work, but everything else will. This is the same concept as Expo Go, but Yaver supports New Architecture and more modules.
+
+**Safe Bridge Reload** -- when a new bundle arrives, Yaver can't just swap the JS file. It needs to: (1) shut down the old JavaScript runtime, (2) wait for background threads (Hermes garbage collector) to finish, (3) create a fresh runtime with the new bundle. If step 2 is skipped, the GC thread touches freed memory and the app crashes. Yaver polls for actual deallocation before proceeding.
 
 ## Git Providers — Clone Repos from Your Phone
 

@@ -52,25 +52,45 @@ class YaverBundleLoader: RCTEventEmitter {
 
       NSLog("[YaverBundleLoader] downloaded %d bytes", data.count)
 
-      // Validate Hermes bytecode
-      // HBC format: magic at offset 4, BC version at offset 8
-      if data.count >= 12 {
-        let magic: UInt32 = data.withUnsafeBytes { $0.load(fromByteOffset: 4, as: UInt32.self) }
-        let bcVersion: UInt32 = data.withUnsafeBytes { $0.load(fromByteOffset: 8, as: UInt32.self) }
-        let expectedBC = SDKManifest.shared.hermesBytecodeVersion
+      // Parse bundle metadata from response header (if agent sent it)
+      let metaHeader = http.value(forHTTPHeaderField: "X-Yaver-Bundle-Metadata")
+      var bundleMeta: BundleMetadata?
 
-        if magic == 0x1F1903C1 {
-          NSLog("[YaverBundleLoader] Hermes bytecode: magic=0x%08X BC=%d expectedBC=%d match=%@",
-                magic, bcVersion, expectedBC, bcVersion == expectedBC ? "YES" : "NO")
+      if let metaStr = metaHeader, let metaData = metaStr.data(using: .utf8) {
+        bundleMeta = try? JSONDecoder().decode(BundleMetadata.self, from: metaData)
+        if let m = bundleMeta {
+          NSLog("[YaverBundleLoader] metadata: size=%lld md5=%@ BC%d module=%@ format=%@",
+                m.size, m.md5, m.hermesBCVersion, m.moduleName, m.format)
 
-          if expectedBC > 0 && bcVersion != expectedBC {
-            let msg = "Hermes BC\(bcVersion) != expected BC\(expectedBC). Update yaver agent or app."
-            NSLog("[YaverBundleLoader] BC_MISMATCH: %@", msg)
-            reject("BC_MISMATCH", msg, nil)
-            return
+          // Pre-validate metadata (catches BC mismatch before we even look at bytes)
+          if let metaErr = YaverBundleValidator.validateMetadata(m) {
+            NSLog("[YaverBundleLoader] metadata rejected: %@", metaErr.localizedDescription)
+            reject(metaErr.code, metaErr.localizedDescription, nil); return
           }
-        } else {
-          NSLog("[YaverBundleLoader] plain JS bundle (magic=0x%08X, not Hermes)", magic)
+
+          // Full bundle validation (size + MD5 + magic + BC)
+          if let bundleErr = YaverBundleValidator.validateBundle(data: data, metadata: m) {
+            NSLog("[YaverBundleLoader] bundle validation FAILED: %@", bundleErr.localizedDescription)
+            reject(bundleErr.code, bundleErr.localizedDescription, nil); return
+          }
+          NSLog("[YaverBundleLoader] bundle validated: size match, MD5 match, BC%d", m.hermesBCVersion)
+        }
+      } else {
+        NSLog("[YaverBundleLoader] no X-Yaver-Bundle-Metadata header — agent may be outdated, skipping integrity checks")
+        // Legacy fallback: basic magic + BC check
+        if data.count >= 12 {
+          let magic: UInt32 = data.withUnsafeBytes { $0.load(fromByteOffset: 4, as: UInt32.self) }
+          let bcVersion: UInt32 = data.withUnsafeBytes { $0.load(fromByteOffset: 8, as: UInt32.self) }
+          let expectedBC = SDKManifest.shared.hermesBytecodeVersion
+          if magic == 0x1F1903C1 {
+            NSLog("[YaverBundleLoader] Hermes BC=%d expectedBC=%d", bcVersion, expectedBC)
+            if expectedBC > 0 && bcVersion != expectedBC {
+              reject("BC_VERSION_MISMATCH",
+                     "Hermes BC\(bcVersion) != expected BC\(expectedBC)", nil); return
+            }
+          } else {
+            NSLog("[YaverBundleLoader] plain JS bundle (not HBC) — may crash on Release bridge")
+          }
         }
       }
 
@@ -82,10 +102,11 @@ class YaverBundleLoader: RCTEventEmitter {
         try data.write(to: savePath, options: .atomic)
         NSLog("[YaverBundleLoader] saved bundle to %@, size=%d", savePath.path, data.count)
 
-        let meta = try JSONSerialization.data(withJSONObject: [
-          "moduleName": moduleName, "sourceUrl": urlString, "size": data.count
+        let localMeta = try JSONSerialization.data(withJSONObject: [
+          "moduleName": moduleName, "sourceUrl": urlString, "size": data.count,
+          "md5": bundleMeta?.md5 ?? "", "bcVersion": bundleMeta?.hermesBCVersion ?? 0
         ] as [String: Any])
-        try meta.write(to: dir.appendingPathComponent("metadata.json"), options: .atomic)
+        try localMeta.write(to: dir.appendingPathComponent("metadata.json"), options: .atomic)
 
         UserDefaults.standard.set(moduleName, forKey: "yaverLoadedModuleName")
         resolve(["loaded": true, "url": urlString, "size": data.count])
