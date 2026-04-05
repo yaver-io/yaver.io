@@ -38,8 +38,9 @@ type HTTPServer struct {
 	feedbackMgr *FeedbackManager
 	blackboxMgr   *BlackBoxManager
 	devServerMgr  *DevServerManager
-	todolistMgr   *TodoListManager
-	multiUserMgr  *MultiUserManager // nil in single-user mode
+	todolistMgr    *TodoListManager
+	sessionAuditor *SessionAuditor
+	multiUserMgr   *MultiUserManager // nil in single-user mode
 	server       *http.Server
 	tlsServer    *http.Server
 	onShutdown   func() // called when mobile requests agent shutdown
@@ -180,6 +181,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/todolist/auto-consume", s.auth(s.handleTodoListAutoConsume))
 	mux.HandleFunc("/todolist/implement-all", s.auth(s.handleTodoListImplementAll))
 	mux.HandleFunc("/todolist/", s.authSDK(s.handleTodoListByID))
+
+	// Session audit (missed items detector) — accessible from mobile
+	mux.HandleFunc("/session-audit", s.auth(s.handleSessionAudit))
+	mux.HandleFunc("/session-audit/all", s.auth(s.handleSessionAuditAll))
 	mux.HandleFunc("/autopilot", s.auth(s.handleAutopilot))
 
 	// Quality gates (lint + typecheck + format + test)
