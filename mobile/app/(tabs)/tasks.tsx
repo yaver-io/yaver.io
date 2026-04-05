@@ -1138,7 +1138,7 @@ export default function TasksScreen() {
         </Pressable>
 
         {/* Dev server preview banner */}
-        {isEffectivelyConnected && <DevPreview />}
+        {isEffectivelyConnected && <View style={{ marginTop: 12 }}><DevPreview /></View>}
 
         {/* Project chip + Todo queue bar */}
         {isEffectivelyConnected && (projectName || todoTotal > 0) && (
