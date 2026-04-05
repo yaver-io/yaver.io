@@ -92,7 +92,7 @@ export default function CLISetupManual() {
               <div>
                 <span className="text-surface-400">$</span>{" "}
                 <span className="text-surface-200 select-all">
-                  curl -fsSL https://yaver.io/install.sh | sh
+                  brew install kivanccakmak/yaver/yaver
                 </span>
               </div>
             </div>

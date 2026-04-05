@@ -39,10 +39,10 @@ export default function DownloadPage() {
           </p>
         </div>
 
-        {/* Desktop CLI */}
+        {/* Go Agent */}
         <div className="mb-12">
           <h2 className="mb-6 text-xs font-semibold uppercase tracking-wider text-surface-500">
-            Desktop CLI {cliVersion && <span className="normal-case tracking-normal text-surface-600">v{cliVersion}</span>}
+            Go Agent {cliVersion && <span className="normal-case tracking-normal text-surface-600">v{cliVersion}</span>}
           </h2>
           <div className="card space-y-4">
             <div>
@@ -51,15 +51,6 @@ export default function DownloadPage() {
                 <span className="text-surface-500">$</span>{" "}
                 <span className="text-surface-300 select-all">
                   brew install kivanccakmak/yaver/yaver
-                </span>
-              </div>
-            </div>
-            <div>
-              <p className="mb-2 text-xs text-surface-500">Quick install (macOS / Linux)</p>
-              <div className="rounded-lg bg-surface-950 px-4 py-3 font-mono text-[13px]">
-                <span className="text-surface-500">$</span>{" "}
-                <span className="text-surface-300 select-all">
-                  curl -fsSL https://yaver.io/install.sh | sh
                 </span>
               </div>
             </div>
@@ -155,15 +146,6 @@ export default function DownloadPage() {
                 </span>
               </div>
             </div>
-            <div>
-              <p className="mb-2 text-xs text-surface-500">Quick install (macOS / Linux)</p>
-              <div className="rounded-lg bg-surface-950 px-4 py-3 font-mono text-[13px]">
-                <span className="text-surface-500">$</span>{" "}
-                <span className="text-surface-300 select-all">
-                  curl -fsSL https://yaver.io/install.sh | sh
-                </span>
-              </div>
-            </div>
           </div>
         </div>
 
@@ -179,15 +161,6 @@ export default function DownloadPage() {
                 <span className="text-surface-500">$</span>{" "}
                 <span className="text-surface-300 select-all">
                   brew upgrade yaver
-                </span>
-              </div>
-            </div>
-            <div>
-              <p className="mb-2 text-xs text-surface-500">Quick update (macOS / Linux)</p>
-              <div className="rounded-lg bg-surface-950 px-4 py-3 font-mono text-[13px]">
-                <span className="text-surface-500">$</span>{" "}
-                <span className="text-surface-300 select-all">
-                  curl -fsSL https://yaver.io/install.sh | sh
                 </span>
               </div>
             </div>

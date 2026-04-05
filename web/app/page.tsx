@@ -1370,7 +1370,7 @@ if (isDev) {
                 icon: "\uD83D\uDE80",
                 color: "text-[#22c55e] bg-[#22c55e]/10",
                 label: "Deploy everything from one place",
-                copy: "Ship web/ to Vercel, mobile/ to TestFlight and Play Store, backend/ to Convex &mdash; all from one project card on your phone.",
+                copy: "Ship web/ to any host, mobile/ to TestFlight and Play Store, backend/ to Convex &mdash; all from one project card on your phone.",
               },
               {
                 icon: "\u2699",
@@ -1381,7 +1381,7 @@ if (isDev) {
               {
                 icon: "\uD83C\uDFAF",
                 color: "text-[#f87171] bg-[#f87171]/10",
-                label: "Perfect for Convex + Expo + Vercel",
+                label: "Perfect for Convex + Expo + Next.js",
                 copy: "The most common solo-founder stack. One repo, three deploy targets, all managed from your phone while you walk the dog.",
               },
               {
@@ -1441,8 +1441,8 @@ if (isDev) {
           <div className="mb-10 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {[
               { framework: "React Native / Expo", actions: "Native Hot Reload inside Yaver, Build iOS, Build Android", platforms: "Camera, BLE, GPS — full native access", icon: "\uD83D\uDCF1", color: "text-[#a78bfa] bg-[#a78bfa]/10" },
-              { framework: "Next.js", actions: "Dev Server, Deploy", platforms: "Vercel", icon: "\u25B2", color: "text-surface-300 bg-surface-800" },
-              { framework: "Vite", actions: "Dev Server, Deploy", platforms: "Vercel", icon: "\u26A1", color: "text-[#fbbf24] bg-[#fbbf24]/10" },
+              { framework: "Next.js", actions: "Dev Server, Deploy", platforms: "Any host", icon: "\u25B2", color: "text-surface-300 bg-surface-800" },
+              { framework: "Vite", actions: "Dev Server, Deploy", platforms: "Any host", icon: "\u26A1", color: "text-[#fbbf24] bg-[#fbbf24]/10" },
               { framework: "Convex", actions: "Deploy Backend", platforms: "Convex Cloud", icon: "\uD83E\uDDE0", color: "text-[#f87171] bg-[#f87171]/10" },
               { framework: "Supabase", actions: "Deploy Backend", platforms: "Supabase Cloud", icon: "\u26A1", color: "text-[#22c55e] bg-[#22c55e]/10" },
               { framework: "Docker", actions: "Run Container", platforms: "Any server", icon: "\uD83D\uDC33", color: "text-[#60a5fa] bg-[#60a5fa]/10" },
@@ -1464,14 +1464,14 @@ if (isDev) {
               <div className="flex-1">
                 <p className="text-sm font-medium text-surface-100">Monorepo-aware</p>
                 <p className="mt-1 text-xs leading-relaxed text-surface-400">
-                  One project, multiple targets. The agent scans subdirectories and finds every deployable piece &mdash; <code className="rounded bg-surface-800 px-1 py-0.5 text-[11px] text-surface-300">mobile/</code> gets Hot Reload + TestFlight, <code className="rounded bg-surface-800 px-1 py-0.5 text-[11px] text-surface-300">web/</code> gets Vercel deploy, <code className="rounded bg-surface-800 px-1 py-0.5 text-[11px] text-surface-300">backend/</code> gets Convex deploy. All from one project card on your phone.
+                  One project, multiple targets. The agent scans subdirectories and finds every deployable piece &mdash; <code className="rounded bg-surface-800 px-1 py-0.5 text-[11px] text-surface-300">mobile/</code> gets Hot Reload + TestFlight, <code className="rounded bg-surface-800 px-1 py-0.5 text-[11px] text-surface-300">web/</code> gets deployed, <code className="rounded bg-surface-800 px-1 py-0.5 text-[11px] text-surface-300">backend/</code> gets Convex deploy. All from one project card on your phone.
                 </p>
               </div>
               <div className="shrink-0 rounded-lg border border-surface-800 bg-surface-900/80 p-3">
                 <div className="space-y-1.5 font-mono text-[11px]">
                   <div className="text-surface-500">my-app/</div>
                   <div className="flex items-center gap-2 pl-3"><span className="text-[#a78bfa]">mobile/</span> <span className="rounded bg-[#a78bfa]/10 px-1.5 py-0.5 text-[9px] text-[#a78bfa]">expo</span> <span className="rounded bg-[#22c55e]/10 px-1.5 py-0.5 text-[9px] text-[#22c55e]">testflight</span></div>
-                  <div className="flex items-center gap-2 pl-3"><span className="text-surface-300">web/</span> <span className="rounded bg-surface-700 px-1.5 py-0.5 text-[9px] text-surface-400">nextjs</span> <span className="rounded bg-surface-700 px-1.5 py-0.5 text-[9px] text-surface-400">vercel</span></div>
+                  <div className="flex items-center gap-2 pl-3"><span className="text-surface-300">web/</span> <span className="rounded bg-surface-700 px-1.5 py-0.5 text-[9px] text-surface-400">nextjs</span> <span className="rounded bg-surface-700 px-1.5 py-0.5 text-[9px] text-surface-400">deploy</span></div>
                   <div className="flex items-center gap-2 pl-3"><span className="text-[#f87171]">backend/</span> <span className="rounded bg-[#f87171]/10 px-1.5 py-0.5 text-[9px] text-[#f87171]">convex</span></div>
                 </div>
               </div>
@@ -1483,7 +1483,7 @@ if (isDev) {
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
               <p className="text-sm font-semibold text-surface-200">Fuzzy search + tags</p>
               <p className="mt-1 text-xs text-surface-400">
-                Search by name, path, or framework. Filter by tags: expo, nextjs, flutter, vercel, convex, docker. Projects discovered automatically &mdash; no config files.
+                Search by name, path, or framework. Filter by tags: expo, nextjs, flutter, convex, docker. Projects discovered automatically &mdash; no config files.
               </p>
             </div>
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
@@ -1522,7 +1522,6 @@ if (isDev) {
                   { method: "RPM", cmd: "sudo rpm -i yaver_latest_x86_64.rpm", os: "Fedora / RHEL" },
                   { method: "Nix", cmd: "nix run github:kivanccakmak/yaver.io", os: "NixOS" },
                   { method: "Docker", cmd: "docker run --rm kivanccakmak/yaver-cli version", os: "Any" },
-                  { method: "curl", cmd: "curl -fsSL https://yaver.io/install.sh | sh", os: "macOS / Linux" },
                 ].map((row) => (
                   <tr key={row.method}>
                     <td className="whitespace-nowrap px-4 py-2.5 text-xs font-medium text-surface-200">{row.method}</td>
@@ -1783,7 +1782,7 @@ if (isDev) {
             <div className="card">
               <h3 className="mb-2 text-sm font-semibold text-surface-100">Browse apps, deploy from the couch</h3>
               <p className="text-sm leading-relaxed text-surface-400">
-                Open the Apps tab. All your projects are there &mdash; auto-discovered. Tap your app, hot reload to your phone, fix a bug with the Feedback SDK, deploy to Vercel. Laptop stays closed.
+                Open the Apps tab. All your projects are there &mdash; auto-discovered. Tap your app, hot reload to your phone, fix a bug with the Feedback SDK, deploy with one tap. Laptop stays closed.
               </p>
             </div>
             <div className="card">
@@ -1819,7 +1818,7 @@ if (isDev) {
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {[
-              { name: "Browse & Deploy Apps", desc: "Auto-discover projects, one-tap deploy to Vercel, TestFlight, Play Store, Convex" },
+              { name: "Browse & Deploy Apps", desc: "Auto-discover projects, one-tap deploy to TestFlight, Play Store, Convex, and more" },
               { name: "Push to Device", desc: "Push existing RN projects to yaver.io app. Real native views, 40+ modules, Hermes bytecode validated." },
               { name: "Native Hot Reload", desc: "Run React Native apps inside Yaver with full native access — camera, BLE, GPS. Hot reload over any network." },
               { name: "Smart Actions", desc: "AI detects frameworks — shows Ship It, Build, Deploy, Hot Reload per target" },
