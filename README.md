@@ -2,26 +2,35 @@
 
 [![Tests](https://github.com/kivanccakmak/yaver.io/actions/workflows/test-suite.yml/badge.svg)](https://github.com/kivanccakmak/yaver.io/actions/workflows/test-suite.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![GitHub stars](https://img.shields.io/github/stars/kivanccakmak/yaver.io?style=social)](https://github.com/kivanccakmak/yaver.io)
 
-**Your code never leaves your machine.** Yaver is an open-source P2P tool that lets developers use any AI coding agent (Claude Code, Codex, Aider, Ollama, etc.) from their mobile device, desktop app, or any terminal — connecting directly to their development machines with encrypted P2P connections. Free and open-source. Self-host everything. No vendor lock-in.
+**AI writes the code. Yaver tests it on your real device.**
+
+Push your app to a real iPhone in 4 seconds. Shake to report a bug — AI sees your screen,
+writes the fix, and hot reloads. Test suites that grow themselves.
+
+Works with any AI coding agent: Claude Code, Codex, Aider, Ollama, Goose, Amp, OpenCode.
+P2P encrypted — your code never leaves your machine. MIT licensed. Free forever.
 
 ## Key Features
 
-- **P2P Encrypted** — Your code, tasks, and AI output flow directly between your devices. Servers only handle auth.
-- **Any AI Agent** — Claude Code, Codex, Aider, Ollama, Goose, Amp, OpenCode, or any custom CLI tool.
-- **Remote Exec** — Run shell commands on any device (like SSH but through Yaver's transport).
+- **Push to Device** — Push existing React Native projects to the yaver.io phone app for real-device testing in ~4 seconds. No TestFlight. No Play Store. Like Expo Go but for any existing RN project. 40+ native modules pre-installed.
+- **Visual QA Loop** — Shake your phone to report a bug. The Feedback SDK captures a screenshot, sends it to your AI agent, the agent writes a fix, and hot reloads the app. Under 60 seconds.
+- **Autonomous Testing** — Agent reads your codebase, navigates every screen on device or emulator, catches crashes, fixes them, hot reloads, and repeats. Test suite grows automatically.
+- **P2P Encrypted** — Your code, tasks, and AI output flow directly between your devices. No cloud middleman. Servers only handle auth.
+- **Any AI Agent** — Claude Code, Codex, Aider, Ollama, Goose, Amp, OpenCode, or any custom CLI tool. Switch agents per task.
+- **Hot Reload** — Expo, Flutter, Vite, Next.js — start dev servers and hot reload from your phone over P2P.
+- **473 MCP Tools** — Docker, K8s, git, CI/CD, databases, smart home, and more — usable from Claude Desktop, Cursor, VS Code, Windsurf, Zed.
+- **Feedback SDKs** — Embed a debug console in your React Native, Flutter, or Web app. Screen recording, voice annotation, bug reports — all P2P to your AI agent.
 - **Session Transfer** — Move AI sessions between machines. Start on your laptop, continue on your server.
 - **Task Scheduling** — Cron-like scheduling for AI tasks. Run code reviews every morning.
 - **Notifications** — Telegram, Discord, Slack alerts when tasks complete.
-- **MCP Tools** — 473 tools: file search, git ops, exec, screenshots, session transfer — usable from Claude Desktop, Cursor, VS Code, Windsurf, Zed.
 - **CI/CD Webhooks** — Trigger AI tasks from GitHub Actions, GitLab CI, or any webhook.
-- **Push to Device** — Push existing React Native projects to the yaver.io phone app for real-device testing. No project modifications. Hermes bytecode validated, 40+ native modules pre-installed. Like Expo Go but for any existing RN project.
-- **Hot Reload** — Expo, Flutter, Vite, Next.js — start dev servers and hot reload from your phone over P2P. Native app preview in a WebView, works through any network.
-- **Git Providers** — Auto-detects GitHub and GitLab credentials on your dev machine. Browse repos from the app and clone to a headless server — no SSH, no manual git setup.
-- **Free Relay** — Every user gets a free relay server (public.yaver.io). Self-host your own anytime.
+- **Git Providers** — Auto-detects GitHub and GitLab credentials. Browse and clone repos from your phone.
+- **Free Relay** — Self-host your own QUIC relay, or use the free community relay.
 - **SDKs** — Go, Python, JS/TS, Flutter/Dart, C — embed Yaver in your own apps.
 
-## Code from the Beach
+## Full Pipeline from Anywhere
 
 ```
 Developer at the beach? No problem.
@@ -38,105 +47,6 @@ Or run the full pipeline:
 
 Skip GitHub Actions. Skip TestFlight queues. Your build goes straight to your phone.
 ```
-
-### Visual Feedback Loop
-
-The killer feature: test your build on your real device, record bugs visually, and the AI agent fixes them.
-
-```
-You test the app → Record screen + voice → AI agent sees the recording → Fixes the bugs → Rebuilds → Repeat
-```
-
-**Three runtime modes** (user selects at runtime from within their app):
-
-| Mode | What happens | Best for |
-|------|-------------|----------|
-| **Full Interactive** | Screen + voice stream live to agent. Agent's vision model detects bugs in real-time. Hot reload pushes fixes as you speak. Say "make this bigger" and it happens. | Active development, quick iterations |
-| **Semi Interactive** | Screen + voice stream live. Agent comments on what it sees but doesn't auto-fix. Say "fix it now" or "keep in mind for later". | Code review, discussion, QA |
-| **Post Mode** | Record everything offline. No streaming. Compress and submit when done. Agent processes the full session afterwards. | Slow connections, detailed QA, batch reports |
-
-**Agent Commentary Levels** (0-10): Controls how proactive the agent is. Level 0 = silent. Level 5 = comments on obvious issues. Level 10 = comments on everything it sees (layout, performance, accessibility). Like pair programming where the AI watches over your shoulder.
-
-### Feedback SDKs
-
-Embed in your app during development. The SDK provides device discovery, connection UI, screen recording, voice annotation, and P2P upload — all in a single package. Disabled automatically in production builds.
-
-**Install:**
-
-```bash
-# Web (any framework: React, Vue, Svelte, vanilla JS)
-npm install @yaver/feedback-web
-
-# React Native
-npm install @yaver/feedback-react-native
-
-# Flutter
-# Add to pubspec.yaml: yaver_feedback: ^0.1.0
-```
-
-**Quick start (Web):**
-```typescript
-import { YaverFeedback } from '@yaver/feedback-web';
-
-if (process.env.NODE_ENV === 'development') {
-  YaverFeedback.init({ trigger: 'floating-button' });
-  // That's it. A "Y" button appears. Click to record bugs.
-  // Auto-discovers your Yaver agent on the LAN.
-}
-```
-
-**Quick start (React Native):**
-```tsx
-import { YaverFeedback, YaverConnectionScreen } from '@yaver/feedback-react-native';
-
-if (__DEV__) {
-  YaverFeedback.init({ trigger: 'shake' }); // Shake phone to report bug
-}
-
-// In your dev settings:
-<YaverConnectionScreen />  // Shows discovery + feedback controls
-```
-
-**Quick start (Flutter):**
-```dart
-import 'package:yaver_feedback/yaver_feedback.dart';
-
-void main() {
-  if (kDebugMode) {
-    YaverFeedback.init(FeedbackConfig(
-      trigger: FeedbackTrigger.floatingButton,
-      mode: FeedbackMode.narrated,
-      agentCommentaryLevel: 5,
-    ));
-  }
-  runApp(MyApp());
-}
-
-// Add the floating button:
-Stack(children: [child, const YaverFeedbackButton()])
-```
-
-**What each SDK includes:**
-- Device discovery — auto-finds your Yaver agent on the LAN
-- Connection UI — URL input, connect button, status indicator
-- Screen recording — ReplayKit (iOS), MediaProjection (Android), getDisplayMedia (Web)
-- Voice annotation — microphone recording synced to timeline
-- Screenshot capture — tap to annotate at any moment
-- P2P upload — multipart POST to agent, works through relay
-- Three runtime modes — user selects live/semi/post at runtime
-- Agent commentary — chat-like view of agent's observations
-- Voice commands — "fix this now", "push to TestFlight", "run the tests"
-- Auto-disabled in production — only active in `__DEV__` / development mode
-
-**CLI commands:**
-```bash
-yaver feedback list              # List bug reports from device testing
-yaver feedback show <id>         # View timeline, transcript, screenshots
-yaver feedback fix <id>          # AI agent creates a fix task from the report
-yaver feedback delete <id>       # Delete a report
-```
-
-**Dogfooding:** Yaver's own mobile app embeds its own feedback SDK. We develop Yaver with Yaver.
 
 **Key capabilities:**
 
@@ -214,6 +124,120 @@ yaver auth
 ### Desktop App (GUI)
 
 Download the desktop app with full GUI from the [download page](https://yaver.io/download) — available as DMG (macOS), installer (Windows), deb/AppImage (Linux).
+
+## Visual Feedback Loop
+
+Test your build on your real device, record bugs visually, and the AI agent fixes them.
+
+```
+You test the app ��� Record screen + voice → AI agent sees the recording → Fixes the bugs → Rebuilds → Repeat
+```
+
+**Three runtime modes** (user selects at runtime from within their app):
+
+| Mode | What happens | Best for |
+|------|-------------|----------|
+| **Full Interactive** | Screen + voice stream live to agent. Agent's vision model detects bugs in real-time. Hot reload pushes fixes as you speak. Say "make this bigger" and it happens. | Active development, quick iterations |
+| **Semi Interactive** | Screen + voice stream live. Agent comments on what it sees but doesn't auto-fix. Say "fix it now" or "keep in mind for later". | Code review, discussion, QA |
+| **Post Mode** | Record everything offline. No streaming. Compress and submit when done. Agent processes the full session afterwards. | Slow connections, detailed QA, batch reports |
+
+**Agent Commentary Levels** (0-10): Controls how proactive the agent is. Level 0 = silent. Level 5 = comments on obvious issues. Level 10 = comments on everything it sees (layout, performance, accessibility). Like pair programming where the AI watches over your shoulder.
+
+### Feedback SDKs
+
+Embed in your app during development. The SDK provides device discovery, connection UI, screen recording, voice annotation, and P2P upload — all in a single package. Disabled automatically in production builds.
+
+**Install:**
+
+```bash
+# Web (any framework: React, Vue, Svelte, vanilla JS)
+npm install @yaver/feedback-web
+
+# React Native
+npm install @yaver/feedback-react-native
+
+# Flutter
+# Add to pubspec.yaml: yaver_feedback: ^0.1.0
+```
+
+**Quick start (Web):**
+```typescript
+import { YaverFeedback } from '@yaver/feedback-web';
+
+if (process.env.NODE_ENV === 'development') {
+  YaverFeedback.init({ trigger: 'floating-button' });
+  // That's it. A "Y" button appears. Click to record bugs.
+  // Auto-discovers your Yaver agent on the LAN.
+}
+```
+
+**Quick start (React Native):**
+```tsx
+import { YaverFeedback, YaverConnectionScreen } from '@yaver/feedback-react-native';
+
+if (__DEV__) {
+  YaverFeedback.init({ trigger: 'shake' }); // Shake phone to report bug
+}
+
+// In your dev settings:
+<YaverConnectionScreen />  // Shows discovery + feedback controls
+```
+
+**Quick start (Flutter):**
+```dart
+import 'package:yaver_feedback/yaver_feedback.dart';
+
+void main() {
+  if (kDebugMode) {
+    YaverFeedback.init(FeedbackConfig(
+      trigger: FeedbackTrigger.floatingButton,
+      mode: FeedbackMode.narrated,
+      agentCommentaryLevel: 5,
+    ));
+  }
+  runApp(MyApp());
+}
+
+// Add the floating button:
+Stack(children: [child, const YaverFeedbackButton()])
+```
+
+**What each SDK includes:**
+- Device discovery ��� auto-finds your Yaver agent on the LAN
+- Connection UI — URL input, connect button, status indicator
+- Screen recording — ReplayKit (iOS), MediaProjection (Android), getDisplayMedia (Web)
+- Voice annotation — microphone recording synced to timeline
+- Screenshot capture — tap to annotate at any moment
+- P2P upload — multipart POST to agent, works through relay
+- Three runtime modes — user selects live/semi/post at runtime
+- Agent commentary — chat-like view of agent's observations
+- Voice commands — "fix this now", "push to TestFlight", "run the tests"
+- Auto-disabled in production — only active in `__DEV__` / development mode
+
+**CLI commands:**
+```bash
+yaver feedback list              # List bug reports from device testing
+yaver feedback show <id>         # View timeline, transcript, screenshots
+yaver feedback fix <id>          # AI agent creates a fix task from the report
+yaver feedback delete <id>       # Delete a report
+```
+
+**Dogfooding:** Yaver's own mobile app embeds its own feedback SDK. We develop Yaver with Yaver.
+
+## QA Testing Workflow
+
+Combine push-to-device with the Feedback SDK for a complete QA loop:
+
+```
+1. Push to device:     npx yaver-cli push
+2. Test on real phone: tap around, find bugs
+3. Report bug:         shake phone ��� screenshot + voice → sent to AI agent
+4. AI fixes it:        agent sees screenshot, reads stack trace, writes fix
+5. Re-push:            npx yaver-cli push → fix on device in ~4s
+6. Repeat
+```
+
+No TestFlight queues. No Play Store reviews. Real-device testing in seconds. Works with any AI agent (Claude Code, Codex, Aider, Ollama).
 
 ## MCP Integration
 
@@ -451,21 +475,6 @@ if (!isYaver) {
 }
 ```
 
-### QA Testing Workflow
-
-Combine push-to-device with the Feedback SDK for a complete QA loop:
-
-```
-1. Push to device:     npx yaver-cli push
-2. Test on real phone: tap around, find bugs
-3. Report bug:         shake phone → screenshot + voice → sent to AI agent
-4. AI fixes it:        agent sees screenshot, reads stack trace, writes fix
-5. Re-push:            npx yaver-cli push → fix on device in ~4s
-6. Repeat
-```
-
-No TestFlight queues. No Play Store reviews. Real-device testing in seconds. Works with any AI agent (Claude Code, Codex, Aider, Ollama).
-
 ### SDK Manifest
 
 The yaver.io app ships with 40+ pre-installed native modules including: `react-native-screens`, `react-native-reanimated`, `react-native-gesture-handler`, `react-native-svg`, `react-native-webview`, `react-native-maps`, `@shopify/react-native-skia`, `expo-camera`, `expo-location`, `expo-notifications`, and more. Run `yaver-push modules` for the full list.
@@ -579,7 +588,6 @@ yaver repo          Switch between projects
 yaver vault         P2P encrypted key management
 yaver pipeline      Build → test → deploy in one command
 yaver feedback      Visual bug reports (list/show/fix) — screen recording + voice from device
-yaver cloud         Cloud dev machines (coming soon)
 yaver stop          Stop the agent
 yaver restart       Restart the agent
 yaver logs          View agent logs
