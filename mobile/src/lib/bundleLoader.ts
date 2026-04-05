@@ -20,12 +20,13 @@ export interface BundleLoadResult {
  */
 export async function loadApp(
   bundleUrl: string,
-  moduleName: string = "main"
+  moduleName: string = "main",
+  headers?: Record<string, string>
 ): Promise<BundleLoadResult> {
   if (!YaverBundleLoader) {
     throw new Error("YaverBundleLoader native module not available");
   }
-  return YaverBundleLoader.loadBundle(bundleUrl, moduleName);
+  return YaverBundleLoader.loadBundle(bundleUrl, moduleName, headers || {});
 }
 
 /**
