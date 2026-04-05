@@ -882,23 +882,23 @@ export default function HomePage() {
   return (
     <>
       {/* ── Section 1: Hero ── */}
-      <section className="px-6 pb-20 pt-20 md:pt-28">
+      <section className="px-6 pb-10 pt-14 md:pt-20">
         <div className="mx-auto max-w-4xl text-center">
-          <div className="mb-6 inline-flex items-center rounded-full border border-surface-700 bg-surface-900 px-4 py-1.5 text-xs text-surface-400">
+          <div className="mb-4 inline-flex items-center rounded-full border border-surface-700 bg-surface-900 px-4 py-1.5 text-xs text-surface-400">
             <span className="mr-2 inline-block h-1.5 w-1.5 rounded-full bg-green-500/70" />
             MIT Licensed &middot; Free Forever
           </div>
-          <h1 className="mb-6 text-4xl font-bold tracking-tight text-surface-50 sm:text-5xl md:text-6xl">
+          <h1 className="mb-4 text-3xl font-bold tracking-tight text-surface-50 sm:text-4xl md:text-5xl">
             AI writes the code.
             <br />
             Yaver tests it on your real device.
           </h1>
           <p className="mx-auto max-w-2xl text-base leading-relaxed text-surface-400 md:text-lg">
-            Push to real hardware in 4 seconds. Shake to report a bug. AI fixes it and hot reloads.
+            Push to device in 4s. Shake to report a bug. AI fixes it, hot reloads.
             <br />
-            Works with Claude Code, Codex, Aider, Ollama &mdash; any agent. P2P encrypted. Free forever.
+            Any agent. P2P encrypted. Free forever.
           </p>
-          <div className="mt-8 flex flex-col items-center justify-center gap-4 sm:flex-row">
+          <div className="mt-6 flex flex-col items-center justify-center gap-4 sm:flex-row">
             <a
               href="https://github.com/kivanccakmak/yaver.io"
               target="_blank"
@@ -911,39 +911,6 @@ export default function HomePage() {
             <a href="#features" className="btn-secondary px-8 py-3 text-sm font-medium">
               Get Started
             </a>
-          </div>
-          <div className="mx-auto mt-6 max-w-md">
-            <div className="terminal">
-              <div className="terminal-header">
-                <div className="terminal-dot bg-[#ff5f57]" />
-                <div className="terminal-dot bg-[#febc2e]" />
-                <div className="terminal-dot bg-[#28c840]" />
-              </div>
-              <div className="terminal-body space-y-1.5 text-[13px]">
-                <div><span className="text-surface-400">$</span>{" "}<span className="text-surface-200 select-all">brew install kivanccakmak/yaver/yaver</span></div>
-                <div><span className="text-surface-400">$</span>{" "}<span className="text-surface-200">yaver auth</span></div>
-                <div><span className="text-surface-400">$</span>{" "}<span className="text-surface-200">yaver serve</span></div>
-              </div>
-            </div>
-          </div>
-
-          {/* App download row */}
-          <div className="mx-auto mt-10 max-w-2xl">
-            <div className="flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
-              <a href="https://testflight.apple.com/join/yaver" target="_blank" rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 rounded-lg bg-surface-800 px-4 py-2.5 text-xs font-medium text-surface-300 transition-colors hover:bg-surface-700">
-                <svg className="h-4 w-4 shrink-0 text-surface-400" fill="currentColor" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.40 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
-                App Store &mdash; iOS
-              </a>
-              <a href="https://play.google.com/store/apps/details?id=io.yaver.mobile" target="_blank" rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 rounded-lg bg-surface-800 px-4 py-2.5 text-xs font-medium text-surface-300 transition-colors hover:bg-surface-700">
-                <svg className="h-4 w-4 shrink-0 text-surface-400" fill="currentColor" viewBox="0 0 24 24"><path d="M17.523 2.238l-1.931 3.334c1.88.907 3.261 2.565 3.713 4.608H4.694c.452-2.043 1.833-3.701 3.714-4.608L6.477 2.238a.357.357 0 01.13-.487.357.357 0 01.487.13l1.962 3.389A8.97 8.97 0 0112 4.749c1.07 0 2.088.188 3.039.521l1.962-3.389a.357.357 0 01.487-.13.357.357 0 01.13.487h-.095zM9.5 7.5a.75.75 0 100-1.5.75.75 0 000 1.5zm5 0a.75.75 0 100-1.5.75.75 0 000 1.5zM4.5 11.68h15c.276 0 .5.224.5.5v7.5c0 1.401-1.119 2.5-2.5 2.5h-11C5.119 22.18 4 21.061 4 19.68v-7.5c0-.276.224-.5.5-.5z"/></svg>
-                Google Play
-              </a>
-            </div>
-            <p className="mt-4 text-xs text-surface-500">
-              Sign in with Apple, Google, or Microsoft. Your machine appears automatically on your phone.
-            </p>
           </div>
         </div>
       </section>
@@ -1534,7 +1501,26 @@ if (isDev) {
             <p className="mt-3 text-center text-xs text-surface-500">
               Or download binaries from{" "}
               <a href="https://github.com/kivanccakmak/yaver.io/releases" target="_blank" rel="noopener noreferrer" className="text-surface-300 underline hover:text-surface-100">GitHub Releases</a>.
-              {" "}Mobile app on the App Store and Google Play.
+            </p>
+          </div>
+
+          {/* Mobile app download */}
+          <div className="mt-10">
+            <p className="mb-4 text-center text-xs font-semibold uppercase tracking-wider text-surface-500">Mobile app</p>
+            <div className="flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
+              <a href="https://testflight.apple.com/join/yaver" target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 rounded-lg bg-surface-800 px-4 py-2.5 text-xs font-medium text-surface-300 transition-colors hover:bg-surface-700">
+                <svg className="h-4 w-4 shrink-0 text-surface-400" fill="currentColor" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.40 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+                App Store &mdash; iOS
+              </a>
+              <a href="https://play.google.com/store/apps/details?id=io.yaver.mobile" target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 rounded-lg bg-surface-800 px-4 py-2.5 text-xs font-medium text-surface-300 transition-colors hover:bg-surface-700">
+                <svg className="h-4 w-4 shrink-0 text-surface-400" fill="currentColor" viewBox="0 0 24 24"><path d="M17.523 2.238l-1.931 3.334c1.88.907 3.261 2.565 3.713 4.608H4.694c.452-2.043 1.833-3.701 3.714-4.608L6.477 2.238a.357.357 0 01.13-.487.357.357 0 01.487.13l1.962 3.389A8.97 8.97 0 0112 4.749c1.07 0 2.088.188 3.039.521l1.962-3.389a.357.357 0 01.487-.13.357.357 0 01.13.487h-.095zM9.5 7.5a.75.75 0 100-1.5.75.75 0 000 1.5zm5 0a.75.75 0 100-1.5.75.75 0 000 1.5zM4.5 11.68h15c.276 0 .5.224.5.5v7.5c0 1.401-1.119 2.5-2.5 2.5h-11C5.119 22.18 4 21.061 4 19.68v-7.5c0-.276.224-.5.5-.5z"/></svg>
+                Google Play
+              </a>
+            </div>
+            <p className="mt-3 text-center text-xs text-surface-500">
+              Sign in with Apple, Google, or Microsoft. Your machine appears automatically on your phone.
             </p>
           </div>
         </div>
