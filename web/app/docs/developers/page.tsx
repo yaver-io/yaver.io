@@ -114,6 +114,7 @@ export default function DevelopersPage() {
               ["whats-new", "What's New"],
               ["four-parts", "Four-Part Architecture"],
               ["push-to-device", "Push to Device (yaver-cli)"],
+              ["direct-device-install", "Direct Device Install (iOS WiFi)"],
               ["hot-reload", "Hot Reload — Dev Server to Phone"],
               ["git-providers", "Git Providers — Clone from Phone"],
               ["project-structure", "Project Structure"],
@@ -297,6 +298,87 @@ export default function DevelopersPage() {
             push → test on real phone → shake to report bug → AI fixes it → re-push → verify.
             No TestFlight queues. No Play Store reviews. Real-device testing in seconds.
           </Prose>
+        </section>
+
+        {/* ─── Direct Device Install ─── */}
+        <section className="mb-20">
+          <SectionHeading id="direct-device-install">
+            Direct Device Install (iOS WiFi)
+          </SectionHeading>
+          <Prose>
+            When your iPhone is on the same WiFi as your Mac, Yaver can build and install
+            your app directly on the device &mdash; just like Xcode, but triggered from
+            your phone. No TestFlight, no waiting for processing. The app launches
+            immediately after install.
+          </Prose>
+
+          <SubHeading>How it works</SubHeading>
+          <Prose>
+            The mobile app detects whether it has a direct LAN connection or is going
+            through the relay. When direct:
+          </Prose>
+          <ol className="mb-6 list-decimal pl-6 space-y-2 text-sm text-surface-400">
+            <li>Mobile sends <InlineCode>POST /builds</InlineCode> with <InlineCode>installOnDevice: true</InlineCode></li>
+            <li>Agent builds with <InlineCode>xcodebuild</InlineCode> (Release config, automatic signing)</li>
+            <li>Agent detects the connected iOS device via <InlineCode>xcrun xctrace list devices</InlineCode></li>
+            <li>Agent installs the .app directly via <InlineCode>xcrun devicectl device install app</InlineCode></li>
+            <li>App launches on device &mdash; full production build, all native modules</li>
+          </ol>
+
+          <SubHeading>Connection-based routing</SubHeading>
+          <div className="mb-6 overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-surface-800">
+                  <th className="px-4 py-2.5 text-left font-medium text-surface-300">Connection</th>
+                  <th className="px-4 py-2.5 text-left font-medium text-surface-300">Platform</th>
+                  <th className="px-4 py-2.5 text-left font-medium text-surface-300">Install Method</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-800">
+                {[
+                  ["Direct (WiFi/LAN)", "iOS", "xcodebuild + xcrun devicectl (instant)"],
+                  ["Relay (4G/remote)", "iOS", "TestFlight or Hermes bytecode push"],
+                  ["Direct (WiFi/LAN)", "Android", "Gradle APK (existing)"],
+                  ["Relay (4G/remote)", "Android", "Play Store or APK download"],
+                ].map((row) => (
+                  <tr key={row.join()}>
+                    <td className="px-4 py-2.5 text-surface-400">{row[0]}</td>
+                    <td className="px-4 py-2.5 text-surface-400">{row[1]}</td>
+                    <td className="px-4 py-2.5 text-surface-400">{row[2]}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <SubHeading>Requirements</SubHeading>
+          <ul className="mb-6 list-disc pl-6 space-y-1 text-sm text-surface-400">
+            <li>Xcode 15+ installed on the Mac</li>
+            <li>Device paired with the Mac (USB or WiFi pairing in Xcode)</li>
+            <li>Valid Apple Developer signing identity (free or paid)</li>
+            <li>Device UDID registered in provisioning profile (automatic signing handles this)</li>
+          </ul>
+
+          <SubHeading>Key files</SubHeading>
+          <div className="mb-6 overflow-x-auto">
+            <table className="w-full text-xs">
+              <tbody className="divide-y divide-surface-800">
+                {[
+                  ["desktop/agent/device_install.go", "installAppOnDevice(), isDirectConnection(), device detection"],
+                  ["desktop/agent/builds.go", "PlatformXcodeDeviceInstall, post-build install hook"],
+                  ["desktop/agent/build_http.go", "installOnDevice request field, LAN validation"],
+                  ["mobile/src/lib/quic.ts", "startBuildForMyPlatform() auto-detects direct + iOS"],
+                  ["mobile/src/lib/builds.ts", "BuildInfo with installStatus, installError, deviceUDID"],
+                ].map(([file, purpose]) => (
+                  <tr key={file}>
+                    <td className="whitespace-nowrap px-4 py-2.5 font-medium text-surface-200">{file}</td>
+                    <td className="px-4 py-2.5 text-surface-400">{purpose}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
 
         {/* ─── Hot Reload ─── */}

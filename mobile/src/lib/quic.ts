@@ -1143,12 +1143,12 @@ export class QuicClient {
   }
 
   /** Start a new build on the connected agent. */
-  async startBuild(platform: string, workDir?: string): Promise<BuildInfo> {
+  async startBuild(platform: string, workDir?: string, installOnDevice?: boolean): Promise<BuildInfo> {
     this.assertConnected();
     const resp = await this.fetchWithTimeout(`${this.baseUrl}/builds`, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ platform, workDir: workDir || "" }),
+      body: JSON.stringify({ platform, workDir: workDir || "", installOnDevice: installOnDevice || false }),
     }, 10_000);
     if (!resp.ok) throw new Error(`Start build failed: ${resp.status}`);
     return resp.json();
@@ -1162,11 +1162,19 @@ export class QuicClient {
     }, 10_000);
   }
 
-  /** Start a build targeting the current mobile platform. */
-  async startBuildForMyPlatform(buildSystem: 'flutter' | 'gradle' | 'rn' | 'expo', workDir?: string): Promise<BuildInfo> {
+  /** Start a build targeting the current mobile platform.
+   *  On iOS with direct LAN connection, automatically uses device install
+   *  (builds and installs directly via xcrun devicectl). */
+  async startBuildForMyPlatform(buildSystem: 'flutter' | 'gradle' | 'rn' | 'expo' | 'xcode', workDir?: string): Promise<BuildInfo> {
+    // iOS + direct WiFi → build & install directly on device
+    if (Platform.OS === 'ios' && this._connectionMode === 'direct') {
+      return this.startBuild('xcode-device-install', workDir, true);
+    }
+
     const platformMap: Record<string, Record<string, string>> = {
       flutter: { ios: 'flutter-ipa', android: 'flutter-apk' },
       gradle: { android: 'gradle-apk' },
+      xcode: { ios: 'xcode-ipa' },
       rn: { ios: 'rn-ios', android: 'rn-android' },
       expo: { ios: 'expo-ios', android: 'expo-android' },
     };
