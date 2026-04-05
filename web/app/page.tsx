@@ -915,7 +915,7 @@ export default function HomePage() {
                   <div className="terminal-dot bg-[#28c840]" />
                 </div>
                 <div className="terminal-body space-y-1 text-[12px]">
-                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">curl -fsSL yaver.io/install.sh | sh</span></div>
+                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">brew install kivanccakmak/yaver/yaver</span></div>
                   <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver auth</span></div>
                   <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver serve</span></div>
                   <div className="my-1 h-px bg-surface-800/60" />
@@ -925,7 +925,7 @@ export default function HomePage() {
               </div>
               <p className="mt-3 text-[11px] text-surface-500">
                 Works with: Claude Code, Codex, Aider, Ollama, Goose, Amp, or any tmux session.
-                {" "}Also: <a href="#install-methods" className="underline hover:text-surface-300">brew, apt, AUR, Docker, Nix, Scoop</a>
+                {" "}Also: <a href="#install-methods" className="underline hover:text-surface-300">curl, apt, AUR, Docker, Nix, Scoop</a>
               </p>
             </div>
 
