@@ -3,83 +3,7 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 
-const CONVEX_SITE_URL =
-  process.env.NEXT_PUBLIC_CONVEX_SITE_URL ||
-  "https://shocking-echidna-394.eu-west-1.convex.site";
 
-function WaitlistButton({ plan }: { plan: string }) {
-  const [email, setEmail] = useState("");
-  const [submitted, setSubmitted] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [showInput, setShowInput] = useState(false);
-
-  const handleSubmit = async () => {
-    if (!email.includes("@")) return;
-    setLoading(true);
-    try {
-      await fetch(`${CONVEX_SITE_URL}/dev/log`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          source: "web", level: "info", tag: "waitlist",
-          message: `Waitlist signup: ${plan}`,
-          data: JSON.stringify({ email, plan, timestamp: new Date().toISOString() }),
-        }),
-      });
-    } catch { /* best effort */ }
-    setSubmitted(true);
-    setLoading(false);
-  };
-
-  if (submitted) {
-    return (
-      <div className="block w-full rounded-lg border border-[#22c55e]/40 bg-[#22c55e]/10 py-2.5 text-center text-sm font-medium text-[#22c55e]">
-        You&apos;re on the list!
-      </div>
-    );
-  }
-
-  if (!showInput) {
-    return (
-      <button
-        onClick={() => setShowInput(true)}
-        className="block w-full rounded-lg border border-surface-700 bg-surface-800/50 py-2.5 text-center text-sm font-medium text-surface-300 transition-colors hover:bg-surface-800 hover:text-surface-100"
-      >
-        Join Waitlist
-      </button>
-    );
-  }
-
-  return (
-    <div className="space-y-2">
-      <input
-        type="email" placeholder="your@email.com" value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") handleSubmit();
-          if (e.key === "Escape") setShowInput(false);
-        }}
-        onBlur={() => { if (!email) setShowInput(false); }}
-        className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200 placeholder:text-surface-600 focus:border-[#6366f1] focus:outline-none"
-        autoFocus
-      />
-      <div className="flex gap-2">
-        <button
-          onClick={handleSubmit} disabled={loading || !email.includes("@")}
-          className="flex-1 rounded-lg bg-[#6366f1] px-4 py-2 text-sm font-medium text-white hover:bg-[#5558e6] disabled:opacity-50"
-        >
-          {loading ? "..." : "Go"}
-        </button>
-        <button
-          onClick={() => setShowInput(false)}
-          className="rounded-lg border border-surface-700 px-3 py-2 text-sm text-surface-500 hover:text-surface-200"
-        >
-          {"\u2715"}
-        </button>
-      </div>
-    </div>
-  );
-}
 
 function DebugConsolePreview() {
   const [panelOpen, setPanelOpen] = useState(true);
@@ -965,14 +889,14 @@ export default function HomePage() {
             MIT Licensed &middot; Free Forever
           </div>
           <h1 className="mb-6 text-4xl font-bold tracking-tight text-surface-50 sm:text-5xl md:text-6xl">
-            Any agent. Your hardware.
+            AI writes the code.
             <br />
-            Your phone.
+            Yaver tests it on your real device.
           </h1>
           <p className="mx-auto max-w-2xl text-base leading-relaxed text-surface-400 md:text-lg">
-            Ollama, Aider, Goose, Codex, or Claude Code &mdash; run them on your own machine, control them from anywhere.
+            Push to real hardware in 4 seconds. Shake to report a bug. AI fixes it and hot reloads.
             <br />
-            Zero cloud. Zero API keys. Free forever.
+            Works with Claude Code, Codex, Aider, Ollama &mdash; any agent. P2P encrypted. Free forever.
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-4 sm:flex-row">
             <a
@@ -984,8 +908,8 @@ export default function HomePage() {
               <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.405.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
               Star on GitHub
             </a>
-            <a href="#waitlist" className="btn-secondary px-8 py-3 text-sm font-medium">
-              Join Waitlist
+            <a href="#features" className="btn-secondary px-8 py-3 text-sm font-medium">
+              Get Started
             </a>
           </div>
           <div className="mx-auto mt-6 max-w-md">
@@ -1024,8 +948,268 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* ── Section 6: Feedback SDK ── */}
+      <section className="border-t border-surface-800/60 px-6 py-24">
+        <div className="mx-auto max-w-4xl">
+          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
+            The AI QA loop that doesn&apos;t exist anywhere else.
+          </h2>
+          <p className="mx-auto mb-6 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
+            Shake your phone. The AI sees your screen, writes the fix, and hot reloads the app. No laptop. No Slack thread. No Loom video. No waiting.
+          </p>
+
+          {/* Visual step sequence */}
+          <div className="mx-auto mb-12 max-w-3xl">
+            <div className="flex flex-wrap items-center justify-center gap-2 text-sm">
+              {[
+                { label: "Shake", icon: "\uD83D\uDCF1" },
+                { label: "Screenshot", icon: "\uD83D\uDCF8" },
+                { label: "P2P to agent", icon: "\u2192" },
+                { label: "Fix", icon: "\uD83D\uDD27" },
+                { label: "Hot reload", icon: "\u21BB" },
+                { label: "Done", icon: "\u2713" },
+              ].map((step, i) => (
+                <div key={step.label} className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 rounded-full border border-surface-700 bg-surface-900 px-3 py-1.5">
+                    <span>{step.icon}</span>
+                    <span className="text-surface-300">{step.label}</span>
+                  </div>
+                  {i < 5 && <span className="text-surface-600">&rarr;</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+
+
+          <div className="mb-10 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {[
+              { icon: ">", color: "text-surface-300 bg-surface-800", label: "Message back and forth", desc: "Send tasks, see agent responses in real-time" },
+              { icon: "\u21BB", color: "text-[#fbbf24] bg-[#fbbf24]/10", label: "Native Hot Reload", desc: "React Native apps run inside Yaver with camera, BLE, GPS — hot reload over WiFi or 4G" },
+              { icon: "\u2692", color: "text-[#60a5fa] bg-[#60a5fa]/10", label: "Build + Deploy", desc: "One button: iOS + Android to TestFlight + Play Store" },
+              { icon: "\uD83D\uDC1B", color: "text-[#f87171] bg-[#f87171]/10", label: "Bug Report", desc: "Auto-screenshot (SDK overlay hidden), AI analyzes, pushes fix" },
+              { icon: "\u25B6", color: "text-[#a78bfa] bg-[#a78bfa]/10", label: "Autonomous Test Loop", desc: "Agent reads codebase, navigates app on device/emulator, catches crashes, writes fixes, hot reloads, and repeats — no human in the loop" },
+              { icon: "\u25CF", color: "text-[#22c55e] bg-[#22c55e]/10", label: "BlackBox", desc: "Streams logs, navigation, crashes like a flight recorder" },
+              { icon: "\u2713", color: "text-[#34d399] bg-[#34d399]/10", label: "Fix Report", desc: "All fixes listed with diffs — staged, never committed — review and accept" },
+              { icon: "\uD83D\uDD12", color: "text-[#818cf8] bg-[#818cf8]/10", label: "6-layer security", desc: "Scoped tokens, IP binding, HTTPS on LAN, rotation, device alerts" },
+              { icon: "\u2717", color: "text-surface-500 bg-surface-800", label: "Auto-disabled in production", desc: "Your users never see it" },
+            ].map((f) => (
+              <div key={f.label} className="flex items-start gap-3 rounded-xl border border-surface-800 bg-surface-900/50 p-4">
+                <div className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-sm ${f.color}`}>{f.icon}</div>
+                <div>
+                  <p className="text-sm font-medium text-surface-200">{f.label}</p>
+                  <p className="text-xs text-surface-500">{f.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* DebugConsolePreview component */}
+          <DebugConsolePreview />
+
+          {/* Feedback SDK code blocks */}
+          <div className="mt-10 rounded-xl border border-surface-800/60 bg-surface-900/50 p-5">
+            <div className="mb-3 flex items-center gap-2">
+              <span className="text-sm font-semibold text-surface-100">React Native</span>
+              <span className="rounded-full bg-[#8b5cf6]/20 px-2 py-0.5 text-[10px] text-[#a78bfa]">feedback</span>
+            </div>
+            <pre className="rounded-lg bg-surface-950 p-3 text-xs text-surface-300 overflow-x-auto"><code>{`const isDev = __DEV__ && user?.id === 'YOUR_USER_ID';
+
+if (isDev && !YaverFeedback.isInitialized()) {
+  YaverFeedback.init({ trigger: 'floating-button' });
+  BlackBox.start();
+  BlackBox.wrapConsole();
+}
+
+return (
+  <>
+    <YourApp />
+    {isDev && <FloatingButton />}
+  </>
+);`}</code></pre>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-surface-800/60 bg-surface-900/50 p-5">
+            <div className="mb-3 flex items-center gap-2">
+              <span className="text-sm font-semibold text-surface-100">Flutter</span>
+              <span className="rounded-full bg-[#8b5cf6]/20 px-2 py-0.5 text-[10px] text-[#a78bfa]">feedback</span>
+            </div>
+            <pre className="rounded-lg bg-surface-950 p-3 text-xs text-surface-300 overflow-x-auto"><code>{`final isDev = kDebugMode && user?.id == 'YOUR_USER_ID';
+
+if (isDev) {
+  YaverFeedback.init(trigger: FeedbackTrigger.floatingButton);
+  BlackBox.start();
+  BlackBox.wrapPrint();
+}
+
+return MaterialApp(
+  builder: (context, child) => Stack(children: [
+    child!,
+    if (isDev) const FloatingButton(),
+  ]),
+);`}</code></pre>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-surface-800/60 bg-surface-900/50 p-5">
+            <div className="mb-3 flex items-center gap-2">
+              <span className="text-sm font-semibold text-surface-100">Web</span>
+              <span className="rounded-full bg-[#8b5cf6]/20 px-2 py-0.5 text-[10px] text-[#a78bfa]">feedback</span>
+            </div>
+            <pre className="rounded-lg bg-surface-950 p-3 text-xs text-surface-300 overflow-x-auto"><code>{`import { YaverFeedback, BlackBox } from '@yaver/feedback-web';
+
+if (isDev) {
+  YaverFeedback.init({ trigger: 'floating-button' });
+  BlackBox.start();
+  BlackBox.wrapConsole();
+}`}</code></pre>
+          </div>
+
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-2 text-xs text-surface-500">
+            <code className="rounded bg-surface-800 px-2 py-1 text-surface-300">npm install @yaver/feedback-react-native</code>
+            <span>&middot;</span>
+            <code className="rounded bg-surface-800 px-2 py-1 text-surface-300">flutter pub add yaver_feedback</code>
+            <span>&middot;</span>
+            <code className="rounded bg-surface-800 px-2 py-1 text-surface-300">npm install @yaver/feedback-web</code>
+          </div>
+          <p className="mt-3 text-center text-xs text-surface-500">
+            Available for: React Native &middot; Flutter &middot; Web
+          </p>
+        </div>
+      </section>
+
+      {/* ── QA Testing Workflow ── */}
+      <section className="border-t border-surface-800/60 px-6 py-24">
+        <div className="mx-auto max-w-4xl">
+          <div className="text-center">
+            <span className="mb-3 inline-block rounded-full bg-[#f59e0b]/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#fcd34d]">QA Testing</span>
+            <h2 className="mb-4 text-2xl font-bold text-surface-50 md:text-3xl">
+              Test on real devices. Fix bugs with AI. Repeat.
+            </h2>
+            <p className="mx-auto mb-12 max-w-2xl text-sm text-surface-400">
+              Push your app to a real phone, find bugs by using it, and let your AI agent fix them automatically.
+              The full loop &mdash; from code to device to fix &mdash; in under a minute.
+            </p>
+          </div>
+
+          <div className="mx-auto max-w-3xl">
+            <div className="space-y-4">
+              {[
+                { step: "1", icon: "📤", title: "Push to device", desc: "npx yaver-cli push — your app loads on a real phone in ~4 seconds" },
+                { step: "2", icon: "🐛", title: "Find bugs by using it", desc: "Tap around on the real device. Shake to report a bug with screenshot + voice annotation." },
+                { step: "3", icon: "🤖", title: "AI agent fixes it", desc: "The Feedback SDK sends the bug report to your AI agent. It sees the screenshot, reads the stack trace, and writes a fix." },
+                { step: "4", icon: "🔄", title: "Re-push and verify", desc: "npx yaver-cli push — the fix is on your phone. Verify in seconds. No rebuild, no TestFlight, no Play Store." },
+              ].map((s) => (
+                <div key={s.step} className="flex items-start gap-4 rounded-xl border border-surface-800 bg-surface-900/50 p-5">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-800 text-lg">{s.icon}</span>
+                  <div>
+                    <p className="text-sm font-semibold text-surface-200">{s.title}</p>
+                    <p className="mt-1 text-xs text-surface-400">{s.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-8 rounded-xl border border-surface-800 bg-surface-900/30 p-6 text-center">
+              <p className="text-sm text-surface-300">
+                Works with any AI agent: Claude Code, Codex, Aider, Ollama, Goose.
+                <br />
+                <span className="text-surface-500">Skip TestFlight queues. Skip Play Store reviews. Test on real hardware instantly.</span>
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Push to Device ── */}
+      <section className="border-t border-surface-800/60 px-6 py-24">
+        <div className="mx-auto max-w-4xl">
+          <div className="text-center">
+            <span className="mb-3 inline-block rounded-full bg-[#22c55e]/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#86efac]">Push to Device</span>
+            <h2 className="mb-4 text-2xl font-bold text-surface-50 md:text-3xl">
+              Like Expo Go, but for any existing project
+            </h2>
+            <p className="mx-auto mb-12 max-w-2xl text-sm text-surface-400">
+              Push your existing React Native project to the yaver.io app for real-device testing.
+              No project modifications. No WebView. Real native views. 40+ pre-installed native modules.
+            </p>
+          </div>
+
+          <div className="mx-auto max-w-2xl">
+            <div className="terminal">
+              <div className="terminal-header">
+                <div className="terminal-dot bg-[#ff5f57]" />
+                <div className="terminal-dot bg-[#febc2e]" />
+                <div className="terminal-dot bg-[#28c840]" />
+              </div>
+              <div className="terminal-body space-y-1.5 text-[13px]">
+                <div><span className="text-surface-500"># Analyze your existing RN project</span></div>
+                <div><span className="text-surface-400">$</span>{" "}<span className="text-surface-200">cd my-app && npx yaver-cli init</span></div>
+                <div className="text-[#86efac]">  React Native:  0.81.5 ✅</div>
+                <div className="text-[#86efac]">  Hermes:        enabled ✅</div>
+                <div className="text-[#86efac]">  15/16 native modules available ✅</div>
+                <div className="mt-2"><span className="text-surface-500"># Push to your phone</span></div>
+                <div><span className="text-surface-400">$</span>{" "}<span className="text-surface-200">npx yaver-cli push</span></div>
+                <div className="text-surface-300">  📡 Found: iPhone 15 (192.168.1.42)</div>
+                <div className="text-surface-300">  🔨 Bundling for ios...</div>
+                <div className="text-surface-300">  ⚡ Compiling Hermes bytecode...</div>
+                <div className="text-surface-300">  📤 Pushing 847 KB...</div>
+                <div className="text-[#86efac]">  🚀 Done in 4.1s — app loading on device</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mx-auto mt-12 grid max-w-3xl gap-4 sm:grid-cols-3">
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
+              <p className="text-sm font-semibold text-surface-200">Real native views</p>
+              <p className="mt-1 text-xs text-surface-400">
+                Not a WebView. Every &lt;View&gt; is a real UIView / android.view.View. Full native performance.
+              </p>
+            </div>
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
+              <p className="text-sm font-semibold text-surface-200">40+ native modules</p>
+              <p className="mt-1 text-xs text-surface-400">
+                Reanimated, Gesture Handler, Maps, Skia, Camera, Notifications, and more &mdash; pre-installed.
+              </p>
+            </div>
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
+              <p className="text-sm font-semibold text-surface-200">Watch mode</p>
+              <p className="mt-1 text-xs text-surface-400">
+                <code className="text-[10px]">--watch</code> re-pushes on every file save. Edit &rarr; save &rarr; see it on device in ~1s.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* ── Section 2: Demo ── */}
       <DemoSection />
+
+      {/* ── Section 5: Works with every agent ── */}
+      <section className="border-t border-surface-800/60 px-6 py-24">
+        <div className="mx-auto max-w-5xl">
+          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
+            Not locked to any agent. Not locked to any cloud.
+          </h2>
+          <p className="mb-12 text-center text-sm text-surface-400">
+            Anything that runs in a terminal. Switch agents per task or set a default.
+          </p>
+
+          <div className="mb-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-sm font-medium text-surface-300">
+            {["Ollama", "Aider", "Goose", "OpenCode", "Amp", "Continue", "OpenAI Codex", "Claude Code", "Any tmux session"].map((name) => (
+              <span key={name}>{name}</span>
+            ))}
+          </div>
+
+          <div className="rounded-xl border border-green-500/20 bg-green-500/5 p-6">
+            <p className="text-sm font-medium text-surface-100">
+              Run Llama, Qwen, DeepSeek, Mistral, or CodeGemma on your own hardware.
+            </p>
+            <p className="mt-2 text-sm text-green-400">
+              Zero API keys. Zero cloud. Fully air-gapped if you want. Full remote control from your phone or any terminal.
+            </p>
+          </div>
+
+        </div>
+      </section>
 
       {/* ── Section 3: Wait, it's free? ── */}
       <section className="border-t border-surface-800/60 px-6 py-24">
@@ -1282,110 +1466,6 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ── Push to Device ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-4xl">
-          <div className="text-center">
-            <span className="mb-3 inline-block rounded-full bg-[#22c55e]/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#86efac]">Push to Device</span>
-            <h2 className="mb-4 text-2xl font-bold text-surface-50 md:text-3xl">
-              Like Expo Go, but for any existing project
-            </h2>
-            <p className="mx-auto mb-12 max-w-2xl text-sm text-surface-400">
-              Push your existing React Native project to the yaver.io app for real-device testing.
-              No project modifications. No WebView. Real native views. 40+ pre-installed native modules.
-            </p>
-          </div>
-
-          <div className="mx-auto max-w-2xl">
-            <div className="terminal">
-              <div className="terminal-header">
-                <div className="terminal-dot bg-[#ff5f57]" />
-                <div className="terminal-dot bg-[#febc2e]" />
-                <div className="terminal-dot bg-[#28c840]" />
-              </div>
-              <div className="terminal-body space-y-1.5 text-[13px]">
-                <div><span className="text-surface-500"># Analyze your existing RN project</span></div>
-                <div><span className="text-surface-400">$</span>{" "}<span className="text-surface-200">cd my-app && npx yaver-cli init</span></div>
-                <div className="text-[#86efac]">  React Native:  0.81.5 ✅</div>
-                <div className="text-[#86efac]">  Hermes:        enabled ✅</div>
-                <div className="text-[#86efac]">  15/16 native modules available ✅</div>
-                <div className="mt-2"><span className="text-surface-500"># Push to your phone</span></div>
-                <div><span className="text-surface-400">$</span>{" "}<span className="text-surface-200">npx yaver-cli push</span></div>
-                <div className="text-surface-300">  📡 Found: iPhone 15 (192.168.1.42)</div>
-                <div className="text-surface-300">  🔨 Bundling for ios...</div>
-                <div className="text-surface-300">  ⚡ Compiling Hermes bytecode...</div>
-                <div className="text-surface-300">  📤 Pushing 847 KB...</div>
-                <div className="text-[#86efac]">  🚀 Done in 4.1s — app loading on device</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="mx-auto mt-12 grid max-w-3xl gap-4 sm:grid-cols-3">
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <p className="text-sm font-semibold text-surface-200">Real native views</p>
-              <p className="mt-1 text-xs text-surface-400">
-                Not a WebView. Every &lt;View&gt; is a real UIView / android.view.View. Full native performance.
-              </p>
-            </div>
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <p className="text-sm font-semibold text-surface-200">40+ native modules</p>
-              <p className="mt-1 text-xs text-surface-400">
-                Reanimated, Gesture Handler, Maps, Skia, Camera, Notifications, and more &mdash; pre-installed.
-              </p>
-            </div>
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <p className="text-sm font-semibold text-surface-200">Watch mode</p>
-              <p className="mt-1 text-xs text-surface-400">
-                <code className="text-[10px]">--watch</code> re-pushes on every file save. Edit &rarr; save &rarr; see it on device in ~1s.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ── QA Testing Workflow ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-4xl">
-          <div className="text-center">
-            <span className="mb-3 inline-block rounded-full bg-[#f59e0b]/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#fcd34d]">QA Testing</span>
-            <h2 className="mb-4 text-2xl font-bold text-surface-50 md:text-3xl">
-              Test on real devices. Fix bugs with AI. Repeat.
-            </h2>
-            <p className="mx-auto mb-12 max-w-2xl text-sm text-surface-400">
-              Push your app to a real phone, find bugs by using it, and let your AI agent fix them automatically.
-              The full loop &mdash; from code to device to fix &mdash; in under a minute.
-            </p>
-          </div>
-
-          <div className="mx-auto max-w-3xl">
-            <div className="space-y-4">
-              {[
-                { step: "1", icon: "📤", title: "Push to device", desc: "npx yaver-cli push — your app loads on a real phone in ~4 seconds" },
-                { step: "2", icon: "🐛", title: "Find bugs by using it", desc: "Tap around on the real device. Shake to report a bug with screenshot + voice annotation." },
-                { step: "3", icon: "🤖", title: "AI agent fixes it", desc: "The Feedback SDK sends the bug report to your AI agent. It sees the screenshot, reads the stack trace, and writes a fix." },
-                { step: "4", icon: "🔄", title: "Re-push and verify", desc: "npx yaver-cli push — the fix is on your phone. Verify in seconds. No rebuild, no TestFlight, no Play Store." },
-              ].map((s) => (
-                <div key={s.step} className="flex items-start gap-4 rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-800 text-lg">{s.icon}</span>
-                  <div>
-                    <p className="text-sm font-semibold text-surface-200">{s.title}</p>
-                    <p className="mt-1 text-xs text-surface-400">{s.desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-8 rounded-xl border border-surface-800 bg-surface-900/30 p-6 text-center">
-              <p className="text-sm text-surface-300">
-                Works with any AI agent: Claude Code, Codex, Aider, Ollama, Goose.
-                <br />
-                <span className="text-surface-500">Skip TestFlight queues. Skip Play Store reviews. Test on real hardware instantly.</span>
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
       {/* ── Section 4: 60-Second Install ── */}
       <section id="features" className="border-t border-surface-800/60 px-6 py-24">
         <div className="mx-auto max-w-3xl">
@@ -1535,162 +1615,6 @@ export default function HomePage() {
             {" "}macOS users: <code className="text-surface-400">yaver serve</code> auto-forks to background. Use the{" "}
             <a href="https://github.com/kivanccakmak/yaver.io" target="_blank" rel="noopener noreferrer" className="text-surface-300 underline hover:text-surface-100">desktop installer</a>
             {" "}for login-item auto-start.
-          </p>
-        </div>
-      </section>
-
-      {/* ── Section 5: Works with every agent ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-5xl">
-          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Not locked to any agent. Not locked to any cloud.
-          </h2>
-          <p className="mb-12 text-center text-sm text-surface-400">
-            Anything that runs in a terminal. Switch agents per task or set a default.
-          </p>
-
-          <div className="mb-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-sm font-medium text-surface-300">
-            {["Ollama", "Aider", "Goose", "OpenCode", "Amp", "Continue", "OpenAI Codex", "Claude Code", "Any tmux session"].map((name) => (
-              <span key={name}>{name}</span>
-            ))}
-          </div>
-
-          <div className="rounded-xl border border-green-500/20 bg-green-500/5 p-6">
-            <p className="text-sm font-medium text-surface-100">
-              Run Llama, Qwen, DeepSeek, Mistral, or CodeGemma on your own hardware.
-            </p>
-            <p className="mt-2 text-sm text-green-400">
-              Zero API keys. Zero cloud. Fully air-gapped if you want. Full remote control from your phone or any terminal.
-            </p>
-          </div>
-
-        </div>
-      </section>
-
-      {/* ── Section 6: Feedback SDK ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-4xl">
-          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            The AI debug loop that doesn&apos;t exist anywhere else.
-          </h2>
-          <p className="mx-auto mb-6 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
-            Shake your phone. The AI sees your screen, writes the fix, and hot reloads the app. No laptop. No Slack thread. No Loom video. No waiting.
-          </p>
-
-          {/* Visual step sequence */}
-          <div className="mx-auto mb-12 max-w-3xl">
-            <div className="flex flex-wrap items-center justify-center gap-2 text-sm">
-              {[
-                { label: "Shake", icon: "\uD83D\uDCF1" },
-                { label: "Screenshot", icon: "\uD83D\uDCF8" },
-                { label: "P2P to agent", icon: "\u2192" },
-                { label: "Fix", icon: "\uD83D\uDD27" },
-                { label: "Hot reload", icon: "\u21BB" },
-                { label: "Done", icon: "\u2713" },
-              ].map((step, i) => (
-                <div key={step.label} className="flex items-center gap-2">
-                  <div className="flex items-center gap-1.5 rounded-full border border-surface-700 bg-surface-900 px-3 py-1.5">
-                    <span>{step.icon}</span>
-                    <span className="text-surface-300">{step.label}</span>
-                  </div>
-                  {i < 5 && <span className="text-surface-600">&rarr;</span>}
-                </div>
-              ))}
-            </div>
-          </div>
-
-
-          <div className="mb-10 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {[
-              { icon: ">", color: "text-surface-300 bg-surface-800", label: "Message back and forth", desc: "Send tasks, see agent responses in real-time" },
-              { icon: "\u21BB", color: "text-[#fbbf24] bg-[#fbbf24]/10", label: "Native Hot Reload", desc: "React Native apps run inside Yaver with camera, BLE, GPS — hot reload over WiFi or 4G" },
-              { icon: "\u2692", color: "text-[#60a5fa] bg-[#60a5fa]/10", label: "Build + Deploy", desc: "One button: iOS + Android to TestFlight + Play Store" },
-              { icon: "\uD83D\uDC1B", color: "text-[#f87171] bg-[#f87171]/10", label: "Bug Report", desc: "Auto-screenshot (SDK overlay hidden), AI analyzes, pushes fix" },
-              { icon: "\u25B6", color: "text-[#a78bfa] bg-[#a78bfa]/10", label: "Autonomous Test Loop", desc: "Agent reads codebase, navigates app on device/emulator, catches crashes, writes fixes, hot reloads, and repeats — no human in the loop" },
-              { icon: "\u25CF", color: "text-[#22c55e] bg-[#22c55e]/10", label: "BlackBox", desc: "Streams logs, navigation, crashes like a flight recorder" },
-              { icon: "\u2713", color: "text-[#34d399] bg-[#34d399]/10", label: "Fix Report", desc: "All fixes listed with diffs — staged, never committed — review and accept" },
-              { icon: "\uD83D\uDD12", color: "text-[#818cf8] bg-[#818cf8]/10", label: "6-layer security", desc: "Scoped tokens, IP binding, HTTPS on LAN, rotation, device alerts" },
-              { icon: "\u2717", color: "text-surface-500 bg-surface-800", label: "Auto-disabled in production", desc: "Your users never see it" },
-            ].map((f) => (
-              <div key={f.label} className="flex items-start gap-3 rounded-xl border border-surface-800 bg-surface-900/50 p-4">
-                <div className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-sm ${f.color}`}>{f.icon}</div>
-                <div>
-                  <p className="text-sm font-medium text-surface-200">{f.label}</p>
-                  <p className="text-xs text-surface-500">{f.desc}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* DebugConsolePreview component */}
-          <DebugConsolePreview />
-
-          {/* Feedback SDK code blocks */}
-          <div className="mt-10 rounded-xl border border-surface-800/60 bg-surface-900/50 p-5">
-            <div className="mb-3 flex items-center gap-2">
-              <span className="text-sm font-semibold text-surface-100">React Native</span>
-              <span className="rounded-full bg-[#8b5cf6]/20 px-2 py-0.5 text-[10px] text-[#a78bfa]">feedback</span>
-            </div>
-            <pre className="rounded-lg bg-surface-950 p-3 text-xs text-surface-300 overflow-x-auto"><code>{`const isDev = __DEV__ && user?.id === 'YOUR_USER_ID';
-
-if (isDev && !YaverFeedback.isInitialized()) {
-  YaverFeedback.init({ trigger: 'floating-button' });
-  BlackBox.start();
-  BlackBox.wrapConsole();
-}
-
-return (
-  <>
-    <YourApp />
-    {isDev && <FloatingButton />}
-  </>
-);`}</code></pre>
-          </div>
-
-          <div className="mt-4 rounded-xl border border-surface-800/60 bg-surface-900/50 p-5">
-            <div className="mb-3 flex items-center gap-2">
-              <span className="text-sm font-semibold text-surface-100">Flutter</span>
-              <span className="rounded-full bg-[#8b5cf6]/20 px-2 py-0.5 text-[10px] text-[#a78bfa]">feedback</span>
-            </div>
-            <pre className="rounded-lg bg-surface-950 p-3 text-xs text-surface-300 overflow-x-auto"><code>{`final isDev = kDebugMode && user?.id == 'YOUR_USER_ID';
-
-if (isDev) {
-  YaverFeedback.init(trigger: FeedbackTrigger.floatingButton);
-  BlackBox.start();
-  BlackBox.wrapPrint();
-}
-
-return MaterialApp(
-  builder: (context, child) => Stack(children: [
-    child!,
-    if (isDev) const FloatingButton(),
-  ]),
-);`}</code></pre>
-          </div>
-
-          <div className="mt-4 rounded-xl border border-surface-800/60 bg-surface-900/50 p-5">
-            <div className="mb-3 flex items-center gap-2">
-              <span className="text-sm font-semibold text-surface-100">Web</span>
-              <span className="rounded-full bg-[#8b5cf6]/20 px-2 py-0.5 text-[10px] text-[#a78bfa]">feedback</span>
-            </div>
-            <pre className="rounded-lg bg-surface-950 p-3 text-xs text-surface-300 overflow-x-auto"><code>{`import { YaverFeedback, BlackBox } from '@yaver/feedback-web';
-
-if (isDev) {
-  YaverFeedback.init({ trigger: 'floating-button' });
-  BlackBox.start();
-  BlackBox.wrapConsole();
-}`}</code></pre>
-          </div>
-
-          <div className="mt-6 flex flex-wrap items-center justify-center gap-2 text-xs text-surface-500">
-            <code className="rounded bg-surface-800 px-2 py-1 text-surface-300">npm install @yaver/feedback-react-native</code>
-            <span>&middot;</span>
-            <code className="rounded bg-surface-800 px-2 py-1 text-surface-300">flutter pub add yaver_feedback</code>
-            <span>&middot;</span>
-            <code className="rounded bg-surface-800 px-2 py-1 text-surface-300">npm install @yaver/feedback-web</code>
-          </div>
-          <p className="mt-3 text-center text-xs text-surface-500">
-            Available for: React Native &middot; Flutter &middot; Web
           </p>
         </div>
       </section>
@@ -2234,19 +2158,12 @@ await for (final chunk in c.streamOutput(task.id)) {
         </div>
       </section>
 
-      {/* ── Section 16: Waitlist ── */}
+      {/* ── Section 16: Managed Services ── */}
       <section id="waitlist" className="border-t border-surface-800/60 px-6 py-24">
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="mb-4 text-2xl font-bold text-surface-50 md:text-3xl">
-            Managed relay and cloud dev machines are coming.
-            <br />
-            Get early access.
+            Managed relay and cloud dev machines &mdash; coming soon.
           </h2>
-
-          <div className="mx-auto mt-8 max-w-sm">
-            <WaitlistButton plan="early-access" />
-            <p className="mt-3 text-xs text-surface-500">No spam. One email when it ships.</p>
-          </div>
 
           <div className="mt-12 space-y-4 text-left">
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 px-5 py-4">
@@ -2541,7 +2458,7 @@ await for (final chunk in c.streamOutput(task.id)) {
             />
             <FAQItem
               question="What are the Cloud Dev Machines?"
-              answer="Dedicated Linux dev environments provisioned just for you — not shared with anyone. CPU machines come with 8 vCPU, 16 GB RAM, 160 GB NVMe. GPU machines add a dedicated NVIDIA RTX 4000 with 20 GB VRAM, Ollama + Qwen 2.5 Coder 32B, and PersonaPlex 7B for voice AI. All tiers include Node.js, Python, Go, Rust, Docker, Expo CLI, EAS CLI. Coming soon — join the waitlist for early access."
+              answer="Dedicated Linux dev environments provisioned just for you — not shared with anyone. CPU machines come with 8 vCPU, 16 GB RAM, 160 GB NVMe. GPU machines add a dedicated NVIDIA RTX 4000 with 20 GB VRAM, Ollama + Qwen 2.5 Coder 32B, and PersonaPlex 7B for voice AI. All tiers include Node.js, Python, Go, Rust, Docker, Expo CLI, EAS CLI. Coming soon."
             />
           </div>
         </div>
@@ -2671,7 +2588,7 @@ await for (final chunk in c.streamOutput(task.id)) {
               <a href="/docs" className="hover:text-surface-300">Docs</a>
               <a href="/docs/developers" className="hover:text-surface-300">Developers</a>
               <Link href="/download" className="hover:text-surface-300">Download</Link>
-              <a href="#waitlist" className="hover:text-surface-300">Pricing</a>
+              <a href="#features" className="hover:text-surface-300">Pricing</a>
               <a href="#integrations" className="hover:text-surface-300">Integrations</a>
             </div>
           </div>
