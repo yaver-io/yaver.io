@@ -112,6 +112,8 @@ export default function DevelopersPage() {
           <nav className="space-y-2 text-sm">
             {[
               ["whats-new", "What's New"],
+              ["three-parts", "Three-Part Architecture"],
+              ["push-to-device", "Push to Device (yaver-cli)"],
               ["hot-reload", "Hot Reload — Dev Server to Phone"],
               ["git-providers", "Git Providers — Clone from Phone"],
               ["project-structure", "Project Structure"],
@@ -154,6 +156,10 @@ export default function DevelopersPage() {
           <div className="space-y-4">
             {[
               {
+                title: "Push to Device (yaver-cli)",
+                desc: "New npm package (yaver-cli) lets third-party RN developers push their existing projects to the yaver.io app for real-device testing. Like Expo Go but for any existing project. 41 native modules, Hermes bytecode validated, watch mode.",
+              },
+              {
                 title: "Hot Reload to Phone",
                 desc: "Start Expo, Flutter, Vite, or Next.js dev servers and preview your app on your phone in real time through the P2P channel. Works on any network.",
               },
@@ -189,6 +195,103 @@ export default function DevelopersPage() {
               </div>
             ))}
           </div>
+        </section>
+
+        {/* ─── Three-Part Architecture ─── */}
+        <section className="mb-20">
+          <SectionHeading id="three-parts">Three-Part Architecture</SectionHeading>
+          <Prose>
+            Yaver has three distinct components for developers. Each serves a different purpose
+            and can be used independently.
+          </Prose>
+          <div className="space-y-4">
+            {[
+              {
+                title: "1. Mobile App (yaver.io)",
+                install: "App Store / Play Store",
+                desc: "Native container app for testing third-party RN apps. Also controls AI agents from your phone (tasks, feedback, hot reload). Runs an HTTP server on port 8347 for receiving pushed bundles.",
+              },
+              {
+                title: "2. Push-to-Device CLI (yaver-cli)",
+                install: "npm install -g yaver-cli",
+                desc: "For third-party developers to push THEIR existing React Native projects to the yaver.io app. Analyzes compatibility, bundles JS, compiles Hermes bytecode, pushes directly to phone. No agent needed.",
+              },
+              {
+                title: "3. Desktop Agent (yaver)",
+                install: "brew install kivanccakmak/yaver/yaver",
+                desc: "Go binary for AI agent connectivity (P2P, relay, MCP). Hot reload dev servers (Expo, Flutter, Vite, Next.js). Session transfer, tasks, builds, deploys. Not needed for push-to-device.",
+              },
+            ].map((item) => (
+              <div key={item.title} className="rounded-lg border border-surface-800 bg-surface-900/50 p-4">
+                <p className="text-sm font-semibold text-surface-200">{item.title}</p>
+                <p className="mt-1 text-xs text-surface-500">
+                  <InlineCode>{item.install}</InlineCode>
+                </p>
+                <p className="mt-2 text-xs text-surface-400">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+          <Prose>
+            <strong className="text-surface-200">Key distinction:</strong>{" "}
+            <InlineCode>yaver-cli</InlineCode> (npm) and{" "}
+            <InlineCode>yaver</InlineCode> (Go binary) are completely separate tools.{" "}
+            <InlineCode>yaver-cli</InlineCode> is for third-party RN developers who want to test their
+            apps on real devices. <InlineCode>yaver</InlineCode> is for running AI agents from your phone.
+            A developer might use both.
+          </Prose>
+        </section>
+
+        {/* ─── Push to Device ─── */}
+        <section className="mb-20">
+          <SectionHeading id="push-to-device">Push to Device (yaver-cli)</SectionHeading>
+          <Prose>
+            The yaver.io mobile app doubles as a native container (like Expo Go) for existing
+            React Native projects. Third-party developers push their existing RN apps to it
+            for real-device QA testing. No project modifications needed.
+          </Prose>
+          <Terminal title="push-to-device">
+            <Comment># Install the CLI</Comment>
+            <Cmd>npm install -g yaver-cli</Cmd>
+            <Comment># Analyze your project</Comment>
+            <Cmd>cd my-app && yaver-push init</Cmd>
+            <Output>React Native: 0.81.5 ✅ (yaver supports 0.81.x)</Output>
+            <Output>15/16 native modules available ✅</Output>
+            <Output>Created yaver.json</Output>
+            <Comment># Push to your phone</Comment>
+            <Cmd>yaver-push push</Cmd>
+            <Output>📡 Found: iPhone 15 (192.168.1.42)</Output>
+            <Output>🔨 Bundling → ⚡ Hermes → 📤 Push 847 KB</Output>
+            <Output>🚀 Done in 4.1s — app loading on device</Output>
+          </Terminal>
+          <SubHeading>CLI Commands</SubHeading>
+          <div className="mb-6 overflow-x-auto">
+            <table className="w-full text-xs">
+              <tbody className="divide-y divide-surface-800">
+                {[
+                  ["yaver-push init", "Analyze project, create yaver.json"],
+                  ["yaver-push push", "Bundle + validate + push to device"],
+                  ["yaver-push push --watch", "Watch mode — re-push on file save"],
+                  ["yaver-push push --ignore-missing", "Push despite missing native modules"],
+                  ["yaver-push doctor", "Deep compatibility report with fix suggestions"],
+                  ["yaver-push devices", "List discovered devices on network"],
+                  ["yaver-push modules", "List all 41 SDK native modules"],
+                  ["yaver-push reset", "Clear pushed bundle, restore default UI"],
+                  ["yaver-push status", "Device + project status"],
+                ].map(([cmd, desc]) => (
+                  <tr key={cmd}>
+                    <td className="py-2 pr-4 font-mono text-surface-200">{cmd}</td>
+                    <td className="py-2 text-surface-500">{desc}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <SubHeading>QA Testing Workflow</SubHeading>
+          <Prose>
+            Combine push-to-device with the Feedback SDK for a complete QA loop:
+            push → test on real phone → shake to report bug → AI fixes it → re-push → verify.
+            No TestFlight queues. No Play Store reviews. Real-device testing in seconds.
+          </Prose>
         </section>
 
         {/* ─── Hot Reload ─── */}
