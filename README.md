@@ -14,20 +14,19 @@ P2P encrypted — your code never leaves your machine. MIT licensed. Free foreve
 
 ## Key Features
 
-- **Push to Device** — Push existing React Native projects to the yaver.io phone app for real-device testing in ~4 seconds. No TestFlight. No Play Store. 40+ native modules.
-- **Visual QA Loop** — Shake to report a bug. Feedback SDK captures screenshot, sends to AI agent, agent writes fix, hot reloads. Under 60 seconds.
-- **Autonomous Testing** — Agent navigates every screen on device or emulator, catches crashes, fixes them, hot reloads, repeats. Test suite grows automatically.
-- **P2P Encrypted** — Code, tasks, and output flow directly between your devices. No cloud.
+- **Push to Device** �� Real-device testing in ~4 seconds. No TestFlight. 40+ native modules.
+- **Visual QA Loop** — Shake to report. AI sees screenshot, writes fix, hot reloads.
+- **Autonomous Testing** — Agent navigates screens, catches crashes, fixes, repeats.
+- **P2P Encrypted** — Code flows directly between devices. No cloud.
 - **Any AI Agent** — Claude Code, Codex, Aider, Ollama, Goose, Amp, or any CLI tool.
-- **Hot Reload** — Expo, Flutter, Vite, Next.js — hot reload from phone over P2P.
-- **473 MCP Tools** — Docker, K8s, git, CI/CD, databases — usable from Claude Desktop, Cursor, VS Code, Windsurf, Zed.
-- **Feedback SDKs** — Debug console for React Native, Flutter, and Web apps.
-- **Session Transfer** — Move AI sessions between machines mid-task.
-- **Task Scheduling** — Cron-like scheduling. Run code reviews every morning.
-- **Notifications** — Telegram, Discord, Slack alerts.
-- **CI/CD Webhooks** — Trigger AI tasks from GitHub Actions, GitLab CI.
-- **Git Providers** — Browse and clone repos from your phone.
-- **Free Relay** — Self-host QUIC relay, or use community relay.
+- **Hot Reload** — Expo, Flutter, Vite, Next.js over P2P.
+- **473 MCP Tools** — Docker, K8s, git, CI/CD, databases.
+- **Feedback SDKs** — Debug console for React Native, Flutter, Web.
+- **Session Transfer** — Move AI sessions between machines.
+- **Task Scheduling** — Cron-like scheduling.
+- **Notifications** — Telegram, Discord, Slack.
+- **CI/CD Webhooks** — GitHub Actions, GitLab CI triggers.
+- **Git Providers** — Browse and clone repos from phone.
 - **SDKs** — Go, Python, JS/TS, Flutter/Dart, C.
 
 ## Full Pipeline from Anywhere

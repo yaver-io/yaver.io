@@ -884,7 +884,7 @@ export default function HomePage() {
       {/* ── Section 1: Hero ── */}
       <section className="px-6 pb-8 pt-14 md:pt-20">
         <div className="mx-auto max-w-4xl text-center">
-          <h1 className="mb-4 text-3xl font-bold tracking-tight text-surface-50 sm:text-4xl md:text-5xl">
+          <h1 className="mb-3 text-3xl font-bold tracking-tight text-surface-50 sm:text-4xl md:text-5xl">
             AI writes the code.
             <br />
             Yaver tests it on your real device.
@@ -892,9 +892,9 @@ export default function HomePage() {
           <p className="mx-auto max-w-2xl text-base leading-relaxed text-surface-400 md:text-lg">
             Push to device in 4s. Shake to report bugs. AI fixes and hot reloads.
             <br />
-            Claude Code, Codex, Aider, Ollama &mdash; any agent. P2P encrypted. Free forever.
+            Claude Code &middot; Codex &middot; Aider &middot; Ollama &mdash; any agent. P2P encrypted. Free forever.
           </p>
-          <div className="mt-6 flex flex-col items-center justify-center gap-4 sm:flex-row">
+          <div className="mt-5 flex flex-col items-center justify-center gap-4 sm:flex-row">
             <a
               href="https://github.com/kivanccakmak/yaver.io"
               target="_blank"
@@ -914,7 +914,98 @@ export default function HomePage() {
       {/* ── Section 2: Demo ── */}
       <DemoSection />
 
-      {/* ── Section 6: Feedback SDK ── */}
+      {/* ── Section 3: Get Started (compact 3-column) ── */}
+      <section id="features" className="border-t border-surface-800/60 px-6 py-16">
+        <div className="mx-auto max-w-5xl">
+          <h2 className="mb-10 text-center text-2xl font-bold text-surface-50 md:text-3xl">
+            Get started in 60 seconds
+          </h2>
+
+          <div className="grid gap-6 md:grid-cols-3">
+            {/* Column 1: Install CLI */}
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
+              <div className="mb-3 flex items-center gap-2">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">1</span>
+                <span className="text-sm font-semibold text-surface-100">Install &amp; start</span>
+              </div>
+              <div className="terminal">
+                <div className="terminal-header">
+                  <div className="terminal-dot bg-[#ff5f57]" />
+                  <div className="terminal-dot bg-[#febc2e]" />
+                  <div className="terminal-dot bg-[#28c840]" />
+                </div>
+                <div className="terminal-body space-y-1 text-[12px]">
+                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">brew install kivanccakmak/yaver/yaver</span></div>
+                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver auth</span></div>
+                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver serve</span></div>
+                </div>
+              </div>
+              <p className="mt-3 text-[11px] text-surface-500">
+                Also: curl, apt, AUR, Docker, Nix, Scoop &mdash; <a href="#install-methods" className="underline hover:text-surface-300">all methods</a>
+              </p>
+            </div>
+
+            {/* Column 2: Connect agent */}
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
+              <div className="mb-3 flex items-center gap-2">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">2</span>
+                <span className="text-sm font-semibold text-surface-100">Connect your agent</span>
+              </div>
+              <div className="terminal">
+                <div className="terminal-header">
+                  <div className="terminal-dot bg-[#ff5f57]" />
+                  <div className="terminal-dot bg-[#febc2e]" />
+                  <div className="terminal-dot bg-[#28c840]" />
+                </div>
+                <div className="terminal-body space-y-1 text-[12px]">
+                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver mcp setup claude</span></div>
+                  <div className="text-[11px] text-green-400/80">MCP configured for Claude Desktop</div>
+                </div>
+              </div>
+              <p className="mt-3 text-[11px] text-surface-500">
+                Works with: Claude Code, Codex, Aider, Ollama, Goose, Amp, or any tmux session
+              </p>
+            </div>
+
+            {/* Column 3: Get the app */}
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
+              <div className="mb-3 flex items-center gap-2">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">3</span>
+                <span className="text-sm font-semibold text-surface-100">Get the app</span>
+              </div>
+              <div className="mt-1 flex flex-col gap-2">
+                <a href="https://testflight.apple.com/join/yaver" target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-lg bg-surface-800 px-4 py-2.5 text-xs font-medium text-surface-300 transition-colors hover:bg-surface-700">
+                  <svg className="h-4 w-4 shrink-0 text-surface-400" fill="currentColor" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.40 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+                  App Store &mdash; iOS
+                </a>
+                <a href="https://play.google.com/store/apps/details?id=io.yaver.mobile" target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-lg bg-surface-800 px-4 py-2.5 text-xs font-medium text-surface-300 transition-colors hover:bg-surface-700">
+                  <svg className="h-4 w-4 shrink-0 text-surface-400" fill="currentColor" viewBox="0 0 24 24"><path d="M17.523 2.238l-1.931 3.334c1.88.907 3.261 2.565 3.713 4.608H4.694c.452-2.043 1.833-3.701 3.714-4.608L6.477 2.238a.357.357 0 01.13-.487.357.357 0 01.487.13l1.962 3.389A8.97 8.97 0 0112 4.749c1.07 0 2.088.188 3.039.521l1.962-3.389a.357.357 0 01.487-.13.357.357 0 01.13.487h-.095zM9.5 7.5a.75.75 0 100-1.5.75.75 0 000 1.5zm5 0a.75.75 0 100-1.5.75.75 0 000 1.5zM4.5 11.68h15c.276 0 .5.224.5.5v7.5c0 1.401-1.119 2.5-2.5 2.5h-11C5.119 22.18 4 21.061 4 19.68v-7.5c0-.276.224-.5.5-.5z"/></svg>
+                  Google Play
+                </a>
+              </div>
+              <p className="mt-3 text-[11px] text-surface-500">
+                Sign in with Apple, Google, or Microsoft. Your machine appears automatically.
+              </p>
+            </div>
+          </div>
+
+          {/* Optional: Feedback SDK quick start */}
+          <div className="mt-6 rounded-xl border border-surface-800 bg-surface-900/30 p-5">
+            <p className="mb-2 text-sm font-medium text-surface-200">
+              Optional: Add the Feedback SDK to your app
+            </p>
+            <div className="flex flex-wrap gap-2 text-xs">
+              <code className="rounded bg-surface-800 px-2 py-1 text-surface-300 select-all">npm install @yaver/feedback-react-native</code>
+              <code className="rounded bg-surface-800 px-2 py-1 text-surface-300 select-all">flutter pub add yaver_feedback</code>
+              <code className="rounded bg-surface-800 px-2 py-1 text-surface-300 select-all">npm install @yaver/feedback-web</code>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Section 4: Feedback SDK ── */}
       <section className="border-t border-surface-800/60 px-6 py-24">
         <div className="mx-auto max-w-4xl">
           <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
@@ -1429,96 +1520,35 @@ if (isDev) {
         </div>
       </section>
 
-      {/* ── Section 4: 60-Second Install ── */}
-      <section id="features" className="border-t border-surface-800/60 px-6 py-24">
+      {/* ── Section: All Installation Methods ── */}
+      <section id="install-methods" className="border-t border-surface-800/60 px-6 py-16">
         <div className="mx-auto max-w-3xl">
-          <h2 className="mb-12 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Get started
-          </h2>
-
-          <div className="space-y-6">
-            {[
-              { step: 1, label: "Install CLI", cmd: "brew install kivanccakmak/yaver/yaver", output: null },
-              { step: 2, label: "Auth", cmd: "yaver auth", output: null },
-              { step: 3, label: "Start", cmd: "yaver serve", output: "Ready. Waiting for tasks..." },
-              { step: 4, label: "Connect your agent", cmd: "yaver mcp setup claude", output: "# Works with: aider, codex, ollama, goose, opencode, amp, or any tmux session" },
-            ].map((s) => (
-              <div key={s.step} className="flex items-start gap-4">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">
-                  {s.step}
-                </span>
-                <div className="flex-1">
-                  <p className="mb-2 text-sm font-medium text-surface-200">{s.label}</p>
-                  <div className="terminal">
-                    <div className="terminal-header">
-                      <div className="terminal-dot bg-[#ff5f57]" />
-                      <div className="terminal-dot bg-[#febc2e]" />
-                      <div className="terminal-dot bg-[#28c840]" />
-                    </div>
-                    <div className="terminal-body text-[13px]">
-                      <div>
-                        <span className="text-surface-400">$</span>{" "}
-                        <span className="text-surface-200 select-all">{s.cmd}</span>
-                      </div>
-                      {s.output && (
-                        <div className="mt-1 pl-2 text-green-400/80">{s.output}</div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
+          <p className="mb-4 text-center text-xs font-semibold uppercase tracking-wider text-surface-500">All installation methods</p>
+          <div className="overflow-hidden rounded-xl border border-surface-800">
+            <table className="w-full text-left text-sm">
+              <tbody className="divide-y divide-surface-800/60">
+                {[
+                  { method: "Homebrew", cmd: "brew install kivanccakmak/yaver/yaver", os: "macOS / Linux" },
+                  { method: "AUR", cmd: "yay -S yaver", os: "Arch Linux" },
+                  { method: "apt", cmd: "sudo apt install yaver", os: "Debian / Ubuntu" },
+                  { method: "RPM", cmd: "sudo rpm -i yaver_latest_x86_64.rpm", os: "Fedora / RHEL" },
+                  { method: "Nix", cmd: "nix run github:kivanccakmak/yaver.io", os: "NixOS" },
+                  { method: "Docker", cmd: "docker run --rm kivanccakmak/yaver-cli version", os: "Any" },
+                  { method: "curl", cmd: "curl -fsSL https://yaver.io/install.sh | sh", os: "macOS / Linux" },
+                ].map((row) => (
+                  <tr key={row.method}>
+                    <td className="whitespace-nowrap px-4 py-2.5 text-xs font-medium text-surface-200">{row.method}</td>
+                    <td className="px-4 py-2.5"><code className="text-[11px] text-surface-400 select-all">{row.cmd}</code></td>
+                    <td className="whitespace-nowrap px-4 py-2.5 text-[11px] text-surface-500">{row.os}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-
-          {/* All install methods */}
-          <div className="mt-12">
-            <p className="mb-4 text-center text-xs font-semibold uppercase tracking-wider text-surface-500">All installation methods</p>
-            <div className="overflow-hidden rounded-xl border border-surface-800">
-              <table className="w-full text-left text-sm">
-                <tbody className="divide-y divide-surface-800/60">
-                  {[
-                    { method: "Homebrew", cmd: "brew install kivanccakmak/yaver/yaver", os: "macOS / Linux" },
-                    { method: "AUR", cmd: "yay -S yaver", os: "Arch Linux" },
-                    { method: "apt", cmd: "sudo apt install yaver", os: "Debian / Ubuntu" },
-                    { method: "RPM", cmd: "sudo rpm -i yaver_latest_x86_64.rpm", os: "Fedora / RHEL" },
-                    { method: "Nix", cmd: "nix run github:kivanccakmak/yaver.io", os: "NixOS" },
-                    { method: "Docker", cmd: "docker run --rm kivanccakmak/yaver-cli version", os: "Any" },
-                    { method: "curl", cmd: "curl -fsSL https://yaver.io/install.sh | sh", os: "macOS / Linux" },
-                  ].map((row) => (
-                    <tr key={row.method}>
-                      <td className="whitespace-nowrap px-4 py-2.5 text-xs font-medium text-surface-200">{row.method}</td>
-                      <td className="px-4 py-2.5"><code className="text-[11px] text-surface-400 select-all">{row.cmd}</code></td>
-                      <td className="whitespace-nowrap px-4 py-2.5 text-[11px] text-surface-500">{row.os}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="mt-3 text-center text-xs text-surface-500">
-              Or download binaries from{" "}
-              <a href="https://github.com/kivanccakmak/yaver.io/releases" target="_blank" rel="noopener noreferrer" className="text-surface-300 underline hover:text-surface-100">GitHub Releases</a>.
-            </p>
-          </div>
-
-          {/* Mobile app download */}
-          <div className="mt-10">
-            <p className="mb-4 text-center text-xs font-semibold uppercase tracking-wider text-surface-500">Mobile app</p>
-            <div className="flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
-              <a href="https://testflight.apple.com/join/yaver" target="_blank" rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 rounded-lg bg-surface-800 px-4 py-2.5 text-xs font-medium text-surface-300 transition-colors hover:bg-surface-700">
-                <svg className="h-4 w-4 shrink-0 text-surface-400" fill="currentColor" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.40 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
-                App Store &mdash; iOS
-              </a>
-              <a href="https://play.google.com/store/apps/details?id=io.yaver.mobile" target="_blank" rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 rounded-lg bg-surface-800 px-4 py-2.5 text-xs font-medium text-surface-300 transition-colors hover:bg-surface-700">
-                <svg className="h-4 w-4 shrink-0 text-surface-400" fill="currentColor" viewBox="0 0 24 24"><path d="M17.523 2.238l-1.931 3.334c1.88.907 3.261 2.565 3.713 4.608H4.694c.452-2.043 1.833-3.701 3.714-4.608L6.477 2.238a.357.357 0 01.13-.487.357.357 0 01.487.13l1.962 3.389A8.97 8.97 0 0112 4.749c1.07 0 2.088.188 3.039.521l1.962-3.389a.357.357 0 01.487-.13.357.357 0 01.13.487h-.095zM9.5 7.5a.75.75 0 100-1.5.75.75 0 000 1.5zm5 0a.75.75 0 100-1.5.75.75 0 000 1.5zM4.5 11.68h15c.276 0 .5.224.5.5v7.5c0 1.401-1.119 2.5-2.5 2.5h-11C5.119 22.18 4 21.061 4 19.68v-7.5c0-.276.224-.5.5-.5z"/></svg>
-                Google Play
-              </a>
-            </div>
-            <p className="mt-3 text-center text-xs text-surface-500">
-              Sign in with Apple, Google, or Microsoft. Your machine appears automatically on your phone.
-            </p>
-          </div>
+          <p className="mt-3 text-center text-xs text-surface-500">
+            Or download binaries from{" "}
+            <a href="https://github.com/kivanccakmak/yaver.io/releases" target="_blank" rel="noopener noreferrer" className="text-surface-300 underline hover:text-surface-100">GitHub Releases</a>.
+          </p>
         </div>
       </section>
 
