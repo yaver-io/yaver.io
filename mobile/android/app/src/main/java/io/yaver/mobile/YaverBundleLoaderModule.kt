@@ -57,32 +57,64 @@ class YaverBundleLoaderModule(reactContext: ReactApplicationContext) :
             return
         }
 
-        try {
-            val app = activity.application
-            val packages: List<ReactPackage> = PackageList(app).packages
+        // Download bundle to local file first, then load from disk
+        // (setJSBundleFile expects a file path, not a URL)
+        Thread {
+            try {
+                val bundleDir = java.io.File(reactApplicationContext.filesDir, "bundles")
+                bundleDir.mkdirs()
+                val bundleFile = java.io.File(bundleDir, "main.jsbundle")
 
-            val instanceManager = ReactInstanceManager.builder()
-                .setApplication(app)
-                .setJSBundleFile(urlString)
-                .addPackages(packages)
-                .setUseDeveloperSupport(true)
-                .setInitialLifecycleState(LifecycleState.RESUMED)
-                .build()
+                // Download from URL (works through relay)
+                val connection = java.net.URL(urlString).openConnection() as java.net.HttpURLConnection
+                connection.connectTimeout = 30000
+                connection.readTimeout = 120000
+                connection.connect()
 
-            loadedInstanceManager = instanceManager
-            pendingBundleUrl = urlString
-            pendingModuleName = moduleName
+                if (connection.responseCode != 200) {
+                    promise.reject("HTTP_ERROR", "Download failed: HTTP ${connection.responseCode}")
+                    return@Thread
+                }
 
-            val intent = Intent(activity, YaverBundleHostActivity::class.java)
-            activity.startActivity(intent)
+                connection.inputStream.use { input ->
+                    java.io.FileOutputStream(bundleFile).use { output ->
+                        input.copyTo(output)
+                    }
+                }
 
-            promise.resolve(Arguments.createMap().apply {
-                putBoolean("loaded", true)
-                putString("url", urlString)
-            })
-        } catch (e: Exception) {
-            promise.reject("LOAD_FAILED", "Failed to load bundle: ${e.message}", e)
-        }
+                android.util.Log.d("YaverBundleLoader", "Bundle downloaded: ${bundleFile.length()} bytes")
+
+                // Now load from LOCAL file path
+                val app = activity.application
+                val packages: List<ReactPackage> = PackageList(app).packages
+
+                val instanceManager = ReactInstanceManager.builder()
+                    .setApplication(app)
+                    .setJSBundleFile(bundleFile.absolutePath)
+                    .addPackages(packages)
+                    .setUseDeveloperSupport(false)
+                    .setInitialLifecycleState(LifecycleState.RESUMED)
+                    .build()
+
+                loadedInstanceManager = instanceManager
+                pendingBundleUrl = urlString
+                pendingModuleName = moduleName
+
+                // Launch host activity on main thread
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    val intent = Intent(activity, YaverBundleHostActivity::class.java)
+                    activity.startActivity(intent)
+                }
+
+                promise.resolve(Arguments.createMap().apply {
+                    putBoolean("loaded", true)
+                    putString("url", urlString)
+                    putInt("size", bundleFile.length().toInt())
+                })
+            } catch (e: Exception) {
+                promise.reject("LOAD_FAILED", "Failed to load bundle: ${e.message}", e)
+            }
+        }.start()
     }
 
     @ReactMethod

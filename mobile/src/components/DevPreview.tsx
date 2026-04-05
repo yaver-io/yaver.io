@@ -167,7 +167,8 @@ export function DevPreview() {
       // Load the compiled native bundle
       setLastLogLine("Loading bundle on device...");
       const bundleUrl = `${baseUrl}${buildResult.bundleUrl}`;
-      await loadApp(bundleUrl, "main");
+      const moduleName = buildResult.moduleName || "main";
+      await loadApp(bundleUrl, moduleName, (quicClient as any).authHeaders);
     } catch (err: any) {
       setNativeLoading(false);
       setLastLogLine("");

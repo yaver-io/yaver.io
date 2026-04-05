@@ -3,6 +3,7 @@
 ## Important Rules
 - **Never push or commit without explicit user permission.** Vercel auto-deploys from GitHub on push to `main`.
 - **Vercel deploy size guard**: `web/` must stay under 10 MB (currently ~2.5 MB). The deploy script enforces this. Do not add large assets to `web/`. The biggest file is `web/public/demo.mp4` (~1.2 MB, compressed from 8 MB original). If adding videos, compress aggressively first: `ffmpeg -i input.mp4 -vcodec libx264 -crf 32 -preset veryslow -vf "scale=720:-2" -an output.mp4`. Prefer external hosting (YouTube embed, GitHub releases CDN) for anything over 1 MB.
+- **NEVER use WebView to load third-party apps.** All app loading must be native (real UIView/android.view.View via RCTBridge). When "Open App" is tapped, use `/dev/build-native` to compile a Hermes bytecode bundle and load it into a native RCTBridge — never a WebView. WebView is only acceptable for web content (landing pages, docs), never for React Native apps.
 - **NEVER commit credentials, IPs, API keys, or secrets to the repo.** The repo is open-source on GitHub. All credentials must go in `.env.test` (gitignored), env vars, or GitHub Actions secrets. This includes Hetzner server IPs, Apple Developer keys, SSH key paths, relay passwords, Tailscale IPs. If you see a hardcoded credential, replace it with an env var or placeholder immediately.
 
 ## Repository & Deployment
