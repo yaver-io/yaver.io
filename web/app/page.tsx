@@ -1282,6 +1282,110 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* ── Push to Device ── */}
+      <section className="border-t border-surface-800/60 px-6 py-24">
+        <div className="mx-auto max-w-4xl">
+          <div className="text-center">
+            <span className="mb-3 inline-block rounded-full bg-[#22c55e]/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#86efac]">Push to Device</span>
+            <h2 className="mb-4 text-2xl font-bold text-surface-50 md:text-3xl">
+              Like Expo Go, but for any existing project
+            </h2>
+            <p className="mx-auto mb-12 max-w-2xl text-sm text-surface-400">
+              Push your existing React Native project to the yaver.io app for real-device testing.
+              No project modifications. No WebView. Real native views. 40+ pre-installed native modules.
+            </p>
+          </div>
+
+          <div className="mx-auto max-w-2xl">
+            <div className="terminal">
+              <div className="terminal-header">
+                <div className="terminal-dot bg-[#ff5f57]" />
+                <div className="terminal-dot bg-[#febc2e]" />
+                <div className="terminal-dot bg-[#28c840]" />
+              </div>
+              <div className="terminal-body space-y-1.5 text-[13px]">
+                <div><span className="text-surface-500"># Analyze your existing RN project</span></div>
+                <div><span className="text-surface-400">$</span>{" "}<span className="text-surface-200">cd my-app && npx yaver-cli init</span></div>
+                <div className="text-[#86efac]">  React Native:  0.81.5 ✅</div>
+                <div className="text-[#86efac]">  Hermes:        enabled ✅</div>
+                <div className="text-[#86efac]">  15/16 native modules available ✅</div>
+                <div className="mt-2"><span className="text-surface-500"># Push to your phone</span></div>
+                <div><span className="text-surface-400">$</span>{" "}<span className="text-surface-200">npx yaver-cli push</span></div>
+                <div className="text-surface-300">  📡 Found: iPhone 15 (192.168.1.42)</div>
+                <div className="text-surface-300">  🔨 Bundling for ios...</div>
+                <div className="text-surface-300">  ⚡ Compiling Hermes bytecode...</div>
+                <div className="text-surface-300">  📤 Pushing 847 KB...</div>
+                <div className="text-[#86efac]">  🚀 Done in 4.1s — app loading on device</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mx-auto mt-12 grid max-w-3xl gap-4 sm:grid-cols-3">
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
+              <p className="text-sm font-semibold text-surface-200">Real native views</p>
+              <p className="mt-1 text-xs text-surface-400">
+                Not a WebView. Every &lt;View&gt; is a real UIView / android.view.View. Full native performance.
+              </p>
+            </div>
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
+              <p className="text-sm font-semibold text-surface-200">40+ native modules</p>
+              <p className="mt-1 text-xs text-surface-400">
+                Reanimated, Gesture Handler, Maps, Skia, Camera, Notifications, and more &mdash; pre-installed.
+              </p>
+            </div>
+            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
+              <p className="text-sm font-semibold text-surface-200">Watch mode</p>
+              <p className="mt-1 text-xs text-surface-400">
+                <code className="text-[10px]">--watch</code> re-pushes on every file save. Edit &rarr; save &rarr; see it on device in ~1s.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── QA Testing Workflow ── */}
+      <section className="border-t border-surface-800/60 px-6 py-24">
+        <div className="mx-auto max-w-4xl">
+          <div className="text-center">
+            <span className="mb-3 inline-block rounded-full bg-[#f59e0b]/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#fcd34d]">QA Testing</span>
+            <h2 className="mb-4 text-2xl font-bold text-surface-50 md:text-3xl">
+              Test on real devices. Fix bugs with AI. Repeat.
+            </h2>
+            <p className="mx-auto mb-12 max-w-2xl text-sm text-surface-400">
+              Push your app to a real phone, find bugs by using it, and let your AI agent fix them automatically.
+              The full loop &mdash; from code to device to fix &mdash; in under a minute.
+            </p>
+          </div>
+
+          <div className="mx-auto max-w-3xl">
+            <div className="space-y-4">
+              {[
+                { step: "1", icon: "📤", title: "Push to device", desc: "npx yaver-cli push — your app loads on a real phone in ~4 seconds" },
+                { step: "2", icon: "🐛", title: "Find bugs by using it", desc: "Tap around on the real device. Shake to report a bug with screenshot + voice annotation." },
+                { step: "3", icon: "🤖", title: "AI agent fixes it", desc: "The Feedback SDK sends the bug report to your AI agent. It sees the screenshot, reads the stack trace, and writes a fix." },
+                { step: "4", icon: "🔄", title: "Re-push and verify", desc: "npx yaver-cli push — the fix is on your phone. Verify in seconds. No rebuild, no TestFlight, no Play Store." },
+              ].map((s) => (
+                <div key={s.step} className="flex items-start gap-4 rounded-xl border border-surface-800 bg-surface-900/50 p-5">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-800 text-lg">{s.icon}</span>
+                  <div>
+                    <p className="text-sm font-semibold text-surface-200">{s.title}</p>
+                    <p className="mt-1 text-xs text-surface-400">{s.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-8 rounded-xl border border-surface-800 bg-surface-900/30 p-6 text-center">
+              <p className="text-sm text-surface-300">
+                Works with any AI agent: Claude Code, Codex, Aider, Ollama, Goose.
+                <br />
+                <span className="text-surface-500">Skip TestFlight queues. Skip Play Store reviews. Test on real hardware instantly.</span>
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* ── Section 4: 60-Second Install ── */}
       <section id="features" className="border-t border-surface-800/60 px-6 py-24">
         <div className="mx-auto max-w-3xl">
@@ -1792,6 +1896,7 @@ if (isDev) {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {[
               { name: "Browse & Deploy Apps", desc: "Auto-discover projects, one-tap deploy to Vercel, TestFlight, Play Store, Convex" },
+              { name: "Push to Device", desc: "Push existing RN projects to yaver.io app. Real native views, 40+ modules, Hermes bytecode validated." },
               { name: "Native Hot Reload", desc: "Run React Native apps inside Yaver with full native access — camera, BLE, GPS. Hot reload over any network." },
               { name: "Smart Actions", desc: "AI detects frameworks — shows Ship It, Build, Deploy, Hot Reload per target" },
               { name: "Session Transfer", desc: "Move AI sessions between machines mid-task" },

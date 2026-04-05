@@ -28,6 +28,7 @@ class MainApplication : Application(), ReactApplication {
             packages.add(ApkInstallerPackage())
             packages.add(ScreenRecorderPackage())
             packages.add(YaverBundleLoaderPackage())
+            packages.add(YaverInfoPackage())
             return packages
           }
 
@@ -43,6 +44,8 @@ class MainApplication : Application(), ReactApplication {
   override val reactHost: ReactHost
     get() = ReactNativeHostWrapper.createReactHost(applicationContext, reactNativeHost)
 
+  private var httpServer: YaverHTTPServer? = null
+
   override fun onCreate() {
     super.onCreate()
     SoLoader.init(this, OpenSourceMergedSoMapping)
@@ -51,6 +54,17 @@ class MainApplication : Application(), ReactApplication {
       load()
     }
     ApplicationLifecycleDispatcher.onApplicationCreate(this)
+
+    // Start on-device HTTP server for yaver push
+    httpServer = YaverHTTPServer(this).apply {
+      onBundleReceived = {
+        // Trigger bundle reload on the main thread
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+          reactNativeHost.reactInstanceManager.recreateReactContextInBackground()
+        }
+      }
+      start()
+    }
   }
 
   override fun onConfigurationChanged(newConfig: Configuration) {

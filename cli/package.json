@@ -1,0 +1,35 @@
+{
+  "name": "yaver-cli",
+  "version": "1.0.0",
+  "description": "Push existing React Native projects to yaver.io for testing on real devices",
+  "bin": {
+    "yaver-push": "bin/yaver-push"
+  },
+  "main": "src/index.js",
+  "files": [
+    "bin/",
+    "src/",
+    "hermesc/",
+    "sdk-manifest.json"
+  ],
+  "keywords": [
+    "react-native",
+    "testing",
+    "mobile",
+    "yaver",
+    "expo-go-alternative"
+  ],
+  "author": "Yaver <hello@yaver.io>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kivanccakmak/yaver.io.git"
+  },
+  "homepage": "https://yaver.io",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "semver": "^7.6.0"
+  }
+}
