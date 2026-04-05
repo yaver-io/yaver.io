@@ -200,7 +200,7 @@ func (s *HTTPServer) handleDevServerProxy(w http.ResponseWriter, r *http.Request
 
 // handleBuildNativeBundle builds a production Hermes bytecode bundle for the active project.
 // POST /dev/build-native { "platform": "ios" }
-// Returns { "status": "ok", "bundleUrl": "/dev/native-bundle" } on success.
+// Returns { "status": "ok", "bundleUrl": "/dev/native-bundle", "moduleName": "main" } on success.
 func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Request) {
 	if s.devServerMgr == nil {
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
@@ -227,35 +227,65 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	buildDir := filepath.Join(workDir, ".yaver-build")
 	bundlePath := filepath.Join(buildDir, "main.jsbundle")
 
-	// Emit starting event
+	log.Printf("[dev:build-native] CALLED platform=%s workDir=%s", req.Platform, workDir)
 	s.devServerMgr.EmitLog("Building native bundle...")
 
-	// 1. Run react-native bundle
 	os.MkdirAll(buildDir, 0o755)
 
-	// Find entry file
-	entryFile := "index.js"
-	for _, candidate := range []string{"index.js", "index.tsx", "index.ts", "src/index.js", "src/index.tsx"} {
-		if _, err := os.Stat(filepath.Join(workDir, candidate)); err == nil {
-			entryFile = candidate
-			break
+	// ── Check node_modules ──
+	if _, err := os.Stat(filepath.Join(workDir, "node_modules")); os.IsNotExist(err) {
+		s.devServerMgr.EmitLog("Installing dependencies...")
+		install := exec.Command("npm", "install", "--legacy-peer-deps")
+		install.Dir = workDir
+		if err := install.Run(); err != nil {
+			install = exec.Command("yarn", "install")
+			install.Dir = workDir
+			install.Run()
 		}
 	}
 
-	// Check if this is an Expo project (uses expo-router)
+	// ── Detect project type ──
 	pkgData, _ := os.ReadFile(filepath.Join(workDir, "package.json"))
-	if strings.Contains(string(pkgData), "expo-router") {
-		// Expo Router entry point
-		entryFile = "node_modules/expo-router/entry.js"
-		if _, err := os.Stat(filepath.Join(workDir, entryFile)); err != nil {
-			entryFile = "index.js" // fallback
+	appJsonData, _ := os.ReadFile(filepath.Join(workDir, "app.json"))
+
+	// Expo detection: check package.json deps + app.json
+	isExpo := false
+	if strings.Contains(string(pkgData), `"expo"`) {
+		// Verify it's actually the expo framework, not just expo-* packages
+		if _, err := os.Stat(filepath.Join(workDir, "node_modules", "expo", "AppEntry.js")); err == nil {
+			isExpo = true
+		} else if strings.Contains(string(appJsonData), `"expo"`) {
+			isExpo = true
 		}
 	}
 
-	s.devServerMgr.EmitLog(fmt.Sprintf("Bundling %s for %s...", entryFile, req.Platform))
-
-	bundleCmd := fmt.Sprintf("npx react-native bundle --platform %s --entry-file %s --bundle-output %s --assets-dest %s --dev false --minify true --reset-cache",
-		req.Platform, entryFile, bundlePath, filepath.Join(buildDir, "assets"))
+	// ── Bundle ──
+	var bundleCmd string
+	if isExpo {
+		s.devServerMgr.EmitLog(fmt.Sprintf("Bundling with Expo for %s...", req.Platform))
+		bundleCmd = fmt.Sprintf("npx expo export:embed --platform %s --bundle-output %s --assets-dest %s --dev false --minify true --reset-cache",
+			req.Platform, bundlePath, filepath.Join(buildDir, "assets"))
+	} else {
+		// Find entry file: package.json "main" → fallback candidates
+		entryFile := "index.js"
+		var pkg struct {
+			Main string `json:"main"`
+		}
+		json.Unmarshal(pkgData, &pkg)
+		if pkg.Main != "" {
+			entryFile = pkg.Main
+		}
+		// Check for expo-router entry
+		if strings.Contains(string(pkgData), `"expo-router"`) {
+			candidate := "node_modules/expo-router/entry.js"
+			if _, err := os.Stat(filepath.Join(workDir, candidate)); err == nil {
+				entryFile = candidate
+			}
+		}
+		s.devServerMgr.EmitLog(fmt.Sprintf("Bundling %s for %s...", entryFile, req.Platform))
+		bundleCmd = fmt.Sprintf("npx react-native bundle --platform %s --entry-file %s --bundle-output %s --assets-dest %s --dev false --minify true --reset-cache",
+			req.Platform, entryFile, bundlePath, filepath.Join(buildDir, "assets"))
+	}
 
 	cmd := exec.Command("sh", "-c", bundleCmd)
 	cmd.Dir = workDir
@@ -270,18 +300,18 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 
 	if err := cmd.Run(); err != nil {
 		s.devServerMgr.EmitLog(fmt.Sprintf("Bundle failed: %v", err))
-		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("react-native bundle failed: %v", err)})
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("bundle failed: %v. Check agent logs for details.", err)})
 		return
 	}
 
-	// 2. Compile with hermesc
+	// ── Hermes compile ──
 	s.devServerMgr.EmitLog("Compiling Hermes bytecode...")
 
 	hermescPath := findHermesc(workDir)
 	if hermescPath == "" {
-		// Skip hermesc — serve plain JS bundle (still works, just slower)
-		s.devServerMgr.EmitLog("hermesc not found — serving plain JS bundle")
+		s.devServerMgr.EmitLog("hermesc not found — serving plain JS bundle (slower but works)")
 	} else {
+		log.Printf("[dev:build-native] Using hermesc at: %s", hermescPath)
 		tmpPath := bundlePath + ".tmp"
 		os.Rename(bundlePath, tmpPath)
 
@@ -292,29 +322,66 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		hermesCmd.Stderr = hermesLogW
 
 		if err := hermesCmd.Run(); err != nil {
-			// Fallback: use plain JS
 			os.Rename(tmpPath, bundlePath)
 			s.devServerMgr.EmitLog(fmt.Sprintf("hermesc failed, using plain JS: %v", err))
 		} else {
 			os.Remove(tmpPath)
-			s.devServerMgr.EmitLog("Hermes bytecode compiled")
+
+			// Verify bytecode version matches Yaver app
+			if data, err := os.ReadFile(bundlePath); err == nil && len(data) >= 8 {
+				magic := uint32(data[0]) | uint32(data[1])<<8 | uint32(data[2])<<16 | uint32(data[3])<<24
+				bcVersion := uint32(data[4]) | uint32(data[5])<<8 | uint32(data[6])<<16 | uint32(data[7])<<24
+				if magic == 0x1F1903C1 {
+					log.Printf("[dev:build-native] Hermes bytecode version: %d", bcVersion)
+					s.devServerMgr.EmitLog(fmt.Sprintf("Hermes BC version: %d", bcVersion))
+				} else {
+					log.Printf("[dev:build-native] WARNING: Not Hermes bytecode (magic=0x%08X)", magic)
+				}
+			}
 		}
 	}
 
-	// Check bundle size
+	// ── Detect module name from bundle ──
+	moduleName := "main" // Expo default
+	if bundleData, err := os.ReadFile(bundlePath); err == nil {
+		bundleStr := string(bundleData)
+		// Search for AppRegistry.registerComponent('X', ...) — works in both minified and non-minified
+		idx := strings.Index(bundleStr, "registerComponent")
+		if idx > 0 {
+			// Find the quoted string after registerComponent
+			rest := bundleStr[idx:]
+			for i := 0; i < len(rest); i++ {
+				if rest[i] == '"' || rest[i] == '\'' {
+					quote := rest[i]
+					end := strings.IndexByte(rest[i+1:], quote)
+					if end > 0 {
+						detected := rest[i+1 : i+1+end]
+						if detected != "" && len(detected) < 100 {
+							moduleName = detected
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+	log.Printf("[dev:build-native] Detected module name: %s", moduleName)
+
+	// ── Check bundle size ──
 	info, err := os.Stat(bundlePath)
 	if err != nil {
 		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "bundle file not found after build"})
 		return
 	}
 
-	s.devServerMgr.EmitLog(fmt.Sprintf("Bundle ready: %d KB", info.Size()/1024))
+	s.devServerMgr.EmitLog(fmt.Sprintf("Bundle ready: %d KB, module: %s", info.Size()/1024, moduleName))
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{
-		"status":    "ok",
-		"bundleUrl": "/dev/native-bundle",
-		"size":      info.Size(),
-		"platform":  req.Platform,
+		"status":     "ok",
+		"bundleUrl":  "/dev/native-bundle",
+		"size":       info.Size(),
+		"platform":   req.Platform,
+		"moduleName": moduleName,
 	})
 }
 

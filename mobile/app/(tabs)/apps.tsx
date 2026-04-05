@@ -14,9 +14,11 @@ import {
 import { WebView } from "react-native-webview";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { Platform } from "react-native";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient, type DevServerStatus } from "../../src/lib/quic";
+import { loadApp } from "../../src/lib/bundleLoader";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -131,11 +133,11 @@ export default function AppsScreen() {
 
   const router = useRouter();
 
-  // Tap project → fetch actions from CLI → show action sheet
+  // Tap project → if dev server running for it, build native + load. Otherwise show action sheet.
   const handleTapProject = useCallback(async (projectName: string) => {
     const isRunning = devStatus?.workDir?.endsWith(projectName);
     if (isRunning) {
-      handleOpen();
+      handleOpenNative(devStatus!.workDir);
       return;
     }
 
@@ -227,11 +229,73 @@ export default function AppsScreen() {
     }
   }, [actionSheet, router]);
 
-  const handleOpen = useCallback(() => {
-    setShowWebView(true);
-    setWebViewLoading(true);
-    setWebViewKey(k => k + 1);
+  const [nativeLoading, setNativeLoading] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState("");
+
+  // Open app natively: Go agent builds Hermes bytecode → phone loads into RCTBridge
+  const handleOpenNative = useCallback(async (workDir: string) => {
+    const baseUrl = (quicClient as any).baseUrl;
+    if (!baseUrl) {
+      Alert.alert("Error", "Not connected to agent");
+      return;
+    }
+
+    setNativeLoading(true);
+    const headers = {
+      ...(quicClient as any).authHeaders,
+      "Content-Type": "application/json",
+    };
+
+    try {
+      // 1. Ensure dev server is running for this project
+      const currentStatus = await quicClient.getDevServerStatus();
+      if (!currentStatus?.running || !currentStatus.workDir?.includes(workDir.split("/").pop() || "")) {
+        setLoadingStatus("Starting dev server...");
+        await quicClient.startDevServer({
+          framework: "expo",
+          workDir: workDir,
+        });
+        // Wait for ready
+        for (let i = 0; i < 30; i++) {
+          await new Promise(r => setTimeout(r, 1000));
+          const s = await quicClient.getDevServerStatus();
+          setLoadingStatus(s?.running ? "Dev server ready" : "Starting dev server...");
+          if (s?.running) break;
+        }
+      }
+
+      // 2. Build native Hermes bytecode bundle via Go agent
+      setLoadingStatus("Building native bundle...");
+      const buildRes = await fetch(`${baseUrl}/dev/build-native`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ platform: Platform.OS }),
+      });
+      const buildResult = await buildRes.json();
+
+      if (buildResult.status !== "ok") {
+        throw new Error(buildResult.error || "Build failed");
+      }
+
+      // 3. Load compiled bytecode into native RCTBridge (NOT WebView)
+      setLoadingStatus("Loading on device...");
+      const bundleUrl = `${baseUrl}${buildResult.bundleUrl}`;
+      const moduleName = buildResult.moduleName || "main";
+      // Pass auth headers so relay-proxied download works
+      await loadApp(bundleUrl, moduleName, (quicClient as any).authHeaders);
+    } catch (err: any) {
+      Alert.alert("Load Failed", err?.message || "Could not load app in Yaver");
+    } finally {
+      setNativeLoading(false);
+      setLoadingStatus("");
+    }
   }, []);
+
+  const handleOpen = useCallback(() => {
+    if (devStatus?.workDir) {
+      handleOpenNative(devStatus.workDir);
+    }
+  }, [devStatus, handleOpenNative]);
 
   const handleReload = useCallback(async () => {
     setWebViewLoading(true);
@@ -287,8 +351,15 @@ export default function AppsScreen() {
               </View>
             </View>
             <View style={s.cardActions}>
-              <Pressable style={[s.actionBtn, s.openBtn]} onPress={handleOpen}>
-                <Text style={s.openBtnText}>Open App</Text>
+              <Pressable style={[s.actionBtn, s.openBtn]} onPress={handleOpen} disabled={nativeLoading}>
+                {nativeLoading ? (
+                  <>
+                    <ActivityIndicator size="small" color="#fff" />
+                    {loadingStatus ? <Text style={[s.openBtnText, { fontSize: 11, marginLeft: 8 }]}>{loadingStatus}</Text> : null}
+                  </>
+                ) : (
+                  <Text style={s.openBtnText}>Open App</Text>
+                )}
               </Pressable>
               <Pressable style={[s.actionBtn, s.reloadBtn]} onPress={handleReload}>
                 <Text style={s.reloadBtnText}>{"\u21BB"} Reload</Text>
