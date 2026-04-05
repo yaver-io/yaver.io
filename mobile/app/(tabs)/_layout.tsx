@@ -10,8 +10,7 @@ function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boo
   const icons: Record<string, string> = {
     Tasks: "T",
     Todos: "\u2610",
-    Apps: "\u25B6",
-    Reload: "\uD83D\uDD25",
+    Projects: "\u25B6",
     Repos: "\u{1F4C2}",
     Builds: "B",
     Devices: "D",
@@ -52,10 +51,10 @@ export default function TabLayout() {
         const running = status?.running === true;
         if (mounted) {
           setDevServerRunning(running);
-          // Auto-navigate to Apps tab when dev server first starts
+          // Auto-navigate to Projects tab when dev server first starts
           if (running && !wasRunning.current) {
             wasRunning.current = true;
-            router.navigate("/(tabs)/hotreload");
+            router.navigate("/(tabs)/apps");
           }
           if (!running) wasRunning.current = false;
         }
@@ -93,21 +92,13 @@ export default function TabLayout() {
       <Tabs.Screen
         name="apps"
         options={{
-          title: "Apps",
+          title: "Projects",
           tabBarIcon: ({ focused }) => (
-            <TabIcon label="Apps" focused={focused} showGreenDot={devServerRunning} />
+            <TabIcon label="Projects" focused={focused} showGreenDot={devServerRunning} />
           ),
         }}
       />
-      <Tabs.Screen
-        name="hotreload"
-        options={{
-          title: "Reload",
-          tabBarIcon: ({ focused }) => (
-            <TabIcon label="Reload" focused={focused} showGreenDot={devServerRunning} />
-          ),
-        }}
-      />
+      <Tabs.Screen name="hotreload" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="builds" options={{ href: null, headerShown: false }} />
       <Tabs.Screen
         name="devices"
