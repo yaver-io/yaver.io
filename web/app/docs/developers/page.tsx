@@ -2242,7 +2242,7 @@ CLI Agent ◄──QUIC──────────────── Relay (:
             <div className="card">
               <h4 className="mb-3 text-sm font-medium text-surface-200">React Native</h4>
               <Terminal title="install">
-                <Cmd>npm install @yaver/feedback-react-native</Cmd>
+                <Cmd>npm install yaver-feedback-react-native</Cmd>
               </Terminal>
             </div>
             <div className="card">

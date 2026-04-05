@@ -40,7 +40,7 @@ Users select the mode at runtime from within their app.
 
 ### React Native
 ```tsx
-import { YaverFeedback, YaverConnectionScreen } from '@yaver/feedback-react-native';
+import { YaverFeedback, YaverConnectionScreen } from 'yaver-feedback-react-native';
 
 if (__DEV__) {
   YaverFeedback.init({ trigger: 'shake' });

@@ -211,9 +211,9 @@ export default function FeedbackSdkPage() {
           <SubHeading>React Native</SubHeading>
           <div className="mb-8">
             <Terminal title="install-rn">
-              <Cmd>npm install @yaver/feedback-react-native</Cmd>
+              <Cmd>npm install yaver-feedback-react-native</Cmd>
               <Comment># or</Comment>
-              <Cmd>yarn add @yaver/feedback-react-native</Cmd>
+              <Cmd>yarn add yaver-feedback-react-native</Cmd>
             </Terminal>
           </div>
 
@@ -248,7 +248,7 @@ export default function FeedbackSdkPage() {
           <div className="mb-8">
             <Terminal title="quick-start-rn.tsx">
               <pre className="text-surface-300">
-                {`import { YaverFeedback, FloatingButton, BlackBox } from '@yaver/feedback-react-native';
+                {`import { YaverFeedback, FloatingButton, BlackBox } from 'yaver-feedback-react-native';
 import { useAuth } from './auth';
 
 function App() {
@@ -350,7 +350,7 @@ if (isDev) {
             <Terminal title="error-wrap-rn.tsx">
               <Comment># React Native &mdash; wrapping ErrorUtils</Comment>
               <pre className="text-surface-300">
-                {`import { wrapErrorHandler } from '@yaver/feedback-react-native';
+                {`import { wrapErrorHandler } from 'yaver-feedback-react-native';
 
 // Get the existing global handler
 const originalHandler = ErrorUtils.getGlobalHandler();
@@ -426,7 +426,7 @@ window.addEventListener('unhandledrejection',
           <div className="mb-8">
             <Terminal title="error-attach.tsx">
               <pre className="text-surface-300">
-                {`import { attachError } from '@yaver/feedback-react-native';
+                {`import { attachError } from 'yaver-feedback-react-native';
 
 async function fetchUserProfile(userId: string) {
   try {
@@ -553,7 +553,7 @@ async function fetchUserProfile(userId: string) {
           <div className="mb-8">
             <Terminal title="blackbox-control.ts">
               <pre className="text-surface-300">
-                {`import { BlackBox } from '@yaver/feedback-react-native';
+                {`import { BlackBox } from 'yaver-feedback-react-native';
 
 // Manual start/stop
 BlackBox.start();
@@ -579,7 +579,7 @@ const isActive = BlackBox.isActive();`}
           <div className="mb-8">
             <Terminal title="blackbox-console.ts">
               <pre className="text-surface-300">
-                {`import { BlackBox } from '@yaver/feedback-react-native';
+                {`import { BlackBox } from 'yaver-feedback-react-native';
 
 // Opt in to console streaming
 BlackBox.wrapConsole();
@@ -601,7 +601,7 @@ console.error('Payment failed:', err);`}
             <Terminal title="blackbox-nav-rn.tsx">
               <Comment># React Native &mdash; manual</Comment>
               <pre className="text-surface-300">
-                {`import { BlackBox } from '@yaver/feedback-react-native';
+                {`import { BlackBox } from 'yaver-feedback-react-native';
 
 // In your navigation listener
 navigation.addListener('state', (e) => {
@@ -641,7 +641,7 @@ MaterialApp(
           <div className="mb-8">
             <Terminal title="blackbox-network.ts">
               <pre className="text-surface-300">
-                {`import { BlackBox } from '@yaver/feedback-react-native';
+                {`import { BlackBox } from 'yaver-feedback-react-native';
 
 // In your HTTP client wrapper or interceptor
 const start = Date.now();
@@ -703,7 +703,7 @@ PaymentError: gateway timeout
           <div className="mb-8">
             <Terminal title="hot-reload.tsx">
               <pre className="text-surface-300">
-                {`import { FeedbackModal } from '@yaver/feedback-react-native';
+                {`import { FeedbackModal } from 'yaver-feedback-react-native';
 
 // The modal shows:
 // - Streaming status (connected / reconnecting / offline)

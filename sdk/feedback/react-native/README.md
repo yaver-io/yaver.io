@@ -1,11 +1,11 @@
-# @yaver/feedback-react-native
+# yaver-feedback-react-native
 
 Visual feedback SDK for Yaver. Lets testers and developers shake their phone (or tap a floating button) to capture screenshots, record voice notes, and send bug reports directly to a Yaver agent running on a dev machine. Built for vibe coding workflows where feedback needs to flow fast.
 
 ## Installation
 
 ```bash
-npm install @yaver/feedback-react-native
+npm install yaver-feedback-react-native
 ```
 
 ### Peer dependencies
@@ -26,7 +26,7 @@ npm install react-native-audio-recorder-player
 ## Quick Start
 
 ```tsx
-import { YaverFeedback, BlackBox, FeedbackModal } from '@yaver/feedback-react-native';
+import { YaverFeedback, BlackBox, FeedbackModal } from 'yaver-feedback-react-native';
 
 // Initialize once at app startup
 YaverFeedback.init({
@@ -164,7 +164,7 @@ yaver sdk-token create --expires 24h
 Continuous streaming of app events to the agent. The agent keeps a ring buffer (last 1000 events per device) and injects context into fix prompts — so the AI agent already knows what the app was doing when you ask for a fix.
 
 ```tsx
-import { BlackBox } from '@yaver/feedback-react-native';
+import { BlackBox } from 'yaver-feedback-react-native';
 
 // Start streaming (call after YaverFeedback.init)
 BlackBox.start({
@@ -258,7 +258,7 @@ YaverFeedback.init({
 ### Manual discovery
 
 ```typescript
-import { YaverDiscovery } from '@yaver/feedback-react-native';
+import { YaverDiscovery } from 'yaver-feedback-react-native';
 
 // Full discovery (Convex → stored → LAN scan)
 const result = await YaverDiscovery.discover({
@@ -281,7 +281,7 @@ await YaverDiscovery.clear();
 A full-screen UI for discovering and connecting to a Yaver agent. Shows connection status, URL/token inputs, auto-discover button, and a Start/Stop testing toggle with recording timer.
 
 ```tsx
-import { YaverConnectionScreen } from '@yaver/feedback-react-native';
+import { YaverConnectionScreen } from 'yaver-feedback-react-native';
 
 function App() {
   return (
@@ -463,7 +463,7 @@ YaverFeedback.init({ authToken, trigger: 'shake' });
 A small draggable "Y" button overlays the app. Tap to open the feedback modal.
 
 ```tsx
-import { FloatingButton, FeedbackModal, YaverFeedback } from '@yaver/feedback-react-native';
+import { FloatingButton, FeedbackModal, YaverFeedback } from 'yaver-feedback-react-native';
 
 function App() {
   return (
@@ -481,7 +481,7 @@ function App() {
 Trigger feedback collection programmatically from anywhere in your app.
 
 ```typescript
-import { YaverFeedback } from '@yaver/feedback-react-native';
+import { YaverFeedback } from 'yaver-feedback-react-native';
 
 // In a button handler, debug menu, etc.
 YaverFeedback.startReport();
@@ -492,7 +492,7 @@ YaverFeedback.startReport();
 For direct communication with the Yaver agent beyond feedback:
 
 ```typescript
-import { P2PClient } from '@yaver/feedback-react-native';
+import { P2PClient } from 'yaver-feedback-react-native';
 
 const client = new P2PClient('http://192.168.1.10:18080', 'your-token');
 

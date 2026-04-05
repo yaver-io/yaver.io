@@ -192,7 +192,7 @@ Embed in your app during development. The SDK provides device discovery, connect
 npm install @yaver/feedback-web
 
 # React Native
-npm install @yaver/feedback-react-native
+npm install yaver-feedback-react-native
 
 # Flutter
 # Add to pubspec.yaml: yaver_feedback: ^0.1.0
@@ -211,7 +211,7 @@ if (process.env.NODE_ENV === 'development') {
 
 **Quick start (React Native):**
 ```tsx
-import { YaverFeedback, YaverConnectionScreen } from '@yaver/feedback-react-native';
+import { YaverFeedback, YaverConnectionScreen } from 'yaver-feedback-react-native';
 
 if (__DEV__) {
   YaverFeedback.init({ trigger: 'shake' }); // Shake phone to report bug
@@ -646,8 +646,8 @@ ACL peers are also accessible via MCP tools (`acl_list_peers`, `acl_call_peer_to
 | **Mobile App** | `mobile/` | App Store / Play Store | Remote control for AI agents + native RN container + on-device HTTP server (port 8347) |
 | **Desktop Agent** | `desktop/agent/` | `brew install yaver` | Go binary — P2P server, AI agent runner, MCP (473 tools), hot reload, builds, session transfer |
 | **Push-to-Device CLI** | `cli/` | `npm i -g yaver-cli` | Bundle existing RN projects → Hermes bytecode → push to phone. No agent needed. |
-| **Feedback SDKs** | `sdk/feedback/` | `npm i @yaver/feedback-*` | Debug console + black box recorder embedded in your app. React Native, Flutter, Web. |
-| **Programmatic SDKs** | `sdk/` | `npm i @yaver/sdk`, `pip install yaver`, etc. | Automate Yaver from code — Go, Python, JS/TS, Flutter/Dart, C. |
+| **Feedback SDKs** | `sdk/feedback/` | `npm i yaver-feedback-*` | Debug console + black box recorder embedded in your app. React Native, Flutter, Web. |
+| **Programmatic SDKs** | `sdk/` | `npm i yaver-sdk`, `pip install yaver`, etc. | Automate Yaver from code — Go, Python, JS/TS, Flutter/Dart, C. |
 | Desktop Installer | `desktop/installer/` | [Download](https://yaver.io/download) | GUI installer (DMG/EXE/DEB) — installs the Go agent binary |
 | Relay Server | `relay/` | Docker / binary | QUIC relay for NAT traversal — self-hostable, pass-through only |
 | Backend | `backend/` | Managed (Convex) | Auth + peer discovery + platform config. No user data. |
@@ -821,7 +821,7 @@ Embed in your app during development. Screen recording + voice + screenshots →
 | SDK | Install | Trigger Modes |
 |-----|---------|---------------|
 | **Web** | `npm install @yaver/feedback-web` | Floating button, keyboard shortcut (Ctrl+Shift+F), manual |
-| **React Native** | `npm install @yaver/feedback-react-native` | Shake-to-report, floating button, manual |
+| **React Native** | `npm install yaver-feedback-react-native` | Shake-to-report, floating button, manual |
 | **Flutter** | `yaver_feedback: ^0.1.0` in pubspec.yaml | Shake, floating button, manual |
 
 All SDKs include: auto device discovery, connection UI, screen recording, voice annotation, three runtime modes (Full Interactive / Semi Interactive / Post Mode), agent commentary, voice commands.

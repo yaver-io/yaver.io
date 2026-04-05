@@ -110,7 +110,7 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Publish @yaver/feedback-react-native to npm
+      - name: Publish yaver-feedback-react-native to npm
         run: |
           cd sdk/feedback/react-native
           npm publish --access public

@@ -13,7 +13,7 @@ import { LoginScreen } from './src/screens/LoginScreen';
 import { ProductDetailScreen } from './src/screens/ProductDetailScreen';
 
 // ─── Yaver Feedback SDK (dev only) ───
-// import { YaverFeedback, FloatingButton, BlackBox } from '@yaver/feedback-react-native';
+// import { YaverFeedback, FloatingButton, BlackBox } from 'yaver-feedback-react-native';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();

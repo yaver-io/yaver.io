@@ -50,7 +50,7 @@ func printFeedbackUsage() {
 Feedback is sent from:
   A) Yaver mobile app — record screen + voice while testing your build
   B) In-app SDK — shake-to-report embedded in your app (dev mode only)
-     npm: @yaver/feedback-react-native
+     npm: yaver-feedback-react-native
      pub.dev: yaver_feedback
      web: @yaver/feedback-web
 

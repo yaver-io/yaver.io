@@ -863,7 +863,7 @@ Before publishing, ensure:
 2. `cli/hermesc/` contains hermesc binaries for all platforms (from yaver.io's exact Hermes build)
 3. Version in `cli/package.json` is bumped
 
-#### npm (`@yaver/sdk`) — Programmatic SDK
+#### npm (`yaver-sdk`) — Programmatic SDK
 Same npm org and token as above.
 ```bash
 echo "//registry.npmjs.org/:_authToken=YOUR_TOKEN" > sdk/js/.npmrc
