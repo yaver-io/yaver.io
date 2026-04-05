@@ -149,6 +149,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/dev/events", s.authSDK(s.handleDevServerEvents))
 	mux.HandleFunc("/dev/compatibility", s.authSDK(s.handleDevServerCompatibility))
 	mux.HandleFunc("/dev/builds", s.auth(s.handleDevServerBuilds))
+	mux.HandleFunc("/dev/build-native", s.authSDK(s.handleBuildNativeBundle))
+	mux.HandleFunc("/dev/native-bundle", s.handleServeNativeBundle) // No auth — serves compiled bundle
 	mux.HandleFunc("/dev/", s.handleDevServerProxy) // No auth — serves app bundle in WebView (not sensitive)
 
 	// Projects (discovery + workdir switching + actions)
