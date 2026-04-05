@@ -103,13 +103,13 @@ async function compileHermes({ inputPath, outputPath }) {
 
 function readBytecodeVersion(hbcPath) {
   const buf = fs.readFileSync(hbcPath);
-  if (buf.length < 8) return null;
+  if (buf.length < 12) return null;
 
-  // Hermes magic: 0x1F1903C1 (little-endian)
-  const magic = buf.readUInt32LE(0);
+  // Hermes HBC format: magic at offset 4, BC version at offset 8
+  const magic = buf.readUInt32LE(4);
   if (magic !== 0x1F1903C1) return null;
 
-  return buf.readUInt32LE(4);
+  return buf.readUInt32LE(8);
 }
 
 module.exports = { bundle, compileHermes, readBytecodeVersion, getHermescPath };

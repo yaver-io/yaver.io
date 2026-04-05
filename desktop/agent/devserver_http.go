@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -227,7 +228,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	buildDir := filepath.Join(workDir, ".yaver-build")
 	bundlePath := filepath.Join(buildDir, "main.jsbundle")
 
-	log.Printf("[dev:build-native] CALLED platform=%s workDir=%s", req.Platform, workDir)
+	log.Printf("[super-host] build-native called: platform=%s workDir=%s", req.Platform, workDir)
 	s.devServerMgr.EmitLog("Building native bundle...")
 
 	os.MkdirAll(buildDir, 0o755)
@@ -291,7 +292,8 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(), "NODE_ENV=production")
 
-	logW := &devLogWriter{prefix: "[dev:build-native]"}
+	log.Printf("[super-host] bundling with command: %s", bundleCmd)
+	logW := &devLogWriter{prefix: "[super-host]"}
 	if s.devServerMgr != nil {
 		logW.onLogLine = func(line string) { s.devServerMgr.EmitLog(line) }
 	}
@@ -307,65 +309,52 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	// ── Hermes compile ──
 	s.devServerMgr.EmitLog("Compiling Hermes bytecode...")
 
-	hermescPath := findHermesc(workDir)
+	// Use embedded hermesc (matches Yaver app's exact Hermes version) — never user's local one
+	hermescPath, hermescErr := GetEmbeddedHermesc()
+	if hermescErr != nil {
+		log.Printf("[super-host] embedded hermesc not available: %v — falling back to project hermesc", hermescErr)
+		hermescPath = findHermesc(workDir)
+	}
+
 	if hermescPath == "" {
+		log.Printf("[super-host] hermesc not found — serving plain JS bundle")
 		s.devServerMgr.EmitLog("hermesc not found — serving plain JS bundle (slower but works)")
 	} else {
-		log.Printf("[dev:build-native] Using hermesc at: %s", hermescPath)
+		log.Printf("[super-host] using hermesc at: %s", hermescPath)
 		tmpPath := bundlePath + ".tmp"
 		os.Rename(bundlePath, tmpPath)
 
 		hermesCmd := exec.Command(hermescPath, "-emit-binary", "-out", bundlePath, "-O", tmpPath)
 		hermesCmd.Dir = workDir
-		hermesLogW := &devLogWriter{prefix: "[dev:hermesc]"}
+		hermesLogW := &devLogWriter{prefix: "[super-host:hermesc]"}
 		hermesCmd.Stdout = hermesLogW
 		hermesCmd.Stderr = hermesLogW
 
 		if err := hermesCmd.Run(); err != nil {
 			os.Rename(tmpPath, bundlePath)
+			log.Printf("[super-host] hermesc failed: %v — using plain JS", err)
 			s.devServerMgr.EmitLog(fmt.Sprintf("hermesc failed, using plain JS: %v", err))
 		} else {
 			os.Remove(tmpPath)
 
-			// Verify bytecode version matches Yaver app
-			if data, err := os.ReadFile(bundlePath); err == nil && len(data) >= 8 {
-				magic := uint32(data[0]) | uint32(data[1])<<8 | uint32(data[2])<<16 | uint32(data[3])<<24
-				bcVersion := uint32(data[4]) | uint32(data[5])<<8 | uint32(data[6])<<16 | uint32(data[7])<<24
+			// Verify and log bytecode version
+			// Hermes HBC format: magic at offset 4, BC version at offset 8
+			if data, err := os.ReadFile(bundlePath); err == nil && len(data) >= 12 {
+				magic := uint32(data[4]) | uint32(data[5])<<8 | uint32(data[6])<<16 | uint32(data[7])<<24
+				bcVersion := uint32(data[8]) | uint32(data[9])<<8 | uint32(data[10])<<16 | uint32(data[11])<<24
 				if magic == 0x1F1903C1 {
-					log.Printf("[dev:build-native] Hermes bytecode version: %d", bcVersion)
-					s.devServerMgr.EmitLog(fmt.Sprintf("Hermes BC version: %d", bcVersion))
+					log.Printf("[super-host] Hermes bytecode version: BC%d", bcVersion)
+					s.devServerMgr.EmitLog(fmt.Sprintf("Hermes BC%d (embedded hermesc)", bcVersion))
 				} else {
-					log.Printf("[dev:build-native] WARNING: Not Hermes bytecode (magic=0x%08X)", magic)
+					log.Printf("[super-host] WARNING: Not Hermes bytecode (magic=0x%08X)", magic)
 				}
 			}
 		}
 	}
 
 	// ── Detect module name from bundle ──
-	moduleName := "main" // Expo default
-	if bundleData, err := os.ReadFile(bundlePath); err == nil {
-		bundleStr := string(bundleData)
-		// Search for AppRegistry.registerComponent('X', ...) — works in both minified and non-minified
-		idx := strings.Index(bundleStr, "registerComponent")
-		if idx > 0 {
-			// Find the quoted string after registerComponent
-			rest := bundleStr[idx:]
-			for i := 0; i < len(rest); i++ {
-				if rest[i] == '"' || rest[i] == '\'' {
-					quote := rest[i]
-					end := strings.IndexByte(rest[i+1:], quote)
-					if end > 0 {
-						detected := rest[i+1 : i+1+end]
-						if detected != "" && len(detected) < 100 {
-							moduleName = detected
-							break
-						}
-					}
-				}
-			}
-		}
-	}
-	log.Printf("[dev:build-native] Detected module name: %s", moduleName)
+	moduleName := detectModuleName(bundlePath, workDir)
+	log.Printf("[super-host] detected module name: %s", moduleName)
 
 	// ── Check bundle size ──
 	info, err := os.Stat(bundlePath)
@@ -374,14 +363,26 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// ── Check for assets ──
+	assetsDir := filepath.Join(buildDir, "assets")
+	hasAssets := false
+	if info, err := os.Stat(assetsDir); err == nil && info.IsDir() {
+		// Check if there are actual files in the assets directory
+		entries, _ := os.ReadDir(assetsDir)
+		hasAssets = len(entries) > 0
+	}
+	log.Printf("[super-host] hasAssets=%v", hasAssets)
+
 	s.devServerMgr.EmitLog(fmt.Sprintf("Bundle ready: %d KB, module: %s", info.Size()/1024, moduleName))
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"status":     "ok",
 		"bundleUrl":  "/dev/native-bundle",
+		"assetsUrl":  "/dev/native-assets",
 		"size":       info.Size(),
 		"platform":   req.Platform,
 		"moduleName": moduleName,
+		"hasAssets":  hasAssets,
 	})
 }
 
@@ -408,6 +409,90 @@ func (s *HTTPServer) handleServeNativeBundle(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename=main.jsbundle")
 	http.ServeFile(w, r, bundlePath)
+}
+
+// detectModuleName scans the JS bundle for AppRegistry.registerComponent('Name', ...)
+// and falls back to app.json "name" field, then "main".
+func detectModuleName(bundlePath, workDir string) string {
+	if bundleData, err := os.ReadFile(bundlePath); err == nil {
+		bundleStr := string(bundleData)
+		// Search for AppRegistry.registerComponent('X', ...) — works in both minified and non-minified
+		idx := strings.Index(bundleStr, "registerComponent")
+		if idx > 0 {
+			rest := bundleStr[idx:]
+			for i := 0; i < len(rest) && i < 200; i++ {
+				if rest[i] == '"' || rest[i] == '\'' {
+					quote := rest[i]
+					end := strings.IndexByte(rest[i+1:], quote)
+					if end > 0 && end < 100 {
+						detected := rest[i+1 : i+1+end]
+						if detected != "" && !strings.ContainsAny(detected, " \t\n{}()[]") {
+							return detected
+						}
+					}
+					break
+				}
+			}
+		}
+	}
+
+	// Fallback: check app.json
+	appJsonPath := filepath.Join(workDir, "app.json")
+	if data, err := os.ReadFile(appJsonPath); err == nil {
+		var appJson struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(data, &appJson) == nil && appJson.Name != "" {
+			return appJson.Name
+		}
+	}
+
+	return "main"
+}
+
+// handleServeNativeAssets serves the assets directory as a zip archive.
+// GET /dev/native-assets
+func (s *HTTPServer) handleServeNativeAssets(w http.ResponseWriter, r *http.Request) {
+	if s.devServerMgr == nil {
+		http.Error(w, "no dev server", http.StatusServiceUnavailable)
+		return
+	}
+
+	status := s.devServerMgr.Status()
+	if status == nil || status.WorkDir == "" {
+		http.Error(w, "no active project", http.StatusBadRequest)
+		return
+	}
+
+	assetsDir := filepath.Join(status.WorkDir, ".yaver-build", "assets")
+	if _, err := os.Stat(assetsDir); err != nil {
+		http.Error(w, "no assets — call POST /dev/build-native first", http.StatusNotFound)
+		return
+	}
+
+	// Stream zip directly to response
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", "attachment; filename=assets.zip")
+
+	zipW := zip.NewWriter(w)
+	defer zipW.Close()
+
+	filepath.Walk(assetsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		relPath, _ := filepath.Rel(assetsDir, path)
+		f, err := zipW.Create(relPath)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		_, err = f.Write(data)
+		return err
+	})
 }
 
 // findHermesc looks for hermesc in the project's react-native installation.
