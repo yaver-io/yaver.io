@@ -4,7 +4,7 @@
   "react": "19.1.0",
   "hermes": {
     "version": "0.81.5",
-    "bytecodeVersion": 99
+    "bytecodeVersion": 96
   },
   "arch": {
     "newArch": true,

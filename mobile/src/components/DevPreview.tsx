@@ -164,6 +164,27 @@ export function DevPreview() {
         throw new Error(buildResult.error || "Build failed");
       }
 
+      // Download assets first (if any) so images/fonts are available when JS runs
+      if (buildResult.hasAssets && buildResult.assetsUrl) {
+        setLastLogLine("Downloading assets...");
+        try {
+          const assetsRes = await fetch(`${baseUrl}${buildResult.assetsUrl}`, { headers });
+          if (assetsRes.ok) {
+            const assetsBlob = await assetsRes.blob();
+            // Push assets to the on-device HTTP server for extraction
+            const devicePort = 8347;
+            await fetch(`http://localhost:${devicePort}/assets`, {
+              method: "POST",
+              body: assetsBlob,
+              headers: { "Content-Type": "application/zip" },
+            });
+          }
+        } catch (assetErr) {
+          // Non-fatal — images may be broken but app should still render
+          console.warn("[DevPreview] asset download failed:", assetErr);
+        }
+      }
+
       // Load the compiled native bundle
       setLastLogLine("Loading bundle on device...");
       const bundleUrl = `${baseUrl}${buildResult.bundleUrl}`;

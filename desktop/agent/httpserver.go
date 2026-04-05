@@ -151,6 +151,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/dev/builds", s.auth(s.handleDevServerBuilds))
 	mux.HandleFunc("/dev/build-native", s.authSDK(s.handleBuildNativeBundle))
 	mux.HandleFunc("/dev/native-bundle", s.handleServeNativeBundle) // No auth — serves compiled bundle
+	mux.HandleFunc("/dev/native-assets", s.handleServeNativeAssets) // No auth — serves compiled assets
 	mux.HandleFunc("/dev/", s.handleDevServerProxy) // No auth — serves app bundle in WebView (not sensitive)
 
 	// Projects (discovery + workdir switching + actions)
@@ -1736,6 +1737,29 @@ func (s *HTTPServer) handleDoctor(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		addCheck("voice", "Speech provider", "warn", "Not configured")
+	}
+
+	// Hermes / Super-host
+	if hermescBin, herr := GetEmbeddedHermesc(); herr == nil {
+		out, rerr := osexec.Command(hermescBin, "--version").CombinedOutput()
+		if rerr == nil {
+			lines := strings.Split(string(out), "\n")
+			bcLine := ""
+			for _, l := range lines {
+				if strings.Contains(l, "HBC bytecode version") {
+					bcLine = strings.TrimSpace(l)
+				}
+			}
+			if bcLine != "" {
+				addCheck("hermes", "Embedded hermesc", "pass", bcLine)
+			} else {
+				addCheck("hermes", "Embedded hermesc", "pass", hermescBin)
+			}
+		} else {
+			addCheck("hermes", "Embedded hermesc", "warn", fmt.Sprintf("present but version check failed: %v", rerr))
+		}
+	} else {
+		addCheck("hermes", "Embedded hermesc", "fail", fmt.Sprintf("not available: %v", herr))
 	}
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{

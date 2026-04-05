@@ -3676,6 +3676,63 @@ func runDoctor() {
 		warning("Not configured — run: yaver config set speech.provider <whisper|openai|deepgram|assemblyai>")
 	}
 
+	// 8. Hermes / Super-host
+	fmt.Println("\n── Hermes (Super-host) ──")
+	check("Embedded hermesc")
+	if hermescBin, herr := GetEmbeddedHermesc(); herr == nil {
+		// Run hermesc --version to get BC version
+		out, rerr := osexec.Command(hermescBin, "--version").CombinedOutput()
+		if rerr == nil {
+			lines := strings.Split(string(out), "\n")
+			bcLine := ""
+			rnLine := ""
+			for _, l := range lines {
+				if strings.Contains(l, "HBC bytecode version") {
+					bcLine = strings.TrimSpace(l)
+				}
+				if strings.Contains(l, "Hermes release version") {
+					rnLine = strings.TrimSpace(l)
+				}
+			}
+			if bcLine != "" {
+				pass(fmt.Sprintf("%s (%s)", bcLine, rnLine))
+			} else {
+				pass(hermescBin)
+			}
+		} else {
+			warning(fmt.Sprintf("present but --version failed: %v", rerr))
+		}
+	} else {
+		failed(fmt.Sprintf("not available: %v", herr))
+	}
+
+	check("SDK manifest BC version")
+	manifestPath := ""
+	manifestBC := 0
+	// Check common locations for sdk-manifest.json
+	for _, candidate := range []string{
+		"mobile/sdk-manifest.json",
+		"sdk-manifest.json",
+	} {
+		if data, err := os.ReadFile(candidate); err == nil {
+			var m struct {
+				Hermes struct {
+					BytecodeVersion int `json:"bytecodeVersion"`
+				} `json:"hermes"`
+			}
+			if json.Unmarshal(data, &m) == nil {
+				manifestBC = m.Hermes.BytecodeVersion
+				manifestPath = candidate
+				break
+			}
+		}
+	}
+	if manifestBC > 0 {
+		pass(fmt.Sprintf("BC%d (%s)", manifestBC, manifestPath))
+	} else {
+		warning("sdk-manifest.json not found in cwd")
+	}
+
 	// Summary
 	fmt.Println()
 	fmt.Printf("Doctor summary: %d passed, %d warnings, %d failures\n", ok, warn, fail)
