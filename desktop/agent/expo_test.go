@@ -97,8 +97,8 @@ func TestAddPluginToAppJSON(t *testing.T) {
 
 		expo := config["expo"].(map[string]interface{})
 		plugins := expo["plugins"].([]interface{})
-		if len(plugins) != 1 || plugins[0] != "@yaver/feedback-react-native" {
-			t.Errorf("expected [@yaver/feedback-react-native], got %v", plugins)
+		if len(plugins) != 1 || plugins[0] != "yaver-feedback-react-native" {
+			t.Errorf("expected [yaver-feedback-react-native], got %v", plugins)
 		}
 	})
 
@@ -117,15 +117,15 @@ func TestAddPluginToAppJSON(t *testing.T) {
 
 		expo := config["expo"].(map[string]interface{})
 		plugins := expo["plugins"].([]interface{})
-		if len(plugins) != 1 || plugins[0] != "@yaver/feedback-react-native" {
-			t.Errorf("expected [@yaver/feedback-react-native], got %v", plugins)
+		if len(plugins) != 1 || plugins[0] != "yaver-feedback-react-native" {
+			t.Errorf("expected [yaver-feedback-react-native], got %v", plugins)
 		}
 	})
 
 	t.Run("idempotent — does not duplicate", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "app.json")
-		os.WriteFile(path, []byte(`{"expo":{"name":"test","plugins":["@yaver/feedback-react-native"]}}`), 0644)
+		os.WriteFile(path, []byte(`{"expo":{"name":"test","plugins":["yaver-feedback-react-native"]}}`), 0644)
 
 		if err := addPluginToAppJSON(path); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -160,8 +160,8 @@ func TestAddPluginToAppJSON(t *testing.T) {
 		if len(plugins) != 3 {
 			t.Errorf("expected 3 plugins, got %d: %v", len(plugins), plugins)
 		}
-		if plugins[2] != "@yaver/feedback-react-native" {
-			t.Errorf("expected last plugin to be @yaver/feedback-react-native, got %v", plugins[2])
+		if plugins[2] != "yaver-feedback-react-native" {
+			t.Errorf("expected last plugin to be yaver-feedback-react-native, got %v", plugins[2])
 		}
 	})
 
@@ -179,8 +179,8 @@ func TestAddPluginToAppJSON(t *testing.T) {
 		json.Unmarshal(data, &config)
 
 		plugins := config["plugins"].([]interface{})
-		if len(plugins) != 1 || plugins[0] != "@yaver/feedback-react-native" {
-			t.Errorf("expected [@yaver/feedback-react-native], got %v", plugins)
+		if len(plugins) != 1 || plugins[0] != "yaver-feedback-react-native" {
+			t.Errorf("expected [yaver-feedback-react-native], got %v", plugins)
 		}
 	})
 }

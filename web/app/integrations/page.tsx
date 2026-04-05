@@ -239,7 +239,7 @@ const CATEGORIES: Category[] = [
       },
       {
         name: "JavaScript / TypeScript",
-        description: "Install from npm: npm install @yaver/sdk",
+        description: "Install from npm: npm install yaver-sdk",
         status: "Built-in",
         docsLink: "/docs/developers#sdk",
       },

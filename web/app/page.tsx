@@ -985,7 +985,7 @@ export default function HomePage() {
               Optional: Add the Feedback SDK to your app for shake-to-report + AI bug fixing
             </p>
             <div className="flex flex-wrap gap-2 text-xs">
-              <code className="rounded bg-surface-800 px-2 py-1 text-surface-300 select-all">npm install @yaver/feedback-react-native</code>
+              <code className="rounded bg-surface-800 px-2 py-1 text-surface-300 select-all">npm install yaver-feedback-react-native</code>
               <code className="rounded bg-surface-800 px-2 py-1 text-surface-300 select-all">flutter pub add yaver_feedback</code>
               <code className="rounded bg-surface-800 px-2 py-1 text-surface-300 select-all">npm install @yaver/feedback-web</code>
             </div>
@@ -1109,7 +1109,7 @@ if (isDev) {
           </div>
 
           <div className="mt-6 flex flex-wrap items-center justify-center gap-2 text-xs text-surface-500">
-            <code className="rounded bg-surface-800 px-2 py-1 text-surface-300">npm install @yaver/feedback-react-native</code>
+            <code className="rounded bg-surface-800 px-2 py-1 text-surface-300">npm install yaver-feedback-react-native</code>
             <span>&middot;</span>
             <code className="rounded bg-surface-800 px-2 py-1 text-surface-300">flutter pub add yaver_feedback</code>
             <span>&middot;</span>
@@ -2434,7 +2434,7 @@ await for (final chunk in c.streamOutput(task.id)) {
             />
             <FAQItem
               question="What is the visual feedback loop?"
-              answer="After deploying a build to your phone, you test it and record bugs — screen recording + voice narration. The report goes back to your AI agent via P2P, which sees the recording, reads your transcript, and fixes the issues. Three modes: Live (agent watches in real-time and comments), Narrated (record + send), and Batch (full dump). You can also embed our feedback SDK (@yaver/feedback-web, @yaver/feedback-react-native, yaver_feedback) in your app for shake-to-report during development."
+              answer="After deploying a build to your phone, you test it and record bugs — screen recording + voice narration. The report goes back to your AI agent via P2P, which sees the recording, reads your transcript, and fixes the issues. Three modes: Live (agent watches in real-time and comments), Narrated (record + send), and Batch (full dump). You can also embed our feedback SDK (@yaver/feedback-web, yaver-feedback-react-native, yaver_feedback) in your app for shake-to-report during development."
             />
             <FAQItem
               question="How does the Apps tab work?"

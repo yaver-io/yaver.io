@@ -223,7 +223,7 @@ export default function DownloadPage() {
               <div className="rounded-lg bg-surface-950 px-4 py-3 font-mono text-[13px]">
                 <span className="text-surface-500">$</span>{" "}
                 <span className="text-surface-300 select-all">
-                  npm install @yaver/sdk
+                  npm install yaver-sdk
                 </span>
               </div>
             </div>
@@ -250,7 +250,7 @@ export default function DownloadPage() {
               <div className="rounded-lg bg-surface-950 px-4 py-3 font-mono text-[13px]">
                 <span className="text-surface-500">$</span>{" "}
                 <span className="text-surface-300 select-all">
-                  npm install @yaver/feedback-react-native
+                  npm install yaver-feedback-react-native
                 </span>
               </div>
             </div>

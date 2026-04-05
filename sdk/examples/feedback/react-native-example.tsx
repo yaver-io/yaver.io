@@ -11,7 +11,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-nati
 //   YaverFeedback,
 //   YaverConnectionScreen,
 //   YaverFeedbackButton,
-// } from '@yaver/feedback-react-native';
+// } from 'yaver-feedback-react-native';
 
 // Initialize in dev mode only
 // if (__DEV__) {

@@ -169,13 +169,13 @@ export default function FeedbackLoopManual() {
               <div>
                 <span className="text-surface-400">$</span>{" "}
                 <span className="text-surface-200">
-                  npm install @yaver/feedback-react-native
+                  npm install yaver-feedback-react-native
                 </span>
               </div>
               <div className="h-px bg-surface-800/60" />
               <div className="text-surface-500"># In your App.tsx</div>
               <div className="pl-2 text-surface-300">
-                {`import { YaverFeedback } from '@yaver/feedback-react-native';`}
+                {`import { YaverFeedback } from 'yaver-feedback-react-native';`}
               </div>
               <div className="pl-2 text-surface-400">
                 {`// Wrap your app root`}

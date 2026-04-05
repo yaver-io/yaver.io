@@ -86,7 +86,7 @@ func addPluginToAppJSON(appJSONPath string) error {
 		return fmt.Errorf("invalid JSON in %s: %w", appJSONPath, err)
 	}
 
-	const pluginName = "@yaver/feedback-react-native"
+	const pluginName = "yaver-feedback-react-native"
 
 	// Navigate to expo.plugins
 	expo, ok := config["expo"].(map[string]interface{})
@@ -144,16 +144,16 @@ func runExpoSetup(args []string) {
 	var installCmd *osexec.Cmd
 	switch pm {
 	case "yarn":
-		installCmd = osexec.Command("yarn", "add", "@yaver/feedback-react-native")
+		installCmd = osexec.Command("yarn", "add", "yaver-feedback-react-native")
 	case "pnpm":
-		installCmd = osexec.Command("pnpm", "add", "@yaver/feedback-react-native")
+		installCmd = osexec.Command("pnpm", "add", "yaver-feedback-react-native")
 	default:
-		installCmd = osexec.Command("npm", "install", "@yaver/feedback-react-native")
+		installCmd = osexec.Command("npm", "install", "yaver-feedback-react-native")
 	}
 	installCmd.Dir = absDir
 	installCmd.Stdout = os.Stdout
 	installCmd.Stderr = os.Stderr
-	fmt.Printf("Installing @yaver/feedback-react-native via %s...\n", pm)
+	fmt.Printf("Installing yaver-feedback-react-native via %s...\n", pm)
 	if err := installCmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Install failed: %v\n", err)
 		os.Exit(1)
@@ -169,14 +169,14 @@ func runExpoSetup(args []string) {
 		if err := addPluginToAppJSON(appJSON); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not update app.json: %v\n", err)
 		} else {
-			fmt.Println("Added @yaver/feedback-react-native to app.json plugins.")
+			fmt.Println("Added yaver-feedback-react-native to app.json plugins.")
 		}
 	} else if _, err := os.Stat(appConfigJS); err == nil {
 		fmt.Println("Detected app.config.js — add the plugin manually:")
-		fmt.Println(`  plugins: [...existingPlugins, "@yaver/feedback-react-native"]`)
+		fmt.Println(`  plugins: [...existingPlugins, "yaver-feedback-react-native"]`)
 	} else if _, err := os.Stat(appConfigTS); err == nil {
 		fmt.Println("Detected app.config.ts — add the plugin manually:")
-		fmt.Println(`  plugins: [...existingPlugins, "@yaver/feedback-react-native"]`)
+		fmt.Println(`  plugins: [...existingPlugins, "yaver-feedback-react-native"]`)
 	}
 
 	fmt.Println()
@@ -184,7 +184,7 @@ func runExpoSetup(args []string) {
 	fmt.Println()
 	fmt.Println("  1. Add to your root component (App.tsx or app/_layout.tsx):")
 	fmt.Println()
-	fmt.Println("     import { initExpo, FeedbackModal } from '@yaver/feedback-react-native';")
+	fmt.Println("     import { initExpo, FeedbackModal } from 'yaver-feedback-react-native';")
 	fmt.Println("     initExpo(); // auto-discovers your dev machine")
 	fmt.Println()
 	fmt.Println("     // In your root component JSX:")

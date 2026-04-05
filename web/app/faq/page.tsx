@@ -192,7 +192,7 @@ const faqs = [
     items: [
       {
         q: "What are the feedback SDKs?",
-        a: "Open-source libraries you embed in your app during development. Available for React Native (@yaver/feedback-react-native), Flutter (yaver_feedback on pub.dev), and Web (@yaver/feedback-web). They add shake-to-report, screen recording, voice annotation, and P2P upload to your app — all disabled automatically in production builds.",
+        a: "Open-source libraries you embed in your app during development. Available for React Native (yaver-feedback-react-native), Flutter (yaver_feedback on pub.dev), and Web (@yaver/feedback-web). They add shake-to-report, screen recording, voice annotation, and P2P upload to your app — all disabled automatically in production builds.",
       },
       {
         q: "Do I need the Yaver mobile app if I use the SDK?",
@@ -204,7 +204,7 @@ const faqs = [
       },
       {
         q: "How do I install the feedback SDK?",
-        a: "Web: `npm install @yaver/feedback-web` then `YaverFeedback.init({ trigger: 'floating-button' })`. React Native: `npm install @yaver/feedback-react-native` then `YaverFeedback.init({ trigger: 'shake' })`. Flutter: add `yaver_feedback` to pubspec.yaml then `YaverFeedback.init(FeedbackConfig(trigger: FeedbackTrigger.shake))`. All SDKs auto-discover your dev machine.",
+        a: "Web: `npm install @yaver/feedback-web` then `YaverFeedback.init({ trigger: 'floating-button' })`. React Native: `npm install yaver-feedback-react-native` then `YaverFeedback.init({ trigger: 'shake' })`. Flutter: add `yaver_feedback` to pubspec.yaml then `YaverFeedback.init(FeedbackConfig(trigger: FeedbackTrigger.shake))`. All SDKs auto-discover your dev machine.",
       },
       {
         q: "Is the SDK safe for production?",

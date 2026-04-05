@@ -1,12 +1,12 @@
 /**
- * Expo config plugin for @yaver/feedback-react-native.
+ * Expo config plugin for yaver-feedback-react-native.
  *
  * Adds required native permissions for the feedback SDK:
  * - iOS: Camera + Microphone usage descriptions
  * - Android: CAMERA + RECORD_AUDIO permissions
  *
  * Usage in app.json:
- *   { "expo": { "plugins": ["@yaver/feedback-react-native"] } }
+ *   { "expo": { "plugins": ["yaver-feedback-react-native"] } }
  */
 const {
   withInfoPlist,

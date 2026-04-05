@@ -61,7 +61,7 @@ const DEFAULT_COLOR = '#6366f1';
  * with message back-and-forth, hot reload, and build+deploy:
  *
  * ```tsx
- * import { FloatingButton } from '@yaver/feedback-react-native';
+ * import { FloatingButton } from 'yaver-feedback-react-native';
  *
  * function App() {
  *   return (
