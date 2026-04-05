@@ -15,7 +15,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient, type DevServerStatus } from "../../src/lib/quic";
-import { loadApp, buildNativeBundleUrl } from "../../src/lib/bundleLoader";
+import { loadApp, buildNativeBundleUrl, getAvailableModules } from "../../src/lib/bundleLoader";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -145,14 +145,42 @@ export default function HotReloadScreen() {
     const isLAN = connectionMode === "direct" || connectionMode === "lan";
     const baseUrl = (quicClient as any).baseUrl as string;
 
+    const doLoadApp = async () => {
+      const bundleUrl = buildNativeBundleUrl(baseUrl);
+      const headers = (quicClient as any).authHeaders as Record<string, string>;
+      await loadApp(bundleUrl, "main", headers);
+    };
+
     const openNativeInYaver = async () => {
       // Load bundle inside Yaver's RCTBridge (super-host mode)
       // Works over any connection — relay, tunnel, direct
       setNativeLoading(true);
       try {
-        const bundleUrl = buildNativeBundleUrl(baseUrl);
+        // Pre-flight: check if the target app is compatible with this host
+        const availableModules = await getAvailableModules();
         const headers = (quicClient as any).authHeaders as Record<string, string>;
-        await loadApp(bundleUrl, "main", headers);
+
+        const compatRes = await fetch(`${baseUrl}/dev/compatibility`, {
+          method: "POST",
+          headers: { ...headers, "Content-Type": "application/json" },
+          body: JSON.stringify({ availableModules }),
+        });
+        const compat = await compatRes.json();
+
+        if (!compat.compatible && compat.missingModules?.length > 0) {
+          Alert.alert(
+            "Missing Native Modules",
+            `This app requires native modules not available in Yaver:\n\n${compat.missingModules.join("\n")}\n\nThe app may crash or have limited functionality.`,
+            [
+              { text: "Load Anyway", onPress: () => doLoadApp().catch(() => {}) },
+              { text: "Cancel", style: "cancel" },
+            ]
+          );
+          setNativeLoading(false);
+          return;
+        }
+
+        await doLoadApp();
       } catch (err: any) {
         Alert.alert("Load Failed", err?.message || "Could not load bundle in Yaver");
       } finally {
