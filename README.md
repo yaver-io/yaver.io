@@ -12,6 +12,45 @@ writes the fix, and hot reloads. Test suites that grow themselves.
 Works with any AI coding agent: Claude Code, Codex, Aider, Ollama, Goose, Amp, OpenCode.
 P2P encrypted — your code never leaves your machine. MIT licensed. Free forever.
 
+## The Four Pieces of Yaver
+
+Yaver is built for solo developers and small teams who ship from anywhere. It has four distinct pieces — each exists for a specific reason:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│  📱 MOBILE APP (yaver.io)                    🔧 DESKTOP AGENT (yaver)      │
+│  App Store / Play Store                       brew install yaver            │
+│                                                                             │
+│  Your remote control for everything.          The brain on your dev machine.│
+│  Send tasks to AI agents, test apps on        Runs AI agents (Claude Code,  │
+│  real hardware, hot reload, visual QA.        Codex, Aider), serves P2P     │
+│  Native container for RN apps (not WebView).  connections, manages builds,  │
+│  Works from beach, coffee shop, anywhere.     MCP server with 473 tools.    │
+│                                                                             │
+│  ─────────────────────────────────────────────────────────────────────────  │
+│                                                                             │
+│  📦 PUSH-TO-DEVICE CLI (yaver-cli)           🐛 FEEDBACK SDK               │
+│  npm install -g yaver-cli                     npm install @yaver/feedback-*  │
+│                                                                             │
+│  For third-party RN developers.               Embed in YOUR app during dev. │
+│  Push your existing React Native project      Shake to report bugs with     │
+│  to the yaver.io phone app for real-device    screenshots + voice. Black    │
+│  testing. Bundles JS, compiles Hermes         box flight recorder streams   │
+│  bytecode, pushes over Wi-Fi. ~4 seconds.     all events to your AI agent.  │
+│  No project modifications required.           React Native, Flutter, Web.   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Why four pieces?** The mobile app and desktop agent are the core — phone talks to your machine P2P. The CLI (`yaver-cli`) is separate because third-party developers need a simple `npm install` to test their RN apps, without running the full agent. The Feedback SDK is separate because it embeds inside *your* app, not Yaver's — it captures bugs from within the app being tested.
+
+**You might use:**
+- Just the **mobile app + agent** — control AI agents from your phone, hot reload any framework
+- Add **yaver-cli** — push your existing React Native project to the phone app for native testing
+- Add the **Feedback SDK** — embed a debug console in your app, shake to report bugs to your AI agent
+- All four together — the full loop: code on machine, push to device, test, report bugs, AI fixes, repeat
+
 ## Key Features
 
 - **Push to Device** �� Real-device testing in ~4 seconds. No TestFlight. 40+ native modules.
@@ -602,15 +641,17 @@ ACL peers are also accessible via MCP tools (`acl_list_peers`, `acl_call_peer_to
 
 ## Components
 
-| Directory | What | Tech |
-|-----------|------|------|
-| `desktop/agent/` | CLI agent (QUIC server, MCP, runner, sandbox) | Go |
-| `desktop/installer/` | Installation GUI (DMG/EXE/DEB) | Electron |
-| `cli/` | Push-to-device CLI (`yaver-cli` on npm) | Node.js |
-| `mobile/` | iOS & Android app (native container + HTTP server) | React Native |
-| `backend/` | Auth, peer discovery, platform config | Convex |
-| `relay/` | QUIC relay server for NAT traversal | Go (quic-go) |
-| `web/` | Landing page & docs | Next.js 15 on Vercel |
+| Piece | Directory | Install | What it does |
+|-------|-----------|---------|-------------|
+| **Mobile App** | `mobile/` | App Store / Play Store | Remote control for AI agents + native RN container + on-device HTTP server (port 8347) |
+| **Desktop Agent** | `desktop/agent/` | `brew install yaver` | Go binary — P2P server, AI agent runner, MCP (473 tools), hot reload, builds, session transfer |
+| **Push-to-Device CLI** | `cli/` | `npm i -g yaver-cli` | Bundle existing RN projects → Hermes bytecode → push to phone. No agent needed. |
+| **Feedback SDKs** | `sdk/feedback/` | `npm i @yaver/feedback-*` | Debug console + black box recorder embedded in your app. React Native, Flutter, Web. |
+| **Programmatic SDKs** | `sdk/` | `npm i @yaver/sdk`, `pip install yaver`, etc. | Automate Yaver from code — Go, Python, JS/TS, Flutter/Dart, C. |
+| Desktop Installer | `desktop/installer/` | [Download](https://yaver.io/download) | GUI installer (DMG/EXE/DEB) — installs the Go agent binary |
+| Relay Server | `relay/` | Docker / binary | QUIC relay for NAT traversal — self-hostable, pass-through only |
+| Backend | `backend/` | Managed (Convex) | Auth + peer discovery + platform config. No user data. |
+| Web | `web/` | Managed (Vercel) | Landing page at yaver.io |
 
 ## CLI Commands
 
