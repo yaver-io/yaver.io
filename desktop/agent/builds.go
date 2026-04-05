@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -40,7 +41,8 @@ const (
 	PlatformRNIOS      BuildPlatform = "rn-ios"
 	PlatformExpoAndroid BuildPlatform = "expo-android"
 	PlatformExpoIOS     BuildPlatform = "expo-ios"
-	PlatformCustom     BuildPlatform = "custom"
+	PlatformXcodeDeviceInstall BuildPlatform = "xcode-device-install"
+	PlatformCustom             BuildPlatform = "custom"
 )
 
 // Build represents a build job with optional artifact.
@@ -55,10 +57,14 @@ type Build struct {
 	ArtifactName string        `json:"artifactName,omitempty"`
 	ArtifactSize int64         `json:"artifactSize,omitempty"`
 	ArtifactHash string        `json:"artifactHash,omitempty"` // SHA256
-	StartedAt    string        `json:"startedAt"`
-	FinishedAt   string        `json:"finishedAt,omitempty"`
-	ExitCode     *int          `json:"exitCode,omitempty"`
-	Error        string        `json:"error,omitempty"`
+	StartedAt      string        `json:"startedAt"`
+	FinishedAt     string        `json:"finishedAt,omitempty"`
+	ExitCode       *int          `json:"exitCode,omitempty"`
+	Error          string        `json:"error,omitempty"`
+	InstallOnDevice bool         `json:"installOnDevice,omitempty"`
+	InstallStatus   string       `json:"installStatus,omitempty"` // "", "installing", "installed", "install_failed"
+	InstallError    string       `json:"installError,omitempty"`
+	DeviceUDID      string       `json:"deviceUDID,omitempty"`
 }
 
 // BuildSummary is returned by list (no large fields).
@@ -148,6 +154,18 @@ func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []str
 			extra = ""
 		}
 		return fmt.Sprintf("xcodebuild build -scheme %s -destination 'generic/platform=iOS' -quiet", scheme), nil
+	case PlatformXcodeDeviceInstall:
+		scheme := "App"
+		if extra != "" {
+			scheme = strings.TrimSpace(extra)
+			extra = ""
+		}
+		// Build for device with derived data. detectIOSDevice + install happens post-build.
+		// Detect workspace vs project
+		wsFlag := fmt.Sprintf("-scheme %s", scheme)
+		return fmt.Sprintf("xcodebuild build %s -destination 'generic/platform=iOS' -derivedDataPath build/DerivedData -configuration Release -allowProvisioningUpdates", wsFlag), []string{
+			"build/DerivedData/Build/Products/Release-iphoneos/*.app",
+		}
 	case PlatformRNAndroid:
 		return "cd android && ./gradlew assembleRelease" + extra, []string{
 			"android/app/build/outputs/apk/release/*.apk",
@@ -172,7 +190,7 @@ func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []str
 }
 
 // StartBuild starts a new build for the given platform.
-func (bm *BuildManager) StartBuild(platform BuildPlatform, workDir string, extraArgs []string) (*Build, error) {
+func (bm *BuildManager) StartBuild(platform BuildPlatform, workDir string, extraArgs []string, installOnDevice ...bool) (*Build, error) {
 	if workDir == "" {
 		workDir = bm.workDir
 	}
@@ -188,14 +206,16 @@ func (bm *BuildManager) StartBuild(platform BuildPlatform, workDir string, extra
 		return nil, fmt.Errorf("start build: %w", err)
 	}
 
+	wantInstall := len(installOnDevice) > 0 && installOnDevice[0]
 	build := &Build{
-		ID:        uuid.New().String()[:8],
-		Platform:  platform,
-		Command:   command,
-		WorkDir:   workDir,
-		Status:    BuildStatusRunning,
-		ExecID:    session.ID,
-		StartedAt: time.Now().UTC().Format(time.RFC3339),
+		ID:              uuid.New().String()[:8],
+		Platform:        platform,
+		Command:         command,
+		WorkDir:         workDir,
+		Status:          BuildStatusRunning,
+		ExecID:          session.ID,
+		StartedAt:       time.Now().UTC().Format(time.RFC3339),
+		InstallOnDevice: wantInstall,
 	}
 
 	bm.mu.Lock()
@@ -232,6 +252,28 @@ func (bm *BuildManager) monitorBuild(build *Build, session *ExecSession, pattern
 				log.Printf("[build] artifact info error: %v", err)
 			}
 		}
+
+		// Direct device install (xcode-device-install platform)
+		if build.InstallOnDevice && build.ArtifactPath != "" {
+			build.InstallStatus = "installing"
+			log.Printf("[build] %s installing on device...", build.ID)
+			bm.mu.Unlock() // unlock during install (can take time)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			udid, installErr := installAppOnDevice(ctx, build.ArtifactPath)
+			cancel()
+
+			bm.mu.Lock() // re-lock
+			build.DeviceUDID = udid
+			if installErr != nil {
+				build.InstallStatus = "install_failed"
+				build.InstallError = installErr.Error()
+				log.Printf("[build] %s install failed: %v", build.ID, installErr)
+			} else {
+				build.InstallStatus = "installed"
+				log.Printf("[build] %s installed on device %s", build.ID, udid[:8])
+			}
+		}
 	} else {
 		build.Status = BuildStatusFailed
 		if exitCode != nil {
@@ -239,7 +281,7 @@ func (bm *BuildManager) monitorBuild(build *Build, session *ExecSession, pattern
 		}
 	}
 
-	log.Printf("[build] %s finished: status=%s artifact=%s", build.ID, build.Status, build.ArtifactName)
+	log.Printf("[build] %s finished: status=%s artifact=%s install=%s", build.ID, build.Status, build.ArtifactName, build.InstallStatus)
 }
 
 // detectArtifact searches for build artifacts matching the given glob patterns.

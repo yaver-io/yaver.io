@@ -14,6 +14,10 @@ export interface BuildInfo {
   finishedAt?: string;
   exitCode?: number;
   error?: string;
+  installOnDevice?: boolean;
+  installStatus?: '' | 'installing' | 'installed' | 'install_failed';
+  installError?: string;
+  deviceUDID?: string;
 }
 
 export interface BuildSummary {

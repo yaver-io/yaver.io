@@ -51,10 +51,11 @@ func (s *HTTPServer) handleBuilds(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost:
 		var req struct {
-			Platform     string   `json:"platform"`
-			WorkDir      string   `json:"workDir"`
-			Args         []string `json:"args"`
-			ArtifactPath string   `json:"artifactPath"` // for register
+			Platform        string   `json:"platform"`
+			WorkDir         string   `json:"workDir"`
+			Args            []string `json:"args"`
+			ArtifactPath    string   `json:"artifactPath"`    // for register
+			InstallOnDevice bool     `json:"installOnDevice"` // direct device install (LAN only)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -68,7 +69,19 @@ func (s *HTTPServer) handleBuilds(w http.ResponseWriter, r *http.Request) {
 			req.Platform = resolveClientPlatform(req.Platform, clientPlatform)
 		}
 
-		build, err := s.buildMgr.StartBuild(BuildPlatform(req.Platform), req.WorkDir, req.Args)
+		// Auto-upgrade to device install: if iOS + direct LAN + installOnDevice requested
+		if req.InstallOnDevice {
+			if !isDirectConnection(r) {
+				jsonReply(w, http.StatusBadRequest, map[string]string{"error": "direct device install requires LAN connection — use TestFlight for relay connections"})
+				return
+			}
+			// Override platform to xcode-device-install if not already
+			if req.Platform != string(PlatformXcodeDeviceInstall) {
+				req.Platform = string(PlatformXcodeDeviceInstall)
+			}
+		}
+
+		build, err := s.buildMgr.StartBuild(BuildPlatform(req.Platform), req.WorkDir, req.Args, req.InstallOnDevice)
 		if err != nil {
 			jsonReply(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
