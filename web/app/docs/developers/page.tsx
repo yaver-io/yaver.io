@@ -112,7 +112,7 @@ export default function DevelopersPage() {
           <nav className="space-y-2 text-sm">
             {[
               ["whats-new", "What's New"],
-              ["three-parts", "Three-Part Architecture"],
+              ["four-parts", "Four-Part Architecture"],
               ["push-to-device", "Push to Device (yaver-cli)"],
               ["hot-reload", "Hot Reload — Dev Server to Phone"],
               ["git-providers", "Git Providers — Clone from Phone"],
@@ -151,7 +151,7 @@ export default function DevelopersPage() {
         <section className="mb-20">
           <SectionHeading id="whats-new">{"What's New"}</SectionHeading>
           <Prose>
-            Latest features in CLI v1.58.0&ndash;v1.60.0 and mobile v1.14.0&ndash;v1.15.0.
+            Latest features in Go Agent v1.72.0 and mobile v1.15.0.
           </Prose>
           <div className="space-y-4">
             {[
@@ -197,11 +197,11 @@ export default function DevelopersPage() {
           </div>
         </section>
 
-        {/* ─── Three-Part Architecture ─── */}
+        {/* ─── Four-Part Architecture ─── */}
         <section className="mb-20">
-          <SectionHeading id="three-parts">Three-Part Architecture</SectionHeading>
+          <SectionHeading id="four-parts">Four-Part Architecture</SectionHeading>
           <Prose>
-            Yaver has three distinct components for developers. Each serves a different purpose
+            Yaver has four distinct components for developers. Each serves a different purpose
             and can be used independently.
           </Prose>
           <div className="space-y-4">
@@ -212,14 +212,19 @@ export default function DevelopersPage() {
                 desc: "Native container app for testing third-party RN apps. Also controls AI agents from your phone (tasks, feedback, hot reload). Runs an HTTP server on port 8347 for receiving pushed bundles.",
               },
               {
-                title: "2. Push-to-Device CLI (yaver-cli)",
-                install: "npm install -g yaver-cli",
-                desc: "For third-party developers to push THEIR existing React Native projects to the yaver.io app. Analyzes compatibility, bundles JS, compiles Hermes bytecode, pushes directly to phone. No agent needed.",
+                title: "2. Go Agent (yaver)",
+                install: "brew install kivanccakmak/yaver/yaver",
+                desc: "Go binary for AI agent connectivity (P2P, relay, MCP). Hot reload dev servers (Expo, Flutter, Vite, Next.js). Session transfer, tasks, builds, deploys.",
               },
               {
-                title: "3. Desktop Agent (yaver)",
-                install: "brew install kivanccakmak/yaver/yaver",
-                desc: "Go binary for AI agent connectivity (P2P, relay, MCP). Hot reload dev servers (Expo, Flutter, Vite, Next.js). Session transfer, tasks, builds, deploys. Not needed for push-to-device.",
+                title: "3. Feedback SDK",
+                install: "npm install yaver-feedback-react-native",
+                desc: "Drop-in SDK for React Native, Flutter, and Web apps. Floating debug button, visual bug reports with auto-screenshots, voice notes, BlackBox flight recorder streaming, and hot reload — all connected to the AI agent.",
+              },
+              {
+                title: "4. Push-to-Device CLI (yaver-cli)",
+                install: "npm install -g yaver-cli",
+                desc: "For third-party developers to push THEIR existing React Native projects to the yaver.io app. Analyzes compatibility, bundles JS, compiles Hermes bytecode, pushes directly to phone. No agent needed.",
               },
             ].map((item) => (
               <div key={item.title} className="rounded-lg border border-surface-800 bg-surface-900/50 p-4">
@@ -237,7 +242,7 @@ export default function DevelopersPage() {
             <InlineCode>yaver</InlineCode> (Go binary) are completely separate tools.{" "}
             <InlineCode>yaver-cli</InlineCode> is for third-party RN developers who want to test their
             apps on real devices. <InlineCode>yaver</InlineCode> is for running AI agents from your phone.
-            A developer might use both.
+            A developer might use both, plus the Feedback SDK in their apps.
           </Prose>
         </section>
 
@@ -493,9 +498,9 @@ export default function DevelopersPage() {
                 web/
               </h4>
               <p className="text-sm leading-relaxed text-surface-400">
-                Next.js 15 landing page deployed on Vercel at{" "}
+                Next.js 15 landing page at{" "}
                 <InlineCode>yaver.io</InlineCode>. Handles OAuth callbacks for
-                desktop CLI auth flow.
+                Go agent auth flow.
               </p>
             </div>
           </div>
@@ -517,7 +522,7 @@ export default function DevelopersPage() {
 │                                                       │
 │  Mobile App          CLI Agent          Web Dashboard  │
 │  (React Native)      (Go binary)        (Next.js)     │
-│  iOS + Android       macOS/Linux/Win    Vercel         │
+│  iOS + Android       macOS/Linux/Win    yaver.io       │
 └──────────────┬─────────────┬─────────────┬────────────┘
                │             │             │
                ▼             ▼             ▼`}
@@ -599,7 +604,7 @@ export default function DevelopersPage() {
                   <InlineCode>surface-*</InlineCode> color palette
                 </li>
                 <li>Client-side auth (tokens in localStorage + cookies)</li>
-                <li>Deployed on Vercel (static + serverless API routes)</li>
+                <li>Deployed at yaver.io (static + serverless API routes)</li>
                 <li>
                   API routes handle OAuth flow (Google, Apple, Microsoft)
                 </li>
@@ -1707,7 +1712,7 @@ CLI Agent ◄──QUIC──────────────── Relay (:
           <div className="mb-8">
             <Terminal title="relay-protocol">
               <pre className="text-surface-300">
-                {`Desktop Agent                  Relay Server                   Mobile App
+                {`Go Agent                       Relay Server                   Mobile App
      │                              │                               │
      │── QUIC connect (outbound) ──►│                               │
      │── RegisterMsg ──────────────►│                               │
