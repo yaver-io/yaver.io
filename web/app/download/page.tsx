@@ -274,12 +274,6 @@ export default function DownloadPage() {
                 >
                   Google Play
                 </a>
-                <a
-                  href={`https://github.com/kivanccakmak/yaver.io/releases/latest/download/Yaver-latest.apk`}
-                  className="btn-secondary py-2 px-4 text-xs"
-                >
-                  APK Download
-                </a>
               </div>
             </div>
           </div>
