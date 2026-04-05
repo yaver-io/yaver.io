@@ -700,26 +700,6 @@ function DemoSection() {
           )}
         </div>
 
-        {/* Quick summary of all three */}
-        <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {DEMO_TABS.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveDemo(tab.id)}
-              className={`rounded-xl border p-4 text-left transition-all ${
-                activeDemo === tab.id
-                  ? "border-[#6366f1]/40 bg-[#6366f1]/5"
-                  : "border-surface-800 bg-surface-900/30 hover:border-surface-700"
-              }`}
-            >
-              <div className="mb-2 flex items-center gap-2">
-                <span className="text-lg">{tab.icon}</span>
-                <span className={`text-sm font-semibold ${activeDemo === tab.id ? "text-surface-100" : "text-surface-300"}`}>{tab.label}</span>
-              </div>
-              <p className="text-xs text-surface-500">{tab.desc}</p>
-            </button>
-          ))}
-        </div>
       </div>
     </section>
   );
