@@ -44,6 +44,10 @@ type HTTPServer struct {
 	tlsServer    *http.Server
 	onShutdown   func() // called when mobile requests agent shutdown
 
+	// Test app sessions
+	testAppSession       sync.Map // sessionID -> *TestAppSession
+	activeTestAppSession sync.Map // "current" -> *TestAppSession
+
 	// Cache validated tokens (token -> cachedTokenInfo) to avoid repeated Convex calls
 	tokenCache sync.Map
 
@@ -133,6 +137,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/feedback", s.authSDK(s.handleFeedback))
 	mux.HandleFunc("/feedback/stream", s.authSDK(s.handleFeedbackStream))
 	mux.HandleFunc("/feedback/", s.authSDK(s.handleFeedbackByID))
+
+	// Test app (autonomous testing from Feedback SDK) — SDK-accessible
+	mux.HandleFunc("/test-app/start", s.authSDK(s.handleTestAppStart))
+	mux.HandleFunc("/test-app/stop", s.authSDK(s.handleTestAppStop))
+	mux.HandleFunc("/test-app/status", s.authSDK(s.handleTestAppStatus))
 
 	// Black box (flight-recorder streaming from device SDKs) — SDK-accessible
 	mux.HandleFunc("/blackbox/stream", s.authSDK(s.handleBlackBoxStream))
@@ -313,6 +322,7 @@ var scopePathPrefixes = map[string][]string{
 	"blackbox": {"/blackbox/"},
 	"voice":    {"/voice/"},
 	"builds":   {"/builds"},
+	"testapp":  {"/test-app/"},
 	"health":   {"/health"},
 	"todolist": {"/todolist"},
 }
