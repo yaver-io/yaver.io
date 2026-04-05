@@ -14,21 +14,21 @@ P2P encrypted — your code never leaves your machine. MIT licensed. Free foreve
 
 ## Key Features
 
-- **Push to Device** — Push existing React Native projects to the yaver.io phone app for real-device testing in ~4 seconds. No TestFlight. No Play Store. Like Expo Go but for any existing RN project. 40+ native modules pre-installed.
-- **Visual QA Loop** — Shake your phone to report a bug. The Feedback SDK captures a screenshot, sends it to your AI agent, the agent writes a fix, and hot reloads the app. Under 60 seconds.
-- **Autonomous Testing** — Agent reads your codebase, navigates every screen on device or emulator, catches crashes, fixes them, hot reloads, and repeats. Test suite grows automatically.
-- **P2P Encrypted** — Your code, tasks, and AI output flow directly between your devices. No cloud middleman. Servers only handle auth.
-- **Any AI Agent** — Claude Code, Codex, Aider, Ollama, Goose, Amp, OpenCode, or any custom CLI tool. Switch agents per task.
-- **Hot Reload** — Expo, Flutter, Vite, Next.js — start dev servers and hot reload from your phone over P2P.
-- **473 MCP Tools** — Docker, K8s, git, CI/CD, databases, smart home, and more — usable from Claude Desktop, Cursor, VS Code, Windsurf, Zed.
-- **Feedback SDKs** — Embed a debug console in your React Native, Flutter, or Web app. Screen recording, voice annotation, bug reports — all P2P to your AI agent.
-- **Session Transfer** — Move AI sessions between machines. Start on your laptop, continue on your server.
-- **Task Scheduling** — Cron-like scheduling for AI tasks. Run code reviews every morning.
-- **Notifications** — Telegram, Discord, Slack alerts when tasks complete.
-- **CI/CD Webhooks** — Trigger AI tasks from GitHub Actions, GitLab CI, or any webhook.
-- **Git Providers** — Auto-detects GitHub and GitLab credentials. Browse and clone repos from your phone.
-- **Free Relay** — Self-host your own QUIC relay, or use the free community relay.
-- **SDKs** — Go, Python, JS/TS, Flutter/Dart, C — embed Yaver in your own apps.
+- **Push to Device** — Push existing React Native projects to the yaver.io phone app for real-device testing in ~4 seconds. No TestFlight. No Play Store. 40+ native modules.
+- **Visual QA Loop** — Shake to report a bug. Feedback SDK captures screenshot, sends to AI agent, agent writes fix, hot reloads. Under 60 seconds.
+- **Autonomous Testing** — Agent navigates every screen on device or emulator, catches crashes, fixes them, hot reloads, repeats. Test suite grows automatically.
+- **P2P Encrypted** — Code, tasks, and output flow directly between your devices. No cloud.
+- **Any AI Agent** — Claude Code, Codex, Aider, Ollama, Goose, Amp, or any CLI tool.
+- **Hot Reload** — Expo, Flutter, Vite, Next.js — hot reload from phone over P2P.
+- **473 MCP Tools** — Docker, K8s, git, CI/CD, databases — usable from Claude Desktop, Cursor, VS Code, Windsurf, Zed.
+- **Feedback SDKs** — Debug console for React Native, Flutter, and Web apps.
+- **Session Transfer** — Move AI sessions between machines mid-task.
+- **Task Scheduling** — Cron-like scheduling. Run code reviews every morning.
+- **Notifications** — Telegram, Discord, Slack alerts.
+- **CI/CD Webhooks** — Trigger AI tasks from GitHub Actions, GitLab CI.
+- **Git Providers** — Browse and clone repos from your phone.
+- **Free Relay** — Self-host QUIC relay, or use community relay.
+- **SDKs** — Go, Python, JS/TS, Flutter/Dart, C.
 
 ## Full Pipeline from Anywhere
 

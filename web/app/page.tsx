@@ -588,24 +588,24 @@ function DebugConsolePreview() {
 
 const DEMO_TABS = [
   {
-    id: "remote",
-    label: "Remote Task",
-    icon: "\u{1F4F1}",
-    desc: "Send a task from your phone. Agent writes code on your machine.",
-    video: "/demo-remote.mp4",
-  },
-  {
     id: "feedback",
     label: "Bug Fix Loop",
     icon: "\uD83D\uDC1B",
-    desc: "Report a bug from the running app. Agent fixes it. Hot reload.",
+    desc: "Shake to report. AI sees your screen, writes the fix, hot reloads. Under 60 seconds.",
     video: "/demo-feedback.mp4",
+  },
+  {
+    id: "remote",
+    label: "Remote Task",
+    icon: "\u{1F4F1}",
+    desc: "Send a task from your phone. Agent writes code on your machine. P2P encrypted.",
+    video: "/demo-remote.mp4",
   },
   {
     id: "autotest",
     label: "Auto Test",
     icon: "\u25B6",
-    desc: "Agent drives the app, finds bugs, fixes them, and verifies.",
+    desc: "AI navigates every screen, finds crashes, fixes them, builds a growing test suite.",
     video: "/demo-autotest.mp4",
   },
 ];
@@ -642,7 +642,7 @@ function DemoVideo({ src }: { src: string }) {
 }
 
 function DemoSection() {
-  const [activeDemo, setActiveDemo] = useState("remote");
+  const [activeDemo, setActiveDemo] = useState("feedback");
   const demo = DEMO_TABS.find((d) => d.id === activeDemo)!;
 
   return (
@@ -882,21 +882,17 @@ export default function HomePage() {
   return (
     <>
       {/* ── Section 1: Hero ── */}
-      <section className="px-6 pb-10 pt-14 md:pt-20">
+      <section className="px-6 pb-8 pt-14 md:pt-20">
         <div className="mx-auto max-w-4xl text-center">
-          <div className="mb-4 inline-flex items-center rounded-full border border-surface-700 bg-surface-900 px-4 py-1.5 text-xs text-surface-400">
-            <span className="mr-2 inline-block h-1.5 w-1.5 rounded-full bg-green-500/70" />
-            MIT Licensed &middot; Free Forever
-          </div>
           <h1 className="mb-4 text-3xl font-bold tracking-tight text-surface-50 sm:text-4xl md:text-5xl">
             AI writes the code.
             <br />
             Yaver tests it on your real device.
           </h1>
           <p className="mx-auto max-w-2xl text-base leading-relaxed text-surface-400 md:text-lg">
-            Push to device in 4s. Shake to report a bug. AI fixes it, hot reloads.
+            Push to device in 4s. Shake to report bugs. AI fixes and hot reloads.
             <br />
-            Any agent. P2P encrypted. Free forever.
+            Claude Code, Codex, Aider, Ollama &mdash; any agent. P2P encrypted. Free forever.
           </p>
           <div className="mt-6 flex flex-col items-center justify-center gap-4 sm:flex-row">
             <a
@@ -914,6 +910,9 @@ export default function HomePage() {
           </div>
         </div>
       </section>
+
+      {/* ── Section 2: Demo ── */}
+      <DemoSection />
 
       {/* ── Section 6: Feedback SDK ── */}
       <section className="border-t border-surface-800/60 px-6 py-24">
@@ -1146,9 +1145,6 @@ if (isDev) {
           </div>
         </div>
       </section>
-
-      {/* ── Section 2: Demo ── */}
-      <DemoSection />
 
       {/* ── Section 5: Works with every agent ── */}
       <section className="border-t border-surface-800/60 px-6 py-24">
