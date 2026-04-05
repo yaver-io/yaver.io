@@ -91,6 +91,83 @@ Native apps compile to machine code — no runtime hot swap. For Swift/Kotlin, Y
 2. **Build-deploy-restart**: Agent fixes code → rebuilds → pushes binary (ADB for Android, TestFlight for iOS)
 3. **Iteration speed**: ~30-60s build-deploy vs instant JS hot reload, but fully automated
 
+## Three-Part Architecture
+
+Yaver has three distinct components for developers:
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                        Yaver Platform                                    │
+│                                                                          │
+│  1. Mobile App (yaver.io)       ── App Store / Play Store               │
+│     • Native container for testing third-party RN apps                   │
+│     • AI agent control from phone (tasks, feedback, hot reload)          │
+│     • HTTP server on port 8347 for receiving pushed bundles              │
+│                                                                          │
+│  2. Push-to-Device CLI (yaver-cli)  ── npm install -g yaver-cli         │
+│     • For third-party developers to push THEIR existing RN projects      │
+│     • Analyzes compatibility, bundles JS, compiles Hermes, pushes        │
+│     • Talks directly to phone's HTTP server (no agent needed)            │
+│                                                                          │
+│  3. Desktop Agent (yaver)       ── brew install yaver                   │
+│     • Go binary for AI agent connectivity (P2P, relay, MCP)             │
+│     • Hot reload dev servers (Expo, Flutter, Vite, Next.js)             │
+│     • Session transfer, tasks, builds, deploys                           │
+│     • Not needed for push-to-device — that's CLI→phone direct           │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key distinction:** `yaver-cli` (npm) and `yaver` (Go binary) are completely separate tools for different use cases. `yaver-cli` is for third-party RN developers who want to test their apps on real devices. `yaver` is for running AI agents from your phone. A developer might use both.
+
+## Push to Device (yaver-cli)
+
+Yaver doubles as a native container app (like Expo Go) for existing React Native projects. Developers push their existing RN projects to the yaver.io phone app via `yaver-cli` for real-device testing.
+
+### Architecture
+```
+Developer's Machine                          Phone (yaver.io app)
+┌─────────────────────┐                     ┌─────────────────────┐
+│  yaver-cli         │     HTTP POST       │  HTTP Server :8347  │
+│  ├── analyzer.js    │────/bundle─────────►│  ├── /health        │
+│  ├── bundler.js     │                     │  ├── /bundle        │
+│  │   └── hermesc    │◄───/health──────────│  ├���─ /reset         │
+│  ├── discovery.js   │     GET             │  └── /assets        │
+│  └── transport.js   │                     │                     │
+│                     │                     │  sdk-manifest.json  │
+│  sdk-manifest.json  │  must match ◄──────►│  (embedded in app)  │
+└─────────────────────┘                     └─────────────────────┘
+```
+
+### Key Files
+| File | Purpose |
+|------|---------|
+| `mobile/sdk-manifest.json` | Source of truth — RN version, Hermes BC, native modules |
+| `mobile/ios/Yaver/YaverHTTPServer.swift` | iOS HTTP server (GCDWebServer on port 8347) |
+| `mobile/ios/Yaver/YaverInfo.swift` + `.m` | YaverInfo native module (isYaver detection) |
+| `mobile/android/.../YaverHTTPServer.kt` | Android HTTP server (NanoHTTPD on port 8347) |
+| `mobile/android/.../YaverInfoModule.kt` | Android YaverInfo native module |
+| `cli/` | `yaver-cli` npm package root |
+| `cli/src/analyzer.js` | Project analysis — RN version, native module compatibility |
+| `cli/src/bundler.js` | JS bundling + hermesc compilation |
+| `cli/src/discovery.js` | Device discovery (UDP beacon, LAN scan, manual IP) |
+| `cli/src/transport.js` | HTTP push to device |
+| `cli/src/commands/` | init, push, doctor, devices, modules, reset, status |
+
+### SDK Manifest Contract
+The `sdk-manifest.json` must be kept in sync across:
+1. `mobile/sdk-manifest.json` (source of truth)
+2. `mobile/android/app/src/main/assets/sdk-manifest.json` (Android copy)
+3. iOS bundle (Xcode → Copy Bundle Resources → sdk-manifest.json)
+4. `cli/sdk-manifest.json` (CLI copy)
+
+When updating native modules in `mobile/package.json`, update the manifest and copy to all locations.
+
+### Hermes Bytecode Validation
+Both CLI and device validate Hermes bytecode version matches. The CLI ships its own `hermesc` (or falls back to the project's react-native hermesc). Magic bytes: `0x1F1903C1` at offset 0, BC version at offset 4 (uint32 LE).
+
+### Safe Bridge Reload
+When a bundle is pushed, `safeReloadBridge` invalidates the old bridge and waits 0.6s before creating a new one. The delay lets Hermes HadesGC thread finish — without it, GC touches freed memory → SIGABRT on TestFlight.
+
 ## What is Yaver?
 Yaver is an open-source P2P tool that lets developers use any AI coding agent (Claude Code, Codex, Aider, Ollama, etc.) from their mobile device or any terminal, connecting directly to their development machines. Task data flows peer-to-peer between your devices — servers only handle auth and peer discovery.
 
@@ -129,7 +206,8 @@ Yaver is an open-source P2P tool that lets developers use any AI coding agent (C
 - `desktop/` — Electron installer (DMG/EXE/DEB) + Go CLI agent
   - `desktop/installer/` — Electron app for installation GUI
   - `desktop/agent/` — Go binary (QUIC server, agent runner, tmux manager)
-- `mobile/` — React Native mobile app (iOS + Android)
+- `mobile/` — React Native mobile app (iOS + Android) + on-device HTTP server for push-to-device
+- `cli/` — `yaver-cli` npm package (push existing RN projects to device)
 - `backend/` — Convex backend (auth + peer discovery + platform config)
 - `relay/` — QUIC relay server for NAT traversal (Go, self-hostable)
   - `relay/deploy/` — Deployment scripts (up.sh, down.sh, systemd unit)
@@ -736,11 +814,22 @@ Must use `expo-share-intent@3.2.3` with Expo SDK 52. Version 4+ requires Expo 53
 
 ### SDK Publishing
 
-#### npm (`@yaver/sdk`)
+#### npm (`yaver-cli`) — Push-to-Device CLI
 Requires npm org `@yaver` and a granular access token with publish permission.
 Token stored as `NPM_TOKEN` GitHub Actions secret. **Never commit tokens to repo.**
 ```bash
 # Local publish (token in .npmrc, gitignored)
+echo "//registry.npmjs.org/:_authToken=YOUR_TOKEN" > cli/.npmrc
+cd cli && npm install && npm publish --access public
+```
+Before publishing, ensure:
+1. `cli/sdk-manifest.json` matches `mobile/sdk-manifest.json` (copy if updated)
+2. `cli/hermesc/` contains hermesc binaries for all platforms (from yaver.io's exact Hermes build)
+3. Version in `cli/package.json` is bumped
+
+#### npm (`@yaver/sdk`) — Programmatic SDK
+Same npm org and token as above.
+```bash
 echo "//registry.npmjs.org/:_authToken=YOUR_TOKEN" > sdk/js/.npmrc
 cd sdk/js && npm publish --access public
 ```

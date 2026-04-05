@@ -15,6 +15,7 @@
 - **Notifications** — Telegram, Discord, Slack alerts when tasks complete.
 - **MCP Tools** — 473 tools: file search, git ops, exec, screenshots, session transfer — usable from Claude Desktop, Cursor, VS Code, Windsurf, Zed.
 - **CI/CD Webhooks** — Trigger AI tasks from GitHub Actions, GitLab CI, or any webhook.
+- **Push to Device** — Push existing React Native projects to the yaver.io phone app for real-device testing. No project modifications. Hermes bytecode validated, 40+ native modules pre-installed. Like Expo Go but for any existing RN project.
 - **Hot Reload** — Expo, Flutter, Vite, Next.js — start dev servers and hot reload from your phone over P2P. Native app preview in a WebView, works through any network.
 - **Git Providers** — Auto-detects GitHub and GitLab credentials on your dev machine. Browse repos from the app and clone to a headless server — no SSH, no manual git setup.
 - **Free Relay** — Every user gets a free relay server (public.yaver.io). Self-host your own anytime.
@@ -377,6 +378,98 @@ The agent starts the framework's dev server locally, then proxies it through the
 
 **Expo modes:** Web preview (default), Expo Go deep link (`exp://` for full native modules), or dev client (custom native build with all native modules).
 
+## Push to Device — Test Existing RN Apps on Real Hardware
+
+Yaver doubles as a native container app (like Expo Go, but for existing projects). Install the yaver.io app from the App Store / Play Store, then push your existing React Native project to it — no project modifications required.
+
+```bash
+# Install the CLI
+npm install -g yaver-cli
+
+# Analyze your existing project
+cd my-existing-rn-app
+yaver-push init
+
+🔍 Analyzing your project...
+
+  React Native:  0.81.5 ✅ (yaver supports 0.81.x)
+  Hermes:        enabled ✅
+  New Arch:      enabled ✅
+
+  Native modules found in your project:
+    react-native-screens@4.16.0       ✅ available in yaver
+    react-native-reanimated@4.1.1     ✅ available in yaver
+    react-native-gesture-handler@2.28 ✅ available in yaver
+    react-native-ble-plx@3.2.0       ❌ NOT in yaver SDK
+
+✅ Created yaver.json
+
+# Push to your phone
+yaver-push push
+
+📡 Found: Kivanc's iPhone (192.168.1.42)
+✅ Compatible
+🔨 Bundling for ios...
+⚡ Compiling Hermes bytecode...
+📤 Pushing 847 KB...
+🚀 Done in 4.1s — app loading on device
+```
+
+**What this is NOT:** Not a WebView. Every `<View>` renders as a real `UIView` / `android.view.View`. Not Metro dev server — the phone runs a production App Store binary with 40+ pre-installed native modules.
+
+### How It Works
+
+1. **`yaver-push init`** reads your `package.json`, compares against the SDK manifest (React Native version, Hermes bytecode version, native modules), and reports compatibility
+2. **`yaver-push push`** bundles your JS with `react-native bundle`, compiles to Hermes bytecode with the CLI's own `hermesc`, validates the bytecode version matches the phone app, and pushes via HTTP to the phone's on-device server (port 8347)
+3. The phone validates the Hermes bytecode, saves it, and safely reloads the React Native bridge (with a 0.6s delay for Hermes GC teardown)
+
+### CLI Commands
+
+```
+yaver-push init                         Analyze project, show compatibility, create yaver.json
+yaver-push push [--device <ip>]         Bundle + validate + push
+yaver-push push --watch                 Watch mode — re-push on file save
+yaver-push push --ignore-missing        Push even with missing native modules
+yaver-push doctor                       Deep compatibility report with fix suggestions
+yaver-push devices                      List discovered devices
+yaver-push modules                      List all SDK native modules (40+)
+yaver-push reset                        Clear pushed bundle on device
+yaver-push status                       Device + project status
+```
+
+### Handling Missing Modules
+
+If your project uses native modules not in the yaver SDK, you can still push — features using those modules will crash, but everything else works. Add graceful checks:
+
+```javascript
+import { NativeModules } from 'react-native';
+const isYaver = !!NativeModules.YaverInfo;
+
+// Skip unavailable features in yaver
+if (!isYaver) {
+  // use react-native-ble-plx normally
+}
+```
+
+### QA Testing Workflow
+
+Combine push-to-device with the Feedback SDK for a complete QA loop:
+
+```
+1. Push to device:     npx yaver-cli push
+2. Test on real phone: tap around, find bugs
+3. Report bug:         shake phone → screenshot + voice → sent to AI agent
+4. AI fixes it:        agent sees screenshot, reads stack trace, writes fix
+5. Re-push:            npx yaver-cli push → fix on device in ~4s
+6. Repeat
+```
+
+No TestFlight queues. No Play Store reviews. Real-device testing in seconds. Works with any AI agent (Claude Code, Codex, Aider, Ollama).
+
+### SDK Manifest
+
+The yaver.io app ships with 40+ pre-installed native modules including: `react-native-screens`, `react-native-reanimated`, `react-native-gesture-handler`, `react-native-svg`, `react-native-webview`, `react-native-maps`, `@shopify/react-native-skia`, `expo-camera`, `expo-location`, `expo-notifications`, and more. Run `yaver-push modules` for the full list.
+
 ## Git Providers — Clone Repos from Your Phone
 
 Yaver auto-detects GitHub and GitLab credentials already on your dev machine — from `gh` CLI, `glab` CLI, macOS Keychain, git credential helpers, or environment variables. No tokens ever leave the machine.
@@ -453,7 +546,8 @@ ACL peers are also accessible via MCP tools (`acl_list_peers`, `acl_call_peer_to
 |-----------|------|------|
 | `desktop/agent/` | CLI agent (QUIC server, MCP, runner, sandbox) | Go |
 | `desktop/installer/` | Installation GUI (DMG/EXE/DEB) | Electron |
-| `mobile/` | iOS & Android app | React Native |
+| `cli/` | Push-to-device CLI (`yaver-cli` on npm) | Node.js |
+| `mobile/` | iOS & Android app (native container + HTTP server) | React Native |
 | `backend/` | Auth, peer discovery, platform config | Convex |
 | `relay/` | QUIC relay server for NAT traversal | Go (quic-go) |
 | `web/` | Landing page & docs | Next.js 15 on Vercel |
