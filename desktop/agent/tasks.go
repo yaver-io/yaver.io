@@ -467,7 +467,8 @@ type Task struct {
 	Title       string     `json:"title"`
 	Description string     `json:"description"`
 	Status      TaskStatus `json:"status"`
-	Source      string     `json:"source,omitempty"` // "mobile", "mcp", "cli"
+	Source      string     `json:"source,omitempty"`      // "mobile", "mcp", "cli"
+	GuestUserID string     `json:"guestUserId,omitempty"` // set when task created by a guest
 	Model       string     `json:"model,omitempty"`
 	RunnerID    string     `json:"runnerId,omitempty"` // which runner is executing this task
 	SessionID   string     `json:"session_id,omitempty"`

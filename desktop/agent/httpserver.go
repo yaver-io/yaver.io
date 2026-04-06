@@ -1455,10 +1455,24 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		source = "mobile"
 	}
 
+	// Check guest runner restriction before creating task
+	guestUID := r.Header.Get("X-Yaver-GuestUserID")
+	if guestUID != "" && s.guestConfigMgr != nil && body.Runner != "" {
+		if denied := s.guestConfigMgr.CheckRunner(guestUID, body.Runner); denied != nil {
+			jsonError(w, http.StatusForbidden, denied.Reason)
+			return
+		}
+	}
+
 	task, err := s.taskMgr.CreateTask(body.Title, body.Description, body.Model, source, body.Runner, body.CustomCommand, body.Images, body.SpeechContext)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create task: %v", err))
 		return
+	}
+
+	// Tag task with guest userId if created by a guest
+	if guestUID != "" {
+		task.GuestUserID = guestUID
 	}
 
 	log.Printf("[HTTP] Task created: %s — %s (status: %s, model: %s, runner: %s)", task.ID, task.Title, task.Status, body.Model, task.RunnerID)

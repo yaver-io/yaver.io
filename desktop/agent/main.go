@@ -1568,6 +1568,11 @@ func runServe(args []string) {
 		}
 		httpServer.notifyMgr.NotifyTaskCompleted(task.ID, task.Title, string(task.Status), task.CostUSD, dur)
 
+		// Record guest usage
+		if task.GuestUserID != "" && dur > 0 && httpServer.guestConfigMgr != nil {
+			httpServer.guestConfigMgr.RecordUsage(task.GuestUserID, float64(dur))
+		}
+
 		// Autopilot: drive the next todo item
 		if httpServer.autopilot != nil && httpServer.autopilot.IsEnabled() && task.Source == "todolist" {
 			httpServer.autopilot.OnTaskDone(task)
