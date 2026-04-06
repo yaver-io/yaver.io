@@ -16,6 +16,14 @@ import { useRouter } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
+import {
+  listGuests,
+  inviteGuest,
+  revokeGuest,
+  acceptGuestByCode,
+  type GuestInfo,
+} from "../../src/lib/guests";
+import { useAuth } from "../../src/context/AuthContext";
 
 const TUTORIALS = [
   { label: "Always-on Setup", icon: "\u{1F50C}", desc: "Auto-boot, systemd, run forever", url: "https://yaver.io/manuals/auto-boot" },
@@ -1526,6 +1534,214 @@ function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
 
 // ── Main Screen ────────────────────────────────────────────────────
 
+// ── Guest Access Section ──────────────────────────────────────────
+
+function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
+  const { token } = useAuth();
+  const { guestInvitations, acceptGuestInvitation, refreshDevices } = useDevice();
+  const [guests, setGuests] = useState<GuestInfo[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviting, setInviting] = useState(false);
+  const [lastInviteCode, setLastInviteCode] = useState<string | null>(null);
+  const [acceptCode, setAcceptCode] = useState("");
+  const [accepting, setAccepting] = useState(false);
+
+  const loadGuests = useCallback(async () => {
+    if (!token) return;
+    setLoading(true);
+    try {
+      const list = await listGuests(token);
+      setGuests(list);
+    } catch {}
+    setLoading(false);
+  }, [token]);
+
+  useEffect(() => { loadGuests(); }, [loadGuests]);
+
+  const handleInvite = useCallback(async () => {
+    if (!token || !inviteEmail.trim()) return;
+    setInviting(true);
+    try {
+      const result = await inviteGuest(token, inviteEmail.trim());
+      setLastInviteCode(result.inviteCode);
+      setInviteEmail("");
+      Alert.alert(
+        "Invitation Sent",
+        `Invite code: ${result.inviteCode}\n\n${
+          result.guestRegistered
+            ? "They'll see it in their Yaver app."
+            : "They need to download Yaver and sign in, then enter this code."
+        }\n\nExpires in 2 days.`
+      );
+      loadGuests();
+    } catch (e: any) {
+      Alert.alert("Error", e.message || "Failed to invite");
+    }
+    setInviting(false);
+  }, [token, inviteEmail, loadGuests]);
+
+  const handleRevoke = useCallback(async (email: string) => {
+    if (!token) return;
+    Alert.alert("Revoke Access", `Remove guest access for ${email}?`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Revoke",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await revokeGuest(token, email);
+            loadGuests();
+          } catch (e: any) {
+            Alert.alert("Error", e.message || "Failed to revoke");
+          }
+        },
+      },
+    ]);
+  }, [token, loadGuests]);
+
+  const handleAcceptByCode = useCallback(async () => {
+    if (!token || !acceptCode.trim()) return;
+    setAccepting(true);
+    try {
+      const result = await acceptGuestByCode(token, acceptCode.trim());
+      Alert.alert("Accepted", `You now have guest access to ${result.hostName}'s machine.`);
+      setAcceptCode("");
+      refreshDevices();
+    } catch (e: any) {
+      Alert.alert("Error", e.message || "Invalid code");
+    }
+    setAccepting(false);
+  }, [token, acceptCode, refreshDevices]);
+
+  const activeGuests = guests.filter(g => g.status === "accepted");
+  const pendingGuests = guests.filter(g => g.status === "pending");
+
+  return (
+    <View style={{ padding: 12, gap: 12 }}>
+      {/* Invite a guest */}
+      <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", textTransform: "uppercase", marginBottom: 4 }}>
+        Invite a Guest
+      </Text>
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        <TextInput
+          style={[s.textInput, { flex: 1, color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
+          placeholder="Email address"
+          placeholderTextColor={c.textMuted}
+          value={inviteEmail}
+          onChangeText={setInviteEmail}
+          keyboardType="email-address"
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        <Pressable
+          style={[s.actionBtn, { backgroundColor: c.accent, opacity: inviting || !inviteEmail.trim() ? 0.5 : 1 }]}
+          onPress={handleInvite}
+          disabled={inviting || !inviteEmail.trim()}
+        >
+          {inviting ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Text style={[s.actionBtnText, { color: "#fff" }]}>Invite</Text>
+          )}
+        </Pressable>
+      </View>
+
+      {lastInviteCode && (
+        <View style={{ backgroundColor: c.bg, borderRadius: 8, padding: 10, borderWidth: 1, borderColor: c.border }}>
+          <Text style={{ color: c.textMuted, fontSize: 12 }}>Last invite code (share with guest):</Text>
+          <Text style={{ color: c.accent, fontSize: 20, fontWeight: "700", fontFamily: "monospace", letterSpacing: 3, marginTop: 4 }}>
+            {lastInviteCode}
+          </Text>
+        </View>
+      )}
+
+      {/* Accept by code (when someone invited you) */}
+      <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", textTransform: "uppercase", marginTop: 8 }}>
+        Accept an Invitation
+      </Text>
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        <TextInput
+          style={[s.textInput, { flex: 1, color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg, fontFamily: "monospace", letterSpacing: 2, fontSize: 16 }]}
+          placeholder="Enter 6-char code"
+          placeholderTextColor={c.textMuted}
+          value={acceptCode}
+          onChangeText={(t) => setAcceptCode(t.toUpperCase())}
+          autoCapitalize="characters"
+          autoCorrect={false}
+          maxLength={6}
+        />
+        <Pressable
+          style={[s.actionBtn, { backgroundColor: c.accent, opacity: accepting || acceptCode.length < 6 ? 0.5 : 1 }]}
+          onPress={handleAcceptByCode}
+          disabled={accepting || acceptCode.length < 6}
+        >
+          {accepting ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Text style={[s.actionBtnText, { color: "#fff" }]}>Accept</Text>
+          )}
+        </Pressable>
+      </View>
+
+      {/* Pending invitations (auto-detected by email match) */}
+      {guestInvitations.length > 0 && (
+        <>
+          <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", textTransform: "uppercase", marginTop: 8 }}>
+            Pending Invitations
+          </Text>
+          {guestInvitations.map((inv) => (
+            <View key={inv.hostUserId} style={{ flexDirection: "row", alignItems: "center", backgroundColor: c.bg, borderRadius: 8, padding: 10, borderWidth: 1, borderColor: c.accent, gap: 8 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: c.textPrimary, fontWeight: "600" }}>{inv.hostName}</Text>
+                <Text style={{ color: c.textMuted, fontSize: 12 }}>{inv.hostEmail}</Text>
+              </View>
+              <Pressable
+                style={[s.actionBtn, { backgroundColor: c.accent }]}
+                onPress={() => acceptGuestInvitation(inv.hostUserId)}
+              >
+                <Text style={[s.actionBtnText, { color: "#fff" }]}>Accept</Text>
+              </Pressable>
+            </View>
+          ))}
+        </>
+      )}
+
+      {/* Your guests */}
+      {(activeGuests.length > 0 || pendingGuests.length > 0) && (
+        <>
+          <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", textTransform: "uppercase", marginTop: 8 }}>
+            Your Guests ({activeGuests.length} active, {pendingGuests.length} pending)
+          </Text>
+          {[...activeGuests, ...pendingGuests].map((g) => (
+            <View key={g.email} style={{ flexDirection: "row", alignItems: "center", backgroundColor: c.bg, borderRadius: 8, padding: 10, borderWidth: 1, borderColor: c.border, gap: 8 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: c.textPrimary, fontWeight: "500" }}>{g.email}</Text>
+                <Text style={{ color: g.status === "accepted" ? c.accent : c.textMuted, fontSize: 12 }}>
+                  {g.status === "accepted" ? `Active${g.fullName ? ` \u2022 ${g.fullName}` : ""}` : "Pending"}
+                </Text>
+              </View>
+              <Pressable
+                style={[s.actionBtn, { backgroundColor: "transparent", borderWidth: 1, borderColor: c.error }]}
+                onPress={() => handleRevoke(g.email)}
+              >
+                <Text style={[s.actionBtnText, { color: c.error }]}>Revoke</Text>
+              </Pressable>
+            </View>
+          ))}
+        </>
+      )}
+
+      {loading && <ActivityIndicator size="small" color={c.accent} />}
+      {!loading && guests.length === 0 && guestInvitations.length === 0 && (
+        <Text style={{ color: c.textMuted, fontSize: 13, textAlign: "center", paddingVertical: 8 }}>
+          No guests yet. Invite someone to let them use your machine.
+        </Text>
+      )}
+    </View>
+  );
+}
+
 export default function MoreScreen() {
   const c = useColors();
   const router = useRouter();
@@ -1609,6 +1825,24 @@ export default function MoreScreen() {
           </View>
           <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
         </Pressable>
+        {/* Guest Access */}
+        <View>
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => toggleSection("guests")}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F91D}"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Guest Access</Text>
+              <Text style={[s.desc, { color: c.textMuted }]}>Invite others to use your machine</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>
+              {expandedSection === "guests" ? "\u2304" : "\u203A"}
+            </Text>
+          </Pressable>
+          {expandedSection === "guests" && <GuestAccessSection c={c} />}
+        </View>
+
         <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleTutorials}>
           <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F4DA}"}</Text>
           <View style={{ flex: 1 }}>
