@@ -8,6 +8,9 @@ import {
   type ConnectionState,
   type Runner,
   type AgentInfo,
+  type GuestConfigEntry,
+  type GuestUsageEntry,
+  type GuestInfo,
 } from "@/lib/agent-client";
 import { CONVEX_URL } from "@/lib/constants";
 import {
@@ -136,6 +139,19 @@ export default function DashboardPage() {
 
   // Relay servers for connection
   const [relayServers, setRelayServers] = useState<any[]>([]);
+
+  // Guest access state
+  const [guestPanel, setGuestPanel] = useState(false);
+  const [guests, setGuests] = useState<GuestInfo[]>([]);
+  const [guestConfigs, setGuestConfigs] = useState<GuestConfigEntry[]>([]);
+  const [guestUsage, setGuestUsage] = useState<GuestUsageEntry[]>([]);
+  const [guestInviteEmail, setGuestInviteEmail] = useState("");
+  const [guestInviting, setGuestInviting] = useState(false);
+  const [editingGuest, setEditingGuest] = useState<string | null>(null);
+  const [editGuestLimit, setEditGuestLimit] = useState("");
+  const [editGuestMode, setEditGuestMode] = useState("always");
+  const [editGuestRunners, setEditGuestRunners] = useState("");
+  const [savingGuestConfig, setSavingGuestConfig] = useState(false);
 
   // ── Auth guard ──────────────────────────────────────────────────
 
@@ -342,6 +358,75 @@ export default function DashboardPage() {
   const isConnected = connState === "connected";
   const runningTask = activeTask?.status === "running";
 
+  // ── Guest access ────────────────────────────────────────────────
+
+  const loadGuestData = useCallback(async () => {
+    if (!isConnected) return;
+    try {
+      const [g, c, u] = await Promise.all([
+        agentClient.getGuestList(),
+        agentClient.getGuestConfigs(),
+        agentClient.getGuestUsage(),
+      ]);
+      setGuests(g);
+      setGuestConfigs(c);
+      setGuestUsage(u);
+    } catch { /* ignore */ }
+  }, [isConnected]);
+
+  useEffect(() => {
+    if (guestPanel && isConnected) loadGuestData();
+  }, [guestPanel, isConnected, loadGuestData]);
+
+  const handleGuestInvite = async () => {
+    if (!guestInviteEmail.trim()) return;
+    setGuestInviting(true);
+    try {
+      const result = await agentClient.inviteGuest(guestInviteEmail.trim());
+      alert(`Invitation sent!\nInvite code: ${result.inviteCode}\n${result.guestRegistered ? "They'll see it in their Yaver app." : "Share the code — they can accept after signing up."}`);
+      setGuestInviteEmail("");
+      loadGuestData();
+    } catch (e: any) {
+      alert(e.message || "Failed to invite");
+    }
+    setGuestInviting(false);
+  };
+
+  const handleGuestRevoke = async (email: string) => {
+    if (!confirm(`Revoke access for ${email}?`)) return;
+    try {
+      await agentClient.revokeGuest(email);
+      loadGuestData();
+    } catch (e: any) {
+      alert(e.message || "Failed to revoke");
+    }
+  };
+
+  const startEditGuest = (cfg: GuestConfigEntry) => {
+    setEditingGuest(cfg.guestEmail);
+    setEditGuestLimit(cfg.dailyTokenLimit ? String(cfg.dailyTokenLimit) : "");
+    setEditGuestMode(cfg.usageMode || "always");
+    setEditGuestRunners(cfg.allowedRunners?.join(",") || "");
+  };
+
+  const handleSaveGuestConfig = async () => {
+    if (!editingGuest) return;
+    setSavingGuestConfig(true);
+    try {
+      await agentClient.updateGuestConfig({
+        email: editingGuest,
+        dailyTokenLimit: editGuestLimit ? parseInt(editGuestLimit, 10) : 0,
+        usageMode: editGuestMode,
+        allowedRunners: editGuestRunners ? editGuestRunners.split(",").map(r => r.trim()).filter(Boolean) : [],
+      });
+      setEditingGuest(null);
+      loadGuestData();
+    } catch (e: any) {
+      alert(e.message || "Failed to save");
+    }
+    setSavingGuestConfig(false);
+  };
+
   return (
     <div className="flex h-[calc(100vh-73px)] overflow-hidden">
       {/* ── Sidebar ─────────────────────────────────────────────── */}
@@ -535,6 +620,143 @@ export default function DashboardPage() {
                   </>
                 )}
               </button>
+            </div>
+          )}
+
+          {/* Guest Access */}
+          {isConnected && (
+            <div className="mb-5">
+              <button
+                onClick={() => setGuestPanel(!guestPanel)}
+                className="mb-2 flex w-full items-center gap-2 text-[10px] font-semibold uppercase tracking-widest text-surface-500 hover:text-surface-300"
+              >
+                <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
+                </svg>
+                Guest Access
+                <span className="ml-auto text-surface-600">{guestPanel ? "\u2304" : "\u203A"}</span>
+              </button>
+
+              {guestPanel && (
+                <div className="space-y-2">
+                  {/* Invite */}
+                  <div className="flex gap-1">
+                    <input
+                      type="email"
+                      value={guestInviteEmail}
+                      onChange={(e) => setGuestInviteEmail(e.target.value)}
+                      placeholder="Email to invite"
+                      className="min-w-0 flex-1 rounded border border-surface-700 bg-surface-850 px-2 py-1 text-[11px] text-surface-200 placeholder-surface-600 outline-none focus:border-surface-500"
+                    />
+                    <button
+                      onClick={handleGuestInvite}
+                      disabled={guestInviting || !guestInviteEmail.trim()}
+                      className="rounded bg-surface-700 px-2 py-1 text-[10px] font-medium text-surface-200 transition-colors hover:bg-surface-600 disabled:opacity-40"
+                    >
+                      {guestInviting ? "..." : "Invite"}
+                    </button>
+                  </div>
+
+                  {/* Guest list with config */}
+                  {guests.filter(g => g.status === "accepted" || g.status === "pending").map((g) => {
+                    const cfg = guestConfigs.find(c => c.guestEmail === g.email);
+                    const u = guestUsage.find(u => u.guestEmail === g.email);
+                    const isEditing = editingGuest === g.email;
+
+                    return (
+                      <div key={g.email} className="rounded-lg border border-surface-800/50 bg-surface-850/30 px-3 py-2 text-[11px]">
+                        <div className="flex items-center justify-between">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className={`h-1.5 w-1.5 rounded-full ${g.status === "accepted" ? "bg-emerald-400" : "bg-amber-400"}`} />
+                              <span className="truncate font-medium text-surface-200">{g.email}</span>
+                            </div>
+                            {g.fullName && <span className="text-[10px] text-surface-500">{g.fullName}</span>}
+                          </div>
+                          <div className="flex gap-1">
+                            {g.status === "accepted" && cfg && (
+                              <button
+                                onClick={() => isEditing ? setEditingGuest(null) : startEditGuest(cfg)}
+                                className="text-[9px] text-surface-500 hover:text-surface-200"
+                              >
+                                {isEditing ? "close" : "config"}
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleGuestRevoke(g.email)}
+                              className="text-[9px] text-red-500/70 hover:text-red-400"
+                            >
+                              revoke
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Usage */}
+                        {u && (
+                          <div className="mt-1 text-[10px] text-surface-500">
+                            Today: {Math.round(u.secondsUsed)}s used
+                            {cfg?.dailyTokenLimit ? ` / ${cfg.dailyTokenLimit}s limit` : ""}
+                          </div>
+                        )}
+
+                        {/* Config editor */}
+                        {isEditing && (
+                          <div className="mt-2 space-y-1.5 border-t border-surface-800/50 pt-2">
+                            <div>
+                              <label className="text-[9px] uppercase text-surface-600">Daily limit (seconds, 0=unlimited)</label>
+                              <input
+                                type="number"
+                                value={editGuestLimit}
+                                onChange={(e) => setEditGuestLimit(e.target.value)}
+                                placeholder="0"
+                                className="mt-0.5 w-full rounded border border-surface-700 bg-surface-850 px-2 py-1 text-[11px] text-surface-200 outline-none focus:border-surface-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[9px] uppercase text-surface-600">Mode</label>
+                              <div className="mt-0.5 flex gap-1">
+                                {["always", "idle-only", "scheduled"].map((m) => (
+                                  <button
+                                    key={m}
+                                    onClick={() => setEditGuestMode(m)}
+                                    className={`flex-1 rounded border px-1 py-0.5 text-[10px] ${
+                                      editGuestMode === m
+                                        ? "border-surface-500 bg-surface-700 text-surface-100"
+                                        : "border-surface-800 text-surface-500 hover:border-surface-600"
+                                    }`}
+                                  >
+                                    {m}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                            <div>
+                              <label className="text-[9px] uppercase text-surface-600">Runners (comma-separated, empty=all)</label>
+                              <input
+                                value={editGuestRunners}
+                                onChange={(e) => setEditGuestRunners(e.target.value)}
+                                placeholder="claude,aider"
+                                className="mt-0.5 w-full rounded border border-surface-700 bg-surface-850 px-2 py-1 text-[11px] text-surface-200 outline-none focus:border-surface-500"
+                              />
+                            </div>
+                            <button
+                              onClick={handleSaveGuestConfig}
+                              disabled={savingGuestConfig}
+                              className="w-full rounded bg-surface-700 py-1 text-[10px] font-medium text-surface-200 transition-colors hover:bg-surface-600 disabled:opacity-40"
+                            >
+                              {savingGuestConfig ? "Saving..." : "Save Config"}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {guests.length === 0 && (
+                    <p className="text-center text-[10px] text-surface-600">No guests yet</p>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

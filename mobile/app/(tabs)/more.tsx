@@ -21,7 +21,12 @@ import {
   inviteGuest,
   revokeGuest,
   acceptGuestByCode,
+  fetchGuestConfigs,
+  updateGuestConfig,
+  fetchGuestUsage,
   type GuestInfo,
+  type GuestConfigEntry,
+  type GuestUsageEntry,
 } from "../../src/lib/guests";
 import { useAuth } from "../../src/context/AuthContext";
 
@@ -1538,7 +1543,8 @@ function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
 
 function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
   const { token } = useAuth();
-  const { guestInvitations, acceptGuestInvitation, refreshDevices } = useDevice();
+  const { guestInvitations, acceptGuestInvitation, refreshDevices, connectionStatus } = useDevice();
+  const connected = connectionStatus === "connected";
   const [guests, setGuests] = useState<GuestInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
@@ -1546,6 +1552,16 @@ function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
   const [lastInviteCode, setLastInviteCode] = useState<string | null>(null);
   const [acceptCode, setAcceptCode] = useState("");
   const [accepting, setAccepting] = useState(false);
+
+  // Config & usage state
+  const [configs, setConfigs] = useState<GuestConfigEntry[]>([]);
+  const [usage, setUsage] = useState<GuestUsageEntry[]>([]);
+  const [configEmail, setConfigEmail] = useState<string | null>(null); // email being edited
+  const [editLimit, setEditLimit] = useState("");
+  const [editMode, setEditMode] = useState("always");
+  const [editRunners, setEditRunners] = useState("");
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [subTab, setSubTab] = useState<"invite" | "config" | "usage">("invite");
 
   const loadGuests = useCallback(async () => {
     if (!token) return;
@@ -1614,11 +1630,96 @@ function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
     setAccepting(false);
   }, [token, acceptCode, refreshDevices]);
 
+  const loadConfigs = useCallback(async () => {
+    if (!connected) return;
+    try {
+      const baseUrl = (quicClient as any).baseUrl;
+      const t = (quicClient as any).token;
+      if (!baseUrl || !t) return;
+      const cfgs = await fetchGuestConfigs(baseUrl, t);
+      setConfigs(cfgs);
+    } catch {}
+  }, [connected]);
+
+  const loadUsage = useCallback(async () => {
+    if (!connected) return;
+    try {
+      const baseUrl = (quicClient as any).baseUrl;
+      const t = (quicClient as any).token;
+      if (!baseUrl || !t) return;
+      const u = await fetchGuestUsage(baseUrl, t);
+      setUsage(u);
+    } catch {}
+  }, [connected]);
+
+  useEffect(() => {
+    if (subTab === "config") loadConfigs();
+    if (subTab === "usage") loadUsage();
+  }, [subTab, loadConfigs, loadUsage]);
+
+  const startEditConfig = useCallback((cfg: GuestConfigEntry) => {
+    setConfigEmail(cfg.guestEmail);
+    setEditLimit(cfg.dailyTokenLimit ? String(cfg.dailyTokenLimit) : "");
+    setEditMode(cfg.usageMode || "always");
+    setEditRunners(cfg.allowedRunners?.join(",") || "");
+  }, []);
+
+  const handleSaveConfig = useCallback(async () => {
+    if (!configEmail || !connected) return;
+    setSavingConfig(true);
+    try {
+      const baseUrl = (quicClient as any).baseUrl;
+      const t = (quicClient as any).token;
+      if (!baseUrl || !t) return;
+      await updateGuestConfig(baseUrl, t, {
+        email: configEmail,
+        dailyTokenLimit: editLimit ? parseInt(editLimit, 10) : 0,
+        usageMode: editMode,
+        allowedRunners: editRunners ? editRunners.split(",").map(r => r.trim()).filter(Boolean) : [],
+      });
+      Alert.alert("Saved", `Config updated for ${configEmail}`);
+      setConfigEmail(null);
+      loadConfigs();
+    } catch (e: any) {
+      Alert.alert("Error", e.message || "Failed to save config");
+    }
+    setSavingConfig(false);
+  }, [configEmail, editLimit, editMode, editRunners, connected, loadConfigs]);
+
   const activeGuests = guests.filter(g => g.status === "accepted");
   const pendingGuests = guests.filter(g => g.status === "pending");
 
   return (
     <View style={{ padding: 12, gap: 12 }}>
+      {/* Sub-tabs: Invite | Config | Usage */}
+      <View style={{ flexDirection: "row", gap: 4, marginBottom: 4 }}>
+        {(["invite", "config", "usage"] as const).map((tab) => (
+          <Pressable
+            key={tab}
+            onPress={() => setSubTab(tab)}
+            style={{
+              flex: 1,
+              paddingVertical: 8,
+              borderRadius: 8,
+              backgroundColor: subTab === tab ? c.accent : c.bg,
+              borderWidth: 1,
+              borderColor: subTab === tab ? c.accent : c.border,
+              alignItems: "center",
+            }}
+          >
+            <Text style={{
+              color: subTab === tab ? "#fff" : c.textMuted,
+              fontSize: 12,
+              fontWeight: "600",
+              textTransform: "uppercase",
+            }}>
+              {tab}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {subTab === "invite" && <>
       {/* Invite a guest */}
       <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", textTransform: "uppercase", marginBottom: 4 }}>
         Invite a Guest
@@ -1738,6 +1839,155 @@ function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
           No guests yet. Invite someone to let them use your machine.
         </Text>
       )}
+      </>}
+
+      {/* Config tab */}
+      {subTab === "config" && <>
+        {!connected ? (
+          <Text style={{ color: c.textMuted, fontSize: 13, textAlign: "center", paddingVertical: 8 }}>
+            Connect to a device to manage guest configs.
+          </Text>
+        ) : configEmail ? (
+          // Edit config for a specific guest
+          <View style={{ gap: 10 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Pressable onPress={() => setConfigEmail(null)}>
+                <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
+              </Pressable>
+              <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "600", flex: 1 }}>{configEmail}</Text>
+            </View>
+
+            <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", textTransform: "uppercase" }}>
+              Daily Limit (seconds, 0 = unlimited)
+            </Text>
+            <TextInput
+              style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
+              placeholder="e.g. 3600 (1 hour)"
+              placeholderTextColor={c.textMuted}
+              value={editLimit}
+              onChangeText={setEditLimit}
+              keyboardType="number-pad"
+            />
+
+            <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", textTransform: "uppercase" }}>
+              Usage Mode
+            </Text>
+            <View style={{ flexDirection: "row", gap: 4 }}>
+              {["always", "idle-only", "scheduled"].map((m) => (
+                <Pressable
+                  key={m}
+                  onPress={() => setEditMode(m)}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 8,
+                    borderRadius: 8,
+                    backgroundColor: editMode === m ? c.accent : c.bg,
+                    borderWidth: 1,
+                    borderColor: editMode === m ? c.accent : c.border,
+                    alignItems: "center",
+                  }}
+                >
+                  <Text style={{ color: editMode === m ? "#fff" : c.textMuted, fontSize: 11, fontWeight: "600" }}>
+                    {m}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", textTransform: "uppercase" }}>
+              Allowed Runners (comma-separated, empty = all)
+            </Text>
+            <TextInput
+              style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
+              placeholder="e.g. claude,aider"
+              placeholderTextColor={c.textMuted}
+              value={editRunners}
+              onChangeText={setEditRunners}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <Pressable
+              style={[s.actionBtn, { backgroundColor: c.accent, opacity: savingConfig ? 0.5 : 1, alignSelf: "flex-end" }]}
+              onPress={handleSaveConfig}
+              disabled={savingConfig}
+            >
+              {savingConfig ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={[s.actionBtnText, { color: "#fff" }]}>Save</Text>
+              )}
+            </Pressable>
+          </View>
+        ) : (
+          // List all guest configs
+          <>
+            {configs.length === 0 ? (
+              <Text style={{ color: c.textMuted, fontSize: 13, textAlign: "center", paddingVertical: 8 }}>
+                No guests with active access. Invite someone first.
+              </Text>
+            ) : (
+              configs.map((cfg) => (
+                <Pressable
+                  key={cfg.guestUserId}
+                  style={{ backgroundColor: c.bg, borderRadius: 8, padding: 12, borderWidth: 1, borderColor: c.border, gap: 4 }}
+                  onPress={() => startEditConfig(cfg)}
+                >
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                    <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 14 }}>{cfg.guestEmail}</Text>
+                    <Text style={{ color: c.accent, fontSize: 12 }}>Edit {"\u203A"}</Text>
+                  </View>
+                  <Text style={{ color: c.textMuted, fontSize: 12 }}>{cfg.guestName}</Text>
+                  <View style={{ flexDirection: "row", gap: 12, marginTop: 4 }}>
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                      Mode: {cfg.usageMode || "always"}
+                    </Text>
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                      Limit: {cfg.dailyTokenLimit ? `${cfg.dailyTokenLimit}s/day` : "unlimited"}
+                    </Text>
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                      Runners: {cfg.allowedRunners?.length ? cfg.allowedRunners.join(",") : "all"}
+                    </Text>
+                  </View>
+                </Pressable>
+              ))
+            )}
+          </>
+        )}
+      </>}
+
+      {/* Usage tab */}
+      {subTab === "usage" && <>
+        {!connected ? (
+          <Text style={{ color: c.textMuted, fontSize: 13, textAlign: "center", paddingVertical: 8 }}>
+            Connect to a device to view guest usage.
+          </Text>
+        ) : usage.length === 0 ? (
+          <Text style={{ color: c.textMuted, fontSize: 13, textAlign: "center", paddingVertical: 8 }}>
+            No usage today.
+          </Text>
+        ) : (
+          <>
+            <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", textTransform: "uppercase", marginBottom: 4 }}>
+              Today&apos;s Usage
+            </Text>
+            {usage.map((u) => (
+              <View
+                key={u.guestEmail}
+                style={{ flexDirection: "row", alignItems: "center", backgroundColor: c.bg, borderRadius: 8, padding: 10, borderWidth: 1, borderColor: c.border, gap: 8 }}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: c.textPrimary, fontWeight: "500" }}>{u.guestEmail}</Text>
+                  <Text style={{ color: c.textMuted, fontSize: 12 }}>{u.guestName}</Text>
+                </View>
+                <Text style={{ color: c.accent, fontWeight: "600", fontFamily: "monospace" }}>
+                  {Math.round(u.secondsUsed)}s
+                </Text>
+              </View>
+            ))}
+          </>
+        )}
+      </>}
     </View>
   );
 }
