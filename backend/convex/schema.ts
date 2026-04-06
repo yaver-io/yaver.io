@@ -335,10 +335,29 @@ export default defineSchema({
     guestUserId: v.id("users"),      // guest who has access
     grantedAt: v.number(),
     revokedAt: v.optional(v.number()),  // null = active, set = revoked
+    // Guest config — set by host to control guest access
+    dailyTokenLimit: v.optional(v.number()),    // max task-seconds per day (0 or absent = unlimited)
+    allowedRunners: v.optional(v.array(v.string())), // runner IDs guest can use (empty/absent = all)
+    usageMode: v.optional(v.string()),          // "idle-only" (default), "always", "scheduled"
+    schedule: v.optional(v.object({
+      startHour: v.number(),
+      endHour: v.number(),
+      timezone: v.optional(v.string()),
+    })),
   })
     .index("by_hostUserId", ["hostUserId"])
     .index("by_guestUserId", ["guestUserId"])
     .index("by_host_guest", ["hostUserId", "guestUserId"]),
+
+  // Guest usage tracking — daily task-seconds consumed per guest
+  guestUsage: defineTable({
+    hostUserId: v.id("users"),
+    guestUserId: v.id("users"),
+    date: v.string(),              // "2026-04-06"
+    secondsUsed: v.number(),
+  })
+    .index("by_host_guest_date", ["hostUserId", "guestUserId", "date"])
+    .index("by_hostUserId_date", ["hostUserId", "date"]),
 
   // SDK tokens — long-lived tokens for Feedback SDK (independent from CLI session tokens)
   sdkTokens: defineTable({

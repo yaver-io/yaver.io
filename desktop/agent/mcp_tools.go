@@ -1453,6 +1453,46 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				},
 			},
 		},
+		{
+			"name":        "guest_config",
+			"description": "View or update guest config (daily limit, allowed runners, usage mode). Without email: list all. With email: show/update config.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"email": map[string]interface{}{
+						"type":        "string",
+						"description": "Guest email to view/update (omit to list all)",
+					},
+					"daily_limit": map[string]interface{}{
+						"type":        "integer",
+						"description": "Max task-seconds per day (0 = unlimited)",
+					},
+					"usage_mode": map[string]interface{}{
+						"type":        "string",
+						"description": "When guest can use: always, idle-only, scheduled",
+						"enum":        []string{"always", "idle-only", "scheduled"},
+					},
+					"allowed_runners": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Runner IDs the guest can use (empty = all)",
+					},
+				},
+			},
+		},
+		{
+			"name":        "guest_usage",
+			"description": "View guest usage stats for today or a specific date.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"date": map[string]interface{}{
+						"type":        "string",
+						"description": "Date in YYYY-MM-DD format (default: today)",
+					},
+				},
+			},
+		},
 	}
 	tools = append(tools, guestTools...)
 

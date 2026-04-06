@@ -41,6 +41,7 @@ type HTTPServer struct {
 	devServerMgr  *DevServerManager
 	todolistMgr    *TodoListManager
 	sessionAuditor *SessionAuditor
+	guestConfigMgr *GuestConfigManager
 	multiUserMgr   *MultiUserManager // nil in single-user mode
 	server       *http.Server
 	tlsServer    *http.Server
@@ -244,6 +245,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/guests", s.auth(s.handleGuestList))
 	mux.HandleFunc("/guests/invite", s.auth(s.handleGuestInvite))
 	mux.HandleFunc("/guests/revoke", s.auth(s.handleGuestRevoke))
+	mux.HandleFunc("/guests/config", s.auth(s.handleGuestConfig))
+	mux.HandleFunc("/guests/usage", s.auth(s.handleGuestUsage))
 
 	// Voice (real-time speech-to-speech & transcription) — SDK-accessible
 	mux.HandleFunc("/voice/status", s.authSDK(s.handleVoiceStatus))
@@ -497,7 +500,7 @@ func (s *HTTPServer) isApprovedGuest(userID string) bool {
 	return false
 }
 
-// refreshGuestList periodically fetches the approved guest list from Convex.
+// refreshGuestList periodically fetches the approved guest list and configs from Convex.
 func (s *HTTPServer) refreshGuestList(ctx context.Context) {
 	if ids, err := FetchGuestUserIds(s.convexURL, s.token); err == nil {
 		s.guestUserIDsMu.Lock()
@@ -505,6 +508,12 @@ func (s *HTTPServer) refreshGuestList(ctx context.Context) {
 		s.guestUserIDsMu.Unlock()
 		if len(ids) > 0 {
 			log.Printf("[GUESTS] Loaded %d approved guest(s)", len(ids))
+		}
+	}
+	// Also refresh guest configs
+	if s.guestConfigMgr != nil {
+		if cfgs, err := FetchGuestConfigs(s.convexURL, s.token); err == nil {
+			s.guestConfigMgr.UpdateConfigs(cfgs)
 		}
 	}
 
@@ -520,6 +529,13 @@ func (s *HTTPServer) refreshGuestList(ctx context.Context) {
 				s.guestUserIDs = ids
 				s.guestUserIDsMu.Unlock()
 			}
+			if s.guestConfigMgr != nil {
+				if cfgs, err := FetchGuestConfigs(s.convexURL, s.token); err == nil {
+					s.guestConfigMgr.UpdateConfigs(cfgs)
+				}
+				// Flush accumulated usage to Convex
+				s.guestConfigMgr.FlushUsage(s.convexURL, s.token)
+			}
 		}
 	}
 }
@@ -533,6 +549,13 @@ func (s *HTTPServer) allowGuest(w http.ResponseWriter, r *http.Request, uid stri
 	if !isGuestAllowedPath(r.URL.Path) {
 		jsonError(w, http.StatusForbidden, "guests cannot access this endpoint")
 		return true
+	}
+	// Check guest config limits (usage mode, daily limit, schedule)
+	if s.guestConfigMgr != nil {
+		if denied := s.guestConfigMgr.CheckAccess(uid); denied != nil {
+			jsonError(w, http.StatusForbidden, denied.Reason)
+			return true
+		}
 	}
 	r.Header.Set("X-Yaver-Guest", "true")
 	r.Header.Set("X-Yaver-GuestUserID", uid)
@@ -5759,6 +5782,119 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 			return true
 		})
 		return mcpToolResult(fmt.Sprintf("Guest access revoked for %s", args.Email))
+
+	case "guest_config":
+		var args struct {
+			Email          string   `json:"email"`
+			DailyLimit     *int     `json:"daily_limit"`
+			UsageMode      string   `json:"usage_mode"`
+			AllowedRunners []string `json:"allowed_runners"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+
+		if args.Email == "" {
+			// List all configs
+			configs, err := FetchGuestConfigs(s.convexURL, s.token)
+			if err != nil {
+				return mcpToolError("failed to fetch configs: " + err.Error())
+			}
+			if len(configs) == 0 {
+				return mcpToolResult("No guest configs. Guests use default settings (unlimited).")
+			}
+			var sb strings.Builder
+			sb.WriteString("Guest Configs:\n")
+			for _, c := range configs {
+				mode := c.UsageMode
+				if mode == "" {
+					mode = "always"
+				}
+				limit := "unlimited"
+				if c.DailyTokenLimit != nil && *c.DailyTokenLimit > 0 {
+					limit = fmt.Sprintf("%ds/day", *c.DailyTokenLimit)
+				}
+				runners := "all"
+				if len(c.AllowedRunners) > 0 {
+					runners = strings.Join(c.AllowedRunners, ",")
+				}
+				sb.WriteString(fmt.Sprintf("- %s (%s): mode=%s limit=%s runners=%s\n",
+					c.GuestEmail, c.GuestName, mode, limit, runners))
+			}
+			return mcpToolResult(sb.String())
+		}
+
+		// If no update fields, just show this guest's config
+		isUpdate := args.DailyLimit != nil || args.UsageMode != "" || args.AllowedRunners != nil
+		if !isUpdate {
+			configs, err := FetchGuestConfigs(s.convexURL, s.token)
+			if err != nil {
+				return mcpToolError("failed to fetch config: " + err.Error())
+			}
+			for _, c := range configs {
+				if c.GuestEmail == args.Email {
+					mode := c.UsageMode
+					if mode == "" {
+						mode = "always"
+					}
+					limit := "unlimited"
+					if c.DailyTokenLimit != nil && *c.DailyTokenLimit > 0 {
+						limit = fmt.Sprintf("%d seconds/day", *c.DailyTokenLimit)
+					}
+					runners := "all"
+					if len(c.AllowedRunners) > 0 {
+						runners = strings.Join(c.AllowedRunners, ", ")
+					}
+					return mcpToolResult(fmt.Sprintf("Config for %s (%s):\n  Mode: %s\n  Daily limit: %s\n  Runners: %s",
+						c.GuestEmail, c.GuestName, mode, limit, runners))
+				}
+			}
+			return mcpToolResult(fmt.Sprintf("No config found for %s", args.Email))
+		}
+
+		// Update config
+		payload := map[string]interface{}{"email": args.Email}
+		if args.DailyLimit != nil {
+			payload["dailyTokenLimit"] = *args.DailyLimit
+		}
+		if args.UsageMode != "" {
+			payload["usageMode"] = args.UsageMode
+		}
+		if args.AllowedRunners != nil {
+			payload["allowedRunners"] = args.AllowedRunners
+		}
+		if err := UpdateGuestConfig(s.convexURL, s.token, payload); err != nil {
+			return mcpToolError(err.Error())
+		}
+		// Refresh cached configs
+		if s.guestConfigMgr != nil {
+			if cfgs, err := FetchGuestConfigs(s.convexURL, s.token); err == nil {
+				s.guestConfigMgr.UpdateConfigs(cfgs)
+			}
+		}
+		return mcpToolResult(fmt.Sprintf("Config updated for %s", args.Email))
+
+	case "guest_usage":
+		var args struct {
+			Date string `json:"date"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		usage, err := FetchGuestUsage(s.convexURL, s.token, args.Date)
+		if err != nil {
+			return mcpToolError("failed to fetch usage: " + err.Error())
+		}
+		if len(usage) == 0 {
+			date := args.Date
+			if date == "" {
+				date = "today"
+			}
+			return mcpToolResult(fmt.Sprintf("No usage for %s.", date))
+		}
+		var sb strings.Builder
+		sb.WriteString("Guest Usage:\n")
+		for _, u := range usage {
+			sb.WriteString(fmt.Sprintf("- %s (%s): %.0f seconds on %s\n",
+				u.GuestEmail, u.GuestName, u.SecondsUsed, u.Date))
+		}
+		return mcpToolResult(sb.String())
 
 	default:
 		return mcpToolError("unknown tool: " + call.Name)

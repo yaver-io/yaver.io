@@ -414,6 +414,46 @@ Each agent instance has:
 - Independent relay connections
 - Auth-aware LAN beacon (only same-user devices discover each other)
 
+## Guest Access
+
+Share your machine with anyone — no team or subscription needed. Invite by email, they accept from the Yaver app. Guests can run tasks and use dev server but cannot access shell, vault, or sessions.
+
+```bash
+# Invite a guest
+yaver guests invite cousin@gmail.com
+# → Invite code: K7WP3N (share this if they sign up with a different email)
+
+# Configure guest limits
+yaver guests config cousin@gmail.com limit=3600 mode=scheduled
+yaver guests config cousin@gmail.com runners=claude,aider
+
+# View guest usage
+yaver guests usage
+
+# List all guests
+yaver guests list
+
+# Revoke access
+yaver guests remove cousin@gmail.com
+```
+
+**Guest config options:**
+
+| Setting | Values | Default | Description |
+|---------|--------|---------|-------------|
+| `limit` | seconds/day | unlimited | Daily task-seconds cap (e.g. `3600` = 1 hour/day) |
+| `mode` | `always`, `idle-only`, `scheduled` | `always` | When the guest can use the machine |
+| `runners` | comma-separated | all | Which AI runners the guest can use |
+
+**How it works:**
+1. Host invites via CLI, mobile app, or MCP (`guest_invite` tool)
+2. Guest signs in to Yaver app with any OAuth (Apple, Google, Microsoft)
+3. Guest accepts via email match or 6-character invite code
+4. Host's devices appear in guest's device list
+5. Max 5 guests per host, invitations expire in 2 days
+
+Config (limits, runners, usage mode) syncs via Convex. Project access is managed P2P on each agent.
+
 ## Hot Reload — Dev Server to Phone
 
 Start a dev server on your machine and preview the app on your phone in real time — all through the P2P channel. Works on any network (Wi-Fi, 4G, behind NAT).

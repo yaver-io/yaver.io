@@ -376,6 +376,140 @@ func FetchGuestList(baseURL, token string) ([]GuestInfo, error) {
 	return result.Guests, nil
 }
 
+// GuestConfig describes the config for a single guest from Convex.
+type GuestConfig struct {
+	GuestUserID    string   `json:"guestUserId"`
+	GuestEmail     string   `json:"guestEmail"`
+	GuestName      string   `json:"guestName"`
+	DailyTokenLimit *int    `json:"dailyTokenLimit,omitempty"`
+	AllowedRunners []string `json:"allowedRunners,omitempty"`
+	UsageMode      string   `json:"usageMode,omitempty"`
+	Schedule       *struct {
+		StartHour int    `json:"startHour"`
+		EndHour   int    `json:"endHour"`
+		Timezone  string `json:"timezone,omitempty"`
+	} `json:"schedule,omitempty"`
+}
+
+// FetchGuestConfigs fetches guest configs from Convex.
+func FetchGuestConfigs(baseURL, token string) ([]GuestConfig, error) {
+	req, err := newBearerRequest("GET", baseURL+"/guests/config", token, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create guest config request: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch guest config: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("guest config failed (status %d)", resp.StatusCode)
+	}
+
+	var result struct {
+		Configs []GuestConfig `json:"configs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode guest config: %w", err)
+	}
+	return result.Configs, nil
+}
+
+// UpdateGuestConfig updates a guest's config via Convex.
+func UpdateGuestConfig(baseURL, token string, cfg map[string]interface{}) error {
+	body, err := json.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal guest config: %w", err)
+	}
+
+	req, err := newBearerRequest("POST", baseURL+"/guests/config", token, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create guest config request: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("update guest config: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("%s", string(respBody))
+	}
+	return nil
+}
+
+// RecordGuestUsage reports guest usage (task-seconds) to Convex.
+func RecordGuestUsage(baseURL, token, guestUserID string, secondsUsed float64, date string) error {
+	payload := map[string]interface{}{
+		"guestUserId": guestUserID,
+		"secondsUsed": secondsUsed,
+		"date":        date,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal guest usage: %w", err)
+	}
+
+	req, err := newBearerRequest("POST", baseURL+"/guests/usage", token, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create guest usage request: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("record guest usage: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("record guest usage failed: %s", string(respBody))
+	}
+	return nil
+}
+
+// GuestUsageInfo describes daily usage for a guest.
+type GuestUsageInfo struct {
+	GuestEmail  string  `json:"guestEmail"`
+	GuestName   string  `json:"guestName"`
+	Date        string  `json:"date"`
+	SecondsUsed float64 `json:"secondsUsed"`
+}
+
+// FetchGuestUsage fetches guest usage for a date from Convex.
+func FetchGuestUsage(baseURL, token, date string) ([]GuestUsageInfo, error) {
+	url := baseURL + "/guests/usage"
+	if date != "" {
+		url += "?date=" + date
+	}
+	req, err := newBearerRequest("GET", url, token, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create guest usage request: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch guest usage: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("guest usage failed (status %d)", resp.StatusCode)
+	}
+
+	var result struct {
+		Usage []GuestUsageInfo `json:"usage"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode guest usage: %w", err)
+	}
+	return result.Usage, nil
+}
+
 // RegisterDeviceRequest contains the fields sent when registering a device.
 type RegisterDeviceRequest struct {
 	Token     string `json:"-"`

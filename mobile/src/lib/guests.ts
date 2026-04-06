@@ -39,6 +39,41 @@ export interface GuestInfo {
   revokedAt?: number;
 }
 
+export interface GuestConfigEntry {
+  guestUserId: string;
+  guestEmail: string;
+  guestName: string;
+  dailyTokenLimit?: number;
+  allowedRunners?: string[];
+  usageMode?: string; // "always" | "idle-only" | "scheduled"
+  schedule?: {
+    startHour: number;
+    endHour: number;
+    timezone?: string;
+  };
+  allowedProjects?: string[];
+}
+
+export interface GuestUsageEntry {
+  guestEmail: string;
+  guestName: string;
+  date: string;
+  secondsUsed: number;
+}
+
+export interface GuestConfigUpdate {
+  email: string;
+  dailyTokenLimit?: number;
+  allowedRunners?: string[];
+  usageMode?: string;
+  schedule?: {
+    startHour: number;
+    endHour: number;
+    timezone?: string;
+  };
+  allowedProjects?: string[];
+}
+
 // ── API ──────────────────────────────────────────────────────────────
 
 /**
@@ -151,4 +186,66 @@ export async function listGuests(token: string): Promise<GuestInfo[]> {
   if (!res.ok) throw new Error("Failed to fetch guest list");
   const data = await res.json();
   return data.guests || [];
+}
+
+// ── Guest Config API (via agent P2P) ────────────────────────────────
+
+/**
+ * Fetch guest configs from the agent (includes Convex config + local project access).
+ */
+export async function fetchGuestConfigs(
+  agentUrl: string,
+  token: string,
+  email?: string
+): Promise<GuestConfigEntry[]> {
+  const url = email
+    ? `${agentUrl}/guests/config?email=${encodeURIComponent(email)}`
+    : `${agentUrl}/guests/config`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error("Failed to fetch guest configs");
+  const data = await res.json();
+  return data.configs || [];
+}
+
+/**
+ * Update guest config via the agent (Convex fields + local project access).
+ */
+export async function updateGuestConfig(
+  agentUrl: string,
+  token: string,
+  config: GuestConfigUpdate
+): Promise<void> {
+  const res = await fetch(`${agentUrl}/guests/config`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to update guest config");
+  }
+}
+
+/**
+ * Fetch guest usage stats from the agent.
+ */
+export async function fetchGuestUsage(
+  agentUrl: string,
+  token: string,
+  date?: string
+): Promise<GuestUsageEntry[]> {
+  const url = date
+    ? `${agentUrl}/guests/usage?date=${encodeURIComponent(date)}`
+    : `${agentUrl}/guests/usage`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error("Failed to fetch guest usage");
+  const data = await res.json();
+  return data.usage || [];
 }

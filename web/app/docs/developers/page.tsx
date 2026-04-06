@@ -132,6 +132,7 @@ export default function DevelopersPage() {
               ["session-transfer", "Session Transfer"],
               ["pr-rules", "Pull Request Rules"],
               ["feedback-sdk", "Feedback SDK & Test Loop"],
+              ["guest-access", "Guest Access & Config"],
               ["sdk-token-security", "SDK Token Security"],
               ["sdk", "SDK — Embed Yaver"],
               ["demo-app", "Demo App (AcmeStore)"],
@@ -2349,6 +2350,86 @@ CLI Agent ◄──QUIC──────────────── Relay (:
               Feedback SDK docs
             </Link>{" "}
             for quick start, API reference, agent integration, and configuration options.
+          </Prose>
+        </section>
+
+        {/* ─── Guest Access & Config ─── */}
+        <section className="mb-20">
+          <SectionHeading id="guest-access">Guest Access &amp; Config</SectionHeading>
+          <Prose>
+            Share your machine with anyone &mdash; no team or subscription needed.
+            Invite by email, they accept from the Yaver app. Guests can run tasks
+            and use dev server but cannot access shell, vault, or sessions.
+          </Prose>
+          <Terminal title="Guest Management">
+            <Comment># Invite a guest</Comment>
+            <Cmd>yaver guests invite cousin@gmail.com</Cmd>
+            <Output>Invitation sent. Invite code: K7WP3N</Output>
+            <Divider />
+            <Comment># Configure limits</Comment>
+            <Cmd>yaver guests config cousin@gmail.com limit=3600 mode=scheduled</Cmd>
+            <Output>Config updated for cousin@gmail.com</Output>
+            <Divider />
+            <Comment># Restrict to specific runners</Comment>
+            <Cmd>yaver guests config cousin@gmail.com runners=claude,aider</Cmd>
+            <Output>Config updated for cousin@gmail.com</Output>
+            <Divider />
+            <Comment># View usage stats</Comment>
+            <Cmd>yaver guests usage</Cmd>
+            <Output>GUEST                           NAME                  SECONDS</Output>
+            <Output>cousin@gmail.com                Cousin                1842</Output>
+            <Divider />
+            <Comment># List all guests</Comment>
+            <Cmd>yaver guests list</Cmd>
+            <Divider />
+            <Comment># Revoke access</Comment>
+            <Cmd>yaver guests remove cousin@gmail.com</Cmd>
+          </Terminal>
+          <Prose>
+            <strong>Config options:</strong>
+          </Prose>
+          <div className="overflow-x-auto my-4">
+            <table className="w-full text-sm text-left text-surface-300">
+              <thead className="text-xs text-surface-400 uppercase border-b border-surface-700">
+                <tr>
+                  <th className="px-4 py-2">Setting</th>
+                  <th className="px-4 py-2">Values</th>
+                  <th className="px-4 py-2">Default</th>
+                  <th className="px-4 py-2">Description</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-800">
+                <tr>
+                  <td className="px-4 py-2 font-mono text-surface-200">limit</td>
+                  <td className="px-4 py-2">seconds/day</td>
+                  <td className="px-4 py-2">unlimited</td>
+                  <td className="px-4 py-2">Daily task-seconds cap</td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-2 font-mono text-surface-200">mode</td>
+                  <td className="px-4 py-2">always, idle-only, scheduled</td>
+                  <td className="px-4 py-2">always</td>
+                  <td className="px-4 py-2">When the guest can use the machine</td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-2 font-mono text-surface-200">runners</td>
+                  <td className="px-4 py-2">comma-separated IDs</td>
+                  <td className="px-4 py-2">all</td>
+                  <td className="px-4 py-2">Which AI runners the guest can use</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <Prose>
+            Config (limits, runners, usage mode) syncs via Convex. Project access
+            is managed P2P on each agent. The agent checks guest limits on every
+            request and tracks usage locally, flushing to Convex every 60 seconds.
+          </Prose>
+          <Prose>
+            <strong>API endpoints:</strong> <code>GET/POST /guests/config</code> (agent),{" "}
+            <code>GET /guests/usage</code> (agent).{" "}
+            <strong>MCP tools:</strong> <code>guest_config</code>,{" "}
+            <code>guest_usage</code>.
           </Prose>
         </section>
 
