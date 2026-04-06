@@ -1256,9 +1256,10 @@ func (tm *TaskManager) startProcess(task *Task) error {
 
 	cmd := exec.CommandContext(ctx, runner.Command, args...)
 
-	// Use per-task workDir if auto-detected from prompt, otherwise global workDir
+	// Use per-task workDir if auto-detected from prompt, otherwise global workDir.
+	// Guest tasks are pinned to the global workDir (cannot override to escape project).
 	taskDir := tm.workDir
-	if task.WorkDir != "" {
+	if task.WorkDir != "" && task.GuestUserID == "" {
 		taskDir = task.WorkDir
 	}
 	cmd.Dir = taskDir
