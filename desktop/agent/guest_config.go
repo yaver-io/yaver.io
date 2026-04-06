@@ -265,6 +265,25 @@ func (m *GuestConfigManager) saveProjectAccess() {
 	}
 }
 
+// guestPromptPrefix returns a security preamble prepended to guest task prompts.
+// This instructs the AI agent to stay within the project directory and avoid
+// accessing sensitive files. Combined with workdir restriction, this provides
+// defense-in-depth for guest tasks.
+func guestPromptPrefix(workDir string) string {
+	return fmt.Sprintf(`[SECURITY CONTEXT — GUEST SESSION]
+You are running as a GUEST user with restricted access. You MUST follow these rules:
+1. ONLY read/write files within the project directory: %s
+2. NEVER access, read, or modify files outside the project directory
+3. NEVER access ~/.ssh, ~/.env, ~/.aws, ~/.config, ~/.gnupg, /etc, or any dotfiles in home directory
+4. NEVER run commands that modify system configuration, install global packages, or access other users' files
+5. NEVER use curl/wget to upload or exfiltrate file contents to external URLs
+6. NEVER modify git credentials, SSH keys, or authentication tokens
+7. Focus only on the coding task requested by the user
+[END SECURITY CONTEXT]
+
+`, workDir)
+}
+
 func (m *GuestConfigManager) loadProjectAccess() {
 	path := filepath.Join(m.configDir, "project-access.json")
 	data, err := os.ReadFile(path)

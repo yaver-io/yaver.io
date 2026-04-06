@@ -1455,16 +1455,31 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		source = "mobile"
 	}
 
-	// Check guest runner restriction before creating task
+	// Check guest restrictions before creating task
 	guestUID := r.Header.Get("X-Yaver-GuestUserID")
-	if guestUID != "" && s.guestConfigMgr != nil && body.Runner != "" {
-		if denied := s.guestConfigMgr.CheckRunner(guestUID, body.Runner); denied != nil {
-			jsonError(w, http.StatusForbidden, denied.Reason)
+	if guestUID != "" && s.guestConfigMgr != nil {
+		// Check runner restriction
+		if body.Runner != "" {
+			if denied := s.guestConfigMgr.CheckRunner(guestUID, body.Runner); denied != nil {
+				jsonError(w, http.StatusForbidden, denied.Reason)
+				return
+			}
+		}
+		// Block custom commands for guests (direct shell access)
+		if body.CustomCommand != "" {
+			jsonError(w, http.StatusForbidden, "guests cannot run custom commands")
 			return
 		}
 	}
 
-	task, err := s.taskMgr.CreateTask(body.Title, body.Description, body.Model, source, body.Runner, body.CustomCommand, body.Images, body.SpeechContext)
+	// For guest tasks, prepend security context to the prompt so the AI agent
+	// stays within the project directory and doesn't access sensitive files.
+	title := body.Title
+	if guestUID != "" {
+		title = guestPromptPrefix(s.taskMgr.workDir) + title
+	}
+
+	task, err := s.taskMgr.CreateTask(title, body.Description, body.Model, source, body.Runner, body.CustomCommand, body.Images, body.SpeechContext)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create task: %v", err))
 		return
