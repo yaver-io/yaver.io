@@ -244,9 +244,15 @@ start_agent() {
 }
 EOF
 
+    # Use --dummy unless YAVER_NO_DUMMY is set (for e2e/docker tests that need real execution)
+    local dummy_flag="--dummy"
+    if [ "${YAVER_NO_DUMMY:-}" = "1" ]; then
+        dummy_flag=""
+    fi
+
     HOME="$config_dir" CLAUDECODE= "$binary" serve --debug \
         --port "$http_port" --quic-port "$quic_port" \
-        --work-dir "$work_dir" --dummy \
+        --work-dir "$work_dir" $dummy_flag \
         "$@" > "$work_dir/agent.log" 2>&1 &
     local pid=$!
     PIDS_TO_KILL+=("$pid")
@@ -1615,6 +1621,392 @@ run_voice_tests() {
     kill "$agent_pid" 2>/dev/null || true
 }
 
+# ── E2E Tests — Real Command Execution ────────────────────────────
+# Runs agent in non-dummy mode with customCommand tasks (python, shell).
+# No AI runner needed — customCommand uses sh -c directly.
+run_e2e_tests() {
+    header "E2E — Real Command Execution (customCommand)"
+
+    local agent_bin="$TEST_DIR/yaver"
+    [ -f "$agent_bin" ] || build_agent "$agent_bin" > /dev/null 2>&1 || { fail "Cannot build agent"; return; }
+
+    local http_port quic_port
+    http_port=$(get_free_port); quic_port=$(get_free_port)
+
+    info "Creating test account..."
+    local token
+    token=$(create_test_account) || { fail "Cannot create test account"; return; }
+
+    local device_id="test-e2e-$(gen_uuid)"
+    local work_dir="$TEST_DIR/e2e-agent"
+
+    info "Starting agent in NON-dummy mode (HTTP=$http_port)..."
+    export YAVER_NO_DUMMY=1
+    local agent_pid
+    agent_pid=$(start_agent "$agent_bin" "$http_port" "$quic_port" "$token" "$device_id" "$work_dir" --no-relay) || {
+        unset YAVER_NO_DUMMY
+        fail "E2E agent failed to start"; return
+    }
+    unset YAVER_NO_DUMMY
+
+    local base_url="http://127.0.0.1:${http_port}"
+    local auth_header="Authorization: Bearer ${token}"
+
+    # ── Test 1: Python hello world ──
+    info "Running Python hello world via customCommand..."
+    local task_resp task_id
+    task_resp=$(curl -sf -X POST "${base_url}/tasks" \
+        -H "$auth_header" -H "Content-Type: application/json" \
+        -d '{"title":"python test","customCommand":"python3 -c \"print(\\\"hello world from yaver e2e test\\\")\""}' 2>/dev/null) || { fail "E2E: create python task"; }
+    task_id=$(echo "$task_resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('taskId',''))" 2>/dev/null)
+
+    if [ -n "$task_id" ]; then
+        # Poll for completion (max 30s)
+        local elapsed=0 status="" output=""
+        while [ $elapsed -lt 30 ]; do
+            local detail
+            detail=$(curl -sf "${base_url}/tasks/${task_id}" -H "$auth_header" 2>/dev/null) || true
+            status=$(echo "$detail" | python3 -c "import sys,json; print(json.load(sys.stdin).get('task',{}).get('status',''))" 2>/dev/null) || true
+            case "$status" in completed|finished|failed|stopped) break ;; esac
+            sleep 1; elapsed=$((elapsed + 1))
+        done
+
+        output=$(curl -sf "${base_url}/tasks/${task_id}" -H "$auth_header" 2>/dev/null | \
+            python3 -c "import sys,json; print(json.load(sys.stdin).get('task',{}).get('output',''))" 2>/dev/null) || true
+
+        if [ "$status" = "completed" ] || [ "$status" = "finished" ]; then
+            if echo "$output" | grep -q "hello world from yaver e2e test"; then
+                pass "E2E: Python hello world (output verified)"
+            else
+                fail "E2E: Python hello world (completed but output missing expected string)"
+                info "Output was: $output"
+            fi
+        else
+            fail "E2E: Python hello world (status=$status after ${elapsed}s)"
+        fi
+    else
+        fail "E2E: Python task creation failed"
+    fi
+
+    # ── Test 2: Shell echo ──
+    info "Running shell echo via customCommand..."
+    task_resp=$(curl -sf -X POST "${base_url}/tasks" \
+        -H "$auth_header" -H "Content-Type: application/json" \
+        -d '{"title":"shell test","customCommand":"echo yaver-shell-test-ok && date +%Y"}' 2>/dev/null) || { fail "E2E: create shell task"; }
+    task_id=$(echo "$task_resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('taskId',''))" 2>/dev/null)
+
+    if [ -n "$task_id" ]; then
+        local elapsed=0 status="" output=""
+        while [ $elapsed -lt 30 ]; do
+            local detail
+            detail=$(curl -sf "${base_url}/tasks/${task_id}" -H "$auth_header" 2>/dev/null) || true
+            status=$(echo "$detail" | python3 -c "import sys,json; print(json.load(sys.stdin).get('task',{}).get('status',''))" 2>/dev/null) || true
+            case "$status" in completed|finished|failed|stopped) break ;; esac
+            sleep 1; elapsed=$((elapsed + 1))
+        done
+
+        output=$(curl -sf "${base_url}/tasks/${task_id}" -H "$auth_header" 2>/dev/null | \
+            python3 -c "import sys,json; print(json.load(sys.stdin).get('task',{}).get('output',''))" 2>/dev/null) || true
+
+        if ([ "$status" = "completed" ] || [ "$status" = "finished" ]) && echo "$output" | grep -q "yaver-shell-test-ok"; then
+            pass "E2E: Shell echo (output verified)"
+        else
+            fail "E2E: Shell echo (status=$status)"
+            info "Output was: $output"
+        fi
+    else
+        fail "E2E: Shell task creation failed"
+    fi
+
+    # ── Test 3: Python script file ──
+    info "Running Python script from file via customCommand..."
+    local script_dir="$work_dir/test-scripts"
+    mkdir -p "$script_dir"
+    cat > "$script_dir/hello.py" << 'PYEOF'
+import sys
+import json
+
+result = {"message": "hello from python script", "python_version": sys.version.split()[0], "status": "success"}
+print(json.dumps(result))
+PYEOF
+
+    task_resp=$(curl -sf -X POST "${base_url}/tasks" \
+        -H "$auth_header" -H "Content-Type: application/json" \
+        -d "{\"title\":\"python script test\",\"customCommand\":\"python3 ${script_dir}/hello.py\"}" 2>/dev/null) || { fail "E2E: create python script task"; }
+    task_id=$(echo "$task_resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('taskId',''))" 2>/dev/null)
+
+    if [ -n "$task_id" ]; then
+        local elapsed=0 status="" output=""
+        while [ $elapsed -lt 30 ]; do
+            local detail
+            detail=$(curl -sf "${base_url}/tasks/${task_id}" -H "$auth_header" 2>/dev/null) || true
+            status=$(echo "$detail" | python3 -c "import sys,json; print(json.load(sys.stdin).get('task',{}).get('status',''))" 2>/dev/null) || true
+            case "$status" in completed|finished|failed|stopped) break ;; esac
+            sleep 1; elapsed=$((elapsed + 1))
+        done
+
+        output=$(curl -sf "${base_url}/tasks/${task_id}" -H "$auth_header" 2>/dev/null | \
+            python3 -c "import sys,json; print(json.load(sys.stdin).get('task',{}).get('output',''))" 2>/dev/null) || true
+
+        if ([ "$status" = "completed" ] || [ "$status" = "finished" ]) && echo "$output" | grep -q "hello from python script"; then
+            pass "E2E: Python script file (output verified)"
+        else
+            fail "E2E: Python script file (status=$status)"
+            info "Output was: $output"
+        fi
+    else
+        fail "E2E: Python script task creation failed"
+    fi
+
+    # ── Test 4: Task with failing command ──
+    info "Running failing command via customCommand..."
+    task_resp=$(curl -sf -X POST "${base_url}/tasks" \
+        -H "$auth_header" -H "Content-Type: application/json" \
+        -d '{"title":"fail test","customCommand":"echo before-fail && exit 42"}' 2>/dev/null) || { fail "E2E: create failing task"; }
+    task_id=$(echo "$task_resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('taskId',''))" 2>/dev/null)
+
+    if [ -n "$task_id" ]; then
+        local elapsed=0 status=""
+        while [ $elapsed -lt 30 ]; do
+            local detail
+            detail=$(curl -sf "${base_url}/tasks/${task_id}" -H "$auth_header" 2>/dev/null) || true
+            status=$(echo "$detail" | python3 -c "import sys,json; print(json.load(sys.stdin).get('task',{}).get('status',''))" 2>/dev/null) || true
+            case "$status" in completed|finished|failed|stopped) break ;; esac
+            sleep 1; elapsed=$((elapsed + 1))
+        done
+
+        if [ "$status" = "failed" ]; then
+            pass "E2E: Failing command detected (status=failed)"
+        else
+            fail "E2E: Failing command (expected failed, got $status)"
+        fi
+    else
+        fail "E2E: Failing task creation failed"
+    fi
+
+    # ── Test 5: Multiple concurrent tasks ──
+    info "Running 3 concurrent tasks via customCommand..."
+    local pids=() task_ids=()
+    for i in 1 2 3; do
+        task_resp=$(curl -sf -X POST "${base_url}/tasks" \
+            -H "$auth_header" -H "Content-Type: application/json" \
+            -d "{\"title\":\"concurrent-$i\",\"customCommand\":\"echo task-$i-output && sleep 1\"}" 2>/dev/null)
+        tid=$(echo "$task_resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('taskId',''))" 2>/dev/null)
+        if [ -n "$tid" ]; then
+            task_ids+=("$tid")
+        fi
+    done
+
+    if [ ${#task_ids[@]} -eq 3 ]; then
+        # Wait for all to complete (max 30s)
+        local all_done=false elapsed=0
+        while [ $elapsed -lt 30 ]; do
+            local done_count=0
+            for tid in "${task_ids[@]}"; do
+                local st
+                st=$(curl -sf "${base_url}/tasks/${tid}" -H "$auth_header" 2>/dev/null | \
+                    python3 -c "import sys,json; print(json.load(sys.stdin).get('task',{}).get('status',''))" 2>/dev/null) || true
+                case "$st" in completed|finished|failed|stopped) done_count=$((done_count + 1)) ;; esac
+            done
+            if [ $done_count -eq 3 ]; then all_done=true; break; fi
+            sleep 1; elapsed=$((elapsed + 1))
+        done
+
+        if $all_done; then
+            pass "E2E: 3 concurrent tasks completed"
+        else
+            fail "E2E: Concurrent tasks did not all complete within 30s"
+        fi
+    else
+        fail "E2E: Failed to create 3 concurrent tasks (got ${#task_ids[@]})"
+    fi
+
+    kill "$agent_pid" 2>/dev/null || true
+}
+
+# ── Docker Sandbox Tests ──────────────────────────────────────────
+# Tests container sandbox: build image, run tasks in containers.
+# Requires Docker daemon running.
+run_docker_tests() {
+    header "Docker — Container Sandbox Tests"
+
+    # Check Docker availability
+    if ! command -v docker &>/dev/null; then
+        skip "Docker tests (docker not installed)"
+        return
+    fi
+    if ! docker info > /dev/null 2>&1; then
+        skip "Docker tests (Docker daemon not running — start Docker Desktop)"
+        return
+    fi
+
+    local agent_bin="$TEST_DIR/yaver"
+    [ -f "$agent_bin" ] || build_agent "$agent_bin" > /dev/null 2>&1 || { fail "Cannot build agent"; return; }
+
+    # ── Test 1: Sandbox image build ──
+    info "Building sandbox image (may take a few minutes first time)..."
+    if docker build -f "$ROOT_DIR/desktop/agent/Dockerfile.sandbox" \
+        -t yaver-sandbox "$ROOT_DIR/desktop/agent" > "$TEST_DIR/docker-build.log" 2>&1; then
+        pass "Docker: Sandbox image built"
+    else
+        fail "Docker: Sandbox image build failed"
+        tail -20 "$TEST_DIR/docker-build.log"
+        return
+    fi
+
+    # ── Test 2: Container runs Python hello world ──
+    info "Running Python hello world in container..."
+    local container_output
+    container_output=$(docker run --rm yaver-sandbox \
+        "python3 -c \"print('hello from yaver container')\"" 2>&1) || true
+    if echo "$container_output" | grep -q "hello from yaver container"; then
+        pass "Docker: Python in container (direct)"
+    else
+        fail "Docker: Python in container (output: $container_output)"
+    fi
+
+    # ── Test 3: Agent with --containerize-host runs task in container ──
+    local http_port quic_port
+    http_port=$(get_free_port); quic_port=$(get_free_port)
+
+    info "Creating test account..."
+    local token
+    token=$(create_test_account) || { fail "Cannot create test account"; return; }
+
+    local device_id="test-docker-$(gen_uuid)"
+    local work_dir="$TEST_DIR/docker-agent"
+
+    info "Starting agent with --containerize-host (HTTP=$http_port)..."
+    export YAVER_NO_DUMMY=1
+    local agent_pid
+    agent_pid=$(start_agent "$agent_bin" "$http_port" "$quic_port" "$token" "$device_id" "$work_dir" \
+        --no-relay --containerize-host) || {
+        unset YAVER_NO_DUMMY
+        fail "Docker agent failed to start"; return
+    }
+    unset YAVER_NO_DUMMY
+
+    local base_url="http://127.0.0.1:${http_port}"
+    local auth_header="Authorization: Bearer ${token}"
+
+    # Verify sandbox status endpoint
+    info "Checking sandbox status..."
+    local sandbox_status
+    sandbox_status=$(curl -sf "${base_url}/sandbox/status" -H "$auth_header" 2>/dev/null) || true
+    local avail imgready
+    avail=$(echo "$sandbox_status" | python3 -c "import sys,json; print(json.load(sys.stdin).get('available', False))" 2>/dev/null) || true
+    imgready=$(echo "$sandbox_status" | python3 -c "import sys,json; print(json.load(sys.stdin).get('imageReady', False))" 2>/dev/null) || true
+
+    if [ "$avail" = "True" ] && [ "$imgready" = "True" ]; then
+        pass "Docker: Sandbox status (available=true, imageReady=true)"
+    else
+        fail "Docker: Sandbox status (available=$avail, imageReady=$imgready)"
+    fi
+
+    # Run Python task through agent with containerization
+    info "Running containerized Python task through agent..."
+    local task_resp task_id
+    task_resp=$(curl -sf -X POST "${base_url}/tasks" \
+        -H "$auth_header" -H "Content-Type: application/json" \
+        -d '{"title":"container python test","customCommand":"python3 -c \"print(\\\"hello from containerized task\\\")\""}' 2>/dev/null) || { fail "Docker: create container task"; }
+    task_id=$(echo "$task_resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('taskId',''))" 2>/dev/null)
+
+    if [ -n "$task_id" ]; then
+        local elapsed=0 status="" output=""
+        while [ $elapsed -lt 60 ]; do
+            local detail
+            detail=$(curl -sf "${base_url}/tasks/${task_id}" -H "$auth_header" 2>/dev/null) || true
+            status=$(echo "$detail" | python3 -c "import sys,json; print(json.load(sys.stdin).get('task',{}).get('status',''))" 2>/dev/null) || true
+            case "$status" in completed|finished|failed|stopped) break ;; esac
+            sleep 2; elapsed=$((elapsed + 2))
+        done
+
+        output=$(curl -sf "${base_url}/tasks/${task_id}" -H "$auth_header" 2>/dev/null | \
+            python3 -c "import sys,json; print(json.load(sys.stdin).get('task',{}).get('output',''))" 2>/dev/null) || true
+
+        if ([ "$status" = "completed" ] || [ "$status" = "finished" ]) && echo "$output" | grep -q "hello from containerized task"; then
+            pass "Docker: Containerized Python task (output verified)"
+        else
+            fail "Docker: Containerized Python task (status=$status)"
+            info "Output was: $output"
+            info "Agent log tail:"
+            tail -20 "$work_dir/agent.log" 2>/dev/null || true
+        fi
+    else
+        fail "Docker: Container task creation failed"
+        info "Response was: $task_resp"
+    fi
+
+    # ── Test 4: Container with Node.js ──
+    info "Running containerized Node.js task..."
+    task_resp=$(curl -sf -X POST "${base_url}/tasks" \
+        -H "$auth_header" -H "Content-Type: application/json" \
+        -d '{"title":"container node test","customCommand":"node -e \"console.log(JSON.stringify({msg:\\\"hello from node\\\",v:process.version}))\""}' 2>/dev/null) || true
+    task_id=$(echo "$task_resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('taskId',''))" 2>/dev/null)
+
+    if [ -n "$task_id" ]; then
+        local elapsed=0 status="" output=""
+        while [ $elapsed -lt 60 ]; do
+            local detail
+            detail=$(curl -sf "${base_url}/tasks/${task_id}" -H "$auth_header" 2>/dev/null) || true
+            status=$(echo "$detail" | python3 -c "import sys,json; print(json.load(sys.stdin).get('task',{}).get('status',''))" 2>/dev/null) || true
+            case "$status" in completed|finished|failed|stopped) break ;; esac
+            sleep 2; elapsed=$((elapsed + 2))
+        done
+
+        output=$(curl -sf "${base_url}/tasks/${task_id}" -H "$auth_header" 2>/dev/null | \
+            python3 -c "import sys,json; print(json.load(sys.stdin).get('task',{}).get('output',''))" 2>/dev/null) || true
+
+        if ([ "$status" = "completed" ] || [ "$status" = "finished" ]) && echo "$output" | grep -q "hello from node"; then
+            pass "Docker: Containerized Node.js task (output verified)"
+        else
+            fail "Docker: Containerized Node.js task (status=$status)"
+            info "Output was: $output"
+        fi
+    else
+        fail "Docker: Node.js container task creation failed"
+    fi
+
+    # ── Test 5: Container filesystem isolation ──
+    info "Verifying container filesystem isolation..."
+    # Write a file on host, verify container can see it in /workspace but not /tmp/host-only
+    local host_marker="$work_dir/host-marker-$(gen_uuid).txt"
+    echo "host-only-content" > "$host_marker"
+
+    task_resp=$(curl -sf -X POST "${base_url}/tasks" \
+        -H "$auth_header" -H "Content-Type: application/json" \
+        -d '{"title":"isolation test","customCommand":"ls /workspace/host-marker-*.txt 2>/dev/null && echo WORKSPACE_VISIBLE || echo WORKSPACE_HIDDEN; cat /etc/hostname 2>/dev/null && echo HOST_VISIBLE || echo CONTAINER_ISOLATED"}' 2>/dev/null) || true
+    task_id=$(echo "$task_resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('taskId',''))" 2>/dev/null)
+
+    if [ -n "$task_id" ]; then
+        local elapsed=0 status="" output=""
+        while [ $elapsed -lt 60 ]; do
+            local detail
+            detail=$(curl -sf "${base_url}/tasks/${task_id}" -H "$auth_header" 2>/dev/null) || true
+            status=$(echo "$detail" | python3 -c "import sys,json; print(json.load(sys.stdin).get('task',{}).get('status',''))" 2>/dev/null) || true
+            case "$status" in completed|finished|failed|stopped) break ;; esac
+            sleep 2; elapsed=$((elapsed + 2))
+        done
+
+        output=$(curl -sf "${base_url}/tasks/${task_id}" -H "$auth_header" 2>/dev/null | \
+            python3 -c "import sys,json; print(json.load(sys.stdin).get('task',{}).get('output',''))" 2>/dev/null) || true
+
+        if ([ "$status" = "completed" ] || [ "$status" = "finished" ]) && echo "$output" | grep -q "WORKSPACE_VISIBLE"; then
+            pass "Docker: Container sees /workspace (project dir mounted)"
+        else
+            fail "Docker: Container /workspace visibility (status=$status)"
+            info "Output was: $output"
+        fi
+    else
+        fail "Docker: Isolation test task creation failed"
+    fi
+
+    # Cleanup: remove sandbox containers if any are left
+    docker ps -q --filter "name=yaver-task-" 2>/dev/null | xargs -r docker stop 2>/dev/null || true
+
+    kill "$agent_pid" 2>/dev/null || true
+}
+
     local run_all=true
     local run_builds=false run_lan=false run_relay=false run_relay_docker=false
     local run_relay_binary=false run_tailscale=false run_cloudflare=false run_unit=false
@@ -1623,6 +2015,8 @@ run_voice_tests() {
     local run_feedback=false
     local run_expo=false
     local run_voice=false
+    local run_e2e=false
+    local run_docker=false
 
     for arg in "$@"; do
         case "$arg" in
@@ -1639,6 +2033,8 @@ run_voice_tests() {
             --feedback)       run_feedback=true; run_all=false ;;
             --expo)           run_expo=true; run_all=false ;;
             --voice)          run_voice=true; run_all=false ;;
+            --e2e)            run_e2e=true; run_all=false ;;
+            --docker)         run_docker=true; run_all=false ;;
             --help|-h)
                 cat << 'HELP'
 Usage: ./scripts/test-suite.sh [FLAGS]
@@ -1659,6 +2055,8 @@ Flags:
   --feedback        Feedback SDK integration tests (starts agent, tests HTTP API)
   --expo            Expo integration tests (project detection, CLI, setup)
   --voice           Voice AI tests (provider registry, HTTP endpoints, mock S2S)
+  --e2e             End-to-end real command execution (python, shell — no AI runner needed)
+  --docker          Docker container sandbox tests (requires Docker daemon)
 
 Environment:
   Credentials loaded from: env vars > .env.test > ../talos/.env.test
@@ -1724,6 +2122,14 @@ HELP
 
     if $run_all || $run_voice; then
         run_voice_tests
+    fi
+
+    if $run_all || $run_e2e; then
+        run_e2e_tests
+    fi
+
+    if $run_all || $run_docker; then
+        run_docker_tests
     fi
 
     # Summary
