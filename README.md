@@ -440,6 +440,18 @@ The agent starts the framework's dev server locally, then proxies it through the
 
 **Expo modes:** Web preview (default), Expo Go deep link (`exp://` for full native modules), or dev client (custom native build with all native modules).
 
+### Remote Reload — Trigger from Your Phone
+
+When a third-party app has the Feedback SDK embedded and is connected to the same agent, you can trigger a reload from the Yaver mobile app — even while away from your desk. The agent broadcasts the reload command to all connected SDK devices via a persistent SSE command channel.
+
+```
+Yaver Mobile App ──tap "Reload"──► Agent ──SSE push──► Third-Party App (Feedback SDK)
+                                    │                     ├─ onReload() callback
+                                    └─ /dev/reload-app    └─ auto DevSettings.reload()
+```
+
+Two modes: `dev` (hot reload from dev server) and `bundle` (rebuild Hermes bytecode + push). Works over both direct LAN and relay connections.
+
 ## Push to Device — Test Existing RN Apps on Real Hardware
 
 Yaver doubles as a native container app (like Expo Go, but for existing projects). Install the yaver.io app from the App Store / Play Store, then push your existing React Native project to it — no project modifications required.
@@ -824,7 +836,7 @@ Embed in your app during development. Screen recording + voice + screenshots →
 | **React Native** | `npm install yaver-feedback-react-native` | Shake-to-report, floating button, manual |
 | **Flutter** | `yaver_feedback: ^0.1.0` in pubspec.yaml | Shake, floating button, manual |
 
-All SDKs include: auto device discovery, connection UI, screen recording, voice annotation, three runtime modes (Full Interactive / Semi Interactive / Post Mode), agent commentary, voice commands.
+All SDKs include: auto device discovery, connection UI, screen recording, voice annotation, three runtime modes (Full Interactive / Semi Interactive / Post Mode), agent commentary, voice commands, and remote reload (trigger hot reload from the Yaver mobile app via the agent's command channel).
 
 See [Feedback SDK Examples](sdk/examples/feedback/) for demos of each mode.
 

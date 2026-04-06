@@ -49,6 +49,6 @@ export type {
   TestFix,
   TestSession,
 } from './types';
-export type { BlackBoxEvent, BlackBoxConfig } from './BlackBox';
+export type { BlackBoxEvent, BlackBoxConfig, BlackBoxCommand, CommandHandler } from './BlackBox';
 export type { DiscoveryResult } from './Discovery';
 export type { FeedbackEvent } from './P2PClient';

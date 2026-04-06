@@ -214,6 +214,32 @@ export class P2PClient {
     };
   }
 
+  /**
+   * Trigger a reload of the third-party app.
+   * In dev mode, this tells the dev server to hot-reload.
+   * In bundle mode, this rebuilds the native bundle and pushes it.
+   * The reload command is also broadcast to all connected SDK devices
+   * via the BlackBox command channel.
+   * @param mode - "dev" for hot reload, "bundle" for native bundle rebuild
+   */
+  async reloadApp(mode: 'dev' | 'bundle' = 'dev'): Promise<{ ok: boolean }> {
+    const response = await fetch(`${this.baseUrl}/dev/reload-app`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ mode }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`[P2PClient] Reload app failed (${response.status}): ${text}`);
+    }
+
+    return response.json();
+  }
+
   /** Get the download URL for a build artifact. */
   getArtifactUrl(buildId: string): string {
     return `${this.baseUrl}/builds/${buildId}/artifact`;

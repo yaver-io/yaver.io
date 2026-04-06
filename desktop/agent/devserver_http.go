@@ -126,7 +126,73 @@ func (s *HTTPServer) handleDevServerReload(w http.ResponseWriter, r *http.Reques
 		s.taskMgr.BroadcastControlSignal(`{"yaver_control":"hot_reload"}`)
 	}
 
+	// Push reload command to all connected SDK devices (third-party apps with Feedback SDK)
+	if s.blackboxMgr != nil {
+		s.blackboxMgr.BroadcastCommand(BlackBoxCommand{
+			Command: "reload",
+		})
+		log.Printf("[dev] Broadcast reload command to connected SDK devices")
+	}
+
 	jsonReply(w, http.StatusOK, map[string]string{"ok": "true"})
+}
+
+// handleReloadApp triggers a reload of the third-party app running inside the Yaver container.
+// For dev server mode: pushes a "reload" command to SDK devices.
+// For native bundle mode: rebuilds the bundle and pushes "reload_bundle" with the bundle URL.
+// POST /dev/reload-app { "mode": "dev" | "bundle" }
+func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req struct {
+		Mode string `json:"mode"` // "dev" (hot reload) or "bundle" (rebuild + push)
+	}
+	if r.Body != nil {
+		json.NewDecoder(r.Body).Decode(&req)
+	}
+	if req.Mode == "" {
+		req.Mode = "dev"
+	}
+
+	if s.blackboxMgr == nil {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "no SDK devices connected"})
+		return
+	}
+
+	switch req.Mode {
+	case "dev":
+		// Hot reload: tell SDK devices to reload from dev server
+		if s.devServerMgr != nil {
+			s.devServerMgr.Reload()
+		}
+		s.blackboxMgr.BroadcastCommand(BlackBoxCommand{
+			Command: "reload",
+		})
+		log.Printf("[dev] Reload-app (dev mode): broadcast reload to SDK devices")
+		jsonReply(w, http.StatusOK, map[string]string{"ok": "true", "mode": "dev"})
+
+	case "bundle":
+		// Native bundle: rebuild and tell SDK devices to fetch new bundle
+		// First trigger the build (reuse build-native logic)
+		s.handleBuildNativeBundle(w, r)
+		// After build completes (handleBuildNativeBundle writes response),
+		// push reload_bundle command
+		s.blackboxMgr.BroadcastCommand(BlackBoxCommand{
+			Command: "reload_bundle",
+			Data: map[string]interface{}{
+				"bundleUrl": "/dev/native-bundle",
+				"assetsUrl": "/dev/native-assets",
+			},
+		})
+		log.Printf("[dev] Reload-app (bundle mode): broadcast reload_bundle to SDK devices")
+		// Note: response already written by handleBuildNativeBundle
+
+	default:
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid mode, use 'dev' or 'bundle'"})
+	}
 }
 
 // handleDevServerEvents streams dev server events via SSE.

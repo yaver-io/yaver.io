@@ -27,6 +27,12 @@ type BlackBoxEvent struct {
 	PrevRoute string                 `json:"prevRoute,omitempty"` // Previous screen (for navigation)
 }
 
+// BlackBoxCommand represents a command pushed from the agent to a connected SDK device.
+type BlackBoxCommand struct {
+	Command string                 `json:"command"`           // "reload", "reload_bundle"
+	Data    map[string]interface{} `json:"data,omitempty"`    // e.g. {"bundleUrl": "/dev/native-bundle"}
+}
+
 // BlackBoxSession represents a continuous streaming session from a device.
 type BlackBoxSession struct {
 	DeviceID  string           `json:"deviceId"`
@@ -39,6 +45,9 @@ type BlackBoxSession struct {
 	// SSE subscribers waiting for new events
 	subscribers []chan BlackBoxEvent
 	subMu       sync.Mutex
+	// Command channels for pushing commands to connected SDK devices (via /blackbox/stream SSE)
+	commandListeners []chan BlackBoxCommand
+	cmdMu            sync.Mutex
 }
 
 // BlackBoxManager manages streaming sessions from multiple devices.
@@ -159,6 +168,50 @@ func (s *BlackBoxSession) Unsubscribe(ch chan BlackBoxEvent) {
 			close(ch)
 			return
 		}
+	}
+}
+
+// SubscribeCommands returns a channel that receives commands pushed by the agent.
+func (s *BlackBoxSession) SubscribeCommands() chan BlackBoxCommand {
+	ch := make(chan BlackBoxCommand, 16)
+	s.cmdMu.Lock()
+	s.commandListeners = append(s.commandListeners, ch)
+	s.cmdMu.Unlock()
+	return ch
+}
+
+// UnsubscribeCommands removes a command listener channel.
+func (s *BlackBoxSession) UnsubscribeCommands(ch chan BlackBoxCommand) {
+	s.cmdMu.Lock()
+	defer s.cmdMu.Unlock()
+	for i, c := range s.commandListeners {
+		if c == ch {
+			s.commandListeners = append(s.commandListeners[:i], s.commandListeners[i+1:]...)
+			close(ch)
+			return
+		}
+	}
+}
+
+// SendCommand pushes a command to all connected SDK devices for this session.
+func (s *BlackBoxSession) SendCommand(cmd BlackBoxCommand) {
+	s.cmdMu.Lock()
+	defer s.cmdMu.Unlock()
+	for _, ch := range s.commandListeners {
+		select {
+		case ch <- cmd:
+		default:
+			// Slow listener — skip
+		}
+	}
+}
+
+// BroadcastCommand pushes a command to ALL connected SDK sessions.
+func (m *BlackBoxManager) BroadcastCommand(cmd BlackBoxCommand) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, s := range m.sessions {
+		s.SendCommand(cmd)
 	}
 }
 

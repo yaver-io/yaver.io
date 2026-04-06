@@ -71,6 +71,35 @@ export class YaverFeedback {
       });
     }
 
+    // Wire up BlackBox command handlers for reload signals from the agent.
+    // This enables the vibe coder to trigger reload from the Yaver mobile app
+    // and have the third-party app (with this SDK) automatically reload.
+    if (enabled) {
+      BlackBox.onCommand((cmd) => {
+        if (cmd.command === 'reload') {
+          if (cfg.onReload) {
+            cfg.onReload();
+          } else {
+            // Default: try DevSettings.reload() in dev mode
+            try {
+              const { DevSettings } = require('react-native');
+              if (typeof DevSettings?.reload === 'function') {
+                DevSettings.reload();
+              }
+            } catch {
+              // Not in dev mode or DevSettings unavailable
+            }
+          }
+        } else if (cmd.command === 'reload_bundle' && cmd.data) {
+          const bundleUrl = cmd.data.bundleUrl as string;
+          const assetsUrl = cmd.data.assetsUrl as string | undefined;
+          if (cfg.onReloadBundle) {
+            cfg.onReloadBundle(bundleUrl, assetsUrl);
+          }
+        }
+      });
+    }
+
     // NOTE: We intentionally do NOT hook ErrorUtils.setGlobalHandler().
     // Sentry, Crashlytics, Bugsnag, and other tools all compete for that
     // single slot. Hijacking it would break whichever tool the developer

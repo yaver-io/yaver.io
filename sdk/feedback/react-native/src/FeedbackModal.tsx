@@ -224,13 +224,13 @@ export const FeedbackModal: React.FC = () => {
 
     setIsReloading(true);
     try {
-      const response = await fetch(`${config.agentUrl.replace(/\/$/, '')}/exec`, {
+      const response = await fetch(`${config.agentUrl.replace(/\/$/, '')}/dev/reload-app`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${config.authToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ command: 'reload', type: 'hot-reload' }),
+        body: JSON.stringify({ mode: 'dev' }),
       });
       if (response.ok) {
         BlackBox.lifecycle('Hot reload triggered from feedback SDK');
