@@ -128,7 +128,7 @@ export interface ExecOptions {
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 export type ConnectionMode = "direct" | "relay" | "tunnel" | null;
 /** How the connection was established — tracked for diagnostics and faster reconnection. */
-export type ConnectionPath = "lan-beacon" | "lan-convex-ip" | "relay" | "cloudflare-tunnel" | null;
+export type ConnectionPath = "lan-beacon" | "lan-convex-ip" | "lan-beacon-upgrade" | "relay" | "cloudflare-tunnel" | null;
 
 export type OutputCallback = (taskId: string, line: string) => void;
 export type ConnectionStateCallback = (state: ConnectionState) => void;
@@ -1887,6 +1887,36 @@ export class QuicClient {
     this._consecutiveHeartbeatFailures = 0;
 
     this.heartbeatInterval = setInterval(async () => {
+      // Upgrade check: if on relay/tunnel but beacon discovered device on LAN, try switching to direct
+      if (this._connectionMode !== "direct" && this.deviceId) {
+        const lanInfo = beaconListener.getLocalIP(this.deviceId);
+        if (lanInfo) {
+          try {
+            const directUrl = `http://${lanInfo.ip}:${lanInfo.port}`;
+            console.log("[QUIC] Beacon found device on LAN — trying upgrade to direct:", directUrl);
+            const probeRes = await this.fetchWithTimeout(`${directUrl}/health`, {
+              headers: this.authHeaders,
+            }, 2000);
+            if (probeRes.ok) {
+              // Switch to direct — update host/port so baseUrl getter returns the LAN address
+              this.host = lanInfo.ip;
+              this.port = lanInfo.port;
+              this.activeRelayUrl = null;
+              this.activeRelayPassword = null;
+              this._tunnelUrl = null;
+              this._tunnelHeaders = {};
+              this.setConnectionMode("direct");
+              this._connectionPath = "lan-beacon-upgrade";
+              this._consecutiveHeartbeatFailures = 0;
+              console.log("[QUIC] Upgraded to direct connection via LAN beacon");
+              return;
+            }
+          } catch {
+            // Direct probe failed — stay on current path
+          }
+        }
+      }
+
       try {
         const res = await this.fetchWithTimeout(`${this.baseUrl}/health`, {
           headers: this.authHeaders,
