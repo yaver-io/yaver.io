@@ -5914,10 +5914,22 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 			"containerizeGuests": s.containerizeGuests,
 			"containerizeHost":   s.containerizeHost,
 		}
+		if s.taskMgr != nil {
+			result["networkMode"] = s.taskMgr.ContainerNetwork
+			result["readOnly"] = s.taskMgr.ContainerReadOnly
+			if s.taskMgr.ContainerCPU != "" {
+				result["cpuLimit"] = s.taskMgr.ContainerCPU
+			}
+			if s.taskMgr.ContainerMemory != "" {
+				result["memoryLimit"] = s.taskMgr.ContainerMemory
+			}
+		}
 		if s.containerRunner != nil {
 			status := s.containerRunner.Status()
 			result["docker"] = status.Available
 			result["imageReady"] = status.ImageReady
+			result["imageName"] = status.ImageName
+			result["gpuAvailable"] = s.containerRunner.IsGPUAvailable()
 		} else {
 			result["docker"] = false
 			result["imageReady"] = false
@@ -5926,10 +5938,23 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 
 	case "sandbox_config":
 		var args struct {
-			ContainerizeGuests *bool `json:"containerize_guests"`
-			ContainerizeHost   *bool `json:"containerize_host"`
+			ContainerizeGuests *bool  `json:"containerize_guests"`
+			ContainerizeHost   *bool  `json:"containerize_host"`
+			CPULimit           string `json:"cpu_limit"`
+			MemoryLimit        string `json:"memory_limit"`
+			NetworkMode        string `json:"network_mode"`
+			ReadOnly           *bool  `json:"read_only"`
 		}
 		json.Unmarshal(call.Arguments, &args)
+
+		// Validate network mode
+		if args.NetworkMode != "" {
+			switch args.NetworkMode {
+			case "host", "bridge", "none":
+			default:
+				return mcpToolError("network_mode must be 'host', 'bridge', or 'none'")
+			}
+		}
 
 		if s.containerRunner == nil {
 			cr := NewContainerRunner()
@@ -5952,6 +5977,32 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 				s.taskMgr.ContainerRunner = s.containerRunner
 			}
 		}
+		if args.CPULimit != "" && s.taskMgr != nil {
+			s.taskMgr.ContainerCPU = args.CPULimit
+		}
+		if args.MemoryLimit != "" && s.taskMgr != nil {
+			s.taskMgr.ContainerMemory = args.MemoryLimit
+		}
+		if args.NetworkMode != "" && s.taskMgr != nil {
+			s.taskMgr.ContainerNetwork = args.NetworkMode
+		}
+		if args.ReadOnly != nil && s.taskMgr != nil {
+			s.taskMgr.ContainerReadOnly = *args.ReadOnly
+		}
+
+		// Persist to config file
+		if cfg, err := LoadConfig(); err == nil {
+			cfg.ContainerizeGuests = s.containerizeGuests
+			cfg.ContainerizeHost = s.containerizeHost
+			if s.taskMgr != nil {
+				cfg.ContainerCPU = s.taskMgr.ContainerCPU
+				cfg.ContainerMemory = s.taskMgr.ContainerMemory
+				cfg.ContainerNetwork = s.taskMgr.ContainerNetwork
+				cfg.ContainerReadOnly = s.taskMgr.ContainerReadOnly
+			}
+			_ = SaveConfig(cfg)
+		}
+
 		return mcpToolResult(fmt.Sprintf("Sandbox config updated: guests=%v, host=%v", s.containerizeGuests, s.containerizeHost))
 
 	case "guest_usage":

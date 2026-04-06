@@ -114,6 +114,19 @@ func (s *HTTPServer) handleSandboxConfig(w http.ResponseWriter, r *http.Request)
 		s.taskMgr.ContainerReadOnly = *body.ReadOnly
 	}
 
+	// Persist to config file so changes survive restart
+	if cfg, err := LoadConfig(); err == nil {
+		cfg.ContainerizeGuests = s.containerizeGuests
+		cfg.ContainerizeHost = s.containerizeHost
+		if s.taskMgr != nil {
+			cfg.ContainerCPU = s.taskMgr.ContainerCPU
+			cfg.ContainerMemory = s.taskMgr.ContainerMemory
+			cfg.ContainerNetwork = s.taskMgr.ContainerNetwork
+			cfg.ContainerReadOnly = s.taskMgr.ContainerReadOnly
+		}
+		_ = SaveConfig(cfg)
+	}
+
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"ok":                 true,
 		"containerizeGuests": s.containerizeGuests,

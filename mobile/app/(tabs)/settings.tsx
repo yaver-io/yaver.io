@@ -104,6 +104,12 @@ export default function SettingsScreen() {
   const agentLogsRef = useRef<ScrollView>(null);
   const testAbortRef = useRef<AbortController | null>(null);
 
+  // Container Sandbox
+  const [sandboxStatus, setSandboxStatus] = useState<import("../../src/lib/quic").SandboxStatus | null>(null);
+  const [sandboxLoading, setSandboxLoading] = useState(false);
+  const [sandboxBuilding, setSandboxBuilding] = useState(false);
+  const [sandboxSaving, setSandboxSaving] = useState(false);
+
   const scrollViewRef = useRef<ScrollView>(null);
 
   // Relay servers
@@ -391,19 +397,22 @@ export default function SettingsScreen() {
       setAgentVersion(null);
       setAgentLastPing(null);
       setAgentStatus(null);
+      setSandboxStatus(null);
       return;
     }
     (async () => {
       try {
-        const [info, status] = await Promise.all([
+        const [info, status, sandbox] = await Promise.all([
           quicClient.getInfo(),
           quicClient.getAgentStatus(),
+          quicClient.getSandboxStatus(),
         ]);
         if (info) {
           setAgentVersion(info.version || null);
           setAgentLastPing(new Date());
         }
         if (status) setAgentStatus(status);
+        if (sandbox) setSandboxStatus(sandbox);
       } catch {
         // Agent unreachable — leave as null
       }
@@ -1334,6 +1343,172 @@ export default function SettingsScreen() {
                 </ScrollView>
               </View>
             </>
+          )}
+        </View>
+        )}
+
+        {/* Container Sandbox */}
+        {connectionStatus === "connected" && sandboxStatus && (
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Container Sandbox</Text>
+
+          {/* Docker status */}
+          <View style={[styles.actionRow, { backgroundColor: c.bgCard, borderColor: c.border, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
+            <Text style={[styles.actionRowLabel, { color: c.textPrimary }]}>Docker</Text>
+            <Text style={{ fontSize: 13, color: sandboxStatus.docker ? "#22c55e" : c.textMuted }}>
+              {sandboxStatus.docker ? "Available" : "Not found"}
+            </Text>
+          </View>
+
+          {/* Image status + build */}
+          <View style={[styles.actionRow, { backgroundColor: c.bgCard, borderColor: c.border, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
+            <Text style={[styles.actionRowLabel, { color: c.textPrimary }]}>
+              Image{sandboxStatus.imageName ? ` (${sandboxStatus.imageName})` : ""}
+            </Text>
+            {sandboxStatus.imageReady ? (
+              <Text style={{ fontSize: 13, color: "#22c55e" }}>Ready</Text>
+            ) : sandboxBuilding ? (
+              <ActivityIndicator size="small" color={c.accent} />
+            ) : (
+              <Pressable
+                onPress={async () => {
+                  setSandboxBuilding(true);
+                  await quicClient.buildSandboxImage();
+                  // Poll for completion
+                  const poll = setInterval(async () => {
+                    const s = await quicClient.getSandboxStatus();
+                    if (s) {
+                      setSandboxStatus(s);
+                      if (s.imageReady) {
+                        setSandboxBuilding(false);
+                        clearInterval(poll);
+                      }
+                    }
+                  }, 5000);
+                  // Stop polling after 15 min
+                  setTimeout(() => { clearInterval(poll); setSandboxBuilding(false); }, 15 * 60 * 1000);
+                }}
+                disabled={!sandboxStatus.docker}
+                style={({ pressed }) => [
+                  { paddingVertical: 5, paddingHorizontal: 12, borderRadius: 6, backgroundColor: sandboxStatus.docker ? c.accent : c.border },
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <Text style={{ fontSize: 12, fontWeight: "600", color: "#fff" }}>Build</Text>
+              </Pressable>
+            )}
+          </View>
+
+          {/* Containerize Guests toggle */}
+          <View style={[styles.actionRow, { backgroundColor: c.bgCard, borderColor: c.border, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.actionRowLabel, { color: c.textPrimary }]}>Containerize Guests</Text>
+              <Text style={{ fontSize: 11, color: c.textMuted }}>Run guest tasks in Docker containers</Text>
+            </View>
+            <Switch
+              value={sandboxStatus.containerizeGuests}
+              disabled={sandboxSaving || !sandboxStatus.docker}
+              onValueChange={async (val) => {
+                setSandboxSaving(true);
+                const ok = await quicClient.updateSandboxConfig({ containerizeGuests: val });
+                if (ok) {
+                  const s = await quicClient.getSandboxStatus();
+                  if (s) setSandboxStatus(s);
+                }
+                setSandboxSaving(false);
+              }}
+              trackColor={{ false: c.border, true: c.accent }}
+            />
+          </View>
+
+          {/* Containerize Host toggle */}
+          <View style={[styles.actionRow, { backgroundColor: c.bgCard, borderColor: c.border, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.actionRowLabel, { color: c.textPrimary }]}>Containerize Host</Text>
+              <Text style={{ fontSize: 11, color: c.textMuted }}>Run all tasks in Docker containers</Text>
+            </View>
+            <Switch
+              value={sandboxStatus.containerizeHost}
+              disabled={sandboxSaving || !sandboxStatus.docker}
+              onValueChange={async (val) => {
+                setSandboxSaving(true);
+                const ok = await quicClient.updateSandboxConfig({ containerizeHost: val });
+                if (ok) {
+                  const s = await quicClient.getSandboxStatus();
+                  if (s) setSandboxStatus(s);
+                }
+                setSandboxSaving(false);
+              }}
+              trackColor={{ false: c.border, true: c.accent }}
+            />
+          </View>
+
+          {/* Network Mode */}
+          <View style={[styles.actionRow, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+            <Text style={[styles.actionRowLabel, { color: c.textPrimary, marginBottom: 6 }]}>Network Mode</Text>
+            <View style={{ flexDirection: "row", gap: 6 }}>
+              {(["host", "bridge", "none"] as const).map((mode) => (
+                <Pressable
+                  key={mode}
+                  onPress={async () => {
+                    setSandboxSaving(true);
+                    const ok = await quicClient.updateSandboxConfig({ networkMode: mode });
+                    if (ok) {
+                      const s = await quicClient.getSandboxStatus();
+                      if (s) setSandboxStatus(s);
+                    }
+                    setSandboxSaving(false);
+                  }}
+                  disabled={sandboxSaving}
+                  style={[
+                    { paddingVertical: 5, paddingHorizontal: 12, borderRadius: 6, borderWidth: 1 },
+                    sandboxStatus.networkMode === mode
+                      ? { backgroundColor: c.accent, borderColor: c.accent }
+                      : { backgroundColor: "transparent", borderColor: c.border },
+                  ]}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: "600", color: sandboxStatus.networkMode === mode ? "#fff" : c.textPrimary }}>
+                    {mode}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+
+          {/* Read-only rootfs toggle */}
+          <View style={[styles.actionRow, { backgroundColor: c.bgCard, borderColor: c.border, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.actionRowLabel, { color: c.textPrimary }]}>Read-only Root</Text>
+              <Text style={{ fontSize: 11, color: c.textMuted }}>Writes only to /workspace and /tmp</Text>
+            </View>
+            <Switch
+              value={sandboxStatus.readOnly ?? false}
+              disabled={sandboxSaving}
+              onValueChange={async (val) => {
+                setSandboxSaving(true);
+                const ok = await quicClient.updateSandboxConfig({ readOnly: val });
+                if (ok) {
+                  const s = await quicClient.getSandboxStatus();
+                  if (s) setSandboxStatus(s);
+                }
+                setSandboxSaving(false);
+              }}
+              trackColor={{ false: c.border, true: c.accent }}
+            />
+          </View>
+
+          {/* Resource limits info */}
+          {(sandboxStatus.cpuLimit || sandboxStatus.memoryLimit || sandboxStatus.gpuAvailable) && (
+            <View style={[styles.actionRow, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+              <Text style={[styles.actionRowLabel, { color: c.textMuted, marginBottom: 4 }]}>Resources</Text>
+              <Text style={{ fontSize: 12, color: c.textPrimary }}>
+                {[
+                  sandboxStatus.cpuLimit && `CPU: ${sandboxStatus.cpuLimit}`,
+                  sandboxStatus.memoryLimit && `Memory: ${sandboxStatus.memoryLimit}`,
+                  sandboxStatus.gpuAvailable && "GPU: Available",
+                ].filter(Boolean).join("  |  ")}
+              </Text>
+            </View>
           )}
         </View>
         )}

@@ -2059,6 +2059,68 @@ export class QuicClient {
   getDevServerBundleUrl(bundlePath: string): string {
     return `${this.baseUrl}${bundlePath}`;
   }
+
+  // ── Container Sandbox ───────────────────────────────────────────────
+
+  /** Get container sandbox status from agent. */
+  async getSandboxStatus(): Promise<SandboxStatus | null> {
+    if (!this.isConnected && !this.hasConnectionInfo) return null;
+    try {
+      const res = await fetch(`${this.baseUrl}/sandbox/status`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  /** Update container sandbox config on agent. Changes are persisted. */
+  async updateSandboxConfig(config: Partial<SandboxConfig>): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/sandbox/config`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(config),
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
+  /** Trigger sandbox Docker image build on agent. Returns immediately; poll status. */
+  async buildSandboxImage(): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/sandbox/build`, {
+        method: "POST",
+        headers: this.authHeaders,
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+}
+
+/** Container sandbox status returned by the agent. */
+export interface SandboxStatus {
+  ok: boolean;
+  containerizeGuests: boolean;
+  containerizeHost: boolean;
+  docker: boolean;
+  imageReady: boolean;
+  imageName?: string;
+  gpuAvailable?: boolean;
+  networkMode?: string;
+  readOnly?: boolean;
+  cpuLimit?: string;
+  memoryLimit?: string;
+}
+
+/** Container sandbox config fields for updates. */
+export interface SandboxConfig {
+  containerizeGuests: boolean;
+  containerizeHost: boolean;
+  cpuLimit: string;
+  memoryLimit: string;
+  networkMode: "host" | "bridge" | "none";
+  readOnly: boolean;
 }
 
 /** Dev server status returned by the agent. */
