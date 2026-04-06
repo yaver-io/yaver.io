@@ -1508,7 +1508,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 		{
 			"name":        "sandbox_config",
-			"description": "Enable/disable container isolation for guest or host tasks. Requires Docker and yaver-sandbox image.",
+			"description": "Enable/disable container isolation for guest or host tasks. Configure resource limits and network mode. Changes are persisted to config file.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -1519,6 +1519,23 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"containerize_host": map[string]interface{}{
 						"type":        "boolean",
 						"description": "Run host tasks in Docker containers",
+					},
+					"cpu_limit": map[string]interface{}{
+						"type":        "string",
+						"description": "CPU limit (e.g. '2.0')",
+					},
+					"memory_limit": map[string]interface{}{
+						"type":        "string",
+						"description": "Memory limit (e.g. '4g')",
+					},
+					"network_mode": map[string]interface{}{
+						"type":        "string",
+						"description": "Network mode: 'host', 'bridge', or 'none'",
+						"enum":        []string{"host", "bridge", "none"},
+					},
+					"read_only": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Read-only root filesystem (writes only to /workspace, /tmp)",
 					},
 				},
 			},

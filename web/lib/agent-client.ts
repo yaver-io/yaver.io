@@ -56,6 +56,29 @@ export interface Runner {
   models?: string[];
 }
 
+export interface SandboxStatus {
+  ok: boolean;
+  containerizeGuests: boolean;
+  containerizeHost: boolean;
+  docker: boolean;
+  imageReady: boolean;
+  imageName?: string;
+  gpuAvailable?: boolean;
+  networkMode?: string;
+  readOnly?: boolean;
+  cpuLimit?: string;
+  memoryLimit?: string;
+}
+
+export interface SandboxConfig {
+  containerizeGuests?: boolean;
+  containerizeHost?: boolean;
+  cpuLimit?: string;
+  memoryLimit?: string;
+  networkMode?: "host" | "bridge" | "none";
+  readOnly?: boolean;
+}
+
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
 export interface RelayServer {
@@ -712,6 +735,44 @@ class AgentClient {
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || "Failed to revoke");
+    }
+  }
+
+  // ── Container Sandbox ──────────────────────────────────────────────
+
+  async getSandboxStatus(): Promise<SandboxStatus | null> {
+    this.assertConnected();
+    try {
+      const res = await fetch(`${this.baseUrl}/sandbox/status`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  async updateSandboxConfig(config: SandboxConfig): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/sandbox/config`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "Failed to update sandbox config");
+    }
+  }
+
+  async buildSandboxImage(): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/sandbox/build`, {
+      method: "POST",
+      headers: this.authHeaders,
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "Failed to start sandbox build");
     }
   }
 
