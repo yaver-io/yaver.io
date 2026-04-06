@@ -42,6 +42,9 @@ type HTTPServer struct {
 	todolistMgr    *TodoListManager
 	sessionAuditor *SessionAuditor
 	guestConfigMgr *GuestConfigManager
+	containerRunner *ContainerRunner   // nil if Docker not available
+	containerizeGuests bool            // run guest tasks in containers
+	containerizeHost   bool            // run host tasks in containers
 	multiUserMgr   *MultiUserManager // nil in single-user mode
 	server       *http.Server
 	tlsServer    *http.Server
@@ -240,6 +243,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/users/me", s.auth(s.handleMultiUserMe))
 	mux.HandleFunc("/users/", s.auth(s.handleMultiUserRemove))
 	mux.HandleFunc("/sessions", s.auth(s.handleMultiUserSessions))
+
+	// Container sandbox management
+	mux.HandleFunc("/sandbox/status", s.auth(s.handleSandboxStatus))
+	mux.HandleFunc("/sandbox/config", s.auth(s.handleSandboxConfig))
+	mux.HandleFunc("/sandbox/build", s.auth(s.handleSandboxBuild))
 
 	// Guest access management (host invites guests to use their agent)
 	mux.HandleFunc("/guests", s.auth(s.handleGuestList))
@@ -5900,6 +5908,51 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 			}
 		}
 		return mcpToolResult(fmt.Sprintf("Config updated for %s", args.Email))
+
+	case "sandbox_status":
+		result := map[string]interface{}{
+			"containerizeGuests": s.containerizeGuests,
+			"containerizeHost":   s.containerizeHost,
+		}
+		if s.containerRunner != nil {
+			status := s.containerRunner.Status()
+			result["docker"] = status.Available
+			result["imageReady"] = status.ImageReady
+		} else {
+			result["docker"] = false
+			result["imageReady"] = false
+		}
+		return mcpToolJSON(result)
+
+	case "sandbox_config":
+		var args struct {
+			ContainerizeGuests *bool `json:"containerize_guests"`
+			ContainerizeHost   *bool `json:"containerize_host"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+
+		if s.containerRunner == nil {
+			cr := NewContainerRunner()
+			if !cr.IsAvailable() {
+				return mcpToolError("Docker not available — install Docker first")
+			}
+			s.containerRunner = cr
+		}
+		if args.ContainerizeGuests != nil {
+			s.containerizeGuests = *args.ContainerizeGuests
+			if s.taskMgr != nil {
+				s.taskMgr.ContainerizeGuests = *args.ContainerizeGuests
+				s.taskMgr.ContainerRunner = s.containerRunner
+			}
+		}
+		if args.ContainerizeHost != nil {
+			s.containerizeHost = *args.ContainerizeHost
+			if s.taskMgr != nil {
+				s.taskMgr.ContainerizeHost = *args.ContainerizeHost
+				s.taskMgr.ContainerRunner = s.containerRunner
+			}
+		}
+		return mcpToolResult(fmt.Sprintf("Sandbox config updated: guests=%v, host=%v", s.containerizeGuests, s.containerizeHost))
 
 	case "guest_usage":
 		var args struct {

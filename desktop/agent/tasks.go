@@ -531,6 +531,15 @@ type TaskManager struct {
 	WaitForSlot  bool // If true, wait for other Claude Code sessions to finish before starting
 	DummyMode    bool // If true, use fake responses instead of launching a real runner
 
+	// Container isolation (optional — set by httpserver when enabled)
+	ContainerRunner    *ContainerRunner
+	ContainerizeGuests bool
+	ContainerizeHost   bool
+	ContainerCPU       string
+	ContainerMemory    string
+	ContainerImage     string
+	ContainerMounts    []string // extra volume mounts from config
+
 	// Callbacks (set after construction)
 	OnTaskDone func(task *Task) // called when a task finishes (completed/failed/stopped)
 
@@ -1254,14 +1263,70 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, runner.Command, args...)
-
-	// Use per-task workDir if auto-detected from prompt, otherwise global workDir.
-	// Guest tasks are pinned to the global workDir (cannot override to escape project).
+	// Determine working directory
 	taskDir := tm.workDir
 	if task.WorkDir != "" && task.GuestUserID == "" {
 		taskDir = task.WorkDir
 	}
+
+	// ── Container execution (optional) ──────────────────────────────
+	// If containerization is enabled for this task type, run inside Docker.
+	useContainer := false
+	if tm.ContainerRunner != nil && tm.ContainerRunner.IsAvailable() && tm.ContainerRunner.IsImageReady() {
+		if task.GuestUserID != "" && tm.ContainerizeGuests {
+			useContainer = true
+		} else if task.GuestUserID == "" && tm.ContainerizeHost {
+			useContainer = true
+		}
+	}
+
+	if useContainer {
+		log.Printf("[task %s] Launching in container: %s (dir=%s)", task.ID, runner.Command, taskDir)
+		containerCmd := append([]string{runner.Command}, args...)
+		opts := ContainerTaskOpts{
+			TaskID:     task.ID,
+			ProjectDir: taskDir,
+			Command:    containerCmd,
+			Env:        CollectAPIKeys(),
+		}
+		if tm.ContainerCPU != "" {
+			opts.CPULimit = tm.ContainerCPU
+		}
+		if tm.ContainerMemory != "" {
+			opts.MemoryLimit = tm.ContainerMemory
+		}
+		if tm.ContainerImage != "" {
+			opts.CustomImage = tm.ContainerImage
+		}
+		opts.ExtraMounts = tm.ContainerMounts
+
+		cmd, stdout, stderr, err := tm.ContainerRunner.RunTask(ctx, opts)
+		if err != nil {
+			cancel()
+			return fmt.Errorf("container start: %w", err)
+		}
+
+		task.cmd = cmd
+		now := time.Now()
+		task.StartedAt = &now
+		task.Status = TaskStatusRunning
+		trackForkedPID(cmd.Process.Pid)
+
+		if runner.OutputMode == "raw" {
+			go tm.readRawOutput(task, stdout)
+		} else {
+			go tm.readStreamJSON(task, stdout)
+		}
+		go func() {
+			scanner := bufio.NewScanner(stderr)
+			for scanner.Scan() {
+				log.Printf("[task %s] [container stderr] %s", task.ID, scanner.Text())
+			}
+		}()
+	} else {
+	// ── Direct execution (default) ──────────────────────────────────
+
+	cmd := exec.CommandContext(ctx, runner.Command, args...)
 	cmd.Dir = taskDir
 
 	// Ensure common tool paths are in PATH for background processes.
@@ -1326,6 +1391,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 			log.Printf("[task %s stderr] %s", task.ID, scanner.Text())
 		}
 	}()
+	} // end else (direct execution)
 
 	// Watchdog: if no output after 30s, emit a warning to the mobile user.
 	go func() {
@@ -1346,9 +1412,9 @@ func (tm *TaskManager) startProcess(task *Task) error {
 
 	// Wait for process to exit; auto-restart on unexpected crash.
 	go func() {
-		err := cmd.Wait()
-		if cmd.Process != nil {
-			untrackForkedPID(cmd.Process.Pid)
+		err := task.cmd.Wait()
+		if task.cmd.Process != nil {
+			untrackForkedPID(task.cmd.Process.Pid)
 		}
 		tm.mu.Lock()
 		if task.Status == TaskStatusRunning {
