@@ -1490,6 +1490,10 @@ func runServe(args []string) {
 		httpServer.feedbackMgr = fbMgr
 		log.Printf("Feedback manager ready (%d existing reports)", len(fbMgr.ListFeedback()))
 	}
+	if cfgDir, err := ConfigDir(); err == nil {
+		httpServer.guestConfigMgr = NewGuestConfigManager(cfgDir)
+		log.Printf("Guest config manager ready")
+	}
 	if bbMgr, err := NewBlackBoxManager(); err != nil {
 		log.Printf("Warning: blackbox unavailable: %v", err)
 	} else {

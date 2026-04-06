@@ -553,7 +553,82 @@ hostUserId: Id<"users">    — machine owner
 guestUserId: Id<"users">   — guest with access
 grantedAt: number
 revokedAt?: number          — null = active, set = revoked
+dailyTokenLimit?: number    — max task-seconds per day (0 or absent = unlimited)
+allowedRunners?: string[]   — runner IDs guest can use (empty/absent = all)
+usageMode?: string          — "idle-only" (default), "always", "scheduled"
+schedule?: { startHour, endHour, timezone? }
 ```
+
+**guestUsage table:**
+```
+hostUserId: Id<"users">
+guestUserId: Id<"users">
+date: string               — "YYYY-MM-DD"
+secondsUsed: number
+```
+
+### Guest Config (Resource Limits & Access Control)
+
+Hosts can configure per-guest limits. Config is stored in Convex (synced via agent polling every 60s). Project access is P2P-only (stored locally on the agent).
+
+**Config fields (Convex — synced):**
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `dailyTokenLimit` | number | unlimited | Max task-seconds per day |
+| `allowedRunners` | string[] | all | Which AI runners guest can use |
+| `usageMode` | string | `always` | `always`, `idle-only`, `scheduled` |
+| `schedule` | object | none | `{ startHour, endHour, timezone? }` for scheduled mode |
+
+**Project access (P2P — local):**
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `allowedProjects` | string[] | all | Project paths guest can access |
+
+**Enforcement:** The `GuestConfigManager` caches configs and checks them in `allowGuest()` before every guest request. Usage is tracked locally (ring buffer) and flushed to Convex every 60 seconds.
+
+### Guest Config CLI
+```bash
+yaver guests config                           # List all configs
+yaver guests config foo@bar.com               # Show config for guest
+yaver guests config foo@bar.com limit=3600    # Set daily limit (1 hour)
+yaver guests config foo@bar.com mode=scheduled  # Scheduled access
+yaver guests config foo@bar.com runners=claude,aider  # Restrict runners
+yaver guests usage                            # Show today's usage
+yaver guests usage 2026-04-06                 # Show usage for date
+```
+
+### Guest Config API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/guests/config` | GET | List all guest configs (Convex + local project access) |
+| `/guests/config?email=x` | GET | Config for specific guest |
+| `/guests/config` | POST | Update guest config (Convex fields + project access) |
+| `/guests/usage` | GET | Daily usage stats (from Convex) |
+| `/guests/usage?date=YYYY-MM-DD` | GET | Usage for specific date |
+
+**Convex HTTP endpoints:**
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/guests/config` | GET | Get guest configs |
+| `/guests/config` | POST | Update guest config |
+| `/guests/usage` | GET | Get guest usage |
+| `/guests/usage` | POST | Record guest usage (agent reports) |
+
+**MCP tools:** `guest_config` (view/update), `guest_usage` (view stats)
+
+### Guest Config Key Files
+| File | Purpose |
+|------|---------|
+| `backend/convex/schema.ts` | `guestAccess` (config fields), `guestUsage` table |
+| `backend/convex/guests.ts` | `getGuestConfig`, `updateGuestConfig`, `recordGuestUsage`, `getGuestUsage` |
+| `backend/convex/http.ts` | HTTP: /guests/config (GET/POST), /guests/usage (GET/POST) |
+| `desktop/agent/guest_config.go` | `GuestConfigManager`: caching, CheckAccess, project access (P2P local) |
+| `desktop/agent/guest_config_http.go` | HTTP handlers: /guests/config, /guests/usage |
+| `desktop/agent/auth.go` | `FetchGuestConfigs`, `UpdateGuestConfig`, `RecordGuestUsage`, `FetchGuestUsage` |
+| `desktop/agent/guest_cmd.go` | CLI: `yaver guests config`, `yaver guests usage` |
+| `desktop/agent/mcp_tools.go` | MCP tools: `guest_config`, `guest_usage` |
+| `mobile/src/lib/guests.ts` | Mobile API: `fetchGuestConfigs`, `updateGuestConfig`, `fetchGuestUsage` |
 
 ## SDK Token Security
 

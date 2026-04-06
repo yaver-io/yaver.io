@@ -2130,4 +2130,106 @@ http.route({
   }),
 });
 
+/** GET /guests/config — Get guest config(s). Query param: ?email=foo@bar.com (optional). */
+http.route({
+  path: "/guests/config",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+
+    const url = new URL(request.url);
+    const email = url.searchParams.get("email") || undefined;
+
+    const configs = await ctx.runQuery(api.guests.getGuestConfig, { tokenHash, guestEmail: email });
+    return jsonResponse({ configs });
+  }),
+});
+
+/** POST /guests/config — Update guest config. Host only. */
+http.route({
+  path: "/guests/config",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+
+    const body = await request.json();
+    if (!body.email) return errorResponse("email is required");
+
+    try {
+      await ctx.runMutation(api.guests.updateGuestConfig, {
+        tokenHash,
+        guestEmail: body.email,
+        dailyTokenLimit: body.dailyTokenLimit,
+        allowedRunners: body.allowedRunners,
+        usageMode: body.usageMode,
+        schedule: body.schedule,
+      });
+      return jsonResponse({ ok: true });
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to update guest config", 400);
+    }
+  }),
+});
+
+/** POST /guests/usage — Record guest usage (agent reports). */
+http.route({
+  path: "/guests/usage",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+
+    const body = await request.json();
+    if (!body.guestUserId || !body.secondsUsed) {
+      return errorResponse("guestUserId and secondsUsed are required");
+    }
+
+    try {
+      await ctx.runMutation(api.guests.recordGuestUsage, {
+        tokenHash,
+        guestUserId: body.guestUserId,
+        secondsUsed: body.secondsUsed,
+        date: body.date || new Date().toISOString().slice(0, 10),
+      });
+      return jsonResponse({ ok: true });
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to record usage", 400);
+    }
+  }),
+});
+
+/** GET /guests/usage — Get guest usage. Query param: ?date=2026-04-06 (optional). */
+http.route({
+  path: "/guests/usage",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+
+    const url = new URL(request.url);
+    const date = url.searchParams.get("date") || undefined;
+
+    const usage = await ctx.runQuery(api.guests.getGuestUsage, { tokenHash, date });
+    return jsonResponse({ usage });
+  }),
+});
+
 export default http;

@@ -452,3 +452,229 @@ export const getGuestUserIds = query({
     return guestUserIds;
   },
 });
+
+// ─── Guest Config ──────────────────────────────────────────────────
+
+/**
+ * Get guest config for a specific guest (or all guests).
+ * Called by the host or the agent.
+ */
+export const getGuestConfig = query({
+  args: {
+    tokenHash: v.string(),
+    guestEmail: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) return [];
+
+    const hostUserId = session.user._id;
+
+    const accessRecords = await ctx.db
+      .query("guestAccess")
+      .withIndex("by_hostUserId", (q) => q.eq("hostUserId", hostUserId))
+      .filter((q) => q.eq(q.field("revokedAt"), undefined))
+      .collect();
+
+    const configs: Array<{
+      guestUserId: string;
+      guestEmail: string;
+      guestName: string;
+      dailyTokenLimit?: number;
+      allowedRunners?: string[];
+      usageMode?: string;
+      schedule?: { startHour: number; endHour: number; timezone?: string };
+    }> = [];
+
+    for (const access of accessRecords) {
+      const guest = await ctx.db.get(access.guestUserId);
+      if (!guest) continue;
+      if (args.guestEmail && guest.email.toLowerCase() !== args.guestEmail.toLowerCase()) continue;
+
+      configs.push({
+        guestUserId: guest.userId,
+        guestEmail: guest.email,
+        guestName: guest.fullName,
+        dailyTokenLimit: access.dailyTokenLimit,
+        allowedRunners: access.allowedRunners,
+        usageMode: access.usageMode,
+        schedule: access.schedule,
+      });
+    }
+
+    return configs;
+  },
+});
+
+/**
+ * Update guest config. Called by the host.
+ * Only updates the fields that are provided.
+ */
+export const updateGuestConfig = mutation({
+  args: {
+    tokenHash: v.string(),
+    guestEmail: v.string(),
+    dailyTokenLimit: v.optional(v.number()),
+    allowedRunners: v.optional(v.array(v.string())),
+    usageMode: v.optional(v.string()),
+    schedule: v.optional(v.object({
+      startHour: v.number(),
+      endHour: v.number(),
+      timezone: v.optional(v.string()),
+    })),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) throw new Error("Unauthorized");
+
+    const hostUserId = session.user._id;
+    const guestEmail = args.guestEmail.toLowerCase();
+
+    // Find the guest user
+    const guestUser = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", guestEmail))
+      .first();
+
+    if (!guestUser) {
+      throw new Error("Guest not found");
+    }
+
+    // Find the active access record
+    const access = await ctx.db
+      .query("guestAccess")
+      .withIndex("by_host_guest", (q) =>
+        q.eq("hostUserId", hostUserId).eq("guestUserId", guestUser._id)
+      )
+      .filter((q) => q.eq(q.field("revokedAt"), undefined))
+      .first();
+
+    if (!access) {
+      throw new Error("No active guest access for this email");
+    }
+
+    // Validate usageMode
+    if (args.usageMode !== undefined) {
+      const validModes = ["idle-only", "always", "scheduled"];
+      if (!validModes.includes(args.usageMode)) {
+        throw new Error(`Invalid usageMode: ${args.usageMode}. Must be one of: ${validModes.join(", ")}`);
+      }
+    }
+
+    // Validate schedule hours
+    if (args.schedule) {
+      if (args.schedule.startHour < 0 || args.schedule.startHour > 23 ||
+          args.schedule.endHour < 0 || args.schedule.endHour > 23) {
+        throw new Error("Schedule hours must be between 0 and 23");
+      }
+    }
+
+    // Build patch object — only include provided fields
+    const patch: Record<string, unknown> = {};
+    if (args.dailyTokenLimit !== undefined) patch.dailyTokenLimit = args.dailyTokenLimit;
+    if (args.allowedRunners !== undefined) patch.allowedRunners = args.allowedRunners;
+    if (args.usageMode !== undefined) patch.usageMode = args.usageMode;
+    if (args.schedule !== undefined) patch.schedule = args.schedule;
+
+    await ctx.db.patch(access._id, patch);
+
+    return { ok: true };
+  },
+});
+
+/**
+ * Record guest usage (task-seconds consumed).
+ * Called by the agent after a task completes.
+ */
+export const recordGuestUsage = mutation({
+  args: {
+    tokenHash: v.string(),
+    guestUserId: v.string(),   // userId string (not doc ID)
+    secondsUsed: v.number(),
+    date: v.string(),          // "YYYY-MM-DD"
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) throw new Error("Unauthorized");
+
+    const hostUserId = session.user._id;
+
+    // Find guest user by userId string
+    const guestUser = await ctx.db
+      .query("users")
+      .filter((q) => q.eq(q.field("userId"), args.guestUserId))
+      .first();
+
+    if (!guestUser) throw new Error("Guest user not found");
+
+    // Upsert daily usage
+    const existing = await ctx.db
+      .query("guestUsage")
+      .withIndex("by_host_guest_date", (q) =>
+        q.eq("hostUserId", hostUserId)
+          .eq("guestUserId", guestUser._id)
+          .eq("date", args.date)
+      )
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        secondsUsed: existing.secondsUsed + args.secondsUsed,
+      });
+    } else {
+      await ctx.db.insert("guestUsage", {
+        hostUserId,
+        guestUserId: guestUser._id,
+        date: args.date,
+        secondsUsed: args.secondsUsed,
+      });
+    }
+
+    return { ok: true };
+  },
+});
+
+/**
+ * Get guest usage for a date range.
+ * Called by the host to see how much each guest used.
+ */
+export const getGuestUsage = query({
+  args: {
+    tokenHash: v.string(),
+    date: v.optional(v.string()),  // specific date, defaults to today
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) return [];
+
+    const hostUserId = session.user._id;
+    const date = args.date || new Date().toISOString().slice(0, 10);
+
+    const usageRecords = await ctx.db
+      .query("guestUsage")
+      .withIndex("by_hostUserId_date", (q) =>
+        q.eq("hostUserId", hostUserId).eq("date", date)
+      )
+      .collect();
+
+    const result: Array<{
+      guestEmail: string;
+      guestName: string;
+      date: string;
+      secondsUsed: number;
+    }> = [];
+
+    for (const usage of usageRecords) {
+      const guest = await ctx.db.get(usage.guestUserId);
+      if (!guest) continue;
+      result.push({
+        guestEmail: guest.email,
+        guestName: guest.fullName,
+        date: usage.date,
+        secondsUsed: usage.secondsUsed,
+      });
+    }
+
+    return result;
+  },
+});
