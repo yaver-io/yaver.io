@@ -148,6 +148,34 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				"properties": map[string]interface{}{},
 			},
 		},
+		// --- iOS Install Method ---
+		{
+			"name":        "get_ios_install_method",
+			"description": "Get the current iOS install method. Returns 'auto' (detect platform), 'native' (xcodebuild+xcrun), or 'bundle' (Hermes push to super-host). Auto resolves to native on macOS with Xcode, bundle otherwise.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "set_ios_install_method",
+			"description": "Set the iOS install method. 'auto' = detect platform (native on macOS+Xcode, bundle otherwise), 'native' = always xcodebuild+xcrun devicectl, 'bundle' = always Hermes bytecode push to super-host container.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"method"},
+				"properties": map[string]interface{}{
+					"method": map[string]interface{}{
+						"type":        "string",
+						"description": "Install method: auto, native, or bundle",
+						"enum":        []string{"auto", "native", "bundle"},
+					},
+					"persist": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Save to config for future sessions (default: true)",
+					},
+				},
+			},
+		},
 		// --- Relay Management ---
 		{
 			"name":        "get_relay_config",

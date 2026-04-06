@@ -104,7 +104,8 @@ export const heartbeat = mutation({
 });
 
 /**
- * List all devices belonging to the authenticated user.
+ * List all devices belonging to the authenticated user,
+ * plus devices from hosts who granted them guest access.
  */
 export const listMyDevices = query({
   args: {
@@ -114,12 +115,13 @@ export const listMyDevices = query({
     const session = await validateSessionInternal(ctx, args.tokenHash);
     if (!session) throw new Error("Unauthorized");
 
-    const devices = await ctx.db
+    // Own devices
+    const ownDevices = await ctx.db
       .query("devices")
       .withIndex("by_userId", (q) => q.eq("userId", session.user._id))
       .collect();
 
-    return devices.map((d) => ({
+    const result = ownDevices.map((d) => ({
       deviceId: d.deviceId,
       name: d.name,
       platform: d.platform,
@@ -130,7 +132,47 @@ export const listMyDevices = query({
       runnerDown: d.runnerDown ?? false,
       runners: d.runners ?? [],
       lastHeartbeat: d.lastHeartbeat,
+      isGuest: false as boolean,
+      hostName: undefined as string | undefined,
+      hostEmail: undefined as string | undefined,
     }));
+
+    // Devices from hosts who granted guest access
+    const guestAccessRecords = await ctx.db
+      .query("guestAccess")
+      .withIndex("by_guestUserId", (q) => q.eq("guestUserId", session.user._id))
+      .filter((q) => q.eq(q.field("revokedAt"), undefined))
+      .collect();
+
+    for (const access of guestAccessRecords) {
+      const host = await ctx.db.get(access.hostUserId);
+      if (!host) continue;
+
+      const hostDevices = await ctx.db
+        .query("devices")
+        .withIndex("by_userId", (q) => q.eq("userId", access.hostUserId))
+        .collect();
+
+      for (const d of hostDevices) {
+        result.push({
+          deviceId: d.deviceId,
+          name: d.name,
+          platform: d.platform,
+          publicKey: d.publicKey,
+          quicHost: d.quicHost,
+          quicPort: d.quicPort,
+          isOnline: d.isOnline,
+          runnerDown: d.runnerDown ?? false,
+          runners: d.runners ?? [],
+          lastHeartbeat: d.lastHeartbeat,
+          isGuest: true,
+          hostName: host.fullName,
+          hostEmail: host.email,
+        });
+      }
+    }
+
+    return result;
   },
 });
 

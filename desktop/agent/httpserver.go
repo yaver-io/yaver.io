@@ -12,6 +12,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +46,8 @@ type HTTPServer struct {
 	tlsServer    *http.Server
 	onShutdown   func() // called when mobile requests agent shutdown
 
+	iosInstallMethod string // "auto", "native", "bundle" — resolved at startup
+
 	// Test app sessions
 	testAppSession       sync.Map // sessionID -> *TestAppSession
 	activeTestAppSession sync.Map // "current" -> *TestAppSession
@@ -57,6 +60,10 @@ type HTTPServer struct {
 
 	// Track seen IPs per token prefix for new-device notifications
 	seenIPs sync.Map // "tokenPrefix_IP" -> true
+
+	// Guest access: cached list of approved guest userIds (refreshed every 60s)
+	guestUserIDs   []string
+	guestUserIDsMu sync.RWMutex
 
 	// TLS config for HTTPS on LAN
 	tlsPort        int
@@ -231,6 +238,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/users/", s.auth(s.handleMultiUserRemove))
 	mux.HandleFunc("/sessions", s.auth(s.handleMultiUserSessions))
 
+	// Guest access management (host invites guests to use their agent)
+	mux.HandleFunc("/guests", s.auth(s.handleGuestList))
+	mux.HandleFunc("/guests/invite", s.auth(s.handleGuestInvite))
+	mux.HandleFunc("/guests/revoke", s.auth(s.handleGuestRevoke))
+
 	// Voice (real-time speech-to-speech & transcription) — SDK-accessible
 	mux.HandleFunc("/voice/status", s.authSDK(s.handleVoiceStatus))
 	mux.HandleFunc("/voice/transcribe", s.authSDK(s.handleVoiceTranscribe))
@@ -294,6 +306,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 			}
 		}()
 	}
+
+	// Start guest list refresh goroutine (polls Convex every 60s)
+	go s.refreshGuestList(ctx)
 
 	log.Printf("HTTP server listening on 0.0.0.0:%d", s.port)
 	if len(s.allowedCIDRs) > 0 {
@@ -441,6 +456,88 @@ func (s *HTTPServer) authOrLocalhost(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// guestAllowedPrefixes defines which URL paths guests can access.
+// Guests get task execution and feedback but NOT shell access, vault, sessions, or terminals.
+var guestAllowedPrefixes = []string{
+	"/tasks",
+	"/feedback",
+	"/dev/",
+	"/blackbox/",
+	"/voice/",
+	"/info",
+	"/agent/status",
+	"/agent/runners",
+	"/projects",
+	"/todolist",
+	"/builds",
+	"/guests",
+	"/health",
+	"/vibing",
+}
+
+func isGuestAllowedPath(path string) bool {
+	for _, prefix := range guestAllowedPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *HTTPServer) isApprovedGuest(userID string) bool {
+	s.guestUserIDsMu.RLock()
+	defer s.guestUserIDsMu.RUnlock()
+	for _, gid := range s.guestUserIDs {
+		if gid == userID {
+			return true
+		}
+	}
+	return false
+}
+
+// refreshGuestList periodically fetches the approved guest list from Convex.
+func (s *HTTPServer) refreshGuestList(ctx context.Context) {
+	if ids, err := FetchGuestUserIds(s.convexURL, s.token); err == nil {
+		s.guestUserIDsMu.Lock()
+		s.guestUserIDs = ids
+		s.guestUserIDsMu.Unlock()
+		if len(ids) > 0 {
+			log.Printf("[GUESTS] Loaded %d approved guest(s)", len(ids))
+		}
+	}
+
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if ids, err := FetchGuestUserIds(s.convexURL, s.token); err == nil {
+				s.guestUserIDsMu.Lock()
+				s.guestUserIDs = ids
+				s.guestUserIDsMu.Unlock()
+			}
+		}
+	}
+}
+
+// allowGuest checks if a non-owner userId is an approved guest and the path is allowed.
+// Returns true if the request was handled (either allowed or rejected), false if not a guest.
+func (s *HTTPServer) allowGuest(w http.ResponseWriter, r *http.Request, uid string, next http.HandlerFunc) bool {
+	if !s.isApprovedGuest(uid) {
+		return false
+	}
+	if !isGuestAllowedPath(r.URL.Path) {
+		jsonError(w, http.StatusForbidden, "guests cannot access this endpoint")
+		return true
+	}
+	r.Header.Set("X-Yaver-Guest", "true")
+	r.Header.Set("X-Yaver-GuestUserID", uid)
+	next(w, r)
+	return true
+}
+
 func (s *HTTPServer) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
@@ -461,12 +558,14 @@ func (s *HTTPServer) auth(next http.HandlerFunc) http.HandlerFunc {
 		if cached, ok := s.tokenCache.Load(token); ok {
 			info := cached.(*cachedTokenInfo)
 			if info.isSdk {
-				// SDK tokens not allowed for full-access endpoints
 				jsonError(w, http.StatusForbidden, "SDK tokens cannot access this endpoint")
 				return
 			}
 			if info.userID == s.ownerUserID {
 				next(w, r)
+				return
+			}
+			if s.allowGuest(w, r, info.userID, next) {
 				return
 			}
 			jsonError(w, http.StatusForbidden, "token belongs to a different user")
@@ -484,6 +583,9 @@ func (s *HTTPServer) auth(next http.HandlerFunc) http.HandlerFunc {
 		s.tokenCache.Store(token, &cachedTokenInfo{userID: uid, isSdk: false})
 
 		if uid != s.ownerUserID {
+			if s.allowGuest(w, r, uid, next) {
+				return
+			}
 			jsonError(w, http.StatusForbidden, "token belongs to a different user")
 			return
 		}
@@ -2590,6 +2692,35 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 		s.taskMgr.mu.Unlock()
 		log.Printf("[MCP] Work dir changed to %s", args.Path)
 		return mcpToolResult(fmt.Sprintf("Working directory changed to: %s", args.Path))
+
+	case "get_ios_install_method":
+		resolved := resolveIOSInstallMethod(s.iosInstallMethod)
+		return mcpToolResult(fmt.Sprintf("iOS install method: %s\nResolved: %s\nPlatform: %s\nXcode available: %v",
+			s.iosInstallMethod, resolved, runtime.GOOS, canDoNativeInstall()))
+
+	case "set_ios_install_method":
+		var args struct {
+			Method  string `json:"method"`
+			Persist *bool  `json:"persist"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.Method != IOSInstallAuto && args.Method != IOSInstallNative && args.Method != IOSInstallBundle {
+			return mcpToolError("method must be auto, native, or bundle")
+		}
+		s.iosInstallMethod = args.Method
+		resolved := resolveIOSInstallMethod(args.Method)
+		log.Printf("[MCP] iOS install method set to %s (resolved: %s)", args.Method, resolved)
+
+		// Persist to config by default
+		shouldPersist := args.Persist == nil || *args.Persist
+		if shouldPersist {
+			cfg, err := LoadConfig()
+			if err == nil {
+				cfg.IOSInstallMethod = args.Method
+				SaveConfig(cfg)
+			}
+		}
+		return mcpToolResult(fmt.Sprintf("iOS install method set to: %s (resolved: %s)", args.Method, resolved))
 
 	case "list_projects":
 		fp, err := projectsFilePath()

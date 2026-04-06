@@ -1965,4 +1965,138 @@ http.route({
   }),
 });
 
+// ── Guest Access ────────────────────────────────────────────────────
+
+/** POST /guests/invite — Invite a guest by email. Host only. */
+http.route({
+  path: "/guests/invite",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+
+    const body = await request.json();
+    if (!body.email) return errorResponse("email is required");
+
+    try {
+      await ctx.runMutation(api.guests.invite, {
+        tokenHash,
+        guestEmail: body.email,
+      });
+      return jsonResponse({ ok: true });
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to invite guest", 400);
+    }
+  }),
+});
+
+/** POST /guests/accept — Accept a pending invitation. Guest only. */
+http.route({
+  path: "/guests/accept",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+
+    const body = await request.json();
+    if (!body.hostUserId) return errorResponse("hostUserId is required");
+
+    try {
+      await ctx.runMutation(api.guests.accept, {
+        tokenHash,
+        hostUserId: body.hostUserId,
+      });
+      return jsonResponse({ ok: true });
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to accept invitation", 400);
+    }
+  }),
+});
+
+/** POST /guests/revoke — Revoke guest access. Host only. */
+http.route({
+  path: "/guests/revoke",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+
+    const body = await request.json();
+    if (!body.email) return errorResponse("email is required");
+
+    try {
+      await ctx.runMutation(api.guests.revoke, {
+        tokenHash,
+        guestEmail: body.email,
+      });
+      return jsonResponse({ ok: true });
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to revoke guest", 400);
+    }
+  }),
+});
+
+/** GET /guests/list — List all guests (host perspective). */
+http.route({
+  path: "/guests/list",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+
+    const guests = await ctx.runQuery(api.guests.listGuests, { tokenHash });
+    return jsonResponse({ guests });
+  }),
+});
+
+/** GET /guests/hosts — List hosts who granted access (guest perspective). */
+http.route({
+  path: "/guests/hosts",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+
+    const hosts = await ctx.runQuery(api.guests.listHosts, { tokenHash });
+    return jsonResponse(hosts);
+  }),
+});
+
+/** GET /guests/allowed — Get approved guest userIds (agent calls this). */
+http.route({
+  path: "/guests/allowed",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+
+    const guestUserIds = await ctx.runQuery(api.guests.getGuestUserIds, { tokenHash });
+    return jsonResponse({ guestUserIds });
+  }),
+});
+
 export default http;

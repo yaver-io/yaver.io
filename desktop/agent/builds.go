@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -42,6 +44,7 @@ const (
 	PlatformExpoAndroid BuildPlatform = "expo-android"
 	PlatformExpoIOS     BuildPlatform = "expo-ios"
 	PlatformXcodeDeviceInstall BuildPlatform = "xcode-device-install"
+	PlatformHermesBundlePush   BuildPlatform = "hermes-bundle-push"
 	PlatformCustom             BuildPlatform = "custom"
 )
 
@@ -166,6 +169,32 @@ func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []str
 		return fmt.Sprintf("xcodebuild build %s -destination 'generic/platform=iOS' -derivedDataPath build/DerivedData -configuration Release -allowProvisioningUpdates", wsFlag), []string{
 			"build/DerivedData/Build/Products/Release-iphoneos/*.app",
 		}
+	case PlatformHermesBundlePush:
+		// JS bundle for Hermes push — detect Expo vs bare RN, bundle to .yaver-build/
+		// hermesc compilation + serving happens as a post-build step in monitorBuild.
+		buildDir := filepath.Join(workDir, ".yaver-build")
+		bundlePath := filepath.Join(buildDir, "main.jsbundle")
+		assetsDir := filepath.Join(buildDir, "assets")
+		// Detect project type from package.json
+		pkgData, _ := os.ReadFile(filepath.Join(workDir, "package.json"))
+		isExpo := strings.Contains(string(pkgData), `"expo"`)
+		var cmd string
+		if isExpo {
+			cmd = fmt.Sprintf("mkdir -p %s && npx expo export:embed --platform ios --bundle-output %s --assets-dest %s --dev false --minify true --reset-cache",
+				buildDir, bundlePath, assetsDir)
+		} else {
+			entryFile := "index.js"
+			var pkg struct{ Main string `json:"main"` }
+			json.Unmarshal(pkgData, &pkg)
+			if pkg.Main != "" {
+				entryFile = pkg.Main
+			}
+			cmd = fmt.Sprintf("mkdir -p %s && npx react-native bundle --platform ios --entry-file %s --bundle-output %s --assets-dest %s --dev false --minify true --reset-cache",
+				buildDir, entryFile, bundlePath, assetsDir)
+		}
+		return cmd + extra, []string{
+			".yaver-build/main.jsbundle",
+		}
 	case PlatformRNAndroid:
 		return "cd android && ./gradlew assembleRelease" + extra, []string{
 			"android/app/build/outputs/apk/release/*.apk",
@@ -253,25 +282,43 @@ func (bm *BuildManager) monitorBuild(build *Build, session *ExecSession, pattern
 			}
 		}
 
-		// Direct device install (xcode-device-install platform)
+		// Post-build: native xcode install or hermes bundle push
 		if build.InstallOnDevice && build.ArtifactPath != "" {
-			build.InstallStatus = "installing"
-			log.Printf("[build] %s installing on device...", build.ID)
-			bm.mu.Unlock() // unlock during install (can take time)
+			if build.Platform == PlatformHermesBundlePush {
+				// Hermes bytecode compilation + serve via /dev/native-bundle
+				build.InstallStatus = "compiling_hermes"
+				log.Printf("[build] %s compiling Hermes bytecode...", build.ID)
+				bm.mu.Unlock()
 
-			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-			udid, installErr := installAppOnDevice(ctx, build.ArtifactPath)
-			cancel()
+				hermesErr := compileHermesBundle(build.ArtifactPath)
 
-			bm.mu.Lock() // re-lock
-			build.DeviceUDID = udid
-			if installErr != nil {
-				build.InstallStatus = "install_failed"
-				build.InstallError = installErr.Error()
-				log.Printf("[build] %s install failed: %v", build.ID, installErr)
+				bm.mu.Lock()
+				if hermesErr != nil {
+					// Not fatal — plain JS bundle still works, just slower
+					log.Printf("[build] %s hermesc failed (using plain JS): %v", build.ID, hermesErr)
+				}
+				build.InstallStatus = "bundle_ready"
+				log.Printf("[build] %s Hermes bundle ready at %s", build.ID, build.ArtifactPath)
 			} else {
-				build.InstallStatus = "installed"
-				log.Printf("[build] %s installed on device %s", build.ID, udid[:8])
+				// Native xcode device install
+				build.InstallStatus = "installing"
+				log.Printf("[build] %s installing on device...", build.ID)
+				bm.mu.Unlock()
+
+				ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+				udid, installErr := installAppOnDevice(ctx, build.ArtifactPath)
+				cancel()
+
+				bm.mu.Lock()
+				build.DeviceUDID = udid
+				if installErr != nil {
+					build.InstallStatus = "install_failed"
+					build.InstallError = installErr.Error()
+					log.Printf("[build] %s install failed: %v", build.ID, installErr)
+				} else {
+					build.InstallStatus = "installed"
+					log.Printf("[build] %s installed on device %s", build.ID, udid[:8])
+				}
 			}
 		}
 	} else {
@@ -472,4 +519,52 @@ func (bm *BuildManager) WatchDir(dir string, patterns []string, platform BuildPl
 
 	cancel := func() { close(done) }
 	return ch, cancel
+}
+
+// compileHermesBundle compiles a JS bundle to Hermes bytecode in-place.
+// Uses the embedded hermesc (matching Yaver app's exact Hermes version).
+// Falls back to project-local hermesc if embedded is unavailable.
+// Returns nil if hermesc is not available (plain JS bundle still works).
+func compileHermesBundle(bundlePath string) error {
+	hermescPath, err := GetEmbeddedHermesc()
+	if err != nil {
+		// Try project-local hermesc
+		hermescPath = findHermescInProject(filepath.Dir(filepath.Dir(bundlePath)))
+		if hermescPath == "" {
+			return fmt.Errorf("hermesc not available: %w", err)
+		}
+	}
+
+	tmpPath := bundlePath + ".tmp"
+	if err := os.Rename(bundlePath, tmpPath); err != nil {
+		return fmt.Errorf("rename for hermesc: %w", err)
+	}
+
+	cmd := exec.Command(hermescPath, "-emit-binary", "-out", bundlePath, "-O", tmpPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		// Restore original JS bundle
+		os.Rename(tmpPath, bundlePath)
+		return fmt.Errorf("hermesc failed: %v\n%s", err, string(out))
+	}
+
+	os.Remove(tmpPath)
+	log.Printf("[build] hermesc compile complete: %s", bundlePath)
+	return nil
+}
+
+// findHermescInProject looks for hermesc in the project's react-native installation.
+func findHermescInProject(workDir string) string {
+	candidates := []string{
+		filepath.Join(workDir, "node_modules", "react-native", "sdks", "hermesc", "osx-bin", "hermesc"),
+		filepath.Join(workDir, "node_modules", "react-native", "sdks", "hermesc", "linux64-bin", "hermesc"),
+		filepath.Join(workDir, "node_modules", "hermes-engine", "osx-bin", "hermesc"),
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			os.Chmod(c, 0o755)
+			return c
+		}
+	}
+	return ""
 }

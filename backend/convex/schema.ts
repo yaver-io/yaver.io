@@ -313,6 +313,31 @@ export default defineSchema({
   }).index("by_user", ["userId"])
     .index("by_team", ["teamId"]),
 
+  // Guest access — let other users connect to your agent (peer-to-peer sharing)
+  guestInvitations: defineTable({
+    hostUserId: v.id("users"),       // who is sharing their machine
+    guestEmail: v.string(),          // invited user's email
+    status: v.union(v.literal("pending"), v.literal("accepted"), v.literal("revoked")),
+    guestUserId: v.optional(v.id("users")),  // set when accepted
+    createdAt: v.number(),
+    expiresAt: v.number(),           // pending invitations expire after 2 days
+    acceptedAt: v.optional(v.number()),
+    revokedAt: v.optional(v.number()),
+  })
+    .index("by_hostUserId", ["hostUserId"])
+    .index("by_guestEmail", ["guestEmail"])
+    .index("by_host_guest", ["hostUserId", "guestEmail"]),
+
+  guestAccess: defineTable({
+    hostUserId: v.id("users"),       // machine owner
+    guestUserId: v.id("users"),      // guest who has access
+    grantedAt: v.number(),
+    revokedAt: v.optional(v.number()),  // null = active, set = revoked
+  })
+    .index("by_hostUserId", ["hostUserId"])
+    .index("by_guestUserId", ["guestUserId"])
+    .index("by_host_guest", ["hostUserId", "guestUserId"]),
+
   // SDK tokens — long-lived tokens for Feedback SDK (independent from CLI session tokens)
   sdkTokens: defineTable({
     tokenHash: v.string(),        // SHA-256 of the raw token

@@ -34,6 +34,7 @@ type Config struct {
 	AllowedIPs    []string            `json:"allowed_ips,omitempty"`     // IP allowlist CIDRs
 	TLSFingerprint string            `json:"tls_fingerprint,omitempty"` // SHA256 of TLS cert
 	TLSPort       int                 `json:"tls_port,omitempty"`       // HTTPS port (default 18443)
+	IOSInstallMethod string           `json:"ios_install_method,omitempty"` // "auto" (default), "native", "bundle"
 }
 
 // ExecConfig controls remote command execution settings.
