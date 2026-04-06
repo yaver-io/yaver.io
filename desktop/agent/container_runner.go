@@ -142,6 +142,13 @@ func (cr *ContainerRunner) RunTask(ctx context.Context, opts ContainerTaskOpts) 
 		args = append(args, "--memory", opts.MemoryLimit)
 	}
 
+	// Read-only root filesystem — only /workspace and /tmp are writable
+	if opts.ReadOnly {
+		args = append(args, "--read-only")
+		args = append(args, "--tmpfs", "/tmp:rw,noexec,nosuid,size=512m")
+		args = append(args, "--tmpfs", "/root:rw,noexec,nosuid,size=256m")
+	}
+
 	// Mount project directory
 	args = append(args, "-v", fmt.Sprintf("%s:/workspace", opts.ProjectDir))
 	args = append(args, "-w", "/workspace")
@@ -156,10 +163,12 @@ func (cr *ContainerRunner) RunTask(ctx context.Context, opts ContainerTaskOpts) 
 		args = append(args, "-e", fmt.Sprintf("%s=%s", k, v))
 	}
 
-	// Network mode
-	if opts.NetworkMode != "" {
-		args = append(args, "--network", opts.NetworkMode)
+	// Network mode — default to "host" so AI agents can reach their APIs
+	networkMode := opts.NetworkMode
+	if networkMode == "" {
+		networkMode = "host"
 	}
+	args = append(args, "--network", networkMode)
 
 	// Extra volume mounts (e.g. project-specific tools)
 	for _, mount := range opts.ExtraMounts {
@@ -208,7 +217,8 @@ type ContainerTaskOpts struct {
 	CustomImage string            // override sandbox image (e.g. project-specific)
 	CPULimit    string            // e.g. "2.0" for 2 cores
 	MemoryLimit string            // e.g. "4g" for 4GB
-	NetworkMode string            // e.g. "host" or "bridge"
+	NetworkMode string            // "host" (default), "bridge", or "none"
+	ReadOnly    bool              // read-only root filesystem (/workspace and /tmp writable)
 	ExtraMounts []string          // additional -v mounts
 }
 
@@ -278,6 +288,47 @@ func (cr *ContainerRunner) Status() ContainerStatus {
 		DockerPath: cr.dockerPath,
 		ImageName:  sandboxImage,
 	}
+}
+
+// StopAllContainers stops all running yaver-task-* containers. Called on agent shutdown.
+func (cr *ContainerRunner) StopAllContainers() {
+	if cr.dockerPath == "" {
+		return
+	}
+	// List running containers with our naming prefix
+	out, err := exec.Command(cr.dockerPath, "ps", "-q", "--filter", "name=yaver-task-").Output()
+	if err != nil || len(out) == 0 {
+		return
+	}
+	ids := strings.Fields(strings.TrimSpace(string(out)))
+	if len(ids) == 0 {
+		return
+	}
+	log.Printf("[SANDBOX] Stopping %d running task containers...", len(ids))
+	args := append([]string{"stop", "-t", "5"}, ids...)
+	cmd := exec.Command(cr.dockerPath, args...)
+	cmd.Run() // best effort
+}
+
+// AutoBuild builds the sandbox image if not already built. Returns true if image is ready.
+// Blocks until build completes (or fails). Use for first-use auto-build.
+func (cr *ContainerRunner) AutoBuild(ctx context.Context) bool {
+	if cr.IsImageReady() {
+		return true
+	}
+	log.Printf("[SANDBOX] Image not found — auto-building (this takes 2-3 minutes the first time)...")
+	if err := cr.BuildImage(ctx); err != nil {
+		log.Printf("[SANDBOX] Auto-build failed: %v — falling back to direct execution", err)
+		return false
+	}
+	return true
+}
+
+// IsGPUAvailable checks if NVIDIA GPU is available for container passthrough (Linux only).
+func (cr *ContainerRunner) IsGPUAvailable() bool {
+	cmd := exec.Command("nvidia-smi", "--query-gpu=name", "--format=csv,noheader")
+	out, err := cmd.Output()
+	return err == nil && len(strings.TrimSpace(string(out))) > 0
 }
 
 // StreamOutput reads container stdout line by line and sends to a channel.

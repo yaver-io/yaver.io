@@ -42,6 +42,8 @@ type Config struct {
 	ContainerImage     string            `json:"container_image,omitempty"`     // custom image (default: yaver-sandbox)
 	ContainerCPU       string            `json:"container_cpu,omitempty"`       // CPU limit e.g. "2.0"
 	ContainerMemory    string            `json:"container_memory,omitempty"`    // Memory limit e.g. "4g"
+	ContainerNetwork   string            `json:"container_network,omitempty"`   // Network mode: "host" (default), "bridge", "none"
+	ContainerReadOnly  bool              `json:"container_read_only,omitempty"` // Read-only root filesystem (writes only to /workspace, /tmp)
 	ContainerMounts    []string          `json:"container_mounts,omitempty"`    // Extra volume mounts e.g. ["/opt/android-sdk:/opt/android-sdk:ro"]
 }
 

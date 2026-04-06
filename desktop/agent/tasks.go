@@ -538,6 +538,8 @@ type TaskManager struct {
 	ContainerCPU       string
 	ContainerMemory    string
 	ContainerImage     string
+	ContainerNetwork   string   // "host" (default), "bridge", "none"
+	ContainerReadOnly  bool     // read-only root filesystem
 	ContainerMounts    []string // extra volume mounts from config
 
 	// Callbacks (set after construction)
@@ -1272,11 +1274,19 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	// ── Container execution (optional) ──────────────────────────────
 	// If containerization is enabled for this task type, run inside Docker.
 	useContainer := false
-	if tm.ContainerRunner != nil && tm.ContainerRunner.IsAvailable() && tm.ContainerRunner.IsImageReady() {
+	if tm.ContainerRunner != nil && tm.ContainerRunner.IsAvailable() {
 		if task.GuestUserID != "" && tm.ContainerizeGuests {
 			useContainer = true
 		} else if task.GuestUserID == "" && tm.ContainerizeHost {
 			useContainer = true
+		}
+		// Auto-build image on first use if not ready
+		if useContainer && !tm.ContainerRunner.IsImageReady() {
+			buildCtx, buildCancel := context.WithTimeout(ctx, 15*time.Minute)
+			if !tm.ContainerRunner.AutoBuild(buildCtx) {
+				useContainer = false // fall back to direct execution
+			}
+			buildCancel()
 		}
 	}
 
@@ -1284,10 +1294,12 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		log.Printf("[task %s] Launching in container: %s (dir=%s)", task.ID, runner.Command, taskDir)
 		containerCmd := append([]string{runner.Command}, args...)
 		opts := ContainerTaskOpts{
-			TaskID:     task.ID,
-			ProjectDir: taskDir,
-			Command:    containerCmd,
-			Env:        CollectAPIKeys(),
+			TaskID:      task.ID,
+			ProjectDir:  taskDir,
+			Command:     containerCmd,
+			Env:         CollectAPIKeys(),
+			NetworkMode: tm.ContainerNetwork,
+			ReadOnly:    tm.ContainerReadOnly,
 		}
 		if tm.ContainerCPU != "" {
 			opts.CPULimit = tm.ContainerCPU
@@ -1295,7 +1307,10 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		if tm.ContainerMemory != "" {
 			opts.MemoryLimit = tm.ContainerMemory
 		}
-		if tm.ContainerImage != "" {
+		// Check for project-specific Dockerfile.yaver first, then config override
+		if projectImage := tm.ContainerRunner.DetectProjectImage(ctx, taskDir); projectImage != "" {
+			opts.CustomImage = projectImage
+		} else if tm.ContainerImage != "" {
 			opts.CustomImage = tm.ContainerImage
 		}
 		opts.ExtraMounts = tm.ContainerMounts

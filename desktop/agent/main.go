@@ -931,6 +931,8 @@ func runServe(args []string) {
 	iosInstall := fs.String("ios-install", "", "iOS install method: auto (default), native (xcodebuild+xcrun), bundle (Hermes push)")
 	containerizeGuests := fs.Bool("containerize-guests", false, "Run guest tasks inside Docker containers (requires yaver-sandbox image)")
 	containerizeHost := fs.Bool("containerize-host", false, "Run host tasks inside Docker containers (requires yaver-sandbox image)")
+	containerNetwork := fs.String("container-network", "", "Container network mode: host (default), bridge, none")
+	containerReadOnly := fs.Bool("container-read-only", false, "Read-only container root filesystem (only /workspace and /tmp writable)")
 	fs.Parse(args)
 
 	// Install systemd service and exit
@@ -1024,6 +1026,18 @@ func runServe(args []string) {
 		}
 		if *iosInstall != "" {
 			childArgs = append(childArgs, fmt.Sprintf("--ios-install=%s", *iosInstall))
+		}
+		if *containerizeGuests {
+			childArgs = append(childArgs, "--containerize-guests")
+		}
+		if *containerizeHost {
+			childArgs = append(childArgs, "--containerize-host")
+		}
+		if *containerNetwork != "" {
+			childArgs = append(childArgs, fmt.Sprintf("--container-network=%s", *containerNetwork))
+		}
+		if *containerReadOnly {
+			childArgs = append(childArgs, "--container-read-only")
 		}
 
 		cmd := osexec.Command(execPath, childArgs...)
@@ -1501,6 +1515,12 @@ func runServe(args []string) {
 	// Container isolation (optional — requires Docker + yaver-sandbox image)
 	useContainerGuests := *containerizeGuests || cfg.ContainerizeGuests
 	useContainerHost := *containerizeHost || cfg.ContainerizeHost
+	// Resolve network mode: CLI flag > config > default "host"
+	cNetwork := *containerNetwork
+	if cNetwork == "" {
+		cNetwork = cfg.ContainerNetwork
+	}
+	cReadOnly := *containerReadOnly || cfg.ContainerReadOnly
 	if useContainerGuests || useContainerHost {
 		cr := NewContainerRunner()
 		if cr.IsAvailable() {
@@ -1514,11 +1534,14 @@ func runServe(args []string) {
 			taskMgr.ContainerCPU = cfg.ContainerCPU
 			taskMgr.ContainerMemory = cfg.ContainerMemory
 			taskMgr.ContainerImage = cfg.ContainerImage
+			taskMgr.ContainerNetwork = cNetwork
+			taskMgr.ContainerReadOnly = cReadOnly
 			taskMgr.ContainerMounts = cfg.ContainerMounts
 			if cr.IsImageReady() {
-				log.Printf("Container sandbox ready (guests=%v, host=%v)", useContainerGuests, useContainerHost)
+				log.Printf("Container sandbox ready (guests=%v, host=%v, network=%s, readOnly=%v)",
+					useContainerGuests, useContainerHost, cNetwork, cReadOnly)
 			} else {
-				log.Printf("Container sandbox enabled but image not built — run 'yaver sandbox build'")
+				log.Printf("Container sandbox enabled but image not built — will auto-build on first task")
 			}
 		} else {
 			log.Printf("Warning: containerization requested but Docker not available — falling back to direct execution")
@@ -1669,6 +1692,10 @@ func runServe(args []string) {
 	}
 	if taskMgr.TmuxMgr != nil {
 		taskMgr.TmuxMgr.Shutdown()
+	}
+	// Stop all running task containers on shutdown
+	if taskMgr.ContainerRunner != nil {
+		taskMgr.ContainerRunner.StopAllContainers()
 	}
 	taskMgr.Shutdown()
 	if err := MarkOffline(cfg.ConvexSiteURL, cfg.AuthToken, cfg.DeviceID); err != nil {
