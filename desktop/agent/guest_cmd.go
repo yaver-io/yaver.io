@@ -46,13 +46,27 @@ func runGuestsInvite(args []string) {
 		convexURL = defaultConvexSiteURL
 	}
 
-	if err := InviteGuest(convexURL, cfg.AuthToken, email); err != nil {
+	result, err := InviteGuest(convexURL, cfg.AuthToken, email)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to invite: %v\n", err)
 		os.Exit(1)
 	}
 
 	fmt.Printf("Invitation sent to %s\n", email)
-	fmt.Println("They need to sign into the Yaver app and accept the invitation within 2 days.")
+	fmt.Printf("Invite code: %s\n", result.InviteCode)
+	fmt.Println()
+	if result.GuestRegistered {
+		fmt.Println("This email is already registered on Yaver.")
+		fmt.Println("They'll see the invitation in the Yaver app automatically.")
+	} else {
+		fmt.Println("This email is not yet registered on Yaver.")
+		fmt.Println("Tell them to:")
+		fmt.Println("  1. Download the Yaver app")
+		fmt.Println("  2. Sign in with any method (Apple, Google, Microsoft, or email)")
+		fmt.Println("  3. Enter the invite code above (or sign in with the invited email)")
+	}
+	fmt.Println()
+	fmt.Println("The invitation expires in 2 days.")
 }
 
 func runGuestsList() {

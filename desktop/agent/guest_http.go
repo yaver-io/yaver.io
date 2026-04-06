@@ -39,7 +39,8 @@ func (s *HTTPServer) handleGuestInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := InviteGuest(s.convexURL, s.token, body.Email); err != nil {
+	result, err := InviteGuest(s.convexURL, s.token, body.Email)
+	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -52,8 +53,10 @@ func (s *HTTPServer) handleGuestInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{
-		"ok":      true,
-		"message": "Invitation sent to " + body.Email,
+		"ok":              true,
+		"message":         "Invitation sent to " + body.Email,
+		"inviteCode":      result.InviteCode,
+		"guestRegistered": result.GuestRegistered,
 	})
 }
 

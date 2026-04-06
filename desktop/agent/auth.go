@@ -275,30 +275,42 @@ func FetchGuestUserIds(baseURL, token string) ([]string, error) {
 	return result.GuestUserIds, nil
 }
 
+// InviteResult holds the response from a guest invitation.
+type InviteResult struct {
+	InviteCode      string `json:"inviteCode"`
+	GuestRegistered bool   `json:"guestRegistered"`
+}
+
 // InviteGuest sends a guest invitation via Convex.
-func InviteGuest(baseURL, token, email string) error {
+// Returns the invite code and whether the guest email is already registered.
+func InviteGuest(baseURL, token, email string) (*InviteResult, error) {
 	payload := map[string]string{"email": email}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("marshal invite: %w", err)
+		return nil, fmt.Errorf("marshal invite: %w", err)
 	}
 
 	req, err := newBearerRequest("POST", baseURL+"/guests/invite", token, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("create invite request: %w", err)
+		return nil, fmt.Errorf("create invite request: %w", err)
 	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("invite request: %w", err)
+		return nil, fmt.Errorf("invite request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("%s", string(respBody))
+		return nil, fmt.Errorf("%s", string(respBody))
 	}
-	return nil
+
+	var result InviteResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode invite response: %w", err)
+	}
+	return &result, nil
 }
 
 // RevokeGuest revokes guest access via Convex.

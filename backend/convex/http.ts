@@ -1983,18 +1983,22 @@ http.route({
     if (!body.email) return errorResponse("email is required");
 
     try {
-      await ctx.runMutation(api.guests.invite, {
+      const result = await ctx.runMutation(api.guests.invite, {
         tokenHash,
         guestEmail: body.email,
       });
-      return jsonResponse({ ok: true });
+      return jsonResponse({
+        ok: true,
+        inviteCode: result.inviteCode,
+        guestRegistered: result.guestRegistered,
+      });
     } catch (e: any) {
       return errorResponse(e.message || "Failed to invite guest", 400);
     }
   }),
 });
 
-/** POST /guests/accept — Accept a pending invitation. Guest only. */
+/** POST /guests/accept — Accept a pending invitation by email match. Guest only. */
 http.route({
   path: "/guests/accept",
   method: "POST",
@@ -2015,6 +2019,33 @@ http.route({
         hostUserId: body.hostUserId,
       });
       return jsonResponse({ ok: true });
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to accept invitation", 400);
+    }
+  }),
+});
+
+/** POST /guests/accept-code — Accept invitation via 6-char code. Works with any OAuth email. */
+http.route({
+  path: "/guests/accept-code",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+
+    const body = await request.json();
+    if (!body.code) return errorResponse("code is required");
+
+    try {
+      const result = await ctx.runMutation(api.guests.acceptByCode, {
+        tokenHash,
+        inviteCode: body.code,
+      });
+      return jsonResponse(result);
     } catch (e: any) {
       return errorResponse(e.message || "Failed to accept invitation", 400);
     }
