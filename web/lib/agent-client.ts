@@ -66,6 +66,34 @@ export interface RelayServer {
   priority: number;
 }
 
+export interface GuestConfigEntry {
+  guestUserId: string;
+  guestEmail: string;
+  guestName: string;
+  dailyTokenLimit?: number;
+  allowedRunners?: string[];
+  usageMode?: string;
+  schedule?: { startHour: number; endHour: number; timezone?: string };
+  allowedProjects?: string[];
+}
+
+export interface GuestUsageEntry {
+  guestEmail: string;
+  guestName: string;
+  date: string;
+  secondsUsed: number;
+}
+
+export interface GuestInfo {
+  email: string;
+  status: "pending" | "accepted" | "revoked" | "expired";
+  fullName?: string;
+  createdAt: number;
+  expiresAt?: number;
+  acceptedAt?: number;
+  revokedAt?: number;
+}
+
 export type OutputCallback = (taskId: string, line: string) => void;
 export type ConnectionStateCallback = (state: ConnectionState) => void;
 
@@ -607,6 +635,84 @@ class AgentClient {
         this.scheduleReconnect();
       }
     }, 3000);
+  }
+
+  // ── Guest config ──────────────────────────────────────────────────
+
+  async getGuestConfigs(): Promise<GuestConfigEntry[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/guests/config`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.configs || [];
+  }
+
+  async updateGuestConfig(config: {
+    email: string;
+    dailyTokenLimit?: number;
+    allowedRunners?: string[];
+    usageMode?: string;
+  }): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/guests/config`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "Failed to update config");
+    }
+  }
+
+  async getGuestUsage(date?: string): Promise<GuestUsageEntry[]> {
+    this.assertConnected();
+    const url = date
+      ? `${this.baseUrl}/guests/usage?date=${encodeURIComponent(date)}`
+      : `${this.baseUrl}/guests/usage`;
+    const res = await fetch(url, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.usage || [];
+  }
+
+  async getGuestList(): Promise<GuestInfo[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/guests`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.guests || [];
+  }
+
+  async inviteGuest(email: string): Promise<{ inviteCode: string; guestRegistered: boolean }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/guests/invite`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "Failed to invite");
+    }
+    return res.json();
+  }
+
+  async revokeGuest(email: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/guests/revoke`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "Failed to revoke");
+    }
   }
 
   // ── Local cache (localStorage) ─────────────────────────────────────
