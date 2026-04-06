@@ -1,11 +1,40 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
+// repoRoot finds the yaver.io repo root by walking up from the test file's directory
+// looking for CLAUDE.md (or README.md as fallback).
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Skipf("cannot get working directory: %v", err)
+	}
+	// Walk up from desktop/agent/ to find repo root
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "CLAUDE.md")); err == nil {
+			return dir
+		}
+		if _, err := os.Stat(filepath.Join(dir, "README.md")); err == nil {
+			if _, err := os.Stat(filepath.Join(dir, "desktop", "agent")); err == nil {
+				return dir
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Skip("cannot find yaver.io repo root — skipping")
+		}
+		dir = parent
+	}
+}
+
 func TestDetectProjectActions_YaverRepo(t *testing.T) {
-	actions := DetectProjectActions("/Users/kivanccakmak/Workspace/yaver.io")
+	root := repoRoot(t)
+	actions := DetectProjectActions(root)
 	if len(actions) == 0 {
 		t.Fatal("expected actions for yaver.io repo")
 	}
@@ -29,7 +58,12 @@ func TestDetectProjectActions_YaverRepo(t *testing.T) {
 }
 
 func TestDetectProjectActions_AcmeStore(t *testing.T) {
-	actions := DetectProjectActions("/Users/kivanccakmak/Workspace/yaver.io/demo/AcmeStore")
+	root := repoRoot(t)
+	acmeStore := filepath.Join(root, "demo", "AcmeStore")
+	if _, err := os.Stat(acmeStore); os.IsNotExist(err) {
+		t.Skip("demo/AcmeStore not present — skipping")
+	}
+	actions := DetectProjectActions(acmeStore)
 	if len(actions) == 0 {
 		t.Fatal("expected actions for AcmeStore")
 	}
