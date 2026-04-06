@@ -254,8 +254,55 @@ export default function AppsScreen() {
 
   const [nativeLoading, setNativeLoading] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState("");
-
   const [buildProgress, setBuildProgress] = useState(0);
+
+  // Direct device install state
+  const [buildStatus, setBuildStatus] = useState<string | null>(null);
+  const [quickActionStatus, setQuickActionStatus] = useState<string | null>(null);
+
+  // Direct device install: build with Xcode and install on device via xcrun devicectl
+  const handleDirectBuild = useCallback(async () => {
+    if (!devStatus?.workDir) return;
+    setBuildStatus("queued");
+    try {
+      const build = await quicClient.startBuild("xcode-device-install", devStatus.workDir, true);
+      setBuildStatus("running");
+
+      // Poll build status every 3s
+      const poll = setInterval(async () => {
+        try {
+          const baseUrl = (quicClient as any).baseUrl;
+          const headers = (quicClient as any).authHeaders;
+          const res = await fetch(`${baseUrl}/builds/${build.id}`, { headers });
+          if (!res.ok) return;
+          const b = await res.json();
+
+          if (b.installStatus === "installed") {
+            setBuildStatus("installed");
+            clearInterval(poll);
+            setTimeout(() => setBuildStatus(null), 5000);
+          } else if (b.installStatus === "install_failed") {
+            setBuildStatus("install_failed");
+            clearInterval(poll);
+            Alert.alert("Install Failed", b.installError || "Could not install on device");
+            setTimeout(() => setBuildStatus(null), 5000);
+          } else if (b.installStatus === "installing") {
+            setBuildStatus("installing");
+          } else if (b.status === "failed") {
+            setBuildStatus("failed");
+            clearInterval(poll);
+            Alert.alert("Build Failed", b.error || "xcodebuild failed");
+            setTimeout(() => setBuildStatus(null), 5000);
+          }
+          // else still running
+        } catch {}
+      }, 3000);
+    } catch (e) {
+      setBuildStatus("failed");
+      Alert.alert("Build Error", String(e));
+      setTimeout(() => setBuildStatus(null), 3000);
+    }
+  }, [devStatus?.workDir]);
 
   // Open app natively: Go agent builds Hermes bytecode → phone loads into RCTBridge
   const handleOpenNative = useCallback(async (workDir: string) => {
@@ -450,6 +497,23 @@ export default function AppsScreen() {
               </View>
             )}
 
+            {/* Build status — shows during direct device install */}
+            {buildStatus && (
+              <View style={s.progressContainer}>
+                <View style={s.progressTrack}>
+                  <View style={[s.progressFill, { width: buildStatus === "installed" ? "100%" : buildStatus === "installing" ? "90%" : "50%" }]} />
+                </View>
+                <Text style={s.progressText} numberOfLines={1}>
+                  {buildStatus === "running" ? "Building with Xcode..." :
+                   buildStatus === "installing" ? "Installing on device..." :
+                   buildStatus === "installed" ? "Installed! App is ready." :
+                   buildStatus === "install_failed" ? "Install failed" :
+                   buildStatus === "failed" ? "Build failed" :
+                   buildStatus === "queued" ? "Starting build..." : buildStatus}
+                </Text>
+              </View>
+            )}
+
             {/* Quick actions */}
             <View style={s.quickActions}>
               {[
@@ -462,8 +526,15 @@ export default function AppsScreen() {
                   key={action.label}
                   style={s.quickBtn}
                   onPress={() => {
-                    quicClient.sendTask(action.prompt, `[Quick Action] ${action.label} for ${runningProject}`).catch(() => {});
-                    router.navigate("/(tabs)/tasks");
+                    if (action.label === "Ship It" && Platform.OS === "ios" && quicClient.connectionMode === "direct") {
+                      // Direct device install — build with Xcode and install on device
+                      handleDirectBuild();
+                    } else {
+                      // Send as task but stay on this page
+                      quicClient.sendTask(action.prompt, `[Quick Action] ${action.label} for ${runningProject}`).catch(() => {});
+                      setQuickActionStatus(`${action.label} task sent`);
+                      setTimeout(() => setQuickActionStatus(null), 3000);
+                    }
                   }}
                 >
                   <Text style={s.quickIcon}>{action.icon}</Text>
@@ -471,6 +542,9 @@ export default function AppsScreen() {
                 </Pressable>
               ))}
             </View>
+            {quickActionStatus && (
+              <Text style={{ color: "#22c55e", fontSize: 11, textAlign: "center", marginTop: 4 }}>{quickActionStatus}</Text>
+            )}
           </View>
         )}
 
