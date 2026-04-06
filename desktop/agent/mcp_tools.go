@@ -1415,6 +1415,47 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, sysLogTools...)
 
+	// --- Guest Access ---
+	guestTools := []map[string]interface{}{
+		{
+			"name":        "guest_invite",
+			"description": "Invite a guest by email to use your machine. They can connect from their Yaver mobile app. Max 5 guests, invitation expires in 2 days.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"email"},
+				"properties": map[string]interface{}{
+					"email": map[string]interface{}{
+						"type":        "string",
+						"description": "Email address of the person to invite",
+					},
+				},
+			},
+		},
+		{
+			"name":        "guest_list",
+			"description": "List all guests who have been invited or have access to your machine.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "guest_revoke",
+			"description": "Revoke guest access for an email address. Removes both pending invitations and active access.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"email"},
+				"properties": map[string]interface{}{
+					"email": map[string]interface{}{
+						"type":        "string",
+						"description": "Email address of the guest to remove",
+					},
+				},
+			},
+		},
+	}
+	tools = append(tools, guestTools...)
+
 	return map[string]interface{}{
 		"tools": tools,
 	}

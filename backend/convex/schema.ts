@@ -316,7 +316,8 @@ export default defineSchema({
   // Guest access — let other users connect to your agent (peer-to-peer sharing)
   guestInvitations: defineTable({
     hostUserId: v.id("users"),       // who is sharing their machine
-    guestEmail: v.string(),          // invited user's email
+    guestEmail: v.string(),          // invited user's email (hint — code also works)
+    inviteCode: v.string(),          // 6-char code for acceptance (works even if emails differ)
     status: v.union(v.literal("pending"), v.literal("accepted"), v.literal("revoked")),
     guestUserId: v.optional(v.id("users")),  // set when accepted
     createdAt: v.number(),
@@ -326,7 +327,8 @@ export default defineSchema({
   })
     .index("by_hostUserId", ["hostUserId"])
     .index("by_guestEmail", ["guestEmail"])
-    .index("by_host_guest", ["hostUserId", "guestEmail"]),
+    .index("by_host_guest", ["hostUserId", "guestEmail"])
+    .index("by_inviteCode", ["inviteCode"]),
 
   guestAccess: defineTable({
     hostUserId: v.id("users"),       // machine owner

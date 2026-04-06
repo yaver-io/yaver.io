@@ -6,6 +6,14 @@ import { Id } from "./_generated/dataModel";
 const MAX_GUESTS_PER_HOST = 5;
 const INVITATION_TTL_MS = 2 * 24 * 60 * 60 * 1000; // 2 days
 
+/** Generate a short 6-character uppercase invite code. */
+function generateInviteCode(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I to avoid confusion
+  const buf = new Uint8Array(6);
+  crypto.getRandomValues(buf);
+  return Array.from(buf).map(b => chars[b % chars.length]).join("");
+}
+
 // ─── Mutations ──────────────────────────────────────────────────
 
 /**
@@ -76,16 +84,22 @@ export const invite = mutation({
       }
     }
 
+    const inviteCode = generateInviteCode();
     const now = Date.now();
     await ctx.db.insert("guestInvitations", {
       hostUserId,
       guestEmail: args.guestEmail.toLowerCase(),
+      inviteCode,
       status: "pending",
       createdAt: now,
       expiresAt: now + INVITATION_TTL_MS,
     });
 
-    return { ok: true };
+    return {
+      ok: true,
+      inviteCode,
+      guestRegistered: !!guestUser, // whether the invited email already has a Yaver account
+    };
   },
 });
 
@@ -140,6 +154,84 @@ export const accept = mutation({
     });
 
     return { ok: true };
+  },
+});
+
+/**
+ * Accept a pending invitation by invite code.
+ * Works regardless of the guest's email — the code is the proof of invitation.
+ * This is the primary acceptance path when the guest signs up with a different
+ * OAuth provider/email than the one the host invited.
+ */
+export const acceptByCode = mutation({
+  args: {
+    tokenHash: v.string(),
+    inviteCode: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) throw new Error("Unauthorized");
+
+    const code = args.inviteCode.toUpperCase().trim();
+
+    const invitation = await ctx.db
+      .query("guestInvitations")
+      .withIndex("by_inviteCode", (q) => q.eq("inviteCode", code))
+      .first();
+
+    if (!invitation) {
+      throw new Error("Invalid invite code");
+    }
+
+    if (invitation.status !== "pending") {
+      throw new Error("Invitation is no longer pending");
+    }
+
+    if (invitation.expiresAt < Date.now()) {
+      await ctx.db.patch(invitation._id, { status: "revoked", revokedAt: Date.now() });
+      throw new Error("Invitation has expired");
+    }
+
+    // Can't accept your own invitation
+    if (invitation.hostUserId === session.user._id) {
+      throw new Error("Cannot accept your own invitation");
+    }
+
+    // Check if already have access from this host
+    const existingAccess = await ctx.db
+      .query("guestAccess")
+      .withIndex("by_host_guest", (q) =>
+        q.eq("hostUserId", invitation.hostUserId).eq("guestUserId", session.user._id)
+      )
+      .filter((q) => q.eq(q.field("revokedAt"), undefined))
+      .first();
+
+    if (existingAccess) {
+      throw new Error("You already have guest access to this host");
+    }
+
+    const now = Date.now();
+
+    await ctx.db.patch(invitation._id, {
+      status: "accepted",
+      guestUserId: session.user._id,
+      acceptedAt: now,
+    });
+
+    await ctx.db.insert("guestAccess", {
+      hostUserId: invitation.hostUserId,
+      guestUserId: session.user._id,
+      grantedAt: now,
+    });
+
+    // Get host info to return
+    const host = await ctx.db.get(invitation.hostUserId);
+
+    return {
+      ok: true,
+      hostName: host?.fullName ?? "Unknown",
+      hostEmail: host?.email ?? "Unknown",
+    };
   },
 });
 

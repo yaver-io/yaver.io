@@ -18,6 +18,12 @@ import { getUserSettings } from "../lib/auth";
 import { appLog } from "../lib/logger";
 import { beaconListener } from "../lib/beacon";
 import { CONVEX_SITE_URL } from "../lib/constants";
+import {
+  fetchGuestHosts,
+  acceptGuestInvitation as apiAcceptInvitation,
+  acceptGuestByCode as apiAcceptByCode,
+  inviteGuest as apiInviteGuest,
+} from "../lib/guests";
 
 /** User-scoped storage key. Falls back to global key if no userId. */
 function userKey(userId: string | undefined, key: string): string {
@@ -88,9 +94,23 @@ export interface Device {
   local?: boolean;
   /** stable hardware ID (P2P only, never sent to Convex) */
   hwid?: string;
+  /** true when this device belongs to a host who granted us guest access */
+  isGuest?: boolean;
+  /** host's display name (only set when isGuest=true) */
+  hostName?: string;
+  /** host's email (only set when isGuest=true) */
+  hostEmail?: string;
 }
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
+
+interface GuestInvitation {
+  hostUserId: string;
+  hostName: string;
+  hostEmail: string;
+  createdAt: number;
+  expiresAt: number;
+}
 
 interface DeviceState {
   devices: Device[];
@@ -105,6 +125,14 @@ interface DeviceState {
   disconnect: () => void;
   refreshDevices: () => Promise<void>;
   detachDevice: (device: Device) => Promise<void>;
+  /** Pending guest invitations from other users */
+  guestInvitations: GuestInvitation[];
+  /** Accept a guest invitation by email match */
+  acceptGuestInvitation: (hostUserId: string) => Promise<void>;
+  /** Accept a guest invitation by 6-char invite code (works with any OAuth email) */
+  acceptGuestByCode: (code: string) => Promise<{ hostName: string; hostEmail: string }>;
+  /** Invite someone as a guest to your machine */
+  inviteGuest: (email: string) => Promise<{ inviteCode: string; guestRegistered: boolean }>;
 }
 
 const DeviceContext = createContext<DeviceState | undefined>(undefined);
@@ -165,6 +193,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   const [userDisconnected, setUserDisconnected] = useState(false);
   const [relaysReady, setRelaysReady] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [guestInvitations, setGuestInvitations] = useState<GuestInvitation[]>([]);
   const hasLoadedOnce = useRef(false);
 
   const refreshDevices = useCallback(async () => {
@@ -195,7 +224,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           const isActivelyConnected = connectedDeviceId === deviceId;
           return {
             id: deviceId,
-            name: d.name,
+            name: d.isGuest ? `${d.name} (${d.hostName || "guest"})` : d.name,
             host: d.quicHost || d.host,
             port: d.quicPort || d.port,
             online: isActivelyConnected || (() => {
@@ -206,6 +235,9 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             lastSeen: isActivelyConnected ? Date.now() : (d.lastHeartbeat || d.lastSeen || 0),
             os: d.platform || d.os || "",
             runners: d.runners ?? [],
+            isGuest: d.isGuest || false,
+            hostName: d.hostName,
+            hostEmail: d.hostEmail,
           };
         });
         // Deduplicate by hardware ID (stable, survives IP/hostname changes)
@@ -227,6 +259,14 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         setDevices(finalDevices);
       } else {
         appLog("warn", `/devices/list failed: ${devicesRes.status}`);
+      }
+
+      // Fetch pending guest invitations
+      try {
+        const hosts = await fetchGuestHosts(token);
+        setGuestInvitations(hosts.pending || []);
+      } catch {
+        // Non-critical — don't fail device refresh
       }
     } catch (e) {
       appLog("error", `refreshDevices error: ${e}`);
@@ -562,6 +602,24 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     return () => unsubscribe();
   }, [activeDevice, token]);
 
+  const acceptGuestInvitation = useCallback(async (hostUserId: string) => {
+    if (!token) return;
+    await apiAcceptInvitation(token, hostUserId);
+    await refreshDevices();
+  }, [token, refreshDevices]);
+
+  const acceptGuestByCode = useCallback(async (code: string) => {
+    if (!token) throw new Error("Not signed in");
+    const result = await apiAcceptByCode(token, code);
+    await refreshDevices();
+    return result;
+  }, [token, refreshDevices]);
+
+  const inviteGuest = useCallback(async (email: string) => {
+    if (!token) throw new Error("Not signed in");
+    return await apiInviteGuest(token, email);
+  }, [token]);
+
   const value = useMemo<DeviceState>(
     () => ({
       devices,
@@ -574,8 +632,12 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       disconnect,
       refreshDevices,
       detachDevice: handleDetachDevice,
+      guestInvitations,
+      acceptGuestInvitation,
+      acceptGuestByCode,
+      inviteGuest,
     }),
-    [devices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, selectDevice, disconnect, refreshDevices, handleDetachDevice]
+    [devices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, selectDevice, disconnect, refreshDevices, handleDetachDevice, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

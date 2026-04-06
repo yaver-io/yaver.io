@@ -479,57 +479,69 @@ Guests can sign in with **any** supported OAuth provider — they don't need to 
 ```
 Host (CLI/Mobile/MCP)                Convex                     Guest (Mobile App)
 ┌───────────────────┐          ┌──────────────┐          ┌───────────────────┐
-│ yaver guests      │  POST    │ guestInvit-  │  GET     │ Yaver app polls   │
-│ invite foo@bar.com│─────────►│ ations table │◄─────────│ /guests/hosts     │
-│                   │ /invite  │ status:      │ pending  │                   │
-└───────────────────┘          │ "pending"    │ invites  │ Shows: "Kivanc    │
-                               │ expiresAt:   │          │ invited you"      │
-                               │ +2 days      │          │                   │
-                               └──────┬───────┘          │ [Accept] [Ignore] │
-                                      │                  │         │         │
-                                      │  POST /accept    │         │         │
-                                      │◄─────────────────│─────────┘         │
-                                      │                  │                   │
-                               ┌──────▼───────┐          │ Device list now   │
-                               │ guestAccess  │          │ shows host's Mac  │
-                               │ table        │─────────►│ "MacBook (Kivanc)"│
-                               │ hostUserId   │ devices  │                   │
-                               │ guestUserId  │ /list    │ Can create tasks, │
-                               │ grantedAt    │ includes │ use dev server... │
-                               └──────────────┘ host devs└───────────────────┘
+│ yaver guests      │  POST    │ guestInvit-  │          │                   │
+│ invite foo@bar.com│─────────►│ ations table │          │  Guest downloads  │
+│                   │ /invite  │ status:      │          │  Yaver app, signs │
+│ Returns:          │          │ "pending"    │          │  in with any OAuth│
+│ Code: K7WP3N      │          │ inviteCode:  │          │  (Apple/Google/   │
+│ Registered: no    │          │ "K7WP3N"     │          │  Microsoft/email) │
+└───────────────────┘          │ expiresAt:   │          │                   │
+       │                       │ +2 days      │          └─────────┬─────────┘
+       │ Share code             └──────┬───────┘                    │
+       │ (text/WhatsApp/etc.)          │                            │
+       └───────────────────────────────┼────────────────────────────┤
+                                       │                            │
+                         ┌─────────────┼─────────────┐              │
+                         │  Path A:    │  Path B:    │              │
+                         │  Email      │  Invite     │              │
+                         │  match      │  code       │              │
+                         │             │             │              │
+                         │  GET        │  POST       │              │
+                         │  /guests/   │  /guests/   │              │
+                         │  hosts      │  accept-code│              │
+                         │  (auto)     │  {code:     │              │
+                         │             │  "K7WP3N"}  │              │
+                         └──────┬──────┴──────┬──────┘              │
+                                │             │                     │
+                         ┌──────▼─────────────▼──┐          ┌──────▼──────────┐
+                         │ guestAccess table     │          │ Device list now │
+                         │ hostUserId, guestUser │─────────►│ shows host's Mac│
+                         │ grantedAt             │ /devices │ "MacBook (host)"│
+                         └───────────────────────┘ /list    └─────────────────┘
 ```
 
 ### Access from CLI, Mobile, and MCP
 
-| Interface | Invite | Accept | List Guests | Revoke |
-|-----------|--------|--------|-------------|--------|
-| **CLI** | `yaver guests invite <email>` | N/A (host only invites) | `yaver guests list` | `yaver guests remove <email>` |
-| **Mobile App** | Via Convex API (`inviteGuest()`) | Tap "Accept" on invitation banner | Via device list (guest devices labeled) | Via Convex API (`revokeGuest()`) |
-| **MCP** | `guest_invite` tool | N/A (guest accepts from mobile) | `guest_list` tool | `guest_revoke` tool |
-| **Agent HTTP** | `POST /guests/invite` | N/A (Convex direct) | `GET /guests` | `POST /guests/revoke` |
-| **Convex HTTP** | `POST /guests/invite` | `POST /guests/accept` | `GET /guests/list` (host), `GET /guests/hosts` (guest) | `POST /guests/revoke` |
+| Interface | Invite | Accept (email match) | Accept (code) | List Guests | Revoke |
+|-----------|--------|---------------------|---------------|-------------|--------|
+| **CLI** | `yaver guests invite <email>` → returns code | N/A | N/A | `yaver guests list` | `yaver guests remove <email>` |
+| **Mobile App** | `inviteGuest()` → returns code | Tap "Accept" on banner | Enter 6-char code | Device list (guest devices labeled) | `revokeGuest()` |
+| **MCP** | `guest_invite` → returns code | N/A | N/A | `guest_list` | `guest_revoke` |
+| **Agent HTTP** | `POST /guests/invite` → `{inviteCode, guestRegistered}` | N/A | N/A | `GET /guests` | `POST /guests/revoke` |
+| **Convex HTTP** | `POST /guests/invite` | `POST /guests/accept` | `POST /guests/accept-code` | `GET /guests/list`, `GET /guests/hosts` | `POST /guests/revoke` |
 
 ### Key Files
 | File | Purpose |
 |------|---------|
-| `backend/convex/schema.ts` | `guestInvitations`, `guestAccess` tables |
-| `backend/convex/guests.ts` | Invite, accept, revoke, list mutations/queries |
-| `backend/convex/http.ts` | HTTP endpoints: /guests/invite, /accept, /revoke, /list, /hosts, /allowed |
+| `backend/convex/schema.ts` | `guestInvitations` (with `inviteCode`), `guestAccess` tables |
+| `backend/convex/guests.ts` | Invite, accept, acceptByCode, revoke, list mutations/queries |
+| `backend/convex/http.ts` | HTTP: /guests/invite, /accept, /accept-code, /revoke, /list, /hosts, /allowed |
 | `backend/convex/devices.ts` | `listMyDevices` returns host devices for guests |
-| `desktop/agent/auth.go` | `FetchGuestUserIds`, `InviteGuest`, `RevokeGuest`, `FetchGuestList` |
+| `desktop/agent/auth.go` | `FetchGuestUserIds`, `InviteGuest` (returns code), `RevokeGuest`, `FetchGuestList` |
 | `desktop/agent/httpserver.go` | `auth()` middleware with guest checking, `guestAllowedPrefixes`, `refreshGuestList` goroutine |
 | `desktop/agent/guest_http.go` | Agent HTTP handlers: /guests, /guests/invite, /guests/revoke |
 | `desktop/agent/guest_cmd.go` | CLI: `yaver guests invite\|list\|remove` |
 | `desktop/agent/mcp_tools.go` | MCP tools: `guest_invite`, `guest_list`, `guest_revoke` |
-| `mobile/src/lib/guests.ts` | Mobile API: fetchGuestHosts, acceptGuestInvitation, inviteGuest, revokeGuest |
-| `mobile/src/context/DeviceContext.tsx` | Guest invitation state, accept flow, guest device display |
+| `mobile/src/lib/guests.ts` | Mobile API: fetchGuestHosts, acceptGuestInvitation, acceptGuestByCode, inviteGuest, revokeGuest |
+| `mobile/src/context/DeviceContext.tsx` | Guest invitation state, accept/acceptByCode flow, guest device display |
 
 ### Convex Schema
 
 **guestInvitations table:**
 ```
 hostUserId: Id<"users">    — who is sharing
-guestEmail: string         — invited email
+guestEmail: string         — invited email (hint for auto-match)
+inviteCode: string         — 6-char code (e.g. "K7WP3N") for cross-email acceptance
 status: "pending" | "accepted" | "revoked"
 guestUserId?: Id<"users">  — set when accepted
 expiresAt: number          — createdAt + 2 days
