@@ -75,9 +75,17 @@ func (s *HTTPServer) handleBuilds(w http.ResponseWriter, r *http.Request) {
 				jsonReply(w, http.StatusBadRequest, map[string]string{"error": "direct device install requires LAN connection — use TestFlight for relay connections"})
 				return
 			}
-			// Override platform to xcode-device-install if not already
-			if req.Platform != string(PlatformXcodeDeviceInstall) {
-				req.Platform = string(PlatformXcodeDeviceInstall)
+
+			// Decide install method based on platform capabilities and user preference
+			method := resolveIOSInstallMethod(s.iosInstallMethod)
+			if method == IOSInstallNative {
+				// macOS + Xcode: xcodebuild + xcrun devicectl
+				if req.Platform != string(PlatformXcodeDeviceInstall) {
+					req.Platform = string(PlatformXcodeDeviceInstall)
+				}
+			} else {
+				// Non-macOS or no Xcode: Hermes bytecode bundle push to super-host
+				req.Platform = string(PlatformHermesBundlePush)
 			}
 		}
 

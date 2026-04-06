@@ -7,9 +7,48 @@ import (
 	"net"
 	"net/http"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 )
+
+// IOSInstallMethod constants for the ios_install_method config field.
+const (
+	IOSInstallAuto   = "auto"   // detect: native on macOS+Xcode, bundle otherwise
+	IOSInstallNative = "native" // always xcodebuild + xcrun devicectl
+	IOSInstallBundle = "bundle" // always Hermes bytecode push to super-host
+)
+
+// canDoNativeInstall returns true if the machine is macOS and has xcodebuild + xcrun available.
+func canDoNativeInstall() bool {
+	if runtime.GOOS != "darwin" {
+		return false
+	}
+	if _, err := exec.LookPath("xcodebuild"); err != nil {
+		return false
+	}
+	if _, err := exec.LookPath("xcrun"); err != nil {
+		return false
+	}
+	return true
+}
+
+// resolveIOSInstallMethod decides whether to use native (xcode) or bundle (hermes push)
+// based on the config preference and platform capabilities.
+// Returns "native" or "bundle".
+func resolveIOSInstallMethod(preference string) string {
+	switch preference {
+	case IOSInstallNative:
+		return IOSInstallNative
+	case IOSInstallBundle:
+		return IOSInstallBundle
+	default: // "auto" or ""
+		if canDoNativeInstall() {
+			return IOSInstallNative
+		}
+		return IOSInstallBundle
+	}
+}
 
 // installAppOnDevice builds and installs an .app on a connected iOS device.
 // appPath should be the path to a .app bundle (not .ipa).

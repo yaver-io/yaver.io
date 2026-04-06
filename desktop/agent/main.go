@@ -122,6 +122,8 @@ func main() {
 		runClean(os.Args[2:])
 	case "cloud":
 		runCloud(os.Args[2:])
+	case "guests":
+		runGuests(os.Args[2:])
 	case "sdk-token":
 		runSdkToken(os.Args[2:])
 	case "doctor":
@@ -224,6 +226,9 @@ Usage:
   yaver cloud status   Show cloud machine status
   yaver cloud ssh      SSH into your cloud machine
   yaver cloud destroy  Tear down your cloud machine
+  yaver guests invite <email>  Invite someone to use your machine (max 5 guests)
+  yaver guests list            List your guests and their status
+  yaver guests remove <email>  Revoke guest access
   yaver clean       Remove old tasks, images, and logs (default: older than 30 days)
   yaver purge       Factory reset — remove all local data (auth, sessions, tasks, logs)
   yaver reset       Alias for purge
@@ -921,6 +926,7 @@ func runServe(args []string) {
 	noTLS := fs.Bool("no-tls", false, "Disable HTTPS server")
 	installSystemd := fs.Bool("install-systemd", false, "Install and enable systemd user service, then exit")
 	noAutopilot := fs.Bool("no-autopilot", false, "Disable auto-driving mode (enabled by default)")
+	iosInstall := fs.String("ios-install", "", "iOS install method: auto (default), native (xcodebuild+xcrun), bundle (Hermes push)")
 	fs.Parse(args)
 
 	// Install systemd service and exit
@@ -1011,6 +1017,9 @@ func runServe(args []string) {
 		}
 		if *noAutopilot {
 			childArgs = append(childArgs, "--no-autopilot")
+		}
+		if *iosInstall != "" {
+			childArgs = append(childArgs, fmt.Sprintf("--ios-install=%s", *iosInstall))
 		}
 
 		cmd := osexec.Command(execPath, childArgs...)
@@ -1421,6 +1430,17 @@ func runServe(args []string) {
 
 	// Start HTTP server (V1 — primary, also serves MCP)
 	httpServer := NewHTTPServer(*httpPort, cfg.AuthToken, ownerUserID, cfg.ConvexSiteURL, hostname, taskMgr)
+
+	// iOS install method (from flag or config, default "auto")
+	iosMethod := *iosInstall
+	if iosMethod == "" && cfg.IOSInstallMethod != "" {
+		iosMethod = cfg.IOSInstallMethod
+	}
+	if iosMethod == "" {
+		iosMethod = IOSInstallAuto
+	}
+	httpServer.iosInstallMethod = iosMethod
+	log.Printf("iOS install method: %s (resolved: %s)", iosMethod, resolveIOSInstallMethod(iosMethod))
 
 	// IP allowlist (from flag or config)
 	allowIPsList := *allowIPs

@@ -248,6 +248,122 @@ func ReportSecurityEvent(baseURL, token, eventType string, details map[string]in
 	resp.Body.Close()
 }
 
+// FetchGuestUserIds fetches the list of approved guest userIds from Convex.
+// The agent calls this periodically to cache which guests are allowed.
+func FetchGuestUserIds(baseURL, token string) ([]string, error) {
+	req, err := newBearerRequest("GET", baseURL+"/guests/allowed", token, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create guest list request: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch guest list: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("guest list failed (status %d)", resp.StatusCode)
+	}
+
+	var result struct {
+		GuestUserIds []string `json:"guestUserIds"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode guest list: %w", err)
+	}
+	return result.GuestUserIds, nil
+}
+
+// InviteGuest sends a guest invitation via Convex.
+func InviteGuest(baseURL, token, email string) error {
+	payload := map[string]string{"email": email}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal invite: %w", err)
+	}
+
+	req, err := newBearerRequest("POST", baseURL+"/guests/invite", token, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create invite request: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("invite request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("%s", string(respBody))
+	}
+	return nil
+}
+
+// RevokeGuest revokes guest access via Convex.
+func RevokeGuest(baseURL, token, email string) error {
+	payload := map[string]string{"email": email}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal revoke: %w", err)
+	}
+
+	req, err := newBearerRequest("POST", baseURL+"/guests/revoke", token, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create revoke request: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("revoke request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("%s", string(respBody))
+	}
+	return nil
+}
+
+// GuestInfo describes a guest from the Convex /guests/list endpoint.
+type GuestInfo struct {
+	Email      string `json:"email"`
+	Status     string `json:"status"`
+	FullName   string `json:"fullName,omitempty"`
+	CreatedAt  int64  `json:"createdAt"`
+	ExpiresAt  int64  `json:"expiresAt,omitempty"`
+	AcceptedAt int64  `json:"acceptedAt,omitempty"`
+	RevokedAt  int64  `json:"revokedAt,omitempty"`
+}
+
+// FetchGuestList fetches the full guest list (with status) from Convex.
+func FetchGuestList(baseURL, token string) ([]GuestInfo, error) {
+	req, err := newBearerRequest("GET", baseURL+"/guests/list", token, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create guest list request: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch guest list: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("guest list failed (status %d)", resp.StatusCode)
+	}
+
+	var result struct {
+		Guests []GuestInfo `json:"guests"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode guest list: %w", err)
+	}
+	return result.Guests, nil
+}
+
 // RegisterDeviceRequest contains the fields sent when registering a device.
 type RegisterDeviceRequest struct {
 	Token     string `json:"-"`
