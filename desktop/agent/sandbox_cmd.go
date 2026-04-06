@@ -86,6 +86,12 @@ func runSandboxStatus() {
 		fmt.Println()
 		fmt.Printf("  Guest containerization:  %v\n", cfg.ContainerizeGuests)
 		fmt.Printf("  Host containerization:   %v\n", cfg.ContainerizeHost)
+		networkMode := cfg.ContainerNetwork
+		if networkMode == "" {
+			networkMode = "host (default)"
+		}
+		fmt.Printf("  Network mode:            %s\n", networkMode)
+		fmt.Printf("  Read-only rootfs:        %v\n", cfg.ContainerReadOnly)
 		if cfg.ContainerImage != "" {
 			fmt.Printf("  Custom image:            %s\n", cfg.ContainerImage)
 		}
@@ -94,6 +100,9 @@ func runSandboxStatus() {
 		}
 		if cfg.ContainerMemory != "" {
 			fmt.Printf("  Memory limit:            %s\n", cfg.ContainerMemory)
+		}
+		if len(cfg.ContainerMounts) > 0 {
+			fmt.Printf("  Extra mounts:            %d configured\n", len(cfg.ContainerMounts))
 		}
 	}
 }

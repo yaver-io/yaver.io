@@ -70,6 +70,10 @@ RUN mkdir -p /root/.npm /root/.gradle /root/.cargo/registry /root/go/pkg/mod
 # ── Working directory ────────────────────────────────────────────────
 WORKDIR /workspace
 
+# ── Healthcheck ─────────────────────────────────────────────────────
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD [ "node", "--version" ]
+
 # Default entrypoint — overridden by ContainerRunner with the actual command
 ENTRYPOINT ["/bin/bash", "-c"]
 CMD ["echo 'yaver-sandbox ready'"]
