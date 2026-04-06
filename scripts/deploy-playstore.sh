@@ -11,8 +11,12 @@ sed -i '' "s/versionCode $CURRENT_VERSION_CODE/versionCode $NEW_VERSION_CODE/" "
 echo "versionCode $CURRENT_VERSION_CODE -> $NEW_VERSION_CODE"
 
 # Clean and build release AAB
+# Build worklets prefab first — reanimated CMake configure needs it,
+# but `clean` deletes it and Gradle doesn't re-order the configure step.
 echo "Building release AAB..."
-./gradlew clean bundleRelease
+./gradlew clean
+./gradlew :react-native-worklets:prefabReleasePackage
+./gradlew bundleRelease
 
 AAB_PATH="app/build/outputs/bundle/release/app-release.aab"
 
