@@ -19,11 +19,7 @@
 name: Yaver Task Trigger (Example)
 
 on:
-  # Trigger on push to main
-  push:
-    branches: [main]
-
-  # Or trigger manually from the Actions tab
+  # Only trigger manually — requires YAVER_AGENT_URL and YAVER_WEBHOOK_SECRET secrets
   workflow_dispatch:
     inputs:
       prompt:

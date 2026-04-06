@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tests:
-        description: "Tests to run (all, builds, lan, relay, tailscale, cloudflare, unit, sdk, auth, feedback)"
+        description: "Tests to run (all, builds, lan, relay, tailscale, cloudflare, unit, sdk, auth, feedback, ollama, ollama-ci)"
         required: false
         default: "all"
   push:
@@ -149,6 +149,7 @@ jobs:
             exit 1
           fi
 
+  # Ollama integration test — install ollama on CI runner, run LLM task via agent
   # Feedback SDK integration tests
   test-sdk-feedback:
     if: github.event.inputs.tests == 'all' || github.event.inputs.tests == 'feedback' || github.event.inputs.tests == ''
@@ -197,6 +198,8 @@ jobs:
           curl -s http://localhost:18080/health | grep -q ok
 
       - name: Run feedback SDK tests
+        env:
+          YAVER_AUTH_TOKEN: ${{ steps.ci-auth.outputs.token }}
         run: node sdk/feedback/test-app/test-feedback.js http://localhost:18080
 
       - name: Run Go feedback tests
@@ -325,6 +328,8 @@ jobs:
           go test -v -run "TestVault|TestBuild|TestFeedback|TestDetect|TestResolve|TestAgent|TestTunnel|TestParse" -count=1 ./...
 
       - name: Feedback HTTP API tests
+        env:
+          YAVER_AUTH_TOKEN: ${{ steps.ci-auth.outputs.token }}
         run: node sdk/feedback/test-app/test-feedback.js http://localhost:18080
 
       - name: Go SDK tests
@@ -342,7 +347,87 @@ jobs:
           npx tsc --noEmit
 
       - name: Dogfood scenario test
+        env:
+          YAVER_AUTH_TOKEN: ${{ steps.ci-auth.outputs.token }}
         run: node sdk/feedback/test-app/test-dogfood-scenario.js http://localhost:18080
+
+  # Docker sandbox integration test
+  test-docker:
+    if: github.event.inputs.tests == 'docker' || github.event.inputs.tests == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: testing
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Docker sandbox tests
+        env:
+          CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+        run: ./scripts/test-suite.sh --docker 2>&1 | tee /tmp/docker-test-output.txt
+
+      - name: Generate test summary
+        if: always()
+        run: |
+          echo "## Docker Sandbox Test" >> "$GITHUB_STEP_SUMMARY"
+          if grep -q "All tests passed" /tmp/docker-test-output.txt 2>/dev/null; then
+            echo "### ✅ All tests passed" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ❌ Some tests failed" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/docker-test-output.txt | while IFS= read -r line; do
+            case "$line" in
+              *"✓ "*) echo "- ✅ $(echo "$line" | sed 's/.*✓ //')" >> "$GITHUB_STEP_SUMMARY" ;;
+              *"✗ "*) echo "- ❌ $(echo "$line" | sed 's/.*✗ //')" >> "$GITHUB_STEP_SUMMARY" ;;
+              *"⊘ "*) echo "- ⏭ $(echo "$line" | sed 's/.*⊘ //')" >> "$GITHUB_STEP_SUMMARY" ;;
+            esac
+          done
+
+  # Ollama LLM integration test — installs ollama on CI runner, pulls 1.5b model, runs agent task
+  test-ollama-ci:
+    if: github.event.inputs.tests == 'ollama' || github.event.inputs.tests == 'ollama-ci'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: testing
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Ollama CI test
+        env:
+          CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+        run: ./scripts/test-suite.sh --ollama-ci 2>&1 | tee /tmp/ollama-test-output.txt
+
+      - name: Generate test summary
+        if: always()
+        run: |
+          echo "## Ollama Integration Test" >> "$GITHUB_STEP_SUMMARY"
+          if grep -q "All tests passed" /tmp/ollama-test-output.txt 2>/dev/null; then
+            echo "### ✅ All tests passed" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ❌ Some tests failed" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/ollama-test-output.txt | while IFS= read -r line; do
+            case "$line" in
+              *"✓ "*) echo "- ✅ $(echo "$line" | sed 's/.*✓ //')" >> "$GITHUB_STEP_SUMMARY" ;;
+              *"✗ "*) echo "- ❌ $(echo "$line" | sed 's/.*✗ //')" >> "$GITHUB_STEP_SUMMARY" ;;
+              *"⊘ "*) echo "- ⏭ $(echo "$line" | sed 's/.*⊘ //')" >> "$GITHUB_STEP_SUMMARY" ;;
+            esac
+          done
 
   # Android emulator integration test (manual trigger — slow)
   test-sdk-emulator:
@@ -420,7 +505,7 @@ jobs:
           node-version: "20"
 
       - name: Install mobile dependencies
-        run: cd mobile && npm ci
+        run: cd mobile && npm ci --legacy-peer-deps
 
       - name: Prebuild iOS
         run: cd mobile && rm -rf ios && npx expo prebuild --platform ios --no-install

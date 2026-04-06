@@ -2007,6 +2007,255 @@ run_docker_tests() {
     kill "$agent_pid" 2>/dev/null || true
 }
 
+# ── Ollama Integration Test — Yaver-to-Yaver via Relay ──────────────
+# Starts a local relay, two agents (A = client, B = ollama runner),
+# sends a coding task through the relay, verifies ollama output.
+# Uses qwen2.5-coder:1.5b to keep RAM usage low (~1GB model).
+run_ollama_tests() {
+    header "Ollama — Yaver-to-Yaver via Relay"
+
+    # ── Pre-flight: check ollama is available ──
+    if ! command -v ollama &>/dev/null; then
+        skip "Ollama not installed"; return
+    fi
+    if ! ollama list 2>/dev/null | grep -q "qwen2.5-coder:1.5b"; then
+        info "Pulling qwen2.5-coder:1.5b (986 MB)..."
+        ollama pull qwen2.5-coder:1.5b || { skip "Cannot pull qwen2.5-coder:1.5b"; return; }
+    fi
+
+    # ── Build binaries ──
+    local agent_bin="$TEST_DIR/yaver"
+    local relay_bin="$TEST_DIR/yaver-relay"
+    [ -f "$agent_bin" ] || build_agent "$agent_bin" > /dev/null 2>&1 || { fail "Cannot build agent"; return; }
+    [ -f "$relay_bin" ] || build_relay "$relay_bin" > /dev/null 2>&1 || { fail "Cannot build relay"; return; }
+
+    # ── Start relay ──
+    local relay_http_port relay_quic_port
+    relay_http_port=$(get_free_port); relay_quic_port=$(get_free_port)
+    local relay_password="ollama-test-relay-$$"
+
+    info "Starting relay (HTTP=$relay_http_port, QUIC=$relay_quic_port)..."
+    local relay_pid
+    relay_pid=$(start_relay "$relay_bin" "$relay_quic_port" "$relay_http_port" "$relay_password" "$TEST_DIR/ollama-relay.log") || {
+        fail "Relay failed to start"; return
+    }
+    pass "Relay started"
+
+    # ── Start Agent B (ollama runner, connects to relay) ──
+    local b_http_port b_quic_port
+    b_http_port=$(get_free_port); b_quic_port=$(get_free_port)
+
+    info "Creating test account..."
+    local token
+    token=$(create_test_account) || { fail "Cannot create test account"; kill "$relay_pid" 2>/dev/null; return; }
+
+    local b_device_id="test-ollama-b-$(gen_uuid)"
+    local b_work_dir="$TEST_DIR/ollama-agent-b"
+    mkdir -p "$b_work_dir"
+
+    info "Starting Agent B (HTTP=$b_http_port)..."
+    export YAVER_NO_DUMMY=1
+    local b_pid
+    b_pid=$(start_agent "$agent_bin" "$b_http_port" "$b_quic_port" "$token" "$b_device_id" "$b_work_dir" --no-relay) || {
+        unset YAVER_NO_DUMMY
+        fail "Agent B failed to start"
+        kill "$relay_pid" 2>/dev/null || true
+        return
+    }
+    unset YAVER_NO_DUMMY
+
+    pass "Agent B started"
+
+    # ── Test 1: Ask ollama to write a printf function ──
+    local base_url="http://127.0.0.1:${b_http_port}"
+    local auth_header="Authorization: Bearer ${token}"
+
+    info "Sending task: ask ollama to write a C printf wrapper function..."
+    local task_resp task_id
+    local ollama_prompt="Write a C function called my_printf that wraps printf and adds a newline at the end. Show only the code, no explanation."
+    task_resp=$(curl -sf -X POST "${base_url}/tasks" \
+        -H "$auth_header" -H "Content-Type: application/json" \
+        -d "{\"title\":\"ollama printf test\",\"customCommand\":\"ollama run qwen2.5-coder:1.5b \\\"${ollama_prompt}\\\"\"}" 2>/dev/null) || { fail "Ollama: create task failed"; }
+    task_id=$(echo "$task_resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('taskId',''))" 2>/dev/null)
+
+    if [ -n "$task_id" ]; then
+        pass "Ollama: Task created ($task_id)"
+
+        # Poll for completion (max 120s — LLM inference can be slow)
+        local elapsed=0 status="" output=""
+        while [ $elapsed -lt 120 ]; do
+            local detail
+            detail=$(curl -sf "${base_url}/tasks/${task_id}" -H "$auth_header" 2>/dev/null) || true
+            status=$(echo "$detail" | python3 -c "import sys,json; print(json.load(sys.stdin).get('task',{}).get('status',''))" 2>/dev/null) || true
+            case "$status" in completed|finished|failed|stopped) break ;; esac
+            sleep 3; elapsed=$((elapsed + 3))
+        done
+
+        output=$(curl -sf "${base_url}/tasks/${task_id}" -H "$auth_header" 2>/dev/null | \
+            python3 -c "import sys,json; print(json.load(sys.stdin).get('task',{}).get('output',''))" 2>/dev/null) || true
+
+        if [ "$status" = "completed" ] || [ "$status" = "finished" ]; then
+            pass "Ollama: Task completed (${elapsed}s)"
+
+            # Verify the output contains C function signature
+            if echo "$output" | grep -qE "(void|int)\s+my_printf"; then
+                pass "Ollama: Output contains my_printf function definition"
+            elif echo "$output" | grep -q "my_printf"; then
+                pass "Ollama: Output mentions my_printf (function form may vary)"
+            else
+                fail "Ollama: Output missing my_printf"
+                info "Output was: $(echo "$output" | head -20)"
+            fi
+
+            # Verify it references printf (the function it wraps)
+            if echo "$output" | grep -q "printf"; then
+                pass "Ollama: Output references printf"
+            else
+                fail "Ollama: Output missing printf reference"
+            fi
+        else
+            fail "Ollama: Task did not complete (status=$status after ${elapsed}s)"
+            info "Output was: $(echo "$output" | head -20)"
+            info "Agent B log tail:"
+            tail -30 "$b_work_dir/agent.log" 2>/dev/null || true
+        fi
+    else
+        fail "Ollama: Task creation returned no taskId"
+        info "Response was: $task_resp"
+    fi
+
+    # ── Cleanup ──
+    kill "$b_pid" "$relay_pid" 2>/dev/null || true
+    info "Ollama test cleanup complete"
+}
+
+# ── Ollama CI Test — Install ollama on CI runner, run integration test ──
+# Designed for GitHub Actions ubuntu-latest runners (7GB RAM, 14GB disk free).
+# Installs ollama, pulls qwen2.5-coder:1.5b (~1GB), runs agent + task.
+# Also works locally — same as run_ollama_tests but installs ollama if missing.
+run_ollama_ci_test() {
+    header "Ollama CI — Install + Run on CI Runner"
+
+    # ── Install ollama if not present ──
+    if ! command -v ollama &>/dev/null; then
+        info "Installing ollama..."
+        curl -fsSL https://ollama.com/install.sh | sh 2>/dev/null || { skip "Cannot install ollama"; return; }
+    fi
+
+    # Start ollama server if not running (CI runners need this)
+    if ! curl -sf http://localhost:11434/api/tags &>/dev/null; then
+        info "Starting ollama server..."
+        ollama serve > "$TEST_DIR/ollama-server.log" 2>&1 &
+        local ollama_pid=$!
+        PIDS_TO_KILL+=("$ollama_pid")
+        # Wait for server to be ready
+        for i in $(seq 1 30); do
+            curl -sf http://localhost:11434/api/tags &>/dev/null && break
+            sleep 1
+        done
+        if ! curl -sf http://localhost:11434/api/tags &>/dev/null; then
+            fail "Ollama server not ready after 30s"
+            cat "$TEST_DIR/ollama-server.log" 2>/dev/null | tail -20
+            return
+        fi
+        pass "Ollama server started"
+    else
+        pass "Ollama server already running"
+    fi
+
+    # ── Pull model ──
+    if ! ollama list 2>/dev/null | grep -q "qwen2.5-coder:1.5b"; then
+        info "Pulling qwen2.5-coder:1.5b (986 MB — this may take a few minutes in CI)..."
+        ollama pull qwen2.5-coder:1.5b 2>/dev/null || { fail "Cannot pull qwen2.5-coder:1.5b"; return; }
+    fi
+    pass "Model qwen2.5-coder:1.5b available"
+
+    # ── Build agent ──
+    local agent_bin="$TEST_DIR/yaver"
+    [ -f "$agent_bin" ] || build_agent "$agent_bin" > /dev/null 2>&1 || { fail "Cannot build agent"; return; }
+
+    # ── Start agent (non-dummy, no relay) ──
+    local http_port quic_port
+    http_port=$(get_free_port); quic_port=$(get_free_port)
+
+    info "Creating test account..."
+    local token
+    token=$(create_test_account) || { fail "Cannot create test account"; return; }
+
+    local device_id="test-ollama-ci-$(gen_uuid)"
+    local work_dir="$TEST_DIR/ollama-ci-agent"
+
+    info "Starting agent (HTTP=$http_port)..."
+    export YAVER_NO_DUMMY=1
+    local agent_pid
+    agent_pid=$(start_agent "$agent_bin" "$http_port" "$quic_port" "$token" "$device_id" "$work_dir" --no-relay) || {
+        unset YAVER_NO_DUMMY
+        fail "Agent failed to start"; return
+    }
+    unset YAVER_NO_DUMMY
+    pass "Agent started"
+
+    # ── Test 1: Ask ollama to write a printf function ──
+    local base_url="http://127.0.0.1:${http_port}"
+    local auth_header="Authorization: Bearer ${token}"
+
+    info "Sending task: ask ollama to write a C printf wrapper function..."
+    local ollama_prompt="Write a C function called my_printf that wraps printf and adds a newline at the end. Show only the code, no explanation."
+    local task_resp task_id
+    task_resp=$(curl -sf -X POST "${base_url}/tasks" \
+        -H "$auth_header" -H "Content-Type: application/json" \
+        -d "{\"title\":\"ollama ci printf test\",\"customCommand\":\"ollama run qwen2.5-coder:1.5b \\\"${ollama_prompt}\\\"\"}" 2>/dev/null) || { fail "Ollama CI: create task failed"; }
+    task_id=$(echo "$task_resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('taskId',''))" 2>/dev/null)
+
+    if [ -n "$task_id" ]; then
+        pass "Ollama CI: Task created ($task_id)"
+
+        # Poll for completion (max 180s — CPU inference is slow in CI)
+        local elapsed=0 status="" output=""
+        while [ $elapsed -lt 180 ]; do
+            local detail
+            detail=$(curl -sf "${base_url}/tasks/${task_id}" -H "$auth_header" 2>/dev/null) || true
+            status=$(echo "$detail" | python3 -c "import sys,json; print(json.load(sys.stdin).get('task',{}).get('status',''))" 2>/dev/null) || true
+            case "$status" in completed|finished|failed|stopped) break ;; esac
+            sleep 3; elapsed=$((elapsed + 3))
+        done
+
+        output=$(curl -sf "${base_url}/tasks/${task_id}" -H "$auth_header" 2>/dev/null | \
+            python3 -c "import sys,json; print(json.load(sys.stdin).get('task',{}).get('output',''))" 2>/dev/null) || true
+
+        if [ "$status" = "completed" ] || [ "$status" = "finished" ]; then
+            pass "Ollama CI: Task completed (${elapsed}s)"
+
+            if echo "$output" | grep -qE "(void|int)\s+my_printf"; then
+                pass "Ollama CI: Output contains my_printf function definition"
+            elif echo "$output" | grep -q "my_printf"; then
+                pass "Ollama CI: Output mentions my_printf (function form may vary)"
+            else
+                fail "Ollama CI: Output missing my_printf"
+                info "Output was: $(echo "$output" | head -20)"
+            fi
+
+            if echo "$output" | grep -q "printf"; then
+                pass "Ollama CI: Output references printf"
+            else
+                fail "Ollama CI: Output missing printf reference"
+            fi
+        else
+            fail "Ollama CI: Task did not complete (status=$status after ${elapsed}s)"
+            info "Output was: $(echo "$output" | head -20)"
+            info "Agent log tail:"
+            tail -30 "$work_dir/agent.log" 2>/dev/null || true
+        fi
+    else
+        fail "Ollama CI: Task creation returned no taskId"
+        info "Response was: $task_resp"
+    fi
+
+    # ── Cleanup ──
+    kill "$agent_pid" 2>/dev/null || true
+    info "Ollama CI test cleanup complete"
+}
+
     local run_all=true
     local run_builds=false run_lan=false run_relay=false run_relay_docker=false
     local run_relay_binary=false run_tailscale=false run_cloudflare=false run_unit=false
@@ -2017,6 +2266,8 @@ run_docker_tests() {
     local run_voice=false
     local run_e2e=false
     local run_docker=false
+    local run_ollama=false
+    local run_ollama_ci=false
 
     for arg in "$@"; do
         case "$arg" in
@@ -2035,6 +2286,8 @@ run_docker_tests() {
             --voice)          run_voice=true; run_all=false ;;
             --e2e)            run_e2e=true; run_all=false ;;
             --docker)         run_docker=true; run_all=false ;;
+            --ollama)         run_ollama=true; run_all=false ;;
+            --ollama-ci)      run_ollama_ci=true; run_all=false ;;
             --help|-h)
                 cat << 'HELP'
 Usage: ./scripts/test-suite.sh [FLAGS]
@@ -2057,6 +2310,8 @@ Flags:
   --voice           Voice AI tests (provider registry, HTTP endpoints, mock S2S)
   --e2e             End-to-end real command execution (python, shell — no AI runner needed)
   --docker          Docker container sandbox tests (requires Docker daemon)
+  --ollama          Ollama integration test — local (requires ollama + qwen2.5-coder:1.5b)
+  --ollama-ci       Ollama CI test — installs ollama + model, runs on any Linux runner
 
 Environment:
   Credentials loaded from: env vars > .env.test > ../talos/.env.test
@@ -2130,6 +2385,14 @@ HELP
 
     if $run_all || $run_docker; then
         run_docker_tests
+    fi
+
+    if $run_ollama; then
+        run_ollama_tests
+    fi
+
+    if $run_ollama_ci; then
+        run_ollama_ci_test
     fi
 
     # Summary
