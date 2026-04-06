@@ -35,6 +35,14 @@ type Config struct {
 	TLSFingerprint string            `json:"tls_fingerprint,omitempty"` // SHA256 of TLS cert
 	TLSPort       int                 `json:"tls_port,omitempty"`       // HTTPS port (default 18443)
 	IOSInstallMethod string           `json:"ios_install_method,omitempty"` // "auto" (default), "native", "bundle"
+
+	// Container isolation — run tasks inside Docker containers
+	ContainerizeGuests bool              `json:"containerize_guests,omitempty"` // run guest tasks in containers (default: false)
+	ContainerizeHost   bool              `json:"containerize_host,omitempty"`   // run host tasks in containers (default: false)
+	ContainerImage     string            `json:"container_image,omitempty"`     // custom image (default: yaver-sandbox)
+	ContainerCPU       string            `json:"container_cpu,omitempty"`       // CPU limit e.g. "2.0"
+	ContainerMemory    string            `json:"container_memory,omitempty"`    // Memory limit e.g. "4g"
+	ContainerMounts    []string          `json:"container_mounts,omitempty"`    // Extra volume mounts e.g. ["/opt/android-sdk:/opt/android-sdk:ro"]
 }
 
 // ExecConfig controls remote command execution settings.

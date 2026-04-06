@@ -1,0 +1,75 @@
+# Yaver Sandbox — containerized environment for guest and host task execution.
+# Pre-installs Claude Code + common dev tools for fast task startup.
+#
+# Build:  docker build -f Dockerfile.sandbox -t yaver-sandbox .
+# Or:     yaver sandbox build
+#
+# Usage is automatic — when containerization is enabled, the agent runs tasks
+# inside this image with the project directory mounted as a volume.
+
+FROM node:22-bookworm-slim
+
+# Avoid interactive prompts during package install
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── System packages + build tools ────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Core tools
+    git curl wget ca-certificates gnupg2 openssh-client \
+    # Build essentials
+    build-essential cmake pkg-config \
+    # Python
+    python3 python3-pip python3-venv \
+    # Java (for Gradle/Android builds)
+    default-jdk-headless \
+    # Ruby (for CocoaPods/Fastlane)
+    ruby ruby-dev \
+    # Misc
+    zip unzip jq tree ripgrep tmux \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Go ───────────────────────────────────────────────────────────────
+ARG GO_VERSION=1.22.5
+RUN ARCH=$(dpkg --print-architecture) && \
+    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" | tar -C /usr/local -xz
+ENV PATH="/usr/local/go/bin:/root/go/bin:${PATH}"
+
+# ── Rust (optional, commonly needed) ─────────────────────────────────
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# ── Claude Code (npm global) ────────────────────────────────────────
+RUN npm install -g @anthropic-ai/claude-code@latest 2>/dev/null || true
+
+# ── Other AI agents (optional, installed if available) ───────────────
+RUN pip3 install --break-system-packages aider-chat 2>/dev/null || true
+
+# ── Flutter (optional) ──────────────────────────────────────────────
+# Skipped by default — uncomment or use project-level Dockerfile to add
+# RUN git clone https://github.com/flutter/flutter.git /opt/flutter --depth 1 -b stable
+# ENV PATH="/opt/flutter/bin:${PATH}"
+
+# ── Expo CLI + Vercel + deploy tools ─────────────────────────────────
+RUN npm install -g expo-cli eas-cli vercel @cloudflare/wrangler 2>/dev/null || true
+
+# ── Gradle wrapper support (Android builds) ─────────────────────────
+ENV JAVA_HOME=/usr/lib/jvm/default-java
+ENV ANDROID_HOME=/opt/android-sdk
+# Android SDK installed on-demand by gradle, not in base image
+
+# ── Cache directories (mounted as volumes for persistence) ───────────
+# These are mounted as Docker named volumes so caches persist across tasks.
+RUN mkdir -p /root/.npm /root/.gradle /root/.cargo/registry /root/go/pkg/mod
+
+# ── Note on macOS-only tools (Xcode, xcodebuild, xcrun) ─────────────
+# Xcode cannot run inside Docker containers (it requires macOS).
+# For iOS builds, use direct execution (non-containerized) or mount
+# the host's Xcode tools via extra_mounts in config.json.
+# Android builds work fully inside the container via Gradle.
+
+# ── Working directory ────────────────────────────────────────────────
+WORKDIR /workspace
+
+# Default entrypoint — overridden by ContainerRunner with the actual command
+ENTRYPOINT ["/bin/bash", "-c"]
+CMD ["echo 'yaver-sandbox ready'"]

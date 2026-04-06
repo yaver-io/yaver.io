@@ -124,6 +124,8 @@ func main() {
 		runCloud(os.Args[2:])
 	case "guests":
 		runGuests(os.Args[2:])
+	case "sandbox":
+		runSandbox(os.Args[2:])
 	case "sdk-token":
 		runSdkToken(os.Args[2:])
 	case "doctor":
@@ -927,6 +929,8 @@ func runServe(args []string) {
 	installSystemd := fs.Bool("install-systemd", false, "Install and enable systemd user service, then exit")
 	noAutopilot := fs.Bool("no-autopilot", false, "Disable auto-driving mode (enabled by default)")
 	iosInstall := fs.String("ios-install", "", "iOS install method: auto (default), native (xcodebuild+xcrun), bundle (Hermes push)")
+	containerizeGuests := fs.Bool("containerize-guests", false, "Run guest tasks inside Docker containers (requires yaver-sandbox image)")
+	containerizeHost := fs.Bool("containerize-host", false, "Run host tasks inside Docker containers (requires yaver-sandbox image)")
 	fs.Parse(args)
 
 	// Install systemd service and exit
@@ -1493,6 +1497,32 @@ func runServe(args []string) {
 	if cfgDir, err := ConfigDir(); err == nil {
 		httpServer.guestConfigMgr = NewGuestConfigManager(cfgDir)
 		log.Printf("Guest config manager ready")
+	}
+	// Container isolation (optional — requires Docker + yaver-sandbox image)
+	useContainerGuests := *containerizeGuests || cfg.ContainerizeGuests
+	useContainerHost := *containerizeHost || cfg.ContainerizeHost
+	if useContainerGuests || useContainerHost {
+		cr := NewContainerRunner()
+		if cr.IsAvailable() {
+			httpServer.containerRunner = cr
+			httpServer.containerizeGuests = useContainerGuests
+			httpServer.containerizeHost = useContainerHost
+			// Wire into task manager so tasks can use containers
+			taskMgr.ContainerRunner = cr
+			taskMgr.ContainerizeGuests = useContainerGuests
+			taskMgr.ContainerizeHost = useContainerHost
+			taskMgr.ContainerCPU = cfg.ContainerCPU
+			taskMgr.ContainerMemory = cfg.ContainerMemory
+			taskMgr.ContainerImage = cfg.ContainerImage
+			taskMgr.ContainerMounts = cfg.ContainerMounts
+			if cr.IsImageReady() {
+				log.Printf("Container sandbox ready (guests=%v, host=%v)", useContainerGuests, useContainerHost)
+			} else {
+				log.Printf("Container sandbox enabled but image not built — run 'yaver sandbox build'")
+			}
+		} else {
+			log.Printf("Warning: containerization requested but Docker not available — falling back to direct execution")
+		}
 	}
 	if bbMgr, err := NewBlackBoxManager(); err != nil {
 		log.Printf("Warning: blackbox unavailable: %v", err)

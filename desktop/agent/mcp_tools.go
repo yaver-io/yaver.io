@@ -1496,6 +1496,36 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, guestTools...)
 
+	// --- Container Sandbox ---
+	sandboxTools := []map[string]interface{}{
+		{
+			"name":        "sandbox_status",
+			"description": "Check Docker container sandbox status (available, image ready, containerization settings).",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "sandbox_config",
+			"description": "Enable/disable container isolation for guest or host tasks. Requires Docker and yaver-sandbox image.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"containerize_guests": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Run guest tasks in Docker containers",
+					},
+					"containerize_host": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Run host tasks in Docker containers",
+					},
+				},
+			},
+		},
+	}
+	tools = append(tools, sandboxTools...)
+
 	return map[string]interface{}{
 		"tools": tools,
 	}

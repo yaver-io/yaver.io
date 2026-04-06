@@ -454,6 +454,37 @@ yaver guests remove cousin@gmail.com
 
 Config (limits, runners, usage mode) syncs via Convex. Project access is managed P2P on each agent.
 
+## Container Sandbox (Optional)
+
+Run AI agent tasks inside Docker containers for full filesystem isolation. Optional and disabled by default — the default mode runs tasks directly on the host.
+
+```bash
+# Build the sandbox image (one-time, ~3 min)
+yaver sandbox build
+
+# Enable for guests only (security isolation)
+yaver serve --containerize-guests
+
+# Enable for all tasks (clean build environments)
+yaver serve --containerize-host
+
+# Check status
+yaver sandbox status
+```
+
+**What's in the container:** Node.js, Python, Go, Rust, Java, Ruby, Claude Code, Aider, Expo CLI, Vercel, and common build tools. Build caches (npm, Gradle, Cargo, Go modules) persist across tasks via Docker volumes.
+
+**Project-specific containers:** Place a `Dockerfile.yaver` in your project root for custom toolchains. The agent auto-detects and builds it.
+
+**Extra host mounts** (e.g. Android SDK): add to `~/.yaver/config.json`:
+```json
+{
+  "container_mounts": ["/opt/android-sdk:/opt/android-sdk:ro"]
+}
+```
+
+**Note:** Xcode/xcodebuild requires macOS and cannot run in Docker. iOS builds must use direct execution (non-containerized). Android builds via Gradle work fully inside containers.
+
 ## Hot Reload — Dev Server to Phone
 
 Start a dev server on your machine and preview the app on your phone in real time — all through the P2P channel. Works on any network (Wi-Fi, 4G, behind NAT).

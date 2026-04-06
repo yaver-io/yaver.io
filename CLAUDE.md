@@ -630,6 +630,75 @@ yaver guests usage 2026-04-06                 # Show usage for date
 | `desktop/agent/mcp_tools.go` | MCP tools: `guest_config`, `guest_usage` |
 | `mobile/src/lib/guests.ts` | Mobile API: `fetchGuestConfigs`, `updateGuestConfig`, `fetchGuestUsage` |
 
+## Container Sandbox (Optional Task Isolation)
+
+Run AI agent tasks inside Docker containers for filesystem isolation. **Optional and disabled by default** — the default mode runs tasks directly on the host (unchanged behavior).
+
+### How it works
+1. Host builds the sandbox image: `yaver sandbox build` (~3 min, one-time)
+2. Host enables containerization via CLI flags or config
+3. Tasks run inside `yaver-sandbox` Docker containers with the project dir mounted as `/workspace`
+4. Build caches (npm, Gradle, Cargo, Go) persist via Docker named volumes
+5. Only API keys needed by AI agents are injected (not the full host environment)
+
+### Config
+
+```bash
+# CLI flags
+yaver serve --containerize-guests    # Guest tasks only
+yaver serve --containerize-host      # All tasks
+
+# Or in ~/.yaver/config.json
+{
+  "containerize_guests": true,
+  "containerize_host": false,
+  "container_cpu": "2.0",
+  "container_memory": "4g",
+  "container_image": "yaver-sandbox",
+  "container_mounts": ["/opt/android-sdk:/opt/android-sdk:ro"]
+}
+```
+
+### Build system support
+
+| Build Tool | Container Support | Notes |
+|-----------|:-:|-------|
+| Gradle (Android) | Yes | Java pre-installed, Gradle wrapper downloads SDK on demand |
+| npm / Expo / Vite | Yes | Node.js 22 pre-installed |
+| Go | Yes | Go 1.22 pre-installed |
+| Rust / Cargo | Yes | Stable toolchain pre-installed |
+| Python / pip | Yes | Python 3 pre-installed |
+| **Xcode (iOS)** | **No** | Requires macOS — use direct execution for iOS builds |
+| Vercel CLI | Yes | Pre-installed |
+| Flutter | Optional | Uncomment in Dockerfile or use project-level `Dockerfile.yaver` |
+
+### Project-specific containers
+Place a `Dockerfile.yaver` in your project root. The agent auto-detects it and builds a `yaver-project-<dirname>` image.
+
+### Guest task security layers (with containers)
+
+| Layer | Without Container | With Container |
+|-------|:-:|:-:|
+| Prompt prefix (AI instructions) | Yes | Yes |
+| Workdir pinning | Yes | Yes |
+| Endpoint allowlist | Yes | Yes |
+| Custom command block | Yes | Yes |
+| **Filesystem isolation** | No | **Yes** (Docker namespace) |
+| **Environment isolation** | No | **Yes** (only API keys injected) |
+| Runner restriction | Yes | Yes |
+| Daily limits + schedule | Yes | Yes |
+
+### Key Files
+| File | Purpose |
+|------|---------|
+| `desktop/agent/Dockerfile.sandbox` | Sandbox Docker image definition |
+| `desktop/agent/container_runner.go` | `ContainerRunner`: Docker wrapper for task execution |
+| `desktop/agent/sandbox_cmd.go` | CLI: `yaver sandbox build\|status` |
+| `desktop/agent/sandbox_http.go` | HTTP: `/sandbox/status`, `/sandbox/config`, `/sandbox/build` |
+| `desktop/agent/config.go` | Config fields: `containerize_guests`, `containerize_host`, `container_*` |
+| `desktop/agent/tasks.go` | Task execution with container branch |
+| `desktop/agent/mcp_tools.go` | MCP tools: `sandbox_status`, `sandbox_config` |
+
 ## SDK Token Security
 
 The Feedback SDK uses a dedicated token system with defense-in-depth security:
