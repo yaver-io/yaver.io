@@ -153,6 +153,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 
 	// Black box (flight-recorder streaming from device SDKs) — SDK-accessible
 	mux.HandleFunc("/blackbox/stream", s.authSDK(s.handleBlackBoxStream))
+	mux.HandleFunc("/blackbox/command-stream", s.authSDK(s.handleBlackBoxCommandStream))
 	mux.HandleFunc("/blackbox/events", s.authSDK(s.handleBlackBoxEvents))
 	mux.HandleFunc("/blackbox/logs", s.authSDK(s.handleBlackBoxLogs))
 	mux.HandleFunc("/blackbox/subscribe", s.authSDK(s.handleBlackBoxSubscribe))
@@ -163,6 +164,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/dev/start", s.authOrLocalhost(s.handleDevServerStart))
 	mux.HandleFunc("/dev/stop", s.authOrLocalhost(s.handleDevServerStop))
 	mux.HandleFunc("/dev/reload", s.authSDK(s.handleDevServerReload))
+	mux.HandleFunc("/dev/reload-app", s.authSDK(s.handleReloadApp))
 	mux.HandleFunc("/dev/events", s.authSDK(s.handleDevServerEvents))
 	mux.HandleFunc("/dev/compatibility", s.authSDK(s.handleDevServerCompatibility))
 	mux.HandleFunc("/dev/builds", s.auth(s.handleDevServerBuilds))
@@ -5683,6 +5685,80 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 		var a struct { File string `json:"file"`; Lines int `json:"lines"`; Filter string `json:"filter"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSyslog(a.File, a.Lines, a.Filter))
 	case "auth_log":
 		var a struct { Lines int `json:"lines"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpAuthLog(a.Lines))
+
+	// --- Guest Access ---
+	case "guest_invite":
+		var args struct {
+			Email string `json:"email"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.Email == "" {
+			return mcpToolError("email is required")
+		}
+		invResult, err := InviteGuest(s.convexURL, s.token, args.Email)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		// Refresh guest list
+		if ids, err := FetchGuestUserIds(s.convexURL, s.token); err == nil {
+			s.guestUserIDsMu.Lock()
+			s.guestUserIDs = ids
+			s.guestUserIDsMu.Unlock()
+		}
+		msg := fmt.Sprintf("Invitation sent to %s.\nInvite code: %s\n", args.Email, invResult.InviteCode)
+		if invResult.GuestRegistered {
+			msg += "This email is already registered — they'll see the invitation in their Yaver app."
+		} else {
+			msg += "This email is not yet registered. Share the invite code — they can accept with any OAuth method after signing up."
+		}
+		msg += "\nExpires in 2 days."
+		return mcpToolResult(msg)
+
+	case "guest_list":
+		guests, err := FetchGuestList(s.convexURL, s.token)
+		if err != nil {
+			return mcpToolError("failed to fetch guests: " + err.Error())
+		}
+		if len(guests) == 0 {
+			return mcpToolResult("No guests. Use guest_invite to invite someone.")
+		}
+		var sb strings.Builder
+		sb.WriteString("Guests:\n")
+		for _, g := range guests {
+			name := g.FullName
+			if name == "" {
+				name = "(not yet signed up)"
+			}
+			sb.WriteString(fmt.Sprintf("- %s [%s] %s\n", g.Email, g.Status, name))
+		}
+		return mcpToolResult(sb.String())
+
+	case "guest_revoke":
+		var args struct {
+			Email string `json:"email"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.Email == "" {
+			return mcpToolError("email is required")
+		}
+		if err := RevokeGuest(s.convexURL, s.token, args.Email); err != nil {
+			return mcpToolError(err.Error())
+		}
+		// Refresh guest list
+		if ids, err := FetchGuestUserIds(s.convexURL, s.token); err == nil {
+			s.guestUserIDsMu.Lock()
+			s.guestUserIDs = ids
+			s.guestUserIDsMu.Unlock()
+		}
+		// Clear token cache for non-owner users
+		s.tokenCache.Range(func(key, value interface{}) bool {
+			info := value.(*cachedTokenInfo)
+			if info.userID != s.ownerUserID && !info.isSdk {
+				s.tokenCache.Delete(key)
+			}
+			return true
+		})
+		return mcpToolResult(fmt.Sprintf("Guest access revoked for %s", args.Email))
 
 	default:
 		return mcpToolError("unknown tool: " + call.Name)

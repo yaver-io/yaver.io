@@ -271,6 +271,7 @@ Yaver is an open-source P2P tool that lets developers use any AI coding agent (C
 9. **Voice-first mobile** — Voice input is always available in the mobile app and Feedback SDK. Audio is recorded on-device and sent to the agent for transcription. S2S providers (PersonaPlex, OpenAI Realtime) are optional for real-time voice conversations.
 10. **Provider-agnostic voice** — Like LLM-agnosticism for coding agents, voice is provider-agnostic: PersonaPlex (free, on-prem), OpenAI Realtime (paid, cloud), or any future provider via the VoiceProvider interface.
 8. **Session Transfer** — Transfer AI agent sessions (Claude Code, Aider, Codex, Goose, Amp, OpenCode) between machines via `yaver session transfer`. Includes conversation history, agent-specific state files, and optional workspace (via git or tar). Also available as MCP tools for use directly from within AI agents.
+11. **Guest Access** — Share your machine with anyone via `yaver guests invite <email>`. No team/subscription needed. Guests get scoped access (tasks, feedback, dev server) but can't access shell, vault, or sessions. Max 5 guests per host, invitations expire in 2 days. Works from CLI, mobile app, and MCP.
 
 ## Voice AI Architecture
 
@@ -342,16 +343,45 @@ Continuous streaming of all app events to the agent via `/blackbox/events`:
 - Fatal crashes auto-create fix tasks
 - `/blackbox/subscribe` SSE for live log watching
 
+### Remote Reload (agent command channel)
+The BlackBox SSE connection doubles as a **command channel** from agent to SDK. When the vibe coder triggers a reload from the Yaver mobile app (or from the Feedback SDK's "Hot Reload" button), the agent broadcasts the command to all connected SDK sessions.
+
+**Use case:** Both the Yaver mobile app and a third-party app (with Feedback SDK) are connected to the same Go agent. The vibe coder can trigger reload of the third-party app while away from their desk.
+
+```
+Yaver Mobile App ──POST /dev/reload-app──► Agent ──SSE command──► Third-Party App (SDK)
+                                            │                        ├─ onReload()
+                                            └─ BroadcastCommand()    └─ DevSettings.reload()
+```
+
+**Two reload modes:**
+- `"dev"` — Hot reload: tells the dev server to restart, SDK calls `onReload` callback (default: `DevSettings.reload()`)
+- `"bundle"` — Native bundle: rebuilds Hermes bytecode, pushes `reload_bundle` command with bundle URL
+
+**Agent endpoints:**
+- `POST /dev/reload` — Existing hot reload + now also broadcasts to SDK sessions
+- `POST /dev/reload-app` — Explicit reload with mode selection (`{"mode": "dev"}` or `{"mode": "bundle"}`)
+- `GET /blackbox/command-stream` — SSE-only endpoint for receiving commands (lightweight, no event ingestion)
+
+**SDK API:**
+- `FeedbackConfig.onReload` / `onReloadBundle` — Callbacks invoked on reload commands
+- `BlackBox.onCommand(handler)` — Register custom command handlers, returns unsubscribe function
+- `BlackBox.isCommandChannelConnected` — Check if SSE command channel is connected
+- `P2PClient.reloadApp(mode)` — Trigger reload from SDK code (`'dev'` or `'bundle'`)
+
 ### Key Files
 | File | Purpose |
 |------|---------|
-| `sdk/feedback/react-native/src/BlackBox.ts` | RN black box streaming client |
-| `sdk/feedback/react-native/src/YaverFeedback.ts` | SDK entry, error buffer, wrapErrorHandler |
+| `sdk/feedback/react-native/src/BlackBox.ts` | RN black box streaming client + SSE command channel |
+| `sdk/feedback/react-native/src/YaverFeedback.ts` | SDK entry, error buffer, wrapErrorHandler, onReload wiring |
+| `sdk/feedback/react-native/src/P2PClient.ts` | P2P client with reloadApp() method |
 | `sdk/feedback/react-native/src/FeedbackModal.tsx` | Modal with hot reload button + streaming indicator |
+| `sdk/feedback/react-native/src/types.ts` | FeedbackConfig with onReload/onReloadBundle callbacks |
 | `sdk/feedback/flutter/lib/src/blackbox.dart` | Flutter black box + NavigatorObserver |
 | `sdk/feedback/flutter/lib/src/feedback.dart` | Flutter SDK entry, wrapFlutterErrorHandler |
-| `desktop/agent/blackbox.go` | BlackBoxManager, session management, prompt generation |
-| `desktop/agent/blackbox_http.go` | HTTP: /blackbox/stream, /events, /logs, /subscribe, /context |
+| `desktop/agent/blackbox.go` | BlackBoxManager, BlackBoxCommand, session management, BroadcastCommand |
+| `desktop/agent/blackbox_http.go` | HTTP: /blackbox/stream, /command-stream, /events, /logs, /subscribe, /context |
+| `desktop/agent/devserver_http.go` | HTTP: /dev/reload (broadcasts to SDK), /dev/reload-app |
 
 ## Multi-User Mode (Shared Machines)
 
@@ -387,6 +417,132 @@ yaver serve --multi-user --team team_abc  # Restrict to team members
 yaver serve --multi-user --max-users 10   # Limit concurrent users
 ```
 
+## Guest Access (Share Your Machine)
+
+Let other people use your machine through Yaver without giving them SSH, passwords, or team setup. The host invites a guest by email; the guest accepts from the Yaver mobile app and can then run tasks on the host's agent. No team or subscription required — just OAuth identity + consent.
+
+### How it works
+1. **Host** invites: `yaver guests invite cousin@gmail.com` → gets a 6-char invite code (e.g. `K7WP3N`)
+2. **Guest** downloads Yaver app → signs in with **any OAuth method** (Apple, Google, Microsoft, or email)
+3. **Acceptance** — two paths:
+   - **Email match**: If guest signs in with the same email that was invited, they see the invitation automatically and tap "Accept"
+   - **Invite code**: If guest signs in with a different email (e.g. Apple private relay, different OAuth provider), they enter the 6-char invite code
+4. Guest's device list now shows the host's machine(s) — labeled as "(hostname) (host name)"
+5. Guest can create tasks, use feedback, dev server, vibing — but NOT shell, vault, sessions, or terminals
+6. **Host** revokes anytime: `yaver guests remove cousin@gmail.com`
+
+### Pre-Registration Support
+Invitations work even if the guest **doesn't have a Yaver account yet**:
+- Host invites `cousin@gmail.com` → invitation stored in Convex with 2-day TTL
+- Guest downloads Yaver app days later → signs up → sees invitation (if within 2 days)
+- Alternatively, host shares the invite code out-of-band (text, WhatsApp, etc.) → guest enters it after signing up
+- The CLI tells the host whether the invited email is already registered
+
+### OAuth Compatibility
+Guests can sign in with **any** supported OAuth provider — they don't need to use the same provider as the host:
+- **Google Sign-In** — real email
+- **Apple Sign-In** — Apple returns real email in the identity token (even with "Hide My Email")
+- **Microsoft/Office 365** — real email
+- **Email/password** — exact email match
+- **Cross-provider**: Host invites `cousin@gmail.com`, guest signs in with Apple using same underlying email → **auto-match works**
+- **Different email**: Host invites `cousin@gmail.com`, guest signs in with `cousin@outlook.com` → use the **invite code** to accept
+
+### Constraints
+- **Max 5 guests** per host
+- **Invitations expire in 2 days** if not accepted
+- **Only the host can invite** — guests cannot invite other guests
+- **Scoped access** — guests are restricted to safe endpoints (see table below)
+- **Invite code**: 6-char uppercase alphanumeric (no 0/O/1/I to avoid confusion)
+
+### Guest Endpoint Access
+
+| Allowed (Guest)  | Blocked (Host Only) |
+|------------------|---------------------|
+| `/tasks`, `/tasks/` | `/exec`, `/exec/` |
+| `/feedback`, `/feedback/` | `/vault/*` |
+| `/dev/*` | `/session/*` |
+| `/blackbox/*` | `/tmux/*` |
+| `/voice/*` | `/agent/shutdown`, `/agent/clean` |
+| `/info`, `/agent/status`, `/agent/runners` | `/git/*` |
+| `/projects`, `/todolist`, `/builds` | `/repos/*` |
+| `/vibing`, `/vibing/*` | `/schedules`, `/notifications/*` |
+| `/health`, `/guests` | `/users`, `/sessions` |
+
+### How the Agent Enforces Guest Access
+1. Agent polls `GET /guests/allowed` from Convex every 60 seconds → caches approved guest userIds
+2. When a non-owner token arrives, `auth()` middleware checks if userId is in the guest list
+3. If yes, checks if the requested path is in `guestAllowedPrefixes` — allows or rejects
+4. Sets `X-Yaver-Guest: true` and `X-Yaver-GuestUserID` headers on allowed requests
+5. On revocation, agent clears token cache so the guest is rejected within 60 seconds
+
+### Invitation Flow (Convex)
+```
+Host (CLI/Mobile/MCP)                Convex                     Guest (Mobile App)
+┌───────────────────┐          ┌──────────────┐          ┌───────────────────┐
+│ yaver guests      │  POST    │ guestInvit-  │  GET     │ Yaver app polls   │
+│ invite foo@bar.com│─────────►│ ations table │◄─────────│ /guests/hosts     │
+│                   │ /invite  │ status:      │ pending  │                   │
+└───────────────────┘          │ "pending"    │ invites  │ Shows: "Kivanc    │
+                               │ expiresAt:   │          │ invited you"      │
+                               │ +2 days      │          │                   │
+                               └──────┬───────┘          │ [Accept] [Ignore] │
+                                      │                  │         │         │
+                                      │  POST /accept    │         │         │
+                                      │◄─────────────────│─────────┘         │
+                                      │                  │                   │
+                               ┌──────▼───────┐          │ Device list now   │
+                               │ guestAccess  │          │ shows host's Mac  │
+                               │ table        │─────────►│ "MacBook (Kivanc)"│
+                               │ hostUserId   │ devices  │                   │
+                               │ guestUserId  │ /list    │ Can create tasks, │
+                               │ grantedAt    │ includes │ use dev server... │
+                               └──────────────┘ host devs└───────────────────┘
+```
+
+### Access from CLI, Mobile, and MCP
+
+| Interface | Invite | Accept | List Guests | Revoke |
+|-----------|--------|--------|-------------|--------|
+| **CLI** | `yaver guests invite <email>` | N/A (host only invites) | `yaver guests list` | `yaver guests remove <email>` |
+| **Mobile App** | Via Convex API (`inviteGuest()`) | Tap "Accept" on invitation banner | Via device list (guest devices labeled) | Via Convex API (`revokeGuest()`) |
+| **MCP** | `guest_invite` tool | N/A (guest accepts from mobile) | `guest_list` tool | `guest_revoke` tool |
+| **Agent HTTP** | `POST /guests/invite` | N/A (Convex direct) | `GET /guests` | `POST /guests/revoke` |
+| **Convex HTTP** | `POST /guests/invite` | `POST /guests/accept` | `GET /guests/list` (host), `GET /guests/hosts` (guest) | `POST /guests/revoke` |
+
+### Key Files
+| File | Purpose |
+|------|---------|
+| `backend/convex/schema.ts` | `guestInvitations`, `guestAccess` tables |
+| `backend/convex/guests.ts` | Invite, accept, revoke, list mutations/queries |
+| `backend/convex/http.ts` | HTTP endpoints: /guests/invite, /accept, /revoke, /list, /hosts, /allowed |
+| `backend/convex/devices.ts` | `listMyDevices` returns host devices for guests |
+| `desktop/agent/auth.go` | `FetchGuestUserIds`, `InviteGuest`, `RevokeGuest`, `FetchGuestList` |
+| `desktop/agent/httpserver.go` | `auth()` middleware with guest checking, `guestAllowedPrefixes`, `refreshGuestList` goroutine |
+| `desktop/agent/guest_http.go` | Agent HTTP handlers: /guests, /guests/invite, /guests/revoke |
+| `desktop/agent/guest_cmd.go` | CLI: `yaver guests invite\|list\|remove` |
+| `desktop/agent/mcp_tools.go` | MCP tools: `guest_invite`, `guest_list`, `guest_revoke` |
+| `mobile/src/lib/guests.ts` | Mobile API: fetchGuestHosts, acceptGuestInvitation, inviteGuest, revokeGuest |
+| `mobile/src/context/DeviceContext.tsx` | Guest invitation state, accept flow, guest device display |
+
+### Convex Schema
+
+**guestInvitations table:**
+```
+hostUserId: Id<"users">    — who is sharing
+guestEmail: string         — invited email
+status: "pending" | "accepted" | "revoked"
+guestUserId?: Id<"users">  — set when accepted
+expiresAt: number          — createdAt + 2 days
+```
+
+**guestAccess table:**
+```
+hostUserId: Id<"users">    — machine owner
+guestUserId: Id<"users">   — guest with access
+grantedAt: number
+revokedAt?: number          — null = active, set = revoked
+```
+
 ## SDK Token Security
 
 The Feedback SDK uses a dedicated token system with defense-in-depth security:
@@ -419,15 +575,24 @@ Request → ipAllowlist → CORS → auth()/authSDK()
           Accepts:           Accepts:
           - Agent token      - Agent token (full)
           - CLI session      - CLI session (full)
-          - Rejects SDK      - SDK token (scoped)
+          - Guest session    - SDK token (scoped)
+            (scoped)
+          - Rejects SDK
               │                  │
-          Endpoints:         Endpoints:
-          /tasks             /feedback
-          /exec              /blackbox/*
-          /vault             /voice/*
-          /agent/*           /builds
-          /session/*
-          /tmux/*
+          Owner gets:        Endpoints:
+          /tasks, /exec      /feedback
+          /vault, /agent/*   /blackbox/*
+          /session/*, /tmux  /voice/*
+          /git/*, /repos/*   /builds
+              │
+          Guest gets:
+          /tasks, /feedback
+          /dev/*, /voice/*
+          /projects, /vibing
+          /builds, /todolist
+          (blocked: exec,
+           vault, session,
+           tmux, git, repos)
 ```
 
 ### Key Files
@@ -664,6 +829,7 @@ go run . connect    # Connect to a remote agent
 go run . status     # Show auth status
 go run . devices    # List registered devices
 go run . relay      # Manage relay server config
+go run . guests     # Manage guest access (invite/list/remove)
 go run . help       # Show all commands
 ```
 

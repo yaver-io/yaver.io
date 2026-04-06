@@ -49,6 +49,15 @@ export interface BlackBoxConfig {
  * - Use `BlackBox.wrapConsole()` to intercept console.log/warn/error
  *   (only if you explicitly opt in — no auto-hooking)
  */
+/** Command received from the agent via the SSE command channel. */
+export interface BlackBoxCommand {
+  command: string; // "reload", "reload_bundle"
+  data?: Record<string, unknown>; // e.g. { bundleUrl: "/dev/native-bundle" }
+}
+
+/** Callback type for handling agent commands. */
+export type CommandHandler = (cmd: BlackBoxCommand) => void;
+
 export class BlackBox {
   private static baseUrl: string | null = null;
   private static authToken: string | null = null;
@@ -64,6 +73,12 @@ export class BlackBox {
     warn: typeof console.warn;
     error: typeof console.error;
   } | null = null;
+
+  // SSE command channel — persistent connection to /blackbox/stream
+  private static sseAbortController: AbortController | null = null;
+  private static sseReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private static commandHandlers: CommandHandler[] = [];
+  private static sseConnected = false;
 
   /**
    * Start the black box stream. Call after `YaverFeedback.init()`.
@@ -97,6 +112,9 @@ export class BlackBox {
       message: 'Black box streaming started',
       timestamp: Date.now(),
     });
+
+    // Connect SSE command channel for receiving agent commands (reload, etc.)
+    BlackBox.connectSSE();
   }
 
   /** Stop the black box stream and flush remaining events. */
@@ -112,6 +130,7 @@ export class BlackBox {
       clearInterval(BlackBox.flushTimer);
       BlackBox.flushTimer = null;
     }
+    BlackBox.disconnectSSE();
     BlackBox.started = false;
   }
 
@@ -271,6 +290,137 @@ export class BlackBox {
       BlackBox.captureError(error, isFatal ?? false);
       next?.(error, isFatal);
     };
+  }
+
+  // ─── Command channel (agent → SDK) ──────────────────────────────
+
+  /**
+   * Register a handler for commands pushed by the agent.
+   * The primary use case is receiving "reload" commands when the vibe coder
+   * triggers a reload from the Yaver mobile app.
+   *
+   * @example
+   * BlackBox.onCommand((cmd) => {
+   *   if (cmd.command === 'reload') {
+   *     DevSettings.reload(); // or Updates.reloadAsync()
+   *   }
+   * });
+   */
+  static onCommand(handler: CommandHandler): () => void {
+    BlackBox.commandHandlers.push(handler);
+    // Return unsubscribe function
+    return () => {
+      BlackBox.commandHandlers = BlackBox.commandHandlers.filter(h => h !== handler);
+    };
+  }
+
+  /** Whether the SSE command channel is connected. */
+  static get isCommandChannelConnected(): boolean {
+    return BlackBox.sseConnected;
+  }
+
+  /**
+   * Connect to the agent's /blackbox/stream SSE endpoint.
+   * This persistent connection allows the agent to push commands (reload, etc.)
+   * back to the SDK. Events are still sent via batch POST /blackbox/events.
+   */
+  private static async connectSSE(): Promise<void> {
+    if (!BlackBox.baseUrl || !BlackBox.authToken) return;
+
+    // Disconnect any existing connection
+    BlackBox.disconnectSSE();
+
+    const controller = new AbortController();
+    BlackBox.sseAbortController = controller;
+
+    const url = `${BlackBox.baseUrl}/blackbox/command-stream?device=${encodeURIComponent(BlackBox.deviceId)}`;
+
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${BlackBox.authToken}`,
+          'X-Device-ID': BlackBox.deviceId,
+          'X-Platform': Platform.OS,
+          'X-App-Name': BlackBox.appName,
+          Accept: 'text/event-stream',
+        },
+        // @ts-ignore — React Native supports signal on fetch
+        signal: controller.signal,
+      });
+
+      if (!response.ok || !response.body) {
+        BlackBox.scheduleSSEReconnect();
+        return;
+      }
+
+      BlackBox.sseConnected = true;
+
+      // Read SSE stream
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const msg = JSON.parse(line.slice(6));
+            if (msg.type === 'command' && msg.command) {
+              const cmd: BlackBoxCommand = msg.command;
+              for (const handler of BlackBox.commandHandlers) {
+                try {
+                  handler(cmd);
+                } catch {
+                  // Handler error — don't break the loop
+                }
+              }
+            }
+          } catch {
+            // Malformed SSE data — skip
+          }
+        }
+      }
+    } catch (err: unknown) {
+      // AbortError is expected on disconnect
+      if (err instanceof Error && err.name === 'AbortError') return;
+    } finally {
+      BlackBox.sseConnected = false;
+    }
+
+    // Reconnect if still running
+    if (BlackBox.started) {
+      BlackBox.scheduleSSEReconnect();
+    }
+  }
+
+  private static disconnectSSE(): void {
+    if (BlackBox.sseAbortController) {
+      BlackBox.sseAbortController.abort();
+      BlackBox.sseAbortController = null;
+    }
+    if (BlackBox.sseReconnectTimer) {
+      clearTimeout(BlackBox.sseReconnectTimer);
+      BlackBox.sseReconnectTimer = null;
+    }
+    BlackBox.sseConnected = false;
+  }
+
+  private static scheduleSSEReconnect(): void {
+    if (!BlackBox.started) return;
+    if (BlackBox.sseReconnectTimer) return;
+    // Reconnect after 5s
+    BlackBox.sseReconnectTimer = setTimeout(() => {
+      BlackBox.sseReconnectTimer = null;
+      if (BlackBox.started) BlackBox.connectSSE();
+    }, 5000);
   }
 
   // ─── Internal ────────────────────────────────────────────────────

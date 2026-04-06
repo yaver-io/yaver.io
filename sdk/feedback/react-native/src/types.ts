@@ -103,6 +103,30 @@ export interface FeedbackConfig {
    */
   panelBackgroundColor?: string;
   /**
+   * Callback invoked when the agent pushes a reload command.
+   * This happens when the vibe coder triggers a reload from the Yaver mobile app
+   * or from another connected device.
+   *
+   * If not provided, the SDK will attempt `DevSettings.reload()` in dev mode
+   * or ignore the command in production.
+   *
+   * @example
+   * onReload: () => {
+   *   // Custom reload logic, e.g. re-fetch bundle from agent
+   *   Updates.reloadAsync();
+   * }
+   */
+  onReload?: () => void;
+  /**
+   * Callback invoked when the agent pushes a reload_bundle command with a new
+   * native bundle URL. The SDK passes the bundle URL and assets URL so the app
+   * can fetch and load the new bundle.
+   *
+   * If not provided, the SDK will attempt to POST the bundle to localhost:8347
+   * (Yaver's on-device HTTP server) for native container reload.
+   */
+  onReloadBundle?: (bundleUrl: string, assetsUrl?: string) => void;
+  /**
    * TLS certificate fingerprint (SHA256) for HTTPS on LAN.
    * When set, the SDK prefers HTTPS connections and verifies the agent's
    * self-signed cert matches this fingerprint.

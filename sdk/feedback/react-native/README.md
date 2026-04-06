@@ -219,6 +219,102 @@ BlackBox.isStreaming;       // check if active
 | `state` | State mutations | `BlackBox.stateChange('theme toggled')` |
 | `render` | Component render with duration | `BlackBox.render('FlatList', 32.1)` |
 
+## Remote Reload (Agent Command Channel)
+
+The SDK maintains a persistent SSE connection to the agent that receives commands. The primary use case: a vibe coder is away from their desk, coding on their phone via the Yaver mobile app, and wants to hot-reload the third-party app (with this SDK) running on the same or a different device.
+
+```
+Yaver Mobile App                    Agent                     Third-Party App (SDK)
+  tap "Reload"                                                
+  ───POST /dev/reload-app──►  process reload                  
+                               ├─ dev server reload           
+                               └─ BroadcastCommand("reload")  
+                                  ───SSE push──────────────►  BlackBox receives command
+                                                               ├─ onReload() callback
+                                                               └─ DevSettings.reload()
+```
+
+Works over both direct LAN and relay connections since it's standard HTTP/SSE.
+
+### Setup
+
+```tsx
+import { YaverFeedback, BlackBox } from 'yaver-feedback-react-native';
+
+YaverFeedback.init({
+  authToken: 'your-sdk-token',
+  agentUrl: 'http://192.168.1.10:18080',
+
+  // Called when the vibe coder triggers reload from Yaver mobile app
+  onReload: () => {
+    console.log('Remote reload triggered!');
+    // Default behavior if omitted: DevSettings.reload() in dev mode
+  },
+
+  // Called when agent pushes a new native bundle
+  onReloadBundle: (bundleUrl, assetsUrl) => {
+    console.log('New bundle available at:', bundleUrl);
+    // Default: no-op. Implement custom bundle loading if needed.
+  },
+});
+
+// Start BlackBox — this also connects the command channel
+BlackBox.start({ appName: 'AcmeStore' });
+```
+
+### Custom Command Handlers
+
+For advanced use cases, register handlers directly on BlackBox:
+
+```tsx
+// Listen for any command from the agent
+const unsubscribe = BlackBox.onCommand((cmd) => {
+  switch (cmd.command) {
+    case 'reload':
+      // Hot reload from dev server
+      DevSettings.reload();
+      break;
+    case 'reload_bundle':
+      // Fetch new native bundle
+      const { bundleUrl, assetsUrl } = cmd.data;
+      loadNewBundle(bundleUrl, assetsUrl);
+      break;
+    default:
+      console.log('Unknown command:', cmd.command);
+  }
+});
+
+// Check connection status
+BlackBox.isCommandChannelConnected; // boolean
+
+// Clean up
+unsubscribe();
+```
+
+### Triggering Reload from P2PClient
+
+The SDK can also trigger reload programmatically (e.g., from a "Reload" button in the Feedback modal):
+
+```tsx
+import { P2PClient } from 'yaver-feedback-react-native';
+
+const client = new P2PClient('http://192.168.1.10:18080', 'your-token');
+
+// Hot reload (dev server restart)
+await client.reloadApp('dev');
+
+// Rebuild native bundle + push to all connected SDK devices
+await client.reloadApp('bundle');
+```
+
+### How It Works
+
+1. `BlackBox.start()` connects to `/blackbox/command-stream` via SSE
+2. The connection auto-reconnects on disconnect (5s backoff)
+3. When the agent receives `POST /dev/reload` or `POST /dev/reload-app`, it broadcasts a command to all connected SDK sessions
+4. The SDK invokes `onReload` / `onReloadBundle` callbacks, or falls back to `DevSettings.reload()` in dev mode
+5. Events are still sent via batch POST to `/blackbox/events` (unchanged)
+
 ### Resilience
 
 - Failed flushes re-add events to the buffer (capped at 2x maxBufferSize)
@@ -445,6 +541,10 @@ YaverFeedback.init({
   feedbackMode: 'batch',                   // 'live' | 'narrated' | 'batch' (default: 'batch')
   agentCommentaryLevel: 0,                 // 0-10 (default: 0, only relevant in live mode)
   maxCapturedErrors: 5,                    // Error ring buffer size (default: 5)
+
+  // Remote reload callbacks (from Yaver mobile app or another SDK device)
+  onReload: () => { ... },                 // Called on hot reload command (default: DevSettings.reload())
+  onReloadBundle: (url, assets) => { ... },// Called on native bundle rebuild command
 });
 ```
 
@@ -608,6 +708,8 @@ YaverFeedback.setEnabled(false);
 | `wrapConsole()` | Intercept console.log/warn/error |
 | `unwrapConsole()` | Restore original console methods |
 | `wrapErrorHandler(next?)` | Pass-through error handler with real-time streaming |
+| `onCommand(handler)` | Register handler for agent commands (reload, etc.). Returns unsubscribe fn |
+| `isCommandChannelConnected` | Whether the SSE command channel is connected (getter) |
 
 ### P2PClient
 
@@ -622,6 +724,7 @@ YaverFeedback.setEnabled(false);
 | `getArtifactUrl(buildId)` | Get download URL for a build artifact |
 | `voiceStatus()` | Get voice capability info |
 | `transcribeVoice(audioUri)` | Send audio for transcription |
+| `reloadApp(mode)` | Trigger remote reload: `'dev'` (hot reload) or `'bundle'` (rebuild + push) |
 | `startTestSession()` | Start autonomous test session |
 | `stopTestSession()` | Stop test session |
 | `getTestSession()` | Get test session status + fixes |
@@ -655,8 +758,10 @@ The SDK communicates with these agent HTTP endpoints:
 | `/feedback` | POST | Upload feedback bundle (multipart) |
 | `/feedback/stream` | POST | Stream live feedback events |
 | `/blackbox/events` | POST | Batch stream Black Box events |
+| `/blackbox/command-stream` | GET | SSE command channel (agent pushes reload, etc.) |
 | `/blackbox/subscribe` | GET | SSE live log stream |
 | `/blackbox/context` | GET | Get generated prompt context |
+| `/dev/reload-app` | POST | Trigger remote reload of SDK-connected apps |
 | `/builds` | GET/POST | List or start builds |
 | `/voice/status` | GET | Voice capability info |
 | `/voice/transcribe` | POST | Send audio for transcription |
@@ -667,23 +772,24 @@ The SDK communicates with these agent HTTP endpoints:
 ## Architecture
 
 ```
-┌──────────────────┐     HTTP (Bearer auth)     ┌──────────────────┐
-│  Your App        │────────────────────────────►│  Yaver Agent     │
-│  + Feedback SDK  │  feedback, blackbox events  │  (Go CLI)        │
-│  + BlackBox      │  screenshots, voice, video  │  on your machine │
-│                  │◄────────────────────────────│                  │
-│                  │  fixes, build status, voice │  runs AI agent   │
-└──────────────────┘                             └──────────────────┘
-       │                                                │
-       │  Auth only                                     │  Auth only
-       ▼                                                ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Convex Backend                               │
-│  Token validation + device registry (no task data stored)           │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────┐     HTTP (Bearer auth)     ┌──────────────────┐     HTTP/SSE      ┌──────────────────┐
+│  Your App        │────────────────────────────►│  Yaver Agent     │◄────────────────── │  Yaver Mobile    │
+│  + Feedback SDK  │  feedback, blackbox events  │  (Go CLI)        │  tasks, reload     │  App (phone)     │
+│  + BlackBox      │  screenshots, voice, video  │  on your machine │  commands           │  vibe coding     │
+│                  │◄────────────────────────────│                  │                    │                  │
+│                  │  reload commands (SSE),     │  runs AI agent   │                    │                  │
+│                  │  fixes, build status, voice │                  │                    │                  │
+└──────────────────┘                             └──────────────────┘                    └──────────────────┘
+       │                                                │                                       │
+       │  Auth only                                     │  Auth only                             │
+       ▼                                                ▼                                       ▼
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                        Convex Backend                                                                    │
+│  Token validation + device registry (no task data stored)                                                │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-All feedback data flows P2P between your app and the agent. Convex handles only auth and device discovery.
+All feedback data flows P2P between your app and the agent. The Yaver mobile app can trigger remote reloads that reach your app via the agent's command channel. Convex handles only auth and device discovery.
 
 ## License
 

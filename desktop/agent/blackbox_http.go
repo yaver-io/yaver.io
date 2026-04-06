@@ -54,6 +54,29 @@ func (s *HTTPServer) handleBlackBoxStream(w http.ResponseWriter, r *http.Request
 
 	log.Printf("[blackbox] Device %s (%s/%s) connected — streaming started", deviceID, platform, appName)
 
+	// Subscribe to commands so the agent can push reload/etc. to this SDK device
+	cmdCh := session.SubscribeCommands()
+	defer session.UnsubscribeCommands(cmdCh)
+
+	// Forward agent commands to the SSE stream in a goroutine
+	ctx := r.Context()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case cmd, ok := <-cmdCh:
+				if !ok {
+					return
+				}
+				cmdJSON, _ := json.Marshal(cmd)
+				fmt.Fprintf(w, "data: {\"type\":\"command\",\"command\":%s}\n\n", cmdJSON)
+				flusher.Flush()
+				log.Printf("[blackbox] Sent command %q to device %s", cmd.Command, deviceID)
+			}
+		}
+	}()
+
 	// Read incoming events
 	decoder := json.NewDecoder(r.Body)
 	for decoder.More() {
@@ -91,6 +114,71 @@ func (s *HTTPServer) handleBlackBoxStream(w http.ResponseWriter, r *http.Request
 	}
 
 	log.Printf("[blackbox] Device %s disconnected", deviceID)
+}
+
+// handleBlackBoxCommandStream handles GET /blackbox/command-stream — SSE-only
+// endpoint for SDK devices to receive commands (reload, reload_bundle) from the agent.
+// This is the lightweight counterpart to /blackbox/stream: no event ingestion,
+// just command delivery. SDK devices use this + batch POST /blackbox/events.
+func (s *HTTPServer) handleBlackBoxCommandStream(w http.ResponseWriter, r *http.Request) {
+	if s.blackboxMgr == nil {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "blackbox not available"})
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	deviceID := r.URL.Query().Get("device")
+	if deviceID == "" {
+		deviceID = r.Header.Get("X-Device-ID")
+	}
+	if deviceID == "" {
+		deviceID = "unknown"
+	}
+	platform := r.Header.Get("X-Platform")
+	appName := r.Header.Get("X-App-Name")
+
+	session := s.blackboxMgr.GetOrCreateSession(deviceID, platform, appName)
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "streaming not supported"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+
+	// Send initial ack
+	fmt.Fprintf(w, "data: {\"type\":\"connected\",\"message\":\"Command stream active for %s\"}\n\n", deviceID)
+	flusher.Flush()
+
+	log.Printf("[blackbox] Device %s (%s/%s) connected to command stream", deviceID, platform, appName)
+
+	cmdCh := session.SubscribeCommands()
+	defer session.UnsubscribeCommands(cmdCh)
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("[blackbox] Device %s command stream disconnected", deviceID)
+			return
+		case cmd, ok := <-cmdCh:
+			if !ok {
+				return
+			}
+			cmdJSON, _ := json.Marshal(cmd)
+			fmt.Fprintf(w, "data: {\"type\":\"command\",\"command\":%s}\n\n", cmdJSON)
+			flusher.Flush()
+			log.Printf("[blackbox] Sent command %q to device %s (command-stream)", cmd.Command, deviceID)
+		}
+	}
 }
 
 // handleBlackBoxEvents handles POST /blackbox/events — batch event push.
