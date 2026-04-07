@@ -29,7 +29,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.74.0"
+const version = "1.75.0"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
@@ -128,6 +128,10 @@ func main() {
 		runSandbox(os.Args[2:])
 	case "sdk-token":
 		runSdkToken(os.Args[2:])
+	case "forgot-password":
+		runForgotPassword(os.Args[2:])
+	case "change-password":
+		runChangePassword(os.Args[2:])
 	case "doctor":
 		runDoctor()
 	case "completion":
@@ -1395,7 +1399,7 @@ func runServe(args []string) {
 		log.Println("Tmux: not available — session adoption disabled")
 	}
 
-	go heartbeatLoop(ctx, cfg.ConvexSiteURL, cfg.AuthToken, cfg.DeviceID, taskMgr)
+	// heartbeatLoop is started after httpServer is created (needs authExpired flag)
 	go metricsLoop(ctx, cfg.ConvexSiteURL, cfg.AuthToken, cfg.DeviceID)
 
 	// Periodic auto-update check (every 6 hours when idle)
@@ -1448,6 +1452,9 @@ func runServe(args []string) {
 
 	// Start HTTP server (V1 — primary, also serves MCP)
 	httpServer := NewHTTPServer(*httpPort, cfg.AuthToken, ownerUserID, cfg.ConvexSiteURL, hostname, taskMgr)
+
+	// Start heartbeat loop (needs httpServer for authExpired flag)
+	go heartbeatLoop(ctx, cfg.ConvexSiteURL, cfg.AuthToken, cfg.DeviceID, taskMgr, httpServer)
 
 	// iOS install method (from flag or config, default "auto")
 	iosMethod := *iosInstall
@@ -4144,7 +4151,7 @@ func execOpen(name string, args ...string) {
 	cmd.Start()
 }
 
-func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr *TaskManager) {
+func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr *TaskManager, httpServer *HTTPServer) {
 	ticker := time.NewTicker(2 * time.Minute)
 	defer ticker.Stop()
 
@@ -4168,6 +4175,9 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 		if errors.Is(err, ErrAuthExpired) {
 			log.Println("[auth] WARNING: Auth token expired! Run 'yaver auth' to re-authenticate.")
 			authExpiredLogged = true
+			if httpServer != nil {
+				httpServer.authExpired.Store(true)
+			}
 		} else {
 			log.Printf("initial heartbeat failed: %v", err)
 		}
@@ -4185,6 +4195,9 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 			} else {
 				log.Println("[auth] Token refreshed (extended 30 days).")
 				authExpiredLogged = false
+				if httpServer != nil {
+					httpServer.authExpired.Store(false)
+				}
 			}
 		case <-ticker.C:
 			currentIP := getLocalIP()
@@ -4204,10 +4217,16 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 							log.Println("[auth] This can happen if you signed out from all devices or your session expired.")
 							log.Println("[auth] Run 'yaver auth' to re-authenticate. The agent will continue running but the device will appear offline.")
 							authExpiredLogged = true
+							if httpServer != nil {
+								httpServer.authExpired.Store(true)
+							}
 						}
 					} else {
 						log.Println("[auth] Token refreshed after 401 — retrying heartbeat...")
 						authExpiredLogged = false
+						if httpServer != nil {
+							httpServer.authExpired.Store(false)
+						}
 						// Retry heartbeat
 						if retryErr := SendHeartbeat(baseURL, token, deviceID, runners, currentIP); retryErr != nil {
 							log.Printf("heartbeat retry failed: %v", retryErr)
@@ -4220,6 +4239,9 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 				if authExpiredLogged {
 					log.Println("[auth] Heartbeat succeeded — auth is working again.")
 					authExpiredLogged = false
+					if httpServer != nil {
+						httpServer.authExpired.Store(false)
+					}
 				}
 			}
 		}
