@@ -43,7 +43,36 @@ export function useDevices(token: string | null): DevicesState {
         online: d.isOnline ?? d.online ?? false,
       }));
 
-      setDevices(mapped);
+      // Deduplicate by hostname — keep the entry with latest heartbeat
+      const seen = new Map<string, Device>();
+      for (const d of mapped) {
+        const key = d.name.toLowerCase().replace(/\.local$/, "");
+        // Skip IP-only names if we already have a hostname for the same machine
+        if (/^\d+\.\d+\.\d+\.\d+$/.test(d.name)) {
+          // Only keep IP entry if no hostname entry exists
+          if (!seen.has(key)) seen.set(key, d);
+          continue;
+        }
+        const existing = seen.get(key);
+        if (!existing || d.lastSeen > existing.lastSeen) {
+          seen.set(key, d);
+        }
+      }
+
+      // Remove IP entries that have a matching hostname entry
+      const hostnames = new Set<string>();
+      for (const d of seen.values()) {
+        if (!/^\d+\.\d+\.\d+\.\d+$/.test(d.name)) hostnames.add(d.name.toLowerCase());
+      }
+      const deduped = Array.from(seen.values()).filter(d => {
+        if (/^\d+\.\d+\.\d+\.\d+$/.test(d.name) && hostnames.size > 0) return false;
+        return true;
+      });
+
+      // Sort: online first
+      deduped.sort((a, b) => (a.online === b.online ? 0 : a.online ? -1 : 1));
+
+      setDevices(deduped);
     } catch {
       // Silently fail
     }
