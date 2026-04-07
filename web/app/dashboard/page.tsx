@@ -42,8 +42,29 @@ export default function DashboardPage() {
   const isConnected = connState === "connected";
 
   useEffect(() => {
-    (async () => { try { const r = await fetch(`${CONVEX_URL}/config`); if (r.ok) { const d = await r.json(); if (d.relayServers) agentClient.setRelayServers(d.relayServers); } } catch {} })();
-  }, []);
+    (async () => {
+      try {
+        // Fetch platform relay servers
+        const r = await fetch(`${CONVEX_URL}/config`);
+        let relays: any[] = [];
+        if (r.ok) { const d = await r.json(); relays = d.relayServers || []; }
+
+        // Fetch user settings to get relay password
+        if (token) {
+          try {
+            const sr = await fetch(`${CONVEX_URL}/settings`, { headers: { Authorization: `Bearer ${token}` } });
+            if (sr.ok) {
+              const sd = await sr.json();
+              const pw = sd.settings?.relayPassword || sd.relayPassword;
+              if (pw) { relays = relays.map((r: any) => ({ ...r, password: pw })); }
+            }
+          } catch {}
+        }
+
+        if (relays.length > 0) agentClient.setRelayServers(relays);
+      } catch {}
+    })();
+  }, [token]);
 
   useEffect(() => { const u = agentClient.on("connectionState", setConnState); return u; }, []);
 
