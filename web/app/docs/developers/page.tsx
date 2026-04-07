@@ -112,7 +112,7 @@ export default function DevelopersPage() {
           <nav className="space-y-2 text-sm">
             {[
               ["whats-new", "What's New"],
-              ["four-parts", "Four-Part Architecture"],
+              ["four-parts", "Architecture"],
               ["push-to-device", "Push to Device (yaver-cli)"],
               ["direct-device-install", "Direct Device Install (iOS WiFi)"],
               ["hot-reload", "Hot Reload — Dev Server to Phone"],
@@ -201,9 +201,9 @@ export default function DevelopersPage() {
 
         {/* ─── Four-Part Architecture ─── */}
         <section className="mb-20">
-          <SectionHeading id="four-parts">Four-Part Architecture</SectionHeading>
+          <SectionHeading id="four-parts">Five-Part Architecture</SectionHeading>
           <Prose>
-            Yaver has four distinct components for developers. Each serves a different purpose
+            Yaver has five distinct components. Each serves a different purpose
             and can be used independently.
           </Prose>
           <div className="space-y-4">
@@ -211,22 +211,32 @@ export default function DevelopersPage() {
               {
                 title: "1. Mobile App (yaver.io)",
                 install: "App Store / Play Store",
-                desc: "Native container app for testing third-party RN apps. Also controls AI agents from your phone (tasks, feedback, hot reload). Runs an HTTP server on port 8347 for receiving pushed bundles.",
+                desc: "Native container app for testing third-party RN apps. Controls AI agents from your phone (tasks, feedback, hot reload). Direct LAN + relay connections. Guest code acceptance for collaboration.",
               },
               {
                 title: "2. Go Agent (yaver)",
                 install: "brew install kivanccakmak/yaver/yaver",
-                desc: "Go binary for AI agent connectivity (P2P, relay, MCP). Hot reload dev servers (Expo, Flutter, Vite, Next.js). Session transfer, tasks, builds, deploys.",
+                desc: "Go binary for AI agent connectivity (P2P, relay, MCP). Hot reload dev servers (Expo, Flutter, Vite, Next.js). Session transfer, tasks, builds, deploys. Runs on the dev machine.",
               },
               {
-                title: "3. Feedback SDK",
+                title: "3. Desktop App (Yaver.io)",
+                install: "Download from yaver.io/download",
+                desc: "Electron app for vibe coding. Split-pane: AI chat on the left, app preview (WebView) on the right. Connects to remote dev machine via relay or local agent via IPC. Deploy to TestFlight/Play Store with one click. macOS, Windows, Linux.",
+              },
+              {
+                title: "4. Web Dashboard (yaver.io/dashboard)",
+                install: "No install — open in browser",
+                desc: "Browser-based workspace. Same features as the desktop app but runs entirely in the browser. Always connects via relay (browsers cannot access localhost). OAuth login, guest code for collaboration.",
+              },
+              {
+                title: "5. Feedback SDK",
                 install: "npm install yaver-feedback-react-native",
-                desc: "Drop-in SDK for React Native, Flutter, and Web apps. Floating debug button, visual bug reports with auto-screenshots, voice notes, BlackBox flight recorder streaming, and hot reload — all connected to the AI agent.",
+                desc: "Drop-in SDK for React Native, Flutter, and Web apps. Visual bug reports with screenshots, voice notes, BlackBox streaming, and remote hot reload — all connected to the AI agent for automatic fixes.",
               },
               {
-                title: "4. Push-to-Device CLI (yaver-cli)",
+                title: "6. Push-to-Device CLI (yaver-cli)",
                 install: "npm install -g yaver-cli",
-                desc: "For third-party developers to push THEIR existing React Native projects to the yaver.io app. Analyzes compatibility, bundles JS, compiles Hermes bytecode, pushes directly to phone. No agent needed.",
+                desc: "Push existing React Native projects to the yaver.io app. Analyzes compatibility, bundles JS, compiles Hermes bytecode, pushes directly to phone. No agent needed.",
               },
             ].map((item) => (
               <div key={item.title} className="rounded-lg border border-surface-800 bg-surface-900/50 p-4">
