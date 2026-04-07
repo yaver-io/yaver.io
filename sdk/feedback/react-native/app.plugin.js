@@ -304,12 +304,20 @@ function withYaverAndroidHotReload(config) {
   return config;
 }
 
-function withYaverFeedback(config) {
+function withYaverFeedback(config, props) {
   config = withYaverFeedbackIOS(config);
   config = withYaverFeedbackAndroid(config);
-  config = withYaverHotReloadNativeModule(config);
-  config = withYaverAppDelegateHook(config);
-  config = withYaverAndroidHotReload(config);
+
+  // Hot reload native module is opt-in via enableHotReload: true
+  // Skip by default — apps running inside Yaver container get hot reload
+  // via YaverBundleLoader, standalone dev builds use DevSettings.reload()
+  const enableHotReload = props?.enableHotReload === true;
+  if (enableHotReload) {
+    config = withYaverHotReloadNativeModule(config);
+    config = withYaverAppDelegateHook(config);
+    config = withYaverAndroidHotReload(config);
+  }
+
   return config;
 }
 
