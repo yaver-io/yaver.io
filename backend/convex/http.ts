@@ -168,6 +168,135 @@ http.route({
   }),
 });
 
+// ── Password Reset Endpoints ────────────────────────────────────────
+
+/** POST /auth/forgot-password — Request a password reset email. */
+http.route({
+  path: "/auth/forgot-password",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.json();
+    const { email } = body;
+
+    if (!email) return errorResponse("Email is required", 400);
+
+    // Generate a random reset token
+    const tokenBytes = new Uint8Array(32);
+    crypto.getRandomValues(tokenBytes);
+    const rawToken = Array.from(tokenBytes)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    const tokenHash = await sha256Hex(rawToken);
+
+    const result = await ctx.runMutation(api.auth.createPasswordReset, {
+      email: email.toLowerCase().trim(),
+      tokenHash,
+    });
+
+    // Send email only if a valid email user was found and not rate-limited
+    if (result.sent) {
+      const { passwordResetHtml } = await import("./email");
+      const resetUrl = `https://yaver.io/auth/reset-password?token=${rawToken}`;
+      await ctx.scheduler.runAfter(0, internal.email.send, {
+        from: "Yaver <noreply@yaver.io>",
+        to: email.toLowerCase().trim(),
+        subject: "Reset your Yaver password",
+        html: passwordResetHtml(resetUrl),
+      });
+    }
+
+    // Always return success — don't reveal whether the email exists
+    return jsonResponse({ ok: true });
+  }),
+});
+
+/** POST /auth/reset-password — Set a new password using a reset token. */
+http.route({
+  path: "/auth/reset-password",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.json();
+    const { token, password } = body;
+
+    if (!token || !password) {
+      return errorResponse("Token and password are required", 400);
+    }
+    if (password.length < 8) {
+      return errorResponse("Password must be at least 8 characters", 400);
+    }
+
+    const tokenHash = await sha256Hex(token);
+    const newPasswordHash = await hashPassword(password);
+
+    try {
+      await ctx.runMutation(api.auth.resetPassword, {
+        tokenHash,
+        newPasswordHash,
+      });
+      return jsonResponse({ ok: true });
+    } catch (e: any) {
+      const msg = e.message || "";
+      if (msg.includes("INVALID_TOKEN")) {
+        return errorResponse("Invalid or expired reset link", 400);
+      }
+      if (msg.includes("TOKEN_USED")) {
+        return errorResponse("This reset link has already been used", 400);
+      }
+      if (msg.includes("TOKEN_EXPIRED")) {
+        return errorResponse("This reset link has expired", 400);
+      }
+      return errorResponse("Password reset failed", 500);
+    }
+  }),
+});
+
+/** POST /auth/change-password — Change password while logged in (email users only). */
+http.route({
+  path: "/auth/change-password",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+
+    const user = await ctx.runQuery(api.auth.validateSession, { tokenHash });
+    if (!user) return errorResponse("Unauthorized", 401);
+
+    const body = await request.json();
+    const { currentPassword, newPassword } = body;
+
+    if (!currentPassword || !newPassword) {
+      return errorResponse("Current password and new password are required", 400);
+    }
+    if (newPassword.length < 8) {
+      return errorResponse("New password must be at least 8 characters", 400);
+    }
+
+    // Look up the email user to get the password hash
+    const emailUser = await ctx.runQuery(api.auth.lookupEmailUser, { email: user.email });
+    if (!emailUser || !emailUser.passwordHash) {
+      return errorResponse("Password change is only available for email accounts", 400);
+    }
+
+    // Verify current password
+    const valid = await verifyPassword(currentPassword, emailUser.passwordHash);
+    if (!valid) {
+      return errorResponse("Current password is incorrect", 401);
+    }
+
+    const newPasswordHash = await hashPassword(newPassword);
+    await ctx.runMutation(api.auth.changePassword, {
+      tokenHash,
+      newPasswordHash,
+    });
+
+    return jsonResponse({ ok: true });
+  }),
+});
+
 // ── Survey Endpoints ────────────────────────────────────────────────
 
 /** POST /survey/submit — Submit developer survey (authed). */

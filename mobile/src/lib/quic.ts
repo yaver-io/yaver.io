@@ -189,6 +189,7 @@ export class QuicClient {
   private _connectionPath: ConnectionPath = null;
   private _networkType: string | null = null; // "wifi" | "cellular" | etc.
   private _connectingInProgress = false; // guard against concurrent attemptConnect calls
+  agentAuthExpired = false; // true when agent's session with Convex has expired
 
   // Relay health tracking
   private _relayHealth: Map<string, { ok: boolean; latencyMs: number; lastChecked: number }> = new Map();
@@ -1664,6 +1665,8 @@ export class QuicClient {
               headers: this.authHeaders,
             }, 2000);
             if (res.ok) {
+              const healthData = await res.json().catch(() => ({}));
+              this.agentAuthExpired = !!healthData.authExpired;
               this.activeRelayUrl = null;
               this.setConnectionMode("direct");
               this._connectionPath = "lan-beacon";
@@ -1684,6 +1687,8 @@ export class QuicClient {
               headers: this.authHeaders,
             }, 2000);
             if (res.ok) {
+              const healthData = await res.json().catch(() => ({}));
+              this.agentAuthExpired = !!healthData.authExpired;
               this.activeRelayUrl = null;
               this.setConnectionMode("direct");
               this._connectionPath = "lan-convex-ip";
@@ -1711,6 +1716,8 @@ export class QuicClient {
               headers: probeHeaders,
             }, 8000);
             if (res.ok) {
+              const healthData = await res.json().catch(() => ({}));
+              this.agentAuthExpired = !!healthData.authExpired;
               // Tunnel works like a direct connection — no relay proxy path needed
               this.activeRelayUrl = null;
               this.activeRelayPassword = null;
@@ -1748,6 +1755,8 @@ export class QuicClient {
               headers: probeHeaders,
             }, 8000);
             if (res.ok) {
+              const healthData = await res.json().catch(() => ({}));
+              this.agentAuthExpired = !!healthData.authExpired;
               this.activeRelayUrl = relay.httpUrl;
               this.activeRelayPassword = relay.password || null;
               this.setConnectionMode("relay");

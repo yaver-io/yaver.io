@@ -211,6 +211,18 @@ function AuthContent() {
           </button>
         </form>
 
+        {/* Forgot password (sign-in mode only) */}
+        {mode === "signin" && (
+          <p className="mt-2 text-right text-sm">
+            <Link
+              href="/auth/reset-password"
+              className="text-surface-500 hover:text-surface-300 transition-colors"
+            >
+              Forgot password?
+            </Link>
+          </p>
+        )}
+
         {/* Toggle mode */}
         <p className="mt-4 text-center text-sm text-surface-500">
           {mode === "signin" ? (

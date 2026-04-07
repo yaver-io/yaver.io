@@ -22,7 +22,7 @@ import { useAuth } from "../../src/context/AuthContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { customRelaysKey, customTunnelsKey } from "../../src/context/DeviceContext";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
-import { deleteAccount as deleteAccountApi, updateProfile, getUserSettings, saveUserSettings, getAiRunners, type AiRunner, getDeviceMetrics, getDeviceEvents, type DeviceMetric, type DeviceEvent, getUsageSummary, type UsageSummary, type SpeechProvider, type KeyStorage, LOCAL_KEYS, getLocalSecret, saveLocalSecret, deleteLocalSecret, getKeyStoragePreference, saveKeyStoragePreference } from "../../src/lib/auth";
+import { deleteAccount as deleteAccountApi, updateProfile, changePassword as changePasswordApi, getUserSettings, saveUserSettings, getAiRunners, type AiRunner, getDeviceMetrics, getDeviceEvents, type DeviceMetric, type DeviceEvent, getUsageSummary, type UsageSummary, type SpeechProvider, type KeyStorage, LOCAL_KEYS, getLocalSecret, saveLocalSecret, deleteLocalSecret, getKeyStoragePreference, saveKeyStoragePreference } from "../../src/lib/auth";
 import { SPEECH_PROVIDERS } from "../../src/lib/speech";
 import { clearCache } from "../../src/lib/storage";
 import * as ExpoClipboard from "expo-clipboard";
@@ -2491,6 +2491,60 @@ export default function SettingsScreen() {
             </View>
           )}
         </View>
+
+        {/* Change Password (email users only) */}
+        {user?.provider === "email" && (
+          <View style={styles.section}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.signOutButton,
+                { backgroundColor: c.bgCard, borderWidth: 1, borderColor: c.border },
+                pressed && { opacity: 0.7 },
+              ]}
+              onPress={() => {
+                Alert.prompt(
+                  "Change Password",
+                  "Enter your current password:",
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Next",
+                      onPress: (currentPw) => {
+                        if (!currentPw) return;
+                        Alert.prompt(
+                          "New Password",
+                          "Enter your new password (min 8 characters):",
+                          [
+                            { text: "Cancel", style: "cancel" },
+                            {
+                              text: "Change",
+                              onPress: async (newPw) => {
+                                if (!newPw || newPw.length < 8) {
+                                  Alert.alert("Error", "Password must be at least 8 characters.");
+                                  return;
+                                }
+                                try {
+                                  await changePasswordApi(token!, currentPw, newPw);
+                                  Alert.alert("Success", "Password changed successfully.");
+                                } catch (e: any) {
+                                  Alert.alert("Error", e.message || "Failed to change password.");
+                                }
+                              },
+                            },
+                          ],
+                          "secure-text"
+                        );
+                      },
+                    },
+                  ],
+                  "secure-text"
+                );
+              }}
+            >
+              <Text style={[styles.signOutText, { color: c.textPrimary }]}>Change Password</Text>
+            </Pressable>
+          </View>
+        )}
 
         {/* Sign out */}
         <View style={styles.section}>

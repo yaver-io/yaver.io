@@ -121,6 +121,8 @@ interface DeviceState {
   userDisconnected: boolean;
   /** Last connection error message (null if no error) */
   lastError: string | null;
+  /** true when agent's Convex auth session is expired (agent reachable but needs re-auth) */
+  agentAuthExpired: boolean;
   selectDevice: (device: Device) => Promise<void>;
   disconnect: () => void;
   refreshDevices: () => Promise<void>;
@@ -628,6 +630,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       isLoadingDevices,
       userDisconnected,
       lastError,
+      agentAuthExpired: quicClient.agentAuthExpired,
       selectDevice,
       disconnect,
       refreshDevices,

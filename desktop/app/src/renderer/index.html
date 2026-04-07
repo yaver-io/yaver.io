@@ -1,0 +1,947 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src *; img-src * data:; frame-src *;">
+  <title>Yaver Desktop</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #09090b; --bg-card: #18181b; --bg-hover: #27272a;
+      --border: #27272a; --border-hover: #3f3f46;
+      --text: #fafafa; --text-secondary: #a1a1aa; --text-muted: #52525b;
+      --accent: #6366f1; --accent-hover: #818cf8; --accent-dim: #6366f120;
+      --green: #22c55e; --green-dim: #22c55e20;
+      --yellow: #eab308; --yellow-dim: #eab30820;
+      --red: #ef4444; --red-dim: #ef444420;
+      --radius: 12px; --radius-sm: 8px;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      background: var(--bg); color: var(--text); overflow: hidden; height: 100vh;
+      -webkit-app-region: drag;
+    }
+    button, input, textarea, select, a, .no-drag { -webkit-app-region: no-drag; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #555; }
+
+    /* ── Shared ─────────────────────────────────────────── */
+    .btn {
+      padding: 10px 20px; border-radius: var(--radius-sm); border: none;
+      font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.15s;
+    }
+    .btn-primary { background: #fff; color: #000; }
+    .btn-primary:hover { background: #e4e4e7; }
+    .btn-ghost { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); }
+    .btn-ghost:hover { background: var(--bg-hover); color: var(--text); border-color: var(--border-hover); }
+    .btn-danger { background: transparent; color: var(--red); border: 1px solid var(--red); }
+    .btn-danger:hover { background: var(--red-dim); }
+    .btn-sm { padding: 6px 14px; font-size: 12px; }
+    .btn-icon { width: 32px; height: 32px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); border: 1px solid var(--border); background: transparent; color: var(--text-secondary); cursor: pointer; }
+    .btn-icon:hover { background: var(--bg-hover); color: var(--text); }
+    .badge { padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 600; }
+    .badge-green { background: var(--green-dim); color: var(--green); }
+    .badge-yellow { background: var(--yellow-dim); color: var(--yellow); }
+    .badge-red { background: var(--red-dim); color: var(--red); }
+
+    /* ── Screens ────────────────────────────────────────── */
+    .screen { display: none; height: 100vh; }
+    .screen.active { display: flex; }
+
+    /* ── Auth screen ──────────────────────────────────── */
+    .auth-screen {
+      flex-direction: column; align-items: center; justify-content: center; gap: 32px;
+    }
+    .logo { font-size: 36px; font-weight: 700; letter-spacing: -0.5px; }
+    .logo span { font-weight: 400; color: var(--text-muted); }
+    .auth-tagline {
+      color: var(--text-secondary); font-size: 16px; text-align: center;
+      max-width: 420px; line-height: 1.7;
+    }
+    .auth-features {
+      display: flex; gap: 24px; flex-wrap: wrap; justify-content: center; max-width: 500px;
+    }
+    .auth-feature {
+      display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary);
+    }
+    .auth-feature-icon { font-size: 18px; }
+
+    /* ── Device picker ────────────────────────────────── */
+    .device-screen {
+      flex-direction: column; align-items: center; padding-top: 80px; gap: 20px;
+    }
+    .device-screen-header { text-align: center; }
+    .device-screen-title { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+    .device-screen-sub { font-size: 14px; color: var(--text-secondary); }
+    .device-grid { max-width: 480px; width: 100%; display: flex; flex-direction: column; gap: 8px; padding: 0 20px; }
+    .device-card {
+      display: flex; align-items: center; gap: 14px; padding: 16px 18px;
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+      cursor: pointer; transition: all 0.15s;
+    }
+    .device-card:hover { border-color: var(--accent); background: var(--bg-hover); }
+    .device-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .device-info { flex: 1; min-width: 0; }
+    .device-name { font-size: 15px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .device-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+    .device-actions { display: flex; gap: 8px; margin-top: 16px; justify-content: center; }
+    .guest-code-section {
+      max-width: 480px; width: 100%; padding: 0 20px; margin-top: 8px;
+    }
+    .guest-code-row { display: flex; gap: 8px; }
+    .guest-code-input {
+      flex: 1; padding: 10px 14px; border-radius: var(--radius-sm);
+      border: 1px solid var(--border); background: var(--bg-card); color: var(--text);
+      font-size: 16px; font-family: "SF Mono", Menlo, Consolas, monospace;
+      letter-spacing: 4px; text-transform: uppercase; text-align: center; outline: none;
+    }
+    .guest-code-input:focus { border-color: var(--accent); }
+    .guest-code-input::placeholder { letter-spacing: 1px; font-size: 13px; color: var(--text-muted); }
+    .empty-state { text-align: center; padding: 40px 20px; }
+    .empty-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.4; }
+    .empty-title { font-size: 15px; color: var(--text-secondary); margin-bottom: 8px; }
+    .empty-hint { font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+    .empty-hint code { background: var(--bg-hover); padding: 2px 6px; border-radius: 4px; }
+
+    /* ── Main app ─────────────────────────────────────── */
+    .main-screen { flex-direction: column; }
+
+    /* Top bar */
+    .topbar {
+      height: 48px; display: flex; align-items: center; padding: 0 16px;
+      border-bottom: 1px solid var(--border); background: var(--bg-card);
+      gap: 10px; flex-shrink: 0;
+    }
+    .topbar-spacer { width: 68px; } /* macOS traffic lights */
+    .topbar-title { font-size: 15px; font-weight: 600; }
+    .topbar-device { font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; margin-left: auto; }
+    .topbar-right { display: flex; gap: 6px; margin-left: 12px; }
+
+    /* Split pane */
+    .split { display: flex; flex: 1; overflow: hidden; }
+    .pane-left { width: 50%; display: flex; flex-direction: column; border-right: 1px solid var(--border); min-width: 300px; }
+    .pane-right { flex: 1; display: flex; flex-direction: column; background: #000; min-width: 250px; }
+    .divider { width: 4px; cursor: col-resize; background: transparent; flex-shrink: 0; transition: background 0.15s; }
+    .divider:hover, .divider.active { background: var(--accent); }
+
+    /* ── Left pane: Chat ────────────────────────────── */
+    .chat-messages {
+      flex: 1; overflow-y: auto; padding: 20px; display: flex;
+      flex-direction: column; gap: 16px;
+    }
+    .msg { max-width: 88%; padding: 12px 16px; border-radius: var(--radius); font-size: 14px; line-height: 1.7; word-wrap: break-word; }
+    .msg-user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+    .msg-assistant {
+      align-self: flex-start; background: var(--bg-card); border: 1px solid var(--border);
+      border-bottom-left-radius: 4px;
+    }
+    .msg-assistant pre { background: #0c0c0c; padding: 10px 12px; border-radius: var(--radius-sm); overflow-x: auto; margin: 10px 0; font-size: 12px; border: 1px solid var(--border); }
+    .msg-assistant code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12px; }
+    .msg-assistant p { margin: 8px 0; }
+    .msg-status { align-self: center; font-size: 12px; color: var(--text-muted); background: transparent; padding: 4px 12px; }
+
+    .chat-input-area {
+      padding: 14px 16px; border-top: 1px solid var(--border); background: var(--bg-card);
+      display: flex; gap: 10px; align-items: flex-end;
+    }
+    .chat-input {
+      flex: 1; resize: none; border: 1px solid var(--border); background: var(--bg);
+      color: var(--text); border-radius: var(--radius); padding: 12px 16px;
+      font-size: 14px; font-family: inherit; line-height: 1.5;
+      min-height: 48px; max-height: 160px; outline: none; transition: border-color 0.15s;
+    }
+    .chat-input:focus { border-color: var(--accent); }
+    .chat-input::placeholder { color: var(--text-muted); }
+    .send-btn {
+      width: 44px; height: 44px; border-radius: 50%; border: none;
+      background: var(--accent); color: #fff; font-size: 18px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+      transition: background 0.15s;
+    }
+    .send-btn:hover { background: var(--accent-hover); }
+    .send-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    /* ── Right pane: Preview ────────────────────────── */
+    .preview-toolbar {
+      height: 40px; display: flex; align-items: center; padding: 0 12px;
+      border-bottom: 1px solid var(--border); background: var(--bg-card); gap: 8px; flex-shrink: 0;
+    }
+    .preview-url { flex: 1; font-size: 11px; color: var(--text-muted); font-family: "SF Mono", Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .preview-empty {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 16px; color: var(--text-muted); font-size: 14px;
+    }
+    .preview-empty-icon { font-size: 56px; opacity: 0.2; }
+    webview { flex: 1; border: none; }
+
+    /* ── Doctor panel ─────────────────────────────────── */
+    .doctor-panel {
+      position: absolute; top: 48px; right: 0; bottom: 0; width: 380px;
+      background: var(--bg-card); border-left: 1px solid var(--border);
+      z-index: 100; overflow-y: auto; padding: 24px 20px; display: none;
+    }
+    .doctor-panel.open { display: block; }
+    .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .panel-title { font-size: 16px; font-weight: 600; }
+    .panel-close { cursor: pointer; color: var(--text-muted); font-size: 20px; background: none; border: none; }
+    .panel-close:hover { color: var(--text); }
+    .section { margin-bottom: 24px; }
+    .section-title { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 10px; }
+    .check-item {
+      display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+      background: var(--bg); border-radius: var(--radius-sm); margin-bottom: 6px;
+      border: 1px solid var(--border);
+    }
+    .check-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .check-name { font-size: 13px; font-weight: 500; flex: 1; }
+    .check-detail { font-size: 11px; color: var(--text-muted); }
+    .settings-btn {
+      width: 100%; padding: 10px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+      background: transparent; color: var(--text); font-size: 13px; cursor: pointer;
+      text-align: left; transition: all 0.15s; margin-bottom: 6px;
+    }
+    .settings-btn:hover { background: var(--bg-hover); }
+    .settings-btn.danger { color: var(--red); border-color: transparent; }
+    .settings-btn.danger:hover { background: var(--red-dim); }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- ═══ Auth Screen ═══ -->
+    <div id="screen-auth" class="screen auth-screen active">
+      <div class="logo">yaver<span>.io</span></div>
+      <p class="auth-tagline">
+        Build apps with AI — from your phone or desktop.<br>
+        No coding experience needed.
+      </p>
+      <div class="auth-features">
+        <div class="auth-feature"><span class="auth-feature-icon">&#x1F4AC;</span> Talk to AI</div>
+        <div class="auth-feature"><span class="auth-feature-icon">&#x1F680;</span> See it live</div>
+        <div class="auth-feature"><span class="auth-feature-icon">&#x1F4F1;</span> Test on phone</div>
+        <div class="auth-feature"><span class="auth-feature-icon">&#x1F512;</span> Private & P2P</div>
+      </div>
+      <button class="btn btn-primary" style="min-width:260px;padding:14px 40px;font-size:16px" onclick="handleSignIn()">
+        Sign In
+      </button>
+      <p style="font-size:12px;color:var(--text-muted)">Apple, Google, Microsoft, or email</p>
+    </div>
+
+    <!-- ═══ Device Picker ═══ -->
+    <div id="screen-devices" class="screen device-screen">
+      <div class="device-screen-header">
+        <div class="logo" style="font-size:24px;margin-bottom:8px">yaver<span>.io</span></div>
+        <div class="device-screen-title">Connect to a machine</div>
+        <div class="device-screen-sub" id="user-greeting"></div>
+      </div>
+
+      <div id="device-grid" class="device-grid"></div>
+
+      <!-- Guest code -->
+      <div class="guest-code-section">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;text-align:center">Have an invite code?</div>
+        <div class="guest-code-row">
+          <input class="guest-code-input no-drag" id="guest-code-input" placeholder="ABC123" maxlength="6">
+          <button class="btn btn-ghost btn-sm" onclick="handleAcceptGuestCode()">Join</button>
+        </div>
+      </div>
+
+      <div class="device-actions">
+        <button class="btn btn-ghost btn-sm" onclick="refreshDevices()">&#x21BB; Refresh</button>
+        <button class="btn btn-ghost btn-sm" onclick="handleSignOut()">Sign Out</button>
+      </div>
+    </div>
+
+    <!-- ═══ Main App ═══ -->
+    <div id="screen-main" class="screen main-screen">
+      <!-- Top bar -->
+      <div class="topbar">
+        <div class="topbar-spacer"></div>
+        <span class="topbar-title">Yaver</span>
+        <div class="topbar-device" id="topbar-device"></div>
+        <div class="topbar-right">
+          <button class="btn btn-ghost btn-sm no-drag" onclick="handleDeployMenu()" title="Deploy" style="font-size:12px">&#x1F680; Deploy</button>
+          <button class="btn-icon" onclick="togglePanel('doctor')" title="Doctor">&#x1FA7A;</button>
+          <button class="btn-icon" onclick="togglePanel('settings')" title="Settings">&#x2699;</button>
+          <button class="btn-icon" onclick="handleDisconnect()" title="Disconnect" style="color:var(--red)">&#x23FB;</button>
+        </div>
+      </div>
+
+      <!-- Split pane -->
+      <div class="split" style="position:relative">
+        <div class="pane-left" id="pane-left">
+          <div class="chat-messages" id="chat-messages">
+            <div class="msg msg-status">Connected. Describe what you want to build.</div>
+          </div>
+          <div class="chat-input-area">
+            <textarea class="chat-input no-drag" id="chat-input"
+              placeholder="Build me a todo app with React..."
+              rows="1" onkeydown="handleInputKey(event)"></textarea>
+            <button class="send-btn no-drag" id="send-btn" onclick="handleSend()">&#9654;</button>
+          </div>
+        </div>
+
+        <div class="divider no-drag" id="divider"></div>
+
+        <div class="pane-right" id="pane-right">
+          <div class="preview-toolbar">
+            <span class="preview-url" id="preview-url">No preview</span>
+            <button class="btn-icon" onclick="handleReload()" title="Reload" style="width:28px;height:28px;font-size:14px">&#x21BB;</button>
+          </div>
+          <div id="preview-empty" class="preview-empty">
+            <div class="preview-empty-icon">&#x1F3A8;</div>
+            <div>App preview will appear here</div>
+            <div style="font-size:12px;max-width:280px;text-align:center;line-height:1.6">
+              Ask the AI to build something and start a dev server. The app will show up automatically.
+            </div>
+          </div>
+          <webview id="preview-webview" class="hidden" allowpopups></webview>
+        </div>
+
+        <!-- Doctor Panel -->
+        <div class="doctor-panel" id="panel-doctor">
+          <div class="panel-header">
+            <span class="panel-title">Doctor</span>
+            <button class="panel-close" onclick="togglePanel('doctor')">&#x2715;</button>
+          </div>
+          <div id="doctor-checks">
+            <div style="color:var(--text-muted);font-size:13px">Running checks...</div>
+          </div>
+          <div class="section" style="margin-top:20px">
+            <div class="section-title">Emulator Setup</div>
+            <div id="emulator-status"></div>
+          </div>
+        </div>
+
+        <!-- Settings Panel -->
+        <div class="doctor-panel" id="panel-settings">
+          <div class="panel-header">
+            <span class="panel-title">Settings</span>
+            <button class="panel-close" onclick="togglePanel('settings')">&#x2715;</button>
+          </div>
+          <div class="section">
+            <div class="section-title">Account</div>
+            <div id="settings-user" class="check-item" style="flex-direction:column;align-items:flex-start;gap:2px"></div>
+            <button class="settings-btn hidden" id="btn-change-pw" onclick="handleChangePassword()" style="margin-top:8px">Change Password</button>
+          </div>
+          <div class="section">
+            <div class="section-title">Guests</div>
+            <button class="settings-btn" onclick="handleInviteGuest()">+ Invite Guest</button>
+            <div id="guest-list"></div>
+          </div>
+          <div class="section">
+            <div class="section-title">Deploy</div>
+            <div id="deploy-section">
+              <button class="settings-btn" onclick="handleDeploy('testflight')">
+                &#x1F34E; Deploy to TestFlight (iOS)
+              </button>
+              <button class="settings-btn" onclick="handleDeploy('playstore')">
+                &#x1F4E6; Deploy to Google Play (Android)
+              </button>
+              <button class="settings-btn" onclick="handleDeploy('web')">
+                &#x1F310; Deploy Web (Vercel)
+              </button>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.6">
+                Builds and deploys run on the remote dev machine. You'll see progress in the chat.
+              </div>
+              <div class="section-title" style="margin-top:16px">Recent Builds</div>
+              <div id="build-list" style="font-size:13px;color:var(--text-muted)">No builds yet</div>
+            </div>
+          </div>
+          <div class="section">
+            <div class="section-title">Projects</div>
+            <div id="project-list" style="font-size:13px;color:var(--text-muted)">Loading...</div>
+          </div>
+          <div class="section" style="margin-top:32px">
+            <button class="settings-btn danger" onclick="handleSignOut()">Sign Out</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ── State ──────────────────────────────────────────
+    let currentUser = null;
+    let currentTask = null;
+    let pollTimer = null;
+    let devPollTimer = null;
+    let connectedDevice = null;
+
+    // ── Screen management ─────────────────────────────
+    function showScreen(name) {
+      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+      const el = document.getElementById('screen-' + name);
+      if (el) el.classList.add('active');
+    }
+
+    // ── Init ──────────────────────────────────────────
+    async function init() {
+      const auth = await window.yaver.getAuthState();
+      if (!auth.isSignedIn) { showScreen('auth'); return; }
+      const validation = await window.yaver.validateToken();
+      if (!validation.valid) { showScreen('auth'); return; }
+      currentUser = validation.user;
+      showScreen('devices');
+      document.getElementById('user-greeting').textContent =
+        `Signed in as ${currentUser.fullName || currentUser.email}`;
+      refreshDevices();
+    }
+
+    // ── Auth ──────────────────────────────────────────
+    async function handleSignIn() {
+      const result = await window.yaver.authenticate();
+      if (result.ok) {
+        const v = await window.yaver.validateToken();
+        if (v.valid) {
+          currentUser = v.user;
+          showScreen('devices');
+          document.getElementById('user-greeting').textContent =
+            `Signed in as ${currentUser.fullName || currentUser.email}`;
+          refreshDevices();
+        }
+      }
+    }
+
+    async function handleSignOut() {
+      await window.yaver.signOut();
+      currentUser = null;
+      connectedDevice = null;
+      stopPolling();
+      closeAllPanels();
+      showScreen('auth');
+    }
+
+    // ── Devices ───────────────────────────────────────
+    async function refreshDevices() {
+      const grid = document.getElementById('device-grid');
+      grid.innerHTML = '<div style="text-align:center;color:var(--text-muted);font-size:13px;padding:16px">Loading...</div>';
+      try {
+        const data = await window.yaver.listDevices();
+        let devices = data.devices || [];
+
+        // Deduplicate by hostname — keep the one with latest heartbeat
+        const seen = new Map();
+        for (const d of devices) {
+          const key = (d.name || d.deviceId || '').toLowerCase();
+          const existing = seen.get(key);
+          if (!existing || (d.lastHeartbeat || 0) > (existing.lastHeartbeat || 0)) {
+            seen.set(key, d);
+          }
+        }
+        devices = Array.from(seen.values());
+
+        // Only show online devices (normies don't need to see offline machines)
+        const onlineDevices = devices.filter(d => d.isOnline);
+        const offlineCount = devices.length - onlineDevices.length;
+        devices = onlineDevices;
+
+        if (devices.length === 0) {
+          grid.innerHTML = `
+            <div class="empty-state">
+              <div class="empty-icon">&#x1F5A5;</div>
+              <div class="empty-title">No machines online</div>
+              <div class="empty-hint">
+                ${offlineCount > 0 ? offlineCount + ' machine(s) offline.<br>' : ''}
+                Ask your developer to start the agent, or set up your own:<br>
+                <code>brew install yaver && yaver auth && yaver serve</code>
+              </div>
+            </div>`;
+          return;
+        }
+
+        grid.innerHTML = devices.map((d, i) => `
+          <div class="device-card no-drag" onclick="connectToDevice(${i})">
+            <div class="device-dot" style="background:${d.isOnline ? 'var(--green)' : 'var(--text-muted)'}"></div>
+            <div class="device-info">
+              <div class="device-name">${escHtml(d.name || d.deviceId)}</div>
+              <div class="device-meta">${d.platform || 'unknown'} &middot; ${d.isOnline ? 'online' : 'offline'}</div>
+            </div>
+            <span class="badge ${d.isOnline ? 'badge-green' : ''}">${d.isOnline ? 'Connect' : 'Offline'}</span>
+          </div>
+        `).join('');
+
+        // Store for onclick
+        window._deviceList = devices;
+      } catch (e) {
+        grid.innerHTML = `<div style="text-align:center;color:var(--red);font-size:13px;padding:16px">${escHtml(e.message)}</div>`;
+      }
+    }
+
+    async function connectToDevice(index) {
+      const device = window._deviceList?.[index];
+      if (!device) return;
+      if (!device.isOnline) return;
+
+      const grid = document.getElementById('device-grid');
+      grid.innerHTML = '<div style="text-align:center;color:var(--text-secondary);font-size:13px;padding:40px">Connecting to ' + escHtml(device.name) + '...</div>';
+
+      let relays = [];
+      try {
+        const settings = await window.yaver.convexRequest('GET', '/settings');
+        if (settings?.relayServers) relays = settings.relayServers;
+      } catch {}
+
+      const result = await window.yaver.connectDevice(device, relays);
+      if (!result.ok) {
+        grid.innerHTML = `<div style="text-align:center;color:var(--red);font-size:13px;padding:20px">Failed: ${escHtml(result.error)}</div>`;
+        setTimeout(refreshDevices, 3000);
+        return;
+      }
+
+      connectedDevice = device;
+      document.getElementById('topbar-device').innerHTML = `
+        <div class="device-dot" style="background:var(--green);width:7px;height:7px"></div>
+        ${escHtml(device.name)}
+        <span class="badge badge-green">${result.mode}</span>`;
+
+      // Clear chat
+      document.getElementById('chat-messages').innerHTML =
+        '<div class="msg msg-status">Connected to ' + escHtml(device.name) + '. Describe what you want to build.</div>';
+      currentTask = null;
+
+      showScreen('main');
+      startPolling();
+      pollDevServer();
+      loadSettings();
+    }
+
+    async function handleAcceptGuestCode() {
+      const input = document.getElementById('guest-code-input');
+      const code = input.value.trim();
+      if (!code || code.length < 4) return;
+      try {
+        const result = await window.yaver.convexRequest('POST', '/guests/accept-code', { inviteCode: code });
+        if (result.ok || result.hostName) {
+          alert('Accepted! You now have access to ' + (result.hostName || 'the host') + "'s machine.");
+          input.value = '';
+          refreshDevices();
+        } else {
+          alert(result.error || 'Invalid code.');
+        }
+      } catch (e) {
+        alert('Error: ' + e.message);
+      }
+    }
+
+    async function handleDisconnect() {
+      await window.yaver.disconnectDevice();
+      connectedDevice = null;
+      stopPolling();
+      closeAllPanels();
+      showScreen('devices');
+      refreshDevices();
+    }
+
+    // ── Chat / Tasks ──────────────────────────────────
+    async function handleSend() {
+      const input = document.getElementById('chat-input');
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      input.style.height = 'auto';
+
+      addMessage('user', text);
+
+      if (currentTask && (currentTask.status === 'running' || currentTask.status === 'queued')) {
+        await window.yaver.continueTask(currentTask.id, { message: text });
+      } else {
+        addMessage('status', 'Sending to AI agent...');
+        const result = await window.yaver.createTask({
+          title: text.slice(0, 80),
+          description: text,
+          source: 'desktop',
+        });
+        if (result.taskId) {
+          currentTask = { id: result.taskId, status: 'running', renderedTurns: 1 };
+        }
+      }
+    }
+
+    function handleInputKey(e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+      const el = e.target;
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+    }
+
+    function addMessage(role, content) {
+      const container = document.getElementById('chat-messages');
+      const div = document.createElement('div');
+      div.className = 'msg msg-' + role;
+      if (role === 'assistant') {
+        div.innerHTML = renderMarkdown(content);
+      } else {
+        div.textContent = content;
+      }
+      container.appendChild(div);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function renderMarkdown(text) {
+      return text
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\n/g, '<br>');
+    }
+
+    function startPolling() {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(async () => {
+        if (!currentTask) return;
+        try {
+          const data = await window.yaver.getTask(currentTask.id);
+          if (!data?.task) return;
+          const task = data.task;
+
+          // Render new turns
+          if (task.turns) {
+            const start = currentTask.renderedTurns || 1;
+            for (let i = start; i < task.turns.length; i++) {
+              addMessage(task.turns[i].role, task.turns[i].content);
+            }
+            currentTask.renderedTurns = task.turns.length;
+          }
+
+          if (task.status !== 'running' && task.status !== 'queued') {
+            if (task.resultText) addMessage('assistant', task.resultText);
+            const cost = task.costUsd ? ' ($' + task.costUsd.toFixed(4) + ')' : '';
+            addMessage('status', 'Task ' + task.status + cost);
+            currentTask.status = task.status;
+          }
+        } catch {}
+      }, 2000);
+    }
+
+    function stopPolling() {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      if (devPollTimer) { clearInterval(devPollTimer); devPollTimer = null; }
+    }
+
+    // ── Dev Server / Preview ──────────────────────────
+    async function pollDevServer() {
+      if (devPollTimer) clearInterval(devPollTimer);
+      const check = async () => {
+        try {
+          const status = await window.yaver.devServerStatus();
+          if (status?.running) showPreview();
+        } catch {}
+      };
+      check();
+      devPollTimer = setInterval(check, 3000);
+    }
+
+    async function showPreview() {
+      const url = await window.yaver.getPreviewUrl();
+      if (!url) return;
+      const webview = document.getElementById('preview-webview');
+      const empty = document.getElementById('preview-empty');
+      if (webview.classList.contains('hidden')) {
+        webview.src = url;
+        webview.classList.remove('hidden');
+        empty.classList.add('hidden');
+        document.getElementById('preview-url').textContent = url;
+      }
+    }
+
+    function handleReload() {
+      const wv = document.getElementById('preview-webview');
+      if (!wv.classList.contains('hidden')) wv.reload();
+      window.yaver.devServerReload();
+    }
+
+    // ── Panels ────────────────────────────────────────
+    function togglePanel(name) {
+      const panel = document.getElementById('panel-' + name);
+      const isOpen = panel.classList.contains('open');
+      closeAllPanels();
+      if (!isOpen) {
+        panel.classList.add('open');
+        if (name === 'doctor') runDoctor();
+        if (name === 'settings') loadSettings();
+      }
+    }
+
+    function closeAllPanels() {
+      document.querySelectorAll('.doctor-panel').forEach(p => p.classList.remove('open'));
+    }
+
+    // ── Doctor ────────────────────────────────────────
+    async function runDoctor() {
+      const container = document.getElementById('doctor-checks');
+      const checks = [];
+
+      // 1. Auth
+      checks.push({ name: 'Authentication', status: currentUser ? 'ok' : 'error', detail: currentUser ? currentUser.email : 'not signed in' });
+
+      // 2. Remote dev machine
+      const conn = await window.yaver.getConnectionState();
+      checks.push({ name: 'Remote Dev Machine', status: conn.connected ? 'ok' : 'error', detail: conn.connected ? connectedDevice?.name || 'connected' : 'not connected' });
+
+      // 3. Agent status
+      if (conn.connected) {
+        try {
+          const info = await window.yaver.getAgentInfo();
+          checks.push({ name: 'Agent', status: 'ok', detail: 'v' + (info.version || '?') + ' @ ' + (info.hostname || '?') });
+          if (info.authExpired) {
+            checks.push({ name: 'Agent Auth', status: 'error', detail: 'Session expired — host needs to run yaver auth' });
+          }
+        } catch {
+          checks.push({ name: 'Agent', status: 'error', detail: 'unreachable' });
+        }
+
+        // 4. Runners
+        try {
+          const data = await window.yaver.getRunners();
+          const runners = data.runners || [];
+          const installed = runners.filter(r => r.installed);
+          checks.push({ name: 'AI Runners', status: installed.length > 0 ? 'ok' : 'warn', detail: installed.length ? installed.map(r => r.name).join(', ') : 'none installed' });
+        } catch {}
+
+        // 5. Dev server
+        try {
+          const status = await window.yaver.devServerStatus();
+          checks.push({ name: 'Dev Server', status: status?.running ? 'ok' : 'none', detail: status?.running ? status.framework + ' on ' + status.workDir : 'not running' });
+        } catch {}
+      }
+
+      // 6. Platform
+      const platform = await window.yaver.getPlatform();
+      checks.push({ name: 'Platform', status: 'ok', detail: platform.platform + '/' + platform.arch });
+
+      // Render
+      container.innerHTML = checks.map(c => `
+        <div class="check-item">
+          <div class="check-dot" style="background:${c.status === 'ok' ? 'var(--green)' : c.status === 'warn' ? 'var(--yellow)' : c.status === 'error' ? 'var(--red)' : 'var(--text-muted)'}"></div>
+          <span class="check-name">${escHtml(c.name)}</span>
+          <span class="check-detail">${escHtml(c.detail)}</span>
+        </div>
+      `).join('');
+
+      // Emulator status
+      renderEmulatorGuide(platform);
+    }
+
+    async function renderEmulatorGuide(platform) {
+      const container = document.getElementById('emulator-status');
+      const isMac = platform.platform === 'darwin';
+
+      let html = '';
+
+      // Android emulator
+      html += `
+        <div class="check-item" style="flex-direction:column;align-items:flex-start;gap:6px">
+          <div style="display:flex;align-items:center;gap:8px;width:100%">
+            <span style="font-size:18px">&#x1F4F1;</span>
+            <span class="check-name">Android Emulator</span>
+          </div>
+          <div style="font-size:12px;color:var(--text-muted);line-height:1.6">
+            Install Android Studio to get the Android emulator.
+            Once installed, the AI can build and run Android apps for you.
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="window.yaver.openExternal('https://developer.android.com/studio')" style="margin-top:4px">
+            Download Android Studio
+          </button>
+        </div>`;
+
+      // iOS simulator (macOS only)
+      if (isMac) {
+        html += `
+          <div class="check-item" style="flex-direction:column;align-items:flex-start;gap:6px;margin-top:8px">
+            <div style="display:flex;align-items:center;gap:8px;width:100%">
+              <span style="font-size:18px">&#x1F34E;</span>
+              <span class="check-name">iOS Simulator</span>
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);line-height:1.6">
+              Install Xcode from the App Store to get the iOS simulator.
+              Only available on macOS.
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="window.yaver.openExternal('macappstore://apps.apple.com/app/xcode/id497799835')" style="margin-top:4px">
+              Open Xcode in App Store
+            </button>
+          </div>`;
+      } else {
+        html += `
+          <div class="check-item" style="margin-top:8px">
+            <span style="font-size:18px">&#x1F34E;</span>
+            <span class="check-name" style="color:var(--text-muted)">iOS Simulator</span>
+            <span class="badge">macOS only</span>
+          </div>`;
+      }
+
+      // Web preview (always available)
+      html += `
+        <div class="check-item" style="margin-top:8px">
+          <div class="check-dot" style="background:var(--green)"></div>
+          <span class="check-name">Web Preview</span>
+          <span class="check-detail">always available</span>
+        </div>`;
+
+      container.innerHTML = html;
+    }
+
+    // ── Settings ──────────────────────────────────────
+    async function loadSettings() {
+      if (currentUser) {
+        document.getElementById('settings-user').innerHTML = `
+          <div style="font-weight:500;font-size:14px">${escHtml(currentUser.fullName || currentUser.email)}</div>
+          <div style="font-size:11px;color:var(--text-muted)">${escHtml(currentUser.email)}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${currentUser.provider || 'oauth'} account</div>`;
+        document.getElementById('btn-change-pw').classList.toggle('hidden', currentUser.provider !== 'email');
+      }
+
+      // Builds
+      loadBuilds();
+
+      // Projects
+      try {
+        const data = await window.yaver.listProjects();
+        const projects = (data.projects || []).slice(0, 10);
+        document.getElementById('project-list').innerHTML = projects.length
+          ? projects.map(p => `
+            <div class="check-item" style="cursor:pointer" onclick="handleGitSync('${escHtml(p.path)}', '${escHtml(p.name)}')">
+              <span class="check-name">${escHtml(p.name)}</span>
+              <span class="check-detail">${escHtml(p.branch || '')}</span>
+            </div>`).join('')
+          : '<div style="font-size:13px;color:var(--text-muted)">No projects on remote machine</div>';
+      } catch {}
+
+      // Guests
+      try {
+        const data = await window.yaver.listGuests();
+        const guests = data.guests || [];
+        document.getElementById('guest-list').innerHTML = guests.map(g => `
+          <div class="check-item">
+            <span class="check-name">${escHtml(g.email)}</span>
+            <span class="badge ${g.status === 'accepted' ? 'badge-green' : 'badge-yellow'}">${g.status}</span>
+          </div>`).join('');
+      } catch {}
+    }
+
+    // ── Deploy ─────────────────────────────────────────
+    function handleDeployMenu() {
+      togglePanel('settings');
+      // Auto-scroll to deploy section
+      setTimeout(() => {
+        document.getElementById('deploy-section')?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
+
+    async function handleDeploy(target) {
+      const prompts = {
+        testflight: 'Build this project for iOS and deploy to TestFlight. Archive with xcodebuild, export as app-store-connect, and upload. Show me the build number when done.',
+        playstore: 'Build this project for Android (release AAB) and upload to Google Play internal testing track. Bump the versionCode, build with Gradle, and upload. Show me the version when done.',
+        web: 'Deploy this project to Vercel (or the configured web hosting). Run the build and deploy commands. Show me the URL when done.',
+      };
+
+      const labels = { testflight: 'TestFlight', playstore: 'Google Play', web: 'Web' };
+      const prompt = prompts[target];
+      if (!prompt) return;
+
+      closeAllPanels();
+      addMessage('user', 'Deploy to ' + labels[target]);
+      addMessage('status', 'Starting ' + labels[target] + ' deploy on remote machine...');
+
+      const result = await window.yaver.createTask({
+        title: 'Deploy to ' + labels[target],
+        description: prompt,
+        source: 'desktop',
+      });
+      if (result.taskId) {
+        currentTask = { id: result.taskId, status: 'running', renderedTurns: 1 };
+      }
+    }
+
+    async function loadBuilds() {
+      try {
+        const data = await window.yaver.agentRequest('GET', '/builds');
+        const builds = (data || []).slice(0, 5);
+        const container = document.getElementById('build-list');
+        if (!builds.length) {
+          container.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">No builds yet</div>';
+          return;
+        }
+        container.innerHTML = builds.map(b => {
+          const statusColor = b.status === 'completed' ? 'var(--green)' : b.status === 'running' ? 'var(--yellow)' : b.status === 'failed' ? 'var(--red)' : 'var(--text-muted)';
+          const time = b.startedAt ? new Date(b.startedAt).toLocaleTimeString() : '';
+          return `
+            <div class="check-item" style="padding:8px 10px">
+              <div class="check-dot" style="background:${statusColor}"></div>
+              <span class="check-name" style="font-size:12px">${escHtml(b.platform)}</span>
+              <span class="check-detail">${b.status} ${time}</span>
+            </div>`;
+        }).join('');
+      } catch {}
+    }
+
+    async function handleGitSync(path, name) {
+      if (confirm('Git sync ' + name + '?')) {
+        await window.yaver.createTask({
+          title: 'Git Sync — ' + name,
+          description: 'cd ' + path + ' && Sync this repository with its remote. Pull the latest changes. If there are merge conflicts, resolve them. Show a summary.',
+          source: 'desktop',
+        });
+      }
+    }
+
+    async function handleChangePassword() {
+      const current = prompt('Current password:');
+      if (!current) return;
+      const newPw = prompt('New password (min 8 characters):');
+      if (!newPw || newPw.length < 8) { alert('Password must be at least 8 characters.'); return; }
+      const confirm_ = prompt('Confirm new password:');
+      if (newPw !== confirm_) { alert('Passwords do not match.'); return; }
+      const result = await window.yaver.changePassword(current, newPw);
+      alert(result.ok ? 'Password changed.' : (result.error || 'Failed.'));
+    }
+
+    async function handleForgotPassword() {
+      const email = prompt('Enter your email:');
+      if (!email) return;
+      await window.yaver.forgotPassword(email);
+      alert('If an account exists, a reset link has been sent.');
+    }
+
+    async function handleInviteGuest() {
+      const email = prompt('Enter guest email:');
+      if (!email) return;
+      const result = await window.yaver.inviteGuest(email);
+      if (result.inviteCode) {
+        alert('Invitation sent!\\nCode: ' + result.inviteCode + '\\nShare this with ' + email);
+        loadSettings();
+      } else {
+        alert(result.error || 'Failed.');
+      }
+    }
+
+    // ── Resizable split pane ──────────────────────────
+    const divider = document.getElementById('divider');
+    let isDragging = false;
+    divider.addEventListener('mousedown', () => {
+      isDragging = true; divider.classList.add('active');
+      document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none';
+    });
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const rect = document.querySelector('.split').getBoundingClientRect();
+      const ratio = Math.max(0.2, Math.min(0.8, (e.clientX - rect.left) / rect.width));
+      document.getElementById('pane-left').style.width = (ratio * 100) + '%';
+    });
+    document.addEventListener('mouseup', () => {
+      isDragging = false; divider.classList.remove('active');
+      document.body.style.cursor = ''; document.body.style.userSelect = '';
+    });
+
+    // ── Helpers ───────────────────────────────────────
+    function escHtml(s) { return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+    // ── Boot ─────────────────────────────────────────
+    init();
+  </script>
+</body>
+</html>
