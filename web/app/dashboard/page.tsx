@@ -118,7 +118,7 @@ export default function DashboardPage() {
   ];
 
   return (
-    <div className="flex h-[calc(100vh-73px)] overflow-hidden">
+    <div className="flex h-screen overflow-hidden">
       {/* Sidebar */}
       <aside className="w-60 flex flex-col border-r border-surface-800 bg-surface-900/50 shrink-0 overflow-y-auto">
         <div className="p-3 space-y-4">
