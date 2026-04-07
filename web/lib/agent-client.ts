@@ -776,6 +776,203 @@ class AgentClient {
     }
   }
 
+  // ── Projects ───────────────────────────────────────────────────────
+
+  async listProjects(): Promise<{ name: string; path: string; branch?: string; framework?: string; tags?: string[] }[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/projects`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.projects ?? [];
+  }
+
+  async getProjectActions(query: string): Promise<{ project: string; path: string; actions: { label: string; target: string; type: string; framework?: string; platform?: string; command?: string }[] }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/projects/actions?query=${encodeURIComponent(query)}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error("Failed to get project actions");
+    return res.json();
+  }
+
+  // ── Dev Server ────────────────────────────────────────────────────
+
+  async getDevServerStatus(): Promise<{ running: boolean; framework?: string; workDir?: string; port?: number } | null> {
+    this.assertConnected();
+    try {
+      const res = await fetch(`${this.baseUrl}/dev/status`, { headers: this.authHeaders });
+      if (!res.ok) return null;
+      return res.json();
+    } catch { return null; }
+  }
+
+  async startDevServer(opts: { framework: string; workDir: string; platform?: string }): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/dev/start`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(opts),
+    });
+    if (!res.ok) throw new Error("Failed to start dev server");
+  }
+
+  async stopDevServer(): Promise<void> {
+    this.assertConnected();
+    await fetch(`${this.baseUrl}/dev/stop`, { method: "POST", headers: this.authHeaders });
+  }
+
+  async reloadDevServer(): Promise<void> {
+    this.assertConnected();
+    await fetch(`${this.baseUrl}/dev/reload`, { method: "POST", headers: this.authHeaders });
+  }
+
+  get devPreviewUrl(): string | null {
+    if (!this.baseUrl) return null;
+    return `${this.baseUrl}/dev/`;
+  }
+
+  /** Get the SSE events URL for dev server live reload. */
+  get devEventsUrl(): string | null {
+    if (!this.baseUrl) return null;
+    return `${this.baseUrl}/dev/events`;
+  }
+
+  /** Get auth headers for direct fetch calls (SSE, etc). */
+  getAuthHeaders(): Record<string, string> {
+    return this.authHeaders;
+  }
+
+  // ── Todos ─────────────────────────────────────────────────────────
+
+  async listTodos(): Promise<{ id: string; description: string; status: string }[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/todolist`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.items ?? [];
+  }
+
+  async addTodo(description: string): Promise<void> {
+    this.assertConnected();
+    await fetch(`${this.baseUrl}/todolist`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ description, source: "web" }),
+    });
+  }
+
+  async deleteTodo(id: string): Promise<void> {
+    this.assertConnected();
+    await fetch(`${this.baseUrl}/todolist/${id}`, { method: "DELETE", headers: this.authHeaders });
+  }
+
+  async todoCount(): Promise<number> {
+    this.assertConnected();
+    try {
+      const res = await fetch(`${this.baseUrl}/todolist/count`, { headers: this.authHeaders });
+      if (!res.ok) return 0;
+      const data = await res.json();
+      return data.count ?? 0;
+    } catch { return 0; }
+  }
+
+  // ── Builds ────────────────────────────────────────────────────────
+
+  async listBuilds(): Promise<{ id: string; platform: string; status: string; startedAt?: number; artifactName?: string }[]> {
+    this.assertConnected();
+    try {
+      const res = await fetch(`${this.baseUrl}/builds`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    } catch { return []; }
+  }
+
+  async getBuild(id: string): Promise<unknown> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/builds/${id}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  // ── Health Monitoring ─────────────────────────────────────────────
+
+  async listHealthTargets(): Promise<{ id: string; url: string; name?: string; status?: string; responseTime?: number }[]> {
+    this.assertConnected();
+    try {
+      const res = await fetch(`${this.baseUrl}/healthmon`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.targets ?? data ?? [];
+    } catch { return []; }
+  }
+
+  async addHealthTarget(target: { url: string; name?: string }): Promise<void> {
+    this.assertConnected();
+    await fetch(`${this.baseUrl}/healthmon`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(target),
+    });
+  }
+
+  async deleteHealthTarget(id: string): Promise<void> {
+    this.assertConnected();
+    await fetch(`${this.baseUrl}/healthmon/${id}`, { method: "DELETE", headers: this.authHeaders });
+  }
+
+  // ── Quality Gates ─────────────────────────────────────────────────
+
+  async listQualityGates(): Promise<{ id?: string; type?: string; name?: string; status?: string }[]> {
+    this.assertConnected();
+    try {
+      const res = await fetch(`${this.baseUrl}/quality`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.checks ?? data ?? [];
+    } catch { return []; }
+  }
+
+  async runQualityGate(id: string): Promise<void> {
+    this.assertConnected();
+    await fetch(`${this.baseUrl}/quality/${id}/run`, { method: "POST", headers: this.authHeaders });
+  }
+
+  async runAllQualityGates(): Promise<void> {
+    this.assertConnected();
+    await fetch(`${this.baseUrl}/quality/run-all`, { method: "POST", headers: this.authHeaders });
+  }
+
+  // ── Git ───────────────────────────────────────────────────────────
+
+  async gitPull(workDir: string): Promise<{ ok: string; message: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/pull?workDir=${encodeURIComponent(workDir)}`, {
+      method: "POST",
+      headers: this.authHeaders,
+    });
+    return res.json();
+  }
+
+  async gitStatus(workDir: string): Promise<unknown> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/status?workDir=${encodeURIComponent(workDir)}`, {
+      headers: this.authHeaders,
+    });
+    return res.json();
+  }
+
+  // ── Password Management ───────────────────────────────────────────
+
+  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/auth/change-password`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "Failed to change password");
+    }
+  }
+
   // ── Local cache (localStorage) ─────────────────────────────────────
 
   private cacheTasks(tasks: Task[]): void {

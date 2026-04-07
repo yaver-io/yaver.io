@@ -21,6 +21,12 @@ import {
   type FormEvent,
 } from "react";
 import Link from "next/link";
+import ProjectsView from "@/components/dashboard/ProjectsView";
+import TodosView from "@/components/dashboard/TodosView";
+import BuildsView from "@/components/dashboard/BuildsView";
+import HealthView from "@/components/dashboard/HealthView";
+import QualityView from "@/components/dashboard/QualityView";
+import PreviewPane from "@/components/dashboard/PreviewPane";
 
 // ── Voice Recording Hook ──────────────────────────────────────────
 
@@ -134,6 +140,12 @@ export default function DashboardPage() {
   // Sidebar
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
+  // Tabs
+  const [activeTab, setActiveTab] = useState<"chat" | "projects" | "todos" | "builds" | "health" | "quality" | "preview">("chat");
+
+  // Todos badge
+  const [todoCount, setTodoCount] = useState(0);
+
   // Voice
   const voice = useVoiceRecorder();
 
@@ -152,6 +164,15 @@ export default function DashboardPage() {
   const [editGuestMode, setEditGuestMode] = useState("always");
   const [editGuestRunners, setEditGuestRunners] = useState("");
   const [savingGuestConfig, setSavingGuestConfig] = useState(false);
+
+  // ── Todo count polling (must be before auth guard to satisfy React hooks rules) ──
+  useEffect(() => {
+    if (connState !== "connected") return;
+    const poll = async () => { try { setTodoCount(await agentClient.todoCount()); } catch {} };
+    poll();
+    const iv = setInterval(poll, 10000);
+    return () => clearInterval(iv);
+  }, [connState]);
 
   // ── Auth guard ──────────────────────────────────────────────────
 
@@ -856,6 +877,39 @@ export default function DashboardPage() {
           )}
         </div>
 
+        {/* ── Tab Bar ───────────────────────────────────────────── */}
+        {isConnected && (
+          <div className="flex items-center gap-1 border-b border-surface-800 px-4 py-1 bg-surface-900/30">
+            {([
+              { id: "chat", label: "Chat", icon: "\uD83D\uDCAC" },
+              { id: "projects", label: "Projects", icon: "\uD83D\uDCC1" },
+              { id: "todos", label: "Todos", icon: "\u2611\uFE0F", badge: todoCount },
+              { id: "builds", label: "Builds", icon: "\uD83D\uDE80" },
+              { id: "preview", label: "Preview", icon: "\uD83C\uDFA8" },
+              { id: "health", label: "Health", icon: "\uD83D\uDCCA" },
+              { id: "quality", label: "Quality", icon: "\u2705" },
+            ] as { id: typeof activeTab; label: string; icon: string; badge?: number }[]).map(
+              (tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                    activeTab === tab.id
+                      ? "bg-indigo-500/10 text-indigo-400"
+                      : "text-surface-500 hover:text-surface-300 hover:bg-surface-800"
+                  }`}
+                >
+                  <span>{tab.icon}</span>
+                  <span className="hidden sm:inline">{tab.label}</span>
+                  {tab.badge != null && tab.badge > 0 && (
+                    <span className="rounded-full bg-indigo-500/20 px-1.5 text-[9px] text-indigo-400">{tab.badge}</span>
+                  )}
+                </button>
+              )
+            )}
+          </div>
+        )}
+
         {/* ── Content Area ─────────────────────────────────────── */}
         <div className="flex min-h-0 flex-1 flex-col">
           {!isConnected ? (
@@ -896,9 +950,38 @@ export default function DashboardPage() {
                 )}
               </div>
             </div>
+          ) : activeTab === "projects" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full">
+              <h2 className="text-lg font-semibold text-surface-100 mb-4">Projects</h2>
+              <ProjectsView onTaskCreated={(id) => { setActiveTab("chat"); agentClient.listTasks().then(setTasks).catch(() => {}); }} />
+            </div>
+          ) : activeTab === "todos" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full">
+              <h2 className="text-lg font-semibold text-surface-100 mb-4">Todos</h2>
+              <TodosView onTaskCreated={(id) => { setActiveTab("chat"); agentClient.listTasks().then(setTasks).catch(() => {}); }} />
+            </div>
+          ) : activeTab === "builds" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full">
+              <h2 className="text-lg font-semibold text-surface-100 mb-4">Builds &amp; Deploy</h2>
+              <BuildsView onTaskCreated={(id) => { setActiveTab("chat"); agentClient.listTasks().then(setTasks).catch(() => {}); }} />
+            </div>
+          ) : activeTab === "preview" ? (
+            <div className="flex-1 min-h-0">
+              <PreviewPane />
+            </div>
+          ) : activeTab === "health" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full">
+              <h2 className="text-lg font-semibold text-surface-100 mb-4">Health Monitoring</h2>
+              <HealthView />
+            </div>
+          ) : activeTab === "quality" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full">
+              <h2 className="text-lg font-semibold text-surface-100 mb-4">Quality Gates</h2>
+              <QualityView />
+            </div>
           ) : (
             <>
-              {/* ── Task History + Output ── */}
+              {/* ── Task History + Output (Chat tab) ── */}
               <div className="flex min-h-0 flex-1">
                 {/* Task list sidebar (narrow) */}
                 <div className="hidden w-56 shrink-0 flex-col border-r border-surface-800 lg:flex">
