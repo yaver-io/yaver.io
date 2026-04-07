@@ -29,7 +29,9 @@ export function useDevices(token: string | null): DevicesState {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) return;
-      const data = (await res.json()) as Device[];
+      const raw = await res.json();
+      // API may return { devices: [...] } or just [...]
+      const data: Device[] = Array.isArray(raw) ? raw : (raw.devices ?? []);
       setDevices(data);
     } catch {
       // Silently fail -- devices list is non-critical.
