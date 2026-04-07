@@ -165,32 +165,9 @@ export default function DashboardPage() {
   const [editGuestRunners, setEditGuestRunners] = useState("");
   const [savingGuestConfig, setSavingGuestConfig] = useState(false);
 
-  // ── Todo count polling (must be before auth guard to satisfy React hooks rules) ──
-  useEffect(() => {
-    if (connState !== "connected") return;
-    const poll = async () => { try { setTodoCount(await agentClient.todoCount()); } catch {} };
-    poll();
-    const iv = setInterval(poll, 10000);
-    return () => clearInterval(iv);
-  }, [connState]);
+  // ── ALL hooks must be before any conditional returns (React rules of hooks) ──
 
-  // ── Auth guard ──────────────────────────────────────────────────
-
-  if (!isLoading && !isAuthenticated) {
-    if (typeof window !== "undefined") window.location.href = "/auth";
-    return null;
-  }
-
-  if (isLoading) {
-    return (
-      <div className="flex min-h-[80vh] items-center justify-center">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-600 border-t-emerald-400" />
-      </div>
-    );
-  }
-
-  // ── Fetch relay servers from platform config ────────────────────
-  // eslint-disable-next-line react-hooks/rules-of-hooks
+  // Fetch relay servers from platform config
   useEffect(() => {
     async function fetchRelays() {
       try {
@@ -207,8 +184,7 @@ export default function DashboardPage() {
     fetchRelays();
   }, []);
 
-  // ── Connection state listener ───────────────────────────────────
-  // eslint-disable-next-line react-hooks/rules-of-hooks
+  // Connection state listener
   useEffect(() => {
     const unsub = agentClient.on("connectionState", (s) => {
       setConnState(s);
@@ -216,8 +192,7 @@ export default function DashboardPage() {
     return unsub;
   }, []);
 
-  // ── Output listener ─────────────────────────────────────────────
-  // eslint-disable-next-line react-hooks/rules-of-hooks
+  // Output listener
   useEffect(() => {
     const unsub = agentClient.on("output", (taskId, line) => {
       if (activeTask && taskId === activeTask.id) {
@@ -227,16 +202,14 @@ export default function DashboardPage() {
     return unsub;
   }, [activeTask]);
 
-  // ── Auto-scroll output ──────────────────────────────────────────
-  // eslint-disable-next-line react-hooks/rules-of-hooks
+  // Auto-scroll output
   useEffect(() => {
     if (outputRef.current) {
       outputRef.current.scrollTop = outputRef.current.scrollHeight;
     }
   }, [outputLines]);
 
-  // ── Poll tasks when connected ───────────────────────────────────
-  // eslint-disable-next-line react-hooks/rules-of-hooks
+  // Poll tasks when connected
   useEffect(() => {
     if (connState !== "connected") return;
     const load = async () => {
@@ -249,6 +222,30 @@ export default function DashboardPage() {
     const iv = setInterval(load, 5000);
     return () => clearInterval(iv);
   }, [connState]);
+
+  // Todo count polling
+  useEffect(() => {
+    if (connState !== "connected") return;
+    const poll = async () => { try { setTodoCount(await agentClient.todoCount()); } catch {} };
+    poll();
+    const iv = setInterval(poll, 10000);
+    return () => clearInterval(iv);
+  }, [connState]);
+
+  // ── Auth guard (AFTER all hooks) ───────────────────────────────
+
+  if (!isLoading && !isAuthenticated) {
+    if (typeof window !== "undefined") window.location.href = "/auth";
+    return null;
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-[80vh] items-center justify-center">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-600 border-t-emerald-400" />
+      </div>
+    );
+  }
 
   // ── Connect to device ───────────────────────────────────────────
 
