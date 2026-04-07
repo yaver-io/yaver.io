@@ -1543,6 +1543,43 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, sandboxTools...)
 
+	// --- Password Management ---
+	passwordTools := []map[string]interface{}{
+		{
+			"name":        "forgot_password",
+			"description": "Send a password reset email to an email-authenticated Yaver user. The reset link expires in 1 hour. Rate-limited to 5 requests per email per day.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"email"},
+				"properties": map[string]interface{}{
+					"email": map[string]interface{}{
+						"type":        "string",
+						"description": "Email address of the account to reset",
+					},
+				},
+			},
+		},
+		{
+			"name":        "change_password",
+			"description": "Change the password of the currently authenticated email user. Requires the current password and a new password (min 8 characters).",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"current_password", "new_password"},
+				"properties": map[string]interface{}{
+					"current_password": map[string]interface{}{
+						"type":        "string",
+						"description": "The current password",
+					},
+					"new_password": map[string]interface{}{
+						"type":        "string",
+						"description": "The new password (minimum 8 characters)",
+					},
+				},
+			},
+		},
+	}
+	tools = append(tools, passwordTools...)
+
 	return map[string]interface{}{
 		"tools": tools,
 	}

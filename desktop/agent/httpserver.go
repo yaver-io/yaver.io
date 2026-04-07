@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -73,6 +74,9 @@ type HTTPServer struct {
 	tlsPort        int
 	tlsCert        tls.Certificate
 	tlsFingerprint string
+
+	// Auth status — set by heartbeat loop when token expires
+	authExpired atomic.Bool
 
 	// Autopilot (auto-driving) mode
 	autopilot *AutopilotManager
@@ -770,6 +774,9 @@ func (s *HTTPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if s.tlsFingerprint != "" {
 		resp["tlsFingerprint"] = s.tlsFingerprint
 		resp["tlsPort"] = s.tlsPort
+	}
+	if s.authExpired.Load() {
+		resp["authExpired"] = true
 	}
 	jsonReply(w, http.StatusOK, resp)
 }
@@ -6028,6 +6035,36 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 				u.GuestEmail, u.GuestName, u.SecondsUsed, u.Date))
 		}
 		return mcpToolResult(sb.String())
+
+	case "forgot_password":
+		var args struct {
+			Email string `json:"email"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.Email == "" {
+			return mcpToolError("email is required")
+		}
+		if err := RequestPasswordReset(s.convexURL, args.Email); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult("If an account exists for that email, a password reset link has been sent. The link expires in 1 hour.")
+
+	case "change_password":
+		var args struct {
+			CurrentPassword string `json:"current_password"`
+			NewPassword     string `json:"new_password"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.CurrentPassword == "" || args.NewPassword == "" {
+			return mcpToolError("current_password and new_password are required")
+		}
+		if len(args.NewPassword) < 8 {
+			return mcpToolError("new password must be at least 8 characters")
+		}
+		if err := ChangePassword(s.convexURL, s.token, args.CurrentPassword, args.NewPassword); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult("Password changed successfully.")
 
 	default:
 		return mcpToolError("unknown tool: " + call.Name)
