@@ -1,9 +1,10 @@
 /**
  * Expo config plugin for yaver-feedback-react-native.
  *
- * Adds required native permissions for the feedback SDK:
- * - iOS: Camera + Microphone usage descriptions
- * - Android: CAMERA + RECORD_AUDIO permissions
+ * Adds:
+ * - iOS/Android permissions for camera + microphone (feedback screenshots/voice)
+ * - iOS: YaverHotReload native module for Hermes bundle hot reload
+ * - AppDelegate hook to load hot-reloaded bundles on startup
  *
  * Usage in app.json:
  *   { "expo": { "plugins": ["yaver-feedback-react-native"] } }
@@ -11,8 +12,14 @@
 const {
   withInfoPlist,
   withAndroidManifest,
+  withXcodeProject,
+  withAppDelegate,
+  withMainApplication,
+  withDangerousMod,
   createRunOncePlugin,
 } = require("@expo/config-plugins");
+const path = require("path");
+const fs = require("fs");
 
 const pkg = require("./package.json");
 
@@ -57,9 +64,257 @@ function withYaverFeedbackAndroid(config) {
   });
 }
 
+/**
+ * Add YaverHotReload native module files to the Xcode project.
+ */
+function withYaverHotReloadNativeModule(config) {
+  return withXcodeProject(config, (config) => {
+    const project = config.modResults;
+    const sdkIosDir = path.resolve(__dirname, "ios");
+
+    // Find the main app group
+    const mainGroup = project.getFirstProject().firstProject.mainGroup;
+    const appName = config.modRequest.projectName || "App";
+
+    // Copy native files to the iOS project
+    const filesToAdd = ["YaverHotReload.swift", "YaverHotReload.m"];
+    const targetDir = path.join(
+      config.modRequest.platformProjectRoot,
+      appName
+    );
+
+    for (const fileName of filesToAdd) {
+      const src = path.join(sdkIosDir, fileName);
+      const dst = path.join(targetDir, fileName);
+      if (fs.existsSync(src)) {
+        fs.copyFileSync(src, dst);
+        // Add to Xcode project if not already there
+        const group = project.pbxGroupByName(appName) || project.getFirstProject();
+        if (group) {
+          project.addSourceFile(
+            `${appName}/${fileName}`,
+            null,
+            group.uuid
+          );
+        }
+      }
+    }
+
+    return config;
+  });
+}
+
+/**
+ * Patch AppDelegate to:
+ * 1. Return hot-reloaded bundle URL on startup (so reloaded bundle persists)
+ * 2. Handle YaverHotReloadBundle notification to recreate the RN bridge
+ *    with the new bundle (enables N reloads without app restart)
+ *
+ * Uses the same pattern as Yaver's own AppDelegate: tear down old bridge,
+ * create new ExpoReactNativeFactory with overrideBundleURL, startReactNative.
+ */
+function withYaverAppDelegateHook(config) {
+  return withAppDelegate(config, (config) => {
+    const contents = config.modResults.contents;
+
+    // Only patch if not already patched
+    if (contents.includes("YaverHotReload")) {
+      return config;
+    }
+
+    // For Swift AppDelegate (Expo SDK 50+)
+    let patched = contents;
+
+    // 1. Hook bundleURL() to return hot bundle on startup
+    if (patched.includes("func bundleURL()")) {
+      patched = patched.replace(
+        /func bundleURL\(\) -> URL\? \{/,
+        `func bundleURL() -> URL? {
+    // Yaver Feedback SDK: load hot-reloaded bundle if available
+    if let yaverBundle = YaverHotReload.bundleURL() { return yaverBundle }`
+      );
+    }
+
+    // 2. Add reload notification handler and bridge recreation logic
+    // Insert before the closing brace of the class
+    const classCloseIndex = patched.lastIndexOf("}");
+    if (classCloseIndex > 0) {
+      const reloadHandler = `
+  // MARK: - Yaver Feedback SDK Hot Reload
+
+  private var yaverIsReloading = false
+
+  private func setupYaverHotReload() {
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(yaverHandleHotReload(_:)),
+      name: Notification.Name("YaverHotReloadBundle"),
+      object: nil
+    )
+  }
+
+  @objc private func yaverHandleHotReload(_ notification: Notification) {
+    guard !yaverIsReloading else { return }
+    yaverIsReloading = true
+
+    guard let bundlePath = notification.userInfo?["bundlePath"] as? String else {
+      yaverIsReloading = false
+      return
+    }
+
+    let bundleURL = URL(fileURLWithPath: bundlePath)
+    guard FileManager.default.fileExists(atPath: bundlePath) else {
+      NSLog("[YaverHotReload] bundle not found at %@", bundlePath)
+      yaverIsReloading = false
+      return
+    }
+
+    NSLog("[YaverHotReload] reloading bridge with %@", bundlePath)
+
+    guard let window = self.window else {
+      yaverIsReloading = false
+      return
+    }
+
+    // Show loading placeholder
+    let placeholder = UIView(frame: window.bounds)
+    placeholder.backgroundColor = .black
+    let spinner = UIActivityIndicatorView(style: .large)
+    spinner.color = .white
+    spinner.center = placeholder.center
+    spinner.startAnimating()
+    placeholder.addSubview(spinner)
+    window.rootViewController?.view = placeholder
+
+    // Brief delay for old bridge to tear down
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+      guard let self = self else { return }
+
+      let delegate = ReactNativeDelegate()
+      delegate.overrideBundleURL = bundleURL
+      delegate.dependencyProvider = RCTAppDependencyProvider()
+
+      let factory = ExpoReactNativeFactory(delegate: delegate)
+      self.reactNativeDelegate = delegate
+      self.reactNativeFactory = factory
+      self.bindReactNativeFactory(factory)
+
+      factory.startReactNative(
+        withModuleName: "main",
+        in: window,
+        launchOptions: nil
+      )
+      self.yaverIsReloading = false
+      NSLog("[YaverHotReload] bridge recreated successfully")
+    }
+  }
+`;
+
+      patched =
+        patched.slice(0, classCloseIndex) +
+        reloadHandler +
+        patched.slice(classCloseIndex);
+    }
+
+    // 3. Call setupYaverHotReload() in didFinishLaunchingWithOptions
+    if (patched.includes("super.application(application, didFinishLaunchingWithOptions:")) {
+      patched = patched.replace(
+        "super.application(application, didFinishLaunchingWithOptions:",
+        "setupYaverHotReload()\n    return super.application(application, didFinishLaunchingWithOptions:"
+      );
+      // Remove the duplicate "return" if the original already had one
+      patched = patched.replace("return setupYaverHotReload()", "setupYaverHotReload()");
+    }
+
+    config.modResults.contents = patched;
+    return config;
+  });
+}
+
+/**
+ * Copy Android native module source files and register the package.
+ * Also patches MainApplication to use hot-reloaded bundle on startup.
+ */
+function withYaverAndroidHotReload(config) {
+  // Copy Java source files
+  config = withDangerousMod(config, [
+    "android",
+    (config) => {
+      const sdkAndroidDir = path.resolve(__dirname, "android", "src", "main", "java", "io", "yaver", "feedback");
+      const targetDir = path.join(
+        config.modRequest.platformProjectRoot,
+        "app", "src", "main", "java", "io", "yaver", "feedback"
+      );
+
+      if (fs.existsSync(sdkAndroidDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+        for (const file of fs.readdirSync(sdkAndroidDir)) {
+          fs.copyFileSync(
+            path.join(sdkAndroidDir, file),
+            path.join(targetDir, file)
+          );
+        }
+      }
+      return config;
+    },
+  ]);
+
+  // Patch MainApplication to register the package and use hot bundle
+  config = withMainApplication(config, (config) => {
+    let contents = config.modResults.contents;
+
+    if (contents.includes("YaverHotReload")) {
+      return config;
+    }
+
+    // Add import
+    contents = contents.replace(
+      "import com.facebook.react.ReactApplication",
+      "import com.facebook.react.ReactApplication;\nimport io.yaver.feedback.YaverHotReloadPackage;\nimport io.yaver.feedback.YaverHotReloadModule;"
+    );
+
+    // Register package in getPackages()
+    if (contents.includes("packages.add(")) {
+      // Find the last packages.add() and add ours after
+      const lastAdd = contents.lastIndexOf("packages.add(");
+      const lineEnd = contents.indexOf("\n", lastAdd);
+      contents =
+        contents.slice(0, lineEnd + 1) +
+        "      packages.add(new YaverHotReloadPackage());\n" +
+        contents.slice(lineEnd + 1);
+    }
+
+    // Override getJSBundleFile to check for hot bundle
+    if (contents.includes("getJSMainModuleName()") && !contents.includes("getJSBundleFile")) {
+      const mainModuleIdx = contents.indexOf("getJSMainModuleName()");
+      const methodStart = contents.lastIndexOf("@Override", mainModuleIdx);
+      contents =
+        contents.slice(0, methodStart) +
+        `@Override
+    protected String getJSBundleFile() {
+      // Yaver Feedback SDK: load hot-reloaded bundle if available
+      java.io.File hotBundle = YaverHotReloadModule.getSavedBundleFile(getApplicationContext());
+      if (hotBundle != null) return hotBundle.getAbsolutePath();
+      return super.getJSBundleFile();
+    }
+
+    ` +
+        contents.slice(methodStart);
+    }
+
+    config.modResults.contents = contents;
+    return config;
+  });
+
+  return config;
+}
+
 function withYaverFeedback(config) {
   config = withYaverFeedbackIOS(config);
   config = withYaverFeedbackAndroid(config);
+  config = withYaverHotReloadNativeModule(config);
+  config = withYaverAppDelegateHook(config);
+  config = withYaverAndroidHotReload(config);
   return config;
 }
 

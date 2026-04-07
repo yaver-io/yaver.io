@@ -119,9 +119,13 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
   const testPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const outputScrollRef = useRef<ScrollView>(null);
 
-  // Resolve agent URL and token
+  // Resolve agent URL and token — re-read from config each render
+  // because discoverAgent() may set agentUrl asynchronously after init.
+  const [resolvedAgentUrl, setResolvedAgentUrl] = useState<string | undefined>(
+    agentUrlProp || YaverFeedback.getConfig()?.agentUrl,
+  );
   const config = YaverFeedback.getConfig();
-  const agentUrl = agentUrlProp || config?.agentUrl;
+  const agentUrl = resolvedAgentUrl;
   const authToken = authTokenProp || config?.authToken;
   const panelBg = panelBackgroundColor || config?.panelBackgroundColor || DEFAULT_PANEL_BG;
 
@@ -129,19 +133,27 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
     setOutput((prev) => [...prev.slice(-20), line]);
   }, []);
 
-  // Connection health polling
+  // Connection health polling — also picks up agentUrl from config when
+  // it becomes available after background discovery completes.
   useEffect(() => {
-    if (!healthCheckInterval || !agentUrl) return;
+    if (!healthCheckInterval) return;
 
     const check = async () => {
+      // Re-read config in case discoverAgent() resolved since last check
+      const latestUrl = agentUrlProp || YaverFeedback.getConfig()?.agentUrl;
+      if (latestUrl && latestUrl !== resolvedAgentUrl) {
+        setResolvedAgentUrl(latestUrl);
+      }
+      if (!latestUrl) return;
+
       try {
         const client = YaverFeedback.getP2PClient();
         if (client) {
           setIsConnected(await client.health());
-        } else if (agentUrl) {
+        } else {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 3000);
-          const resp = await fetch(`${agentUrl.replace(/\/$/, '')}/health`, {
+          const resp = await fetch(`${latestUrl.replace(/\/$/, '')}/health`, {
             signal: controller.signal,
           });
           clearTimeout(timeout);
@@ -155,7 +167,7 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
     check();
     const interval = setInterval(check, healthCheckInterval);
     return () => clearInterval(interval);
-  }, [agentUrl, healthCheckInterval]);
+  }, [agentUrlProp, healthCheckInterval, resolvedAgentUrl]);
 
   const panResponder = useRef(
     PanResponder.create({
