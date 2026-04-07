@@ -232,22 +232,63 @@ Yaver is an open-source P2P tool that lets developers use any AI coding agent (C
 └─────────────┘
 ```
 
-### Connection strategy (direct-first, relay-fallback)
-1. Mobile tries **direct connection** to desktop agent (3s timeout) — lowest latency
-2. If direct fails, tries **each relay server** in priority order (5s timeout each)
-3. Desktop agent connects outbound to **all** relay servers via QUIC tunnels on startup
-4. If a relay goes down, traffic automatically routes through remaining relays
+### Connection strategy (per surface)
+
+Each client surface has a different connection strategy based on platform capabilities:
+
+| Surface | Strategy | Direct LAN | Relay | Local IPC |
+|---------|----------|:----------:|:-----:|:---------:|
+| **Mobile app** | Direct-first, relay-fallback | Yes (UDP beacon + Convex IP) | Yes | N/A |
+| **Desktop Electron** | Local-first, then direct, then relay | Yes | Yes | Yes (`localhost:18080`) |
+| **Web dashboard** | Relay-only | No (browser CORS blocks localhost) | Yes | No |
+| **Go CLI** | Direct (same machine) | N/A | N/A | Always local |
+
+**Mobile app** (`mobile/src/lib/quic.ts`):
+1. On WiFi: try LAN beacon IP (2s) → Convex-known IP (2s) → relay servers
+2. On cellular: skip direct, go straight to relay
+3. Reconnects automatically on network changes (WiFi ↔ cellular)
+
+**Desktop Electron** (`desktop/app/src/main/main.js`):
+1. Probe `localhost:18080` for local Go agent (IPC — same machine)
+2. If local agent found + auth works → connect locally (no relay needed)
+3. If local not found → try direct LAN → relay servers (same as mobile)
+4. Stores its own token in `~/.yaver/desktop-settings.json` (never overwrites CLI's `config.json`)
+
+**Web dashboard** (`web/lib/agent-client.ts`):
+1. Always uses relay — browsers cannot access `localhost` on the user's machine
+2. Fetches relay password from Convex user settings
+3. All requests go through `https://relay.yaver.io/d/{deviceId}/...`
+4. This is by design — the web dashboard is for remote access (e.g., normie guest connecting to a developer's machine)
+
+**Go CLI** (`desktop/agent/`):
+1. Always runs locally — serves on `0.0.0.0:18080`
+2. Connects outbound to relay servers via QUIC tunnels
+3. No relay needed for local access
+
+### Token isolation (multi-surface auth)
+
+Each surface stores its own session token independently. The same OAuth user can be signed into all surfaces simultaneously:
+
+| Surface | Token storage | Scope |
+|---------|--------------|-------|
+| Go CLI | `~/.yaver/config.json` (`auth_token`) | Agent API access |
+| Desktop Electron | `~/.yaver/desktop-settings.json` (`authToken`) | Convex + agent (via IPC or relay) |
+| Mobile | iOS Keychain / Android SecureStore | Convex + agent (via direct/relay) |
+| Web | `localStorage` (`yaver_auth_token`) | Convex + agent (via relay) |
+
+Signing out on one surface does not affect others. The Desktop Electron app never writes to `config.json` to avoid corrupting the Go CLI's token.
 
 ## Directory Structure
-- `desktop/` — Electron installer (DMG/EXE/DEB) + Go CLI agent
+- `desktop/` — Electron installer + desktop app + Go CLI agent
   - `desktop/installer/` — Electron app for installation GUI
+  - `desktop/app/` — Electron desktop app for vibe coding (split-pane: chat + preview)
   - `desktop/agent/` — Go binary (QUIC server, agent runner, tmux manager)
 - `mobile/` — React Native mobile app (iOS + Android) + on-device HTTP server for push-to-device
 - `cli/` — `yaver-cli` npm package (push existing RN projects to device)
 - `backend/` — Convex backend (auth + peer discovery + platform config)
 - `relay/` — QUIC relay server for NAT traversal (Go, self-hostable)
   - `relay/deploy/` — Deployment scripts (up.sh, down.sh, systemd unit)
-- `web/` — Next.js landing page, deployed on Vercel at yaver.io
+- `web/` — Next.js web app (landing page + dashboard), deployed on Vercel at yaver.io
 - `keys/` — Private keys, signing scripts (gitignored, not in repo — see `keys/CLAUDE.md` for details)
 
 ## Tech Stack
