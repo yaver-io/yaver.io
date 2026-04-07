@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Dashboard mode: hide global header, footer, chat widget */
+body.dashboard-mode header { display: none !important; }
+body.dashboard-mode footer { display: none !important; }
+body.dashboard-mode .fixed.bottom-6.right-6 { display: none !important; }
+body.dashboard-mode main { flex: 1; }
+
 @layer base {
   :root {
     --surface-50: 10 10 10;
