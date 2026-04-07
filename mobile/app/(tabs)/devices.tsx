@@ -12,6 +12,7 @@ import {
 import * as Clipboard from "expo-clipboard";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Alert } from "react-native";
+import { TextInput } from "react-native";
 import { Device, RunnerInfo, useDevice } from "../../src/context/DeviceContext";
 import { useAuth } from "../../src/context/AuthContext";
 import { useColors } from "../../src/context/ThemeContext";
@@ -419,9 +420,26 @@ export default function DevicesScreen() {
     disconnect,
     refreshDevices,
     detachDevice,
+    acceptGuestByCode,
   } = useDevice();
 
-  // Device polling is handled by DeviceContext (every 3s from any screen)
+  const [guestCode, setGuestCode] = useState("");
+  const [guestLoading, setGuestLoading] = useState(false);
+
+  const handleAcceptGuestCode = async () => {
+    const code = guestCode.trim();
+    if (!code || code.length < 4) return;
+    setGuestLoading(true);
+    try {
+      const result = await acceptGuestByCode(code);
+      Alert.alert("Joined!", `You now have access to ${result.hostName}'s machine.`);
+      setGuestCode("");
+      refreshDevices();
+    } catch (e: any) {
+      Alert.alert("Error", e.message || "Invalid code");
+    }
+    setGuestLoading(false);
+  };
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: c.bg }]} edges={["bottom"]}>
@@ -436,6 +454,26 @@ export default function DevicesScreen() {
             )}
           </View>
         )}
+
+        {/* Guest code input */}
+        <View style={[styles.guestCodeRow, { borderBottomColor: c.border }]}>
+          <TextInput
+            style={[styles.guestCodeInput, { backgroundColor: c.bgCard, borderColor: c.border, color: c.textPrimary }]}
+            placeholder="Invite code"
+            placeholderTextColor={c.textMuted}
+            value={guestCode}
+            onChangeText={setGuestCode}
+            autoCapitalize="characters"
+            maxLength={6}
+          />
+          <Pressable
+            style={[styles.guestCodeBtn, { backgroundColor: c.accent, opacity: guestCode.trim().length < 4 ? 0.4 : 1 }]}
+            onPress={handleAcceptGuestCode}
+            disabled={guestCode.trim().length < 4 || guestLoading}
+          >
+            <Text style={styles.guestCodeBtnText}>{guestLoading ? "..." : "Join"}</Text>
+          </Pressable>
+        </View>
 
         <FlatList
           data={devices}
@@ -475,6 +513,38 @@ export default function DevicesScreen() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
   container: { flex: 1 },
+  guestCodeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+  },
+  guestCodeInput: {
+    flex: 1,
+    height: 40,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    fontSize: 16,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    letterSpacing: 4,
+    textAlign: "center",
+    textTransform: "uppercase",
+  },
+  guestCodeBtn: {
+    height: 40,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  guestCodeBtnText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
+  },
   statusBar: {
     flexDirection: "row",
     alignItems: "center",
