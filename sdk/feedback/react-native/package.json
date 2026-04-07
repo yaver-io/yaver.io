@@ -1,6 +1,6 @@
 {
   "name": "yaver-feedback-react-native",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Visual feedback SDK for Yaver — shake-to-report, screen recording, voice annotations for vibe coding",
   "main": "src/index.ts",
   "types": "src/index.ts",
