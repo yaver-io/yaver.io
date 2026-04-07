@@ -48,6 +48,9 @@ jobs:
       - name: Install dependencies
         run: cd mobile && npm ci --legacy-peer-deps
 
+      - name: Prebuild native projects
+        run: cd mobile && npx expo prebuild --platform ios --clean
+
       - name: Install CocoaPods
         run: cd mobile/ios && pod install
 
@@ -153,6 +156,9 @@ jobs:
 
       - name: Install dependencies
         run: cd mobile && npm ci --legacy-peer-deps
+
+      - name: Prebuild native projects
+        run: cd mobile && npx expo prebuild --platform android --clean
 
       - name: Decode Android keystore
         env:
