@@ -10,7 +10,10 @@ const http = httpRouter();
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+    },
   });
 }
 
@@ -91,6 +94,37 @@ async function createSessionToken(ctx: { runMutation: (m: any, args: any) => Pro
   const expiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000;
   await ctx.runMutation(api.auth.createSession, { tokenHash, userId, expiresAt });
   return token;
+}
+
+// ── CORS Preflight for Auth Endpoints ───────────────────────────────
+// Browsers send OPTIONS preflight when requests include Authorization headers.
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type",
+  "Access-Control-Max-Age": "86400",
+};
+
+function corsPreflightResponse(): Response {
+  return new Response(null, { status: 204, headers: corsHeaders });
+}
+
+for (const path of [
+  "/auth/validate", "/auth/signup", "/auth/login", "/auth/refresh",
+  "/auth/logout", "/auth/update-profile", "/auth/delete-account",
+  "/auth/forgot-password", "/auth/reset-password", "/auth/change-password",
+  "/auth/verify-totp",
+  "/devices/list", "/config", "/settings",
+  "/guests/invite", "/guests/accept", "/guests/accept-code",
+  "/guests/revoke", "/guests/list", "/guests/hosts", "/guests/allowed",
+  "/guests/config", "/guests/usage",
+]) {
+  http.route({
+    path,
+    method: "OPTIONS",
+    handler: httpAction(async () => corsPreflightResponse()),
+  });
 }
 
 // ── Email/Password Auth Endpoints ───────────────────────────────────
