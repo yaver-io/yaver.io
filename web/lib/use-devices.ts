@@ -30,21 +30,31 @@ export function useDevices(token: string | null): DevicesState {
       });
       if (!res.ok) return;
       const raw = await res.json();
-      // API may return { devices: [...] } or just [...]
-      const data: Device[] = Array.isArray(raw) ? raw : (raw.devices ?? []);
-      setDevices(data);
+      const arr = Array.isArray(raw) ? raw : (raw.devices ?? []);
+
+      // Map API fields to Device interface
+      const mapped: Device[] = arr.map((d: any) => ({
+        id: d.deviceId || d.id || "",
+        name: d.name || d.hostname || "",
+        platform: d.platform || "",
+        host: d.quicHost || d.host || "",
+        port: d.quicPort || d.port || 18080,
+        lastSeen: d.lastHeartbeat ? new Date(d.lastHeartbeat).toISOString() : "",
+        online: d.isOnline ?? d.online ?? false,
+      }));
+
+      setDevices(mapped);
     } catch {
-      // Silently fail -- devices list is non-critical.
+      // Silently fail
     }
   }, [token]);
 
-  // Auto-refresh on mount
   useEffect(() => {
     refreshDevices();
+    // Poll every 10s
+    const iv = setInterval(refreshDevices, 10000);
+    return () => clearInterval(iv);
   }, [refreshDevices]);
 
-  return {
-    devices,
-    refreshDevices,
-  };
+  return { devices, refreshDevices };
 }
