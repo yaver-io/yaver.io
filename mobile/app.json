@@ -66,6 +66,12 @@
       ]
     },
     "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0a0a0a"
+        }
+      ],
       "expo-router",
       "expo-secure-store",
       "expo-apple-authentication",
