@@ -87,6 +87,7 @@ export interface RelayServer {
   httpUrl: string;
   region: string;
   priority: number;
+  password?: string;
 }
 
 export interface GuestConfigEntry {
@@ -455,8 +456,14 @@ class AgentClient {
     return `http://${this.host}:${this.port}`;
   }
 
+  private activeRelayPassword: string | null = null;
+
   private get authHeaders(): Record<string, string> {
-    return { Authorization: `Bearer ${this.token}` };
+    const h: Record<string, string> = { Authorization: `Bearer ${this.token}` };
+    if (this.activeRelayUrl && this.activeRelayPassword) {
+      h["X-Relay-Password"] = this.activeRelayPassword;
+    }
+    return h;
   }
 
   private assertConnected(): void {
@@ -560,11 +567,14 @@ class AgentClient {
         for (const relay of this.relayServers) {
           try {
             const relayDeviceUrl = `${relay.httpUrl}/d/${this.deviceId}`;
+            const relayHeaders: Record<string, string> = { ...this.authHeaders };
+            if (relay.password) relayHeaders["X-Relay-Password"] = relay.password;
             const res = await this.fetchWithTimeout(`${relayDeviceUrl}/health`, {
-              headers: this.authHeaders,
+              headers: relayHeaders,
             }, 8000);
             if (res.ok) {
               this.activeRelayUrl = relay.httpUrl;
+              this.activeRelayPassword = relay.password || null;
               connected = true;
               console.log("[AgentClient] Relay connection succeeded via", relay.id);
               break;
