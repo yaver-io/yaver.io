@@ -1,4 +1,14 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// AsyncStorage is an optional peer dep — gracefully degrade if missing
+let AsyncStorage: {
+  getItem: (key: string) => Promise<string | null>;
+  setItem: (key: string, value: string) => Promise<void>;
+  removeItem: (key: string) => Promise<void>;
+} | null = null;
+try {
+  AsyncStorage = require('@react-native-async-storage/async-storage').default;
+} catch {
+  // Not installed — discovery caching disabled, auto-discovery still works
+}
 
 const STORAGE_KEY = 'yaver_feedback_agent';
 const DEFAULT_PORT = 18080;
@@ -123,9 +133,116 @@ export class YaverDiscovery {
 
       if (!target?.quicHost) return null;
 
+      // Try direct connection first (same LAN)
       const port = target.httpPort ?? DEFAULT_PORT;
-      const url = `http://${target.quicHost}:${port}`;
-      return await YaverDiscovery.probe(url);
+      const directUrl = `http://${target.quicHost}:${port}`;
+      const directResult = await YaverDiscovery.probe(directUrl);
+      if (directResult) return directResult;
+
+      // Direct connection failed — try via HTTP relay (off-LAN)
+      const relayResult = await YaverDiscovery.discoverViaRelay(
+        base, authToken, target.deviceId,
+      );
+      if (relayResult) return relayResult;
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Discover agent via relay HTTP proxy.
+   * Fetches relay server list from Convex platformConfig, then probes
+   * `{relayHttpUrl}/d/{deviceId}/health` to reach the agent over the internet.
+   */
+  static async discoverViaRelay(
+    convexUrl: string,
+    authToken: string,
+    deviceId: string,
+  ): Promise<DiscoveryResult | null> {
+    try {
+      // Fetch relay server list from user settings first, then platform config
+      const settingsRes = await fetch(`${convexUrl}/auth/validate`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      let relayUrl: string | undefined;
+      let relayPassword: string | undefined;
+
+      if (settingsRes.ok) {
+        const settingsData = await settingsRes.json();
+        relayUrl = settingsData.relayUrl;
+        relayPassword = settingsData.relayPassword;
+      }
+
+      // If no user-level relay, fetch platform relay servers
+      if (!relayUrl) {
+        const configRes = await fetch(`${convexUrl}/platform-config?key=relay_servers`);
+        if (configRes.ok) {
+          const configData = await configRes.json();
+          const servers = typeof configData.value === 'string'
+            ? JSON.parse(configData.value)
+            : configData.value;
+          if (Array.isArray(servers) && servers.length > 0) {
+            // Pick the first (highest priority) relay with an httpUrl
+            const relay = servers.find((s: { httpUrl?: string }) => s.httpUrl);
+            if (relay) {
+              relayUrl = relay.httpUrl;
+            }
+          }
+        }
+      }
+
+      if (!relayUrl) return null;
+
+      // Probe agent through relay: {relayHttpUrl}/d/{deviceId}/health
+      const relayBase = `${relayUrl.replace(/\/$/, '')}/d/${deviceId}`;
+      const result = await YaverDiscovery.probeWithHeaders(relayBase, {
+        'X-Relay-Password': relayPassword || '',
+      });
+      return result;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Probe with extra headers (e.g. relay password).
+   */
+  static async probeWithHeaders(
+    url: string,
+    headers: Record<string, string>,
+  ): Promise<DiscoveryResult | null> {
+    const base = url.replace(/\/$/, '');
+    const start = Date.now();
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS + 3000); // relay adds latency
+
+      const response = await fetch(`${base}/health`, {
+        method: 'GET',
+        headers,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) return null;
+
+      const latency = Date.now() - start;
+      let hostname = 'Unknown';
+      let version = 'unknown';
+
+      try {
+        const data = await response.json();
+        hostname = data.hostname ?? data.name ?? 'Unknown';
+        version = data.version ?? 'unknown';
+      } catch {
+        // Health endpoint might return plain text
+      }
+
+      return { url: base, hostname, version, latency };
     } catch {
       return null;
     }
@@ -185,8 +302,9 @@ export class YaverDiscovery {
     return result;
   }
 
-  /** Get the cached agent connection from AsyncStorage. */
+  /** Get the cached agent connection from storage. */
   static async getStored(): Promise<{ url: string; hostname: string } | null> {
+    if (!AsyncStorage) return null;
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEY);
       if (!raw) return null;
@@ -200,8 +318,9 @@ export class YaverDiscovery {
     }
   }
 
-  /** Store a successful discovery result in AsyncStorage. */
+  /** Store a successful discovery result. */
   static async store(result: DiscoveryResult): Promise<void> {
+    if (!AsyncStorage) return;
     try {
       await AsyncStorage.setItem(
         STORAGE_KEY,
@@ -214,6 +333,7 @@ export class YaverDiscovery {
 
   /** Clear the stored agent connection. */
   static async clear(): Promise<void> {
+    if (!AsyncStorage) return;
     try {
       await AsyncStorage.removeItem(STORAGE_KEY);
     } catch {

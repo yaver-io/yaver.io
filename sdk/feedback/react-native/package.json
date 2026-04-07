@@ -6,6 +6,8 @@
   "types": "src/index.ts",
   "files": [
     "src/",
+    "ios/",
+    "android/",
     "app.plugin.js"
   ],
   "license": "MIT",

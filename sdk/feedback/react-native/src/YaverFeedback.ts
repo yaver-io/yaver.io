@@ -49,6 +49,10 @@ export class YaverFeedback {
       p2pClient = new P2PClient(config.agentUrl, config.authToken);
     } else {
       p2pClient = null;
+      // Auto-discover agent in the background when convexUrl or LAN is available
+      if (enabled) {
+        YaverFeedback.discoverAgent();
+      }
     }
 
     // Set up error capture buffer size
@@ -80,21 +84,15 @@ export class YaverFeedback {
           if (cfg.onReload) {
             cfg.onReload();
           } else {
-            // Default: try DevSettings.reload() in dev mode
-            try {
-              const { DevSettings } = require('react-native');
-              if (typeof DevSettings?.reload === 'function') {
-                DevSettings.reload();
-              }
-            } catch {
-              // Not in dev mode or DevSettings unavailable
-            }
+            YaverFeedback.defaultReload();
           }
         } else if (cmd.command === 'reload_bundle' && cmd.data) {
           const bundleUrl = cmd.data.bundleUrl as string;
           const assetsUrl = cmd.data.assetsUrl as string | undefined;
           if (cfg.onReloadBundle) {
             cfg.onReloadBundle(bundleUrl, assetsUrl);
+          } else {
+            YaverFeedback.defaultReloadBundle(bundleUrl, assetsUrl);
           }
         }
       });
@@ -109,6 +107,30 @@ export class YaverFeedback {
     //   - YaverFeedback.attachError(err) in catch blocks
     //   - YaverFeedback.wrapErrorHandler(existingHandler) to create a
     //     pass-through wrapper they insert into their own error chain
+  }
+
+  /**
+   * Run agent discovery in the background.
+   * Called automatically from init() when no agentUrl is provided.
+   * Sets config.agentUrl and creates P2PClient on success.
+   */
+  static async discoverAgent(): Promise<void> {
+    if (!config || !enabled) return;
+    if (config.agentUrl) return; // already have a URL
+
+    try {
+      const result = await YaverDiscovery.discover({
+        convexUrl: config.convexUrl,
+        authToken: config.authToken,
+        preferredDeviceId: config.preferredDeviceId,
+      });
+      if (result && config) {
+        config.agentUrl = result.url;
+        p2pClient = new P2PClient(result.url, config.authToken);
+      }
+    } catch {
+      // Discovery failed — FloatingButton will show disconnected, user can retry
+    }
   }
 
   /**
@@ -357,6 +379,85 @@ export class YaverFeedback {
       console.log('[YaverFeedback] Auto-report sent');
     } catch (err) {
       console.warn('[YaverFeedback] Auto-report failed:', err);
+    }
+  }
+
+  /**
+   * Default reload handler. Tries three strategies in order:
+   *
+   * 1. **YaverBundleLoader** — running inside Yaver's native container.
+   *    Pulls fresh Hermes bundle from agent and reloads the RN bridge.
+   *
+   * 2. **YaverHotReload** — standalone app with feedback SDK's native module
+   *    (added via Expo config plugin). Downloads Hermes bundle from agent,
+   *    saves to Documents, and reloads the RN bridge.
+   *
+   * 3. **DevSettings.reload()** — standalone dev build connected to Metro.
+   */
+  private static defaultReload(): void {
+    if (!config?.agentUrl) return;
+    const bundleUrl = `${config.agentUrl}/dev/native-bundle`;
+    const headers = { Authorization: `Bearer ${config.authToken}` };
+    YaverFeedback.loadBundleAndReload(bundleUrl, headers);
+  }
+
+  /**
+   * Default reload_bundle handler. Receives a compiled Hermes bundle URL
+   * from the agent and loads it via the best available native mechanism.
+   */
+  private static defaultReloadBundle(bundleUrl: string, _assetsUrl?: string): void {
+    if (!config?.agentUrl) return;
+
+    const fullUrl = bundleUrl.startsWith('http')
+      ? bundleUrl
+      : `${config.agentUrl}${bundleUrl}`;
+    const headers = { Authorization: `Bearer ${config.authToken}` };
+    YaverFeedback.loadBundleAndReload(fullUrl, headers);
+  }
+
+  /**
+   * Core bundle reload logic. Tries native loaders in order:
+   *
+   * 1. YaverBundleLoader (Yaver container — full validation + bridge reload)
+   * 2. YaverHotReload (SDK's own native module — download + bridge reload)
+   * 3. DevSettings.reload() (Metro dev server fallback)
+   */
+  private static loadBundleAndReload(
+    bundleUrl: string,
+    headers: Record<string, string>,
+  ): void {
+    const { NativeModules } = require('react-native');
+
+    // Strategy 1: YaverBundleLoader (running inside Yaver container)
+    if (NativeModules.YaverBundleLoader) {
+      NativeModules.YaverBundleLoader.loadBundle(bundleUrl, 'main', headers)
+        .catch((err: Error) => {
+          console.warn('[YaverFeedback] YaverBundleLoader reload failed:', err);
+        });
+      return;
+    }
+
+    // Strategy 2: YaverHotReload (SDK's native module, added by Expo config plugin)
+    if (NativeModules.YaverHotReload) {
+      NativeModules.YaverHotReload.loadBundle(bundleUrl, headers)
+        .catch((err: Error) => {
+          console.warn('[YaverFeedback] YaverHotReload reload failed:', err);
+        });
+      return;
+    }
+
+    // Strategy 3: DevSettings.reload() for Metro dev builds
+    console.warn(
+      '[YaverFeedback] No native bundle loader available. ' +
+      'Add "yaver-feedback-react-native" to your app.json plugins to enable hot reload.',
+    );
+    try {
+      const { DevSettings } = require('react-native');
+      if (typeof DevSettings?.reload === 'function') {
+        DevSettings.reload();
+      }
+    } catch {
+      // Not in dev mode
     }
   }
 
