@@ -510,6 +510,53 @@ func FetchGuestUsage(baseURL, token, date string) ([]GuestUsageInfo, error) {
 	return result.Usage, nil
 }
 
+// RequestPasswordReset sends a forgot-password email via Convex.
+// Does not require auth — works with just the email address.
+func RequestPasswordReset(baseURL, email string) error {
+	payload, _ := json.Marshal(map[string]string{"email": email})
+	resp, err := httpClient.Post(baseURL+"/auth/forgot-password", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("request password reset: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("password reset request failed: %s", string(body))
+	}
+	return nil
+}
+
+// ChangePassword changes the password for an authenticated email user.
+func ChangePassword(baseURL, token, currentPassword, newPassword string) error {
+	payload, _ := json.Marshal(map[string]string{
+		"currentPassword": currentPassword,
+		"newPassword":     newPassword,
+	})
+	req, err := newBearerRequest("POST", baseURL+"/auth/change-password", token, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("create change-password request: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("change password request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		var errResp struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(body, &errResp) == nil && errResp.Error != "" {
+			return fmt.Errorf("%s", errResp.Error)
+		}
+		return fmt.Errorf("change password failed (status %d)", resp.StatusCode)
+	}
+	return nil
+}
+
 // RegisterDeviceRequest contains the fields sent when registering a device.
 type RegisterDeviceRequest struct {
 	Token     string `json:"-"`
