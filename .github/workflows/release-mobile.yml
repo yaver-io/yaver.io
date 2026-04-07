@@ -46,7 +46,7 @@ jobs:
           node-version: "20"
 
       - name: Install dependencies
-        run: cd mobile && npm ci
+        run: cd mobile && npm ci --legacy-peer-deps
 
       - name: Install CocoaPods
         run: cd mobile/ios && pod install
@@ -152,7 +152,7 @@ jobs:
           java-version: "17"
 
       - name: Install dependencies
-        run: cd mobile && npm ci
+        run: cd mobile && npm ci --legacy-peer-deps
 
       - name: Decode Android keystore
         env:
