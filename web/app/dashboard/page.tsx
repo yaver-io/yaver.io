@@ -32,6 +32,7 @@ export default function DashboardPage() {
   const [runners, setRunners] = useState<Runner[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [guestCode, setGuestCode] = useState("");
   const [activeTab, setActiveTab] = useState<"chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality">("chat");
   const [todoCount, setTodoCount] = useState(0);
 
@@ -146,6 +147,25 @@ export default function DashboardPage() {
                 {devices.filter(d => d.online).length === 0 && <p className="text-[10px] text-surface-600">No devices online</p>}
               </div>
             )}
+          </div>
+
+          {/* Guest code */}
+          <div className="mb-4">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-surface-500 mb-1">Join as Guest</p>
+            <div className="flex gap-1.5">
+              <input value={guestCode} onChange={e => setGuestCode(e.target.value.toUpperCase())} maxLength={6}
+                placeholder="CODE" className="flex-1 rounded-md border border-surface-800 bg-surface-900 px-2 py-1.5 text-xs text-center font-mono tracking-widest text-surface-200 placeholder-surface-600 outline-none focus:border-indigo-500" />
+              <button onClick={async () => {
+                if (guestCode.trim().length < 4) return;
+                try {
+                  const res = await fetch(`${CONVEX_URL}/guests/accept-code`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ inviteCode: guestCode.trim() }) });
+                  const data = await res.json();
+                  if (data.ok || data.hostName) { alert(`Joined ${data.hostName || "host"}'s machine!`); setGuestCode(""); refreshDevices(); }
+                  else alert(data.error || "Invalid code");
+                } catch (e: any) { alert(e.message); }
+              }} disabled={guestCode.trim().length < 4}
+                className="rounded-md bg-indigo-500 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-indigo-400 disabled:opacity-30">Join</button>
+            </div>
           </div>
 
           {/* Tasks */}
