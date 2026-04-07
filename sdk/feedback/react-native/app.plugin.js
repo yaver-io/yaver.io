@@ -9,6 +9,11 @@
  * Usage in app.json:
  *   { "expo": { "plugins": ["yaver-feedback-react-native"] } }
  */
+// Resolve @expo/config-plugins from the host project's node_modules
+// (not from the SDK's directory, which may be symlinked)
+const configPluginsPath = require.resolve("@expo/config-plugins", {
+  paths: [process.cwd()],
+});
 const {
   withInfoPlist,
   withAndroidManifest,
@@ -17,7 +22,7 @@ const {
   withMainApplication,
   withDangerousMod,
   createRunOncePlugin,
-} = require("@expo/config-plugins");
+} = require(configPluginsPath);
 const path = require("path");
 const fs = require("fs");
 
@@ -65,43 +70,33 @@ function withYaverFeedbackAndroid(config) {
 }
 
 /**
- * Add YaverHotReload native module files to the Xcode project.
+ * Copy YaverHotReload native module files into the iOS project directory.
+ * Uses withDangerousMod to copy files during prebuild. The files are
+ * automatically picked up by Xcode since they're in the project directory.
  */
 function withYaverHotReloadNativeModule(config) {
-  return withXcodeProject(config, (config) => {
-    const project = config.modResults;
-    const sdkIosDir = path.resolve(__dirname, "ios");
+  return withDangerousMod(config, [
+    "ios",
+    (config) => {
+      const sdkIosDir = path.resolve(__dirname, "ios");
+      const appName = config.modRequest.projectName || "SFMG";
+      const targetDir = path.join(
+        config.modRequest.platformProjectRoot,
+        appName
+      );
 
-    // Find the main app group
-    const mainGroup = project.getFirstProject().firstProject.mainGroup;
-    const appName = config.modRequest.projectName || "App";
-
-    // Copy native files to the iOS project
-    const filesToAdd = ["YaverHotReload.swift", "YaverHotReload.m"];
-    const targetDir = path.join(
-      config.modRequest.platformProjectRoot,
-      appName
-    );
-
-    for (const fileName of filesToAdd) {
-      const src = path.join(sdkIosDir, fileName);
-      const dst = path.join(targetDir, fileName);
-      if (fs.existsSync(src)) {
-        fs.copyFileSync(src, dst);
-        // Add to Xcode project if not already there
-        const group = project.pbxGroupByName(appName) || project.getFirstProject();
-        if (group) {
-          project.addSourceFile(
-            `${appName}/${fileName}`,
-            null,
-            group.uuid
-          );
+      const filesToCopy = ["YaverHotReload.swift", "YaverHotReload.m"];
+      for (const fileName of filesToCopy) {
+        const src = path.join(sdkIosDir, fileName);
+        const dst = path.join(targetDir, fileName);
+        if (fs.existsSync(src) && !fs.existsSync(dst)) {
+          fs.copyFileSync(src, dst);
         }
       }
-    }
 
-    return config;
-  });
+      return config;
+    },
+  ]);
 }
 
 /**
