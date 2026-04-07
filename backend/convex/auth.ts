@@ -1,6 +1,8 @@
 import { v } from "convex/values";
 import { mutation, query, internalQuery, QueryCtx, MutationCtx } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
+import { welcomeHtml } from "./email";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -183,6 +185,16 @@ export const createOrUpdateUser = mutation({
       forceRelay: false,
       ...defaultRelay,
     });
+
+    // Send welcome email to new users
+    await ctx.scheduler.runAfter(0, internal.email.send, {
+      from: "Kivanc from Yaver <kivanc@yaver.io>",
+      to: args.email,
+      subject: "Welcome to Yaver",
+      html: welcomeHtml(args.fullName || args.email),
+      replyTo: "kivanc@yaver.io",
+    });
+
     return userDocId;
   },
 });
@@ -334,6 +346,16 @@ export const createEmailUser = mutation({
       forceRelay: false,
       ...defaultRelay,
     });
+
+    // Send welcome email
+    await ctx.scheduler.runAfter(0, internal.email.send, {
+      from: "Kivanc from Yaver <kivanc@yaver.io>",
+      to: args.email,
+      subject: "Welcome to Yaver",
+      html: welcomeHtml(args.fullName || args.email),
+      replyTo: "kivanc@yaver.io",
+    });
+
     return userDocId;
   },
 });
@@ -686,5 +708,141 @@ export const getUserByEmail = internalQuery({
       .query("users")
       .withIndex("by_email", (q) => q.eq("email", email))
       .first();
+  },
+});
+
+/**
+ * Change password for an authenticated email user.
+ */
+export const changePassword = mutation({
+  args: {
+    tokenHash: v.string(),
+    newPasswordHash: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const result = await validateSessionInternal(ctx, args.tokenHash);
+    if (!result) throw new Error("Unauthorized");
+
+    if (result.user.provider !== "email") {
+      throw new Error("Password change is only available for email accounts");
+    }
+
+    await ctx.db.patch(result.user._id, { passwordHash: args.newPasswordHash });
+    return { ok: true };
+  },
+});
+
+// ── Password Reset ──────────────────────────────────────────────────
+
+const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;        // 1 hour
+const RESET_DAILY_LIMIT = 5;                       // max resets per email per day
+const RESET_COOLDOWN_MS = 60 * 1000;               // 1 min between requests
+
+/**
+ * Create a password reset record. Returns tokenHash so the HTTP action
+ * can build the reset link with the raw token.
+ *
+ * Rate-limiting:
+ *  - Max 5 requests per email per 24h
+ *  - 60s cooldown between consecutive requests
+ */
+export const createPasswordReset = mutation({
+  args: {
+    email: v.string(),
+    tokenHash: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const email = args.email.toLowerCase().trim();
+
+    // Look up user — must be an email provider user
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", email))
+      .unique();
+
+    if (!user || user.provider !== "email") {
+      // Return silently — don't reveal whether account exists
+      return { ok: true, sent: false };
+    }
+
+    const now = Date.now();
+    const dayAgo = now - 24 * 60 * 60 * 1000;
+
+    // Fetch recent resets for this email
+    const recentResets = await ctx.db
+      .query("passwordResets")
+      .withIndex("by_email", (q) => q.eq("email", email))
+      .collect();
+
+    const resetsToday = recentResets.filter((r) => r.createdAt > dayAgo);
+
+    // Daily limit
+    if (resetsToday.length >= RESET_DAILY_LIMIT) {
+      return { ok: true, sent: false, rateLimited: true };
+    }
+
+    // Cooldown — check the most recent request
+    const latest = resetsToday.sort((a, b) => b.createdAt - a.createdAt)[0];
+    if (latest && now - latest.createdAt < RESET_COOLDOWN_MS) {
+      return { ok: true, sent: false, rateLimited: true };
+    }
+
+    // Create the reset record
+    await ctx.db.insert("passwordResets", {
+      tokenHash: args.tokenHash,
+      email,
+      userId: user._id,
+      expiresAt: now + RESET_TOKEN_TTL_MS,
+      createdAt: now,
+    });
+
+    return { ok: true, sent: true, userId: user._id, fullName: user.fullName };
+  },
+});
+
+/**
+ * Validate a password reset token and apply the new password.
+ * The token can only be used once.
+ */
+export const resetPassword = mutation({
+  args: {
+    tokenHash: v.string(),
+    newPasswordHash: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const reset = await ctx.db
+      .query("passwordResets")
+      .withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
+      .unique();
+
+    if (!reset) {
+      throw new Error("INVALID_TOKEN");
+    }
+
+    if (reset.usedAt) {
+      throw new Error("TOKEN_USED");
+    }
+
+    if (reset.expiresAt < Date.now()) {
+      throw new Error("TOKEN_EXPIRED");
+    }
+
+    // Mark token as used
+    await ctx.db.patch(reset._id, { usedAt: Date.now() });
+
+    // Update the user's password
+    await ctx.db.patch(reset.userId, { passwordHash: args.newPasswordHash });
+
+    // Invalidate all existing sessions for this user (force re-login)
+    const sessions = await ctx.db
+      .query("sessions")
+      .withIndex("by_userId", (q) => q.eq("userId", reset.userId))
+      .collect();
+
+    for (const session of sessions) {
+      await ctx.db.delete(session._id);
+    }
+
+    return { ok: true };
   },
 });

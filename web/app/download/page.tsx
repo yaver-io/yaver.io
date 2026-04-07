@@ -255,7 +255,7 @@ export default function DownloadPage() {
               </p>
               <div className="flex flex-wrap gap-2">
                 <a
-                  href="https://apps.apple.com/app/yaver/id6746057981"
+                  href="https://apps.apple.com/app/yaver/id6760467669"
                   className="btn-primary py-2 px-4 text-xs"
                 >
                   App Store

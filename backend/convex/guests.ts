@@ -2,6 +2,8 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { validateSessionInternal } from "./auth";
 import { Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
+import { guestInviteHtml } from "./email";
 
 const MAX_GUESTS_PER_HOST = 5;
 const INVITATION_TTL_MS = 2 * 24 * 60 * 60 * 1000; // 2 days
@@ -93,6 +95,14 @@ export const invite = mutation({
       status: "pending",
       createdAt: now,
       expiresAt: now + INVITATION_TTL_MS,
+    });
+
+    // Send invite email (fire-and-forget — won't block or fail the mutation)
+    await ctx.scheduler.runAfter(0, internal.email.send, {
+      from: "Yaver <hello@yaver.io>",
+      to: args.guestEmail.toLowerCase(),
+      subject: `${session.user.fullName} invited you to Yaver`,
+      html: guestInviteHtml(session.user.fullName, inviteCode),
     });
 
     return {

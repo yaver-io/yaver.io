@@ -311,6 +311,14 @@ export default function LoginScreen() {
                   )}
                 </Pressable>
 
+                {!isSignUp && (
+                  <Pressable onPress={() => Linking.openURL("https://yaver.io/auth/reset-password")}>
+                    <Text style={[styles.forgotText, { color: c.textMuted }]}>
+                      Forgot password?
+                    </Text>
+                  </Pressable>
+                )}
+
                 <Pressable onPress={() => { setIsSignUp(!isSignUp); setEmailError(""); }}>
                   <Text style={[styles.toggleText, { color: c.accent }]}>
                     {isSignUp ? "Already have an account? Sign In" : "Don't have an account? Sign Up"}
@@ -452,5 +460,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
     marginTop: 4,
+  },
+  forgotText: {
+    fontSize: 13,
+    textAlign: "right",
+    marginTop: 2,
+    marginBottom: 4,
   },
 });

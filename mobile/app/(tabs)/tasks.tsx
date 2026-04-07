@@ -313,7 +313,7 @@ function buildChatMessages(task: Task): { role: string; content: string }[] {
 export default function TasksScreen() {
   const c = useColors();
   const taskRouter = useRouter();
-  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, selectDevice, isLoadingDevices, refreshDevices } = useDevice();
+  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, selectDevice, disconnect, isLoadingDevices, refreshDevices } = useDevice();
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>(getLogEntries());
 
@@ -1094,8 +1094,24 @@ export default function TasksScreen() {
                 <Text style={{ fontSize: 12, color: "#818cf8", fontWeight: "600" }}>Retry</Text>
               </Pressable>
             )}
+            {connectionStatus === "error" && (
+              <Pressable
+                style={{ marginLeft: 8, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, backgroundColor: "#ef444433" }}
+                onPress={disconnect}
+              >
+                <Text style={{ fontSize: 12, color: "#f87171", fontWeight: "600" }}>Stop</Text>
+              </Pressable>
+            )}
           </View>
-          {isEffectivelyConnected && (
+          {isEffectivelyConnected && agentAuthExpired && (
+            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 4, marginLeft: 18 }}>
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "#f59e0b" }} />
+              <Text style={{ color: "#fbbf24", fontSize: 11, marginLeft: 6 }}>
+                Agent session expired — run 'yaver auth' on your machine
+              </Text>
+            </View>
+          )}
+          {isEffectivelyConnected && !agentAuthExpired && (
             <View style={{ flexDirection: "row", alignItems: "center", marginTop: 4, marginLeft: 18 }}>
               {agentStatus && (
                 <>

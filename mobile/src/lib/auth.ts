@@ -30,6 +30,7 @@ export interface User {
   id: string;
   email: string;
   name: string;
+  provider?: string;
   avatarUrl?: string;
   surveyCompleted?: boolean;
 }
@@ -83,6 +84,7 @@ export async function validateToken(token: string): Promise<User | null> {
       id: u.userId ?? u.id,
       email: u.email,
       name: u.fullName ?? u.name,
+      provider: u.provider,
       avatarUrl: u.avatarUrl,
       surveyCompleted: u.surveyCompleted ?? false,
     } as User;
@@ -220,6 +222,37 @@ export async function loginWithEmail(
     throw new Error(data.error ?? "Login failed");
   }
   return response.json();
+}
+
+export async function changePassword(
+  token: string,
+  currentPassword: string,
+  newPassword: string
+): Promise<void> {
+  const response = await fetch(`${getConvexSiteUrl()}/auth/change-password`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error ?? "Password change failed");
+  }
+}
+
+export async function requestPasswordReset(email: string): Promise<void> {
+  const response = await fetch(`${getConvexSiteUrl()}/auth/forgot-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error ?? "Password reset request failed");
+  }
 }
 
 export async function updateProfile(

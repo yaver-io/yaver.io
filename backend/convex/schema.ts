@@ -19,6 +19,17 @@ export default defineSchema({
     .index("by_email", ["email"])
     .index("by_provider", ["provider", "providerId"]),
 
+  passwordResets: defineTable({
+    tokenHash: v.string(),          // SHA-256 of the reset token
+    email: v.string(),              // email this reset is for
+    userId: v.id("users"),
+    expiresAt: v.number(),          // 1 hour TTL
+    usedAt: v.optional(v.number()), // set when token is consumed
+    createdAt: v.number(),
+  })
+    .index("by_tokenHash", ["tokenHash"])
+    .index("by_email", ["email"]),
+
   pendingAuth: defineTable({
     pendingToken: v.string(),
     userId: v.id("users"),

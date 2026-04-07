@@ -22,6 +22,7 @@ import type * as deviceEvents from "../deviceEvents.js";
 import type * as deviceMetrics from "../deviceMetrics.js";
 import type * as devices from "../devices.js";
 import type * as downloads from "../downloads.js";
+import type * as email from "../email.js";
 import type * as guests from "../guests.js";
 import type * as http from "../http.js";
 import type * as managedRelays from "../managedRelays.js";
@@ -57,6 +58,7 @@ declare const fullApi: ApiFromModules<{
   deviceMetrics: typeof deviceMetrics;
   devices: typeof devices;
   downloads: typeof downloads;
+  email: typeof email;
   guests: typeof guests;
   http: typeof http;
   managedRelays: typeof managedRelays;

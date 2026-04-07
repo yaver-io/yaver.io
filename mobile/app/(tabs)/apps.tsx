@@ -169,7 +169,8 @@ export default function AppsScreen() {
       const result = await quicClient.getProjectActions(projectName);
       // Always prepend "Vibing" as the first option
       const vibingAction = { label: "Vibing", target: ".", type: "vibing", icon: "\u{1F3B5}", framework: "", platform: "", command: "" };
-      result.actions = [vibingAction, ...result.actions];
+      const gitSyncAction = { label: "Git Sync", target: ".", type: "git-sync", icon: "\u{1F504}", framework: "", platform: "", command: "" };
+      result.actions = [vibingAction, gitSyncAction, ...result.actions];
       setActionSheet(result);
     } catch {
       // Fallback
@@ -191,6 +192,15 @@ export default function AppsScreen() {
     const project = actionSheet?.project ?? "";
     const path = actionSheet?.path ?? "";
     setActionSheet(null);
+
+    if (action.type === "git-sync") {
+      await quicClient.sendTask(
+        `Git Sync — ${project}`,
+        `cd ${path} && Sync this repository with its remote. Pull the latest changes. If there are merge conflicts, resolve them intelligently. If the local branch is behind, rebase or merge as appropriate. If there are uncommitted local changes, stash them first, pull, then re-apply. Show me a summary of what changed.`,
+      ).catch(() => {});
+      router.navigate("/(tabs)/tasks");
+      return;
+    }
 
     if (action.type === "vibing") {
       // Open vibing mode — delay to let action sheet modal fully close first
