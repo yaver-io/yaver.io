@@ -1,3 +1,4 @@
 .vercel
 .open-next
 .wrangler
+.env.production
