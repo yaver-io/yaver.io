@@ -3,13 +3,13 @@
 ## Phase 1: Foundation (DONE)
 - [x] Project structure and documentation (CLAUDE.md, README.md, DOWNLOADS.md, SETUP.md)
 - [x] Convex backend: schema (users, sessions, devices), auth.ts, devices.ts, http.ts
-- [x] Web landing page: deployed to Vercel (https://yaver-io.vercel.app)
+- [x] Web landing page: deployed to Cloudflare Workers (https://yaver.io)
 - [x] Web: pricing page, downloads page, auth page, dashboard
 - [x] Web: Talos-style dark GPT theme (black/gray/white)
 - [x] Mobile app scaffold: Expo + expo-router, tabs (tasks/devices/settings), auth context
 - [x] Desktop agent: Go + QUIC server, stream-json RPC with Claude CLI, config, auth
 - [x] Desktop installer: Electron wizard (DMG/EXE/DEB), service install, OAuth flow
-- [x] Linked Vercel project (yaver-io)
+- [x] Linked Cloudflare Workers project (yaver-io)
 - [x] Root .gitignore
 
 ## Phase 2: Auth Flow
@@ -25,7 +25,7 @@
 - [ ] **YOU**: Set Google OAuth credentials in Convex env
 - [ ] **YOU**: Set Microsoft OAuth credentials in Convex env
 - [ ] **YOU**: Set AUTH_REDIRECT_URL and MOBILE_DEEP_LINK in Convex env
-- [ ] **YOU**: Set NEXT_PUBLIC_CONVEX_SITE_URL in Vercel env vars
+- [ ] **YOU**: Set NEXT_PUBLIC_CONVEX_SITE_URL in Cloudflare Workers (wrangler secret)
 - [ ] **YOU**: Test end-to-end OAuth flow
 
 ## Phase 3: P2P / QUIC Layer (CODE DONE)
@@ -70,8 +70,8 @@
 - [x] Auth page (Google + Microsoft OAuth)
 - [x] Dashboard (device list)
 - [x] Header + Footer components
-- [x] Deployed to https://yaver-io.vercel.app
-- [ ] **YOU**: Point yaver.io DNS to Vercel
+- [x] Deployed to https://yaver.io (Cloudflare Workers)
+- [x] DNS on Cloudflare, Workers routes configured
 
 ## Phase 7: App Store (LATER — needs name decision)
 - [ ] Decide product name: yaver.io vs shellport.sh vs other

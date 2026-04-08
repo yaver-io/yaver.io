@@ -1,8 +1,8 @@
 # Yaver.io — Claude Code Project Guide
 
 ## Important Rules
-- **Never push or commit without explicit user permission.** Vercel auto-deploys from GitHub on push to `main`.
-- **Vercel deploy size guard**: `web/` must stay under 10 MB (currently ~2.5 MB). The deploy script enforces this. Do not add large assets to `web/`. The biggest file is `web/public/demo.mp4` (~1.2 MB, compressed from 8 MB original). If adding videos, compress aggressively first: `ffmpeg -i input.mp4 -vcodec libx264 -crf 32 -preset veryslow -vf "scale=720:-2" -an output.mp4`. Prefer external hosting (YouTube embed, GitHub releases CDN) for anything over 1 MB.
+- **Never push or commit without explicit user permission.**
+- **Cloudflare deploy size guard**: `web/` must stay under 10 MB (currently ~2.5 MB). The deploy script enforces this. Do not add large assets to `web/`. The biggest file is `web/public/demo.mp4` (~1.2 MB, compressed from 8 MB original). If adding videos, compress aggressively first: `ffmpeg -i input.mp4 -vcodec libx264 -crf 32 -preset veryslow -vf "scale=720:-2" -an output.mp4`. Prefer external hosting (YouTube embed, GitHub releases CDN) for anything over 1 MB.
 - **NEVER use WebView to load third-party apps.** All app loading must be native (real UIView/android.view.View via ExpoReactNativeFactory with New Architecture). When "Open App" is tapped, use `/dev/build-native` to compile a Hermes bytecode bundle and load it into a native bridge with full TurboModule support — never a WebView. WebView is only acceptable for web content (landing pages, docs), never for React Native apps.
 - **NEVER commit credentials, IPs, API keys, or secrets to the repo.** The repo is open-source on GitHub. All credentials must go in `.env.test` (gitignored), env vars, or GitHub Actions secrets. This includes Hetzner server IPs, Apple Developer keys, SSH key paths, relay passwords, Tailscale IPs, npm tokens, PyPI tokens, Google Play service account keys. If you see a hardcoded credential, replace it with an env var or placeholder immediately. **Also check git history** — if a credential was accidentally committed, it must be removed from history (via `git filter-branch` or BFG) before pushing to GitHub. Never write `.npmrc` files with tokens to tracked paths — use temp files and delete immediately after use. The npm publish tokens (`npm_...`), Play Store service account JSON, and App Store Connect API keys must never appear in any committed file.
 
@@ -10,7 +10,7 @@
 - **Source of truth**: GitLab (`gitlab.com/kivanccakmak/yaver.io`) — development happens here
 - **Public mirror**: GitHub (`github.com/kivanccakmak/yaver.io`) — open-source, single squashed initial commit, no git history
 - **To update GitHub mirror**: Push to GitLab first, then sync to GitHub with a squashed commit (see below)
-- **Vercel**: auto-deploys from GitHub on push to `main`. Manual deploy: `./scripts/deploy-vercel.sh`
+- **Cloudflare Workers**: web deployed via `wrangler`. Manual deploy: `./scripts/deploy-vercel.sh` (name kept for backward compat, deploys to Cloudflare)
 - **Landing page links**: point to `https://github.com/kivanccakmak/yaver.io`
 
 ### Syncing GitLab → GitHub
@@ -1082,13 +1082,16 @@ npx convex dev --once    # Push to dev
 npx convex deploy --yes  # Push to prod
 ```
 
-### Web (Vercel)
-> **Auto-deploy is disabled** in `vercel.json`. Deploy manually:
-> ```bash
-> ./scripts/deploy-vercel.sh
-> ```
+### Web (Cloudflare Workers)
+Deploy via `@opennextjs/cloudflare` + `wrangler`:
+```bash
+./scripts/deploy-vercel.sh     # Size-guarded deploy (builds + wrangler deploy)
+# Or directly:
+cd web && npm run deploy        # runs: opennextjs-cloudflare && wrangler deploy
+```
 
-Required Vercel env vars — see `web/.env.example`
+Environment variables are set in `wrangler.toml` or via `wrangler secret put <KEY>`.
+DNS is managed in Cloudflare (yaver.io zone) — routes configured in `web/wrangler.toml`.
 
 ### Relay Server
 See `relay/README.md` for full deployment guide.
