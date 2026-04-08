@@ -242,12 +242,13 @@ class AgentClient {
     };
   }
 
-  async listTasks(): Promise<Task[]> {
+  async listTasks(limit?: number): Promise<Task[]> {
     if (!this.isConnected) {
       return this.getCachedTasks();
     }
     try {
-      const res = await fetch(`${this.baseUrl}/tasks`, {
+      const url = limit ? `${this.baseUrl}/tasks?limit=${limit}` : `${this.baseUrl}/tasks`;
+      const res = await fetch(url, {
         headers: this.authHeaders,
       });
       if (!res.ok) throw new Error(`Failed to list tasks: ${res.status}`);
@@ -643,7 +644,8 @@ class AgentClient {
 
     this.pollInterval = setInterval(async () => {
       try {
-        const res = await fetch(`${this.baseUrl}/tasks`, {
+        // Only fetch recent tasks (limit=5) to keep payload small through relay
+        const res = await fetch(`${this.baseUrl}/tasks?limit=5`, {
           headers: this.authHeaders,
         });
         if (!res.ok) return;

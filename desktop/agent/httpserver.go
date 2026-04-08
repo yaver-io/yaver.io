@@ -13,6 +13,7 @@ import (
 	osexec "os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1426,6 +1427,14 @@ func (s *HTTPServer) handleTasks(w http.ResponseWriter, r *http.Request) {
 
 func (s *HTTPServer) listTasks(w http.ResponseWriter, r *http.Request) {
 	tasks := s.taskMgr.ListTasks()
+
+	// Support ?limit=N to reduce payload size for web dashboard polling
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 && limit < len(tasks) {
+			tasks = tasks[:limit]
+		}
+	}
+
 	resp := map[string]interface{}{
 		"ok":    true,
 		"tasks": tasks,

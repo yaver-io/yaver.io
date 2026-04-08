@@ -5,6 +5,7 @@ import { useDevices, type Device } from "@/lib/use-devices";
 import { agentClient, type Task, type ConnectionState, type Runner, type AgentInfo } from "@/lib/agent-client";
 import { CONVEX_URL } from "@/lib/constants";
 import { useState, useEffect, useRef } from "react";
+import { useTheme } from "@/components/ThemeProvider";
 import ProjectsView from "@/components/dashboard/ProjectsView";
 import TodosView from "@/components/dashboard/TodosView";
 import BuildsView from "@/components/dashboard/BuildsView";
@@ -22,6 +23,7 @@ export default function DashboardPage() {
   // ── ALL hooks unconditionally at the top ────────────────────────
   const { user, token, isLoading, isAuthenticated, logout } = useAuth();
   const { devices, refreshDevices } = useDevices(token);
+  const { theme, toggle: toggleTheme } = useTheme();
 
   const [connState, setConnState] = useState<ConnectionState>("disconnected");
   const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
@@ -35,21 +37,28 @@ export default function DashboardPage() {
   const [guestCode, setGuestCode] = useState("");
   const [activeTab, setActiveTab] = useState<"chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality">("chat");
   const [todoCount, setTodoCount] = useState(0);
+  const [connectError, setConnectError] = useState<string | null>(null);
+  const [relayReady, setRelayReady] = useState(false);
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const outputRef = useRef<HTMLDivElement>(null);
+  const relayReadyPromiseRef = useRef<Promise<void> | null>(null);
 
   const isConnected = connState === "connected";
 
   useEffect(() => {
+    let cancelled = false;
+    let resolve: () => void;
+    relayReadyPromiseRef.current = new Promise<void>(r => { resolve = r; });
+
     (async () => {
       try {
-        // Fetch platform relay servers
+        // Fetch platform relay servers (already includes password)
         const r = await fetch(`${CONVEX_URL}/config`);
         let relays: any[] = [];
         if (r.ok) { const d = await r.json(); relays = d.relayServers || []; }
 
-        // Fetch user settings to get relay password
+        // Fetch user settings to get relay password override
         if (token) {
           try {
             const sr = await fetch(`${CONVEX_URL}/settings`, { headers: { Authorization: `Bearer ${token}` } });
@@ -61,9 +70,12 @@ export default function DashboardPage() {
           } catch {}
         }
 
-        if (relays.length > 0) agentClient.setRelayServers(relays);
+        if (!cancelled && relays.length > 0) agentClient.setRelayServers(relays);
       } catch {}
+      if (!cancelled) setRelayReady(true);
+      resolve!();
     })();
+    return () => { cancelled = true; };
   }, [token]);
 
   useEffect(() => { const u = agentClient.on("connectionState", setConnState); return u; }, []);
@@ -77,14 +89,14 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!isConnected) return;
-    const load = async () => { try { setTasks(await agentClient.listTasks()); } catch {} };
-    load(); const iv = setInterval(load, 5000); return () => clearInterval(iv);
+    const load = async () => { try { setTasks(await agentClient.listTasks(20)); } catch {} };
+    load(); const iv = setInterval(load, 10000); return () => clearInterval(iv);
   }, [isConnected]);
 
   useEffect(() => {
     if (!isConnected) return;
     const poll = async () => { try { setTodoCount(await agentClient.todoCount()); } catch {} };
-    poll(); const iv = setInterval(poll, 10000); return () => clearInterval(iv);
+    poll(); const iv = setInterval(poll, 30000); return () => clearInterval(iv);
   }, [isConnected]);
 
   // ── Actions ─────────────────────────────────────────────────────
@@ -92,14 +104,23 @@ export default function DashboardPage() {
   const connectToDevice = async (device: Device) => {
     if (!token) return;
     setConnectedDevice(device);
+    setConnectError(null);
+
+    // Wait for relay config to be loaded (web dashboard MUST use relay)
+    if (relayReadyPromiseRef.current) {
+      await relayReadyPromiseRef.current;
+    }
+
     try {
       await agentClient.connect(device.host, device.port, token, device.id);
       try { setAgentInfo(await agentClient.getInfo()); } catch {}
       try { setRunners(await agentClient.getRunners()); } catch {}
-    } catch {}
+    } catch (err: any) {
+      setConnectError(err?.message || "Could not connect to device");
+    }
   };
 
-  const disconnect = () => { agentClient.disconnect(); setConnectedDevice(null); setAgentInfo(null); setTasks([]); setActiveTask(null); setOutputLines([]); setRunners([]); };
+  const disconnect = () => { agentClient.disconnect(); setConnectedDevice(null); setAgentInfo(null); setTasks([]); setActiveTask(null); setOutputLines([]); setRunners([]); setConnectError(null); };
 
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -158,6 +179,24 @@ export default function DashboardPage() {
                 {agentInfo && <p className="text-[10px] text-surface-500 mt-0.5">v{agentInfo.version}</p>}
                 <button onClick={disconnect} className="text-[10px] text-red-400 hover:text-red-300 mt-1">Disconnect</button>
               </div>
+            ) : connState === "connecting" && connectedDevice ? (
+              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="h-3 w-3 animate-spin rounded-full border border-amber-400 border-t-transparent" />
+                  <span className="text-xs font-medium text-surface-300 truncate">{connectedDevice.name}</span>
+                </div>
+                <p className="text-[10px] text-amber-400/70 mt-1">Connecting via relay...</p>
+                <button onClick={disconnect} className="text-[10px] text-surface-500 hover:text-surface-300 mt-1">Cancel</button>
+              </div>
+            ) : connState === "error" && connectedDevice ? (
+              <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2">
+                <div className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-red-400" /><span className="text-xs font-medium text-surface-300 truncate">{connectedDevice.name}</span></div>
+                <p className="text-[10px] text-red-400/70 mt-1">{connectError || "Connection failed"}</p>
+                <div className="flex gap-2 mt-1">
+                  <button onClick={() => connectToDevice(connectedDevice)} className="text-[10px] text-amber-400 hover:text-amber-300">Retry</button>
+                  <button onClick={disconnect} className="text-[10px] text-surface-500 hover:text-surface-300">Cancel</button>
+                </div>
+              </div>
             ) : (
               <div className="space-y-1">
                 {devices.filter(d => d.online).map(d => (
@@ -201,8 +240,15 @@ export default function DashboardPage() {
             </div>
           )}
         </div>
-        <div className="mt-auto border-t border-surface-800 p-3">
+        <div className="mt-auto border-t border-surface-800 p-3 flex items-center justify-between">
           <button onClick={logout} className="text-[11px] text-red-400 hover:text-red-300">Sign Out</button>
+          <button onClick={toggleTheme} className="rounded-md p-1.5 text-surface-500 hover:text-surface-300 hover:bg-surface-800" title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
+            {theme === "dark" ? (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            )}
+          </button>
         </div>
       </aside>
 
@@ -226,12 +272,37 @@ export default function DashboardPage() {
             <div className="flex flex-1 items-center justify-center p-8">
               <div className="max-w-md text-center">
                 <h2 className="mb-2 text-lg font-semibold text-surface-100">Workspace</h2>
-                <p className="mb-6 text-sm text-surface-500">Connect to a device running <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-300">yaver serve</code></p>
-                {devices.filter(d => d.online).map(d => (
-                  <button key={d.id} onClick={() => connectToDevice(d)} className="mx-auto flex items-center gap-3 rounded-lg border border-surface-700 bg-surface-900 px-5 py-3 hover:border-emerald-500/30">
-                    <span className="h-2 w-2 rounded-full bg-emerald-400" /><span className="text-sm font-medium text-surface-200">{d.name}</span>
-                  </button>
-                ))}
+                {connState === "connecting" ? (
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-600 border-t-amber-400" />
+                    <p className="text-sm text-surface-400">Connecting to {connectedDevice?.name}...</p>
+                    <p className="text-xs text-surface-600">Trying relay servers</p>
+                  </div>
+                ) : connState === "error" ? (
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3 text-left">
+                      <p className="text-sm text-red-400 font-medium mb-1">Connection failed</p>
+                      <p className="text-xs text-surface-500">{connectError || "Could not reach agent (direct or via relay)"}</p>
+                      <p className="text-xs text-surface-600 mt-2">Make sure <code className="rounded bg-surface-800 px-1 py-0.5 text-surface-400">yaver serve</code> is running on your machine</p>
+                    </div>
+                    <div className="flex gap-2">
+                      {connectedDevice && <button onClick={() => connectToDevice(connectedDevice)} className="rounded-md bg-amber-500/10 border border-amber-500/20 px-4 py-2 text-xs text-amber-400 hover:bg-amber-500/20">Retry</button>}
+                      <button onClick={disconnect} className="rounded-md border border-surface-700 px-4 py-2 text-xs text-surface-400 hover:text-surface-300">Back</button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p className="mb-6 text-sm text-surface-500">Connect to a device running <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-300">yaver serve</code></p>
+                    <div className="space-y-2">
+                      {devices.filter(d => d.online).map(d => (
+                        <button key={d.id} onClick={() => connectToDevice(d)} className="mx-auto flex items-center gap-3 rounded-lg border border-surface-700 bg-surface-900 px-5 py-3 hover:border-emerald-500/30 transition-colors">
+                          <span className="h-2 w-2 rounded-full bg-emerald-400" /><span className="text-sm font-medium text-surface-200">{d.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                    {devices.filter(d => d.online).length === 0 && <p className="text-sm text-surface-600 mt-4">No devices online</p>}
+                  </>
+                )}
               </div>
             </div>
           ) : activeTab === "projects" ? (
