@@ -65,21 +65,24 @@
   ```
 - [ ] Deploy: `cd backend && npx convex deploy`
 
-## 5. Vercel Environment Variables
+## 5. Cloudflare Workers Environment
 
-- [ ] Go to [Vercel Dashboard](https://vercel.com) > yaver-io project > Settings > Environment Variables
-- [ ] Add:
-  - `NEXT_PUBLIC_CONVEX_URL` = `https://<your-convex-deployment>.convex.cloud`
-  - `NEXT_PUBLIC_CONVEX_SITE_URL` = `https://<your-convex-deployment>.convex.site`
-- [ ] Redeploy: `cd web && vercel --prod`
+- [ ] Log in to [Cloudflare Dashboard](https://dash.cloudflare.com) > Workers & Pages > `yaver-io`
+- [ ] Set secrets via CLI:
+  ```bash
+  cd web
+  npx wrangler secret put NEXT_PUBLIC_CONVEX_URL      # https://<your-convex-deployment>.convex.cloud
+  npx wrangler secret put NEXT_PUBLIC_CONVEX_SITE_URL  # https://<your-convex-deployment>.convex.site
+  ```
+- [ ] Deploy: `cd web && npm run deploy`
 
-## 6. Domain Setup
+## 6. Domain Setup (Cloudflare DNS)
 
-- [ ] In Vercel dashboard: Settings > Domains > Add `yaver.io`
-- [ ] Update DNS:
-  - `A` record: point to Vercel IP (`76.76.21.21`)
-  - Or `CNAME`: point to `cname.vercel-dns.com`
-- [ ] Wait for SSL certificate provisioning
+- [ ] DNS zone for `yaver.io` must be on Cloudflare (required for Workers routes)
+- [ ] Routes are configured in `web/wrangler.toml`:
+  - `yaver.io/*` → `yaver-io` worker
+  - `www.yaver.io/*` → `yaver-io` worker
+- [ ] SSL is automatic via Cloudflare (Universal SSL)
 
 ## 7. Mobile App Setup (later — after name decision)
 

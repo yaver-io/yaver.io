@@ -349,7 +349,7 @@ Trigger AI tasks from CI/CD:
 | **Dependencies** | outdated, audit, list — npm/pip/cargo/go auto-detect | 3 |
 | **Package Registries** | npm, PyPI, crates.io, Go modules, pub.dev, Homebrew, RubyGems, Maven, NuGet, Docker Hub | 24 |
 | **GitHub + GitLab** | PRs, issues, CI, releases, stars, trending, MRs, pipelines | 10 |
-| **Platforms** | Supabase, Convex, Cloudflare (Workers/Pages/R2/D1/KV), Vercel, Netlify, Firebase, Fly.io, Railway | 33 |
+| **Platforms** | Supabase, Convex, Cloudflare (Workers/Pages/R2/D1/KV), Netlify, Firebase, Fly.io, Railway | 33 |
 | **Database** | query + schema (SQLite, Postgres, MySQL, Redis) | 2 |
 | **Network** | tcpdump, tshark, nmap, netcat, port scan, arp, traceroute, mtr, curl timings | 18 |
 | **Linux Sysadmin** | dmesg, lsmod, modprobe, systemctl, journalctl, ufw, iptables, df, du, lsblk, tree, top, ps, vmstat | 30 |
@@ -472,7 +472,7 @@ yaver serve --containerize-host
 yaver sandbox status
 ```
 
-**What's in the container:** Node.js, Python, Go, Rust, Java, Ruby, Claude Code, Aider, Expo CLI, Vercel, and common build tools. Build caches (npm, Gradle, Cargo, Go modules) persist across tasks via Docker volumes.
+**What's in the container:** Node.js, Python, Go, Rust, Java, Ruby, Claude Code, Aider, Expo CLI, Wrangler, and common build tools. Build caches (npm, Gradle, Cargo, Go modules) persist across tasks via Docker volumes.
 
 **Project-specific containers:** Place a `Dockerfile.yaver` in your project root for custom toolchains. The agent auto-detects and builds it.
 
@@ -734,7 +734,7 @@ ACL peers are also accessible via MCP tools (`acl_list_peers`, `acl_call_peer_to
 | Desktop Installer | `desktop/installer/` | [Download](https://yaver.io/download) | GUI installer (DMG/EXE/DEB) — installs the Go agent binary |
 | Relay Server | `relay/` | Docker / binary | QUIC relay for NAT traversal — self-hostable, pass-through only |
 | Backend | `backend/` | Managed (Convex) | Auth + peer discovery + platform config. No user data. |
-| Web | `web/` | Managed (Vercel) | Landing page at yaver.io |
+| Web | `web/` | Managed (Cloudflare Workers) | Landing page at yaver.io |
 
 ## CLI Commands
 
