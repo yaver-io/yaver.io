@@ -1093,6 +1093,17 @@ cd web && npm run deploy        # runs: opennextjs-cloudflare && wrangler deploy
 Environment variables are set in `wrangler.toml` or via `wrangler secret put <KEY>`.
 DNS is managed in Cloudflare (yaver.io zone) — routes configured in `web/wrangler.toml`.
 
+**CI deploy** triggers on `web/v*` tags via `.github/workflows/release-web.yml`.
+
+**GitHub Actions secrets (for CI):**
+| Secret | Purpose |
+|--------|---------|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API token ("Edit Cloudflare Workers" template) |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID (from `wrangler whoami`) |
+| `CONVEX_DEPLOY_KEY` | Convex deploy key (for updating web version in Convex) |
+
+To rotate the Cloudflare token: [Cloudflare Dashboard → Profile → API Tokens](https://dash.cloudflare.com/profile/api-tokens). Create a new token with the "Edit Cloudflare Workers" template, scoped to the yaver.io zone, then update the GitHub secret via `gh secret set CLOUDFLARE_API_TOKEN`.
+
 ### Relay Server
 See `relay/README.md` for full deployment guide.
 
