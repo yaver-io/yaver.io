@@ -316,6 +316,37 @@ export default function AutoBootManual() {
             Common manufacturers: Dell (&quot;AC Recovery&quot;), HP (&quot;After Power Loss&quot;), Lenovo (&quot;After Power Loss&quot;), ASUS (&quot;Restore AC Power Loss&quot;), Intel NUC (&quot;After Power Failure&quot;).
           </p>
 
+          <div className="mt-4 rounded-lg border border-yellow-800/40 bg-yellow-900/10 p-4">
+            <h4 className="mb-2 text-sm font-semibold text-yellow-300/90">
+              Watch out: dead CMOS battery
+            </h4>
+            <p className="mb-2 text-sm text-surface-400">
+              If your machine powers on after AC loss but gets stuck on a screen like{" "}
+              <strong className="text-surface-300">&quot;Time-of-day not set — please run SETUP program&quot;</strong> or{" "}
+              <strong className="text-surface-300">&quot;Invalid configuration information&quot;</strong>,
+              your CMOS battery is dead.
+            </p>
+            <p className="mb-2 text-sm text-surface-400">
+              The CMOS battery (a CR2032 coin cell on the motherboard) keeps BIOS settings and the
+              real-time clock alive when the machine is unplugged. When it dies, the BIOS forgets its
+              configuration on every power cycle and halts at a warning screen — waiting for a keypress
+              that never comes on a headless machine.
+            </p>
+            <p className="mb-2 text-sm text-surface-400">
+              <strong className="text-surface-300">Does normal use drain the battery?</strong> No.
+              When the machine is plugged in, the motherboard powers the CMOS chip from the PSU — the
+              battery is only used when the machine is fully unplugged. A healthy CR2032 lasts 3–5 years
+              even with the machine unplugged. Daisy-chaining power strips or UPS units doesn&apos;t
+              affect it — what matters is whether AC power reaches the PSU.
+            </p>
+            <p className="text-sm text-surface-400">
+              <strong className="text-surface-300">Fix:</strong> Replace the CR2032 battery on the
+              motherboard. It&apos;s a $1 coin cell — pop the old one out, snap the new one in.
+              After replacing, re-enter BIOS, set the clock and &quot;AC Recovery → Power On&quot; again,
+              and your headless auto-boot will work reliably.
+            </p>
+          </div>
+
           <h3 className="mb-2 mt-6 text-sm font-semibold text-surface-200">
             Step 2: Auto-login (optional)
           </h3>
