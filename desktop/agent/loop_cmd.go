@@ -340,9 +340,13 @@ Usage:
   yaver loop remove <name>                Unregister a loop (does not delete branch)
 
 Auto Develop prompt management:
-  yaver loop prompt set <name> "<msg>"    Set inline feature prompt for develop loop
-  yaver loop prompt show <name>           Show current active prompt
-  yaver loop prompt clear <name>          Clear inline prompt (fall back to spec file)
+  yaver loop prompt set <name> "<msg>"              Set inline feature prompt
+  yaver loop prompt show <name>                     Show current active prompt
+  yaver loop prompt clear <name>                    Clear inline prompt
+  yaver loop prompt pick <develop> <idea-id> [--run] [--ideas-from <loop>]
+                                                    Pick an idea from ideas.json and
+                                                    stash its .prompt as the inline
+                                                    prompt; --run kicks immediately
 
 Ideas mode:
   yaver loop ideas show <name>            Print the latest generated ideas.json
@@ -361,16 +365,27 @@ See docs/roadmap_ci_solo_developer_lower_costs.md for the full M8 spec.
 `)
 }
 
-// loopPrompt handles `yaver loop prompt {set|show|clear} <name>`.
+// loopPrompt handles `yaver loop prompt {set|show|clear|pick} <name>`.
 // This is the Auto Develop entry point for devs writing one-off
 // feature prompts from their phone / terminal without touching any
 // .md files on disk.
+//
+//	set   — stash an inline feature prompt on the loop
+//	show  — print the currently effective prompt with its source
+//	clear — wipe the runtime inline prompt (falls back to spec file)
+//	pick  — load an idea from the loop's ideas.json by ID and stash
+//	        its .prompt field as the inline prompt. Pass --run to
+//	        kick the loop immediately after the stash succeeds.
 func loopPrompt(args []string) {
 	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: yaver loop prompt {set|show|clear} <name> [<msg>]")
+		fmt.Fprintln(os.Stderr, "usage: yaver loop prompt {set|show|clear|pick} <name> [<id|msg>]")
 		os.Exit(1)
 	}
 	sub := args[0]
+	if sub == "pick" {
+		loopPromptPick(args[1:])
+		return
+	}
 	name := args[1]
 	loops, err := loadLoops()
 	if err != nil {
@@ -456,6 +471,143 @@ func loopPrompt(args []string) {
 	default:
 		fmt.Fprintf(os.Stderr, "unknown prompt subcommand %q (want set|show|clear)\n", sub)
 		os.Exit(1)
+	}
+}
+
+// loopPromptPick loads an idea by ID out of a loop's ideas.json and
+// sets that idea's `.prompt` field as the loop's runtime inline
+// prompt. Optional --run kicks the loop immediately so a dev can go
+// from "tap an idea in the mobile Auto Dev tab" to a committed patch
+// in one sentence: `yaver loop prompt pick sfmg-genz derbi-basinc --run`.
+//
+// The idea can come from any loop's ideas.json — an ideas-mode loop
+// typically owns one set of candidate features, and any develop-mode
+// loop can pick one of them to drive. So the signature is:
+//
+//	yaver loop prompt pick <develop-loop-name> <idea-id> [--ideas-from <source-loop>] [--run]
+//
+// Default for --ideas-from is the same loop name (looks for
+// ideas.json inside <develop-loop-name>'s own state dir) so a
+// single-loop setup works without extra flags.
+func loopPromptPick(args []string) {
+	// Permissive arg scanner so devs can put --run / --ideas-from in
+	// any position — Go's flag package only accepts flags before
+	// positionals, which is unnatural for this command's usage.
+	var ideasFrom string
+	var runNow bool
+	positional := []string{}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--run" || a == "-run":
+			runNow = true
+		case a == "--ideas-from" || a == "-ideas-from":
+			if i+1 < len(args) {
+				ideasFrom = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, "--ideas-from="):
+			ideasFrom = strings.TrimPrefix(a, "--ideas-from=")
+		default:
+			positional = append(positional, a)
+		}
+	}
+	if len(positional) < 2 {
+		fmt.Fprintln(os.Stderr, "usage: yaver loop prompt pick <develop-loop> <idea-id> [--ideas-from <source-loop>] [--run]")
+		os.Exit(1)
+	}
+	targetName := positional[0]
+	ideaID := positional[1]
+	sourceName := ideasFrom
+	if sourceName == "" {
+		sourceName = targetName
+	}
+
+	loops, err := loadLoops()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load loops: %v\n", err)
+		os.Exit(1)
+	}
+	target, ok := loops[targetName]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "loop %q not found\n", targetName)
+		os.Exit(1)
+	}
+
+	// Resolve the ideas.json path: prefer LastIdeasPath if the source
+	// loop has been run before, otherwise fall back to the canonical
+	// location.
+	var ideasPath string
+	if src, ok := loops[sourceName]; ok && src.LastIdeasPath != "" {
+		ideasPath = src.LastIdeasPath
+	} else {
+		base, _ := ConfigDir()
+		ideasPath = filepath.Join(base, "loops", sourceName, "ideas.json")
+	}
+
+	data, rerr := os.ReadFile(ideasPath)
+	if rerr != nil {
+		fmt.Fprintf(os.Stderr, "no ideas.json for loop %q at %s — run `yaver loop run %s` first\n",
+			sourceName, ideasPath, sourceName)
+		os.Exit(1)
+	}
+
+	// ideas.json is { generated_at, loop_name, persona, ideas: [...] }
+	// per persistIdeas. Decode loosely so we can cope with extra fields.
+	var payload struct {
+		Ideas []struct {
+			ID          string `json:"id"`
+			Title       string `json:"title"`
+			Description string `json:"description"`
+			Prompt      string `json:"prompt"`
+		} `json:"ideas"`
+	}
+	if jerr := json.Unmarshal(data, &payload); jerr != nil {
+		fmt.Fprintf(os.Stderr, "parse ideas.json: %v\n", jerr)
+		os.Exit(1)
+	}
+
+	var picked *struct {
+		ID          string `json:"id"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Prompt      string `json:"prompt"`
+	}
+	for i := range payload.Ideas {
+		if payload.Ideas[i].ID == ideaID {
+			picked = &payload.Ideas[i]
+			break
+		}
+	}
+	if picked == nil {
+		fmt.Fprintf(os.Stderr, "idea %q not found in %s. Available ids:\n", ideaID, ideasPath)
+		for _, it := range payload.Ideas {
+			fmt.Fprintf(os.Stderr, "  - %s: %s\n", it.ID, it.Title)
+		}
+		os.Exit(1)
+	}
+	if strings.TrimSpace(picked.Prompt) == "" {
+		fmt.Fprintf(os.Stderr, "idea %q has no .prompt field — regenerate ideas.json with a newer Auto Dev build\n", ideaID)
+		os.Exit(1)
+	}
+
+	target.PromptInline = picked.Prompt
+	target.ConsecutiveStuck = 0
+	if target.Status == LoopStatusPaused || target.Status == LoopStatusStuck ||
+		target.Status == LoopStatusNeedsHuman || target.Status == LoopStatusBudgetHit {
+		target.Status = LoopStatusIdle
+	}
+	loops[targetName] = target
+	if err := saveLoops(loops); err != nil {
+		fmt.Fprintf(os.Stderr, "save loops: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Picked idea %q → %s\n", ideaID, picked.Title)
+	fmt.Printf("Loop %q inline prompt set (%d chars).\n", targetName, len(picked.Prompt))
+
+	if runNow {
+		fmt.Println()
+		loopRun([]string{targetName})
 	}
 }
 
