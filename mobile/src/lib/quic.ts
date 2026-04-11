@@ -2764,12 +2764,12 @@ export class QuicClient {
     } catch { return null; }
   }
 
-  async mailDraft(id: string, instructions?: string, provider?: string): Promise<{ prompt: string; target: MailMessage; draft?: string } | null> {
+  async mailDraft(id: string, instructions?: string, provider?: string, execute: boolean = true): Promise<{ prompt: string; target: MailMessage; draft?: string } | null> {
     try {
       const res = await fetch(`${this.baseUrl}/mail/draft`, {
         method: "POST",
         headers: { ...this.authHeaders, "Content-Type": "application/json" },
-        body: JSON.stringify({ id, instructions, provider, execute: false }),
+        body: JSON.stringify({ id, instructions, provider, execute }),
       });
       if (!res.ok) return null;
       return await res.json();
