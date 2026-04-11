@@ -30,6 +30,7 @@ type Config struct {
 	Notifications *NotificationConfig `json:"notifications,omitempty"`
 	WebhookSecret       string              `json:"webhook_secret,omitempty"`
 	AnalyticsWebhookURL string              `json:"analytics_webhook_url,omitempty"`
+	RateLimit           *RateLimitConfig    `json:"rate_limit,omitempty"`
 	HAURL         string              `json:"ha_url,omitempty"`
 	HAToken       string              `json:"ha_token,omitempty"`
 	AllowedIPs    []string            `json:"allowed_ips,omitempty"`     // IP allowlist CIDRs
@@ -74,7 +75,21 @@ type EmailConfig struct {
 	GoogleRefreshToken string `json:"google_refresh_token,omitempty"`
 	SenderEmail       string `json:"sender_email,omitempty"`
 	SenderName        string `json:"sender_name,omitempty"`
+	// Transactional SMTP relay — used by yaver email send for
+	// outbound-only "send password reset" style mail. Lives
+	// alongside the inbox-sync fields above because they share
+	// the same underlying EmailConfig record; at runtime they
+	// target different use cases.
+	SMTPHost     string `json:"smtp_host,omitempty"`
+	SMTPPort     int    `json:"smtp_port,omitempty"`
+	SMTPUsername string `json:"smtp_username,omitempty"`
+	SMTPPassword string `json:"smtp_password,omitempty"`
+	SMTPFrom     string `json:"smtp_from,omitempty"`
+	SMTPStartTLS bool   `json:"smtp_starttls,omitempty"` // RFC 3207 STARTTLS on port 587
 }
+
+// Attach RateLimit on the top-level Config — declared here so
+// config.go is the one source of truth for config shape.
 
 // ACLPeerConfig describes a connected MCP peer for the Agent Communication Layer.
 type ACLPeerConfig struct {

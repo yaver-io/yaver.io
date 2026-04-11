@@ -2857,6 +2857,11 @@ export interface YaverMonitor {
   history?: MonitorCheck[];
   createdAt: string;
   lastCheckAt?: string;
+  checkSsl?: boolean;
+  sslWarnDays?: number;
+  sslExpiresAt?: string;
+  sslDaysLeft?: number;
+  sslAlertedAt?: string;
 }
 
 export interface MonitorCheck {
