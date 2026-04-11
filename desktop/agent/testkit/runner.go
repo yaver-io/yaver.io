@@ -37,6 +37,11 @@ type Result struct {
 	// instr is the live state used by step handlers (save_har).
 	// Unexported so it doesn't leak into the JSON reporter.
 	instr *InstrumentationState
+	// frameRing holds the recent screencast frames when
+	// Spec.Artifacts.Video is true. runPhase flushes it next to
+	// any failing step's screenshot so the mobile
+	// FrameSequencePlayer has something to show. Unexported.
+	frameRing *FrameRing
 }
 
 // Duration returns wall-clock duration of the run.
@@ -206,6 +211,20 @@ func runWebSpec(ctx context.Context, spec *Spec, opts RunOptions, res *Result) {
 	instr := InstallInstrumentation(browserCtx, spec.Capture)
 	res.instr = instr
 
+	// Screencast capture — opt-in via `artifacts: {video: true}`.
+	// Holds the last ~120 frames in memory; flushed to disk next
+	// to a failing step's screenshot so the mobile
+	// FrameSequencePlayer can scrub through the failure.
+	if spec.Artifacts.Video {
+		res.frameRing = NewFrameRing(120)
+		if stop, err := StartScreencast(browserCtx, res.frameRing); err == nil {
+			defer stop()
+		} else {
+			fmt.Fprintf(os.Stderr, "[testkit] screencast start failed: %v — continuing without video\n", err)
+			res.frameRing = nil
+		}
+	}
+
 	// Setup phase
 	if !runPhase(browserCtx, spec, opts, res, "setup", spec.Setup, artifactDir) {
 		// Setup failed — still try teardown but don't run main steps.
@@ -331,6 +350,15 @@ func runPhase(ctx context.Context, spec *Spec, opts RunOptions, res *Result, pha
 				p := filepath.Join(artifactDir, fmt.Sprintf("%s-%02d-FAIL.png", phase, i))
 				if shotErr := captureScreenshot(ctx, p); shotErr == nil {
 					sr.ScreenshotPath = p
+				}
+			}
+			// Flush screencast frames next to the failure so the
+			// mobile FrameSequencePlayer can scrub through them.
+			// Writes to `<phase>-<idx>-frames/` siblingto the screenshot.
+			if res.frameRing != nil {
+				label := fmt.Sprintf("%s-%02d", phase, i)
+				if _, ferr := FlushFrames(artifactDir, label, res.frameRing); ferr != nil && opts.VerboseLog {
+					fmt.Fprintf(os.Stderr, "[testkit] flush frames failed: %v\n", ferr)
 				}
 			}
 		} else if step.Screenshot || shouldScreenshot(spec, false) {

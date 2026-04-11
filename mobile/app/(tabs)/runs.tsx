@@ -378,11 +378,15 @@ export default function RunsScreen() {
               {item.screenshot && (
                 <Pressable
                   onPress={() => {
-                    // Every `<step>-frames/` dir sits next to the
-                    // step's screenshot, so derive the directory
-                    // path from the screenshot filename.
-                    const lastSlash = item.screenshot!.lastIndexOf("/");
-                    const dir = item.screenshot!.slice(0, lastSlash) + "/frames";
+                    // testkit.FlushFrames writes `<label>-frames/`
+                    // next to the FAIL screenshot, where label is
+                    // `<phase>-<index>`. Convert
+                    //   /artifacts/step-02-FAIL.png
+                    // to
+                    //   /artifacts/step-02-frames
+                    const dir = item.screenshot!
+                      .replace(/-FAIL\.png$/i, "-frames")
+                      .replace(/\.png$/i, "-frames");
                     setFramesDir(dir);
                   }}
                 >
