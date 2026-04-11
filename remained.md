@@ -112,6 +112,50 @@ the first `- [ ]`, implements it, checks it off, commits, pushes.
 - [ ] "Revert selected" button calls `POST /autodev/reports/revert`
       with the ticked SHAs.
 
+## Solo-dev SaaS replacements — queued for next batches
+
+### #5 — Read-only DB admin UI (TablePlus / DBeaver replacement)
+
+- [ ] `desktop/agent/db_admin.go` — owner-only read-only SQL
+      browser for SQLite and Postgres. Endpoints:
+      `GET /db/connections` list configured connections,
+      `POST /db/connections` add `{kind, dsn, label}`,
+      `GET /db/tables?conn=…` list tables with row counts,
+      `GET /db/rows?conn=…&table=…&limit=&offset=&where=…`
+      page through rows, `POST /db/query?conn=…` run an ad-hoc
+      read-only SQL statement (reject anything outside
+      SELECT / EXPLAIN / PRAGMA / SHOW). Connections persist in
+      `~/.yaver/db-connections.json`.
+- [ ] Extend doctor to check for `sqlite3` CLI and `psql`.
+- [ ] Mobile: new "DB" pane inside Studio under More — table
+      picker, row list (virtualised), tap row to see JSON,
+      SQL input at the bottom.
+- [ ] MCP tools: `db_connect`, `db_tables`, `db_rows`, `db_query`.
+- [ ] Doctor: add checks for sqlite3 and psql binaries.
+
+### VS Code extension for Copilot-lite
+
+- [ ] `editor/vscode-copilot-lite/` — tiny extension that
+      registers an InlineCompletionItemProvider, streams the
+      current prefix + suffix window to
+      `${YAVER_AGENT}/copilot/complete` over SSE, and renders
+      tokens as they arrive. One setting: `yaver.agent` (URL +
+      bearer token). Ships as a .vsix the dev sideloads.
+
+### Analytics mobile UI
+
+- [ ] New "Analytics" pane inside Studio that hits
+      `/analytics/summary`, `/analytics/top`, `/analytics/funnel`,
+      `/analytics/retention` and renders them with plain-React
+      Native views (no chart lib — pixel bars are fine).
+
+### Mail classifier inline controls
+
+- [ ] In `mobile/app/(tabs)/mail.tsx`, add a small "Mark as
+      bulk / personal" two-button row on each message card that
+      calls `POST /mail/mark`. Show a brief toast confirming the
+      verdict was recorded.
+
 ## Notes for whoever runs this on another machine
 
 * Build: `cd desktop/agent && go build ./...`
