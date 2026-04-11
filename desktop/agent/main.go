@@ -100,6 +100,8 @@ func main() {
 		runVault(os.Args[2:])
 	case "build":
 		runBuild(os.Args[2:])
+	case "release":
+		runRelease(os.Args[2:])
 	case "debug":
 		runDebug(os.Args[2:])
 	case "expo":

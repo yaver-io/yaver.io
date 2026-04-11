@@ -2362,6 +2362,118 @@ export class QuicClient {
     return this.authHeaders;
   }
 
+  // ---- Releases (self-hosted OTA) ---------------------------------------
+
+  /** List every release in a channel with rollout percent. */
+  async releasesList(channel: string = "production"): Promise<ReleaseManifest | null> {
+    try {
+      const res = await fetch(
+        `${this.baseUrl}/releases/list?channel=${encodeURIComponent(channel)}`,
+        { headers: this.authHeaders },
+      );
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data.manifest ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Ask what this device should run on cold start. */
+  async releasesLatest(
+    channel: string = "production",
+    deviceId?: string,
+  ): Promise<ReleaseLatest | null> {
+    try {
+      const params = new URLSearchParams({ channel });
+      if (deviceId) params.set("device", deviceId);
+      const res = await fetch(
+        `${this.baseUrl}/releases/latest?${params.toString()}`,
+        { headers: this.authHeaders },
+      );
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  /** Rollback the channel to a previously-published semver. */
+  async releasesRollback(channel: string, semver: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/exec`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          command: `yaver release rollback ${channel} ${semver}`,
+        }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Set the rollout percentage for a channel. */
+  async releasesRollout(channel: string, percent: number): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/exec`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          command: `yaver release rollout ${channel} ${percent}`,
+        }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  // ---- Errors (cross-device aggregation) -------------------------------
+
+  /** List errors with header stats. */
+  async errorsList(includeResolved: boolean = false): Promise<ErrorsListResponse | null> {
+    try {
+      const url = includeResolved
+        ? `${this.baseUrl}/errors?include_resolved=1`
+        : `${this.baseUrl}/errors`;
+      const res = await fetch(url, { headers: this.authHeaders });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  /** Mark an error as resolved with an optional one-liner note. */
+  async errorResolve(fingerprint: string, note?: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/errors/resolve`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ fingerprint, note }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Reopen a previously-resolved error. */
+  async errorReopen(fingerprint: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/errors/reopen`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ fingerprint }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   // ---- Auto Dev (M8) -----------------------------------------------------
 
   /** Fetch all registered Auto Dev loops. */
@@ -2476,6 +2588,78 @@ export interface TestkitFrameList {
   frames: string[];
   fps: number;
   count: number;
+}
+
+/** Self-hosted OTA manifest. */
+export interface ReleaseManifest {
+  channel: string;
+  latest?: string;
+  rolloutPercent: number;
+  releases: ReleaseEntry[];
+  updatedAt: string;
+}
+
+export interface ReleaseEntry {
+  semver: string;
+  size: number;
+  md5: string;
+  hermesBcVersion: number;
+  publishedAt: string;
+  commit?: string;
+  notes?: string;
+}
+
+/** Response shape of /releases/latest. */
+export interface ReleaseLatest {
+  ok: boolean;
+  channel: string;
+  semver?: string;
+  size?: number;
+  md5?: string;
+  hermesBcVersion?: number;
+  publishedAt?: string;
+  bundleUrl?: string;
+  rolloutPercent: number;
+  inRollout: boolean;
+  reason?: string;
+  previous?: ReleaseEntry;
+}
+
+/** Cross-device error aggregation record. */
+export interface ErrorRecord {
+  fingerprint: string;
+  message: string;
+  firstFrame?: string;
+  stack?: string[];
+  firstSeenAt: string;
+  lastSeenAt: string;
+  count: number;
+  deviceIds: string[];
+  fatal?: boolean;
+  resolved?: boolean;
+  resolvedAt?: string;
+  resolvedNote?: string;
+  recent?: ErrorSample[];
+}
+
+export interface ErrorSample {
+  deviceId: string;
+  timestamp: number;
+  message: string;
+  route?: string;
+  source?: string;
+  metadata?: Record<string, string>;
+}
+
+export interface ErrorsListResponse {
+  ok: boolean;
+  errors: ErrorRecord[];
+  stats: {
+    open: number;
+    resolved: number;
+    openLast24h: number;
+    totalDistinct: number;
+  };
 }
 
 /** Auto Dev loop row — wire shape of GET /autodev/loops. */
