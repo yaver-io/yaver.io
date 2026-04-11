@@ -19,11 +19,19 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 )
+
+// loopsFileMu serializes read-modify-write cycles against loops.json
+// across the CLI, scheduler ticks, and HTTP handlers in the same
+// process. Cross-process races are mitigated by saveLoops's atomic
+// write-then-rename — concurrent writers race, but the file never
+// ends up half-written.
+var loopsFileMu sync.Mutex
 
 // LoopMode is the top-level behavior of a loop.
 type LoopMode string
@@ -255,6 +263,12 @@ func loopsStorePath() (string, error) {
 }
 
 func loadLoops() (map[string]*LoopState, error) {
+	loopsFileMu.Lock()
+	defer loopsFileMu.Unlock()
+	return loadLoopsLocked()
+}
+
+func loadLoopsLocked() (map[string]*LoopState, error) {
 	p, err := loopsStorePath()
 	if err != nil {
 		return nil, err
@@ -277,6 +291,17 @@ func loadLoops() (map[string]*LoopState, error) {
 }
 
 func saveLoops(loops map[string]*LoopState) error {
+	loopsFileMu.Lock()
+	defer loopsFileMu.Unlock()
+	return saveLoopsLocked(loops)
+}
+
+// saveLoopsLocked writes the loops map to loops.json via an atomic
+// write-then-rename pattern: a sibling `loops.json.tmp` is written
+// and fsync'd, then renamed over the live path. Readers either see
+// the old file or the new file — never a half-written one. Callers
+// that already hold loopsFileMu must use this variant.
+func saveLoopsLocked(loops map[string]*LoopState) error {
 	p, err := loopsStorePath()
 	if err != nil {
 		return err
@@ -285,7 +310,52 @@ func saveLoops(loops map[string]*LoopState) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, data, 0600)
+	tmp := p + ".tmp"
+	// O_CREATE|O_TRUNC|O_WRONLY — a stale tmp from a crashed previous
+	// run gets overwritten, not appended to.
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	if _, werr := f.Write(data); werr != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return werr
+	}
+	if serr := f.Sync(); serr != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return serr
+	}
+	if cerr := f.Close(); cerr != nil {
+		_ = os.Remove(tmp)
+		return cerr
+	}
+	return os.Rename(tmp, p)
+}
+
+// withLoops runs fn on the current loops map under the file mutex
+// and, if fn returns true, persists the mutated map. Use this for
+// any read-modify-write sequence so racing writers don't clobber
+// each other. Returns the same map that was passed into fn (for
+// callers that want to inspect it after save).
+func withLoops(fn func(map[string]*LoopState) (bool, error)) (map[string]*LoopState, error) {
+	loopsFileMu.Lock()
+	defer loopsFileMu.Unlock()
+	loops, err := loadLoopsLocked()
+	if err != nil {
+		return nil, err
+	}
+	save, err := fn(loops)
+	if err != nil {
+		return loops, err
+	}
+	if save {
+		if err := saveLoopsLocked(loops); err != nil {
+			return loops, err
+		}
+	}
+	return loops, nil
 }
 
 // runLoop is the `yaver loop ...` entry point.
@@ -1060,79 +1130,13 @@ func loopRun(args []string) {
 		return
 	}
 
-	l.Status = LoopStatusRunning
-	l.IterationCount++
-	l.LastIterationAt = time.Now().UTC().Format(time.RFC3339)
-	if err := saveLoops(loops); err != nil {
-		fmt.Fprintf(os.Stderr, "save loops: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Persistence callback — runDevelopLoop calls this between kicks
-	// so the mobile Auto Dev tab and `yaver loop status` always see
-	// fresh budget counters / kick summaries in real time.
-	saveCallback := func(state *LoopState) {
-		latest, lerr := loadLoops()
-		if lerr != nil {
-			return
-		}
-		latest[state.Spec.Name] = state
-		_ = saveLoops(latest)
-	}
-
 	ctx := contextBackground()
-	result := runLoopIteration(ctx, l, saveCallback)
-
-	// Reload + merge state under a fresh handle in case a sibling
-	// process (scheduler) wrote between our save above and now.
-	loops, _ = loadLoops()
-	if cur, ok := loops[name]; ok {
-		// Preserve budget counters updated inside runDevelopLoop —
-		// the reloaded copy may be stale.
-		reloadKeep := cur
-		reloadKeep.CommitsToday = l.CommitsToday
-		reloadKeep.PatchesToday = l.PatchesToday
-		reloadKeep.BudgetDayKey = l.BudgetDayKey
-		reloadKeep.LastIdeasPath = l.LastIdeasPath
-		l = reloadKeep
-	}
-	// Auto-fix / fix modes run a single kick and don't go through the
-	// develop-loop counter path, so bump the budget here if the kick
-	// actually committed something.
-	if l.Spec.Mode != LoopModeDevelop && result.PatchCommit != "" {
-		l.rollBudgetDay()
-		l.CommitsToday++
-		l.PatchesToday++
-	}
-	switch result.Status {
-	case "done":
-		l.Status = LoopStatusIdle
-		l.ConsecutiveStuck = 0
-	case "stuck":
-		l.Status = LoopStatusStuck
-		l.ConsecutiveStuck++
-		if l.Spec.Budget.StopAfterConsecutiveStuck > 0 &&
-			l.ConsecutiveStuck >= l.Spec.Budget.StopAfterConsecutiveStuck {
-			l.Status = LoopStatusPaused
-		}
-	case "stopped":
-		l.Status = LoopStatusStopped
-	case "needs_human":
-		l.Status = LoopStatusNeedsHuman
-	case "budget_hit":
-		l.Status = LoopStatusBudgetHit
-	case "failed":
-		l.Status = LoopStatusStuck
-		l.ConsecutiveStuck++
-	default:
-		l.Status = LoopStatusIdle
-	}
-	l.LastSummary = result.Summary
-	loops[name] = l
-	if err := saveLoops(loops); err != nil {
-		fmt.Fprintf(os.Stderr, "save loops: %v\n", err)
+	post, result, kerr := kickLoopOnce(ctx, name)
+	if kerr != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", kerr)
 		os.Exit(1)
 	}
+	l = post
 
 	// Human-friendly footer.
 	fmt.Println()
@@ -1181,6 +1185,102 @@ func loopRun(args []string) {
 // cancellable parent context in the future.
 func contextBackground() context.Context {
 	return context.Background()
+}
+
+// kickLoopOnce runs a single iteration of the named loop, updates
+// its persisted state, and returns (post-kick loop state, iteration
+// result). All side effects — mark running, run phases, reload &
+// merge, persist new status, bump budget counters — are contained
+// here so both the CLI (`yaver loop run`) and the HTTP handler
+// (`POST /autodev/loops/<name>/run`) can share one code path
+// without the CLI's printf/os.Exit churn.
+//
+// Returns a friendly error if the loop doesn't exist, is paused /
+// stopped, or has a live STOP file. Any error from
+// runLoopIteration itself surfaces on the IterationResult.
+func kickLoopOnce(ctx context.Context, name string) (*LoopState, *IterationResult, error) {
+	loops, err := loadLoops()
+	if err != nil {
+		return nil, nil, fmt.Errorf("load loops: %w", err)
+	}
+	l, ok := loops[name]
+	if !ok {
+		return nil, nil, fmt.Errorf("loop %q not found", name)
+	}
+	if l.Status == LoopStatusStopped || l.Status == LoopStatusPaused {
+		return l, nil, fmt.Errorf("loop %q is %s — resume it first", name, l.Status)
+	}
+	if killPath, kerr := loopKillFilePath(name); kerr == nil {
+		if _, serr := os.Stat(killPath); serr == nil {
+			return l, nil, fmt.Errorf("STOP file exists at %s — remove it to resume", killPath)
+		}
+	}
+
+	l.Status = LoopStatusRunning
+	l.IterationCount++
+	l.LastIterationAt = time.Now().UTC().Format(time.RFC3339)
+	if err := saveLoops(loops); err != nil {
+		return l, nil, fmt.Errorf("save loops: %w", err)
+	}
+
+	saveCallback := func(state *LoopState) {
+		// Reload + write-back under the mutex so a concurrent CLI
+		// `loop stop` doesn't get clobbered by intra-kick progress
+		// writes.
+		_, _ = withLoops(func(latest map[string]*LoopState) (bool, error) {
+			latest[state.Spec.Name] = state
+			return true, nil
+		})
+	}
+
+	result := runLoopIteration(ctx, l, saveCallback)
+
+	// Reload + merge to absorb any sibling writes during the kick,
+	// then apply final status + counters.
+	loops, _ = loadLoops()
+	if cur, ok := loops[name]; ok {
+		reloadKeep := cur
+		reloadKeep.CommitsToday = l.CommitsToday
+		reloadKeep.PatchesToday = l.PatchesToday
+		reloadKeep.BudgetDayKey = l.BudgetDayKey
+		reloadKeep.LastIdeasPath = l.LastIdeasPath
+		l = reloadKeep
+	}
+
+	if l.Spec.Mode != LoopModeDevelop && result.PatchCommit != "" {
+		l.rollBudgetDay()
+		l.CommitsToday++
+		l.PatchesToday++
+	}
+	switch result.Status {
+	case "done":
+		l.Status = LoopStatusIdle
+		l.ConsecutiveStuck = 0
+	case "stuck":
+		l.Status = LoopStatusStuck
+		l.ConsecutiveStuck++
+		if l.Spec.Budget.StopAfterConsecutiveStuck > 0 &&
+			l.ConsecutiveStuck >= l.Spec.Budget.StopAfterConsecutiveStuck {
+			l.Status = LoopStatusPaused
+		}
+	case "stopped":
+		l.Status = LoopStatusStopped
+	case "needs_human":
+		l.Status = LoopStatusNeedsHuman
+	case "budget_hit":
+		l.Status = LoopStatusBudgetHit
+	case "failed":
+		l.Status = LoopStatusStuck
+		l.ConsecutiveStuck++
+	default:
+		l.Status = LoopStatusIdle
+	}
+	l.LastSummary = result.Summary
+	loops[name] = l
+	if err := saveLoops(loops); err != nil {
+		return l, result, fmt.Errorf("save loops: %w", err)
+	}
+	return l, result, nil
 }
 
 func loopPhasesForMode(mode LoopMode) []string {
