@@ -170,6 +170,8 @@ func main() {
 		runInit(os.Args[2:])
 	case "new", "project-new", "project-wizard":
 		runNew(os.Args[2:])
+	case "mail":
+		runMail(os.Args[2:])
 	case "completion":
 		runCompletion(os.Args[2:])
 	case "help", "--help", "-h":

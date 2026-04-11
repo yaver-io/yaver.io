@@ -224,6 +224,16 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// CRUD for registered clients + users — owner-only
 	mux.HandleFunc("/oauth/clients", s.auth(s.handleOauthClients))
 	mux.HandleFunc("/oauth/users", s.auth(s.handleOauthUsers))
+
+	// Mail — Gmail / O365 inbox fetch + AI draft + SMTP send
+	mux.HandleFunc("/mail/inbox", s.auth(s.handleMailInbox))
+	mux.HandleFunc("/mail/draft", s.auth(s.handleMailDraft))
+	mux.HandleFunc("/mail/send", s.auth(s.handleMailSend))
+	// OAuth onboarding — callback is unauthenticated (the OAuth
+	// provider redirects into it), everything else is owner-only.
+	mux.HandleFunc("/mail/onboard/start", s.auth(s.handleMailOnboardStart))
+	mux.HandleFunc("/mail/onboard/status", s.auth(s.handleMailOnboardStatus))
+	mux.HandleFunc("/mail/onboard/callback", s.handleMailOnboardCallback)
 	mux.HandleFunc("/analytics", s.auth(s.handleAnalytics))
 	mux.HandleFunc("/session/list", s.auth(s.handleSessionList))
 	mux.HandleFunc("/session/export", s.auth(s.handleSessionExport))

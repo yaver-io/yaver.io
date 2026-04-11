@@ -2206,6 +2206,21 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
+        {/* Mail — Gmail / O365 triage + AI-boosted replies */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/mail" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F4E7}"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Mail</Text>
+              <Text style={[s.desc, { color: c.textMuted }]}>Gmail / O365 inbox, smart classifier, AI drafts</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
         {/* Git Providers — dedicated screen for consistency */}
         {connected && (
           <Pressable
