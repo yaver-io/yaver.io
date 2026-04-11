@@ -34,7 +34,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -106,13 +105,10 @@ func collectDiskSpace() []DiskSpaceEntry {
 			continue
 		}
 		seen[m.Mount] = true
-		var stat syscall.Statfs_t
-		if err := syscall.Statfs(m.Mount, &stat); err != nil {
+		total, free, ok := statfsGB(m.Mount)
+		if !ok {
 			continue
 		}
-		blockSize := uint64(stat.Bsize)
-		total := float64(stat.Blocks*blockSize) / (1024 * 1024 * 1024)
-		free := float64(stat.Bavail*blockSize) / (1024 * 1024 * 1024)
 		used := total - free
 		if total <= 0 {
 			continue
