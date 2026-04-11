@@ -76,6 +76,18 @@ last handoff" below).
   `mobile/src/lib/quic.ts` + `mobile/app/(tabs)/autodev.tsx` now
   load real data (loops, prompts mirrored from inline prompts,
   ideas from the first ideas-mode loop).
+- **Release-train TestFlight gating** — new `LoopShip.ReleaseTrain`
+  block (`{n, paused, target}`) plus `LoopState.GreenRunSinceLastDeploy`
+  counter. `releaseTrainAllowsDeploy` in `loop_exec.go` gates
+  `phaseDeploy` on N consecutive green kicks AND
+  `TestflightToday < MaxTestFlightPerDay` AND `!Paused`. Successful
+  deploy bumps `TestflightToday` and zeroes the green counter;
+  stuck / failed / needs_human resets it too.
+- **Codex runner** — `phaseThink` now dispatches to `spawnCodex`
+  when `think.runner: codex`. Shared `buildLoopPrompt` helper means
+  Claude and Codex see byte-identical prompts, so `think.fallback:
+  [claude, codex]` can cycle between them on rate-limit errors
+  without the prompt changing shape.
 
 ## Gaps, ordered by value
 
@@ -117,36 +129,14 @@ Sketch:
   terminate with `budget_hit`
 - Persist the counter to `~/.yaver/loops/<name>/session_usage.json`
 
-### 3. Release-train TestFlight gating
-`Budget.MaxTestFlightPerDay` is parsed and hard-capped at 10, but
-nothing actually checks it before running a deploy. The doc's
-"release train" (deploy to TF only when N consecutive green
-iterations have passed + daily budget not exhausted) is unwired.
+### 3. aider / ollama runner support
+Claude and Codex are wired. Aider is ~50 lines (subprocess, same
+JSON contract). Ollama is slightly bigger because it needs a local
+HTTP client to the ollama daemon instead of a subprocess.
 
-Sketch:
-- New `LoopState.GreenRunSinceLastDeploy int`
-- In `phaseDeploy`, if the deploy command contains `testflight` or
-  `altool` or matches `ship.deploy_target == "testflight"`:
-  - Check `GreenRunSinceLastDeploy >= spec.Ship.ReleaseTrainN`
-    (default 3)
-  - Check `LoopState.TestflightToday < Budget.MaxTestFlightPerDay`
-  - Check `LoopState.Spec.Ship.ReleaseTrainPaused` flag
-  - If all pass, run the deploy, bump `TestflightToday`, reset
-    `GreenRunSinceLastDeploy`
-  - Else, skip deploy and log the reason
-- Expose a `ship.release_train: {N: 3, paused: false, target: "testflight"}`
-  block in the spec
-
-### 4. codex / aider / ollama runner support
-Only `claude-code` is wired in `phaseThink`. Stubs return a clear
-error (not a silent fake). Adding codex / aider is ~50 lines each:
-new `spawnCodex(...)`, same JSON contract parsing. Ollama is
-slightly bigger because it needs a local HTTP client to the ollama
-daemon instead of a subprocess.
-
-This unblocks fallback chain execution — once multiple runners
-exist, `think.fallback` can actually cycle between them on
-rate-limit failures.
+With Claude + Codex already working, `think.fallback: [claude,
+codex]` already cycles correctly on rate-limit failures — aider
+and ollama are additive, not blocking.
 
 ## Quick verification commands
 
