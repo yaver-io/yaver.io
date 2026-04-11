@@ -29,7 +29,10 @@ Status at the time this was written:
 <!-- #3 landed: docs/yaver-test-sdk.md is the canonical page; linked
 from README.md next to the auto-detect testing bullet. -->
 
-| 4 | **Safari driver smoke test on macOS** | `testkit/driver_safari.go` compiles and the transport path is proven by the Firefox W3C client it reuses, but there's no integration test that actually opens Safari. Safari needs `sudo safaridriver --enable` once on the host so this can't run in GH Actions — has to be a local opt-in test guarded by an env var (`YAVER_SAFARI_SMOKE=1`). | ~2 hours |
+<!-- #4 landed: testkit/driver_safari_smoke_test.go — guarded by
+YAVER_SAFARI_SMOKE=1, runs against an httptest server, checks the
+PNG signature on the screenshot. -->
+
 <!-- #5 landed: step-level `- include: macros/x.test.yaml` expands in
 place. Implemented via `Step.Include` + `expandStepIncludes` in
 testkit/spec.go. Test: `TestStepIncludeExpandsInPlace`. -->
@@ -74,7 +77,6 @@ testkit/spec.go. Test: `TestStepIncludeExpandsInPlace`. -->
 ### One-week option
 1. #1 WDA install helper
 2. #2 mobile frame-sequence player
-3. #4 local Safari smoke target (guarded by env var)
 
 After that the feature matrix for the solo-RN-dev-with-own-hardware
 persona is **fully green** against every paid SaaS row that isn't a
