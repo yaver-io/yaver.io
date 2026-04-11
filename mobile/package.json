@@ -40,7 +40,7 @@
     "expo-router": "~6.0.23",
     "expo-secure-store": "~15.0.8",
     "expo-sensors": "~15.0.8",
-    "expo-share-intent": "^3.2.3",
+    "expo-share-intent": "^5.1.1",
     "expo-sharing": "~14.0.8",
     "expo-speech": "~14.0.8",
     "expo-splash-screen": "~31.0.13",

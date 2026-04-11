@@ -17,8 +17,7 @@ import (
 // upload → get → generate prompt → create fix task → delete
 func TestFeedbackFullFlow(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -166,8 +165,7 @@ func TestFeedbackFullFlow(t *testing.T) {
 // TestFeedbackPersistence verifies reports survive manager restart.
 func TestFeedbackPersistence(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	// Create report
@@ -199,8 +197,7 @@ func TestFeedbackModes(t *testing.T) {
 // TestFeedbackStreamEndpoint verifies the streaming endpoint accepts events.
 func TestFeedbackStreamEndpoint(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -238,8 +235,7 @@ func (f *flushRecorder) Flush() {
 // TestFeedbackScreenshotServing verifies screenshot files are served correctly.
 func TestFeedbackScreenshotServing(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -268,8 +264,7 @@ func TestFeedbackScreenshotServing(t *testing.T) {
 // TestAllNewEndpointsExist verifies all new HTTP endpoints return non-404 for valid methods.
 func TestAllNewEndpointsExist(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	em := &ExecManager{sessions: make(map[string]*ExecSession), workDir: tmpDir}

@@ -1,13 +1,23 @@
-// AsyncStorage is an optional peer dep — gracefully degrade if missing
-let AsyncStorage: {
+// AsyncStorage is an optional peer dep — gracefully degrade if missing.
+// Resolved lazily on each call so unit-test mocks of
+// `@react-native-async-storage/async-storage` are picked up even when
+// Discovery.ts is imported before the mock is applied.
+type AsyncStorageLike = {
   getItem: (key: string) => Promise<string | null>;
   setItem: (key: string, value: string) => Promise<void>;
   removeItem: (key: string) => Promise<void>;
-} | null = null;
-try {
-  AsyncStorage = require('@react-native-async-storage/async-storage').default;
-} catch {
-  // Not installed — discovery caching disabled, auto-discovery still works
+};
+function getAsyncStorage(): AsyncStorageLike | null {
+  try {
+    const mod = require('@react-native-async-storage/async-storage');
+    const candidate = mod?.default ?? mod;
+    if (candidate && typeof candidate.getItem === 'function') {
+      return candidate as AsyncStorageLike;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 const STORAGE_KEY = 'yaver_feedback_agent';
@@ -304,9 +314,10 @@ export class YaverDiscovery {
 
   /** Get the cached agent connection from storage. */
   static async getStored(): Promise<{ url: string; hostname: string } | null> {
-    if (!AsyncStorage) return null;
+    const storage = getAsyncStorage();
+    if (!storage) return null;
     try {
-      const raw = await AsyncStorage.getItem(STORAGE_KEY);
+      const raw = await storage.getItem(STORAGE_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed.url === 'string') {
@@ -320,9 +331,10 @@ export class YaverDiscovery {
 
   /** Store a successful discovery result. */
   static async store(result: DiscoveryResult): Promise<void> {
-    if (!AsyncStorage) return;
+    const storage = getAsyncStorage();
+    if (!storage) return;
     try {
-      await AsyncStorage.setItem(
+      await storage.setItem(
         STORAGE_KEY,
         JSON.stringify({ url: result.url, hostname: result.hostname }),
       );
@@ -333,9 +345,10 @@ export class YaverDiscovery {
 
   /** Clear the stored agent connection. */
   static async clear(): Promise<void> {
-    if (!AsyncStorage) return;
+    const storage = getAsyncStorage();
+    if (!storage) return;
     try {
-      await AsyncStorage.removeItem(STORAGE_KEY);
+      await storage.removeItem(STORAGE_KEY);
     } catch {
       // Storage failure is non-fatal
     }

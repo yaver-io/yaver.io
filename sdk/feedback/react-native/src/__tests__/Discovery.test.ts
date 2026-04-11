@@ -4,9 +4,10 @@ import { YaverDiscovery, DiscoveryResult } from '../Discovery';
 const mockFetch = jest.fn();
 global.fetch = mockFetch as any;
 
-// Mock AsyncStorage
+// Mock AsyncStorage. Discovery.ts requires it via `.default`, so the mock
+// must expose its API on a `default` property too.
 const mockStorage: Record<string, string> = {};
-jest.mock('@react-native-async-storage/async-storage', () => ({
+const mockAsyncStorage = {
   getItem: jest.fn((key: string) => Promise.resolve(mockStorage[key] || null)),
   setItem: jest.fn((key: string, value: string) => {
     mockStorage[key] = value;
@@ -16,6 +17,11 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
     delete mockStorage[key];
     return Promise.resolve();
   }),
+};
+jest.mock('@react-native-async-storage/async-storage', () => ({
+  __esModule: true,
+  default: mockAsyncStorage,
+  ...mockAsyncStorage,
 }));
 
 // Mock AbortController

@@ -16,8 +16,7 @@ import (
 
 func TestFeedbackEmptyMetadata(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -41,8 +40,7 @@ func TestFeedbackEmptyMetadata(t *testing.T) {
 
 func TestFeedbackInvalidJSON(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -65,8 +63,7 @@ func TestFeedbackInvalidJSON(t *testing.T) {
 
 func TestFeedbackNoFiles(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -99,8 +96,7 @@ func TestFeedbackNoFiles(t *testing.T) {
 
 func TestFeedbackMultipleScreenshots(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -133,8 +129,7 @@ func TestFeedbackMultipleScreenshots(t *testing.T) {
 
 func TestFeedbackLargeTimeline(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -167,8 +162,7 @@ func TestFeedbackLargeTimeline(t *testing.T) {
 
 func TestFeedbackPromptWithAllEventTypes(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -223,8 +217,7 @@ func TestFeedbackPromptWithAllEventTypes(t *testing.T) {
 
 func TestFeedbackConcurrentUploads(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -258,8 +251,7 @@ func TestFeedbackConcurrentUploads(t *testing.T) {
 
 func TestFeedbackDeleteNonExistent(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -271,8 +263,7 @@ func TestFeedbackDeleteNonExistent(t *testing.T) {
 
 func TestFeedbackFixNonExistent(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -284,8 +275,7 @@ func TestFeedbackFixNonExistent(t *testing.T) {
 
 func TestFeedbackTranscriptNonExistent(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -297,8 +287,7 @@ func TestFeedbackTranscriptNonExistent(t *testing.T) {
 
 func TestFeedbackHTTPMethodNotAllowed(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -323,8 +312,7 @@ func TestFeedbackHTTPMethodNotAllowed(t *testing.T) {
 
 func TestFeedbackHTTPDeleteAndVerify(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -368,8 +356,7 @@ func TestFeedbackHTTPDeleteAndVerify(t *testing.T) {
 
 func TestFeedbackTranscriptUpdate(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -417,8 +404,7 @@ func TestFeedbackTranscriptUpdate(t *testing.T) {
 
 func TestFeedbackFileTypes(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -459,8 +445,7 @@ func TestFeedbackFileTypes(t *testing.T) {
 
 func TestFeedbackListOrdering(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()

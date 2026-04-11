@@ -13,9 +13,7 @@ import (
 func TestVaultCRUD(t *testing.T) {
 	// Use a temp dir for the vault
 	tmpDir := t.TempDir()
-	origConfigDir := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origConfigDir)
+	t.Setenv("HOME", tmpDir)
 
 	// Create .yaver dir
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
@@ -96,8 +94,7 @@ func TestVaultCRUD(t *testing.T) {
 
 func TestVaultPersistence(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	// Create and populate vault
@@ -124,8 +121,7 @@ func TestVaultPersistence(t *testing.T) {
 
 func TestVaultWrongPassphrase(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	// Create vault with one passphrase
@@ -147,8 +143,7 @@ func TestVaultWrongPassphrase(t *testing.T) {
 
 func TestVaultExportImport(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	vs, _ := NewVaultStore("pass")
@@ -198,8 +193,7 @@ func TestVaultDerivePassphraseFromToken(t *testing.T) {
 
 func TestVaultHTTPEndpoints(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	vs, err := NewVaultStore("http-test")

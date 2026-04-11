@@ -192,7 +192,11 @@ func TestTodoListManager_AutoConsume(t *testing.T) {
 }
 
 func TestTodoListHTTP_AddAndList(t *testing.T) {
-	mgr, _ := NewTodoListManager()
+	t.Setenv("HOME", t.TempDir())
+	mgr, err := NewTodoListManager()
+	if err != nil {
+		t.Fatalf("NewTodoListManager: %v", err)
+	}
 	defer mgr.ClearAll()
 
 	srv := &HTTPServer{todolistMgr: mgr}

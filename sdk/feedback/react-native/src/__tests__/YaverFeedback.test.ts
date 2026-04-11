@@ -1,10 +1,13 @@
 import { YaverFeedback } from '../YaverFeedback';
 
-// Mock react-native DeviceEventEmitter
+// Mock react-native: DeviceEventEmitter for event dispatch + Platform so
+// ShakeDetector.start() can branch on iOS without hitting a real RN runtime.
 jest.mock('react-native', () => ({
   DeviceEventEmitter: {
     emit: jest.fn(),
+    addListener: jest.fn(() => ({ remove: jest.fn() })),
   },
+  Platform: { OS: 'ios' },
 }));
 
 // Mock Discovery
