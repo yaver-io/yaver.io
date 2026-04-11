@@ -173,6 +173,28 @@ type LoopShip struct {
 	Branch       string `yaml:"branch,omitempty" json:"branch,omitempty"`               // default "main"
 	CommitPrefix string `yaml:"commit_prefix,omitempty" json:"commit_prefix,omitempty"` // default "yaver-loop:"
 	Deploy       string `yaml:"deploy,omitempty" json:"deploy,omitempty"`               // shell command
+	// ReleaseTrain gates the Deploy step so the loop only ships after
+	// N consecutive green kicks and stays under the daily TestFlight
+	// budget. If unset / disabled, Deploy runs on every done status
+	// like before.
+	ReleaseTrain LoopReleaseTrain `yaml:"release_train,omitempty" json:"release_train,omitempty"`
+}
+
+// LoopReleaseTrain controls how aggressively a loop ships. The defaults
+// give a solo dev a "fix three things green, then cut a build" cadence
+// without them having to think about it.
+type LoopReleaseTrain struct {
+	// N is the number of consecutive green iterations required before
+	// Deploy runs. 0 = disabled (runs on every done status — old
+	// behavior). Typical value: 3.
+	N int `yaml:"n,omitempty" json:"n,omitempty"`
+	// Paused is a kill-switch the dev flips when they don't want the
+	// loop to cut builds — e.g. during a manual QA day. `yaver loop
+	// release-train pause <name>` toggles it.
+	Paused bool `yaml:"paused,omitempty" json:"paused,omitempty"`
+	// Target labels what the deploy command ships to, used only for
+	// log output. "testflight" / "playstore" / "web" / etc.
+	Target string `yaml:"target,omitempty" json:"target,omitempty"`
 }
 
 type LoopBudget struct {
@@ -234,6 +256,12 @@ type LoopState struct {
 	// generated ideas.json from an ideas-mode kick. Populated by
 	// runIdeasKick and read by the mobile Auto Dev tab over HTTP.
 	LastIdeasPath string `json:"lastIdeasPath,omitempty"`
+
+	// GreenRunSinceLastDeploy tracks how many consecutive green
+	// iterations have happened since the last successful deploy.
+	// Release-train gating in phaseDeploy checks this against
+	// Spec.Ship.ReleaseTrain.N and resets it on a successful ship.
+	GreenRunSinceLastDeploy int `json:"greenRunSinceLastDeploy"`
 }
 
 // rollBudgetDay zeroes the daily counters if the current UTC day is
@@ -1259,6 +1287,9 @@ func kickLoopOnce(ctx context.Context, name string) (*LoopState, *IterationResul
 	case "stuck":
 		l.Status = LoopStatusStuck
 		l.ConsecutiveStuck++
+		// Broken kicks reset the release train so it takes N fresh
+		// greens before we ship again.
+		l.GreenRunSinceLastDeploy = 0
 		if l.Spec.Budget.StopAfterConsecutiveStuck > 0 &&
 			l.ConsecutiveStuck >= l.Spec.Budget.StopAfterConsecutiveStuck {
 			l.Status = LoopStatusPaused
@@ -1267,11 +1298,13 @@ func kickLoopOnce(ctx context.Context, name string) (*LoopState, *IterationResul
 		l.Status = LoopStatusStopped
 	case "needs_human":
 		l.Status = LoopStatusNeedsHuman
+		l.GreenRunSinceLastDeploy = 0
 	case "budget_hit":
 		l.Status = LoopStatusBudgetHit
 	case "failed":
 		l.Status = LoopStatusStuck
 		l.ConsecutiveStuck++
+		l.GreenRunSinceLastDeploy = 0
 	default:
 		l.Status = LoopStatusIdle
 	}
