@@ -95,34 +95,28 @@ last handoff" below).
   re-runs until green / stuck / max kicks. Spec field `test:
   {root, retry_flake, headful}`. Tested end-to-end in the agent
   suite.
+- **Session-limits tracker** — new `loop_session.go`. Before every
+  kick, `pickRunnerWithinLimits` checks the current runner's
+  wall-clock usage inside its provider window (from
+  `defaultProviderLimits`). Over the soft cap → swap in the first
+  runner from `think.fallback` that still has headroom, or yield
+  with `status=budget_hit`. After every kick,
+  `recordKickUsage` charges the runner that ran. File is
+  atomically written to `~/.yaver/loops/<name>/session_usage.json`
+  so scheduler subprocesses persist their usage.
+- **Aider runner** — `phaseThink` dispatches to `spawnAider` on
+  `think.runner: aider`. Same JSON contract and shared
+  `buildLoopPrompt` as Claude and Codex; uses `--yes-always
+  --no-git --message` for autonomous one-shot runs so our
+  phaseCommit stays the single commit path.
 
 ## Gaps, ordered by value
 
-### 1. Session-limits tracker runtime
-`think.respect_session_limits` field is parsed but nothing enforces
-it. Claude Code's 5h rolling window shared with interactive use
-needs to be tracked so the loop yields during active hours.
-
-Sketch:
-- Per-provider in-memory counter keyed by provider name
-- Tick counter on each kick: record tokens spent (parse claude's
-  stdout for its own cost reporting, or estimate from prompt+response
-  length)
-- Soft cap: default 80% of `ProviderLimits.SessionWindow` tokens
-- Before each kick in `runDevelopLoop`, check
-  `providerUsage[runner] > soft_cap * session_budget` — if yes,
-  either fall back to the next runner in `think.fallback` or
-  terminate with `budget_hit`
-- Persist the counter to `~/.yaver/loops/<name>/session_usage.json`
-
-### 2. aider / ollama runner support
-Claude and Codex are wired. Aider is ~50 lines (subprocess, same
-JSON contract). Ollama is slightly bigger because it needs a local
-HTTP client to the ollama daemon instead of a subprocess.
-
-With Claude + Codex already working, `think.fallback: [claude,
-codex]` already cycles correctly on rate-limit failures — aider
-and ollama are additive, not blocking.
+### 1. ollama runner
+Claude, Codex, and Aider are wired. Ollama still needs a
+small subprocess wrapper that POSTs to `/api/generate` on the
+local ollama daemon and maps the response to `AIResponse`.
+Additive, not blocking — the fallback chain already cycles.
 
 ## Quick verification commands
 

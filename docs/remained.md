@@ -24,7 +24,13 @@ Status at the time this was written:
 
 | # | Item | Why it matters | Effort |
 |---|---|---|---|
-| 1 | **iOS Simulator tap-by-selector via WDA (one-command install)** | Today `target: ios-sim` boots the sim, installs the app, launches it, and takes screenshots, but taps only work by coordinate. Selector taps need WebDriverAgent running on :8100. `testkit/driver_wda.go` already speaks WDA correctly (Click / SendKeys / Screenshot / findElement with predicate + class-chain + accessibility-id strategies). What's missing is a `yaver install wda` one-liner that downloads or builds a pre-signed WebDriverAgent.app + stands it up against the booted simulator so the dev never has to open Xcode. | ~1 day |
+<!-- #1 landed: `yaver install wda` in wda_cmd.go locates the WDA
+xcodeproj inside a global `npm install -g appium-xcuitest-driver`,
+runs xcodebuild build-for-testing against the booted simulator,
+launches WebDriverAgentRunner in the background, and polls
+http://127.0.0.1:8100/status until it answers. `yaver install list`
+now shows a wda row with live status. -->
+
 <!-- #2 landed: FrameSequencePlayer component in runs.tsx reads a
 dir via the new /testkit/frames endpoint and scrubs through the
 PNGs at the manifest's fps. Backend screencast wiring
@@ -76,14 +82,22 @@ testkit/spec.go. Test: `TestStepIncludeExpandsInPlace`. -->
 
 ## Ranked by what to ship next
 
-### One-evening option
-1. **#1 WDA install helper** (1 day) — kills the last iOS selector gap.
+### What's left after this session
 
-### One-week option
-1. #1 WDA install helper
-2. Wire testkit/video.go StartScreencast + FlushFrames into
-   runner.go so the new FrameSequencePlayer actually has
-   footage to play.
+- Nice-to-haves #6–10 in the table above (network throttling,
+  retry-on-LLM-rate-limit, pinch-zoom, HAR response bodies,
+  HTML report).
+- #11 autonomous loop → testkit end-to-end integration. The
+  `FixHandler` seam and `AutoFixLog` are still waiting for a
+  proper handler — the loop-mode Auto Test path uses its own
+  shortcut (synthetic `HeuristicReport` → `phaseThink`), not
+  the `testkit.FixHandler` seam.
+- Everything "explicitly kept out of scope" above stays out of
+  scope.
+
+After that the feature matrix for the solo-RN-dev-with-own-hardware
+persona is **fully green** against every paid SaaS row that isn't a
+device cloud. The $0/mo target holds.
 
 After that the feature matrix for the solo-RN-dev-with-own-hardware
 persona is **fully green** against every paid SaaS row that isn't a
