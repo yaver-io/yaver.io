@@ -143,6 +143,30 @@ irm https://yaver.io/install.ps1 | iex          # Quick install (Windows PowerSh
 yaver auth
 ```
 
+### Headless machines (Mac mini upstairs, Hetzner VPS, Linux box over SSH)
+
+You don't need a browser on the headless machine. Pick one:
+
+```bash
+# Option A — fresh OAuth via QR (Apple / Google / Microsoft)
+yaver auth --headless
+# → prints a QR code pointing at yaver.io/auth/device
+# → scan it with your phone camera, sign in with whatever provider,
+#   the headless agent polls and receives the token.
+
+# Option B — copy an existing signed-in token over the P2P relay
+# (fastest path — no OAuth dance at all)
+yaver auth pair
+# → prints a 6-char pairing code + QR code.
+# On a machine that's already signed in (your laptop), run:
+yaver auth send <PAIR-CODE> <target-url-from-the-qr>
+# Or scan the QR from the Yaver mobile app → More → Pair device.
+```
+
+Both paths work the same for Apple, Google, and Microsoft — the web
+sign-in page at `yaver.io/auth/device` accepts all three and hands
+the resulting token back through the device-code flow.
+
 ### All Installation Methods
 
 | Method | Command |

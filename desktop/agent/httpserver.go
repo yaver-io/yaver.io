@@ -165,6 +165,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/feedback-board", s.auth(s.handleFeedbackBoard))
 	mux.HandleFunc("/feedback-board/", s.auth(s.handleFeedbackBoard))
 	mux.HandleFunc("/feedback-board/public", s.authSDK(s.handleFeedbackBoardPublic))
+	// Auth pair endpoints are intentionally UNAUTHENTICATED —
+	// the pairing code (10-min window, single use) is the secret.
+	mux.HandleFunc("/auth/pair/info", s.handlePairInfo)
+	mux.HandleFunc("/auth/pair/submit", s.handlePairSubmit)
 	mux.HandleFunc("/analytics", s.auth(s.handleAnalytics))
 	mux.HandleFunc("/session/list", s.auth(s.handleSessionList))
 	mux.HandleFunc("/session/export", s.auth(s.handleSessionExport))

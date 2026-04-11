@@ -328,6 +328,23 @@ Run 'yaver <command> -h' for command-specific options.
 // ---------------------------------------------------------------------------
 
 func runAuth(args []string) {
+	// Subcommand dispatch: `yaver auth pair` / `yaver auth send`
+	// handle the QR-based P2P token forwarding flow for cases
+	// where another yaver machine is already signed in and we
+	// want to skip the OAuth roundtrip entirely. The remaining
+	// args path below handles the normal browser / device-code
+	// flows for fresh logins.
+	if len(args) > 0 {
+		switch args[0] {
+		case "pair":
+			runAuthPair(args[1:])
+			return
+		case "send":
+			runAuthSend(args[1:])
+			return
+		}
+	}
+
 	fs := flag.NewFlagSet("auth", flag.ExitOnError)
 	convexURL := fs.String("convex-url", defaultConvexSiteURL, "Convex site URL")
 	token := fs.String("token", "", "Provide token directly (skip browser)")

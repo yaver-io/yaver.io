@@ -113,7 +113,11 @@ const faqs = [
       },
       {
         q: "Can I use Yaver on a headless server?",
-        a: "Yes. Install the CLI, run `yaver auth` once (or use `yaver auth --token <token>` for headless), then `yaver serve`. Combined with auto-boot, a Mac Mini or Linux server becomes a persistent AI dev machine you control from your phone.",
+        a: "Yes. Three auth paths for headless machines: (1) `yaver auth --headless` runs the OAuth device-code flow — prints a QR code, you scan it with your phone camera, sign in with Apple/Google/Microsoft, and the headless machine polls and receives the token. (2) `yaver auth pair` starts a P2P pairing window, prints a short code + QR, and waits for another signed-in machine to forward its token over the relay — no second OAuth dance. On the source machine run `yaver auth send <CODE> <URL>`. (3) `yaver auth --token <token>` if you already have a token from another device. Combined with auto-boot, a Mac mini or Linux server becomes a persistent AI dev machine you control from your phone — no browser ever runs on the headless box.",
+      },
+      {
+        q: "My Mac mini is upstairs and I'm on my laptop — how do I sign in without clicking through Apple OAuth on the Mac mini?",
+        a: "SSH into the Mac mini and run `yaver auth pair`. It prints a QR code + 6-character code. On your laptop (already signed in), run `yaver auth send <CODE> <url-from-the-QR>` or open the Yaver mobile app → More → Pair device → scan the QR. Your laptop's token flows over the existing P2P relay to the Mac mini in one shot. No second OAuth required. Works identically for Apple, Google, and Microsoft sign-in because the token the source is forwarding is already session-level, not provider-level.",
       },
     ],
   },

@@ -199,6 +199,11 @@ function DeviceCodeContent() {
         <p className="mt-6 text-center text-xs text-surface-600">
           Run <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-400">yaver auth --headless</code> to get a code
         </p>
+        <p className="mt-2 text-center text-xs text-surface-600">
+          Already signed in on another machine? Skip the OAuth flow entirely:<br />
+          <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-400">yaver auth pair</code> on the headless box,
+          then <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-400">yaver auth send &lt;code&gt; &lt;url&gt;</code> from the signed-in machine.
+        </p>
       </div>
     </div>
   );
