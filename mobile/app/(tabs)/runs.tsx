@@ -21,12 +21,14 @@ import {
   quicClient,
   TestkitFlakeStats,
   TestkitHistoryEntry,
+  TestkitNotification,
+  TestkitPassMarker,
   TestkitRunStatus,
   TestkitSpec,
   TestkitSuiteResult,
 } from "../../src/lib/quic";
 
-type Tab = "specs" | "history" | "flake";
+type Tab = "specs" | "history" | "flake" | "alerts";
 
 export default function RunsScreen() {
   const c = useColors();
@@ -38,6 +40,8 @@ export default function RunsScreen() {
   const [status, setStatus] = useState<TestkitRunStatus | null>(null);
   const [history, setHistory] = useState<TestkitHistoryEntry[]>([]);
   const [flake, setFlake] = useState<TestkitFlakeStats[]>([]);
+  const [alerts, setAlerts] = useState<TestkitNotification[]>([]);
+  const [markers, setMarkers] = useState<TestkitPassMarker[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [starting, setStarting] = useState(false);
   const [headful, setHeadful] = useState(false);
@@ -48,16 +52,20 @@ export default function RunsScreen() {
     if (!isConnected) return;
     setRefreshing(true);
     try {
-      const [s, st, h, f] = await Promise.all([
+      const [s, st, h, f, a, m] = await Promise.all([
         quicClient.testkitListSpecs(),
         quicClient.testkitRunStatus(),
         quicClient.testkitHistory(),
         quicClient.testkitFlakeReport(),
+        quicClient.testkitNotifications(),
+        quicClient.testkitMarkers(),
       ]);
       setSpecs(s);
       setStatus(st);
       setHistory(h);
       setFlake(f);
+      setAlerts(a);
+      setMarkers(m);
     } finally {
       setRefreshing(false);
     }
@@ -122,20 +130,27 @@ export default function RunsScreen() {
     <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
       {/* Tabs */}
       <View style={[styles.tabBar, { borderColor: c.border }]}>
-        {(["specs", "history", "flake"] as Tab[]).map((t) => (
-          <Pressable
-            key={t}
-            onPress={() => setTab(t)}
-            style={[
-              styles.tabButton,
-              tab === t && { borderBottomColor: c.accent, borderBottomWidth: 2 },
-            ]}
-          >
-            <Text style={{ color: tab === t ? c.textPrimary : c.textMuted, fontWeight: "600" }}>
-              {t === "specs" ? "Specs" : t === "history" ? "Runs" : "Flake"}
-            </Text>
-          </Pressable>
-        ))}
+        {(["specs", "history", "flake", "alerts"] as Tab[]).map((t) => {
+          const label =
+            t === "specs" ? "Specs" :
+            t === "history" ? "Runs" :
+            t === "flake" ? "Flake" : "Alerts";
+          const badge = t === "alerts" && alerts.length > 0 ? ` (${alerts.length})` : "";
+          return (
+            <Pressable
+              key={t}
+              onPress={() => setTab(t)}
+              style={[
+                styles.tabButton,
+                tab === t && { borderBottomColor: c.accent, borderBottomWidth: 2 },
+              ]}
+            >
+              <Text style={{ color: tab === t ? c.textPrimary : c.textMuted, fontWeight: "600" }}>
+                {label}{badge}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
 
       {/* Run controls */}
@@ -241,6 +256,58 @@ export default function RunsScreen() {
                   ✗ {s.name}: {s.error || "failed"}
                 </Text>
               ))}
+            </View>
+          )}
+        />
+      )}
+
+      {tab === "alerts" && (
+        <FlatList
+          data={alerts}
+          keyExtractor={(it) => it.id}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.textPrimary} />}
+          contentContainerStyle={{ padding: 12 }}
+          ListHeaderComponent={
+            markers.length > 0 ? (
+              <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginBottom: 12 }]}>
+                <Text style={[styles.cardTitle, { color: "#4ade80" }]}>
+                  ✓ {markers.length} SHA{markers.length === 1 ? "" : "s"} already passed locally
+                </Text>
+                {markers.slice(0, 3).map((m) => (
+                  <Text key={m.sha} style={[styles.cardSub, { color: c.textMuted }]}>
+                    {m.sha.slice(0, 7)} {m.branch ? `· ${m.branch}` : ""} · {m.total} specs
+                  </Text>
+                ))}
+                <Text style={[styles.cardSub, { color: c.textMuted, marginTop: 4, fontStyle: "italic" }]}>
+                  GH Actions can short-circuit these via `yaver test sync --check`
+                </Text>
+              </View>
+            ) : null
+          }
+          ListEmptyComponent={
+            <Text style={[styles.muted, { color: c.textMuted, textAlign: "center", marginTop: 32 }]}>
+              No failure alerts. The agent posts here whenever a spec breaks.
+            </Text>
+          }
+          renderItem={({ item }) => (
+            <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+              <Text style={[styles.cardTitle, { color: "#f87171" }]}>
+                ✗ {item.spec_name}
+              </Text>
+              <Text style={[styles.cardSub, { color: c.textMuted }]}>
+                {new Date(item.created_at).toLocaleString()}
+                {item.git_branch ? ` · ${item.git_branch}` : ""}
+              </Text>
+              {item.error && (
+                <Text style={[styles.failLine, { color: c.textPrimary }]} numberOfLines={4}>
+                  {item.error}
+                </Text>
+              )}
+              {item.screenshot && (
+                <Text style={[styles.cardSub, { color: c.textMuted, marginTop: 4 }]} numberOfLines={1}>
+                  📷 {item.screenshot}
+                </Text>
+              )}
             </View>
           )}
         />

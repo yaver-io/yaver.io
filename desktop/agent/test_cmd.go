@@ -416,6 +416,12 @@ Flags:`)
 	if suite.Passed() {
 		_ = testkit.WritePassMarker(abs, gitSHA(abs), gitBranch(abs), runtime.GOOS,
 			len(suite.Results), suite.FinishedAt.Sub(suite.StartedAt))
+	} else {
+		// Publish failure-only notifications into the local stream so
+		// the mobile app sees them on next poll. The webhook (if
+		// YAVER_TEST_NOTIFY_URL is set) fires inside Append.
+		nc := testkit.NewNotificationCenter(testkit.NotificationsPathFor(abs), 100)
+		testkit.PublishSuiteFailures(nc, suite, gitSHA(abs), gitBranch(abs))
 	}
 
 	suite.WriteTTY(os.Stdout)

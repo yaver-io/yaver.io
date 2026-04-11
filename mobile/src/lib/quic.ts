@@ -2235,6 +2235,57 @@ export class QuicClient {
       return [];
     }
   }
+
+  /** Failure-only notifications from the local stream. Mobile polls this. */
+  async testkitNotifications(root?: string): Promise<TestkitNotification[]> {
+    try {
+      const url = root
+        ? `${this.baseUrl}/testkit/notifications?root=${encodeURIComponent(root)}`
+        : `${this.baseUrl}/testkit/notifications`;
+      const res = await fetch(url, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.notifications || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Local pass markers — "this SHA already passed locally." */
+  async testkitMarkers(root?: string): Promise<TestkitPassMarker[]> {
+    try {
+      const url = root
+        ? `${this.baseUrl}/testkit/markers?root=${encodeURIComponent(root)}`
+        : `${this.baseUrl}/testkit/markers`;
+      const res = await fetch(url, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.markers || [];
+    } catch {
+      return [];
+    }
+  }
+}
+
+export interface TestkitNotification {
+  id: string;
+  kind: "test_failed" | "test_recovered";
+  spec_name: string;
+  spec_path: string;
+  error?: string;
+  screenshot?: string;
+  git_sha?: string;
+  git_branch?: string;
+  created_at: string;
+}
+
+export interface TestkitPassMarker {
+  sha: string;
+  branch?: string;
+  passed_at: string;
+  host_os: string;
+  total: number;
+  duration_s: number;
 }
 
 export interface TestkitSpec {

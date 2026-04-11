@@ -197,6 +197,11 @@ func (s *HTTPServer) handleTestkitRun(w http.ResponseWriter, r *http.Request) {
 			// Append to local history (P2P only — never sent anywhere).
 			hist := &testkit.History{Path: testkit.HistoryPathFor(root)}
 			_ = hist.AppendSuite(suite, "", "", runtime.GOOS)
+			// Failure-only notifications: write into the local center
+			// so the mobile app sees them next poll, and fire the
+			// optional webhook for users who configured one.
+			nc := testkit.NewNotificationCenter(testkit.NotificationsPathFor(root), 100)
+			testkit.PublishSuiteFailures(nc, suite, "", "")
 			testkitGlobal.mu.Lock()
 			testkitGlobal.lastSuite = suite
 			testkitGlobal.running = false
@@ -232,6 +237,42 @@ func (s *HTTPServer) handleTestkitHistory(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"entries": entries,
+	})
+}
+
+// handleTestkitNotifications returns the local notification stream
+// (failure-only). Mobile app polls this every few seconds. Source of
+// truth is `<spec>/.yaver-test-results/notifications.jsonl` — fully
+// local, no third-party push provider involved.
+func (s *HTTPServer) handleTestkitNotifications(w http.ResponseWriter, r *http.Request) {
+	root, err := resolveSpecRoot(r.URL.Query().Get("root"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	nc := testkit.NewNotificationCenter(testkit.NotificationsPathFor(root), 100)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"notifications": nc.List(50),
+	})
+}
+
+// handleTestkitMarkers exposes the local pass markers so the mobile
+// app's "Local CI" tab can show "✓ this SHA already passed locally."
+func (s *HTTPServer) handleTestkitMarkers(w http.ResponseWriter, r *http.Request) {
+	root, err := resolveSpecRoot(r.URL.Query().Get("root"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	markers, err := testkit.LatestPassMarkers(root, 20)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"markers": markers,
 	})
 }
 

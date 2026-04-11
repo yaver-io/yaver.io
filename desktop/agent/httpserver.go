@@ -158,6 +158,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/testkit/run", s.auth(s.handleTestkitRun))
 	mux.HandleFunc("/testkit/history", s.auth(s.handleTestkitHistory))
 	mux.HandleFunc("/testkit/flake", s.auth(s.handleTestkitFlake))
+	mux.HandleFunc("/testkit/notifications", s.auth(s.handleTestkitNotifications))
+	mux.HandleFunc("/testkit/markers", s.auth(s.handleTestkitMarkers))
 
 	// Feedback (visual bug reports from device testing) — SDK-accessible
 	mux.HandleFunc("/feedback", s.authSDK(s.handleFeedback))
