@@ -31,6 +31,13 @@ type Config struct {
 	WebhookSecret       string              `json:"webhook_secret,omitempty"`
 	AnalyticsWebhookURL string              `json:"analytics_webhook_url,omitempty"`
 	RateLimit           *RateLimitConfig    `json:"rate_limit,omitempty"`
+
+	// Machine-level monitors (disk-health, peer heartbeat)
+	// run on every serve by default. Each can be individually
+	// disabled in config for devs who don't want extra
+	// goroutines or who've wired the same checks elsewhere.
+	DisableDiskHealth bool `json:"disable_disk_health,omitempty"`
+	DisableHeartbeatWatcher bool `json:"disable_heartbeat_watcher,omitempty"`
 	HAURL         string              `json:"ha_url,omitempty"`
 	HAToken       string              `json:"ha_token,omitempty"`
 	AllowedIPs    []string            `json:"allowed_ips,omitempty"`     // IP allowlist CIDRs

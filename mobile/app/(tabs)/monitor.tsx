@@ -34,13 +34,15 @@ import {
   type ErrorRecord,
   type ErrorsListResponse,
   type LogEntry,
+  type MachineHealth,
+  type PeerState,
   type ReleaseManifest,
   type TrackEvent,
   type YaverFlag,
   type YaverMonitor,
 } from "../../src/lib/quic";
 
-type Section = "errors" | "releases" | "uptime" | "events" | "flags" | "logs";
+type Section = "errors" | "releases" | "machine" | "uptime" | "events" | "flags" | "logs";
 
 export default function MonitorScreen() {
   const c = useColors();
@@ -59,7 +61,7 @@ export default function MonitorScreen() {
       </View>
 
       <View style={[styles.tabs, { borderBottomColor: c.border }]}>
-        {(["errors", "releases", "logs", "uptime", "events", "flags"] as Section[]).map((s) => (
+        {(["errors", "machine", "releases", "logs", "uptime", "events", "flags"] as Section[]).map((s) => (
           <Pressable key={s} onPress={() => setSection(s)} style={styles.tabBtn}>
             <Text
               style={[
@@ -96,6 +98,8 @@ export default function MonitorScreen() {
         <EventsPane />
       ) : section === "logs" ? (
         <LogsPane />
+      ) : section === "machine" ? (
+        <MachinePane />
       ) : (
         <FlagsPane />
       )}
@@ -766,6 +770,191 @@ function LogsPane() {
         )}
       />
     </View>
+  );
+}
+
+// ── Machine health (disk + SMART + peer heartbeat) ────────────────
+
+function MachinePane() {
+  const c = useColors();
+  const [health, setHealth] = useState<MachineHealth | null>(null);
+  const [peers, setPeers] = useState<PeerState[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const [h, p] = await Promise.all([
+        quicClient.machineHealth(),
+        quicClient.machinePeers(),
+      ]);
+      setHealth(h);
+      setPeers(p);
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 30_000);
+    return () => clearInterval(id);
+  }, [refresh]);
+
+  return (
+    <ScrollView
+      contentContainerStyle={{ padding: 12 }}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
+    >
+      {health == null ? (
+        <View style={styles.empty}>
+          <Text style={[styles.emptyTitle, { color: c.textPrimary }]}>Warming up</Text>
+          <Text style={[styles.emptyBody, { color: c.textSecondary }]}>
+            The agent runs a disk + SMART scan every 10 minutes. First snapshot lands within a few seconds of boot.
+          </Text>
+        </View>
+      ) : (
+        <>
+          <Text style={[styles.sectionLabel, { color: c.textSecondary }]}>Host</Text>
+          <View style={[styles.card, { borderColor: c.border }]}>
+            <Text style={[styles.cardName, { color: c.textPrimary }]}>{health.hostname}</Text>
+            <Text style={[styles.cardMeta, { color: c.textSecondary }]}>
+              {health.os} · last scan {timeAgo(health.updatedAt)}
+            </Text>
+            {health.alerts && health.alerts.length > 0 ? (
+              <View style={{ marginTop: 6 }}>
+                {health.alerts.map((a, i) => (
+                  <Text
+                    key={i}
+                    style={[styles.cardMeta, { color: "#ef4444", fontWeight: "600" }]}
+                  >
+                    ⚠ {a}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
+          </View>
+
+          <Text style={[styles.sectionLabel, { color: c.textSecondary, marginTop: 14 }]}>Filesystems</Text>
+          {health.filesystems.length === 0 ? (
+            <Text style={[styles.cardMeta, { color: c.textSecondary }]}>(no mounts reported)</Text>
+          ) : (
+            health.filesystems.map((f) => {
+              const tone =
+                f.usedPct >= 95
+                  ? "#ef4444"
+                  : f.usedPct >= 85
+                    ? "#eab308"
+                    : "#22c55e";
+              return (
+                <View key={f.mount} style={[styles.card, { borderColor: c.border }]}>
+                  <View style={styles.cardHeader}>
+                    <Text style={[styles.cardName, { color: c.textPrimary, flex: 1 }]} numberOfLines={1}>
+                      {f.mount}
+                    </Text>
+                    <Text style={[styles.cardStatus, { color: tone }]}>
+                      {Math.round(f.usedPct)}%
+                    </Text>
+                  </View>
+                  <Text style={[styles.cardMeta, { color: c.textSecondary }]}>
+                    {f.usedGb.toFixed(1)} GB used / {f.totalGb.toFixed(1)} GB total
+                    {f.fsType ? ` · ${f.fsType}` : ""}
+                  </Text>
+                  {/* Progress bar — inline so there's no image asset. */}
+                  <View style={{ height: 4, backgroundColor: "rgba(255,255,255,0.1)", borderRadius: 2, marginTop: 6 }}>
+                    <View
+                      style={{
+                        height: 4,
+                        width: `${Math.min(100, f.usedPct)}%`,
+                        backgroundColor: tone,
+                        borderRadius: 2,
+                      }}
+                    />
+                  </View>
+                </View>
+              );
+            })
+          )}
+
+          <Text style={[styles.sectionLabel, { color: c.textSecondary, marginTop: 14 }]}>Drives</Text>
+          {health.drives.length === 0 ? (
+            <Text style={[styles.cardMeta, { color: c.textSecondary }]}>
+              (no SMART data yet — `brew install smartmontools` on Linux to enable)
+            </Text>
+          ) : (
+            health.drives.map((d) => (
+              <View key={d.device} style={[styles.card, { borderColor: c.border }]}>
+                <View style={styles.cardHeader}>
+                  <Text style={[styles.cardName, { color: c.textPrimary, flex: 1 }]} numberOfLines={1}>
+                    {d.device}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.cardStatus,
+                      {
+                        color:
+                          d.health === "passed"
+                            ? "#22c55e"
+                            : d.health === "failing"
+                              ? "#ef4444"
+                              : c.textSecondary,
+                      },
+                    ]}
+                  >
+                    {d.health.toUpperCase()}
+                  </Text>
+                </View>
+                {d.model ? (
+                  <Text style={[styles.cardMeta, { color: c.textSecondary }]}>{d.model}</Text>
+                ) : null}
+                {(d.temperatureC || d.powerOnHours) ? (
+                  <Text style={[styles.cardMeta, { color: c.textSecondary, marginTop: 2 }]}>
+                    {d.temperatureC ? `${d.temperatureC}°C` : ""}
+                    {d.temperatureC && d.powerOnHours ? " · " : ""}
+                    {d.powerOnHours ? `${d.powerOnHours}h power-on` : ""}
+                  </Text>
+                ) : null}
+              </View>
+            ))
+          )}
+
+          <Text style={[styles.sectionLabel, { color: c.textSecondary, marginTop: 14 }]}>Peers</Text>
+          {peers.length === 0 ? (
+            <Text style={[styles.cardMeta, { color: c.textSecondary }]}>
+              (no other devices discovered yet)
+            </Text>
+          ) : (
+            peers.map((p) => (
+              <View key={p.deviceId} style={[styles.card, { borderColor: c.border }]}>
+                <View style={styles.cardHeader}>
+                  <Text style={[styles.cardName, { color: c.textPrimary, flex: 1 }]} numberOfLines={1}>
+                    {p.name || p.deviceId.slice(0, 8)}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.cardStatus,
+                      {
+                        color:
+                          p.state === "online"
+                            ? "#22c55e"
+                            : p.state === "offline"
+                              ? "#ef4444"
+                              : "#eab308",
+                      },
+                    ]}
+                  >
+                    {p.state}
+                  </Text>
+                </View>
+                <Text style={[styles.cardMeta, { color: c.textSecondary }]}>
+                  last seen {p.lastSeen ? timeAgo(p.lastSeen) : "never"}
+                </Text>
+              </View>
+            ))
+          )}
+        </>
+      )}
+    </ScrollView>
   );
 }
 
