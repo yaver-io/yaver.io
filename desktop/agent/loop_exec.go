@@ -836,10 +836,30 @@ func runSingleKick(ctx context.Context, l *LoopState, nudge string) *IterationRe
 	}
 	result.PatchCommit = sha
 
+	// Track the green run before the release-train check so the
+	// counter advances even on iterations the gate blocks from
+	// shipping.
+	if aiResp.Status == "done" {
+		l.GreenRunSinceLastDeploy++
+	}
+
 	if l.Spec.Ship.Deploy != "" && aiResp.Status == "done" {
-		if derr := phaseDeploy(watchCtx, l, workDir); derr != nil {
-			fmt.Fprintf(os.Stderr, "[loop %s] deploy phase failed (commit still landed): %v\n",
-				l.Spec.Name, derr)
+		if reason, ok := releaseTrainAllowsDeploy(l); !ok {
+			fmt.Fprintf(os.Stderr, "[loop %s] release train skipped deploy: %s\n",
+				l.Spec.Name, reason)
+		} else {
+			if derr := phaseDeploy(watchCtx, l, workDir); derr != nil {
+				fmt.Fprintf(os.Stderr, "[loop %s] deploy phase failed (commit still landed): %v\n",
+					l.Spec.Name, derr)
+			} else {
+				// Successful deploy resets the green counter and
+				// bumps today's TestFlight tally. rollBudgetDay is
+				// safe to call unconditionally — it only zeroes on
+				// a day change.
+				l.rollBudgetDay()
+				l.TestflightToday++
+				l.GreenRunSinceLastDeploy = 0
+			}
 		}
 	}
 
@@ -1190,35 +1210,26 @@ func phaseThink(ctx context.Context, l *LoopState, workDir string, report *Heuri
 	switch {
 	case runner == "claude-code" || runner == "claude":
 		return spawnClaudeCode(ctx, l, workDir, report, reportPath, nudge)
-	case runner == "codex" || runner == "aider" || strings.HasPrefix(runner, "ollama"):
-		return nil, fmt.Errorf("runner %q is not wired yet (claude-code is the only runner in this build)", runner)
+	case runner == "codex":
+		return spawnCodex(ctx, l, workDir, report, reportPath, nudge)
+	case runner == "aider" || strings.HasPrefix(runner, "ollama"):
+		return nil, fmt.Errorf("runner %q is not wired yet (claude-code and codex are the only runners in this build)", runner)
 	default:
 		return nil, fmt.Errorf("unknown runner %q", runner)
 	}
 }
 
-// spawnClaudeCode invokes the `claude` CLI in print mode with the
-// loop's effective prompt plus the heuristic report piped via stdin.
-// The expected contract: claude reads the prompt, makes at most one
-// edit, and emits a JSON AIResponse as the last line of its stdout.
-//
-// Wire is intentionally thin — no special MCP tricks, no fancy flags.
-// If the claude CLI flags change, only this function needs a tweak.
-func spawnClaudeCode(ctx context.Context, l *LoopState, workDir string, report *HeuristicReport, reportPath string, nudge string) (*AIResponse, error) {
-	if _, err := exec.LookPath("claude"); err != nil {
-		return nil, fmt.Errorf("`claude` CLI not on PATH — install Claude Code from https://claude.com/product/claude-code")
-	}
-
+// buildLoopPrompt composes the full text the AI runner sees for one
+// kick: the dev's feature prompt, the heuristic report as JSON, any
+// nudge from the previous kick, and the mode-specific contract. Shared
+// between spawnClaudeCode and spawnCodex so both runners see identical
+// input and the dev can swap runners via `think.fallback` without the
+// prompt shape changing underneath them.
+func buildLoopPrompt(l *LoopState, workDir string, report *HeuristicReport, nudge string) (string, error) {
 	prompt, err := effectivePrompt(l, workDir)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-
-	// Build the full prompt: system prompt + heuristic report + nudge
-	// (if the previous kick left one) + contract reminder. The prompt
-	// source already documents the output JSON format; the reminder is
-	// belt-and-braces so single-shot runs with untrusted prompts still
-	// get something parseable.
 	reportJSON, _ := json.MarshalIndent(report, "", "  ")
 	parts := []string{
 		prompt,
@@ -1248,7 +1259,24 @@ func spawnClaudeCode(ctx context.Context, l *LoopState, workDir string, report *
 				"Emit the JSON status contract as the last line of your response. "+
 				"Do not ask clarifying questions — make a judgment call and proceed.")
 	}
-	fullPrompt := strings.Join(parts, "")
+	return strings.Join(parts, ""), nil
+}
+
+// spawnClaudeCode invokes the `claude` CLI in print mode with the
+// loop's effective prompt plus the heuristic report piped via stdin.
+// The expected contract: claude reads the prompt, makes at most one
+// edit, and emits a JSON AIResponse as the last line of its stdout.
+//
+// Wire is intentionally thin — no special MCP tricks, no fancy flags.
+// If the claude CLI flags change, only this function needs a tweak.
+func spawnClaudeCode(ctx context.Context, l *LoopState, workDir string, report *HeuristicReport, reportPath string, nudge string) (*AIResponse, error) {
+	if _, err := exec.LookPath("claude"); err != nil {
+		return nil, fmt.Errorf("`claude` CLI not on PATH — install Claude Code from https://claude.com/product/claude-code")
+	}
+	fullPrompt, err := buildLoopPrompt(l, workDir, report, nudge)
+	if err != nil {
+		return nil, err
+	}
 
 	// Use `claude --print` for non-interactive mode. Feed the prompt
 	// via stdin so we don't run into argv length limits.
@@ -1282,6 +1310,44 @@ func spawnClaudeCode(ctx context.Context, l *LoopState, workDir string, report *
 		return nil, fmt.Errorf("claude CLI returned error: %w", err)
 	}
 
+	return parseAIResponse(string(out))
+}
+
+// spawnCodex invokes the `codex` CLI in non-interactive mode with the
+// same JSON contract we use for Claude. Matches the CLI's runner
+// config in tasks.go: `codex --quiet --full-auto <prompt>`. The prompt
+// is written to a sibling file and passed through stdin so we don't
+// hit argv length limits on long Auto Develop sessions.
+func spawnCodex(ctx context.Context, l *LoopState, workDir string, report *HeuristicReport, reportPath string, nudge string) (*AIResponse, error) {
+	if _, err := exec.LookPath("codex"); err != nil {
+		return nil, fmt.Errorf("`codex` CLI not on PATH — install OpenAI Codex to use this runner")
+	}
+	fullPrompt, err := buildLoopPrompt(l, workDir, report, nudge)
+	if err != nil {
+		return nil, err
+	}
+
+	// `codex --quiet --full-auto` suppresses chatter and auto-approves
+	// file writes — the same ergonomics `claude --print
+	// --permission-mode acceptEdits` gives us. Prompt goes on stdin
+	// via the `-` positional, which codex treats as "read from stdin".
+	cmd := exec.CommandContext(ctx, "codex", "--quiet", "--full-auto", "-")
+	cmd.Dir = workDir
+	cmd.Stdin = strings.NewReader(fullPrompt)
+	cmd.Stderr = os.Stderr
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 10 * time.Second
+
+	fmt.Fprintf(os.Stderr, "[loop %s] spawning codex CLI (prompt=%d chars, report=%d findings)...\n",
+		l.Spec.Name, len(fullPrompt), len(report.Findings))
+
+	out, err := cmd.Output()
+	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, fmt.Errorf("codex subprocess cancelled: %w", ctx.Err())
+		}
+		return nil, fmt.Errorf("codex CLI returned error: %w", err)
+	}
 	return parseAIResponse(string(out))
 }
 
@@ -1492,6 +1558,40 @@ func phaseDeploy(ctx context.Context, l *LoopState, workDir string) error {
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// releaseTrainAllowsDeploy returns (reason, true/false). If the train
+// is disabled (N == 0) the deploy always runs — backwards-compatible
+// with the old "run on every done status" behavior. Otherwise:
+//
+//  1. If paused, no deploy.
+//  2. If the green counter hasn't reached N, no deploy.
+//  3. If today's TestFlight budget is already spent, no deploy.
+//
+// A false return means the Deploy command is skipped this iteration;
+// the green counter still advances so the next iteration is closer
+// to shipping.
+func releaseTrainAllowsDeploy(l *LoopState) (string, bool) {
+	rt := l.Spec.Ship.ReleaseTrain
+	if rt.N <= 0 {
+		return "train disabled — N=0", true
+	}
+	if rt.Paused {
+		return "release train paused", false
+	}
+	// rollBudgetDay is idempotent — call it so the TestflightToday
+	// counter reflects the current UTC day before we compare.
+	l.rollBudgetDay()
+	if l.Spec.Budget.MaxTestFlightPerDay > 0 &&
+		l.TestflightToday >= l.Spec.Budget.MaxTestFlightPerDay {
+		return fmt.Sprintf("daily testflight budget exhausted (%d/%d)",
+			l.TestflightToday, l.Spec.Budget.MaxTestFlightPerDay), false
+	}
+	if l.GreenRunSinceLastDeploy < rt.N {
+		return fmt.Sprintf("waiting for %d consecutive green kicks (have %d)",
+			rt.N, l.GreenRunSinceLastDeploy), false
+	}
+	return "train armed — shipping", true
 }
 
 // --- git helpers -------------------------------------------------------
