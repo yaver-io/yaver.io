@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -13,6 +14,7 @@ import (
 	osexec "os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -6364,6 +6366,435 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 			return mcpToolError(err.Error())
 		}
 		return mcpToolJSON(res)
+	case "project_new_quick":
+		return s.mcpProjectNewQuick(call.Arguments)
+
+	case "yaver_onboard":
+		return mcpToolResult(yaverOnboardChecklist())
+
+	// --- Forms ---
+	case "form_list":
+		forms, _ := loadForms()
+		return mcpToolJSON(map[string]interface{}{"forms": forms})
+	case "form_create":
+		var f Form
+		json.Unmarshal(call.Arguments, &f)
+		if f.Name == "" {
+			return mcpToolError("name required")
+		}
+		f.ID = randomFormID()
+		f.CreatedAt = time.Now().UTC()
+		forms, _ := loadForms()
+		forms = append(forms, f)
+		if err := saveForms(forms); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(map[string]interface{}{"form": f, "submitUrl": "/forms/" + f.ID + "/submit"})
+	case "form_submissions":
+		var args struct{ ID string `json:"id"` }
+		json.Unmarshal(call.Arguments, &args)
+		subs, _ := readSubmissions(args.ID, 100)
+		return mcpToolJSON(map[string]interface{}{"submissions": subs})
+	case "form_delete":
+		var args struct{ ID string `json:"id"` }
+		json.Unmarshal(call.Arguments, &args)
+		forms, _ := loadForms()
+		out := forms[:0]
+		for _, f := range forms {
+			if f.ID != args.ID {
+				out = append(out, f)
+			}
+		}
+		_ = saveForms(out)
+		return mcpToolResult("deleted")
+
+	// --- Newsletter ---
+	case "newsletter_subscribers":
+		subs := loadSubscribers()
+		return mcpToolJSON(map[string]interface{}{
+			"subscribers": subs,
+			"counts": map[string]int{
+				"total":        len(subs),
+				"confirmed":    countByStatus(subs, "confirmed"),
+				"pending":      countByStatus(subs, "pending"),
+				"unsubscribed": countByStatus(subs, "unsubscribed"),
+			},
+		})
+	case "newsletter_create":
+		var c Campaign
+		json.Unmarshal(call.Arguments, &c)
+		if c.Subject == "" {
+			return mcpToolError("subject required")
+		}
+		c.ID = randomFormID()
+		c.Status = "draft"
+		c.CreatedAt = time.Now().UTC()
+		_ = saveCampaigns(append(loadCampaigns(), c))
+		return mcpToolJSON(map[string]interface{}{"campaign": c})
+	case "newsletter_send":
+		var args struct{ ID string `json:"id"` }
+		json.Unmarshal(call.Arguments, &args)
+		camps := loadCampaigns()
+		found := false
+		for i := range camps {
+			if camps[i].ID == args.ID && camps[i].Status == "draft" {
+				camps[i].Status = "sending"
+				_ = saveCampaigns(camps)
+				go broadcastCampaign(args.ID)
+				found = true
+				break
+			}
+		}
+		if !found {
+			return mcpToolError("campaign not found or already sent")
+		}
+		return mcpToolResult("broadcast started")
+	case "newsletter_compose_from_git":
+		var opts ComposeNewsletterOptions
+		json.Unmarshal(call.Arguments, &opts)
+		act, err := CollectGitActivity(opts)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		subject, draft := BuildNewsletterDraft(act, opts.Subject)
+		result := map[string]interface{}{"subject": subject, "draft": draft, "activity": act}
+		if opts.Execute {
+			prompt := BuildComposePrompt(act, draft, opts.Instructions)
+			if polished, err := runMailDraftInline(opts.Runner, prompt); err == nil {
+				result["draft"] = polished
+				draft = polished
+			}
+		}
+		if opts.SaveDraft {
+			camp := Campaign{ID: randomFormID(), Subject: subject, Body: draft, Status: "draft", CreatedAt: time.Now().UTC()}
+			_ = saveCampaigns(append(loadCampaigns(), camp))
+			result["campaignId"] = camp.ID
+		}
+		return mcpToolJSON(result)
+
+	// --- Jobs ---
+	case "jobs_list":
+		queue, _ := listJobs("queue")
+		dlq, _ := listJobs("dlq")
+		return mcpToolJSON(map[string]interface{}{"queue": queue, "dlq": dlq})
+	case "jobs_enqueue":
+		var args struct {
+			Handler     string          `json:"handler"`
+			Payload     json.RawMessage `json:"payload"`
+			DelaySec    int             `json:"delaySec"`
+			MaxAttempts int             `json:"maxAttempts"`
+			BackoffSec  int             `json:"backoffSec"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.Handler == "" {
+			return mcpToolError("handler required")
+		}
+		opts := []JobOption{}
+		if args.DelaySec > 0 {
+			opts = append(opts, WithDelay(time.Duration(args.DelaySec)*time.Second))
+		}
+		if args.MaxAttempts > 0 {
+			opts = append(opts, WithMaxAttempts(args.MaxAttempts))
+		}
+		if args.BackoffSec > 0 {
+			opts = append(opts, WithBackoffSec(args.BackoffSec))
+		}
+		j, err := EnqueueJob(args.Handler, json.RawMessage(args.Payload), opts...)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(map[string]interface{}{"job": j})
+	case "jobs_retry":
+		var args struct{ ID string `json:"id"` }
+		json.Unmarshal(call.Arguments, &args)
+		dlq, _ := listJobs("dlq")
+		for _, j := range dlq {
+			if j.ID == args.ID {
+				j.Attempts = 0
+				j.LastError = ""
+				j.RunAt = time.Now().UTC()
+				_ = removeJob("dlq", args.ID)
+				_ = writeJob("queue", &j)
+				return mcpToolResult("requeued")
+			}
+		}
+		return mcpToolError("job not in dlq")
+	case "jobs_cancel":
+		var args struct{ ID string `json:"id"` }
+		json.Unmarshal(call.Arguments, &args)
+		_ = removeJob("queue", args.ID)
+		return mcpToolResult("cancelled")
+
+	// --- Image + PDF ---
+	case "img_optimize":
+		var args struct {
+			Src  string `json:"src"`
+			Root string `json:"root"`
+			W    int    `json:"w"`
+			H    int    `json:"h"`
+			Fmt  string `json:"fmt"`
+			Q    int    `json:"q"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		u := fmt.Sprintf("/img?src=%s", args.Src)
+		if args.Root != "" {
+			u += "&root=" + args.Root
+		}
+		if args.W > 0 {
+			u += fmt.Sprintf("&w=%d", args.W)
+		}
+		if args.H > 0 {
+			u += fmt.Sprintf("&h=%d", args.H)
+		}
+		if args.Fmt != "" {
+			u += "&fmt=" + args.Fmt
+		}
+		if args.Q > 0 {
+			u += fmt.Sprintf("&q=%d", args.Q)
+		}
+		return mcpToolJSON(map[string]interface{}{"url": u})
+	case "pdf_render":
+		var opts PDFRenderOptions
+		json.Unmarshal(call.Arguments, &opts)
+		pdf, err := RenderPDF(opts)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(map[string]interface{}{
+			"size":   len(pdf),
+			"base64": base64.StdEncoding.EncodeToString(pdf),
+		})
+
+	// --- OAuth provider admin ---
+	case "oauth_client_list":
+		return mcpToolJSON(map[string]interface{}{"clients": loadOauthClients()})
+	case "oauth_client_create":
+		var args struct {
+			Name         string   `json:"name"`
+			RedirectUris []string `json:"redirectUris"`
+			Scopes       []string `json:"scopes"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.Name == "" || len(args.RedirectUris) == 0 {
+			return mcpToolError("name + redirectUris required")
+		}
+		secret := randomFormID() + randomFormID() + randomFormID()
+		hashed, _, _ := hashPassword(secret)
+		client := OAuthClient{
+			ID: randomFormID(), Secret: hashed, Name: args.Name,
+			RedirectURIs: args.RedirectUris, Scopes: args.Scopes,
+			CreatedAt: time.Now().UTC(),
+		}
+		oauthMu.Lock()
+		oauthClients = append(loadOauthClients(), client)
+		oauthMu.Unlock()
+		_ = saveOauthClients()
+		return mcpToolJSON(map[string]interface{}{
+			"client_id": client.ID, "client_secret": secret,
+			"note": "Secret is shown ONCE — save it now.",
+		})
+	case "oauth_user_list":
+		users := loadOauthUsers()
+		out := make([]map[string]interface{}, 0, len(users))
+		for _, u := range users {
+			out = append(out, map[string]interface{}{"id": u.ID, "email": u.Email, "name": u.Name})
+		}
+		return mcpToolJSON(map[string]interface{}{"users": out})
+	case "oauth_user_create":
+		var args struct {
+			Email, Name, Password string
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.Email == "" || args.Password == "" {
+			return mcpToolError("email + password required")
+		}
+		h, salt, _ := hashPassword(args.Password)
+		u := OAuthUser{ID: randomFormID(), Email: strings.ToLower(args.Email), Name: args.Name, Hash: h, Salt: salt, CreatedAt: time.Now().UTC()}
+		oauthMu.Lock()
+		oauthUsers = append(loadOauthUsers(), u)
+		oauthMu.Unlock()
+		_ = saveOauthUsers()
+		return mcpToolResult("user created")
+
+	// --- Mail ---
+	case "mail_inbox":
+		var opts MailFetchOptions
+		json.Unmarshal(call.Arguments, &opts)
+		msgs, err := FetchMail(opts)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(map[string]interface{}{"messages": msgs, "counts": countByClassification(msgs)})
+	case "mail_draft":
+		var args struct {
+			ID           string `json:"id"`
+			Provider     string `json:"provider"`
+			Instructions string `json:"instructions"`
+			Execute      bool   `json:"execute"`
+			Runner       string `json:"runner"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		all, err := FetchMail(MailFetchOptions{Provider: args.Provider, Folder: "inbox", Limit: 50})
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		var target MailMessage
+		var thread []MailMessage
+		for _, m := range all {
+			if m.ID == args.ID {
+				target = m
+			}
+		}
+		if target.ID == "" {
+			return mcpToolError("message not found in recent window")
+		}
+		for _, m := range all {
+			if m.ThreadID == target.ThreadID {
+				thread = append(thread, m)
+			}
+		}
+		sent, _ := FetchMail(MailFetchOptions{Provider: args.Provider, Folder: "sent", Limit: 10})
+		prompt := BuildDraftPrompt(target, thread, sent, args.Instructions)
+		result := map[string]interface{}{"target": target, "prompt": prompt}
+		if args.Execute {
+			if reply, err := runMailDraftInline(args.Runner, prompt); err == nil {
+				result["draft"] = reply
+			} else {
+				result["error"] = err.Error()
+			}
+		}
+		return mcpToolJSON(result)
+
+	// --- Shortener ---
+	case "short_list":
+		return mcpToolJSON(map[string]interface{}{"links": loadShortLinks()})
+	case "short_create":
+		var args struct{ URL, Code, Label string }
+		json.Unmarshal(call.Arguments, &args)
+		if args.URL == "" {
+			return mcpToolError("url required")
+		}
+		if args.Code == "" {
+			args.Code = randomShortCode()
+		}
+		links := loadShortLinks()
+		for _, l := range links {
+			if l.Code == args.Code {
+				return mcpToolError("code taken")
+			}
+		}
+		link := ShortLink{Code: args.Code, URL: args.URL, Label: args.Label, CreatedAt: time.Now().UTC()}
+		shortMu.Lock()
+		shortLinks = append(links, link)
+		_ = saveShortLinks()
+		shortMu.Unlock()
+		return mcpToolJSON(map[string]interface{}{"link": link, "publicUrl": "/s/" + link.Code})
+	case "short_clicks":
+		var args struct{ Code string }
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(map[string]interface{}{"code": args.Code})
+	case "short_delete":
+		var args struct{ Code string }
+		json.Unmarshal(call.Arguments, &args)
+		links := loadShortLinks()
+		out := links[:0]
+		for _, l := range links {
+			if l.Code != args.Code {
+				out = append(out, l)
+			}
+		}
+		shortMu.Lock()
+		shortLinks = out
+		_ = saveShortLinks()
+		shortMu.Unlock()
+		return mcpToolResult("deleted")
+
+	// --- Waitlist ---
+	case "waitlist_list":
+		list := loadWaitlist()
+		return mcpToolJSON(map[string]interface{}{"entries": list, "total": len(list)})
+	case "waitlist_leaderboard":
+		list := loadWaitlist()
+		top := make([]WaitlistEntry, 0, 10)
+		for _, e := range list {
+			if e.Invited > 0 {
+				top = append(top, e)
+			}
+		}
+		sort.Slice(top, func(i, j int) bool { return top[i].Invited > top[j].Invited })
+		if len(top) > 10 {
+			top = top[:10]
+		}
+		return mcpToolJSON(map[string]interface{}{"leaderboard": top})
+	case "waitlist_delete":
+		var args struct{ Email string }
+		json.Unmarshal(call.Arguments, &args)
+		list := loadWaitlist()
+		out := list[:0]
+		for _, e := range list {
+			if e.Email != args.Email {
+				out = append(out, e)
+			}
+		}
+		waitlistMu.Lock()
+		waitlistCache = out
+		_ = saveWaitlist()
+		waitlistMu.Unlock()
+		return mcpToolResult("deleted")
+
+	// --- Docs site ---
+	case "docs_config":
+		var cfg DocsConfig
+		json.Unmarshal(call.Arguments, &cfg)
+		if cfg.Path != "" {
+			_ = saveDocsConfig(&cfg)
+			scanDocs()
+		}
+		return mcpToolJSON(map[string]interface{}{"config": loadDocsConfig(), "tree": docsTree})
+	case "docs_list":
+		if docsIndex == nil {
+			scanDocs()
+		}
+		return mcpToolJSON(map[string]interface{}{"tree": docsTree, "config": loadDocsConfig()})
+	case "docs_search":
+		var args struct{ Q string }
+		json.Unmarshal(call.Arguments, &args)
+		if docsIndex == nil {
+			scanDocs()
+		}
+		q := strings.ToLower(args.Q)
+		hits := []map[string]interface{}{}
+		for slug, path := range docsIndex {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			if strings.Contains(strings.ToLower(string(data)), q) {
+				hits = append(hits, map[string]interface{}{"slug": slug, "title": prettyTitle(slug, path)})
+			}
+		}
+		return mcpToolJSON(map[string]interface{}{"hits": hits})
+
+	// --- Meetings ---
+	case "meeting_create":
+		var e EventType
+		json.Unmarshal(call.Arguments, &e)
+		if e.Slug == "" || e.Title == "" {
+			return mcpToolError("slug and title required")
+		}
+		if e.DurationMin <= 0 {
+			e.DurationMin = 30
+		}
+		e.CreatedAt = time.Now().UTC()
+		meetMu.Lock()
+		eventTypes = append(loadMeetings(), e)
+		_ = saveMeetings()
+		meetMu.Unlock()
+		return mcpToolJSON(map[string]interface{}{"eventType": e, "publicUrl": "/meet/" + e.Slug})
+	case "meeting_list":
+		return mcpToolJSON(map[string]interface{}{"eventTypes": loadMeetings()})
+	case "meeting_bookings":
+		return mcpToolJSON(map[string]interface{}{"bookings": loadBookings()})
 
 	default:
 		return mcpToolError("unknown tool: " + call.Name)
@@ -6589,6 +7020,198 @@ func (s *HTTPServer) mcpStatus() interface{} {
 }
 
 // yaverHelpText returns help documentation for the given topic.
+// mcpProjectNewQuick is the one-shot "skip the wizard" path:
+// take a name + slug + description + flags and materialise a
+// monorepo scaffold in a single MCP call. Under the hood it
+// starts a wizard session, prefills every answer, and calls
+// GenerateProject. Keeps the composition surface simple so a
+// remote AI agent doesn't need to round-trip 20 questions.
+func (s *HTTPServer) mcpProjectNewQuick(raw json.RawMessage) interface{} {
+	var args struct {
+		Name            string `json:"name"`
+		Slug            string `json:"slug"`
+		Description     string `json:"description"`
+		Tagline         string `json:"tagline"`
+		Domain          string `json:"domain"`
+		PrimaryColor    string `json:"primaryColor"`
+		AccentColor     string `json:"accentColor"`
+		IncludeWeb      *bool  `json:"includeWeb"`
+		IncludeLanding  *bool  `json:"includeLanding"`
+		IncludeMobile   *bool  `json:"includeMobile"`
+		IncludeBackend  *bool  `json:"includeBackend"`
+		WebHost         string `json:"webHost"`
+		Backend         string `json:"backend"`
+		OauthApple      *bool  `json:"oauthApple"`
+		OauthGoogle     *bool  `json:"oauthGoogle"`
+		OauthMicrosoft  *bool  `json:"oauthMicrosoft"`
+		IosBundleID     string `json:"iosBundleId"`
+		AndroidPackage  string `json:"androidPackage"`
+		GitProvider     string `json:"gitProvider"`
+		GitVisibility   string `json:"gitVisibility"`
+		GitOrg          string `json:"gitOrg"`
+		ParentDir       string `json:"parentDir"`
+	}
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return mcpToolError("invalid arguments: " + err.Error())
+	}
+	if args.Name == "" || args.Slug == "" || args.Description == "" {
+		return mcpToolError("name, slug, and description are required")
+	}
+
+	sess, _ := StartWizard()
+	pref := func(k, v string) {
+		if v != "" {
+			_, _ = AnswerWizard(sess.ID, k, v)
+		}
+	}
+	boolStr := func(p *bool, dflt bool) string {
+		v := dflt
+		if p != nil {
+			v = *p
+		}
+		if v {
+			return "true"
+		}
+		return "false"
+	}
+
+	pref("app_name", args.Name)
+	pref("slug", args.Slug)
+	pref("description", args.Description)
+	pref("tagline", args.Tagline)
+	pref("domain", args.Domain)
+	pref("primary_color", firstNonEmpty(args.PrimaryColor, "#4F46E5"))
+	pref("accent_color", firstNonEmpty(args.AccentColor, "#F59E0B"))
+	pref("tone", "system")
+	pref("include_web", boolStr(args.IncludeWeb, true))
+	pref("include_landing", boolStr(args.IncludeLanding, true))
+	pref("include_mobile", boolStr(args.IncludeMobile, true))
+	pref("include_backend", boolStr(args.IncludeBackend, true))
+	pref("web_framework", "nextjs")
+	pref("web_host", firstNonEmpty(args.WebHost, "cloudflare"))
+	pref("backend", firstNonEmpty(args.Backend, "convex"))
+	pref("mobile_stack", "expo-rn")
+	pref("oauth_apple", boolStr(args.OauthApple, true))
+	pref("oauth_google", boolStr(args.OauthGoogle, true))
+	pref("oauth_microsoft", boolStr(args.OauthMicrosoft, false))
+	pref("oauth_email", "true")
+	pref("payments", "stripe")
+	pref("ios_bundle_id", firstNonEmpty(args.IosBundleID, "com.myco."+args.Slug))
+	pref("android_package", firstNonEmpty(args.AndroidPackage, "com.myco."+args.Slug))
+	pref("apple_team_id", "")
+	pref("play_service_account", "")
+	pref("cloudflare_zone", "")
+	pref("git_provider", firstNonEmpty(args.GitProvider, "none"))
+	pref("git_visibility", firstNonEmpty(args.GitVisibility, "private"))
+	pref("git_org", args.GitOrg)
+	pref("git_repo_name", args.Slug)
+	pref("confirm", "true")
+
+	res, err := GenerateProject(sess.ID, args.ParentDir)
+	if err != nil {
+		return mcpToolError(err.Error())
+	}
+	return mcpToolJSON(res)
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// yaverOnboardChecklist inspects the current agent state and
+// returns an ordered list of "still to do" items for a fresh
+// install. The idea: an AI agent (Claude Desktop, Codex, etc.)
+// can call yaver_onboard at the start of a session and then
+// walk the user through the gaps with specific CLI commands.
+func yaverOnboardChecklist() string {
+	var b strings.Builder
+	b.WriteString("Yaver onboarding checklist\n")
+	b.WriteString("==========================\n\n")
+
+	cfg, _ := LoadConfig()
+	mark := func(done bool, label, hint string) {
+		if done {
+			b.WriteString("  [x] " + label + "\n")
+		} else {
+			b.WriteString("  [ ] " + label + "\n")
+			if hint != "" {
+				b.WriteString("       → " + hint + "\n")
+			}
+		}
+	}
+
+	// 1. Auth
+	authed := cfg != nil && cfg.AuthToken != ""
+	mark(authed, "Sign in", "yaver auth   (opens browser)")
+
+	// 2. Device registered
+	deviceOK := cfg != nil && cfg.DeviceID != ""
+	mark(deviceOK, "Device registered", "yaver serve   (also starts the HTTP + QUIC servers)")
+
+	// 3. Bootstrap secret (for remote /auth/recover)
+	bootOK := cfg != nil && cfg.BootstrapSecretHash != ""
+	mark(bootOK, "Bootstrap recovery secret set", "yaver config bootstrap-secret <passphrase>  (store in password manager)")
+
+	// 4. Public transport
+	transport := "none"
+	if cfg != nil {
+		switch {
+		case len(cfg.CloudflareTunnels) > 0:
+			transport = "cloudflare-tunnel"
+		case len(cfg.RelayServers) > 0:
+			transport = "relay"
+		}
+	}
+	mark(transport != "none", "Public reachable transport ("+transport+")", "yaver tunnel cloudflare wizard   or   yaver relay add <url>")
+
+	// 5. Email — for notifications, forms, newsletter
+	emailOK := cfg != nil && cfg.Email != nil && (cfg.Email.SMTPHost != "" || cfg.Email.GoogleRefreshToken != "")
+	mark(emailOK, "Email provider wired (needed for forms/newsletter/mail)", "yaver email setup   (or use mail_onboard_start from mobile)")
+
+	// 6. Runner installed
+	runnerFound := ""
+	for _, r := range []string{"claude", "codex", "aider", "goose", "amp", "ollama", "opencode"} {
+		if _, err := osexecLookPath(r); err == nil {
+			runnerFound = r
+			break
+		}
+	}
+	mark(runnerFound != "", "AI runner installed ("+runnerFound+")", "npm i -g @anthropic-ai/claude-code   or any other supported runner")
+
+	// 7. Auto-start
+	autoStart := cfg != nil && cfg.AutoStart
+	mark(autoStart, "Agent auto-starts on boot", "yaver config set auto-start true")
+
+	// 8. Auto-update
+	autoUpdate := cfg != nil && cfg.AutoUpdate
+	mark(autoUpdate, "Auto-update enabled", "yaver config set auto-update true")
+
+	b.WriteString("\nNext suggested action: ")
+	switch {
+	case !authed:
+		b.WriteString("run `yaver auth`")
+	case !deviceOK:
+		b.WriteString("run `yaver serve` in one terminal")
+	case !bootOK:
+		b.WriteString("pick a passphrase and run `yaver config bootstrap-secret <passphrase>`")
+	case transport == "none":
+		b.WriteString("wire a public transport with `yaver tunnel cloudflare wizard`")
+	case !emailOK:
+		b.WriteString("connect Gmail/O365 (POST /mail/onboard/start from the mobile app, or `yaver email setup`)")
+	case runnerFound == "":
+		b.WriteString("install an AI runner — claude / codex / aider / ollama")
+	default:
+		b.WriteString("you're set up — call `yaver_help` with topic=solo-stack to see what's possible")
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
 func yaverHelpText(topic string) string {
 	switch strings.ToLower(topic) {
 	case "tmux":
@@ -6767,31 +7390,306 @@ The auth flow:
 
 The token is used for all API calls and is refreshed automatically.`
 
+	// --- Self-hosted replacements (zero monthly cost) ---
+
+	case "forms":
+		return `Forms (replaces Formspree / Basin / Getform ~$29/mo)
+════════════════════════════════════════════════════
+
+Self-hosted HTML form ingestion with honeypot, rate limiting, and
+SMTP notification. Runs entirely on the dev's own machine.
+
+Endpoints:
+  POST /forms                        owner — create form
+  GET  /forms                        owner — list forms
+  POST /forms/:id/submit             public — honeypot + rate-limited
+  GET  /forms/:id/submissions        owner — tail submissions
+  DELETE /forms?id=:id               owner — delete
+
+Create a form:
+  curl -X POST $AGENT/forms -H "Authorization: Bearer $TOKEN" \
+    -d '{"name":"Contact","notifyEmail":"me@example.com","honeypotField":"website","rateLimitPerHour":60}'
+
+Point your landing page <form action="..."> at /forms/:id/submit.
+
+MCP tools: form_create, form_list, form_submissions, form_delete`
+
+	case "newsletter":
+		return `Newsletter (replaces ConvertKit / Mailchimp / Buttondown ~$49/mo)
+════════════════════════════════════════════════════════════════
+
+HMAC-tokened double opt-in with broadcast via the existing SMTP relay.
+Plus compose-from-git: the agent walks git log + gh/glab to draft the
+weekly recap for you.
+
+Public:
+  POST /newsletter/subscribe                email signup
+  GET  /newsletter/confirm?token=...        confirm subscription
+  GET  /newsletter/unsubscribe?token=...    one-click unsub
+
+Owner:
+  GET  /newsletter/subscribers              list + counts
+  GET  /newsletter/campaigns                list drafts + sent
+  POST /newsletter/campaigns                create draft
+  POST /newsletter/campaigns/:id/send       broadcast
+  POST /newsletter/compose                  compose-from-git
+                                            { repo, sinceDays, includePrs,
+                                              includeIssues, saveDraft,
+                                              execute, runner }
+
+MCP tools: newsletter_subscribers, newsletter_create, newsletter_send,
+newsletter_compose_from_git`
+
+	case "jobs", "queue":
+		return `Job queue (replaces Inngest / Trigger.dev / BullMQ ~$0-500/mo)
+══════════════════════════════════════════════════════════════
+
+File-backed persistent queue with retry/backoff/DLQ. Built-in
+handlers for newsletter.send, form.notify, pdf.render. Register
+your own with RegisterJobHandler() for custom side-effects.
+
+  POST /jobs/enqueue  { handler, payload, delaySec?, maxAttempts?, backoffSec? }
+  GET  /jobs          list queue + dlq
+  POST /jobs/:id/retry
+  POST /jobs/:id/cancel
+
+MCP tools: jobs_list, jobs_enqueue, jobs_retry, jobs_cancel`
+
+	case "image", "img":
+		return `Image optimizer (replaces Cloudinary / Imgix ~$99+/mo)
+══════════════════════════════════════════════════════
+
+Resize + reencode on-demand. Pure-Go, no CGo, disk-cached.
+
+  GET /img?src=<path>&root=<id>&w=&h=&fmt=&q=
+
+Serve via the agent's public tunnel and link directly from your
+landing page:
+  <img src="https://yaver.me.com/img?src=hero.png&w=1200&fmt=webp&q=75">
+
+MCP tools: img_optimize, img_cache_clear`
+
+	case "pdf":
+		return `PDF generation (replaces DocRaptor ~$15-300/mo)
+═══════════════════════════════════════════════
+
+HTML → PDF via the embedded Chromium (same one the test SDK uses).
+
+  POST /pdf/render
+    { "html": "<h1>Invoice</h1>", "format": "A4", "landscape": false,
+      "printBackground": true, "marginTop": "1cm" }
+  → application/pdf
+
+You can also pass a URL instead of html:
+  { "url": "https://yaver.me.com/invoices/123" }
+
+MCP tools: pdf_render`
+
+	case "oauth":
+		return `OAuth provider (replaces Dex / Authelia / Keycloak-lite)
+════════════════════════════════════════════════════════
+
+Self-hosted OIDC so projects generated by yaver new can point their
+auth at your own agent instead of Convex / Google / etc.
+
+Public:
+  GET  /oauth/.well-known/openid-configuration
+  GET  /oauth/authorize                     — login form
+  POST /oauth/login                         — email+password
+  POST /oauth/token                         — code → JWT
+  GET  /oauth/userinfo
+  GET  /oauth/jwks                          — RS256 public key
+
+Owner:
+  POST /oauth/clients                       — register a client
+                                              (secret shown ONCE)
+  POST /oauth/users                         — create a user
+
+Passwords are scrypt-hashed (N=32768, r=8, p=1) — brute-force
+painful, single-user logins stay fast.
+
+MCP tools: oauth_client_list, oauth_client_create, oauth_user_list,
+oauth_user_create`
+
+	case "mail":
+		return `Mail (replaces ConvertKit inbox / Superhuman ~$30/mo)
+═════════════════════════════════════════════════════
+
+Gmail + Microsoft Graph (O365) triage + AI-boosted replies. All via
+the dev's own OAuth tokens — nothing touches Convex.
+
+  GET  /mail/inbox?provider=&limit=&onlyPersonal=true
+  POST /mail/draft        { id, instructions, execute: true }
+                          execute=true pipes the prompt into the
+                          configured runner (Claude/Codex/Ollama)
+                          and returns the draft text inline.
+  POST /mail/send
+  POST /mail/onboard/start { provider: "gmail" | "o365" }
+  GET  /mail/onboard/callback / /status
+
+Classifier beats Gmail Promotions: thread replies, List-Unsubscribe,
+Precedence=bulk, Auto-Submitted, marketing keywords, sender domain
+history → personal / transactional / marketing / bulk buckets.
+
+CLI: yaver mail inbox | draft | send | connect
+MCP tools: email_list_inbox, email_get, email_send, email_search,
+mail_draft, mail_classify`
+
+	case "shortener", "short":
+		return `URL shortener (replaces Bitly / Rebrandly / Dub.co ~$29/mo)
+═══════════════════════════════════════════════════════════
+
+  POST /shortener { url, code?, label? }   owner — create
+  GET  /s/:code                            public — 302 + click log
+  GET  /s/:code/json                       public — JSON API
+  GET  /shortener                          owner — list + counts
+  GET  /shortener/clicks?code=             owner — last 500 clicks
+
+Click rows are append-only JSONL — cheap to tail, rotatable by mv.
+
+MCP tools: short_create, short_list, short_clicks, short_delete`
+
+	case "waitlist":
+		return `Waitlist (replaces Prefinery / Earlybird / Viral Loops ~$49/mo)
+═══════════════════════════════════════════════════════════════
+
+Public signup with referral codes + leaderboard.
+
+  POST /waitlist/join { email, ref, name, source }
+                       → { slot, code, shareUrl }
+  GET  /waitlist/leaderboard                (redacted — no emails)
+  GET  /waitlist                            owner — full list
+  DELETE /waitlist?email=
+
+Referral credit auto-increments when join includes ?ref=CODE.
+Broadcast via the newsletter tool.
+
+MCP tools: waitlist_list, waitlist_delete, waitlist_leaderboard`
+
+	case "docs":
+		return `Docs site (replaces Mintlify / Gitbook / Readme.com ~$20+/mo)
+═════════════════════════════════════════════════════════════
+
+Serve a markdown folder as a static docs site with sidebar + search.
+
+  POST /docs/config { path, title, theme, logoUrl }
+  GET  /docs                        — index
+  GET  /docs/<slug>                 — page
+  GET  /docs/_search?q=...          — substring search
+  GET  /docs/_json                  — sidebar tree
+
+Write markdown in your repo, point /docs/config at the folder, done.
+Zero asset deps (inline CSS, pure-Go renderer).
+
+MCP tools: docs_config, docs_list, docs_search`
+
+	case "meetings", "meet", "calendar":
+		return `Meetings (replaces Calendly / Cal.com / SavvyCal ~$12-24/mo)
+════════════════════════════════════════════════════════════
+
+Public booking page with Google Calendar + Microsoft Teams integration.
+Reuses the existing Gmail OAuth + Azure tenant credentials — the dev
+authorises once and gets real Meet/Teams links auto-generated.
+
+  POST /meetings                owner — define event type
+  GET  /meet/:slug              public — HTML booking page
+  POST /meet/:slug              public — book a slot
+  GET  /bookings                owner — list confirmed
+
+Event type:
+  { slug, title, durationMin, provider: "google"|"o365",
+    hosting: "meet"|"teams"|"none",
+    availability: [{ weekday, startTime, endTime, timezone }],
+    bufferMin, daysAhead }
+
+MCP tools: meeting_create, meeting_list, meeting_bookings`
+
+	case "wizard", "new-project", "project":
+		return `Project wizard (replaces create-react-app / turbo gen ~free+your time)
+═════════════════════════════════════════════════════════════════════
+
+Monorepo scaffold: Convex + Next.js on Cloudflare + Expo RN + native
+builds (xcodebuild + gradle, no EAS). Auto git init + gh/glab repo
+create + initial push.
+
+  yaver new                         interactive wizard
+  POST /project/wizard/start        start a session
+  POST /project/wizard/answer       submit an answer
+  POST /project/wizard/generate     materialise the scaffold
+
+Layout: apps/{web,landing,mobile}/, packages/shared/, backend/convex/
+
+Fields: app_name, description, slug, domain, colors, include_web /
+mobile / backend / landing (all opt-in), git_provider + visibility.
+
+MCP tools: project_wizard_start, project_wizard_answer,
+project_wizard_generate`
+
+	case "solo-stack", "stack", "costs", "savings":
+		return `Solo dev stack — every feature replaces a paid SaaS
+════════════════════════════════════════════════════
+
+Your Mac mini + Claude Code / Codex / Ollama subscription replace:
+
+  Sentry / Datadog errors       → error_list, apm, blackbox  ($50-300/mo)
+  LaunchDarkly flags            → flag_*                      ($20-500/mo)
+  ConvertKit newsletter         → newsletter_*                ($29-79/mo)
+  Formspree forms               → form_*                      ($24/mo)
+  Cloudinary images             → img_optimize                ($99+/mo)
+  DocRaptor PDF                 → pdf_render                  ($15-300/mo)
+  Calendly meetings             → meeting_*                   ($12/mo)
+  Bitly short URLs              → short_*                     ($29/mo)
+  Prefinery waitlist            → waitlist_*                  ($49/mo)
+  Mintlify docs                 → docs_*                      ($20+/mo)
+  Auth0 / Clerk                 → oauth_*                     ($25+/mo)
+  Algolia search                → search                      ($100+/mo)
+  Better Uptime / Healthchecks  → monitor_*                   ($18/mo)
+  Dex / Authelia                → oauth provider              (free)
+  Inngest / Trigger.dev         → jobs_*                      ($20-500/mo)
+  Prefinery affiliate tracking  → waitlist referrals          ($49/mo)
+  Statuspage.io                 → statuspage                  ($29/mo)
+  PagerDuty-lite                → notify + monitors           ($21/mo)
+  Papertrail logs               → logs                        ($7/mo)
+  Vault / Doppler               → vault                       ($25/mo)
+  Cron-job.org                  → schedule_task               ($2/mo)
+  ngrok / bore                  → tunnels + relay             ($8/mo)
+  Expo EAS Build                → local xcodebuild + gradle   ($29/mo)
+  BackBlaze / Tarsnap           → backup + encrypted          ($5/mo)
+
+Running total replaced: roughly $600-2500/mo → $0 on your Mac mini.
+
+Use yaver_help with any of these topics for setup:
+  forms, newsletter, jobs, image, pdf, oauth, mail, shortener,
+  waitlist, docs, meetings, wizard`
+
 	default:
-		return `Yaver — AI Coding Agent on Your Phone
-═════════════════════════════════════
+		return `Yaver — your Mac mini runs every SaaS you were paying for
+══════════════════════════════════════════════════════════
 
-Yaver is an open-source P2P tool that lets you control any AI coding agent
-(Claude Code, Codex, Aider, Ollama, etc.) from your mobile device.
+Yaver turns your powerful dev machine into the self-hosted
+replacement for the solo-dev SaaS stack. Works with any AI coding
+agent you're already paying for (Claude Code, Codex, Aider, Ollama).
 
-Key features:
-- Tasks: Create and manage AI agent sessions from mobile
-- Tmux adoption: Discover and control existing tmux sessions
-- Multi-runner: Switch between Claude, Codex, Aider, and custom agents
-- P2P: Task data flows directly between devices (no server storage)
-- Multiple transports: LAN direct, QUIC relay, Cloudflare tunnel
-- MCP: Full programmatic access for AI-to-AI workflows
+Available help topics — use yaver_help({ topic: "..." }):
 
-Use yaver_help with a topic for details:
-  tmux, relay, tunnel, mobile, mcp, runners, tasks, auth
+  Foundation        tasks, mcp, runners, auth, mobile, relay, tunnel, tmux
+  Developer         wizard, tests, builds, sessions, git
+  SaaS replacements forms, newsletter, jobs, image, pdf, oauth, mail,
+                    shortener, waitlist, docs, meetings
+  Overview          solo-stack  ← shows what each feature replaces and
+                                   how much you save
 
 Quick start:
   1. Install: brew install kivanccakmak/yaver/yaver
   2. Sign in: yaver auth
-  3. That's it — the mobile app discovers your machine automatically
+  3. yaver init    ← first-run wizard, walks you through everything
+  4. yaver new     ← generate a fullstack monorepo for your next app
 
-CLI commands: auth, serve, status, devices, tmux, relay, tunnel, config,
-set-runner, mcp, email, acl, doctor, logs, ping, attach, connect`
+Run yaver doctor any time to audit what's configured vs missing.
+
+CLI commands: auth, serve, status, devices, init, new, doctor, tmux,
+relay, tunnel, config, set-runner, mcp, email, mail, acl, logs, ping,
+attach, connect`
 	}
 }
 

@@ -477,15 +477,23 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 		{
 			"name":        "yaver_help",
-			"description": "Get help about Yaver features and capabilities. Use this when a user asks what Yaver can do, how to set up, or how features work (tmux adoption, relay servers, tunnels, MCP tools, mobile app, etc.).",
+			"description": "Answer 'how do I do X with Yaver?' questions. Call this whenever the user wonders what Yaver can do, which feature replaces which SaaS, or how to set something up. Accepts a topic keyword. Topics include: overview, solo-stack (costs + savings summary), forms, newsletter, jobs, image, pdf, oauth, mail, shortener, waitlist, docs, meetings, wizard, tmux, relay, tunnel, mobile, mcp, runners, tasks, auth.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"topic": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional topic: overview, tmux, relay, tunnel, mobile, mcp, runners, tasks, auth",
+						"description": "Topic keyword (e.g. 'newsletter', 'solo-stack', 'meetings'). Pass empty string for an overview.",
 					},
 				},
+			},
+		},
+		{
+			"name":        "yaver_onboard",
+			"description": "Drive the first-run onboarding flow for a fresh Yaver install. Returns the ordered checklist of steps the user still needs to complete (auth, bootstrap secret, tunnel, runner, etc.) based on the current config state. Call this before doing any setup work so you know where to start.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
 			},
 		},
 		{
@@ -1436,6 +1444,38 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name":        "project_new_quick",
+			"description": "One-shot fullstack project scaffold. Skips the interactive wizard and creates a monorepo (apps/{web,landing,mobile}, packages/shared, backend/convex) at parentDir/<slug>. Uses the opinionated defaults unless overridden: Convex + Next.js on Cloudflare + Expo RN + Apple/Google OAuth + native builds (xcodebuild + gradle, no EAS). Auto-inits git and pushes to GitHub/GitLab when git_provider is set.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"name", "slug", "description"},
+				"properties": map[string]interface{}{
+					"name":            map[string]interface{}{"type": "string", "description": "Brand name (shown in README, landing page, metadata)"},
+					"slug":            map[string]interface{}{"type": "string", "description": "URL-safe slug used for folder + package names"},
+					"description":     map[string]interface{}{"type": "string", "description": "One-paragraph description — goes into README, landing hero, AI context"},
+					"tagline":         map[string]interface{}{"type": "string"},
+					"domain":          map[string]interface{}{"type": "string"},
+					"primaryColor":    map[string]interface{}{"type": "string", "description": "Hex e.g. #4F46E5"},
+					"accentColor":     map[string]interface{}{"type": "string"},
+					"includeWeb":      map[string]interface{}{"type": "boolean", "description": "Default true"},
+					"includeLanding":  map[string]interface{}{"type": "boolean", "description": "Default true"},
+					"includeMobile":   map[string]interface{}{"type": "boolean", "description": "Default true"},
+					"includeBackend":  map[string]interface{}{"type": "boolean", "description": "Default true"},
+					"webHost":         map[string]interface{}{"type": "string", "enum": []string{"cloudflare", "vercel", "netlify", "self-host"}},
+					"backend":         map[string]interface{}{"type": "string", "enum": []string{"convex", "supabase", "firebase", "yaver-oauth", "none"}},
+					"oauthApple":      map[string]interface{}{"type": "boolean"},
+					"oauthGoogle":     map[string]interface{}{"type": "boolean"},
+					"oauthMicrosoft":  map[string]interface{}{"type": "boolean"},
+					"iosBundleId":     map[string]interface{}{"type": "string"},
+					"androidPackage":  map[string]interface{}{"type": "string"},
+					"gitProvider":     map[string]interface{}{"type": "string", "enum": []string{"github", "gitlab", "none"}},
+					"gitVisibility":   map[string]interface{}{"type": "string", "enum": []string{"private", "public"}},
+					"gitOrg":          map[string]interface{}{"type": "string"},
+					"parentDir":       map[string]interface{}{"type": "string", "description": "Default: agent working dir"},
+				},
+			},
+		},
+		{
 			"name":        "project_wizard_generate",
 			"description": "Materialise the scaffold for a completed wizard session. Returns the target directory + next-step checklist. Project folder is created at parentDir/<slug>.",
 			"inputSchema": map[string]interface{}{
@@ -1449,6 +1489,146 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 	}
 	tools = append(tools, wizardTools...)
+
+	// --- Self-hosted SaaS replacements ---
+	//
+	// Every tool below replaces a paid SaaS the solo dev would
+	// otherwise be paying monthly for. They all run on the dev's
+	// own machine (no Convex, no vendor) and follow the same
+	// shape: one tool per common action, always returning
+	// structured JSON so other agents can chain them.
+	soloStackTools := []map[string]interface{}{
+		// Forms
+		{"name": "form_list", "description": "List all self-hosted forms with submission counts.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "form_create", "description": "Create a new form. Returns the form ID + a public /forms/:id/submit URL to paste into a landing page <form action=...>.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"name"}, "properties": map[string]interface{}{
+			"name":             map[string]interface{}{"type": "string"},
+			"notifyEmail":      map[string]interface{}{"type": "string"},
+			"honeypotField":    map[string]interface{}{"type": "string", "description": "Field name that real humans will leave blank; bots will fill."},
+			"rateLimitPerHour": map[string]interface{}{"type": "integer"},
+			"successRedirect":  map[string]interface{}{"type": "string"},
+		}}},
+		{"name": "form_submissions", "description": "Tail the most recent submissions for a form.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"id"}, "properties": map[string]interface{}{"id": map[string]interface{}{"type": "string"}}}},
+		{"name": "form_delete", "description": "Delete a form and its submission log.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"id"}, "properties": map[string]interface{}{"id": map[string]interface{}{"type": "string"}}}},
+
+		// Newsletter
+		{"name": "newsletter_subscribers", "description": "List newsletter subscribers + status counts (confirmed / pending / unsubscribed).", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "newsletter_create", "description": "Create a newsletter campaign draft.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"subject"}, "properties": map[string]interface{}{
+			"subject":  map[string]interface{}{"type": "string"},
+			"body":     map[string]interface{}{"type": "string"},
+			"htmlBody": map[string]interface{}{"type": "string"},
+		}}},
+		{"name": "newsletter_send", "description": "Broadcast a newsletter campaign to all confirmed subscribers via the SMTP relay. This is irreversible.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"id"}, "properties": map[string]interface{}{"id": map[string]interface{}{"type": "string"}}}},
+		{"name": "newsletter_compose_from_git", "description": "Walk git log + gh/glab PRs and issues for a repo + window and draft a weekly recap newsletter. Optionally pipe through the AI runner for tone polish, and optionally save as a campaign draft.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"repo"}, "properties": map[string]interface{}{
+			"repo":          map[string]interface{}{"type": "string", "description": "Absolute repo path"},
+			"sinceDays":     map[string]interface{}{"type": "integer", "description": "Default 7"},
+			"includePrs":    map[string]interface{}{"type": "boolean"},
+			"includeIssues": map[string]interface{}{"type": "boolean"},
+			"subject":       map[string]interface{}{"type": "string"},
+			"instructions":  map[string]interface{}{"type": "string", "description": "Tone notes for the AI polish pass"},
+			"execute":       map[string]interface{}{"type": "boolean", "description": "Pipe through runner for polish"},
+			"saveDraft":     map[string]interface{}{"type": "boolean"},
+		}}},
+
+		// Job queue
+		{"name": "jobs_list", "description": "List pending queue + dead-letter jobs.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "jobs_enqueue", "description": "Enqueue a new background job. Handlers are registered at agent boot; common ones: newsletter.send, form.notify, pdf.render.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"handler"}, "properties": map[string]interface{}{
+			"handler":     map[string]interface{}{"type": "string"},
+			"payload":     map[string]interface{}{"type": "object"},
+			"delaySec":    map[string]interface{}{"type": "integer"},
+			"maxAttempts": map[string]interface{}{"type": "integer"},
+			"backoffSec":  map[string]interface{}{"type": "integer"},
+		}}},
+		{"name": "jobs_retry", "description": "Requeue a DLQ job.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"id"}, "properties": map[string]interface{}{"id": map[string]interface{}{"type": "string"}}}},
+		{"name": "jobs_cancel", "description": "Drop a pending queue job.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"id"}, "properties": map[string]interface{}{"id": map[string]interface{}{"type": "string"}}}},
+
+		// Image optimizer + PDF
+		{"name": "img_optimize", "description": "Return a URL that resizes + reencodes an image on demand. Output is disk-cached.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"src"}, "properties": map[string]interface{}{
+			"src":  map[string]interface{}{"type": "string"},
+			"root": map[string]interface{}{"type": "string", "description": "Optional project root ID"},
+			"w":    map[string]interface{}{"type": "integer"},
+			"h":    map[string]interface{}{"type": "integer"},
+			"fmt":  map[string]interface{}{"type": "string", "enum": []string{"webp", "jpeg", "png"}},
+			"q":    map[string]interface{}{"type": "integer", "description": "Quality 1..100"},
+		}}},
+		{"name": "pdf_render", "description": "Render HTML or a URL to PDF via the embedded Chromium. Returns the PDF as base64. Use for invoices, receipts, reports.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{
+			"html":            map[string]interface{}{"type": "string"},
+			"url":             map[string]interface{}{"type": "string"},
+			"format":          map[string]interface{}{"type": "string", "description": "A4 | Letter | Legal | Tabloid | A3 | A5"},
+			"landscape":       map[string]interface{}{"type": "boolean"},
+			"printBackground": map[string]interface{}{"type": "boolean"},
+		}}},
+
+		// OAuth provider
+		{"name": "oauth_client_list", "description": "List registered OAuth clients for the self-hosted identity provider.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "oauth_client_create", "description": "Register a new OAuth client. The returned client_secret is only shown once — save it immediately.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"name", "redirectUris"}, "properties": map[string]interface{}{
+			"name":         map[string]interface{}{"type": "string"},
+			"redirectUris": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+			"scopes":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+		}}},
+		{"name": "oauth_user_list", "description": "List registered OAuth users (email + id only, never hashes).", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "oauth_user_create", "description": "Create a new OAuth user with a scrypt-hashed password.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"email", "password"}, "properties": map[string]interface{}{
+			"email":    map[string]interface{}{"type": "string"},
+			"name":     map[string]interface{}{"type": "string"},
+			"password": map[string]interface{}{"type": "string"},
+		}}},
+
+		// Mail (Gmail / O365 fetch + AI draft)
+		{"name": "mail_inbox", "description": "Fetch the solo dev's inbox from Gmail or Microsoft 365. The classifier tags each message as personal / transactional / marketing / bulk using thread replies + List-Unsubscribe + Precedence + sender history — stricter than Gmail's Promotions tab. Returns normalised MailMessage objects.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{
+			"provider":     map[string]interface{}{"type": "string", "enum": []string{"gmail", "o365", "auto"}},
+			"folder":       map[string]interface{}{"type": "string", "enum": []string{"inbox", "sent"}},
+			"query":        map[string]interface{}{"type": "string", "description": "Gmail search syntax or Graph $search value"},
+			"limit":        map[string]interface{}{"type": "integer"},
+			"onlyPersonal": map[string]interface{}{"type": "boolean"},
+		}}},
+		{"name": "mail_draft", "description": "Draft a reply to a message. Pulls the thread + recent sent-folder mail for tone, then pipes through the configured AI runner when execute=true and returns the draft text. Otherwise returns the prompt the caller can execute manually.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"id"}, "properties": map[string]interface{}{
+			"id":           map[string]interface{}{"type": "string"},
+			"provider":     map[string]interface{}{"type": "string"},
+			"instructions": map[string]interface{}{"type": "string"},
+			"execute":      map[string]interface{}{"type": "boolean"},
+			"runner":       map[string]interface{}{"type": "string", "description": "Override default runner (claude/codex/aider/ollama/...)"},
+		}}},
+
+		// URL shortener
+		{"name": "short_list", "description": "List short URLs with click counts.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "short_create", "description": "Create a short URL. Auto-generates a 6-char code if not provided.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"url"}, "properties": map[string]interface{}{
+			"url":   map[string]interface{}{"type": "string"},
+			"code":  map[string]interface{}{"type": "string"},
+			"label": map[string]interface{}{"type": "string"},
+		}}},
+		{"name": "short_clicks", "description": "Tail the last 500 click rows, optionally filtered by code.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"code": map[string]interface{}{"type": "string"}}}},
+		{"name": "short_delete", "description": "Delete a short URL.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"code"}, "properties": map[string]interface{}{"code": map[string]interface{}{"type": "string"}}}},
+
+		// Waitlist
+		{"name": "waitlist_list", "description": "List all waitlist entries (owner-only, includes emails).", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "waitlist_leaderboard", "description": "Top referrers (redacted — no emails). Safe to surface publicly.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "waitlist_delete", "description": "Remove a waitlist entry by email.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"email"}, "properties": map[string]interface{}{"email": map[string]interface{}{"type": "string"}}}},
+
+		// Docs site
+		{"name": "docs_config", "description": "Point the docs site at a markdown folder, set title / theme / logo.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{
+			"path":    map[string]interface{}{"type": "string"},
+			"title":   map[string]interface{}{"type": "string"},
+			"theme":   map[string]interface{}{"type": "string", "enum": []string{"light", "dark"}},
+			"logoUrl": map[string]interface{}{"type": "string"},
+		}}},
+		{"name": "docs_list", "description": "Return the docs site sidebar tree.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "docs_search", "description": "Substring search across all doc pages.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"q"}, "properties": map[string]interface{}{"q": map[string]interface{}{"type": "string"}}}},
+
+		// Meetings (Calendly-lite)
+		{"name": "meeting_create", "description": "Create a new bookable event type. Uses Google Calendar (auto-creates Meet links) or Microsoft Graph (auto-creates Teams meetings) via the existing EmailConfig OAuth creds.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"slug", "title", "provider"}, "properties": map[string]interface{}{
+			"slug":         map[string]interface{}{"type": "string"},
+			"title":        map[string]interface{}{"type": "string"},
+			"durationMin":  map[string]interface{}{"type": "integer"},
+			"description":  map[string]interface{}{"type": "string"},
+			"provider":     map[string]interface{}{"type": "string", "enum": []string{"google", "o365"}},
+			"hosting":      map[string]interface{}{"type": "string", "enum": []string{"meet", "teams", "none"}},
+			"daysAhead":    map[string]interface{}{"type": "integer"},
+			"bufferMin":    map[string]interface{}{"type": "integer"},
+			"availability": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "object"}},
+		}}},
+		{"name": "meeting_list", "description": "List all bookable event types.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "meeting_bookings", "description": "List confirmed bookings across all event types.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+	}
+	tools = append(tools, soloStackTools...)
 
 	// --- Guest Access ---
 	guestTools := []map[string]interface{}{
