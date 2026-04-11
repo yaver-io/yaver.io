@@ -6084,6 +6084,18 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 		}
 		return mcpToolResult("Password changed successfully.")
 
+	// --- yaver-test-sdk: local CI runner ---
+	case "testkit_list_specs":
+		return s.mcpTestkitListSpecs(call.Arguments)
+	case "testkit_run":
+		return s.mcpTestkitRun(call.Arguments)
+	case "testkit_last_failure":
+		return s.mcpTestkitLastFailure(call.Arguments)
+	case "testkit_flake_report":
+		return s.mcpTestkitFlakeReport(call.Arguments)
+	case "testkit_self_heal_selector":
+		return s.mcpTestkitSelfHealSelector(call.Arguments)
+
 	default:
 		return mcpToolError("unknown tool: " + call.Name)
 	}

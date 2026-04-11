@@ -1580,6 +1580,76 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, passwordTools...)
 
+	// --- yaver-test-sdk: local CI runner ---
+	// Exposes the embedded test runner over MCP so any AI tool the dev
+	// is already using (Claude Code, Cursor, Aider, Codex) can list
+	// specs, kick off runs, read failures, and propose patches without
+	// any custom integration. Same Go agent process, same data, no
+	// cloud round trip.
+	testkitTools := []map[string]interface{}{
+		{
+			"name":        "testkit_list_specs",
+			"description": "List the yaver-test-sdk specs in the current project (yaver-tests/**/*.test.yaml). Returns name, path, target, step count.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"root": map[string]interface{}{
+						"type":        "string",
+						"description": "Spec root directory (default: yaver-tests)",
+					},
+				},
+			},
+		},
+		{
+			"name":        "testkit_run",
+			"description": "Run the yaver-test-sdk specs end-to-end on the dev's machine via the embedded chromedp runner. Returns suite results inline. Use this to drive a 'fix → test → fix' loop without spawning Playwright.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"root":        map[string]interface{}{"type": "string", "description": "Spec root (default: yaver-tests)"},
+					"only":        map[string]interface{}{"type": "string", "description": "Only run a single spec by name"},
+					"concurrency": map[string]interface{}{"type": "integer", "description": "Parallel workers (default 1)"},
+					"retries":     map[string]interface{}{"type": "integer", "description": "Flake retries (default 0)"},
+					"headful":     map[string]interface{}{"type": "boolean", "description": "Show the browser visibly"},
+				},
+			},
+		},
+		{
+			"name":        "testkit_last_failure",
+			"description": "Read the most recent failed run from local history. Returns the spec name, the failing step, the screenshot path, and the error — exactly what an AI agent needs to propose a patch.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"root": map[string]interface{}{"type": "string", "description": "Spec root (default: yaver-tests)"},
+				},
+			},
+		},
+		{
+			"name":        "testkit_flake_report",
+			"description": "Per-spec failure ratios over the last 100 runs. Use to identify chronically broken or flaky specs that need attention.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"root": map[string]interface{}{"type": "string", "description": "Spec root (default: yaver-tests)"},
+				},
+			},
+		},
+		{
+			"name":        "testkit_self_heal_selector",
+			"description": "Given a CSS selector that no longer matches and a DOM HTML snapshot, ask the user's vision/text LLM to propose a new selector. Returns the suggested replacement plus the model's reasoning. Used by the autonomous test-fix loop.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"failed_selector", "dom_html"},
+				"properties": map[string]interface{}{
+					"failed_selector": map[string]interface{}{"type": "string", "description": "The CSS selector that failed"},
+					"dom_html":        map[string]interface{}{"type": "string", "description": "The current page HTML"},
+					"intent":          map[string]interface{}{"type": "string", "description": "Optional: what the selector was supposed to find"},
+				},
+			},
+		},
+	}
+	tools = append(tools, testkitTools...)
+
 	return map[string]interface{}{
 		"tools": tools,
 	}

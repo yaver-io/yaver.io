@@ -148,6 +148,34 @@ func runCtx(ctx context.Context, name string, args ...string) (string, error) {
 	return string(out), err
 }
 
+// SendText pushes text into the currently focused field via simctl's
+// io keyboard endpoint (available on Xcode 14+). Used by the runner
+// for `target: ios-sim` fill steps.
+func (d *IOSSimDriver) SendText(ctx context.Context, udid, text string) error {
+	// `xcrun simctl io <udid> keyboard text "..."` is the canonical
+	// no-WDA way to type into the active app. Falls back to AppleScript
+	// keystroke injection on older Xcode.
+	if _, err := runCtx(ctx, "xcrun", "simctl", "io", udid, "keyboard", "text", text); err == nil {
+		return nil
+	}
+	// Best-effort AppleScript fallback. Solo dev rarely runs this on
+	// older Xcode but the path exists.
+	script := fmt.Sprintf(`tell application "System Events" to keystroke %q`, text)
+	_, err := runCtx(ctx, "osascript", "-e", script)
+	return err
+}
+
+// Tap dispatches a tap at (x, y) on the booted simulator via
+// `xcrun simctl io ... tap` (Xcode 15+) with an AppleScript fallback.
+func (d *IOSSimDriver) Tap(ctx context.Context, udid string, x, y int) error {
+	if _, err := runCtx(ctx, "xcrun", "simctl", "io", udid, "tap", fmt.Sprintf("%d", x), fmt.Sprintf("%d", y)); err == nil {
+		return nil
+	}
+	// Fallback: cliclick if installed (`brew install cliclick`).
+	_, err := runCtx(ctx, "cliclick", fmt.Sprintf("c:%d,%d", x, y))
+	return err
+}
+
 // FullBootSequence is the convenience helper: boot → install → launch
 // → screenshot → shutdown. Used by `yaver test run` for `target: ios-sim`
 // specs (returned in M5 scaffold). We expose it now so the user can
