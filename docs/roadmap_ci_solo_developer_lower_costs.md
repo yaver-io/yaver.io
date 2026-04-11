@@ -507,6 +507,107 @@ update, and apply both without leaving the editor.
       Playwright + Appium.
 - [ ] Marked stable; bundled with the next CLI release.
 
+## Competitor scan — paid SaaS we're undercutting
+
+Snapshot of the paid landscape as of early 2026. The point isn't to
+clone any of these, it's to see exactly which features customers are
+already paying real money for so we know what's worth building into
+the agent.
+
+| Tool                       | What you actually pay for                                                                  | Solo dev entry price          |
+| -------------------------- | ------------------------------------------------------------------------------------------ | ----------------------------- |
+| BrowserStack App Automate  | 3000+ real device cloud, parallel runs, video + logs                                       | ~$129/mo (1 parallel)         |
+| BrowserStack App Live      | Manual interactive sessions on real devices                                                | ~$29/mo                       |
+| BrowserStack Percy         | Visual diff baselines + PR review workflow, long-term history                              | $199/mo (25k snapshots)       |
+| Sauce Labs RDC             | Enterprise device cloud, Sauce Visual AI, retention                                        | ~$39/mo entry, scales fast    |
+| LambdaTest / HyperExecute  | "Cheap BrowserStack" — parallel sharding at lower per-minute cost                          | ~$15/mo Live, $19/mo Automate |
+| Chromatic                  | Storybook-native visual diff, multi-browser snapshots, baseline mgmt                       | $179/mo (35k snapshots)       |
+| Applitools Eyes            | "Visual AI" diff that ignores rendering noise; self-healing selectors; Ultrafast Grid      | Custom (≈$0–$500+/mo)         |
+| Waldo.com                  | Record-on-real-device → replay-anywhere, no-code mobile E2E                                | Custom quote                  |
+| Maestro Cloud (mobile.dev) | Cloud execution of OSS Maestro YAML; parallel sharding; history                            | $250/device/mo, $125/browser  |
+| QA Wolf                    | Fully managed: humans + AI write *and* maintain your tests; 100% coverage SLA              | ~$50k+/yr                     |
+| Reflect.run                | No-code web recorder, multi-browser, SMS/email tests                                       | $225/mo                       |
+| Octomind                   | AI auto-generates Playwright tests from your app + auto-heals when DOM changes             | Free → custom                 |
+
+The headline observation: **the real money is in things a pure SaaS
+has to build a fleet for** (real device cloud, multi-browser
+snapshot grid, managed QA humans). The other half — visual diff,
+flake detection, parallel sharding, AI-healing selectors, recorder
+mode — is plain code that runs on the user's machine just as well
+as on a vendor's. Those are exactly the things yaver-test-sdk
+should ship.
+
+### What's worth pulling in vs leaving alone
+
+| Capability                                  | Build into yaver-test-sdk?                | Notes                                                                                          |
+| ------------------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Parallel test sharding across cores         | **Yes — M4**                              | Pure Go scheduler over the spec list. No infra dependency.                                     |
+| Flake detection (re-run failed N×, tag)    | **Yes — M6**                              | Already half-built: agent has retry logic for AI tasks.                                        |
+| Visual diff (perceptual + delta-E)          | **Yes — M6**                              | Pure Go image lib. Baselines as PNGs in `yaver-tests/visual/`.                                 |
+| Multi-browser snapshot grid                 | **Yes — M5/M6**                           | Spawn locally installed Chrome / Firefox / WebKit via CDP / playwright-go.                     |
+| AI self-healing selectors                   | **Yes — M6**                              | When a selector fails, send DOM snapshot to the same MCP that drives Claude Code, ask for a re-derived selector. Already have the MCP server. |
+| Test history / build analytics dashboard    | **Yes — M7**                              | Persist run JSON to local SQLite, surface in mobile app.                                       |
+| Recorder mode → YAML emitter                | **Yes — M5**                              | Watch CDP / driver events, distill into the canonical step vocabulary.                         |
+| Long-term baseline storage                  | **Yes — local-first, optional sync**      | `yaver-tests/visual/` versioned in git; optional `yaver test sync` to user-owned S3/GCS.       |
+| Real device cloud (3000+ phones)            | **No — out of scope**                     | Requires owning hardware. Not a software problem. Refer users to BrowserStack if they need it. |
+| Managed-QA humans (QA Wolf model)           | **No**                                    | This is a services business, not a tool. Not what Yaver is.                                    |
+| Crowd-testing marketplace                   | **No**                                    | TestProject and Rainforest both died trying. Pattern: don't.                                   |
+
+### Lessons from products that died
+
+- **TestProject** (RIP March 2023) — free cloud execution backed by
+  Tricentis upsell, killed because the free tier was unsustainable
+  and the enterprise pivot alienated the indie community. Lesson:
+  do not build a free cloud-execution tier funded by an enterprise
+  upsell. Yaver runs on the user's own machine, so we don't have
+  this temptation.
+- **Rainforest QA** — pivoted entirely away from QA testing into
+  embedded-payments fintech. Crowd-tester model didn't scale.
+- **Functionize**, **Testim** — both acquired by Tricentis and
+  subsumed into the enterprise suite, losing their developer
+  identity. Lesson: developer-friendly tooling and enterprise
+  consolidators don't mix; staying open-source is the moat.
+
+### Cross-pollination: ideas to borrow from `decolua/9router`
+
+[decolua/9router](https://github.com/decolua/9router) is a
+locally-run OpenAI-compatible proxy that routes between 40+ AI
+providers with a 3-tier auto-fallback (Subscription → Cheap API →
+Free), per-provider quota tracking with reset countdowns, OAuth
+token refresh, and multi-account round-robin. Different problem
+space from CI testing, but several of its design patterns drop
+straight into the Yaver agent:
+
+1. **3-tier model fallback chain** — instead of a fixed
+   `ANTHROPIC_API_KEY`, the agent should accept an ordered list
+   `providers: [claude-sub, claude-api, ollama-local]` and walk it
+   on rate-limit or 5xx. This is *exactly* the right shape for
+   yaver-test-sdk's "AI self-healing selector" feature: try the
+   primary model, fall back to a cheaper one, then to a local
+   Ollama if both fail.
+2. **Per-provider quota tracking with live reset countdown** —
+   surface the agent's current quota usage per provider in the
+   mobile app's status bar. Yaver shows nothing today; users find
+   out they've hit a wall mid-task. The data structure 9router
+   uses (token count, window size, reset_at) is the right shape.
+3. **OAuth auto-refresh loop** — Yaver's agent today requires
+   `yaver auth` to be run manually. Borrow 9router's background
+   refresh pattern: poll the provider's token endpoint, write the
+   refreshed token back to `~/.yaver/config.json`, never interrupt
+   the user.
+4. **Multi-account round-robin per provider** — for power users
+   with several Claude / Codex subscriptions, accept a list and
+   round-robin requests across them at the HTTP server layer. Low
+   effort, large quality-of-life win.
+
+**Not worth borrowing:** 9router ships as a Next.js app with a
+dashboard. Yaver's agent is a single Go binary on purpose; the
+mobile app is the UI. Don't add a Node runtime alongside the agent.
+Also skip 9router's "cloud sync of config" feature — Yaver
+deliberately never sends task data or credentials through its
+servers, and replicating OAuth tokens via Convex would break the
+privacy model.
+
 ## Things explicitly not in scope
 
 - Hosted "Yaver Cloud" SaaS. The whole point is the dev's own machine.
