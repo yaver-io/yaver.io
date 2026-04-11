@@ -29,7 +29,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.81.0"
+const version = "1.82.0"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
@@ -1790,6 +1790,11 @@ func runServe(args []string) {
 	} else {
 		StartHeartbeatWatcher(ctx)
 	}
+
+	// Job queue worker — drains ~/.yaver/jobs/queue/ every 2s
+	// and runs registered handlers with retry/backoff/DLQ.
+	registerBuiltinJobHandlers()
+	StartJobQueue()
 
 	// Start relay tunnels with hot-reload support
 	// Initial relay tunnels are started, and config is polled for changes every 30s
