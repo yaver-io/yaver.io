@@ -88,6 +88,17 @@ type Spec struct {
 	// spec without copy-pasting.
 	Include []string `yaml:"include,omitempty"`
 
+	// NetworkProfile applies a CDP Network.emulateNetworkConditions
+	// preset for the whole spec. Useful for catching PWA / offline
+	// UX regressions without wiring a separate Playwright config.
+	// Supported values:
+	//   "fast-3g"  — 1.6 Mbps down / 768 Kbps up / 150ms RTT
+	//   "slow-3g"  — 500 Kbps down / 500 Kbps up / 400ms RTT
+	//   "2g"       — 250 Kbps down / 250 Kbps up / 800ms RTT
+	//   "offline"  — full network blackout (for service worker tests)
+	// Empty / "online" = no emulation (default).
+	NetworkProfile string `yaml:"network_profile,omitempty"`
+
 	// Path is the absolute path of the spec file. Set by LoadSpec, not the
 	// user.
 	Path string `yaml:"-"`
