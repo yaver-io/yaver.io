@@ -3,15 +3,19 @@
 // one tap, and shows the live result + history. Everything goes over
 // the existing P2P transport: no Convex, no central server, no leak.
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Dimensions,
   FlatList,
   Image,
   Modal,
+  PanResponder,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Switch,
   Text,
@@ -51,6 +55,11 @@ export default function RunsScreen() {
   const [integrations, setIntegrations] = useState<TestkitIntegration[]>([]);
   const [autofixes, setAutofixes] = useState<TestkitAutoFix[]>([]);
   const [shotPath, setShotPath] = useState<string | null>(null);
+  // Snapshot diff viewer — pass a base path ending in `.png` (before
+  // we suffix `.current.png` / `.diff.png`) to open the three-pane
+  // comparator. null closes the modal.
+  const [snapshotBase, setSnapshotBase] = useState<string | null>(null);
+  const [snapshotPane, setSnapshotPane] = useState<"baseline" | "current" | "diff">("baseline");
   const [refreshing, setRefreshing] = useState(false);
   const [starting, setStarting] = useState(false);
   const [headful, setHeadful] = useState(false);
@@ -285,11 +294,29 @@ export default function RunsScreen() {
                 {item.git_branch ? ` · ${item.git_branch}` : ""}
                 {item.flaky_count > 0 ? ` · ${item.flaky_count} flaky` : ""}
               </Text>
-              {item.specs.filter((s) => !s.passed).map((s) => (
-                <Text key={s.name} style={[styles.failLine, { color: "#f87171" }]} numberOfLines={2}>
-                  ✗ {s.name}: {s.error || "failed"}
-                </Text>
-              ))}
+              {item.specs.filter((s) => !s.passed).map((s) => {
+                const err = s.error || "failed";
+                // If the error mentions a snapshot, extract the
+                // baseline path and let the dev open the three-pane
+                // viewer.
+                const snapMatch = err.match(/diff at (.+\.diff\.png)/);
+                const baseline = snapMatch ? snapMatch[1].replace(/\.diff\.png$/, ".png") : null;
+                return (
+                  <Pressable
+                    key={s.name}
+                    onPress={() => baseline && setSnapshotBase(baseline)}
+                  >
+                    <Text style={[styles.failLine, { color: "#f87171" }]} numberOfLines={2}>
+                      ✗ {s.name}: {err}
+                    </Text>
+                    {baseline && (
+                      <Text style={[styles.cardSub, { color: c.accent || "#6366f1", marginTop: 2 }]}>
+                        Tap to compare baseline / current / diff →
+                      </Text>
+                    )}
+                  </Pressable>
+                );
+              })}
             </View>
           )}
         />
@@ -504,6 +531,65 @@ export default function RunsScreen() {
           )}
           <Text style={{ position: "absolute", bottom: 32, color: "#fff", fontSize: 12 }}>Tap to close</Text>
         </Pressable>
+      </Modal>
+
+      {/* Snapshot diff viewer — three panes (baseline / current /
+          diff) with tap-swipe between them. Used when a snapshot: step
+          fails and the runner wrote current.png + diff.png next to the
+          baseline. The base path is the original snapshot PNG (e.g.
+          yaver-tests/snapshots/home.png); we suffix it to get the
+          other two panes. */}
+      <Modal
+        visible={!!snapshotBase}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setSnapshotBase(null)}
+      >
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.96)" }}>
+          {snapshotBase && (
+            <>
+              <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+                <Image
+                  source={{
+                    uri: quicClient.testkitArtifactUrl(
+                      snapshotPane === "baseline"
+                        ? snapshotBase
+                        : snapshotPane === "current"
+                          ? snapshotBase.replace(/\.png$/i, ".current.png")
+                          : snapshotBase.replace(/\.png$/i, ".diff.png"),
+                    ),
+                    headers: quicClient.testkitArtifactHeaders,
+                  }}
+                  style={{ width: "100%", height: "85%", resizeMode: "contain" }}
+                />
+              </View>
+              <View style={{ flexDirection: "row", justifyContent: "space-around", paddingBottom: 40, paddingTop: 16 }}>
+                {(["baseline", "current", "diff"] as const).map((p) => (
+                  <Pressable
+                    key={p}
+                    onPress={() => setSnapshotPane(p)}
+                    style={{
+                      paddingHorizontal: 18,
+                      paddingVertical: 8,
+                      borderRadius: 999,
+                      backgroundColor: snapshotPane === p ? "#6366f1" : "rgba(255,255,255,0.12)",
+                    }}
+                  >
+                    <Text style={{ color: "#fff", fontWeight: "600" }}>
+                      {p === "baseline" ? "Baseline" : p === "current" ? "Current" : "Diff"}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Pressable
+                onPress={() => setSnapshotBase(null)}
+                style={{ position: "absolute", top: 50, right: 20, padding: 8 }}
+              >
+                <Text style={{ color: "#fff", fontSize: 18 }}>✕</Text>
+              </Pressable>
+            </>
+          )}
+        </View>
       </Modal>
     </SafeAreaView>
   );
