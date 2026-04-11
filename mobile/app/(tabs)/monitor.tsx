@@ -34,6 +34,9 @@ import {
   type ErrorRecord,
   type ErrorsListResponse,
   type ReleaseManifest,
+  type TrackEvent,
+  type YaverFlag,
+  type YaverMonitor,
 } from "../../src/lib/quic";
 
 type Section = "errors" | "releases" | "uptime" | "events" | "flags";
@@ -414,56 +417,347 @@ function ReleasesPane() {
   );
 }
 
-// ── Stubs for U1 / A1 / F1 — the server side lands next ────────────
+// ── Uptime monitors ────────────────────────────────────────────────
 
 function UptimePane() {
   const c = useColors();
+  const [monitors, setMonitors] = useState<YaverMonitor[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [newUrl, setNewUrl] = useState("");
+
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const list = await quicClient.monitorsList();
+      setMonitors(list);
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 15000);
+    return () => clearInterval(id);
+  }, [refresh]);
+
+  const addMonitor = useCallback(async () => {
+    if (!newUrl.trim()) return;
+    const ok = await quicClient.monitorsAdd({ url: newUrl.trim() });
+    if (ok) {
+      setNewUrl("");
+      refresh();
+    } else {
+      Alert.alert("Add failed");
+    }
+  }, [newUrl, refresh]);
+
+  const removeMonitor = useCallback(
+    async (id: string, name?: string) => {
+      Alert.alert("Delete?", `Remove monitor ${name ?? id}?`, [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            await quicClient.monitorsRemove(id);
+            refresh();
+          },
+        },
+      ]);
+    },
+    [refresh],
+  );
+
+  const togglePause = useCallback(
+    async (m: YaverMonitor) => {
+      await quicClient.monitorsPause(m.id, !m.paused);
+      refresh();
+    },
+    [refresh],
+  );
+
+  const checkNow = useCallback(
+    async (id: string) => {
+      await quicClient.monitorsCheck(id);
+      refresh();
+    },
+    [refresh],
+  );
+
   return (
-    <ScrollView contentContainerStyle={{ padding: 12 }}>
-      <View style={styles.empty}>
-        <Text style={[styles.emptyTitle, { color: c.textPrimary }]}>Uptime checks</Text>
-        <Text style={[styles.emptyBody, { color: c.textSecondary }]}>
-          Coming in U1. From the dev's machine:{"\n\n"}
-          <Text style={styles.mono}>yaver monitor add https://yaver.io</Text>
-          {"\n\n"}
-          Schedules 30s checks through the agent's cron, alerts your phone on
-          three consecutive failures. No vendor account.
-        </Text>
+    <ScrollView
+      contentContainerStyle={{ padding: 12 }}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
+    >
+      <Text style={[styles.sectionLabel, { color: c.textSecondary }]}>Add monitor</Text>
+      <View style={styles.rolloutRow}>
+        <TextInput
+          value={newUrl}
+          onChangeText={setNewUrl}
+          placeholder="https://yaver.io"
+          placeholderTextColor={c.textSecondary}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+          style={[
+            styles.rolloutInput,
+            { color: c.textPrimary, borderColor: c.border },
+          ]}
+        />
+        <ActionButton label="Add" onPress={addMonitor} />
       </View>
+      <Text style={[styles.cardMeta, { color: c.textSecondary, marginTop: 4 }]}>
+        Checked every 60s. Alerts fire after three consecutive failures.
+      </Text>
+
+      {monitors.length === 0 ? (
+        <View style={styles.empty}>
+          <Text style={[styles.emptyBody, { color: c.textSecondary }]}>
+            No monitors yet. Drop a URL above, or run{"\n\n"}
+            <Text style={styles.mono}>yaver monitor add https://yaver.io</Text>
+            {"\n\n"}
+            from the agent shell.
+          </Text>
+        </View>
+      ) : (
+        monitors.map((m) => {
+          const stateColor =
+            m.paused
+              ? c.textSecondary
+              : m.state === "up"
+                ? "#22c55e"
+                : m.state === "down"
+                  ? "#ef4444"
+                  : "#eab308";
+          return (
+            <View key={m.id} style={[styles.card, { borderColor: c.border }]}>
+              <View style={styles.cardHeader}>
+                <Text style={[styles.cardName, { color: c.textPrimary }]}>
+                  {m.name ?? m.url}
+                </Text>
+                <Text style={[styles.cardStatus, { color: stateColor }]}>
+                  {m.paused ? "paused" : m.state}
+                </Text>
+              </View>
+              <Text style={[styles.cardMeta, { color: c.textSecondary }]} numberOfLines={1}>
+                {m.url}
+              </Text>
+              <Text style={[styles.cardMeta, { color: c.textSecondary, marginTop: 2 }]}>
+                every {m.interval}
+                {m.lastCheckAt ? ` · last ${timeAgo(m.lastCheckAt)}` : ""}
+                {m.state !== "unknown" ? ` · streak ${m.streak}` : ""}
+              </Text>
+              <View style={{ flexDirection: "row", marginTop: 8, flexWrap: "wrap" }}>
+                <ActionButton label="Check now" onPress={() => checkNow(m.id)} />
+                <ActionButton
+                  label={m.paused ? "Resume" : "Pause"}
+                  onPress={() => togglePause(m)}
+                />
+                <ActionButton
+                  label="Delete"
+                  onPress={() => removeMonitor(m.id, m.name)}
+                />
+              </View>
+            </View>
+          );
+        })
+      )}
     </ScrollView>
   );
 }
+
+// ── Events (track() ingest) ────────────────────────────────────────
 
 function EventsPane() {
   const c = useColors();
+  const [events, setEvents] = useState<TrackEvent[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const list = await quicClient.analyticsEvents(undefined, 200);
+      setEvents(list);
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 10000);
+    return () => clearInterval(id);
+  }, [refresh]);
+
   return (
-    <ScrollView contentContainerStyle={{ padding: 12 }}>
-      <View style={styles.empty}>
-        <Text style={[styles.emptyTitle, { color: c.textPrimary }]}>Events stream</Text>
-        <Text style={[styles.emptyBody, { color: c.textSecondary }]}>
-          Coming in A1. The Feedback SDK adds a{" "}
-          <Text style={styles.mono}>yaver.track("purchase_completed", {`{ amount: 9.99 }`})</Text>{" "}
-          channel that funnels through BlackBox into a local ring buffer. No
-          dashboards — CSV export + optional PostHog webhook bridge.
-        </Text>
-      </View>
+    <ScrollView
+      contentContainerStyle={{ padding: 12 }}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
+    >
+      <Text style={[styles.cardMeta, { color: c.textSecondary }]}>
+        {events.length} recent event{events.length === 1 ? "" : "s"} · ring-bounded
+      </Text>
+      {events.length === 0 ? (
+        <View style={styles.empty}>
+          <Text style={[styles.emptyTitle, { color: c.textPrimary }]}>
+            No events yet
+          </Text>
+          <Text style={[styles.emptyBody, { color: c.textSecondary }]}>
+            Wire your SDK to call{" "}
+            <Text style={styles.mono}>yaver.track("purchase_completed", {`{ amount: 9.99 }`})</Text>
+            {"\n\n"}
+            Events stream into{" "}
+            <Text style={styles.mono}>~/.yaver/analytics/events.jsonl</Text> and
+            can be exported via{" "}
+            <Text style={styles.mono}>GET /analytics/events.csv</Text>.
+          </Text>
+        </View>
+      ) : (
+        events.map((ev, i) => (
+          <View
+            key={`${ev.timestamp}-${i}`}
+            style={[styles.card, { borderColor: c.border }]}
+          >
+            <Text style={[styles.cardName, { color: c.textPrimary }]}>{ev.name}</Text>
+            <Text style={[styles.cardMeta, { color: c.textSecondary }]}>
+              {new Date(ev.timestamp).toLocaleString()}
+              {ev.route ? ` · ${ev.route}` : ""}
+              {ev.deviceId ? ` · ${ev.deviceId.slice(0, 8)}` : ""}
+            </Text>
+            {ev.props && Object.keys(ev.props).length > 0 ? (
+              <Text style={[styles.cardMeta, styles.mono, { color: c.textSecondary, marginTop: 4 }]} numberOfLines={3}>
+                {JSON.stringify(ev.props)}
+              </Text>
+            ) : null}
+          </View>
+        ))
+      )}
     </ScrollView>
   );
 }
 
+// ── Feature flags ──────────────────────────────────────────────────
+
 function FlagsPane() {
   const c = useColors();
+  const [flags, setFlags] = useState<YaverFlag[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const list = await quicClient.flagsList();
+      setFlags(list);
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const toggleFlag = useCallback(
+    async (f: YaverFlag) => {
+      if (f.type !== "bool") return;
+      const next: YaverFlag = { ...f, defaultBool: !f.defaultBool };
+      await quicClient.flagsSet(next);
+      refresh();
+    },
+    [refresh],
+  );
+
+  const setRollout = useCallback(
+    (f: YaverFlag) => {
+      Alert.prompt(
+        "Rollout percent",
+        `0..100 for ${f.key}`,
+        async (text) => {
+          const pct = parseInt(text, 10);
+          if (isNaN(pct) || pct < 0 || pct > 100) return;
+          const next: YaverFlag = { ...f, rolloutPercent: pct };
+          await quicClient.flagsSet(next);
+          refresh();
+        },
+        "plain-text",
+        String(f.rolloutPercent),
+      );
+    },
+    [refresh],
+  );
+
+  const deleteFlag = useCallback(
+    (f: YaverFlag) => {
+      Alert.alert("Delete flag?", f.key, [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            await quicClient.flagsDelete(f.key);
+            refresh();
+          },
+        },
+      ]);
+    },
+    [refresh],
+  );
+
   return (
-    <ScrollView contentContainerStyle={{ padding: 12 }}>
-      <View style={styles.empty}>
-        <Text style={[styles.emptyTitle, { color: c.textPrimary }]}>Feature flags</Text>
-        <Text style={[styles.emptyBody, { color: c.textSecondary }]}>
-          Coming in F1. The agent serves{" "}
-          <Text style={styles.mono}>/flags/eval</Text> with hashed-bucket
-          percentage rollouts and stable per-user on/off. Flip flags from your
-          phone; the SDK polls through the existing P2P channel.
-        </Text>
-      </View>
+    <ScrollView
+      contentContainerStyle={{ padding: 12 }}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
+    >
+      {flags.length === 0 ? (
+        <View style={styles.empty}>
+          <Text style={[styles.emptyTitle, { color: c.textPrimary }]}>
+            No flags yet
+          </Text>
+          <Text style={[styles.emptyBody, { color: c.textSecondary }]}>
+            From the dev's machine:{"\n\n"}
+            <Text style={styles.mono}>
+              yaver flags set checkout_v2 false --rollout 20
+            </Text>
+            {"\n\n"}
+            Then your SDK polls{" "}
+            <Text style={styles.mono}>/flags/eval?userId=x</Text> and caches
+            the result for 30s.
+          </Text>
+        </View>
+      ) : (
+        flags.map((f) => {
+          const isOn = f.type === "bool" ? f.defaultBool : !!f.defaultString;
+          return (
+            <View key={f.key} style={[styles.card, { borderColor: c.border }]}>
+              <View style={styles.cardHeader}>
+                <Text style={[styles.cardName, { color: c.textPrimary }]}>{f.key}</Text>
+                <Text style={[styles.cardStatus, { color: isOn ? "#22c55e" : c.textSecondary }]}>
+                  {f.type === "bool" ? (isOn ? "ON" : "OFF") : f.defaultString}
+                </Text>
+              </View>
+              {f.description ? (
+                <Text style={[styles.cardMeta, { color: c.textSecondary }]}>
+                  {f.description}
+                </Text>
+              ) : null}
+              <Text style={[styles.cardMeta, { color: c.textSecondary, marginTop: 2 }]}>
+                rollout {f.rolloutPercent}%
+                {f.overrides && Object.keys(f.overrides).length > 0
+                  ? ` · ${Object.keys(f.overrides).length} override(s)`
+                  : ""}
+              </Text>
+              <View style={{ flexDirection: "row", marginTop: 8, flexWrap: "wrap" }}>
+                {f.type === "bool" ? (
+                  <ActionButton label={isOn ? "Flip OFF" : "Flip ON"} onPress={() => toggleFlag(f)} />
+                ) : null}
+                <ActionButton label="Rollout" onPress={() => setRollout(f)} />
+                <ActionButton label="Delete" onPress={() => deleteFlag(f)} />
+              </View>
+            </View>
+          );
+        })
+      )}
     </ScrollView>
   );
 }
