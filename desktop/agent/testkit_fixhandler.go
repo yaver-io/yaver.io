@@ -52,6 +52,10 @@ func registerInteractiveFixHandler() {
 
 // runInteractiveFixClaude is the actual handler body. Separated so
 // tests can call it without touching the package-level registry.
+// Wrapped with a small retry loop — rate-limit errors from claude
+// are extremely common on a busy solo-dev day (the LLM is already
+// serving their interactive session), and a single transient 429
+// should not collapse self-heal to "give_up".
 func runInteractiveFixClaude(ctx context.Context, req testkit.FixRequest) (*testkit.FixResult, error) {
 	if _, err := exec.LookPath("claude"); err != nil {
 		// Claude isn't installed — SelectorReplaceFromSelfHeal is
@@ -66,6 +70,69 @@ func runInteractiveFixClaude(ctx context.Context, req testkit.FixRequest) (*test
 	if req.Spec == nil {
 		return nil, fmt.Errorf("fix request missing spec")
 	}
+
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		result, err := runInteractiveFixClaudeOnce(ctx, req)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		if !isRetryableRunnerError(err) || attempt == maxAttempts {
+			break
+		}
+		// Exponential backoff: 1s, 3s, 9s. The outer
+		// AttemptAutonomousFix caps the whole call at 60s, so
+		// we're guaranteed to fit even if the first two attempts
+		// consume ~5s each.
+		wait := time.Duration(1<<(attempt-1)) * 3 * time.Second
+		if wait > 15*time.Second {
+			wait = 15 * time.Second
+		}
+		select {
+		case <-ctx.Done():
+			return &testkit.FixResult{Strategy: "give_up", Notes: "self-heal cancelled before retry"}, nil
+		case <-time.After(wait):
+		}
+	}
+	return &testkit.FixResult{
+		Strategy: "give_up",
+		Notes:    fmt.Sprintf("self-heal exhausted %d attempts: %v", maxAttempts, lastErr),
+	}, nil
+}
+
+// isRetryableRunnerError inspects a runner error for signatures
+// that look like transient rate-limit / 5xx / network blips. Any
+// other error is a permanent failure — retrying only delays the
+// inevitable "give up."
+func isRetryableRunnerError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"rate limit",
+		"rate-limit",
+		"429",
+		"too many requests",
+		"503",
+		"overloaded",
+		"connection reset",
+		"timeout",
+		"temporary failure",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// runInteractiveFixClaudeOnce is one attempt at the claude
+// subprocess — split out so the retry wrapper can call it
+// repeatedly.
+func runInteractiveFixClaudeOnce(ctx context.Context, req testkit.FixRequest) (*testkit.FixResult, error) {
 
 	// Build a tight, bounded prompt. The contract is different from
 	// Auto Dev's — we want a small JSON blob, not a full AIResponse.
