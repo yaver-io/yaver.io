@@ -1,6 +1,7 @@
 package testkit
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -78,6 +79,14 @@ type HARHeader struct {
 type HARContent struct {
 	Size     int64  `json:"size"`
 	MimeType string `json:"mimeType"`
+	// Text is the response body. Optional — only populated when
+	// capture.network_bodies is on and CDP actually returned a
+	// body for the request.
+	Text string `json:"text,omitempty"`
+	// Encoding is "base64" when Text is a base64 blob of the
+	// original bytes (images, fonts, compressed payloads); empty
+	// for plain UTF-8 text.
+	Encoding string `json:"encoding,omitempty"`
 }
 
 type HARTimings struct {
@@ -117,10 +126,7 @@ func SaveHAR(state *InstrumentationState, artifactDir, label string) (string, er
 				Status:      n.Status,
 				StatusText:  n.StatusText,
 				HTTPVersion: "HTTP/1.1",
-				Content: HARContent{
-					Size:     n.SizeBytes,
-					MimeType: mimeFromType(n.Type),
-				},
+				Content:     harContentFromNetworkEvent(n),
 				HeadersSize: -1,
 				BodySize:    n.SizeBytes,
 			},
@@ -155,6 +161,31 @@ func SaveHAR(state *InstrumentationState, artifactDir, label string) (string, er
 		return path, err
 	}
 	return path, nil
+}
+
+// harContentFromNetworkEvent builds a HARContent with optional body
+// text. Text is omitted when capture.network_bodies is off, and
+// encoded as base64 when the body isn't valid UTF-8 (images, fonts,
+// etc). HAR viewers understand both forms.
+func harContentFromNetworkEvent(n NetworkEvent) HARContent {
+	mime := n.MimeType
+	if mime == "" {
+		mime = mimeFromType(n.Type)
+	}
+	c := HARContent{
+		Size:     n.SizeBytes,
+		MimeType: mime,
+	}
+	if len(n.Body) == 0 {
+		return c
+	}
+	if n.BodyBase64 {
+		c.Text = base64.StdEncoding.EncodeToString(n.Body)
+		c.Encoding = "base64"
+	} else {
+		c.Text = string(n.Body)
+	}
+	return c
 }
 
 // mimeFromType maps CDP resource-type strings to approximate MIME
