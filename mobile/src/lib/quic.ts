@@ -2660,6 +2660,95 @@ export class QuicClient {
     }
   }
 
+  // ---- Newsletter compose (from git activity) --------------------------
+
+  async newsletterCompose(opts: { repo: string; sinceDays?: number; includePrs?: boolean; includeIssues?: boolean; subject?: string; instructions?: string; execute?: boolean; saveDraft?: boolean }): Promise<{ subject: string; draft: string; prompt: string; activity: any; campaignId?: string } | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/newsletter/compose`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(opts),
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  // ---- PDF render -------------------------------------------------------
+
+  async pdfRender(body: { html?: string; url?: string; format?: string; landscape?: boolean; printBackground?: boolean }): Promise<string | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/pdf/render`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) return null;
+      // Return a data URL so the RN Image/WebView can render it.
+      const blob = await res.blob();
+      return await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result));
+        r.onerror = reject;
+        r.readAsDataURL(blob);
+      });
+    } catch { return null; }
+  }
+
+  // ---- Image optimizer (URL helper) ------------------------------------
+
+  imgOptimizeUrl(opts: { src: string; root?: string; w?: number; h?: number; fmt?: string; q?: number }): string {
+    const p = new URLSearchParams();
+    p.set("src", opts.src);
+    if (opts.root) p.set("root", opts.root);
+    if (opts.w) p.set("w", String(opts.w));
+    if (opts.h) p.set("h", String(opts.h));
+    if (opts.fmt) p.set("fmt", opts.fmt);
+    if (opts.q) p.set("q", String(opts.q));
+    return `${this.baseUrl}/img?${p.toString()}`;
+  }
+
+  // ---- Self-hosted OAuth provider admin --------------------------------
+
+  async oauthClients(): Promise<any[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/oauth/clients`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      return (await res.json()).clients || [];
+    } catch { return []; }
+  }
+
+  async oauthClientCreate(body: { name: string; redirectUris: string[]; scopes?: string[] }): Promise<{ client_id: string; client_secret: string } | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/oauth/clients`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  async oauthUsers(): Promise<any[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/oauth/users`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      return (await res.json()).users || [];
+    } catch { return []; }
+  }
+
+  async oauthUserCreate(body: { email: string; password: string; name?: string }): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/oauth/users`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
   // ---- Mail (Gmail / O365) ---------------------------------------------
 
   async mailInbox(opts: { provider?: "gmail" | "o365"; folder?: string; limit?: number; onlyPersonal?: boolean } = {}): Promise<{ messages: MailMessage[]; counts: Record<string, number> } | null> {
