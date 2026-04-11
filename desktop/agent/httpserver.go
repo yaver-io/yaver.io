@@ -122,6 +122,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/agent/tools", s.auth(s.handleTools))
 	mux.HandleFunc("/schedules", s.auth(s.handleSchedules))
 	mux.HandleFunc("/schedules/", s.auth(s.handleScheduleByID))
+	mux.HandleFunc("/autodev/loops", s.auth(s.handleAutodevLoops))
+	mux.HandleFunc("/autodev/loops/", s.auth(s.handleAutodevLoopAction))
 	mux.HandleFunc("/analytics", s.auth(s.handleAnalytics))
 	mux.HandleFunc("/session/list", s.auth(s.handleSessionList))
 	mux.HandleFunc("/session/export", s.auth(s.handleSessionExport))

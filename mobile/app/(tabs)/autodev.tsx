@@ -26,34 +26,19 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
+import {
+  quicClient,
+  type AutoDevLoop,
+  type AutoDevIdeasPayload,
+} from "../../src/lib/quic";
 
-type LoopMode = "fix" | "auto-fix" | "develop" | "ideas";
-type LoopStatus =
-  | "idle"
-  | "running"
-  | "paused"
-  | "stopped"
-  | "stuck"
-  | "budget_hit"
-  | "needs_human";
-
-type LoopRow = {
-  id: string;
-  name: string;
-  mode: LoopMode;
-  status: LoopStatus;
-  iterationCount: number;
-  lastSummary?: string;
-  branch: string;
-  tone?: string;
-  radicalnessUi?: number;
-  radicalnessFeatures?: number;
-};
+type LoopRow = AutoDevLoop;
+type LoopStatus = LoopRow["status"];
 
 type PromptRow = {
   id: string;
   name: string;
-  mode: LoopMode;
+  mode: LoopRow["mode"];
   bodyPreview: string;
   active: boolean;
 };
@@ -62,11 +47,9 @@ type IdeaRow = {
   id: string;
   title: string;
   description: string;
-  radicalness: number;
-  effort: "small" | "medium" | "large";
-  whyPersona: string;
-  whyNot: string;
-  selected: boolean;
+  prompt: string;
+  effort?: "small" | "medium" | "large";
+  radicalness?: number;
 };
 
 type Section = "loops" | "prompts" | "ideas";
@@ -86,13 +69,45 @@ export default function AutoDevScreen() {
     if (!isConnected) return;
     setRefreshing(true);
     try {
-      // HTTP endpoints are not wired yet — this is M8 scaffolding.
-      // Once the Go side exposes /autodev/loops, /autodev/prompts,
-      // /autodev/ideas the calls go here via quicClient. For now the
-      // arrays stay empty and the UI shows the "no data yet" state.
-      setLoops([]);
-      setPrompts([]);
-      setIdeas([]);
+      const list = await quicClient.autodevLoops();
+      setLoops(list);
+
+      // Prompt library mirrors the inline prompts devs have stashed
+      // on each loop. When a loop has an active PromptInline we show
+      // it as an "active" row; if not, we drop a placeholder so the
+      // dev can tell the loop exists but isn't pinned to a prompt.
+      setPrompts(
+        list.map((l) => ({
+          id: l.id,
+          name: l.name,
+          mode: l.mode,
+          bodyPreview:
+            l.promptInline?.slice(0, 120) ?? "(no inline prompt set)",
+          active: !!l.promptInline,
+        })),
+      );
+
+      // Ideas are per-loop — pull the first ideas-mode loop we see.
+      const ideasLoop = list.find((l) => l.mode === "ideas");
+      if (ideasLoop) {
+        const payload = await quicClient.autodevIdeas(ideasLoop.name);
+        if (payload && payload.ideas) {
+          setIdeas(
+            payload.ideas.map((it) => ({
+              id: it.id,
+              title: it.title,
+              description: it.description ?? "",
+              prompt: it.prompt,
+              effort: it.effort,
+              radicalness: it.radicalness,
+            })),
+          );
+        } else {
+          setIdeas([]);
+        }
+      } else {
+        setIdeas([]);
+      }
     } finally {
       setRefreshing(false);
     }
@@ -102,9 +117,10 @@ export default function AutoDevScreen() {
     refresh();
   }, [refresh]);
 
-  const stopAll = useCallback(() => {
-    // Placeholder — wired to POST /autodev/stop-all when the Go side ships.
-  }, []);
+  const stopAll = useCallback(async () => {
+    await Promise.all(loops.map((l) => quicClient.autodevStop(l.name)));
+    refresh();
+  }, [loops, refresh]);
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: c.bg }]} edges={["top"]}>
