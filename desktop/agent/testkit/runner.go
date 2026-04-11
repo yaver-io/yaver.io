@@ -219,6 +219,36 @@ func runPhase(ctx context.Context, spec *Spec, opts RunOptions, res *Result, pha
 			StartedAt:   time.Now(),
 		}
 		err := executeStep(stepCtx, spec, step)
+		// On a selector-not-found failure, give the autonomous fix
+		// loop one shot at proposing a replacement selector before we
+		// declare the step failed. This is the "tests don't rot"
+		// payoff: a cosmetic refactor that renames a class doesn't
+		// break the suite, the LLM patches the selector and the run
+		// continues.
+		if err != nil && IsSelectorFailure(err) && step.Click != "" {
+			dom := captureDOM(stepCtx)
+			fix := SelectorReplaceFromSelfHeal(stepCtx, step.Click, dom, "click target")
+			if fix != nil && fix.Strategy == "selector_replace" && fix.SelectorReplace != "" {
+				patched := step
+				patched.Click = fix.SelectorReplace
+				if retryErr := executeStep(stepCtx, spec, patched); retryErr == nil {
+					sr.Description += " (auto-healed)"
+					err = nil
+				}
+			}
+		}
+		if err != nil && IsSelectorFailure(err) && step.Fill != nil {
+			dom := captureDOM(stepCtx)
+			fix := SelectorReplaceFromSelfHeal(stepCtx, step.Fill.Selector, dom, "input field")
+			if fix != nil && fix.Strategy == "selector_replace" && fix.SelectorReplace != "" {
+				patched := step
+				patched.Fill = &FillStep{Selector: fix.SelectorReplace, Text: step.Fill.Text}
+				if retryErr := executeStep(stepCtx, spec, patched); retryErr == nil {
+					sr.Description += " (auto-healed)"
+					err = nil
+				}
+			}
+		}
 		// Snapshot steps need a separate phase: capture + compare against
 		// the on-disk baseline. Run after the chromedp action returns
 		// successfully (so the page is in its final state).
@@ -407,6 +437,17 @@ func waitForURL(ctx context.Context, substr string) error {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// captureDOM grabs the current page's outerHTML via chromedp.
+// Best-effort — returns "" on any error so the autonomous fix path
+// can fall back to a code edit instead.
+func captureDOM(ctx context.Context) string {
+	var html string
+	if err := chromedp.Run(ctx, chromedp.OuterHTML("html", &html, chromedp.ByQuery)); err != nil {
+		return ""
+	}
+	return html
 }
 
 // stepDescription returns a human label for a step, used in reports.
