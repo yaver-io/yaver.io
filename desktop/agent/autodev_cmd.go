@@ -55,16 +55,17 @@ const (
 
 // autodevDefaults bundles the policy knobs for a single run.
 type autodevDefaults struct {
-	hours   string
-	load    string
-	deploy  string
-	prompt  string
-	project string
-	runner  string
-	branch  string
-	target  string
-	maxIter int
-	notify  bool
+	hours      string
+	load       string
+	deploy     string
+	prompt     string
+	project    string
+	runner     string
+	branch     string
+	target     string
+	maxIter    int
+	notify     bool
+	noAutotest bool
 }
 
 // runAutodev is `yaver autodev <project> [flags]`.
@@ -100,6 +101,7 @@ func runAutodevOrTest(kind string, args []string) {
 	maxIter := fs.Int("max-iterations", 0, "Hard cap on total kicks (0 = no cap)")
 	notify := fs.Bool("notify", false, "Notify mobile when run ends")
 	showPlan := fs.Bool("plan", false, "Print plan and exit (dry-run)")
+	noAutotest := fs.Bool("no-autotest", false, "autodev only: skip the interleaved autotest pass")
 	fs.Usage = func() { printAutodevHelp(kind) }
 
 	positional, flagArgs := splitAutodevArgs(args)
@@ -125,16 +127,17 @@ func runAutodevOrTest(kind string, args []string) {
 	}
 
 	d := autodevDefaults{
-		hours:   *hours,
-		load:    *load,
-		deploy:  *deploy,
-		prompt:  *prompt,
-		project: project,
-		runner:  *runner,
-		branch:  *branch,
-		target:  *target,
-		maxIter: *maxIter,
-		notify:  *notify,
+		hours:      *hours,
+		load:       *load,
+		deploy:     *deploy,
+		prompt:     *prompt,
+		project:    project,
+		runner:     *runner,
+		branch:     *branch,
+		target:     *target,
+		maxIter:    *maxIter,
+		notify:     *notify,
+		noAutotest: *noAutotest,
 	}
 	d = applyAutodevDefaults(d, kind, wd)
 
@@ -147,6 +150,12 @@ func runAutodevOrTest(kind string, args []string) {
 		fmt.Fprintf(os.Stderr, "%s: scaffold spec: %v\n", kind, err)
 		os.Exit(1)
 	}
+	if p.IncludeAutotest {
+		if err := ensureAutodevRegressionSpec(p); err != nil {
+			fmt.Fprintf(os.Stderr, "%s: scaffold regression spec: %v\n", kind, err)
+			os.Exit(1)
+		}
+	}
 	if d.prompt != "" {
 		// loop_cmd's prompt setter persists in loops.json so
 		// subsequent runs without a prompt still remember it.
@@ -154,6 +163,71 @@ func runAutodevOrTest(kind string, args []string) {
 	}
 	runAutodevLoop(p)
 	runAutodevDeploy(p)
+}
+
+// ensureAutodevRegressionSpec scaffolds the interleaved autotest
+// loop used by `yaver autodev`. It's a separate loop name and
+// spec from `yaver autotest <project>` so standalone autotest
+// runs don't clobber it. The prompt instructs the runner to
+// focus on code changed since the last passing test run — a
+// smart regression pass rather than a full re-test every kick.
+func ensureAutodevRegressionSpec(p autodevPlan) error {
+	if fileExists(p.TestSpecPath) {
+		return nil
+	}
+	respect := "false"
+	if p.RespectLimits {
+		respect = "true"
+	}
+	prompt := `Smart regression pass. First run: git diff --name-only HEAD~1 HEAD
+to find files the autodev loop just changed. Focus end-to-end testing on
+the code paths those files touch — launch the app, click the screens and
+flows they affect, verify with Playwright / Appium / selenium if a suite
+is configured. Only widen to full regression if the changed-files pass is
+green and there is budget left. When you find a regression, write a
+minimal fix, verify, commit with message "autotest(regression): <short>"
+and push. Do not add new features.`
+	body := fmt.Sprintf(`name: %s
+mode: auto-test
+target: %s
+schedule:
+  every: 60s
+  timeout: 20m
+playtest:
+  enabled: true
+  duration: 3m
+  fuzzer: heuristic
+think:
+  runner: %s
+  fallback:
+    - codex
+    - aider
+    - ollama:qwen2.5-coder:32b
+  max_kicks_per_run: 2
+  respect_session_limits: %s
+  prompt_inline: |
+%s
+  require_green:
+    - typecheck
+    - test
+ship:
+  branch: %s
+  commit_prefix: "autotest(regression):"
+budget:
+  max_iterations_per_day: %d
+test:
+  framework: playwright
+  chrome: true
+  data_entry: true
+  regression: true
+  focus_changed_files: true
+`, p.TestLoopName, p.Target, p.Runner, respect,
+		indentAutodev(prompt, "    "), p.Branch, p.MaxIterDay)
+	if err := os.WriteFile(p.TestSpecPath, []byte(body), 0o644); err != nil {
+		return err
+	}
+	loopAdd([]string{p.TestSpecPath})
+	return nil
 }
 
 func splitAutodevArgs(args []string) (positional, flags []string) {
@@ -223,6 +297,15 @@ type autodevPlan struct {
 	RespectLimits  bool
 	TickSleepSec   int
 	MaxIterDay     int
+	// IncludeAutotest causes an autodev run to interleave one
+	// autotest kick after every dev kick against the same project.
+	// The autotest kick runs in smart regression mode — focused on
+	// files changed by the preceding dev commit.
+	IncludeAutotest bool
+	// TestLoopName / TestSpecPath are the interleaved autotest
+	// loop's identifiers (only populated when IncludeAutotest).
+	TestLoopName string
+	TestSpecPath string
 }
 
 func buildAutodevPlan(kind string, d autodevDefaults, wd string) autodevPlan {
@@ -263,26 +346,36 @@ func buildAutodevPlan(kind string, d autodevDefaults, wd string) autodevPlan {
 	if branch == "" {
 		branch = "main"
 	}
+	includeAutotest := kind == "autodev" && !d.noAutotest
+	testLoopName := ""
+	testSpecPath := ""
+	if includeAutotest {
+		testLoopName = d.project + "-autodev-regression"
+		testSpecPath = filepath.Join(wd, ".autodev-regression.loop.yaml")
+	}
 	return autodevPlan{
-		Kind:           kind,
-		Project:        d.project,
-		LoopName:       loopName,
-		Mode:           mode,
-		Hours:          d.hours,
-		Load:           d.load,
-		Deploy:         d.deploy,
-		Target:         target,
-		Prompt:         d.prompt,
-		SpecPath:       filepath.Join(wd, "."+kind+".loop.yaml"),
-		Runner:         runner,
-		Branch:         branch,
-		MaxIterHardCap: d.maxIter,
-		Notify:         d.notify,
-		Deadline:       deadline,
-		InfiniteRun:    infinite,
-		RespectLimits:  respect,
-		TickSleepSec:   tick,
-		MaxIterDay:     maxIter,
+		Kind:            kind,
+		Project:         d.project,
+		LoopName:        loopName,
+		Mode:            mode,
+		Hours:           d.hours,
+		Load:            d.load,
+		Deploy:          d.deploy,
+		Target:          target,
+		Prompt:          d.prompt,
+		SpecPath:        filepath.Join(wd, "."+kind+".loop.yaml"),
+		Runner:          runner,
+		Branch:          branch,
+		MaxIterHardCap:  d.maxIter,
+		Notify:          d.notify,
+		Deadline:        deadline,
+		InfiniteRun:     infinite,
+		RespectLimits:   respect,
+		TickSleepSec:    tick,
+		MaxIterDay:      maxIter,
+		IncludeAutotest: includeAutotest,
+		TestLoopName:    testLoopName,
+		TestSpecPath:    testSpecPath,
 	}
 }
 
@@ -308,7 +401,12 @@ func printAutodevPlan(p autodevPlan) {
 	fmt.Printf("  runner:        %s (falls back to codex → aider → ollama)\n", p.Runner)
 	fmt.Printf("  branch:        %s\n", p.Branch)
 	fmt.Printf("  kick interval: %ds (multi-kick loop)\n", p.TickSleepSec)
-	fmt.Printf("  daily budget:  %d iterations\n", p.MaxIterDay)
+	fmt.Printf("  daily budget:  %d iterations (enforced even under --infinite)\n", p.MaxIterDay)
+	if p.IncludeAutotest {
+		fmt.Printf("  regression:    ON — each successful dev kick is followed by a\n")
+		fmt.Printf("                 smart-regression autotest pass on changed files\n")
+		fmt.Printf("                 (loop name: %s)\n", p.TestLoopName)
+	}
 	if p.MaxIterHardCap > 0 {
 		fmt.Printf("  hard cap:      %d total kicks\n", p.MaxIterHardCap)
 	}
@@ -447,7 +545,19 @@ func indentAutodev(s, prefix string) string {
 
 // runAutodevLoop is the main kick schedule. Calls loopRun once per
 // tick, records git deltas into the per-run JSON report, keeps
-// going until deadline / hard cap / SIGINT.
+// going until deadline / hard cap / daily budget / SIGINT.
+//
+// When p.IncludeAutotest is true (the default for `yaver autodev`),
+// each dev kick is immediately followed by a regression autotest
+// kick on the same repo — smart-regression mode focused on files
+// the dev kick just changed. The alternation means one
+// `yaver autodev sfmg` invocation both develops AND tests.
+//
+// Daily-budget enforcement: even with --infinite, the loop
+// refuses to kick past p.MaxIterDay iterations in a rolling 24h
+// window so it cannot burn the user's entire monthly Claude /
+// Codex / API allotment in a single overnight run. Past the cap,
+// the loop sleeps an hour and re-checks.
 func runAutodevLoop(p autodevPlan) {
 	report := newAutodevReport(p)
 	defer func() {
@@ -456,7 +566,24 @@ func runAutodevLoop(p autodevPlan) {
 	}()
 	report.save()
 
+	kickOne := func(iter int, name string, label string) (before, after string) {
+		fmt.Printf("%s: %s kick #%d at %s\n", p.Kind, label, iter, time.Now().Format("15:04:05"))
+		before = autodevGitHead()
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Fprintf(os.Stderr, "%s: %s kick panicked: %v\n", p.Kind, label, r)
+				}
+			}()
+			loopRun([]string{name})
+		}()
+		after = autodevGitHead()
+		return
+	}
+
 	iter := 0
+	dayWindowStart := time.Now()
+	kicksToday := 0
 	for {
 		if !p.InfiniteRun && time.Now().After(p.Deadline) {
 			fmt.Printf("%s: deadline reached (%s)\n", p.Kind, p.Deadline.Format(time.RFC3339))
@@ -466,25 +593,53 @@ func runAutodevLoop(p autodevPlan) {
 			fmt.Printf("%s: hard cap of %d kicks reached\n", p.Kind, p.MaxIterHardCap)
 			break
 		}
+		// Rolling 24h window for the daily-budget cap. Past the
+		// cap, sleep until the window rolls instead of exiting —
+		// an infinite run should survive a daily pause.
+		if time.Since(dayWindowStart) > 24*time.Hour {
+			dayWindowStart = time.Now()
+			kicksToday = 0
+		}
+		if p.MaxIterDay > 0 && kicksToday >= p.MaxIterDay {
+			fmt.Printf("%s: daily cap of %d kicks hit — sleeping until the 24h window rolls\n", p.Kind, p.MaxIterDay)
+			time.Sleep(1 * time.Hour)
+			continue
+		}
+
 		iter++
-		fmt.Printf("%s: kick #%d at %s\n", p.Kind, iter, time.Now().Format("15:04:05"))
-		beforeSHA := autodevGitHead()
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					fmt.Fprintf(os.Stderr, "%s: kick panicked: %v\n", p.Kind, r)
-				}
-			}()
-			loopRun([]string{p.LoopName})
-		}()
-		afterSHA := autodevGitHead()
+		kicksToday++
+
+		// --- dev kick ---
+		beforeSHA, afterSHA := kickOne(iter, p.LoopName, p.Kind)
 		if beforeSHA != afterSHA && afterSHA != "" {
 			report.addKick(iter, beforeSHA, afterSHA)
 			report.save()
 		}
+
+		// --- interleaved regression autotest kick ---
+		// Smart-regression: the autotest spec reads git diff
+		// --name-only HEAD~1 HEAD in its prompt, so it picks up
+		// exactly the files the dev kick just changed.
+		if p.IncludeAutotest && p.TestLoopName != "" {
+			// Only run the regression if the dev kick actually
+			// produced a new commit — no point re-testing an
+			// unchanged tree.
+			if beforeSHA != afterSHA && afterSHA != "" && kicksToday < p.MaxIterDay {
+				kicksToday++
+				tBefore, tAfter := kickOne(iter, p.TestLoopName, "autotest(regression)")
+				if tBefore != tAfter && tAfter != "" {
+					report.addKick(iter, tBefore, tAfter)
+					report.save()
+				}
+			}
+		}
+
 		time.Sleep(time.Duration(p.TickSleepSec) * time.Second)
 	}
 	loopStop([]string{p.LoopName})
+	if p.TestLoopName != "" {
+		loopStop([]string{p.TestLoopName})
+	}
 }
 
 // --- deploy with version bump --------------------------------------------
