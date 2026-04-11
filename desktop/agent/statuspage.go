@@ -32,6 +32,8 @@ type statusPageData struct {
 	Releases    map[string]*ReleaseManifest
 	ErrorsStats map[string]int
 	Events      int
+	Machine     MachineHealth
+	Peers       []*PeerState
 }
 
 func buildStatusPageData() statusPageData {
@@ -52,6 +54,13 @@ func buildStatusPageData() statusPageData {
 		data.ErrorsStats = store.Stats()
 	}
 	data.Events = len(analyticsTail(0, 1000))
+
+	// Machine health snapshot + peers. We take a read lock so
+	// the status page render doesn't fight the scanner.
+	machineHealthMu.RLock()
+	data.Machine = machineHealth
+	machineHealthMu.RUnlock()
+	data.Peers = globalPeerWatcher().Snapshot()
 	return data
 }
 
@@ -199,6 +208,69 @@ const statusPageTemplate = `<!doctype html>
   <h2>Events</h2>
   <p class="muted">{{.Events}} recent business events ingested through yaver.track().</p>
 </section>
+
+{{if .Machine.Hostname}}
+<section>
+  <h2>Machine: {{.Machine.Hostname}} ({{.Machine.OS}})</h2>
+  <p class="muted">Last scan {{timeAgoMs .Machine.UpdatedAt}}</p>
+  {{if .Machine.Alerts}}
+  <div style="margin-top: 0.5rem;">
+    {{range .Machine.Alerts}}
+    <p style="color: #dc2626; font-weight: 600;">⚠ {{.}}</p>
+    {{end}}
+  </div>
+  {{end}}
+  {{if .Machine.Filesystems}}
+  <table>
+    <thead><tr><th>Mount</th><th>Used</th><th>Free</th><th>%</th></tr></thead>
+    <tbody>
+      {{range .Machine.Filesystems}}
+      <tr>
+        <td>{{.Mount}}</td>
+        <td>{{printf "%.1f" .UsedGB}} GB</td>
+        <td>{{printf "%.1f" .FreeGB}} GB</td>
+        <td>{{printf "%.0f" .UsedPct}}%</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{end}}
+  {{if .Machine.Drives}}
+  <h3 style="margin-top: 1rem; font-size: 0.95rem;">SMART</h3>
+  <table>
+    <thead><tr><th>Device</th><th>Model</th><th>Health</th><th>Temp</th></tr></thead>
+    <tbody>
+      {{range .Machine.Drives}}
+      <tr>
+        <td><code>{{.Device}}</code></td>
+        <td class="muted">{{.Model}}</td>
+        <td>{{if eq .Health "passed"}}<span class="up">OK</span>{{else if eq .Health "failing"}}<span class="down">FAILING</span>{{else}}<span class="muted">unknown</span>{{end}}</td>
+        <td class="muted">{{if gt .TemperatureC 0}}{{.TemperatureC}}°C{{end}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{end}}
+</section>
+{{end}}
+
+{{if .Peers}}
+<section>
+  <h2>Peer heartbeats</h2>
+  <table>
+    <thead><tr><th>Device</th><th>State</th><th>Last seen</th></tr></thead>
+    <tbody>
+      {{range .Peers}}
+      <tr>
+        <td>{{if .Name}}{{.Name}}{{else}}<code>{{.DeviceID}}</code>{{end}}</td>
+        <td>{{if eq .State "online"}}<span class="up">online</span>{{else if eq .State "offline"}}<span class="down">OFFLINE</span>{{else}}<span class="muted">stale</span>{{end}}</td>
+        <td class="muted">{{timeAgoMs .LastSeen}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}
 
 <footer>
   Self-hosted by Yaver &middot; no JS, no external assets, no vendor &middot;

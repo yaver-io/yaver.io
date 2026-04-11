@@ -169,6 +169,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// the pairing code (10-min window, single use) is the secret.
 	mux.HandleFunc("/auth/pair/info", s.handlePairInfo)
 	mux.HandleFunc("/auth/pair/submit", s.handlePairSubmit)
+	mux.HandleFunc("/machine/health", s.auth(s.handleMachineHealth))
+	mux.HandleFunc("/machine/peers", s.auth(s.handlePeerHealth))
 	mux.HandleFunc("/analytics", s.auth(s.handleAnalytics))
 	mux.HandleFunc("/session/list", s.auth(s.handleSessionList))
 	mux.HandleFunc("/session/export", s.auth(s.handleSessionExport))

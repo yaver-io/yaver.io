@@ -2632,6 +2632,34 @@ export class QuicClient {
     }
   }
 
+  // ---- Machine health (disk + SMART + peers) ----------------------------
+
+  async machineHealth(): Promise<MachineHealth | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/machine/health`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data.health ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  async machinePeers(): Promise<PeerState[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/machine/peers`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.peers ?? [];
+    } catch {
+      return [];
+    }
+  }
+
   // ---- Log aggregation (E cross-device) ---------------------------------
 
   async logsSearch(
@@ -2879,6 +2907,48 @@ export interface TrackEvent {
   timestamp: number;
   route?: string;
   props?: Record<string, string>;
+}
+
+/** Machine health snapshot (disk + SMART). */
+export interface MachineHealth {
+  hostname: string;
+  os: string;
+  updatedAt: string;
+  filesystems: DiskSpaceEntry[];
+  drives: SMARTDrive[];
+  alerts?: string[];
+}
+
+export interface DiskSpaceEntry {
+  mount: string;
+  totalGb: number;
+  usedGb: number;
+  freeGb: number;
+  usedPct: number;
+  device?: string;
+  fsType?: string;
+  checkedAt: string;
+}
+
+export interface SMARTDrive {
+  device: string;
+  model?: string;
+  serial?: string;
+  health: "passed" | "failing" | "unknown";
+  temperatureC?: number;
+  powerOnHours?: number;
+  checkedAt: string;
+}
+
+/** Peer heartbeat state from /machine/peers. */
+export interface PeerState {
+  deviceId: string;
+  name?: string;
+  lastSeen: string;
+  observedAt: string;
+  state: "online" | "stale" | "offline";
+  alertedAt?: string;
+  staleSince?: string;
 }
 
 /** Cross-device log entry. */

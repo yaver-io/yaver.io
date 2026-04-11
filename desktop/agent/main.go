@@ -29,7 +29,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.80.0"
+const version = "1.81.0"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
@@ -124,6 +124,8 @@ func main() {
 		runAPIKey(os.Args[2:])
 	case "backup":
 		runBackup(os.Args[2:])
+	case "machine":
+		runMachine(os.Args[2:])
 	case "debug":
 		runDebug(os.Args[2:])
 	case "expo":
@@ -1724,6 +1726,27 @@ func runServe(args []string) {
 
 	// Start LAN discovery beacon (UDP broadcast for same-network mobile discovery)
 	go startBeacon(ctx, cfg.DeviceID, *httpPort, hostname, ownerUserID)
+
+	// Disk health + SMART monitor — solo-dev headless hardware
+	// guard. Every 10 minutes the scanner refreshes the
+	// MachineHealth snapshot and fires notifications for fresh
+	// crossings of the 85% / 95% disk thresholds or a SMART
+	// "failing" transition. Local only, no vendor. Opt-out via
+	// `disable_disk_health: true` in config.json.
+	if cfg.DisableDiskHealth {
+		log.Printf("[disk-health] disabled via config — skipping")
+	} else {
+		StartDiskHealthLoop()
+	}
+
+	// Peer heartbeat watcher — alerts when a registered peer
+	// hasn't checked in for > 5 minutes. Opt-out via
+	// `disable_heartbeat_watcher: true` in config.json.
+	if cfg.DisableHeartbeatWatcher {
+		log.Printf("[heartbeat] disabled via config — skipping")
+	} else {
+		StartHeartbeatWatcher(ctx)
+	}
 
 	// Start relay tunnels with hot-reload support
 	// Initial relay tunnels are started, and config is polled for changes every 30s

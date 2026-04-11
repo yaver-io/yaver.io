@@ -930,6 +930,35 @@ class AgentClient {
     await fetch(`${this.baseUrl}/healthmon/${id}`, { method: "DELETE", headers: this.authHeaders });
   }
 
+  // ── Machine health (disk + SMART + peer heartbeat) ──────────────
+
+  async machineHealth(): Promise<{
+    hostname: string;
+    os: string;
+    updatedAt: string;
+    filesystems: { mount: string; totalGb: number; usedGb: number; freeGb: number; usedPct: number; device?: string; fsType?: string }[];
+    drives: { device: string; model?: string; health: "passed" | "failing" | "unknown"; temperatureC?: number; powerOnHours?: number }[];
+    alerts?: string[];
+  } | null> {
+    this.assertConnected();
+    try {
+      const res = await fetch(`${this.baseUrl}/machine/health`, { headers: this.authHeaders });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data.health ?? null;
+    } catch { return null; }
+  }
+
+  async machinePeers(): Promise<{ deviceId: string; name?: string; lastSeen: string; state: "online" | "stale" | "offline" }[]> {
+    this.assertConnected();
+    try {
+      const res = await fetch(`${this.baseUrl}/machine/peers`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.peers ?? [];
+    } catch { return []; }
+  }
+
   // ── Quality Gates ─────────────────────────────────────────────────
 
   async listQualityGates(): Promise<{ id?: string; type?: string; name?: string; status?: string }[]> {
