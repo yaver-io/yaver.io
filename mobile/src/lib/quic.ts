@@ -2660,6 +2660,66 @@ export class QuicClient {
     }
   }
 
+  // ---- Mail (Gmail / O365) ---------------------------------------------
+
+  async mailInbox(opts: { provider?: "gmail" | "o365"; folder?: string; limit?: number; onlyPersonal?: boolean } = {}): Promise<{ messages: MailMessage[]; counts: Record<string, number> } | null> {
+    try {
+      const p = new URLSearchParams();
+      if (opts.provider) p.set("provider", opts.provider);
+      if (opts.folder) p.set("folder", opts.folder);
+      if (opts.limit) p.set("limit", String(opts.limit));
+      if (opts.onlyPersonal) p.set("onlyPersonal", "true");
+      const res = await fetch(`${this.baseUrl}/mail/inbox?${p.toString()}`, { headers: this.authHeaders });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  async mailDraft(id: string, instructions?: string, provider?: string): Promise<{ prompt: string; target: MailMessage; draft?: string } | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/mail/draft`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ id, instructions, provider, execute: false }),
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  async mailSend(body: { to: string[]; subject: string; body?: string; htmlBody?: string }): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/mail/send`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
+  async mailConnectStart(provider: "gmail" | "o365"): Promise<{ sessionId: string; authUrl: string } | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/mail/onboard/start`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ provider }),
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  async mailConnectStatus(sessionId: string): Promise<{ session: any; ready: boolean } | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/mail/onboard/status?id=${encodeURIComponent(sessionId)}`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
   // ---- Forms -----------------------------------------------------------
 
   async formsList(): Promise<any[]> {
@@ -3132,6 +3192,26 @@ export interface LogEntry {
   source?: string;
   route?: string;
   timestamp: number;
+}
+
+/** Mail message shape shared across Gmail / O365 in the agent. */
+export interface MailMessage {
+  id: string;
+  threadId?: string;
+  from: string;
+  fromName?: string;
+  to?: string[];
+  cc?: string[];
+  subject: string;
+  snippet?: string;
+  body?: string;
+  bodyHtml?: string;
+  date: string;
+  classification: "personal" | "transactional" | "marketing" | "bulk";
+  score: number;
+  threadReplies?: number;
+  hasUnsubscribe?: boolean;
+  provider: "gmail" | "o365";
 }
 
 /** One step in the project wizard — the UI renders whichever
