@@ -75,6 +75,82 @@ import (
 // stays open before the passkey expires and we regenerate.
 const bootstrapPairingTTL = 10 * time.Minute
 
+// BootstrapInfo is the JSON shape returned by /info when the
+// agent is in bootstrap mode. Exported (lowercase fields, but
+// the type itself) so other code in this package can decode it.
+type bootstrapInfoResponse struct {
+	OK        bool   `json:"ok"`
+	Mode      string `json:"mode"`
+	NeedsAuth bool   `json:"needsAuth"`
+	Hostname  string `json:"hostname"`
+	Version   string `json:"version"`
+}
+
+// probeBootstrapInfo hits http://127.0.0.1:<port>/info with a
+// 1-second timeout. Returns the parsed response or nil on any
+// failure (port closed, timeout, non-bootstrap response). Used
+// by `yaver status` to detect a running bootstrap-mode agent
+// without needing an auth token.
+func probeBootstrapInfo(port int) *bootstrapInfoResponse {
+	client := &http.Client{Timeout: 1 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/info", port))
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	var info bootstrapInfoResponse
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil
+	}
+	return &info
+}
+
+// forkBootstrapToBackground mirrors the authed serve fork-to-bg
+// dance for the no-token case. Re-execs `yaver serve --debug
+// --port=N --work-dir=W` with stdout/stderr piped to the agent
+// log file and detached from the parent. Returns true on success.
+func forkBootstrapToBackground(httpPort int, workDir string) bool {
+	execPath, err := os.Executable()
+	if err != nil {
+		log.Printf("bootstrap: cannot find yaver binary: %v", err)
+		return false
+	}
+	logFile := logFilePath()
+	lf, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		log.Printf("bootstrap: cannot open log file: %v", err)
+		return false
+	}
+	cmd := osexec.Command(execPath, "serve", "--debug",
+		fmt.Sprintf("--port=%d", httpPort),
+		fmt.Sprintf("--work-dir=%s", workDir))
+	cmd.Stdout = lf
+	cmd.Stderr = lf
+	cmd.Dir = workDir
+	detachProcess(cmd)
+	if err := cmd.Start(); err != nil {
+		log.Printf("bootstrap: failed to fork: %v", err)
+		lf.Close()
+		return false
+	}
+	if err := os.WriteFile(pidFilePath(), []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0644); err != nil {
+		log.Printf("bootstrap: warning: could not write PID file: %v", err)
+	}
+	lf.Close()
+	fmt.Printf("Yaver agent started in bootstrap mode (PID %d, port %d).\n", cmd.Process.Pid, httpPort)
+	fmt.Println()
+	fmt.Println("This machine has no auth token yet. The agent is up and waiting.")
+	fmt.Println("Open the Yaver mobile app (already signed in) on the same Wi-Fi —")
+	fmt.Println("the box will appear as 'needs auth', tap it to pair.")
+	fmt.Println()
+	fmt.Println("  yaver status    Check pairing state")
+	fmt.Println("  yaver logs      Watch the bootstrap server")
+	return true
+}
+
 // runBootstrapServe is entered when `yaver serve` is invoked on
 // a machine that has no auth token. It blocks until a token
 // lands via /auth/pair/submit, saves it, then re-execs the
@@ -123,6 +199,13 @@ func runBootstrapServe(httpPort int) {
 	// /info is a cheap liveness check the mobile app pings to
 	// verify the URL before sending the token.
 	mux.HandleFunc("/info", bs.handleInfo)
+	// /auth/recover is the unauth recovery endpoint normally
+	// mounted on the full HTTPServer. Mount it here too so a
+	// box that has lost its token but is still reachable via
+	// relay/Tailscale can be remotely re-authed by an already-
+	// signed-in mobile client. The handler is the same one used
+	// in normal serve mode (auth_recover.go).
+	mux.HandleFunc("/auth/recover", bs.handleAuthRecover)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf("0.0.0.0:%d", httpPort),
@@ -274,6 +357,15 @@ func (bs *bootstrapHTTPServer) handlePairInfo(w http.ResponseWriter, r *http.Req
 
 func (bs *bootstrapHTTPServer) handlePairSubmit(w http.ResponseWriter, r *http.Request) {
 	(&HTTPServer{}).handlePairSubmit(w, r)
+}
+
+// handleAuthRecover delegates to the same handler used in
+// normal serve mode. It's safe because handleAuthRecover only
+// touches package-level state (recoveryLimiter, the bootstrap
+// secret hash in config.json, the pair session map) — none of
+// the HTTPServer fields it would otherwise read are needed.
+func (bs *bootstrapHTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
+	(&HTTPServer{}).handleAuthRecover(w, r)
 }
 
 // corsWrap lets the mobile app and browsers on the LAN hit the

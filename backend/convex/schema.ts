@@ -72,9 +72,17 @@ export default defineSchema({
     }))),
     lastHeartbeat: v.number(),
     createdAt: v.number(),
+    // hardwareId is a stable per-machine fingerprint reported by
+    // the agent on registration and every heartbeat. Used by the
+    // remote-OAuth-trigger flow: when an agent loses its token
+    // and re-enters bootstrap mode, the original host can call
+    // /auth/recover with their Convex token and we look up the
+    // device by hardwareId to confirm they own it.
+    hardwareId: v.optional(v.string()),
   })
     .index("by_userId", ["userId"])
-    .index("by_deviceId", ["deviceId"]),
+    .index("by_deviceId", ["deviceId"])
+    .index("by_hardwareId", ["hardwareId"]),
 
   downloads: defineTable({
     platform: v.union(
