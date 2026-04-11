@@ -90,6 +90,7 @@ Skip GitHub Actions. Skip TestFlight queues. Your build goes straight to your ph
 
 - **Repo switching** — `yaver repo switch my-app` auto-discovers git repos under `~/` and changes the agent's working directory. No manual path typing.
 - **Auto-detect testing** — `yaver test unit` detects your framework (Flutter, Jest, pytest, Go test, Cargo, XCTest, Espresso, Playwright, Cypress, Maestro) and runs the right command. Pass/fail counts stream to your phone.
+- **yaver-test-sdk** — Embedded E2E test runner that replaces Playwright + Percy + axe-core. Drop YAML specs under `yaver-tests/`, run `yaver test run`, and every test executes on your own hardware for $0/mo. See [`docs/yaver-test-sdk.md`](docs/yaver-test-sdk.md).
 - **Full pipeline** — `yaver pipeline --test --deploy p2p` builds, tests, and deploys in one command. Stops on test failure by default.
 - **Platform-aware builds** — When you request a build from your phone, the agent knows your platform (iOS or Android) and builds the right artifact (APK/AAB for Android, IPA for iOS).
 - **Expo support** — `yaver build expo-android` and `yaver build expo-ios` for Expo-managed projects. Runs `eas build` or `expo prebuild` + native build depending on your setup.
