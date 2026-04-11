@@ -1245,7 +1245,7 @@ func phaseThink(ctx context.Context, l *LoopState, workDir string, report *Heuri
 	case runner == "aider":
 		return spawnAider(ctx, l, workDir, report, reportPath, nudge)
 	case strings.HasPrefix(runner, "ollama"):
-		return nil, fmt.Errorf("runner %q is not wired yet (claude, codex, and aider are the wired runners — ollama is additive scaffolding)", runner)
+		return spawnOllama(ctx, l, workDir, report, reportPath, nudge)
 	default:
 		return nil, fmt.Errorf("unknown runner %q", runner)
 	}
@@ -1343,6 +1343,107 @@ func spawnClaudeCode(ctx context.Context, l *LoopState, workDir string, report *
 	}
 
 	return parseAIResponse(string(out))
+}
+
+// spawnOllama talks to a local ollama daemon via its HTTP API
+// (http://127.0.0.1:11434/api/generate, override with OLLAMA_HOST).
+// The runner string is "ollama:<model>" — e.g. "ollama:qwen2.5-coder"
+// — so the dev can select a local model without hardcoding.
+//
+// Ollama doesn't edit files on its own; it just returns text. Auto
+// Dev's contract is "the AI writes a patch + emits the JSON status
+// contract." Since ollama can't write files, this runner responds
+// with status=needs_human and a summary pointing the dev to run a
+// tool-using runner (claude / codex) for the actual edit. It is
+// still useful in a fallback chain so `think.fallback: [claude,
+// ollama]` can at least classify the failure when the primary is
+// rate-limited — a proper local tool-using runner (Cline, Roo, etc)
+// will replace this when one of those ships a subprocess driver.
+func spawnOllama(ctx context.Context, l *LoopState, workDir string, report *HeuristicReport, reportPath string, nudge string) (*AIResponse, error) {
+	model := strings.TrimPrefix(strings.ToLower(l.Spec.Think.Runner), "ollama:")
+	model = strings.TrimPrefix(model, "ollama")
+	model = strings.TrimPrefix(model, ":")
+	if strings.TrimSpace(model) == "" {
+		model = "qwen2.5-coder"
+	}
+
+	host := envOr("OLLAMA_HOST", "http://127.0.0.1:11434")
+	if !strings.HasPrefix(host, "http") {
+		host = "http://" + host
+	}
+
+	fullPrompt, err := buildLoopPrompt(l, workDir, report, nudge)
+	if err != nil {
+		return nil, err
+	}
+
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"model":  model,
+		"prompt": fullPrompt,
+		"stream": false,
+		"options": map[string]interface{}{
+			// Low temperature so the JSON contract stays parseable.
+			"temperature": 0.1,
+		},
+	})
+	req, rerr := http.NewRequestWithContext(ctx, http.MethodPost, host+"/api/generate", strings.NewReader(string(reqBody)))
+	if rerr != nil {
+		return nil, fmt.Errorf("build ollama request: %w", rerr)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	fmt.Fprintf(os.Stderr, "[loop %s] POST ollama %s (model=%s, prompt=%d chars)...\n",
+		l.Spec.Name, host+"/api/generate", model, len(fullPrompt))
+
+	client := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, fmt.Errorf("ollama request cancelled: %w", ctx.Err())
+		}
+		return nil, fmt.Errorf("ollama HTTP: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ollama returned HTTP %d — check `ollama serve` is running", resp.StatusCode)
+	}
+	var payload struct {
+		Response string `json:"response"`
+	}
+	if jerr := json.NewDecoder(resp.Body).Decode(&payload); jerr != nil {
+		return nil, fmt.Errorf("decode ollama response: %w", jerr)
+	}
+	if strings.TrimSpace(payload.Response) == "" {
+		return nil, fmt.Errorf("ollama returned an empty response (is model %q installed? `ollama pull %s`)", model, model)
+	}
+
+	// Ollama can classify, plan, and emit JSON — but it cannot edit
+	// files. Parse whatever JSON contract it produced; if the AI
+	// tried to return `status=done`, rewrite it to `needs_human`
+	// with a summary that explains the limitation so the loop
+	// doesn't think a non-edit kick was a success.
+	aiResp, perr := parseAIResponse(payload.Response)
+	if perr != nil || aiResp == nil {
+		return &AIResponse{
+			Status:  "needs_human",
+			Summary: "ollama did not emit a parseable JSON contract — swap to a tool-using runner for actual edits",
+		}, nil
+	}
+	if aiResp.Status == "done" || aiResp.Status == "in_progress" {
+		aiResp.Status = "needs_human"
+		aiResp.Summary = "ollama analysed the failure but cannot edit files — " + aiResp.Summary
+	}
+	return aiResp, nil
+}
+
+// envOr returns the named env var if set, otherwise the default.
+// Used by spawnOllama so devs can point at a remote ollama box via
+// OLLAMA_HOST without editing code.
+func envOr(name, def string) string {
+	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
+		return v
+	}
+	return def
 }
 
 // spawnAider invokes the `aider` CLI in non-interactive "one-shot"
