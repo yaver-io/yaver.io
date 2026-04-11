@@ -267,6 +267,246 @@ cloud CI for tag-triggered release builds. Their monthly bill goes
 from "GitHub Actions over-quota + BrowserStack + Percy" to "$0 + a $5
 relay if they want one."
 
+## yaver-test-sdk: tests embedded in the Go agent itself
+
+M1–M3 above assume the dev brings their own test runner (Playwright,
+Appium, etc.) and Yaver just orchestrates it. The next step is to
+fold the runner into the agent so the dev does not have to install
+*anything* beyond the `yaver` binary itself. We call this slice
+**yaver-test-sdk**: a built-in, batteries-included test definition
+format + executor that lives inside the Go agent and ships with every
+Yaver release.
+
+### Vision
+
+```
+my-app/
+├── src/
+├── yaver-tests/                  ← lives in the user's repo, version-controlled
+│   ├── login.test.yaml
+│   ├── checkout.test.yaml
+│   ├── visual/baseline-home.png
+│   └── fixtures/test-user.json
+└── yaver.config.yaml             ← optional, project-wide defaults
+```
+
+```bash
+$ yaver test                       # runs every yaver-tests/**/*.test.yaml
+$ yaver test login                 # runs login.test.yaml
+$ yaver test --watch               # vibe-coding loop: re-runs on file save
+$ yaver test --update-snapshots    # accept current pixels as new baseline
+$ yaver test --record              # generate a yaml from a recorded session
+```
+
+The agent boots the right runner (Chromium via embedded CDP, an iOS
+simulator via `simctl`, an Android emulator via `adb`, a real device
+via WebDriverAgent / UIAutomator2) and executes the spec, **without
+the user installing Playwright, Appium, ChromeDriver, geckodriver,
+or any Node/Python dependency.** Everything the agent needs is either
+statically linked into the Go binary, downloaded once into
+`~/.yaver/runtimes/` on first use, or driven through Apple/Google's
+own simulator tools that already exist on a dev's machine.
+
+### Vibe-coding loop
+
+The whole point of "in-repo + embedded" is to make the loop tight
+enough that a dev can write tests by talking to an AI inside their
+editor:
+
+```
+[edit yaver-tests/login.test.yaml in Cursor / Claude Code]
+        │
+        ▼
+[file watcher in agent re-runs that single spec — <2s feedback]
+        │
+        ▼
+[mobile app shows pass/fail + screenshot + diff]
+        │
+        ▼
+[AI suggests next assertion via the same MCP that's already running]
+```
+
+The Yaver agent already exposes an MCP server for AI tools (it lives
+under `mcp/`). yaver-test-sdk plugs into the same MCP so any AI agent
+on the dev's machine can list specs, read failures, propose patches,
+and re-run — without leaving the editor and without going through a
+cloud CI round trip.
+
+### Standardized syntax (`*.test.yaml`)
+
+A draft of what a spec looks like. Deliberately Playwright-shaped
+because that's the thing most devs already know, but encoded as data
+so the agent can read it without spawning Node:
+
+```yaml
+# yaver-tests/login.test.yaml
+name: login flow
+target: web                       # web | ios-sim | android-emu | device
+url: http://localhost:3000        # for web
+app: ./build/MyApp.app            # for ios-sim/android-emu
+viewport: { width: 1280, height: 800 }
+artifacts:
+  on: failure                     # always | failure | never
+  trace: true
+  video: true
+  screenshot: true
+
+setup:
+  - http.post:
+      url: "{{env.CONVEX_URL}}/auth/signup"
+      body:
+        email: "e2e-{{run.id}}@yaver.test"
+        password: "{{secrets.test_password}}"
+      capture: { token: "$.token" }
+
+steps:
+  - goto: /auth
+  - fill: { selector: 'input[type=email]', text: "e2e-{{run.id}}@yaver.test" }
+  - fill: { selector: 'input[type=password]', text: "{{secrets.test_password}}" }
+  - click: 'button:has-text("Sign In")'
+  - wait_for_url: /dashboard/
+  - assert.visible: 'h1:has-text("Dashboard")'
+  - assert.local_storage: { key: yaver_auth_token, exists: true }
+  - snapshot: dashboard-loaded   # diffs against visual/dashboard-loaded.png
+
+teardown:
+  - http.post:
+      url: "{{env.CONVEX_URL}}/auth/delete-account"
+      headers: { Authorization: "Bearer {{captured.token}}" }
+```
+
+Key properties of the syntax:
+
+- **Pure data, no code.** A spec is just YAML. AIs read and write it
+  without running an interpreter. Diffs in PRs make sense.
+- **One vocabulary across web + mobile + device.** `goto`, `click`,
+  `fill`, `wait_for`, `snapshot`, `assert.*` mean the same thing
+  whether the target is a web page, an iOS app or an Android app.
+  Behind the scenes the agent picks the right driver.
+- **Templating in `{{ }}`** with three scopes: `env.*` (process env),
+  `secrets.*` (vault-backed, never logged), and `captured.*` /
+  `run.*` (set during the run).
+- **Explicit `artifacts:` block** so failures always come back with
+  enough breadcrumbs (trace.zip, video.mp4, screenshot.png).
+- **`setup:` / `teardown:` are first-class** so a dummy user pattern
+  like the one already in `e2e/global-setup.ts` is a one-line
+  `http.post` instead of a TypeScript file.
+
+### What ships in the Go binary
+
+The agent already has a process-spawning, port-managing, artifact-
+storing runtime. yaver-test-sdk adds:
+
+| Capability                 | How it ships in `yaver`                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------------------------- |
+| Headless Chromium driving  | Embedded CDP client over WebSocket. No ChromeDriver/Selenium server. Uses the user's Chrome.      |
+| Selenium-style WebDriver   | Optional fallback for Firefox / Safari via the standard W3C WebDriver protocol over HTTP.        |
+| iOS Simulator              | `simctl` (already on every Mac with Xcode). Lifecycle: boot, install, launch, screenrecord, shutdown. |
+| Android Emulator           | `emulator` + `adb` from the Android SDK already in the dev's PATH.                               |
+| Real iOS device            | WebDriverAgent + `idevice*` tools, started by the agent on demand.                                |
+| Real Android device        | UIAutomator2 + `adb`, same pattern.                                                              |
+| Image diffing              | Pure-Go pixel diff (e.g. `imaging` + delta-E). No ImageMagick dependency.                         |
+| Trace + video assembly     | Native Go: collect frames + events into a zip the existing mobile app already knows how to render. |
+| Snapshot baselines         | Plain PNGs in `yaver-tests/visual/`. Versioned in git.                                            |
+| Reporters                  | JUnit XML (for upload to GH Actions), HTML report, JSON for the mobile app, MCP messages for AI.  |
+| Spec parser + scheduler    | Pure Go. Fan-out across cores, retry-on-flake, hardware-aware throttling.                         |
+
+The non-negotiable rule: **after `brew install yaver` (or scoop /
+apt) the dev should be able to run `yaver test` against any of the
+target types above without installing a single extra binary that
+ships from npm or pip.** The two exceptions we accept are Apple's
+Xcode (which the dev already needs to build the app) and Google's
+Android SDK (same).
+
+### Recording mode (`yaver test --record`)
+
+A bootstrap path so a dev never has to write the first spec by hand:
+
+```
+$ yaver test --record login
+[agent] launching chromium against http://localhost:3000 ...
+[agent] open the page in the browser, do the login flow
+[agent] press Ctrl+S to save the recorded spec
+... user clicks around ...
+[agent] saved yaver-tests/login.test.yaml (12 steps, 3 assertions)
+```
+
+The agent watches the CDP / Appium event stream, distills clicks
+and inputs into the canonical step vocabulary, and writes the YAML.
+The dev then opens the YAML in their editor and edits or asks an AI
+to refine it. This is what "vibe coding tests" looks like in
+practice — the dev thinks in terms of "the thing I just did" and
+the agent does the boilerplate.
+
+### Why this beats "just install Playwright"
+
+- **One install.** No `npm install -D playwright @playwright/test`
+  with its own version skew per project.
+- **No JS toolchain in CI.** A pure Go binary runs the tests, so the
+  dev doesn't need Node 20 or pnpm or yarn or corepack on whatever
+  machine is running them.
+- **Same agent runs AI tasks and tests.** Failure → AI fix → re-run
+  is one process talking to itself, not three (editor, AI, test
+  runner) coordinating via the filesystem.
+- **Mobile-first failure inspection.** The agent already knows how
+  to stream artifacts to the phone. A failing test surfaces in the
+  Yaver mobile app the same way a failing AI task does.
+- **AI-friendly by design.** YAML + MCP + a fixed vocabulary means
+  any AI agent can read a failing run, propose a YAML patch, and
+  re-run it without any custom integration per AI tool.
+
+### Roadmap addendum — yaver-test-sdk milestones
+
+Slot these in after M3:
+
+#### M4 — "Spec parser + Chromium driver" (≈3 weeks)
+- [ ] `desktop/agent/test/` package: spec types, YAML loader, validator.
+- [ ] Embedded CDP client (or vendor `chromedp`) so the agent can drive Chrome with no external Selenium server.
+- [ ] Step vocabulary: `goto`, `click`, `fill`, `wait_for`, `assert.visible`, `assert.text`, `screenshot`.
+- [ ] Templating engine for `{{env.*}}`, `{{secrets.*}}`, `{{captured.*}}`.
+- [ ] `yaver test` command, default discovery from `yaver-tests/`.
+- [ ] JUnit + JSON reporters; failure artifacts into the existing per-task store.
+
+**Acceptance:** the current `e2e/tests/auth-flow.spec.ts` Playwright
+test is rewritten as a 30-line `yaver-tests/auth-flow.test.yaml`,
+runs via `yaver test`, and produces the same pass/fail + screenshot
+on failure.
+
+#### M5 — "Mobile drivers + recording mode" (≈4 weeks)
+- [ ] iOS Simulator driver (`simctl` lifecycle, Appium-style WebDriver
+      bridge so existing assertions work).
+- [ ] Android Emulator driver (`emulator` + `adb` + UIAutomator2).
+- [ ] `target: ios-sim` / `target: android-emu` in spec parser.
+- [ ] Live screen mirroring of the device under test into the mobile
+      app (reuse the existing video pipeline).
+- [ ] `yaver test --record` mode: capture CDP / driver events and
+      emit a YAML.
+
+**Acceptance:** `yaver test --record login` against an RN app on
+the iOS Simulator produces a YAML the dev can commit, and re-running
+that YAML reproduces the flow on a clean simulator boot.
+
+#### M6 — "Visual regression + AI integration" (≈3 weeks)
+- [ ] Pure-Go image diff (alpha, delta-E, perceptual).
+- [ ] `snapshot:` step + `--update-snapshots` flag.
+- [ ] Diff viewer in the mobile app: side-by-side, swipe to compare.
+- [ ] MCP tool surface: `yaver.test.list`, `yaver.test.run`,
+      `yaver.test.read_failure`, `yaver.test.propose_patch`.
+- [ ] `--watch` mode that re-runs the affected spec on file save.
+
+**Acceptance:** an AI agent inside the dev's editor can read a
+failing snapshot test via MCP, propose a YAML edit + a baseline
+update, and apply both without leaving the editor.
+
+#### M7 — "yaver-test-sdk 1.0" (≈2 weeks)
+- [ ] Stable spec schema, semver-bumped on changes.
+- [ ] Hardware-aware scheduler for parallel runs across CPU cores
+      and multiple devices.
+- [ ] Documentation site under `docs/test-sdk/` with the full
+      vocabulary, examples for every target, migration guide from
+      Playwright + Appium.
+- [ ] Marked stable; bundled with the next CLI release.
+
 ## Things explicitly not in scope
 
 - Hosted "Yaver Cloud" SaaS. The whole point is the dev's own machine.
