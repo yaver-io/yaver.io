@@ -171,6 +171,24 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/auth/pair/submit", s.handlePairSubmit)
 	mux.HandleFunc("/machine/health", s.auth(s.handleMachineHealth))
 	mux.HandleFunc("/machine/peers", s.auth(s.handlePeerHealth))
+	mux.HandleFunc("/tunnel/forward/", s.auth(s.handleTunnelForward))
+	mux.HandleFunc("/machine/tailscale", s.auth(s.handleTailscaleStatus))
+	// Unauthenticated recovery endpoint — bootstrap-secret gated,
+	// rate limited. Intentionally NOT wrapped in auth() because
+	// the whole point is to bring a locked-out agent back online.
+	mux.HandleFunc("/auth/recover", s.handleAuthRecover)
+	// File browser (read-only, scoped to discovered projects)
+	mux.HandleFunc("/files/roots", s.auth(s.handleFilesRoots))
+	mux.HandleFunc("/files/list", s.auth(s.handleFilesList))
+	mux.HandleFunc("/files/read", s.auth(s.handleFilesRead))
+	// Project wizard (fullstack generator) — drives the same
+	// state machine as `yaver new` over HTTP so the mobile app,
+	// the web dashboard and MCP clients all share it.
+	mux.HandleFunc("/project/wizard/start", s.auth(s.handleWizardStart))
+	mux.HandleFunc("/project/wizard/answer", s.auth(s.handleWizardAnswer))
+	mux.HandleFunc("/project/wizard/generate", s.auth(s.handleWizardGenerate))
+	mux.HandleFunc("/project/wizard/session", s.auth(s.handleWizardSession))
+	mux.HandleFunc("/project/wizard/questions", s.auth(s.handleWizardQuestions))
 	mux.HandleFunc("/analytics", s.auth(s.handleAnalytics))
 	mux.HandleFunc("/session/list", s.auth(s.handleSessionList))
 	mux.HandleFunc("/session/export", s.auth(s.handleSessionExport))
@@ -6243,6 +6261,41 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 		return s.mcpMonitorRemove(call.Arguments)
 	case "analytics_events":
 		return s.mcpAnalyticsEvents(call.Arguments)
+
+	// --- Project wizard (fullstack generator) ---
+	case "project_wizard_start":
+		sess, q := StartWizard()
+		return mcpToolJSON(map[string]interface{}{
+			"sessionId": sess.ID,
+			"question":  q,
+			"note":      "Call project_wizard_answer for each question, then project_wizard_generate.",
+		})
+	case "project_wizard_answer":
+		var args struct {
+			SessionID  string `json:"sessionId"`
+			QuestionID string `json:"questionId"`
+			Answer     string `json:"answer"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		q, err := AnswerWizard(args.SessionID, args.QuestionID, args.Answer)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(map[string]interface{}{
+			"question": q,
+			"session":  GetWizard(args.SessionID),
+		})
+	case "project_wizard_generate":
+		var args struct {
+			SessionID string `json:"sessionId"`
+			ParentDir string `json:"parentDir"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		res, err := GenerateProject(args.SessionID, args.ParentDir)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(res)
 
 	default:
 		return mcpToolError("unknown tool: " + call.Name)

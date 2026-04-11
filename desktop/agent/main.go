@@ -166,6 +166,10 @@ func main() {
 		runManualUpdate()
 	case "doctor":
 		runDoctor()
+	case "init", "setup":
+		runInit(os.Args[2:])
+	case "new", "project-new", "project-wizard":
+		runNew(os.Args[2:])
 	case "completion":
 		runCompletion(os.Args[2:])
 	case "help", "--help", "-h":
@@ -363,7 +367,7 @@ func runAuth(args []string) {
 		if err := ValidateToken(cfg.ConvexSiteURL, cfg.AuthToken); err == nil {
 			fmt.Println("Already signed in.")
 			fmt.Println()
-			fmt.Println("Run 'yaver serve' to start the agent.")
+			startServeIfStopped()
 			return
 		}
 		// Token expired, continue to re-auth
@@ -390,7 +394,7 @@ func runAuth(args []string) {
 		fmt.Println("Signed in successfully.")
 		fmt.Println("  Free relay: public.yaver.io (included, no setup needed)")
 		fmt.Println()
-		fmt.Println("Run 'yaver serve' to start the agent.")
+		startServeIfStopped()
 		return
 	}
 
@@ -426,7 +430,7 @@ func runAuth(args []string) {
 		fmt.Println("Signed in successfully.")
 		fmt.Println("  Free relay: public.yaver.io (included, no setup needed)")
 		fmt.Println()
-		fmt.Println("Run 'yaver serve' to start the agent.")
+		startServeIfStopped()
 		return
 	}
 
@@ -521,7 +525,7 @@ func runAuth(args []string) {
 		fmt.Println("Signed in successfully.")
 		fmt.Println("  Free relay: public.yaver.io (included, no setup needed)")
 		fmt.Println()
-		fmt.Println("Run 'yaver serve' to start the agent.")
+		startServeIfStopped()
 
 	case <-time.After(5 * time.Minute):
 		srv1.Close()
@@ -873,6 +877,36 @@ func logFilePath() string {
 	return filepath.Join(dir, "agent.log")
 }
 
+// startServeIfStopped forks `yaver serve` in the background if the
+// agent isn't already running. Called at the end of a successful
+// auth / pair flow so the user doesn't have to remember the extra
+// step. Best-effort: prints a diagnostic to stderr on failure but
+// never aborts the caller — the user can always run `yaver serve`
+// manually.
+func startServeIfStopped() {
+	if _, running := isAgentRunning(); running {
+		fmt.Println("Agent is already running.")
+		return
+	}
+	execPath, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "auto-start: cannot find yaver binary: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Run `yaver serve` manually.")
+		return
+	}
+	cmd := osexec.Command(execPath, "serve")
+	// Inherit stdio so the user sees the "Restarting Yaver agent" /
+	// "Starting Yaver agent…" line the server prints before it
+	// forks into the background. Once the parent serve process
+	// returns, we're done.
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "auto-start: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Run `yaver serve` manually to start the agent.")
+	}
+}
+
 // isAgentRunning checks if the agent process is alive.
 func isAgentRunning() (int, bool) {
 	pidFile := pidFilePath()
@@ -1017,6 +1051,15 @@ func runServe(args []string) {
 			// Brief pause to let the port be released
 			time.Sleep(500 * time.Millisecond)
 		}
+	}
+
+	// Bootstrap mode: if we have no token yet, don't exit with
+	// "Not signed in" — run a minimal pairing HTTP server so the
+	// user can push a token from their phone. See auth_bootstrap.go.
+	bootstrapCfg, bootstrapErr := LoadConfig()
+	if needsBootstrap(bootstrapCfg, bootstrapErr) {
+		runBootstrapServe(*httpPort)
+		return
 	}
 
 	cfg := mustLoadAuthConfig()
@@ -1942,6 +1985,16 @@ func runShutdown() {
 // ---------------------------------------------------------------------------
 
 func runConfig(args []string) {
+	// Handle "yaver config set bootstrap-secret <value>" and
+	// "yaver config bootstrap-secret [value|clear]".
+	if len(args) >= 1 && (args[0] == "bootstrap-secret" || (len(args) >= 2 && args[0] == "set" && args[1] == "bootstrap-secret")) {
+		rest := args[1:]
+		if args[0] == "set" {
+			rest = args[2:]
+		}
+		runConfigBootstrapSecret(rest)
+		return
+	}
 	// Handle "yaver config set <key> <value>"
 	if len(args) >= 3 && args[0] == "set" {
 		runConfigSet(args[1], args[2])
@@ -2394,6 +2447,13 @@ Connection priority: LAN direct → Cloudflare Tunnel → Relay Server
 	case "add":
 		runTunnelAdd(args[1:])
 	case "list", "ls":
+		// Prefer the new unified tunnel-forward listing when
+		// the dev has any forwards registered; otherwise fall
+		// back to the legacy Cloudflare Tunnel list.
+		if forwards, _ := loadTunnelForwards(); len(forwards) > 0 {
+			tunnelListCmd()
+			return
+		}
 		runTunnelList()
 	case "remove", "rm":
 		runTunnelRemove(args[1:])
@@ -2401,6 +2461,13 @@ Connection priority: LAN direct → Cloudflare Tunnel → Relay Server
 		runTunnelTest(args[1:])
 	case "setup":
 		runTunnelSetup()
+	// New SSH-replacement forward/connect subcommands.
+	case "forward":
+		tunnelForwardCmd(args[1:])
+	case "connect":
+		tunnelConnectCmd(args[1:])
+	case "cloudflare":
+		tunnelCloudflareCmd(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown tunnel subcommand: %s\n", args[0])
 		os.Exit(1)
@@ -3996,6 +4063,95 @@ func runDoctor() {
 		pass(fmt.Sprintf("%s (%s)", path, ver))
 	} else {
 		warning("not installed (optional — only for legacy Playwright/Cypress fallback)")
+	}
+
+	// E2 — Headless-machine checks (Tailscale / cloudflared /
+	// SMART / recovery / tunnels). These surface the solo-dev
+	// "is the Mac mini upstairs actually reachable" story.
+	fmt.Println("\n── Headless connectivity ──")
+
+	check("Tailscale")
+	if ts := DetectTailscale(); ts != nil && ts.Running && ts.Self != nil {
+		pass(fmt.Sprintf("up (%s, addrs: %s)", ts.Self.HostName, strings.Join(ts.Self.Addrs, ", ")))
+	} else {
+		warning("not running (optional — alternative to relay)")
+	}
+
+	check("cloudflared")
+	if path, err := osexec.LookPath("cloudflared"); err == nil {
+		pass(path)
+	} else {
+		warning("not installed (run `yaver tunnel cloudflare wizard` to set up a public tunnel)")
+	}
+
+	check("Cloudflare Tunnels")
+	if cfg != nil && len(cfg.CloudflareTunnels) > 0 {
+		for _, t := range cfg.CloudflareTunnels {
+			label := t.Label
+			if label == "" {
+				label = t.ID
+			}
+			pass(fmt.Sprintf("%s → %s", label, t.URL))
+		}
+	} else {
+		warning("none configured")
+	}
+
+	check("Bootstrap secret (remote recovery)")
+	if cfg != nil && cfg.BootstrapSecretHash != "" {
+		pass("configured")
+	} else {
+		warning("not set — run `yaver init` or `yaver config bootstrap-secret <value>`")
+	}
+
+	// SMART / disk health — run one fresh scan so doctor doesn't
+	// print stale goroutine state when the dev invokes it right
+	// after starting the agent.
+	if !(cfg != nil && cfg.DisableDiskHealth) {
+		fmt.Println("\n── Machine health ──")
+		runDiskHealthScan()
+		machineHealthMu.RLock()
+		mh := machineHealth
+		machineHealthMu.RUnlock()
+		if len(mh.Filesystems) == 0 && len(mh.Drives) == 0 {
+			check("SMART / disk")
+			warning("unavailable on this platform")
+		} else {
+			for _, f := range mh.Filesystems {
+				check("FS " + f.Mount)
+				msg := fmt.Sprintf("%.0f%% used (%s free)", f.UsedPct, formatGB(f.FreeGB))
+				switch {
+				case f.UsedPct >= DiskCriticalPercent:
+					failed(msg)
+				case f.UsedPct >= DiskWarnPercent:
+					warning(msg)
+				default:
+					pass(msg)
+				}
+			}
+			for _, d := range mh.Drives {
+				check("Drive " + d.Device)
+				switch d.Health {
+				case "passed":
+					pass(fmt.Sprintf("SMART passed (%s)", d.Model))
+				case "failing":
+					failed(fmt.Sprintf("SMART failing (%s)", d.Model))
+				default:
+					warning(fmt.Sprintf("%s (%s)", d.Health, d.Model))
+				}
+			}
+			for _, a := range mh.Alerts {
+				check("Alert")
+				warning(a)
+			}
+		}
+	}
+
+	// Rate limiter status
+	if cfg != nil && cfg.RateLimit != nil && cfg.RateLimit.Enabled {
+		fmt.Println("\n── Rate limiter ──")
+		check("Rate limit")
+		pass(fmt.Sprintf("%d req/min, burst %d", cfg.RateLimit.RequestsPerMinute, cfg.RateLimit.BurstSize))
 	}
 
 	// Hardware status — battery + load

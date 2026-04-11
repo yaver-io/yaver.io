@@ -253,8 +253,8 @@ export default function QualityGatesScreen() {
     <View style={[st.container, { backgroundColor: c.bg, paddingTop: insets.top }]}>
       {/* Header */}
       <View style={[st.header, { borderBottomColor: c.border }]}>
-        <Pressable onPress={() => router.navigate("/(tabs)/more" as any)}>
-          <Text style={{ color: c.accent, fontSize: 16 }}>Back</Text>
+        <Pressable onPress={() => router.back()} style={{ paddingVertical: 8 }}>
+          <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
         </Pressable>
         <Text style={[st.headerTitle, { color: c.textPrimary }]}>Quality Gates</Text>
         <View style={{ width: 40 }} />

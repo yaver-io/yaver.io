@@ -29,6 +29,8 @@ import {
   type GuestUsageEntry,
 } from "../../src/lib/guests";
 import { useAuth } from "../../src/context/AuthContext";
+import { fetchPairInfo, submitPair } from "../../src/lib/pairDevice";
+import { beaconListener, type DiscoveredDevice } from "../../src/lib/beacon";
 
 const TUTORIALS = [
   { label: "Always-on Setup", icon: "\u{1F50C}", desc: "Auto-boot, systemd, run forever", url: "https://yaver.io/manuals/auto-boot" },
@@ -1228,7 +1230,7 @@ interface GitProviderInfo {
   setupAt: string;
 }
 
-function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
+export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
   const [providers, setProviders] = useState<GitProviderInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [detecting, setDetecting] = useState(false);
@@ -1541,7 +1543,7 @@ function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
 
 // ── Guest Access Section ──────────────────────────────────────────
 
-function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
+export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
   const { token } = useAuth();
   const { guestInvitations, acceptGuestInvitation, refreshDevices, connectionStatus } = useDevice();
   const connected = connectionStatus === "connected";
@@ -1995,11 +1997,21 @@ function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
 export default function MoreScreen() {
   const c = useColors();
   const router = useRouter();
-  const { connectionStatus } = useDevice();
+  const { connectionStatus, activeDevice } = useDevice();
+  const { token, user } = useAuth();
   const connected = connectionStatus === "connected";
 
   const [showTutorials, setShowTutorials] = useState(false);
   const [tutorialUrl, setTutorialUrl] = useState<string | null>(null);
+
+  // Pair device modal state
+  const [showPair, setShowPair] = useState(false);
+  const [pairCode, setPairCode] = useState("");
+  const [pairUrl, setPairUrl] = useState("");
+  const [pairBusy, setPairBusy] = useState(false);
+  const [pairError, setPairError] = useState<string | null>(null);
+  const [pairSuccess, setPairSuccess] = useState<string | null>(null);
+  const [bootstrapDevices, setBootstrapDevices] = useState<DiscoveredDevice[]>([]);
 
   // Expandable section state
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
@@ -2008,6 +2020,77 @@ export default function MoreScreen() {
   const handleTodos = useCallback(() => router.navigate("/(tabs)/todos" as any), [router]);
   const handleSettings = useCallback(() => router.navigate("/(tabs)/settings" as any), [router]);
   const handleTutorials = useCallback(() => setShowTutorials(true), []);
+
+  const openPair = useCallback(() => {
+    setPairCode("");
+    setPairError(null);
+    setPairSuccess(null);
+    // Pre-fill with the currently active device's URL so that
+    // re-pairing a known machine is one-tap. For a brand-new
+    // headless box this will be empty — user types it in.
+    if (activeDevice?.host && activeDevice?.port) {
+      setPairUrl(`http://${activeDevice.host}:${activeDevice.port}`);
+    } else {
+      setPairUrl("");
+    }
+    // Seed bootstrap devices immediately so a box already on the
+    // LAN shows up as a pickable row the instant the modal opens.
+    setBootstrapDevices(beaconListener.getBootstrapDevices());
+    setShowPair(true);
+  }, [activeDevice]);
+
+  // While the Pair modal is open, refresh the list of needs-auth
+  // devices every 2 seconds. Beacons come in every 3s so two
+  // polls are enough to catch a fresh box without UI jitter.
+  useEffect(() => {
+    if (!showPair) return;
+    const iv = setInterval(() => {
+      setBootstrapDevices(beaconListener.getBootstrapDevices());
+    }, 2000);
+    return () => clearInterval(iv);
+  }, [showPair]);
+
+  const pickBootstrapDevice = useCallback((dev: DiscoveredDevice) => {
+    setPairError(null);
+    setPairSuccess(null);
+    setPairUrl(`http://${dev.ip}:${dev.port}`);
+    if (dev.bootstrapPasskey) {
+      setPairCode(dev.bootstrapPasskey);
+    }
+  }, []);
+
+  const handlePairSubmit = useCallback(async () => {
+    if (!token) {
+      setPairError("Sign in on this phone first");
+      return;
+    }
+    setPairBusy(true);
+    setPairError(null);
+    setPairSuccess(null);
+    try {
+      // First confirm the target is actually listening for a
+      // pairing — avoids leaking the token to the wrong URL if
+      // the user mistyped the host.
+      const info = await fetchPairInfo(pairUrl);
+      if (!info.ok) {
+        setPairError(info.error ?? "Target is not in pairing mode");
+        return;
+      }
+      const res = await submitPair({
+        code: pairCode,
+        targetUrl: pairUrl,
+        token,
+        userId: user?.id,
+      });
+      if (!res.ok) {
+        setPairError(res.error ?? "Pairing failed");
+        return;
+      }
+      setPairSuccess(`Paired with ${res.host ?? info.host ?? "target"}`);
+    } finally {
+      setPairBusy(false);
+    }
+  }, [pairCode, pairUrl, token, user]);
 
   const toggleSection = useCallback((section: string) => {
     setExpandedSection((prev) => (prev === section ? null : section));
@@ -2078,24 +2161,49 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
-        {/* Git Providers */}
+        {/* Files — read-only browser over discovered project roots */}
         {connected && (
-          <View>
-            <Pressable
-              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-              onPress={() => toggleSection("git-providers")}
-            >
-              <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F511}"}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.label, { color: c.textPrimary }]}>Git Providers</Text>
-                <Text style={[s.desc, { color: c.textMuted }]}>GitHub / GitLab — browse repos, clone to machine</Text>
-              </View>
-              <Text style={{ color: c.textMuted, fontSize: 16 }}>
-                {expandedSection === "git-providers" ? "\u2304" : "\u203A"}
-              </Text>
-            </Pressable>
-            {expandedSection === "git-providers" && <GitProviderSection c={c} />}
-          </View>
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/files" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F4C1}"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Files</Text>
+              <Text style={[s.desc, { color: c.textMuted }]}>Browse project files (read-only)</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
+        {/* New Project — fullstack wizard (web + mobile + backend + DNS + OAuth) */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/newproject" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u2728"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>New Project</Text>
+              <Text style={[s.desc, { color: c.textMuted }]}>Fullstack wizard — web, mobile, DNS, OAuth</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
+        {/* Git Providers — dedicated screen for consistency */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/gitproviders" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F511}"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Git Providers</Text>
+              <Text style={[s.desc, { color: c.textMuted }]}>GitHub / GitLab — browse repos, clone to machine</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
         )}
 
         {/* Existing cards */}
@@ -2107,23 +2215,32 @@ export default function MoreScreen() {
           </View>
           <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
         </Pressable>
-        {/* Guest Access */}
-        <View>
-          <Pressable
-            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-            onPress={() => toggleSection("guests")}
-          >
-            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F91D}"}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={[s.label, { color: c.textPrimary }]}>Guest Access</Text>
-              <Text style={[s.desc, { color: c.textMuted }]}>Invite others to use your machine</Text>
-            </View>
-            <Text style={{ color: c.textMuted, fontSize: 16 }}>
-              {expandedSection === "guests" ? "\u2304" : "\u203A"}
+        {/* Pair a device — send this phone's auth to a headless machine */}
+        <Pressable
+          style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+          onPress={openPair}
+        >
+          <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F511}"}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[s.label, { color: c.textPrimary }]}>Pair a device</Text>
+            <Text style={[s.desc, { color: c.textMuted }]}>
+              Enter the passkey from `yaver auth pair` on a headless machine
             </Text>
-          </Pressable>
-          {expandedSection === "guests" && <GuestAccessSection c={c} />}
-        </View>
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+        </Pressable>
+        {/* Guest Access — dedicated screen */}
+        <Pressable
+          style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+          onPress={() => router.navigate("/(tabs)/guests" as any)}
+        >
+          <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F91D}"}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[s.label, { color: c.textPrimary }]}>Guest Access</Text>
+            <Text style={[s.desc, { color: c.textMuted }]}>Invite others to use your machine</Text>
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+        </Pressable>
 
         <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleTutorials}>
           <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F4DA}"}</Text>
@@ -2142,6 +2259,110 @@ export default function MoreScreen() {
           <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
         </Pressable>
       </ScrollView>
+
+      {/* Pair device modal */}
+      <Modal visible={showPair} animationType="slide" transparent>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" }}>
+          <View style={{ backgroundColor: c.bg, padding: 20, borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingBottom: insets.bottom + 24 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <Text style={{ color: c.textPrimary, fontSize: 17, fontWeight: "700" }}>Pair a device</Text>
+              <Pressable onPress={() => setShowPair(false)} hitSlop={8}>
+                <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>Close</Text>
+              </Pressable>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 13, marginBottom: 16 }}>
+              Run `yaver auth pair` — or just `yaver serve` on a fresh box — on the headless machine. It prints a 6-character passkey. On the same Wi-Fi, the box will also show up below for one-tap pairing.
+            </Text>
+
+            {bootstrapDevices.length > 0 && (
+              <View style={{ marginBottom: 16 }}>
+                <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 6 }}>
+                  Found on this network ({bootstrapDevices.length})
+                </Text>
+                {bootstrapDevices.map((d) => (
+                  <Pressable
+                    key={d.deviceId}
+                    onPress={() => pickBootstrapDevice(d)}
+                    style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border, marginBottom: 6 }]}
+                  >
+                    <Text style={[s.icon, { color: c.accent }]}>{"\u25CF"}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[s.label, { color: c.textPrimary }]}>{d.name || d.deviceId}</Text>
+                      <Text style={[s.desc, { color: c.textMuted }]}>
+                        {d.ip}:{d.port} — needs auth
+                        {d.bootstrapPasskey ? ` · passkey ${d.bootstrapPasskey}` : ""}
+                      </Text>
+                    </View>
+                    <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+
+            <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 6 }}>Passkey</Text>
+            <TextInput
+              value={pairCode}
+              onChangeText={(t) => {
+                setPairCode(t.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6));
+                setPairError(null);
+                setPairSuccess(null);
+              }}
+              placeholder="ABC123"
+              placeholderTextColor={c.textMuted}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              spellCheck={false}
+              maxLength={6}
+              style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgCard, letterSpacing: 6, fontFamily: "Menlo", textAlign: "center", fontSize: 20, fontWeight: "700" }]}
+            />
+
+            <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 6, marginTop: 14 }}>Target URL</Text>
+            <TextInput
+              value={pairUrl}
+              onChangeText={(t) => {
+                setPairUrl(t);
+                setPairError(null);
+                setPairSuccess(null);
+              }}
+              placeholder="http://192.168.1.20:18080"
+              placeholderTextColor={c.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              spellCheck={false}
+              keyboardType="url"
+              style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgCard }]}
+            />
+
+            {pairError && (
+              <Text style={{ color: "#ef4444", fontSize: 13, marginTop: 12 }}>{pairError}</Text>
+            )}
+            {pairSuccess && (
+              <Text style={{ color: "#22c55e", fontSize: 13, marginTop: 12 }}>{pairSuccess}</Text>
+            )}
+
+            <Pressable
+              onPress={handlePairSubmit}
+              disabled={pairBusy || pairCode.length !== 6 || !pairUrl.trim()}
+              style={[
+                s.actionBtn,
+                {
+                  marginTop: 18,
+                  backgroundColor: pairBusy || pairCode.length !== 6 || !pairUrl.trim() ? c.bgCard : c.accent,
+                  paddingVertical: 14,
+                },
+              ]}
+            >
+              {pairBusy ? (
+                <ActivityIndicator color={c.textPrimary} />
+              ) : (
+                <Text style={[s.actionBtnText, { color: pairCode.length === 6 && pairUrl.trim() ? "#fff" : c.textMuted }]}>
+                  Send token
+                </Text>
+              )}
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
 
       {/* Tutorials list modal */}
       <Modal visible={showTutorials && !tutorialUrl} animationType="slide">

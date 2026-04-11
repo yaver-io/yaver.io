@@ -2660,6 +2660,84 @@ export class QuicClient {
     }
   }
 
+  // ---- Project wizard (fullstack generator) -----------------------------
+
+  async wizardStart(): Promise<WizardStartResponse | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/project/wizard/start`, {
+        method: "POST",
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as WizardStartResponse;
+    } catch {
+      return null;
+    }
+  }
+
+  async wizardAnswer(
+    sessionId: string,
+    questionId: string,
+    answer: string,
+  ): Promise<WizardStartResponse | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/project/wizard/answer`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, questionId, answer }),
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as WizardStartResponse;
+    } catch {
+      return null;
+    }
+  }
+
+  async wizardGenerate(
+    sessionId: string,
+    parentDir?: string,
+  ): Promise<WizardGenerateResult | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/project/wizard/generate`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, parentDir }),
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as WizardGenerateResult;
+    } catch {
+      return null;
+    }
+  }
+
+  // ---- Unauthenticated recovery -----------------------------------------
+  //
+  // Call this when every authenticated request to the agent returns 401 and
+  // the user is outside the LAN. The agent must still be reachable over some
+  // transport (Tailscale / Cloudflare Tunnel / yaver relay) — the recovery
+  // endpoint is auth-free but the connectivity layer is not. The bootstrap
+  // secret is what we're actually trusting here, so we keep it in the mobile
+  // keychain (see DeviceContext) rather than over the wire every call.
+
+  async recoverAgent(
+    secret: string,
+    mode: "pair" | "device-code" = "pair",
+  ): Promise<RecoveryResult | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/auth/recover`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secret, mode }),
+      });
+      if (!res.ok) {
+        return { ok: false, error: `HTTP ${res.status}` } as RecoveryResult;
+      }
+      return (await res.json()) as RecoveryResult;
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? "network error" } as RecoveryResult;
+    }
+  }
+
   // ---- Log aggregation (E cross-device) ---------------------------------
 
   async logsSearch(
@@ -2959,6 +3037,51 @@ export interface LogEntry {
   source?: string;
   route?: string;
   timestamp: number;
+}
+
+/** One step in the project wizard — the UI renders whichever
+ *  control the `kind` field says to render. */
+export interface WizardQuestion {
+  id: string;
+  kind: "text" | "choice" | "bool" | "color" | "confirm" | "done";
+  prompt: string;
+  help?: string;
+  default?: string;
+  choices?: string[];
+  required?: boolean;
+}
+
+export interface WizardSession {
+  id: string;
+  answers: Record<string, string>;
+  done: boolean;
+  generatedPath?: string;
+}
+
+export interface WizardStartResponse {
+  ok: boolean;
+  session: WizardSession;
+  question: WizardQuestion | null;
+}
+
+export interface WizardGenerateResult {
+  ok: boolean;
+  directory: string;
+  files: string[];
+  nextSteps: string[];
+}
+
+/** Result of POST /auth/recover — agent is unauthenticated but reachable
+ *  via Tailscale / Cloudflare Tunnel / yaver relay. */
+export interface RecoveryResult {
+  ok: boolean;
+  mode?: "pair" | "device-code";
+  pairCode?: string;
+  pairSubmitUrl?: string;
+  deviceCodeUrl?: string;
+  userCode?: string;
+  expiresAt?: string;
+  error?: string;
 }
 
 /** Feature flag — one entry in the ledger. */

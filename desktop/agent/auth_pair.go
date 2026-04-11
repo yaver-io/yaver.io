@@ -1,6 +1,6 @@
 package main
 
-// auth_pair.go — QR-based auth pairing for headless machines.
+// auth_pair.go — passkey-based auth pairing for headless machines.
 //
 // Problem: solo dev has a Mac mini at the top of the house with
 // no display, a Hetzner VPS over SSH, or a Linux box they
@@ -12,34 +12,26 @@ package main
 // Solution: the source machine (laptop) already has a valid
 // token in ~/.yaver/config.json. We copy it to the target
 // machine (Mac mini / VPS) over the existing P2P relay using
-// a short, human-typeable code as the one-shot secret. The
-// laptop can scan the QR code the target prints (either via
-// the mobile yaver app's camera or a plain phone camera that
-// opens a `yaver://` URL), confirm the pairing, and the token
-// lands on the target. No Convex roundtrip for the token — it
-// flows directly over the relay.
+// a short, human-typeable passkey as the one-shot secret. The
+// target prints the passkey in big block letters; on a signed-in
+// machine the dev runs `yaver auth send <passkey> <target-url>`
+// and the token lands on the target.
+//
+// We used to print a `yaver-pair://...` QR here, but iOS Camera
+// refuses to open custom URI schemes ("kullanılabilir veri
+// bulunamadı" / "no usable data found"), so it added zero value.
+// The passkey + one CLI command is simpler and actually works.
 //
 // Security model:
 //
-//   1. The pairing code is a 6-char random string from an
+//   1. The passkey is a 6-char random string from an
 //      unambiguous alphabet (no 0/O/1/I). 1 in ~1.3 billion
 //      guesses to brute force, and the window is 10 minutes.
-//   2. Pairing endpoints are only open while a code is active,
-//      only accept ONE successful submission, and destroy the
-//      code on success.
-//   3. The source proves it knows the code; the target trusts
-//      the first valid submission.
-//   4. The QR payload includes both the local LAN URL and the
-//      relay URL so the source can reach the target through
-//      whichever transport is available.
-//
-// Wire format (QR payload, plain text):
-//
-//   yaver-pair://<code>?urls=<csv-of-urls>&host=<hostname>
-//
-// where `urls` is a comma-separated list of candidate endpoints
-// (local LAN first, relay fallback). The mobile app parses it,
-// shows a confirmation, and POSTs the token.
+//   2. Pairing endpoints are only open while a passkey is
+//      active, only accept ONE successful submission, and
+//      destroy the passkey on success.
+//   3. The source proves it knows the passkey; the target
+//      trusts the first valid submission.
 //
 // HTTP surface:
 //
@@ -59,8 +51,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/mdp/qrterminal/v3"
 )
 
 // pairingSession is the in-memory state while `yaver auth pair`
@@ -149,18 +139,19 @@ func activePairingSnapshot() *pairingSession {
 }
 
 // candidatePairingURLs returns the URLs the source machine can
-// use to reach this target. Always includes the local direct
-// URL (for same-LAN pairing) and falls back to the relay when
-// the config has a relay configured.
+// use to reach this target. Prefers Tailscale IPs (when
+// detected) because two nodes on the same Tailnet can skip
+// the relay entirely; falls back to the local LAN address;
+// finally lists the registered relay URLs so the source can
+// reach the target from anywhere.
 func candidatePairingURLs() []string {
 	urls := []string{}
+	// Tailscale first — zero-config VPN for the solo dev.
+	urls = append(urls, tailscaleIPCandidates(18080)...)
 	if ip := getLocalIP(); ip != "" && ip != "0.0.0.0" {
 		urls = append(urls, fmt.Sprintf("http://%s:18080", ip))
 	}
 	urls = append(urls, "http://127.0.0.1:18080")
-	// Relay URL: if this agent is registered, every relay it
-	// knows is a valid target. Keep this short — the source
-	// will try them in order.
 	if cfg, err := LoadConfig(); err == nil && cfg != nil {
 		for _, r := range cfg.RelayServers {
 			relayURL := r.HttpURL
@@ -175,16 +166,28 @@ func candidatePairingURLs() []string {
 	return urls
 }
 
-// pairQRPayload composes the plain-text QR body. Stable format
-// so the mobile app's parser stays simple.
-func pairQRPayload(session *pairingSession) string {
-	urls := candidatePairingURLs()
-	return fmt.Sprintf(
-		"yaver-pair://%s?host=%s&urls=%s",
-		session.Code,
-		session.Hostname,
-		strings.Join(urls, ","),
-	)
+// bigPasskey renders the 6-char passkey as an ASCII block so
+// it reads clearly from across the room when the dev is glancing
+// at the headless machine's terminal. Keeps the output pure
+// ASCII — no fancy box-drawing — so it works over SSH, inside
+// `screen`, on Windows conhost, and in CI log scrapers.
+func bigPasskey(code string) string {
+	var b strings.Builder
+	b.WriteString("    +")
+	b.WriteString(strings.Repeat("-", len(code)*4+3))
+	b.WriteString("+\n")
+	b.WriteString("    |  ")
+	for i, r := range code {
+		if i > 0 {
+			b.WriteString("   ")
+		}
+		b.WriteRune(r)
+	}
+	b.WriteString("  |\n")
+	b.WriteString("    +")
+	b.WriteString(strings.Repeat("-", len(code)*4+3))
+	b.WriteString("+\n")
+	return b.String()
 }
 
 // --- HTTP handlers -------------------------------------------------------
@@ -355,26 +358,50 @@ func runAuthPair(args []string) {
 	}
 	defer EndPairingSession()
 
-	payload := pairQRPayload(session)
 	hostname, _ := os.Hostname()
+	urls := candidatePairingURLs()
+	// Pick a reasonable default URL for the copy-paste hint: LAN
+	// first (most likely to work), falling back to the first
+	// candidate (usually Tailscale) if there's no LAN address.
+	defaultURL := ""
+	for _, u := range urls {
+		if strings.Contains(u, "127.0.0.1") {
+			continue
+		}
+		defaultURL = u
+		break
+	}
+	if defaultURL == "" && len(urls) > 0 {
+		defaultURL = urls[0]
+	}
 
 	fmt.Println()
-	fmt.Println("Yaver auth pairing — scan this QR from another device that's signed in:")
+	fmt.Printf("Yaver auth pairing — target: %s\n", hostname)
 	fmt.Println()
-	qrterminal.GenerateHalfBlock(payload, qrterminal.L, os.Stdout)
+	fmt.Println("Passkey:")
 	fmt.Println()
-	fmt.Printf("  Target:        %s\n", hostname)
-	fmt.Printf("  Pairing code:  %s\n", session.Code)
-	fmt.Printf("  Expires:       %s\n", session.ExpiresAt.Format(time.RFC3339))
+	fmt.Print(bigPasskey(session.Code))
 	fmt.Println()
-	fmt.Println("From a source machine already signed in:")
-	fmt.Printf("  yaver auth send %s <one of the URLs below>\n", session.Code)
-	for _, u := range candidatePairingURLs() {
-		fmt.Printf("    %s\n", u)
+	fmt.Printf("  Expires in:  %s\n", time.Until(session.ExpiresAt).Round(time.Second))
+	fmt.Println()
+	fmt.Println("On a machine that's already signed in, run:")
+	fmt.Println()
+	if defaultURL != "" {
+		fmt.Printf("    yaver auth send %s %s\n", session.Code, defaultURL)
+	} else {
+		fmt.Printf("    yaver auth send %s <target-url>\n", session.Code)
 	}
 	fmt.Println()
-	fmt.Println("Or open the Yaver mobile app → More → Pair device → scan the QR.")
-	fmt.Println()
+	if len(urls) > 1 {
+		fmt.Println("Other reachable URLs for this target:")
+		for _, u := range urls {
+			if u == defaultURL {
+				continue
+			}
+			fmt.Printf("    %s\n", u)
+		}
+		fmt.Println()
+	}
 	fmt.Println("Waiting for the source to submit a token…")
 
 	select {
@@ -416,8 +443,9 @@ func runAuthPair(args []string) {
 			fmt.Fprintf(os.Stderr, "save config: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("✓ paired — primary auth token replaced")
-		fmt.Println("  Run `yaver serve` (or restart the launchd/systemd unit) to use it.")
+		fmt.Println("✓ paired — primary auth token installed")
+		fmt.Println()
+		startServeIfStopped()
 		return
 	}
 
@@ -437,6 +465,8 @@ func runAuthPair(args []string) {
 		labelMsg, len(ListPairedTokens()))
 	fmt.Println("  The primary owner's token is still active; this added user can hit")
 	fmt.Println("  the agent alongside them. Revoke with `yaver auth pair revoke <label>`.")
+	fmt.Println()
+	startServeIfStopped()
 }
 
 // listPairedTokensCmd prints every accepted paired token in a

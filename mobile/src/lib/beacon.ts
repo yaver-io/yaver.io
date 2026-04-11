@@ -21,6 +21,10 @@ export interface DiscoveredDevice {
   name: string;      // hostname
   lastSeen: number;  // timestamp
   hwid?: string;     // stable hardware ID from beacon
+  /** true when the beacon announces the box is in bootstrap mode (no auth yet) */
+  needsAuth?: boolean;
+  /** 6-char pairing passkey from the bootstrap beacon (may be empty if suppressed) */
+  bootstrapPasskey?: string;
 }
 
 interface BeaconPayload {
@@ -30,6 +34,8 @@ interface BeaconPayload {
   n: string;   // hostname
   th: string;  // token fingerprint
   hw?: string; // stable hardware ID (P2P only)
+  na?: boolean; // needs-auth flag (bootstrap mode)
+  pk?: string;  // bootstrap pairing passkey
 }
 
 type DiscoveryCallback = (device: DiscoveredDevice) => void;
@@ -137,6 +143,11 @@ class BeaconListener {
     return Array.from(this.devices.values());
   }
 
+  /** Get currently discovered devices that are in bootstrap (needs-auth) mode. */
+  getBootstrapDevices(): DiscoveredDevice[] {
+    return Array.from(this.devices.values()).filter((d) => d.needsAuth);
+  }
+
   /** Check if a device (by full or short ID) is locally discovered. */
   isLocal(deviceId: string): boolean {
     const shortId = deviceId.slice(0, 8);
@@ -157,16 +168,24 @@ class BeaconListener {
       // Protocol version check
       if (payload.v !== 1) return;
 
-      // Auth check: fingerprint must match
-      if (!this.fingerprint || payload.th !== this.fingerprint) {
-        // Beacon from a different user — ignore silently
-        return;
-      }
+      // Bootstrap (needs-auth) beacons bypass both the fingerprint
+      // check and the known-device check. They represent a fresh
+      // yaver box that hasn't been signed into yet — we want the
+      // mobile app to show it so the user can push a token.
+      const isBootstrap = payload.na === true;
 
-      // Device ID check: must be in our known device list
-      if (!this.knownDeviceIds.has(payload.id)) {
-        appLog("info", `[beacon] peer-seen: unknown device ${payload.id} from ${senderIP}`);
-        return;
+      if (!isBootstrap) {
+        // Auth check: fingerprint must match
+        if (!this.fingerprint || payload.th !== this.fingerprint) {
+          // Beacon from a different user — ignore silently
+          return;
+        }
+
+        // Device ID check: must be in our known device list
+        if (!this.knownDeviceIds.has(payload.id)) {
+          appLog("info", `[beacon] peer-seen: unknown device ${payload.id} from ${senderIP}`);
+          return;
+        }
       }
 
       const isNew = !this.devices.has(payload.id);
@@ -180,6 +199,8 @@ class BeaconListener {
         name: payload.n,
         lastSeen: Date.now(),
         hwid: payload.hw,
+        needsAuth: isBootstrap,
+        bootstrapPasskey: payload.pk,
       };
 
       this.devices.set(payload.id, device);

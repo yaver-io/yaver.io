@@ -1415,6 +1415,41 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, sysLogTools...)
 
+	// --- Project wizard (fullstack generator) ---
+	wizardTools := []map[string]interface{}{
+		{
+			"name":        "project_wizard_start",
+			"description": "Start a new fullstack project wizard session. Returns sessionId + first question. Call project_wizard_answer repeatedly, then project_wizard_generate.",
+			"inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+		{
+			"name":        "project_wizard_answer",
+			"description": "Submit an answer to the current wizard question. Returns the next question (or 'done' kind when complete).",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"sessionId", "questionId", "answer"},
+				"properties": map[string]interface{}{
+					"sessionId":  map[string]interface{}{"type": "string"},
+					"questionId": map[string]interface{}{"type": "string"},
+					"answer":     map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+		{
+			"name":        "project_wizard_generate",
+			"description": "Materialise the scaffold for a completed wizard session. Returns the target directory + next-step checklist. Project folder is created at parentDir/<slug>.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"sessionId"},
+				"properties": map[string]interface{}{
+					"sessionId": map[string]interface{}{"type": "string"},
+					"parentDir": map[string]interface{}{"type": "string", "description": "Parent directory for the new project (default: agent cwd)"},
+				},
+			},
+		},
+	}
+	tools = append(tools, wizardTools...)
+
 	// --- Guest Access ---
 	guestTools := []map[string]interface{}{
 		{
