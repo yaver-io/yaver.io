@@ -120,6 +120,7 @@ export default function TabLayout() {
       <Tabs.Screen name="settings" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="runs" options={{ href: null, title: "Local CI", headerShown: true }} />
       <Tabs.Screen name="autodev" options={{ href: null, title: "Auto Dev", headerShown: true }} />
+      <Tabs.Screen name="monitor" options={{ href: null, title: "Monitor", headerShown: true }} />
     </Tabs>
   );
 }

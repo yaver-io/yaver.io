@@ -137,6 +137,14 @@ func (s *BlackBoxSession) PushEvent(event BlackBoxEvent) {
 	}
 	s.mu.Unlock()
 
+	// Fan out to the cross-device error store so the mobile
+	// Errors tab sees aggregated errors across every SDK session.
+	// Non-error events are filtered inside ErrorStore.Record so
+	// track / analytics events pass through unchanged.
+	if event.Type == "error" || event.IsFatal {
+		GlobalErrorStore().Record(s.DeviceID, event)
+	}
+
 	// Notify SSE subscribers (non-blocking)
 	s.subMu.Lock()
 	for _, ch := range s.subscribers {
