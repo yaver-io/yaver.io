@@ -22,7 +22,7 @@ import { quicClient } from "../../src/lib/quic";
 // pane is a tab inside this one screen because none of them
 // justify a dedicated tab in the root navigator.
 
-type Pane = "forms" | "newsletter" | "jobs";
+type Pane = "forms" | "newsletter" | "jobs" | "pdf" | "oauth";
 
 export default function SoloStackScreen() {
   const c = useColors();
@@ -51,6 +51,28 @@ export default function SoloStackScreen() {
   const [queue, setQueue] = useState<any[]>([]);
   const [dlq, setDlq] = useState<any[]>([]);
 
+  // PDF state — tiny composer that renders the agent's PDF
+  // endpoint with ad-hoc HTML and hands back a data URL so the
+  // mobile layer can preview inline.
+  const [pdfHtml, setPdfHtml] = useState("<h1>Invoice #001</h1><p>Thanks for your business.</p>");
+  const [pdfDataUrl, setPdfDataUrl] = useState<string | null>(null);
+
+  // OAuth provider state
+  const [oauthClients, setOauthClients] = useState<any[]>([]);
+  const [oauthUsers, setOauthUsers] = useState<any[]>([]);
+  const [showNewClient, setShowNewClient] = useState(false);
+  const [newClientName, setNewClientName] = useState("");
+  const [newClientRedirect, setNewClientRedirect] = useState("");
+  const [newClientSecret, setNewClientSecret] = useState<string | null>(null);
+  const [showNewUser, setShowNewUser] = useState(false);
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [newUserPass, setNewUserPass] = useState("");
+
+  // Newsletter compose-from-git state
+  const [showCompose, setShowCompose] = useState(false);
+  const [composeRepo, setComposeRepo] = useState("");
+  const [composeDays, setComposeDays] = useState("7");
+
   const load = useCallback(async () => {
     if (!connected) return;
     setLoading(true);
@@ -60,15 +82,67 @@ export default function SoloStackScreen() {
       } else if (pane === "newsletter") {
         setSubs(await quicClient.newsletterSubscribers());
         setCampaigns(await quicClient.newsletterCampaigns());
-      } else {
+      } else if (pane === "jobs") {
         const data = await quicClient.jobsList();
         setQueue(data?.queue ?? []);
         setDlq(data?.dlq ?? []);
+      } else if (pane === "oauth") {
+        setOauthClients(await quicClient.oauthClients());
+        setOauthUsers(await quicClient.oauthUsers());
       }
     } finally {
       setLoading(false);
     }
   }, [pane, connected]);
+
+  const renderPdf = useCallback(async () => {
+    setLoading(true);
+    const url = await quicClient.pdfRender({ html: pdfHtml, printBackground: true });
+    setPdfDataUrl(url);
+    setLoading(false);
+  }, [pdfHtml]);
+
+  const createOauthClient = useCallback(async () => {
+    if (!newClientName || !newClientRedirect) return;
+    const res = await quicClient.oauthClientCreate({
+      name: newClientName,
+      redirectUris: newClientRedirect.split(",").map((s) => s.trim()).filter(Boolean),
+    });
+    if (res) {
+      setNewClientSecret(res.client_secret);
+      load();
+    }
+  }, [newClientName, newClientRedirect, load]);
+
+  const createOauthUser = useCallback(async () => {
+    if (!newUserEmail || !newUserPass) return;
+    const ok = await quicClient.oauthUserCreate({ email: newUserEmail, password: newUserPass });
+    if (ok) {
+      setNewUserEmail(""); setNewUserPass(""); setShowNewUser(false);
+      load();
+    }
+  }, [newUserEmail, newUserPass, load]);
+
+  const composeFromGit = useCallback(async () => {
+    if (!composeRepo.trim()) return;
+    setLoading(true);
+    const res = await quicClient.newsletterCompose({
+      repo: composeRepo.trim(),
+      sinceDays: parseInt(composeDays, 10) || 7,
+      includePrs: true,
+      includeIssues: true,
+      saveDraft: true,
+    });
+    setLoading(false);
+    setShowCompose(false);
+    if (res) {
+      setCampaignSubject(res.subject);
+      setCampaignBody(res.draft);
+      load();
+    } else {
+      Alert.alert("Compose failed", "Check the repo path — run `yaver repo list` to see discovered roots.");
+    }
+  }, [composeRepo, composeDays, load]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -105,13 +179,17 @@ export default function SoloStackScreen() {
         <View style={{ width: 50 }} />
       </View>
 
-      <View style={[s.tabs, { borderBottomColor: c.border }]}>
-        {(["forms", "newsletter", "jobs"] as Pane[]).map((p) => (
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={[s.tabs, { borderBottomColor: c.border }]}
+      >
+        {(["forms", "newsletter", "jobs", "pdf", "oauth"] as Pane[]).map((p) => (
           <Pressable key={p} onPress={() => setPane(p)} style={[s.tab, pane === p && { borderBottomColor: c.accent }]}>
             <Text style={{ color: pane === p ? c.accent : c.textMuted, fontWeight: "600", textTransform: "capitalize" }}>{p}</Text>
           </Pressable>
         ))}
-      </View>
+      </ScrollView>
 
       {loading ? (
         <ActivityIndicator style={{ marginTop: 24 }} />
@@ -144,9 +222,14 @@ export default function SoloStackScreen() {
                   </Text>
                 </View>
               ) : null}
-              <Pressable onPress={() => setShowNewCampaign(true)} style={[s.btn, { backgroundColor: c.accent }]}>
-                <Text style={s.btnText}>+ New campaign</Text>
-              </Pressable>
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                <Pressable onPress={() => setShowNewCampaign(true)} style={[s.btn, { backgroundColor: c.accent, flex: 1 }]}>
+                  <Text style={s.btnText}>+ New campaign</Text>
+                </Pressable>
+                <Pressable onPress={() => setShowCompose(true)} style={[s.btn, { backgroundColor: c.bgCardElevated, borderWidth: 1, borderColor: c.border, flex: 1 }]}>
+                  <Text style={{ color: c.textPrimary, fontWeight: "700", textAlign: "center" }}>From git</Text>
+                </Pressable>
+              </View>
               {campaigns.map((c_) => (
                 <View key={c_.id} style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
                   <Text style={[s.cardTitle, { color: c.textPrimary }]}>{c_.subject}</Text>
@@ -159,7 +242,7 @@ export default function SoloStackScreen() {
                 </View>
               ))}
             </View>
-          ) : (
+          ) : pane === "jobs" ? (
             <View>
               <Text style={[s.section, { color: c.textPrimary }]}>Queue ({queue.length})</Text>
               {queue.map((j) => (
@@ -179,6 +262,56 @@ export default function SoloStackScreen() {
                 </View>
               ))}
             </View>
+          ) : pane === "pdf" ? (
+            <View>
+              <Text style={[s.section, { color: c.textPrimary }]}>Render HTML to PDF</Text>
+              <TextInput
+                value={pdfHtml}
+                onChangeText={setPdfHtml}
+                multiline
+                numberOfLines={8}
+                placeholder="<h1>Hello</h1>"
+                placeholderTextColor={c.textMuted}
+                style={[s.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput, height: 180, textAlignVertical: "top", fontFamily: "Menlo", fontSize: 12 }]}
+              />
+              <Pressable onPress={renderPdf} style={[s.btn, { backgroundColor: c.accent, marginTop: 10 }]}>
+                <Text style={s.btnText}>Render</Text>
+              </Pressable>
+              {pdfDataUrl ? (
+                <Text style={[s.cardMeta, { color: c.textMuted, marginTop: 12 }]} numberOfLines={1}>
+                  PDF ready ({Math.round(pdfDataUrl.length / 1024)} KB) — data URL returned. Tap Render again for a fresh copy.
+                </Text>
+              ) : null}
+            </View>
+          ) : (
+            <View>
+              <Text style={[s.section, { color: c.textPrimary }]}>OAuth Clients</Text>
+              <Pressable onPress={() => setShowNewClient(true)} style={[s.btn, { backgroundColor: c.accent, marginTop: 8 }]}>
+                <Text style={s.btnText}>+ New client</Text>
+              </Pressable>
+              {oauthClients.length === 0 ? (
+                <Text style={{ color: c.textMuted, marginTop: 12 }}>No clients registered yet. Use these to let apps sign in against your self-hosted OIDC provider.</Text>
+              ) : oauthClients.map((cl) => (
+                <View key={cl.id} style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+                  <Text style={[s.cardTitle, { color: c.textPrimary }]}>{cl.name}</Text>
+                  <Text style={[s.cardMeta, { color: c.textMuted }]}>client_id: {cl.id}</Text>
+                  {(cl.redirectUris || []).map((u: string) => (
+                    <Text key={u} style={[s.cardMeta, { color: c.textMuted }]} numberOfLines={1}>{u}</Text>
+                  ))}
+                </View>
+              ))}
+
+              <Text style={[s.section, { color: c.textPrimary, marginTop: 16 }]}>Users</Text>
+              <Pressable onPress={() => setShowNewUser(true)} style={[s.btn, { backgroundColor: c.accent, marginTop: 8 }]}>
+                <Text style={s.btnText}>+ New user</Text>
+              </Pressable>
+              {oauthUsers.map((u: any) => (
+                <View key={u.id} style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+                  <Text style={[s.cardTitle, { color: c.textPrimary }]}>{u.email}</Text>
+                  {u.name ? <Text style={[s.cardMeta, { color: c.textMuted }]}>{u.name}</Text> : null}
+                </View>
+              ))}
+            </View>
           )}
         </ScrollView>
       )}
@@ -192,6 +325,57 @@ export default function SoloStackScreen() {
             <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
               <Pressable onPress={() => setShowNewForm(false)} style={[s.btn, { flex: 1, backgroundColor: c.bgCard }]}><Text style={{ color: c.textPrimary, fontWeight: "600", textAlign: "center" }}>Cancel</Text></Pressable>
               <Pressable onPress={createForm} style={[s.btn, { flex: 1, backgroundColor: c.accent }]}><Text style={s.btnText}>Create</Text></Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={showCompose} animationType="slide" transparent>
+        <View style={s.modalWrap}>
+          <View style={[s.modalCard, { backgroundColor: c.bgCardElevated, borderColor: c.border }]}>
+            <Text style={[s.cardTitle, { color: c.textPrimary }]}>Compose from git activity</Text>
+            <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 4 }}>
+              Pulls commits / merged PRs / closed issues from the last N days and drafts a weekly newsletter.
+            </Text>
+            <TextInput value={composeRepo} onChangeText={setComposeRepo} placeholder="absolute repo path" placeholderTextColor={c.textMuted} autoCapitalize="none" style={[s.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput }]} />
+            <TextInput value={composeDays} onChangeText={setComposeDays} placeholder="days (default 7)" placeholderTextColor={c.textMuted} keyboardType="number-pad" style={[s.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput }]} />
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+              <Pressable onPress={() => setShowCompose(false)} style={[s.btn, { flex: 1, backgroundColor: c.bgCard }]}><Text style={{ color: c.textPrimary, fontWeight: "600", textAlign: "center" }}>Cancel</Text></Pressable>
+              <Pressable onPress={composeFromGit} style={[s.btn, { flex: 1, backgroundColor: c.accent }]}><Text style={s.btnText}>Compose</Text></Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={showNewClient} animationType="slide" transparent>
+        <View style={s.modalWrap}>
+          <View style={[s.modalCard, { backgroundColor: c.bgCardElevated, borderColor: c.border }]}>
+            <Text style={[s.cardTitle, { color: c.textPrimary }]}>New OAuth client</Text>
+            <TextInput value={newClientName} onChangeText={setNewClientName} placeholder="name" placeholderTextColor={c.textMuted} style={[s.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput }]} />
+            <TextInput value={newClientRedirect} onChangeText={setNewClientRedirect} placeholder="redirect URI (comma separated)" placeholderTextColor={c.textMuted} autoCapitalize="none" style={[s.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput }]} />
+            {newClientSecret ? (
+              <View style={{ marginTop: 12, padding: 10, backgroundColor: c.bgCard, borderRadius: 8 }}>
+                <Text style={{ color: c.accent, fontSize: 11, fontWeight: "700" }}>SAVE THIS — SHOWN ONCE</Text>
+                <Text style={{ color: c.textPrimary, fontFamily: "Menlo", fontSize: 11, marginTop: 4 }} selectable>{newClientSecret}</Text>
+              </View>
+            ) : null}
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+              <Pressable onPress={() => { setShowNewClient(false); setNewClientSecret(null); setNewClientName(""); setNewClientRedirect(""); }} style={[s.btn, { flex: 1, backgroundColor: c.bgCard }]}><Text style={{ color: c.textPrimary, fontWeight: "600", textAlign: "center" }}>Close</Text></Pressable>
+              <Pressable onPress={createOauthClient} style={[s.btn, { flex: 1, backgroundColor: c.accent }]}><Text style={s.btnText}>Create</Text></Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={showNewUser} animationType="slide" transparent>
+        <View style={s.modalWrap}>
+          <View style={[s.modalCard, { backgroundColor: c.bgCardElevated, borderColor: c.border }]}>
+            <Text style={[s.cardTitle, { color: c.textPrimary }]}>New user</Text>
+            <TextInput value={newUserEmail} onChangeText={setNewUserEmail} placeholder="email" placeholderTextColor={c.textMuted} autoCapitalize="none" style={[s.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput }]} />
+            <TextInput value={newUserPass} onChangeText={setNewUserPass} placeholder="password" placeholderTextColor={c.textMuted} secureTextEntry style={[s.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput }]} />
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+              <Pressable onPress={() => setShowNewUser(false)} style={[s.btn, { flex: 1, backgroundColor: c.bgCard }]}><Text style={{ color: c.textPrimary, fontWeight: "600", textAlign: "center" }}>Cancel</Text></Pressable>
+              <Pressable onPress={createOauthUser} style={[s.btn, { flex: 1, backgroundColor: c.accent }]}><Text style={s.btnText}>Create</Text></Pressable>
             </View>
           </View>
         </View>

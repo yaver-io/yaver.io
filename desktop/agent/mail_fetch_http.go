@@ -23,15 +23,30 @@ package main
 // for refresh+access tokens, writes them into config.json.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
+
+// contextTimeout is a tiny helper so the mail draft call can
+// cap runner execution without pulling context into every
+// handler signature.
+func contextTimeout(d time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), d)
+}
+
+// execCmdCtx returns an *exec.Cmd bound to the given context
+// so a runaway runner is killed when the timeout fires.
+func execCmdCtx(ctx context.Context, bin string, args ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, bin, args...)
+}
 
 // --- fetch endpoints -------------------------------------------------------
 
@@ -81,6 +96,7 @@ func (s *HTTPServer) handleMailDraft(w http.ResponseWriter, r *http.Request) {
 		Provider     string `json:"provider"`
 		Instructions string `json:"instructions"`
 		Execute      bool   `json:"execute"` // run the runner inline
+		Runner       string `json:"runner,omitempty"` // override default
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON")
@@ -122,7 +138,7 @@ func (s *HTTPServer) handleMailDraft(w http.ResponseWriter, r *http.Request) {
 		"prompt": prompt,
 	}
 	if body.Execute {
-		reply, runErr := runMailDraftInline(prompt)
+		reply, runErr := runMailDraftInline(body.Runner, prompt)
 		if runErr != nil {
 			out["draft"] = ""
 			out["error"] = runErr.Error()
@@ -152,16 +168,74 @@ func (s *HTTPServer) handleMailSend(w http.ResponseWriter, r *http.Request) {
 }
 
 // runMailDraftInline pipes the prompt into the configured
-// runner (Claude, Codex, Ollama, …) and reads the reply. This
-// is best-effort — when no runner is wired the caller gets the
-// raw prompt and has to execute it manually.
-func runMailDraftInline(prompt string) (string, error) {
-	// Minimal MVP: delegate to the generic runner pool. A
-	// richer version would stream tokens back to the client
-	// over SSE so the mobile app can show the draft appearing
-	// live. Left as a follow-up — first cut just runs the
-	// default runner synchronously.
-	return "", fmt.Errorf("inline execution not yet wired — use the returned prompt with `yaver attach` or paste into your editor")
+// runner (Claude, Codex, Ollama, …) and returns the draft
+// text. Synchronous, capped at 120s so a misbehaving runner
+// can't hang the mobile app.
+//
+// For stream-json runners (Claude) we still collect into a
+// flat string and extract the assistant text — mobile isn't
+// the place for token-streaming today, and the caller already
+// has the raw prompt if they want an attach-session experience.
+func runMailDraftInline(runnerID, prompt string) (string, error) {
+	if runnerID == "" {
+		runnerID = "claude"
+	}
+	cfg := GetRunnerConfig(runnerID)
+	if cfg.Command == "" {
+		return "", fmt.Errorf("unknown runner %q", runnerID)
+	}
+	// Substitute {prompt} in each argument. We do NOT shell out
+	// through sh -c, so the prompt is passed as an argv element
+	// and no escaping is required.
+	args := make([]string, 0, len(cfg.Args))
+	for _, a := range cfg.Args {
+		args = append(args, strings.ReplaceAll(a, "{prompt}", prompt))
+	}
+	ctx, cancel := contextTimeout(120 * time.Second)
+	defer cancel()
+	cmd := execCmdCtx(ctx, cfg.Command, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%s: %v — %s", runnerID, err, strings.TrimSpace(string(out)))
+	}
+	return extractRunnerReply(cfg.OutputMode, string(out)), nil
+}
+
+// extractRunnerReply pulls the assistant text out of whatever
+// the runner wrote to stdout. Claude's stream-json format is
+// newline-delimited JSON with `type: "assistant"` messages;
+// everything else is assumed to be raw.
+func extractRunnerReply(mode, output string) string {
+	if mode != "stream-json" {
+		return strings.TrimSpace(output)
+	}
+	var b strings.Builder
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var evt struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal([]byte(line), &evt); err != nil {
+			continue
+		}
+		if evt.Type == "assistant" {
+			for _, c := range evt.Message.Content {
+				if c.Type == "text" {
+					b.WriteString(c.Text)
+				}
+			}
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // --- OAuth onboarding (mobile-friendly) ------------------------------------

@@ -201,6 +201,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/newsletter/subscribers", s.auth(s.handleNewsletterSubscribers))
 	mux.HandleFunc("/newsletter/campaigns", s.auth(s.handleNewsletterCampaigns))
 	mux.HandleFunc("/newsletter/campaigns/", s.auth(s.handleNewsletterSend))
+	mux.HandleFunc("/newsletter/compose", s.auth(s.handleNewsletterCompose))
 
 	// Job queue — persistent background jobs with retries/DLQ
 	mux.HandleFunc("/jobs", s.auth(s.handleJobs))
