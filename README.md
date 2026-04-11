@@ -188,6 +188,55 @@ the resulting token back through the device-code flow.
 
 Download the desktop app with full GUI from the [download page](https://yaver.io/download) — available as DMG (macOS), installer (Windows), deb/AppImage (Linux).
 
+## Always-Up Mode (Boots Without Auth)
+
+`yaver serve` is designed to start and stay reachable even on a brand-new install with no token. The HTTP server comes up in **bootstrap mode** the moment you run it for the first time, the agent registers itself with the OS auto-start system (LaunchAgent on macOS, systemd user unit on Linux, scheduled task on Windows), and the next reboot brings the box back automatically — still in bootstrap mode if no one has paired it yet.
+
+```bash
+# Brand-new install. No `yaver auth` needed yet.
+yaver serve
+# → Yaver agent started in bootstrap mode (PID …, port 18080).
+# → Registered as macOS LaunchAgent (will auto-start on login).
+#
+# This machine has no auth token yet. The agent is up and waiting.
+# Open the Yaver mobile app (already signed in) on the same Wi-Fi —
+# the box will appear as 'needs auth', tap it to pair.
+```
+
+`yaver status` reflects the bootstrap state instead of bailing:
+
+```
+Yaver:    v1.85.0
+Auth:     ● not signed in
+Agent:    ● running (bootstrap mode, port 18080)
+Host:     mac-mini.local
+Mode:     bootstrap — waiting for a phone to pair
+Auto-start: ● installed (will run on login/boot)
+```
+
+The bootstrap HTTP surface only mounts the four endpoints needed to receive a token — `/health`, `/info`, `/auth/pair/{info,submit}`, and `/auth/recover`. Everything else (tasks, vault, exec, dev server) is gated behind a successful pairing.
+
+### Two Ways to Pair From the Mobile App
+
+| Path | When | How |
+|------|------|-----|
+| **LAN beacon** | Box and phone on the same Wi-Fi | Bootstrap mode broadcasts a UDP beacon every 3s. The mobile app's beacon listener picks it up automatically and shows it in **More → Pair device** with a one-tap "adopt this machine" button. |
+| **Remote re-auth (host-only)** | Box is on a remote network reachable via Tailscale, Cloudflare Tunnel, or the Yaver relay, AND your phone has previously paired with it before | The phone POSTs to `/auth/recover` with your Convex Bearer token. The agent calls `convex /devices/owner-by-hardware` with its hardware fingerprint. If Convex says you're the registered owner, the recovery flow proceeds. No pre-shared secret to remember — your Convex identity IS the host check. |
+
+The mobile app automatically picks the right path based on whether the device is in your device list. Guests can never trigger the recovery flow on a host machine, even if they know the relay URL — the host check happens server-side in Convex against the original `userId` that registered the hardware fingerprint.
+
+### Survives Reboots
+
+The first `yaver serve` writes the OS-native auto-start descriptor:
+
+| OS | What gets installed |
+|----|---------------------|
+| **macOS** | `~/Library/LaunchAgents/io.yaver.agent.plist` (RunAtLoad + KeepAlive). Loaded automatically on next login. |
+| **Linux** | `~/.config/systemd/user/yaver.service` + `loginctl enable-linger` so the unit runs without an interactive login. |
+| **Windows** | A scheduled task that fires on user login. |
+
+After the first install you can reboot the machine and the agent comes back automatically — in bootstrap mode if no one has paired it yet, in normal mode if it already has a token. Either way, the phone can reach it without you ever opening a terminal again.
+
 ## Visual Feedback Loop
 
 Test your build on your real device, record bugs visually, and the AI agent fixes them.
@@ -515,7 +564,7 @@ yaver sandbox status
 Start a dev server on your machine and preview the app on your phone in real time — all through the P2P channel. Works on any network (Wi-Fi, 4G, behind NAT).
 
 ```bash
-# From the Yaver mobile app: tap a project → Hot Reload
+# From the Yaver mobile app: tap a project → Open App
 # Or from CLI:
 yaver dev start --framework expo     # Expo / React Native
 yaver dev start --framework flutter  # Flutter
@@ -523,7 +572,17 @@ yaver dev start --framework vite     # Vite
 yaver dev start --framework nextjs   # Next.js
 ```
 
-The agent starts the framework's dev server locally, then proxies it through the P2P channel. Your phone loads the web version in a full-screen WebView. Save a file → the app auto-reloads on your phone.
+### Open App — dynamic dispatch (iOS)
+
+The Yaver mobile app's **Open App** button dispatches dynamically based on the connection mode — **never a WebView**. Third-party React Native apps always load natively:
+
+| Connection | What runs | Outcome |
+|------------|-----------|---------|
+| **iOS + same Wi-Fi** (direct LAN) | `xcodebuild build` (auto-detected `.xcworkspace` / `.xcodeproj` + scheme) inside `./ios/` with `-allowProvisioningUpdates`, then `xcrun devicectl device install app` + `xcrun devicectl device process launch` | App is installed + launched on the real device the same way Xcode would do it manually — fastest iteration, full native capabilities. |
+| **iOS + cellular / relay** | `/dev/build-native` runs the framework's bundler (`expo export:embed` or `react-native bundle`), compiles with embedded `hermesc` (BC96 from RN 0.81.5), ships the validated HBC over the P2P channel, phone loads it into the Yaver super-host via `YaverBundleLoader` (New Arch guest bridge with TurboModules + Fabric) | App runs *inside* Yaver with its full JS. Works over 4G / relay / anything. |
+| **Android** | Hermes HBC push into the Yaver super-host (same path as iOS relay) | Single path — Android doesn't need a separate native install branch. |
+
+The dispatch lives in `mobile/app/(tabs)/apps.tsx`'s `handleOpen` + `handleTapProject`; the LAN native build uses the `PlatformXcodeDeviceInstall` build platform in `desktop/agent/builds.go`; and `desktop/agent/device_install.go` reads `CFBundleIdentifier` via `PlistBuddy` so the app auto-launches after install.
 
 **Supported frameworks:**
 
@@ -534,7 +593,7 @@ The agent starts the framework's dev server locally, then proxies it through the
 | Vite | `npx vite` | Auto (Vite HMR) |
 | Next.js | `npx next dev` | Auto (Fast Refresh) |
 
-**Expo modes:** Web preview (default), Expo Go deep link (`exp://` for full native modules), or dev client (custom native build with all native modules).
+**Expo modes:** LAN native install (same Wi-Fi + iOS), Hermes HBC push to the Yaver super-host (any network), or raw dev client (custom native build with all native modules).
 
 ### Remote Reload — Trigger from Your Phone
 
