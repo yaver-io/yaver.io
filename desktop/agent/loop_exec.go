@@ -693,6 +693,28 @@ func runSingleKick(ctx context.Context, l *LoopState, nudge string) *IterationRe
 		StartedAt: time.Now().UTC(),
 	}
 
+	// Session-limits check — before we do any work, ask whether the
+	// configured runner has headroom in its provider window. When it
+	// doesn't we either (a) swap in a fallback runner for this kick
+	// only, or (b) terminate with budget_hit so the scheduler tries
+	// again after the window rolls over.
+	runner, yieldReason, fitsBudget := pickRunnerWithinLimits(l.Spec.Name, l.Spec.Think)
+	if !fitsBudget {
+		result.Status = "budget_hit"
+		result.Summary = yieldReason
+		result.FinishedAt = time.Now().UTC()
+		return result
+	}
+	if runner != l.Spec.Think.Runner {
+		fmt.Fprintf(os.Stderr, "[loop %s] session-limits: %s\n", l.Spec.Name, yieldReason)
+		// Override the runner for this kick only. We mutate the
+		// in-memory copy, which is safe because runSingleKick
+		// operates on a scratch LoopState the caller just reloaded.
+		// The saved state still reflects the original primary runner.
+		l.Spec.Think.Runner = runner
+		result.Summary = yieldReason // carry upward for status display
+	}
+
 	// Ensure the per-loop worktree exists and is refreshed from the
 	// target branch tip. The worktree — not the dev's main tree — is
 	// what the AI runner sees and what phaseCommit writes to, so the
@@ -705,6 +727,12 @@ func runSingleKick(ctx context.Context, l *LoopState, nudge string) *IterationRe
 		result.FinishedAt = time.Now().UTC()
 		return result
 	}
+	defer func() {
+		// Charge the kick's wall-clock duration to the runner that
+		// actually ran. This runs in a defer so any early-return
+		// path below still records usage correctly.
+		recordKickUsage(l.Spec.Name, runner, time.Since(result.StartedAt))
+	}()
 
 	// Wall-clock timeout from the spec, if any. Default: no limit.
 	if l.Spec.Schedule.Timeout != "" {
@@ -1214,8 +1242,10 @@ func phaseThink(ctx context.Context, l *LoopState, workDir string, report *Heuri
 		return spawnClaudeCode(ctx, l, workDir, report, reportPath, nudge)
 	case runner == "codex":
 		return spawnCodex(ctx, l, workDir, report, reportPath, nudge)
-	case runner == "aider" || strings.HasPrefix(runner, "ollama"):
-		return nil, fmt.Errorf("runner %q is not wired yet (claude-code and codex are the only runners in this build)", runner)
+	case runner == "aider":
+		return spawnAider(ctx, l, workDir, report, reportPath, nudge)
+	case strings.HasPrefix(runner, "ollama"):
+		return nil, fmt.Errorf("runner %q is not wired yet (claude, codex, and aider are the wired runners — ollama is additive scaffolding)", runner)
 	default:
 		return nil, fmt.Errorf("unknown runner %q", runner)
 	}
@@ -1312,6 +1342,54 @@ func spawnClaudeCode(ctx context.Context, l *LoopState, workDir string, report *
 		return nil, fmt.Errorf("claude CLI returned error: %w", err)
 	}
 
+	return parseAIResponse(string(out))
+}
+
+// spawnAider invokes the `aider` CLI in non-interactive "one-shot"
+// mode. Aider already has `--message` + `--yes-always` for scripted
+// runs, and `--no-git` stops it from auto-committing — we do our
+// own commit in phaseCommit. Same JSON contract as the other
+// runners: the prompt arrives on stdin / --message, aider edits
+// files, and emits the AIResponse contract at the end of stdout.
+func spawnAider(ctx context.Context, l *LoopState, workDir string, report *HeuristicReport, reportPath string, nudge string) (*AIResponse, error) {
+	if _, err := exec.LookPath("aider"); err != nil {
+		return nil, fmt.Errorf("`aider` CLI not on PATH — install Aider (`pip install aider-chat`) to use this runner")
+	}
+	fullPrompt, err := buildLoopPrompt(l, workDir, report, nudge)
+	if err != nil {
+		return nil, err
+	}
+
+	// Aider reads the task prompt via --message. It refuses when the
+	// prompt is multiline on the command line of some shells, so we
+	// keep the argv shape and let exec handle escaping.
+	//
+	//   --yes-always      auto-confirm every Y/N prompt (autonomous)
+	//   --no-git          don't auto-commit; phaseCommit does that
+	//   --no-pretty       plain output — easier to parse
+	//   --no-stream       complete response before returning
+	cmd := exec.CommandContext(ctx, "aider",
+		"--yes-always",
+		"--no-git",
+		"--no-pretty",
+		"--no-stream",
+		"--message", fullPrompt,
+	)
+	cmd.Dir = workDir
+	cmd.Stderr = os.Stderr
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 10 * time.Second
+
+	fmt.Fprintf(os.Stderr, "[loop %s] spawning aider CLI (prompt=%d chars, report=%d findings)...\n",
+		l.Spec.Name, len(fullPrompt), len(report.Findings))
+
+	out, err := cmd.Output()
+	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, fmt.Errorf("aider subprocess cancelled: %w", ctx.Err())
+		}
+		return nil, fmt.Errorf("aider CLI returned error: %w", err)
+	}
 	return parseAIResponse(string(out))
 }
 
