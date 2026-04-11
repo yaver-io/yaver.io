@@ -29,7 +29,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.82.0"
+const version = "1.83.0"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
@@ -170,6 +170,10 @@ func main() {
 		runInit(os.Args[2:])
 	case "new", "project-new", "project-wizard":
 		runNew(os.Args[2:])
+	case "autodev":
+		runAutodev(os.Args[2:])
+	case "autotest":
+		runAutotest(os.Args[2:])
 	case "mail":
 		runMail(os.Args[2:])
 	case "completion":
