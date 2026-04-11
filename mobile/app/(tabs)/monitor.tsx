@@ -33,13 +33,14 @@ import {
   quicClient,
   type ErrorRecord,
   type ErrorsListResponse,
+  type LogEntry,
   type ReleaseManifest,
   type TrackEvent,
   type YaverFlag,
   type YaverMonitor,
 } from "../../src/lib/quic";
 
-type Section = "errors" | "releases" | "uptime" | "events" | "flags";
+type Section = "errors" | "releases" | "uptime" | "events" | "flags" | "logs";
 
 export default function MonitorScreen() {
   const c = useColors();
@@ -58,7 +59,7 @@ export default function MonitorScreen() {
       </View>
 
       <View style={[styles.tabs, { borderBottomColor: c.border }]}>
-        {(["errors", "releases", "uptime", "events", "flags"] as Section[]).map((s) => (
+        {(["errors", "releases", "logs", "uptime", "events", "flags"] as Section[]).map((s) => (
           <Pressable key={s} onPress={() => setSection(s)} style={styles.tabBtn}>
             <Text
               style={[
@@ -93,6 +94,8 @@ export default function MonitorScreen() {
         <UptimePane />
       ) : section === "events" ? (
         <EventsPane />
+      ) : section === "logs" ? (
+        <LogsPane />
       ) : (
         <FlagsPane />
       )}
@@ -634,6 +637,115 @@ function EventsPane() {
         ))
       )}
     </ScrollView>
+  );
+}
+
+// ── Logs (cross-device grep) ───────────────────────────────────────
+
+function LogsPane() {
+  const c = useColors();
+  const [entries, setEntries] = useState<LogEntry[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [query, setQuery] = useState("");
+  const [level, setLevel] = useState<"" | "info" | "warn" | "error">("");
+
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const data = await quicClient.logsSearch({
+        q: query || undefined,
+        level: level || undefined,
+        limit: 200,
+      });
+      setEntries(data);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [query, level]);
+
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 8000);
+    return () => clearInterval(id);
+  }, [refresh]);
+
+  const levelColor = (lvl: string) =>
+    lvl === "error" ? "#ef4444" : lvl === "warn" ? "#eab308" : c.textSecondary;
+
+  return (
+    <View style={{ flex: 1 }}>
+      <View style={{ padding: 12 }}>
+        <TextInput
+          value={query}
+          onChangeText={setQuery}
+          onSubmitEditing={refresh}
+          placeholder="grep message…"
+          placeholderTextColor={c.textSecondary}
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={[
+            styles.rolloutInput,
+            { color: c.textPrimary, borderColor: c.border, marginRight: 0 },
+          ]}
+        />
+        <View style={{ flexDirection: "row", marginTop: 8 }}>
+          {(["", "info", "warn", "error"] as const).map((lvl) => (
+            <Pressable
+              key={lvl || "all"}
+              onPress={() => setLevel(lvl)}
+              style={[
+                styles.pill,
+                {
+                  backgroundColor:
+                    level === lvl ? "#6366f1" : "rgba(255,255,255,0.08)",
+                },
+              ]}
+            >
+              <Text
+                style={{
+                  color: level === lvl ? "#fff" : c.textSecondary,
+                  fontSize: 12,
+                }}
+              >
+                {lvl || "all"}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      </View>
+      <FlatList
+        data={entries}
+        keyExtractor={(_, i) => String(i)}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
+        contentContainerStyle={{ padding: 12, paddingTop: 0 }}
+        ListEmptyComponent={
+          <View style={styles.empty}>
+            <Text style={[styles.emptyTitle, { color: c.textPrimary }]}>
+              No log entries match
+            </Text>
+            <Text style={[styles.emptyBody, { color: c.textSecondary }]}>
+              Call <Text style={styles.mono}>BlackBox.log/warn/error</Text> from
+              your app or opt into{" "}
+              <Text style={styles.mono}>BlackBox.wrapConsole()</Text> to
+              capture console calls. Cross-device ring, searchable here.
+            </Text>
+          </View>
+        }
+        renderItem={({ item }) => (
+          <View style={[styles.card, { borderColor: c.border }]}>
+            <Text style={[styles.cardMeta, { color: levelColor(item.level) }]}>
+              [{item.level}] {new Date(item.timestamp).toLocaleTimeString()}
+              {item.deviceId ? ` · ${item.deviceId.slice(0, 8)}` : ""}
+              {item.source ? ` · ${item.source}` : ""}
+              {item.route ? ` · ${item.route}` : ""}
+            </Text>
+            <Text style={[styles.mono, { color: c.textPrimary, marginTop: 2, fontSize: 12 }]}>
+              {item.message}
+            </Text>
+          </View>
+        )}
+      />
+    </View>
   );
 }
 

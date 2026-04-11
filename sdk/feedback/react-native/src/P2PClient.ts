@@ -308,6 +308,116 @@ export class P2PClient {
     return { token: result.token, expiresAt: result.expiresAt };
   }
 
+  // ─── Feature flags (F1) ──────────────────────────────────────────
+
+  /**
+   * Evaluate every flag for a userId. Hits /flags/eval which uses
+   * SHA256 bucketing against rolloutPercent — stable per user per
+   * flag. Results are the dev's source of truth; the SDK caches
+   * for 30s in getFlagsCached().
+   */
+  async flagsEvaluate(userId: string = 'anonymous'): Promise<Record<string, unknown>> {
+    const res = await fetch(
+      `${this.baseUrl}/flags/eval?userId=${encodeURIComponent(userId)}`,
+      { headers: { Authorization: `Bearer ${this.authToken}` } },
+    );
+    if (!res.ok) return {};
+    const data = await res.json();
+    return data.flags ?? {};
+  }
+
+  /** Evaluate a single flag by key — shortcut when you only need one. */
+  async flagsEvaluateOne<T = unknown>(
+    key: string,
+    userId: string = 'anonymous',
+  ): Promise<T | undefined> {
+    const res = await fetch(
+      `${this.baseUrl}/flags/eval?userId=${encodeURIComponent(userId)}&flag=${encodeURIComponent(key)}`,
+      { headers: { Authorization: `Bearer ${this.authToken}` } },
+    );
+    if (!res.ok) return undefined;
+    const data = await res.json();
+    return data.value as T;
+  }
+
+  // ─── Releases (R1) ───────────────────────────────────────────────
+
+  /**
+   * Ask what bundle this device should run. Returns the latest
+   * release in the channel plus a rollout gate. The mobile app
+   * uses this on cold start to decide whether to download a new
+   * bundle from /releases/bundle.
+   */
+  async releasesLatest(
+    channel: string = 'production',
+    deviceId?: string,
+  ): Promise<{
+    ok: boolean;
+    channel: string;
+    semver?: string;
+    size?: number;
+    md5?: string;
+    hermesBcVersion?: number;
+    bundleUrl?: string;
+    rolloutPercent: number;
+    inRollout: boolean;
+    reason?: string;
+  } | null> {
+    const params = new URLSearchParams({ channel });
+    if (deviceId) params.set('device', deviceId);
+    const res = await fetch(`${this.baseUrl}/releases/latest?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    });
+    if (!res.ok) return null;
+    return res.json();
+  }
+
+  /** Download a specific bundle as raw bytes. */
+  async releasesDownload(
+    channel: string,
+    semver: string,
+  ): Promise<ArrayBuffer | null> {
+    const params = new URLSearchParams({ channel, semver });
+    const res = await fetch(`${this.baseUrl}/releases/bundle?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    });
+    if (!res.ok) return null;
+    return res.arrayBuffer();
+  }
+
+  // ─── Analytics ingest (A1 — direct POST path) ───────────────────
+
+  /**
+   * Fire-and-forget track event. Most callers should use
+   * `BlackBox.track()` which fans through the streaming channel;
+   * this method is the fallback for surfaces without a live SSE.
+   */
+  async analyticsIngest(
+    name: string,
+    props?: Record<string, string>,
+    opts?: { deviceId?: string; route?: string; timestamp?: number },
+  ): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/analytics/ingest`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name,
+          props,
+          deviceId: opts?.deviceId,
+          route: opts?.route,
+          timestamp: opts?.timestamp ?? Date.now(),
+        }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   /** Internal helper for authenticated GET/POST requests. */
   private async request(method: string, path: string): Promise<Response> {
     const response = await fetch(`${this.baseUrl}${path}`, {
