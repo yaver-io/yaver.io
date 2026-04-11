@@ -22,7 +22,7 @@ import { quicClient } from "../../src/lib/quic";
 // pane is a tab inside this one screen because none of them
 // justify a dedicated tab in the root navigator.
 
-type Pane = "forms" | "newsletter" | "jobs" | "pdf" | "oauth";
+type Pane = "forms" | "newsletter" | "jobs" | "pdf" | "oauth" | "shortener" | "waitlist" | "docs" | "meetings";
 
 export default function SoloStackScreen() {
   const c = useColors();
@@ -73,6 +73,27 @@ export default function SoloStackScreen() {
   const [composeRepo, setComposeRepo] = useState("");
   const [composeDays, setComposeDays] = useState("7");
 
+  // Shortener state
+  const [shortLinks, setShortLinks] = useState<any[]>([]);
+  const [showNewLink, setShowNewLink] = useState(false);
+  const [newLinkUrl, setNewLinkUrl] = useState("");
+  const [newLinkLabel, setNewLinkLabel] = useState("");
+
+  // Waitlist state
+  const [waitlist, setWaitlist] = useState<any[]>([]);
+  const [waitlistCount, setWaitlistCount] = useState(0);
+
+  // Docs state
+  const [docsTree, setDocsTree] = useState<any[]>([]);
+  const [docsConfig, setDocsConfig] = useState<any>(null);
+  const [showDocsConfig, setShowDocsConfig] = useState(false);
+  const [docsPath, setDocsPath] = useState("");
+  const [docsTitle, setDocsTitle] = useState("");
+
+  // Meetings state
+  const [eventTypes, setEventTypes] = useState<any[]>([]);
+  const [bookings, setBookings] = useState<any[]>([]);
+
   const load = useCallback(async () => {
     if (!connected) return;
     setLoading(true);
@@ -89,6 +110,19 @@ export default function SoloStackScreen() {
       } else if (pane === "oauth") {
         setOauthClients(await quicClient.oauthClients());
         setOauthUsers(await quicClient.oauthUsers());
+      } else if (pane === "shortener") {
+        setShortLinks(await quicClient.shortList());
+      } else if (pane === "waitlist") {
+        const res = await quicClient.waitlistList();
+        setWaitlist(res?.entries ?? []);
+        setWaitlistCount(res?.total ?? 0);
+      } else if (pane === "docs") {
+        const res = await quicClient.docsList();
+        setDocsTree(res?.tree ?? []);
+        setDocsConfig(res?.config ?? null);
+      } else if (pane === "meetings") {
+        setEventTypes(await quicClient.meetingsList());
+        setBookings(await quicClient.meetingBookings());
       }
     } finally {
       setLoading(false);
@@ -184,7 +218,7 @@ export default function SoloStackScreen() {
         showsHorizontalScrollIndicator={false}
         style={[s.tabs, { borderBottomColor: c.border }]}
       >
-        {(["forms", "newsletter", "jobs", "pdf", "oauth"] as Pane[]).map((p) => (
+        {(["forms", "newsletter", "jobs", "shortener", "waitlist", "docs", "meetings", "pdf", "oauth"] as Pane[]).map((p) => (
           <Pressable key={p} onPress={() => setPane(p)} style={[s.tab, pane === p && { borderBottomColor: c.accent }]}>
             <Text style={{ color: pane === p ? c.accent : c.textMuted, fontWeight: "600", textTransform: "capitalize" }}>{p}</Text>
           </Pressable>
@@ -262,6 +296,81 @@ export default function SoloStackScreen() {
                 </View>
               ))}
             </View>
+          ) : pane === "shortener" ? (
+            <View>
+              <Pressable onPress={() => setShowNewLink(true)} style={[s.btn, { backgroundColor: c.accent }]}>
+                <Text style={s.btnText}>+ New short link</Text>
+              </Pressable>
+              {shortLinks.length === 0 ? (
+                <Text style={{ color: c.textMuted, marginTop: 16 }}>No short links yet. Public URL pattern: /s/&lt;code&gt;</Text>
+              ) : shortLinks.map((l) => (
+                <View key={l.code} style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+                  <Text style={[s.cardTitle, { color: c.textPrimary }]}>/s/{l.code}</Text>
+                  <Text style={[s.cardMeta, { color: c.textMuted }]} numberOfLines={1}>→ {l.url}</Text>
+                  <Text style={[s.cardMeta, { color: c.textMuted }]}>{l.clicks} clicks{l.label ? ` · ${l.label}` : ""}</Text>
+                </View>
+              ))}
+            </View>
+          ) : pane === "waitlist" ? (
+            <View>
+              <View style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+                <Text style={[s.cardTitle, { color: c.textPrimary }]}>{waitlistCount} signed up</Text>
+                <Text style={[s.cardMeta, { color: c.textMuted }]}>Public join: POST /waitlist/join — add ?ref=CODE for referral credit</Text>
+              </View>
+              {waitlist.slice(0, 30).map((e) => (
+                <View key={e.email} style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+                  <Text style={[s.cardTitle, { color: c.textPrimary }]}>#{e.slot} {e.email}</Text>
+                  <Text style={[s.cardMeta, { color: c.textMuted }]}>
+                    code: {e.code} · invited {e.invited}
+                    {e.referrer ? ` · ref: ${e.referrer}` : ""}
+                  </Text>
+                </View>
+              ))}
+              {waitlist.length > 30 ? (
+                <Text style={{ color: c.textMuted, textAlign: "center", marginTop: 12 }}>Showing 30 of {waitlist.length}</Text>
+              ) : null}
+            </View>
+          ) : pane === "docs" ? (
+            <View>
+              <Pressable onPress={() => { setDocsPath(docsConfig?.path ?? ""); setDocsTitle(docsConfig?.title ?? ""); setShowDocsConfig(true); }} style={[s.btn, { backgroundColor: c.accent }]}>
+                <Text style={s.btnText}>Configure docs site</Text>
+              </Pressable>
+              {docsConfig ? (
+                <View style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+                  <Text style={[s.cardTitle, { color: c.textPrimary }]}>{docsConfig.title || "Docs"}</Text>
+                  <Text style={[s.cardMeta, { color: c.textMuted }]} numberOfLines={1}>{docsConfig.path}</Text>
+                  <Text style={[s.cardMeta, { color: c.textMuted }]}>{docsTree.length} page(s)</Text>
+                </View>
+              ) : null}
+              {docsTree.map((p: any) => (
+                <View key={p.slug || "index"} style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+                  <Text style={[s.cardTitle, { color: c.textPrimary }]}>{p.title}</Text>
+                  <Text style={[s.cardMeta, { color: c.textMuted }]} numberOfLines={1}>/docs{p.slug ? `/${p.slug}` : ""}</Text>
+                </View>
+              ))}
+            </View>
+          ) : pane === "meetings" ? (
+            <View>
+              <Text style={[s.section, { color: c.textPrimary }]}>Event types</Text>
+              {eventTypes.length === 0 ? (
+                <Text style={{ color: c.textMuted }}>
+                  No event types yet. Use `meeting_create` from MCP or POST /meetings to define one. Uses your Gmail / O365 OAuth creds for real Meet / Teams links.
+                </Text>
+              ) : eventTypes.map((e: any) => (
+                <View key={e.slug} style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+                  <Text style={[s.cardTitle, { color: c.textPrimary }]}>{e.title}</Text>
+                  <Text style={[s.cardMeta, { color: c.textMuted }]}>/meet/{e.slug} · {e.durationMin}min · {e.provider}/{e.hosting}</Text>
+                </View>
+              ))}
+              <Text style={[s.section, { color: c.textPrimary, marginTop: 16 }]}>Confirmed bookings ({bookings.length})</Text>
+              {bookings.slice(0, 10).map((b: any) => (
+                <View key={b.id} style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+                  <Text style={[s.cardTitle, { color: c.textPrimary }]}>{b.name} ({b.email})</Text>
+                  <Text style={[s.cardMeta, { color: c.textMuted }]}>{b.eventSlug} · {new Date(b.startsAt).toLocaleString()}</Text>
+                  {b.joinUrl ? <Text style={[s.cardMeta, { color: c.accent }]} numberOfLines={1}>{b.joinUrl}</Text> : null}
+                </View>
+              ))}
+            </View>
           ) : pane === "pdf" ? (
             <View>
               <Text style={[s.section, { color: c.textPrimary }]}>Render HTML to PDF</Text>
@@ -325,6 +434,42 @@ export default function SoloStackScreen() {
             <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
               <Pressable onPress={() => setShowNewForm(false)} style={[s.btn, { flex: 1, backgroundColor: c.bgCard }]}><Text style={{ color: c.textPrimary, fontWeight: "600", textAlign: "center" }}>Cancel</Text></Pressable>
               <Pressable onPress={createForm} style={[s.btn, { flex: 1, backgroundColor: c.accent }]}><Text style={s.btnText}>Create</Text></Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={showNewLink} animationType="slide" transparent>
+        <View style={s.modalWrap}>
+          <View style={[s.modalCard, { backgroundColor: c.bgCardElevated, borderColor: c.border }]}>
+            <Text style={[s.cardTitle, { color: c.textPrimary }]}>New short link</Text>
+            <TextInput value={newLinkUrl} onChangeText={setNewLinkUrl} placeholder="https://..." placeholderTextColor={c.textMuted} autoCapitalize="none" style={[s.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput }]} />
+            <TextInput value={newLinkLabel} onChangeText={setNewLinkLabel} placeholder="label (optional)" placeholderTextColor={c.textMuted} style={[s.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput }]} />
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+              <Pressable onPress={() => setShowNewLink(false)} style={[s.btn, { flex: 1, backgroundColor: c.bgCard }]}><Text style={{ color: c.textPrimary, fontWeight: "600", textAlign: "center" }}>Cancel</Text></Pressable>
+              <Pressable onPress={async () => {
+                if (!newLinkUrl.trim()) return;
+                await quicClient.shortCreate({ url: newLinkUrl.trim(), label: newLinkLabel.trim() });
+                setNewLinkUrl(""); setNewLinkLabel(""); setShowNewLink(false); load();
+              }} style={[s.btn, { flex: 1, backgroundColor: c.accent }]}><Text style={s.btnText}>Create</Text></Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={showDocsConfig} animationType="slide" transparent>
+        <View style={s.modalWrap}>
+          <View style={[s.modalCard, { backgroundColor: c.bgCardElevated, borderColor: c.border }]}>
+            <Text style={[s.cardTitle, { color: c.textPrimary }]}>Docs site</Text>
+            <TextInput value={docsPath} onChangeText={setDocsPath} placeholder="absolute path to markdown folder" placeholderTextColor={c.textMuted} autoCapitalize="none" style={[s.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput }]} />
+            <TextInput value={docsTitle} onChangeText={setDocsTitle} placeholder="site title" placeholderTextColor={c.textMuted} style={[s.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput }]} />
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+              <Pressable onPress={() => setShowDocsConfig(false)} style={[s.btn, { flex: 1, backgroundColor: c.bgCard }]}><Text style={{ color: c.textPrimary, fontWeight: "600", textAlign: "center" }}>Cancel</Text></Pressable>
+              <Pressable onPress={async () => {
+                if (!docsPath.trim()) return;
+                await quicClient.docsConfig({ path: docsPath.trim(), title: docsTitle.trim() });
+                setShowDocsConfig(false); load();
+              }} style={[s.btn, { flex: 1, backgroundColor: c.accent }]}><Text style={s.btnText}>Save</Text></Pressable>
             </View>
           </View>
         </View>

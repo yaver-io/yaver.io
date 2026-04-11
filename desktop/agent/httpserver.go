@@ -128,6 +128,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/autodev/loops/", s.auth(s.handleAutodevLoopAction))
 	mux.HandleFunc("/autodev/reports", s.auth(s.handleAutodevReports))
 	mux.HandleFunc("/autodev/reports/revert", s.auth(s.handleAutodevRevert))
+	mux.HandleFunc("/autodev/start", s.auth(s.handleAutodevStart))
 	mux.HandleFunc("/releases/list", s.auth(s.handleReleaseList))
 	mux.HandleFunc("/releases/latest", s.auth(s.handleReleaseLatest))
 	mux.HandleFunc("/releases/bundle", s.auth(s.handleReleaseBundle))
@@ -258,6 +259,46 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/meetings", s.auth(s.handleMeetings))
 	mux.HandleFunc("/meet/", s.handleMeetPage)
 	mux.HandleFunc("/bookings", s.auth(s.handleBookings))
+
+	// A/B experiments on top of flags
+	mux.HandleFunc("/ab/experiments", s.auth(s.handleABExperiments))
+	mux.HandleFunc("/ab/assign", s.handleABAssign)
+	mux.HandleFunc("/ab/events", s.handleABEvents)
+	mux.HandleFunc("/ab/results", s.auth(s.handleABResults))
+
+	// Clips — screen recording + sharing (share links are public).
+	// Replaces Loom / Tella / Vidyard for the solo dev.
+	mux.HandleFunc("/clips/start", s.auth(s.handleClipStart))
+	mux.HandleFunc("/clips/stop", s.auth(s.handleClipStop))
+	mux.HandleFunc("/clips/list", s.auth(s.handleClipList))
+	mux.HandleFunc("/clips/upload/", s.auth(s.handleClipUpload))
+	mux.HandleFunc("/clips/", s.handleClipDetail)
+
+	// Affiliate tracking (extends the shortener with commissions)
+	mux.HandleFunc("/affiliates", s.auth(s.handleAffiliates))
+	mux.HandleFunc("/affiliates/", s.auth(s.handleAffiliateSub))
+
+	// Invoices + Stripe / LemonSqueezy integration
+	mux.HandleFunc("/customers", s.auth(s.handleCustomers))
+	mux.HandleFunc("/invoices", s.auth(s.handleInvoices))
+	mux.HandleFunc("/invoices/", s.auth(s.handleInvoiceSub))
+	// Webhook endpoints — public (signature verification pending)
+	mux.HandleFunc("/webhooks/stripe", s.handleStripeWebhook)
+	mux.HandleFunc("/webhooks/lemonsqueezy", s.handleLemonWebhook)
+
+	// Asciinema-lite terminal recording
+	mux.HandleFunc("/asciinema", s.auth(s.handleAsciinemaList))
+	mux.HandleFunc("/asciinema/import", s.auth(s.handleAsciinemaImport))
+	mux.HandleFunc("/asciinema/start", s.auth(s.handleAsciinemaStart))
+	mux.HandleFunc("/asciinema/stop", s.auth(s.handleAsciinemaStop))
+	mux.HandleFunc("/asciinema/", s.handleAsciinemaDetail)
+
+	// Live chat widget — public visitor side, owner side gated
+	mux.HandleFunc("/chat/messages", s.handleChatMessageIngest)
+	mux.HandleFunc("/chat/stream", s.handleChatStream)
+	mux.HandleFunc("/chat/conversations", s.auth(s.handleChatConversations))
+	mux.HandleFunc("/chat/reply", s.auth(s.handleChatReply))
+	mux.HandleFunc("/chat/widget.js", s.handleChatWidgetJS)
 
 	mux.HandleFunc("/analytics", s.auth(s.handleAnalytics))
 	mux.HandleFunc("/session/list", s.auth(s.handleSessionList))

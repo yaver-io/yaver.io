@@ -4095,6 +4095,34 @@ func runDoctor() {
 		warning("not installed (run `yaver tunnel cloudflare wizard` to set up a public tunnel)")
 	}
 
+	check("ffmpeg (Loom screen recording)")
+	if path, err := osexec.LookPath("ffmpeg"); err == nil {
+		pass(path)
+	} else {
+		warning("not installed — brew install ffmpeg   (required by /loom/start)")
+	}
+
+	check("asciinema (terminal recording)")
+	if path, err := osexec.LookPath("asciinema"); err == nil {
+		pass(path)
+	} else {
+		warning("not installed (optional) — brew install asciinema")
+	}
+
+	check("gh CLI (newsletter compose-from-git)")
+	if path, err := osexec.LookPath("gh"); err == nil {
+		pass(path)
+	} else {
+		warning("not installed (optional) — https://cli.github.com/")
+	}
+
+	check("glab CLI")
+	if path, err := osexec.LookPath("glab"); err == nil {
+		pass(path)
+	} else {
+		warning("not installed (optional) — https://gitlab.com/gitlab-org/cli")
+	}
+
 	check("Cloudflare Tunnels")
 	if cfg != nil && len(cfg.CloudflareTunnels) > 0 {
 		for _, t := range cfg.CloudflareTunnels {

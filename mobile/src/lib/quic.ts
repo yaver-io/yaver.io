@@ -2660,6 +2660,230 @@ export class QuicClient {
     }
   }
 
+  // ---- Clips (screen recording) ----------------------------------------
+
+  async clipStart(body: { title?: string; description?: string }): Promise<any | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/clips/start`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  async clipStop(): Promise<any | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/clips/stop`, { method: "POST", headers: this.authHeaders });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  async clipList(): Promise<any[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/clips/list`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      return (await res.json()).sessions || [];
+    } catch { return []; }
+  }
+
+  // ---- Chat (live visitor widget) --------------------------------------
+
+  async chatConversations(): Promise<any[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/chat/conversations`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      return (await res.json()).conversations || [];
+    } catch { return []; }
+  }
+
+  async chatHistory(vid: string): Promise<any[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/chat/messages?vid=${encodeURIComponent(vid)}`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      return (await res.json()).messages || [];
+    } catch { return []; }
+  }
+
+  async chatReply(vid: string, text: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/chat/reply`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ vid, text }),
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
+  // ---- A/B experiments -------------------------------------------------
+
+  async abExperiments(): Promise<any[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/ab/experiments`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      return (await res.json()).experiments || [];
+    } catch { return []; }
+  }
+
+  async abResults(key: string): Promise<Record<string, any> | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/ab/results?key=${encodeURIComponent(key)}`, { headers: this.authHeaders });
+      if (!res.ok) return null;
+      return (await res.json()).results ?? {};
+    } catch { return null; }
+  }
+
+  // ---- Invoices --------------------------------------------------------
+
+  async invoicesList(): Promise<any[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/invoices`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      return (await res.json()).invoices || [];
+    } catch { return []; }
+  }
+
+  async customersList(): Promise<any[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/customers`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      return (await res.json()).customers || [];
+    } catch { return []; }
+  }
+
+  // ---- Affiliates ------------------------------------------------------
+
+  async affiliatesList(): Promise<any[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/affiliates`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      return (await res.json()).affiliates || [];
+    } catch { return []; }
+  }
+
+  // ---- Asciinema -------------------------------------------------------
+
+  async asciinemaList(): Promise<any[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/asciinema`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      return (await res.json()).casts || [];
+    } catch { return []; }
+  }
+
+  // ---- Shortener --------------------------------------------------------
+
+  async shortList(): Promise<any[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/shortener`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      return (await res.json()).links || [];
+    } catch { return []; }
+  }
+
+  async shortCreate(body: { url: string; code?: string; label?: string }): Promise<any | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/shortener`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) return null;
+      return (await res.json()).link;
+    } catch { return null; }
+  }
+
+  async shortDelete(code: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/shortener?code=${encodeURIComponent(code)}`, {
+        method: "DELETE", headers: this.authHeaders,
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
+  // ---- Waitlist ---------------------------------------------------------
+
+  async waitlistList(): Promise<{ entries: any[]; total: number } | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/waitlist`, { headers: this.authHeaders });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  async waitlistLeaderboard(): Promise<any[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/waitlist/leaderboard`);
+      if (!res.ok) return [];
+      return (await res.json()).leaderboard || [];
+    } catch { return []; }
+  }
+
+  async waitlistDelete(email: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/waitlist?email=${encodeURIComponent(email)}`, {
+        method: "DELETE", headers: this.authHeaders,
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
+  // ---- Docs site --------------------------------------------------------
+
+  async docsList(): Promise<{ tree: any[]; config: any } | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/docs/_json`, { headers: this.authHeaders });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  async docsConfig(body: { path: string; title?: string; theme?: string }): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/docs/config`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
+  // ---- Meetings ---------------------------------------------------------
+
+  async meetingsList(): Promise<any[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/meetings`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      return (await res.json()).eventTypes || [];
+    } catch { return []; }
+  }
+
+  async meetingsCreate(body: any): Promise<any | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/meetings`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) return null;
+      return (await res.json()).eventType;
+    } catch { return null; }
+  }
+
+  async meetingBookings(): Promise<any[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/bookings`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      return (await res.json()).bookings || [];
+    } catch { return []; }
+  }
+
   // ---- Newsletter compose (from git activity) --------------------------
 
   async newsletterCompose(opts: { repo: string; sinceDays?: number; includePrs?: boolean; includeIssues?: boolean; subject?: string; instructions?: string; execute?: boolean; saveDraft?: boolean }): Promise<{ subject: string; draft: string; prompt: string; activity: any; campaignId?: string } | null> {
