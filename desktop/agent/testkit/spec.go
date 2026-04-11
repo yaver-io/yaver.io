@@ -75,6 +75,19 @@ type Spec struct {
 	// Artifacts controls what gets captured on failure.
 	Artifacts ArtifactsConfig `yaml:"artifacts,omitempty"`
 
+	// Capture turns on instrumentation streams (console errors,
+	// network requests, performance metrics, accessibility audit).
+	// The runner wires these into chromedp's CDP subscriptions and
+	// writes the results as JSON + HAR + axe reports under the spec's
+	// artifacts dir.
+	Capture CaptureConfig `yaml:"capture,omitempty"`
+
+	// Include is a list of paths to other *.test.yaml files whose
+	// `steps:` blocks are inlined at load time. Lets the solo dev
+	// extract "login as test user" once and reuse it across every
+	// spec without copy-pasting.
+	Include []string `yaml:"include,omitempty"`
+
 	// Path is the absolute path of the spec file. Set by LoadSpec, not the
 	// user.
 	Path string `yaml:"-"`
@@ -158,8 +171,31 @@ type Step struct {
 	// the default question; a string value overrides it.
 	Inspect string `yaml:"inspect,omitempty"`
 
+	// A11y runs an axe-core audit against the current page. Fails
+	// the step if any violations at or above `min_impact` are found.
+	// The full violation list is written to the spec's artifact dir
+	// so the dev can scroll it on their phone.
+	A11y *A11yStep `yaml:"a11y,omitempty"`
+
+	// SaveHAR dumps the network capture accumulated so far as a
+	// HAR 1.2 file under <spec>/.yaver-test-results/<name>.har.
+	// Requires capture.network to be on.
+	SaveHAR string `yaml:"save_har,omitempty"`
+
 	// Eval runs raw JavaScript in the page context. Result is logged.
 	Eval string `yaml:"eval,omitempty"`
+}
+
+// A11yStep controls an accessibility audit step.
+type A11yStep struct {
+	// MinImpact is the minimum axe-core impact level to treat as a
+	// failure: "minor" | "moderate" | "serious" | "critical".
+	// Default "serious" so solo devs don't get flooded by minor
+	// nits on the first run.
+	MinImpact string `yaml:"min_impact,omitempty"`
+	// Tags is an optional list of axe-core rule tags to include
+	// (wcag2a, wcag21aa, best-practice, etc). Empty = axe defaults.
+	Tags []string `yaml:"tags,omitempty"`
 }
 
 // FillStep is the body of a `fill` step.
@@ -170,6 +206,15 @@ type FillStep struct {
 
 // LoadSpec parses a single spec file from disk.
 func LoadSpec(path string) (*Spec, error) {
+	return loadSpecDepth(path, 0)
+}
+
+// loadSpecDepth is the internal recursive loader. Depth-limited so a
+// malicious or accidentally-cyclic `include:` can't OOM the agent.
+func loadSpecDepth(path string, depth int) (*Spec, error) {
+	if depth > 8 {
+		return nil, fmt.Errorf("include depth limit reached for %q — check for cycles", path)
+	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("resolve %q: %w", path, err)
@@ -199,6 +244,34 @@ func LoadSpec(path string) (*Spec, error) {
 		s.Artifacts.Screenshot = &yes
 	}
 	s.Path = abs
+
+	// Expand include:/<path> directives by inlining each referenced
+	// file's Setup + Steps at the front of this spec's own blocks.
+	// The included spec's target/url/etc are ignored — includes are
+	// step macros, not full specs. Solo-dev's expected flow:
+	//
+	//   yaver-tests/macros/login.test.yaml  (setup + steps only)
+	//   yaver-tests/checkout.test.yaml      (include: ["macros/login.test.yaml"])
+	if len(s.Include) > 0 {
+		baseDir := filepath.Dir(abs)
+		var preSetup, preSteps []Step
+		for _, inc := range s.Include {
+			incPath := inc
+			if !filepath.IsAbs(incPath) {
+				incPath = filepath.Join(baseDir, incPath)
+			}
+			incSpec, err := loadSpecDepth(incPath, depth+1)
+			if err != nil {
+				return nil, fmt.Errorf("include %q: %w", inc, err)
+			}
+			preSetup = append(preSetup, incSpec.Setup...)
+			preSetup = append(preSetup, incSpec.Steps...)
+			_ = preSteps // reserved for future "inline at the step site" marker
+		}
+		// Prepend the macro body to this spec's setup so "log in"
+		// fires before the first real step.
+		s.Setup = append(preSetup, s.Setup...)
+	}
 	return &s, nil
 }
 
