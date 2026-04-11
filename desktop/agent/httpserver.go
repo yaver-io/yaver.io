@@ -237,6 +237,26 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/mail/onboard/start", s.auth(s.handleMailOnboardStart))
 	mux.HandleFunc("/mail/onboard/status", s.auth(s.handleMailOnboardStatus))
 	mux.HandleFunc("/mail/onboard/callback", s.handleMailOnboardCallback)
+
+	// URL shortener — public /s/:code redirect, owner CRUD on /shortener
+	mux.HandleFunc("/s/", s.handleShortRedirect)
+	mux.HandleFunc("/shortener", s.auth(s.handleShortener))
+	mux.HandleFunc("/shortener/clicks", s.auth(s.handleShortClicks))
+
+	// Waitlist with referral leaderboard — join + leaderboard public
+	mux.HandleFunc("/waitlist/join", s.handleWaitlistJoin)
+	mux.HandleFunc("/waitlist/leaderboard", s.handleWaitlistLeaderboard)
+	mux.HandleFunc("/waitlist", s.auth(s.handleWaitlist))
+
+	// Docs site — public /docs/*, owner config on /docs/config
+	mux.HandleFunc("/docs", s.handleDocsSite)
+	mux.HandleFunc("/docs/", s.handleDocsSite)
+
+	// Meetings / Calendly-lite — public /meet/:slug, owner /meetings
+	mux.HandleFunc("/meetings", s.auth(s.handleMeetings))
+	mux.HandleFunc("/meet/", s.handleMeetPage)
+	mux.HandleFunc("/bookings", s.auth(s.handleBookings))
+
 	mux.HandleFunc("/analytics", s.auth(s.handleAnalytics))
 	mux.HandleFunc("/session/list", s.auth(s.handleSessionList))
 	mux.HandleFunc("/session/export", s.auth(s.handleSessionExport))

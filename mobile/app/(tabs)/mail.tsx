@@ -82,7 +82,10 @@ export default function MailScreen() {
     setSelected(m);
     setDraftPrompt(null);
     setDraftText("");
-    const res = await quicClient.mailDraft(m.id);
+    // execute=true pipes the prompt into the configured runner
+    // (Claude/Codex/Aider/Ollama) and returns the draft text
+    // inline — mobile doesn't have to paste the prompt anywhere.
+    const res = await quicClient.mailDraft(m.id, undefined, undefined, true);
     if (res) {
       setDraftPrompt(res.prompt);
       setDraftText(res.draft ?? "");
