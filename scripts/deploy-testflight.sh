@@ -68,3 +68,5 @@ if [ $EXPORT_EXIT -ne 0 ] && ! echo "$EXPORT_OUTPUT" | grep -q "Redundant Binary
 fi
 
 echo "✓ TestFlight build $NEW_BUILD uploaded"
+
+mobile-cache-cleanup.sh mark-deployed yaver || true

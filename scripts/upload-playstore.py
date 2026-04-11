@@ -2,6 +2,7 @@
 """Upload AAB to Google Play Internal Testing track."""
 
 import os
+import subprocess
 import sys
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
@@ -53,6 +54,11 @@ def main():
     # Commit the edit
     service.edits().commit(packageName=PACKAGE, editId=edit_id).execute()
     print(f"Edit committed! Build {version_code} is live on {TRACK} track.")
+
+    subprocess.run(
+        ["mobile-cache-cleanup.sh", "mark-deployed", "yaver"],
+        check=False,
+    )
 
 if __name__ == "__main__":
     main()

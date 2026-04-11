@@ -1109,6 +1109,33 @@ systemctl --user disable yaver  # Disable auto-start
 
 ## Deployments
 
+### Disk Space Guard
+
+This machine hosts four mobile projects (`sfmg`, `talos`, `yaver`, `botox`). Xcode + Android SDK + simulator caches already consume ~30 GB, and an iOS archive or Android AAB burns another 5–10 GB transiently. **Before any mobile deploy, check free space and clean stale caches.**
+
+```bash
+# Run at the START of every mobile deploy — fails hard if < 20 GB free, auto-cleans first
+mobile-cache-cleanup.sh preflight
+
+# Status only
+mobile-cache-cleanup.sh check            # disk free + per-project age + cache size
+
+# Manual cleanup (safe, uses XDG cache)
+mobile-cache-cleanup.sh clean-system     # Xcode DerivedData + stale simulators + Gradle transforms
+mobile-cache-cleanup.sh clean-stale 7    # wipe caches for projects idle > 7 days
+mobile-cache-cleanup.sh clean-project yaver
+```
+
+The script lives at `~/.local/bin/mobile-cache-cleanup.sh` and is **shared across sfmg, talos, yaver, and botox** — do not fork it into any repo. It detects "last deploy" from either a marker file in `~/.cache/mobile-cache-cleanup/` or from the last git commit that touched the mobile version files (`Info.plist`, `build.gradle`, `app.json`). A weekly launchd job (`local.mobile-cache-cleanup`, Sundays 03:00) runs `weekly` which does `clean-system` + `clean-stale 14` and logs to `~/.cache/mobile-cache-cleanup/weekly.log`.
+
+**After a successful deploy, always call**:
+```bash
+mobile-cache-cleanup.sh mark-deployed yaver
+```
+so the stale-cleanup does not purge yaver's caches next run. The deploy scripts in `scripts/deploy-testflight.sh` and `scripts/deploy-playstore.sh` should end with this call.
+
+Minimum free space for a mobile deploy: **20 GB**. If `preflight` exits non-zero, do not proceed — free more space manually (Downloads, old Docker images, `~/Library/Caches/*`) and retry.
+
 ### Convex Backend
 ```bash
 cd backend

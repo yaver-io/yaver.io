@@ -24,6 +24,8 @@
 
 export { YaverFeedback } from './YaverFeedback';
 export { BlackBox } from './BlackBox';
+export { YaverUpdates } from './YaverUpdates';
+export type { YaverUpdatesConfig, PendingUpdate } from './YaverUpdates';
 export { initExpo } from './expo';
 export { YaverDiscovery } from './Discovery';
 export { P2PClient } from './P2PClient';

@@ -28,7 +28,8 @@ type Config struct {
 	Speech        *SpeechConfig       `json:"speech,omitempty"`
 	Voice         *VoiceConfig        `json:"voice,omitempty"`
 	Notifications *NotificationConfig `json:"notifications,omitempty"`
-	WebhookSecret string              `json:"webhook_secret,omitempty"`
+	WebhookSecret       string              `json:"webhook_secret,omitempty"`
+	AnalyticsWebhookURL string              `json:"analytics_webhook_url,omitempty"`
 	HAURL         string              `json:"ha_url,omitempty"`
 	HAToken       string              `json:"ha_token,omitempty"`
 	AllowedIPs    []string            `json:"allowed_ips,omitempty"`     // IP allowlist CIDRs

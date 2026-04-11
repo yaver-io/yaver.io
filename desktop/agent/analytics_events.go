@@ -27,6 +27,7 @@ package main
 //     instead of (or in addition to) the per-device ring.
 
 import (
+	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"net/http"
@@ -67,7 +68,10 @@ func analyticsPath() (string, error) {
 
 // AnalyticsAppend writes one track event to the jsonl ledger and
 // updates the in-memory tail cache. Safe to call from the
-// BlackBox push goroutine.
+// BlackBox push goroutine. If a webhook URL is configured (via
+// `yaver analytics webhook set`), the event is also POSTed there
+// in a detached goroutine — zero dashboards on yaver's side but
+// the dev gets PostHog / Mixpanel / any HTTP sink for free.
 func AnalyticsAppend(ev TrackEvent) {
 	if ev.Timestamp == 0 {
 		ev.Timestamp = time.Now().UnixMilli()
@@ -97,6 +101,63 @@ func AnalyticsAppend(ev TrackEvent) {
 	if len(analyticsCache) > 1000 {
 		analyticsCache = analyticsCache[len(analyticsCache)-1000:]
 	}
+
+	// Fire the webhook bridge — detached goroutine so the BlackBox
+	// fan-out isn't blocked by a slow sink.
+	if hook := analyticsWebhookURL(); hook != "" {
+		evCopy := ev
+		hookCopy := hook
+		go forwardAnalyticsToWebhook(hookCopy, evCopy)
+	}
+}
+
+// forwardAnalyticsToWebhook posts a single event to the configured
+// sink. Shape is intentionally PostHog-compatible (flat name +
+// distinct_id + properties) so the default "paste this URL from
+// PostHog" workflow works without translation.
+func forwardAnalyticsToWebhook(url string, ev TrackEvent) {
+	body := map[string]interface{}{
+		"event":       ev.Name,
+		"distinct_id": ev.DeviceID,
+		"timestamp":   time.UnixMilli(ev.Timestamp).UTC().Format(time.RFC3339),
+		"properties": func() map[string]interface{} {
+			out := map[string]interface{}{}
+			for k, v := range ev.Props {
+				out[k] = v
+			}
+			if ev.Route != "" {
+				out["$current_url"] = ev.Route
+			}
+			out["yaver_ingest"] = true
+			return out
+		}(),
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return
+	}
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	_ = resp.Body.Close()
+}
+
+// analyticsWebhookURL reads the current webhook URL from the
+// config file. Cheap on every call — the config layer already
+// caches. Empty string means "no bridge, skip".
+func analyticsWebhookURL() string {
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.AnalyticsWebhookURL)
 }
 
 // analyticsTail returns the most recent events, filtered by
@@ -181,6 +242,97 @@ func (s *HTTPServer) handleAnalyticsCSV(w http.ResponseWriter, r *http.Request) 
 			ev.Route,
 			string(propsJSON),
 		})
+	}
+}
+
+// runAnalytics is the `yaver analytics ...` CLI dispatch.
+func runAnalytics(args []string) {
+	if len(args) == 0 {
+		printAnalyticsUsage()
+		os.Exit(0)
+	}
+	switch args[0] {
+	case "webhook":
+		analyticsWebhookCmd(args[1:])
+	case "tail":
+		analyticsTailCmd(args[1:])
+	case "help", "--help", "-h":
+		printAnalyticsUsage()
+	default:
+		os.Stderr.WriteString("Unknown analytics subcommand: " + args[0] + "\n\n")
+		printAnalyticsUsage()
+		os.Exit(1)
+	}
+}
+
+func printAnalyticsUsage() {
+	os.Stdout.WriteString(`Yaver analytics — local event ingest + webhook bridge.
+
+Usage:
+  yaver analytics webhook set <url>     Forward every track event to <url>
+  yaver analytics webhook unset         Stop forwarding
+  yaver analytics webhook show          Print the current webhook URL
+  yaver analytics tail [limit]          Print the most recent events
+
+Events land in ~/.yaver/analytics/events.jsonl. The webhook bridge
+POSTs each new event with a PostHog-compatible JSON body so pointing
+it at a PostHog capture URL "just works" — no server, no dashboards
+on yaver's side.
+`)
+}
+
+func analyticsWebhookCmd(args []string) {
+	if len(args) == 0 {
+		args = []string{"show"}
+	}
+	switch args[0] {
+	case "set":
+		if len(args) < 2 {
+			os.Stderr.WriteString("usage: yaver analytics webhook set <url>\n")
+			os.Exit(1)
+		}
+		cfg, err := LoadConfig()
+		if err != nil || cfg == nil {
+			cfg = &Config{}
+		}
+		cfg.AnalyticsWebhookURL = args[1]
+		if err := SaveConfig(cfg); err != nil {
+			os.Stderr.WriteString("save config: " + err.Error() + "\n")
+			os.Exit(1)
+		}
+		os.Stdout.WriteString("✓ webhook set: " + args[1] + "\n")
+	case "unset":
+		cfg, err := LoadConfig()
+		if err != nil || cfg == nil {
+			return
+		}
+		cfg.AnalyticsWebhookURL = ""
+		_ = SaveConfig(cfg)
+		os.Stdout.WriteString("✓ webhook cleared\n")
+	case "show":
+		cfg, _ := LoadConfig()
+		if cfg == nil || cfg.AnalyticsWebhookURL == "" {
+			os.Stdout.WriteString("(no analytics webhook configured)\n")
+			return
+		}
+		os.Stdout.WriteString(cfg.AnalyticsWebhookURL + "\n")
+	default:
+		os.Stderr.WriteString("unknown webhook subcommand\n")
+		os.Exit(1)
+	}
+}
+
+func analyticsTailCmd(args []string) {
+	limit := 20
+	if len(args) >= 1 {
+		if n, err := strconv.Atoi(args[0]); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	events := analyticsTail(0, limit)
+	for _, ev := range events {
+		data, _ := json.Marshal(ev)
+		os.Stdout.WriteString(string(data) + "\n")
 	}
 }
 
