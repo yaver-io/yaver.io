@@ -206,7 +206,7 @@ export default function SoloStackScreen() {
   return (
     <View style={[s.container, { backgroundColor: c.bg }]}>
       <View style={[s.header, { borderBottomColor: c.border, paddingTop: insets.top + 12 }]}>
-        <Pressable onPress={() => router.back()} style={{ paddingVertical: 8 }}>
+        <Pressable onPress={() => router.navigate("/(tabs)/more" as any)} style={{ paddingVertical: 8 }}>
           <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
         </Pressable>
         <Text style={{ fontSize: 17, fontWeight: "700", color: c.textPrimary }}>Solo Stack</Text>

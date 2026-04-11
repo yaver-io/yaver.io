@@ -1,6 +1,6 @@
 import { Tabs, useRouter } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
@@ -36,6 +36,19 @@ export default function TabLayout() {
   const isConnected = connectionStatus === "connected" && !!activeDevice;
   const [devServerRunning, setDevServerRunning] = useState(false);
   const wasRunning = useRef(false);
+
+  const backToMore = useCallback(
+    () => (
+      <Pressable
+        onPress={() => router.navigate("/(tabs)/more" as any)}
+        style={{ paddingLeft: 14, paddingVertical: 8 }}
+        hitSlop={8}
+      >
+        <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
+      </Pressable>
+    ),
+    [router, c.accent],
+  );
 
   // Poll dev server status for green dot badge + auto-route
   useEffect(() => {
@@ -125,9 +138,18 @@ export default function TabLayout() {
       <Tabs.Screen name="studio" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="qualitygates" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="settings" options={{ href: null, headerShown: false }} />
-      <Tabs.Screen name="runs" options={{ href: null, title: "Local CI", headerShown: true }} />
-      <Tabs.Screen name="autodev" options={{ href: null, title: "Auto Dev", headerShown: true }} />
-      <Tabs.Screen name="monitor" options={{ href: null, title: "Monitor", headerShown: true }} />
+      <Tabs.Screen
+        name="runs"
+        options={{ href: null, title: "Local CI", headerShown: true, headerLeft: backToMore }}
+      />
+      <Tabs.Screen
+        name="autodev"
+        options={{ href: null, title: "Auto Dev", headerShown: true, headerLeft: backToMore }}
+      />
+      <Tabs.Screen
+        name="monitor"
+        options={{ href: null, title: "Monitor", headerShown: true, headerLeft: backToMore }}
+      />
     </Tabs>
   );
 }
