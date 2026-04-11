@@ -11,9 +11,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -447,6 +449,89 @@ func (s *HTTPServer) handleTestkitArtifact(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	http.ServeFile(w, r, abs)
+}
+
+// handleTestkitFrames lists the PNG frames in a screencast directory
+// (the sibling of a failing step's artifacts — written by
+// testkit.FlushFrames). Returns the absolute frame paths + the
+// manifest's fps so the mobile FrameSequencePlayer can scrub through
+// them via /testkit/artifact. Containment check against the spec root
+// is the same as handleTestkitArtifact.
+func (s *HTTPServer) handleTestkitFrames(w http.ResponseWriter, r *http.Request) {
+	root, err := resolveSpecRoot(r.URL.Query().Get("root"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	rel := r.URL.Query().Get("dir")
+	if rel == "" {
+		http.Error(w, "dir required", http.StatusBadRequest)
+		return
+	}
+	target := rel
+	if !filepath.IsAbs(rel) {
+		target = filepath.Join(root, rel)
+	}
+	abs, err := filepath.Abs(target)
+	if err != nil {
+		http.Error(w, "bad dir", http.StatusBadRequest)
+		return
+	}
+	// Same containment rule the artifact handler uses: the directory
+	// must live under the spec root's artifact subtree.
+	allowed := false
+	for _, base := range []string{
+		filepath.Join(root, ".yaver-test-results"),
+		filepath.Join(root, "snapshots"),
+	} {
+		if strings.HasPrefix(abs+string(filepath.Separator), base+string(filepath.Separator)) || abs == base {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		http.Error(w, "no frames directory: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	var pngs []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasSuffix(strings.ToLower(name), ".png") {
+			pngs = append(pngs, filepath.Join(abs, name))
+		}
+	}
+	sort.Strings(pngs) // deterministic playback order
+
+	// Optional manifest.txt — default fps if missing. Format:
+	//   frames=120
+	//   fps=15
+	//   captured_at=2026-04-11T...
+	fps := 15
+	if data, rerr := os.ReadFile(filepath.Join(abs, "manifest.txt")); rerr == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "fps=") {
+				if v, cerr := fmt.Sscanf(line, "fps=%d", &fps); cerr != nil || v == 0 {
+					fps = 15
+				}
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"frames": pngs,
+		"fps":    fps,
+		"count":  len(pngs),
+	})
 }
 
 // handleTestkitMarkers exposes the local pass markers so the mobile

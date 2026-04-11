@@ -25,7 +25,12 @@ Status at the time this was written:
 | # | Item | Why it matters | Effort |
 |---|---|---|---|
 | 1 | **iOS Simulator tap-by-selector via WDA (one-command install)** | Today `target: ios-sim` boots the sim, installs the app, launches it, and takes screenshots, but taps only work by coordinate. Selector taps need WebDriverAgent running on :8100. `testkit/driver_wda.go` already speaks WDA correctly (Click / SendKeys / Screenshot / findElement with predicate + class-chain + accessibility-id strategies). What's missing is a `yaver install wda` one-liner that downloads or builds a pre-signed WebDriverAgent.app + stands it up against the booted simulator so the dev never has to open Xcode. | ~1 day |
-| 2 | **Mobile frame-sequence video player** | Backend captures CDP screencast PNGs on failure (`testkit/video.go`, per-step ring buffer → PNG sequence on disk). The mobile "Runs" tab's viewer modal only renders single stills. The dev can eyeball the frames on disk but can't scrub the failure on their phone. Build a small `FrameSequencePlayer` component that reads the manifest and steps through the PNGs with play/pause and a scrub bar. Reuses the existing `/testkit/artifact` endpoint. | ~1 day |
+<!-- #2 landed: FrameSequencePlayer component in runs.tsx reads a
+dir via the new /testkit/frames endpoint and scrubs through the
+PNGs at the manifest's fps. Backend screencast wiring
+(StartScreencast / FlushFrames) is still scaffolding — video.go
+exists but isn't called from runner.go yet. -->
+
 <!-- #3 landed: docs/yaver-test-sdk.md is the canonical page; linked
 from README.md next to the auto-detect testing bullet. -->
 
@@ -76,7 +81,9 @@ testkit/spec.go. Test: `TestStepIncludeExpandsInPlace`. -->
 
 ### One-week option
 1. #1 WDA install helper
-2. #2 mobile frame-sequence player
+2. Wire testkit/video.go StartScreencast + FlushFrames into
+   runner.go so the new FrameSequencePlayer actually has
+   footage to play.
 
 After that the feature matrix for the solo-RN-dev-with-own-hardware
 persona is **fully green** against every paid SaaS row that isn't a
