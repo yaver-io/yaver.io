@@ -136,6 +136,8 @@ func main() {
 		runChangePassword(os.Args[2:])
 	case "install":
 		runInstall(os.Args[2:])
+	case "update", "self-update", "upgrade":
+		runManualUpdate()
 	case "doctor":
 		runDoctor()
 	case "completion":

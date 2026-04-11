@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -255,6 +256,53 @@ func (s *HTTPServer) handleTestkitNotifications(w http.ResponseWriter, r *http.R
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"notifications": nc.List(50),
 	})
+}
+
+// handleTestkitArtifact serves a screenshot, trace, or video frame
+// from the on-disk artifact tree. The path query param must resolve
+// to a file inside `<root>/.yaver-test-results/` or
+// `<root>/snapshots/`; anything else returns 404 to prevent the
+// mobile app (or anything else with a token) from reading arbitrary
+// files. We never serve from outside the project's spec dir.
+func (s *HTTPServer) handleTestkitArtifact(w http.ResponseWriter, r *http.Request) {
+	root, err := resolveSpecRoot(r.URL.Query().Get("root"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	rel := r.URL.Query().Get("path")
+	if rel == "" {
+		http.Error(w, "path required", http.StatusBadRequest)
+		return
+	}
+	// Resolve. The on-disk artifact paths the runner records are
+	// already absolute, but we accept either form.
+	target := rel
+	if !filepath.IsAbs(rel) {
+		target = filepath.Join(root, rel)
+	}
+	abs, err := filepath.Abs(target)
+	if err != nil {
+		http.Error(w, "bad path", http.StatusBadRequest)
+		return
+	}
+	// Path containment check — abs must be inside one of the allowed
+	// subtrees of the spec root.
+	allowed := false
+	for _, base := range []string{
+		filepath.Join(root, ".yaver-test-results"),
+		filepath.Join(root, "snapshots"),
+	} {
+		if strings.HasPrefix(abs+string(filepath.Separator), base+string(filepath.Separator)) || abs == base {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	http.ServeFile(w, r, abs)
 }
 
 // handleTestkitMarkers exposes the local pass markers so the mobile
