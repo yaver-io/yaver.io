@@ -1,0 +1,18 @@
+{
+  "name": "yaver-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "End-to-end browser tests for yaver.io (landing page + auth flow). Uses Playwright; chosen over Selenium for first-class GitHub Actions support, parallel browser runs, and built-in tracing.",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui",
+    "report": "playwright show-report",
+    "install-browsers": "playwright install --with-deps chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

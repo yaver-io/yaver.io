@@ -20,7 +20,7 @@ import {
   View,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Markdown from "react-native-markdown-display";
 import { useDevice } from "../../src/context/DeviceContext";
@@ -338,6 +338,7 @@ export default function TasksScreen() {
   const [reconnectError, setReconnectError] = useState<string | null>(null);
   const [quicState, setQuicState] = useState<ConnectionState>(quicClient.connectionState);
   const [connMode, setConnMode] = useState<ConnectionMode>(quicClient.connectionMode);
+  const [reconnectAttempt, setReconnectAttempt] = useState<number>(quicClient.reconnectAttempt);
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
   const [pingRtt, setPingRtt] = useState<number | null>(null);
   const [isPinging, setIsPinging] = useState(false);
@@ -397,7 +398,8 @@ export default function TasksScreen() {
   useEffect(() => {
     const unsub1 = quicClient.on("connectionState", setQuicState);
     const unsub2 = quicClient.on("connectionMode", setConnMode);
-    return () => { unsub1(); unsub2(); };
+    const unsub3 = quicClient.on("reconnectAttempt", setReconnectAttempt);
+    return () => { unsub1(); unsub2(); unsub3(); };
   }, []);
 
   // Fetch agent status when connected
@@ -1063,6 +1065,11 @@ export default function TasksScreen() {
     return () => clearInterval(interval);
   }, [isEffectivelyConnected]);
   const showRetryButton = connectionStatus === "disconnected" && activeDevice && !userDisconnected;
+  // Show the attempt counter while we're actively retrying (attempt > 0 and
+  // not yet connected). Clamp to max so the display never exceeds N/max.
+  const showReconnectProgress =
+    reconnectAttempt > 0 && !isEffectivelyConnected && !!activeDevice;
+  const displayedAttempt = Math.min(reconnectAttempt, quicClient.maxReconnectAttempts);
 
   const chatMessages = selectedTask ? buildChatMessages(selectedTask) : [];
   const isRunning = selectedTask?.status === "running" || selectedTask?.status === "queued";
@@ -1094,10 +1101,15 @@ export default function TasksScreen() {
                 <Text style={{ fontSize: 12, color: "#818cf8", fontWeight: "600" }}>Retry</Text>
               </Pressable>
             )}
+            {showReconnectProgress && (
+              <Text style={{ color: banner.text, fontSize: 11, marginLeft: 6, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }}>
+                {displayedAttempt}/{quicClient.maxReconnectAttempts}
+              </Text>
+            )}
             {connectionStatus === "error" && (
               <Pressable
                 style={{ marginLeft: 8, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, backgroundColor: "#ef444433" }}
-                onPress={disconnect}
+                onPress={() => quicClient.stopReconnect()}
               >
                 <Text style={{ fontSize: 12, color: "#f87171", fontWeight: "600" }}>Stop</Text>
               </Pressable>

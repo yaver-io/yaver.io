@@ -1,4 +1,7 @@
-import * as FileSystem from 'expo-file-system';
+// expo-file-system v19 moved the string-based API (cacheDirectory,
+// downloadAsync, EncodingType, etc.) to the `legacy` submodule. The new
+// Paths API is object-based and would require rewriting every caller.
+import * as FileSystem from 'expo-file-system/legacy';
 import { Linking, Platform } from 'react-native';
 
 export interface BuildInfo {

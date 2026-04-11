@@ -5,6 +5,7 @@
 - **Cloudflare deploy size guard**: `web/` must stay under 10 MB (currently ~2.5 MB). The deploy script enforces this. Do not add large assets to `web/`. The biggest file is `web/public/demo.mp4` (~1.2 MB, compressed from 8 MB original). If adding videos, compress aggressively first: `ffmpeg -i input.mp4 -vcodec libx264 -crf 32 -preset veryslow -vf "scale=720:-2" -an output.mp4`. Prefer external hosting (YouTube embed, GitHub releases CDN) for anything over 1 MB.
 - **NEVER use WebView to load third-party apps.** All app loading must be native (real UIView/android.view.View via ExpoReactNativeFactory with New Architecture). When "Open App" is tapped, use `/dev/build-native` to compile a Hermes bytecode bundle and load it into a native bridge with full TurboModule support — never a WebView. WebView is only acceptable for web content (landing pages, docs), never for React Native apps.
 - **NEVER commit credentials, IPs, API keys, or secrets to the repo.** The repo is open-source on GitHub. All credentials must go in `.env.test` (gitignored), env vars, or GitHub Actions secrets. This includes Hetzner server IPs, Apple Developer keys, SSH key paths, relay passwords, Tailscale IPs, npm tokens, PyPI tokens, Google Play service account keys. If you see a hardcoded credential, replace it with an env var or placeholder immediately. **Also check git history** — if a credential was accidentally committed, it must be removed from history (via `git filter-branch` or BFG) before pushing to GitHub. Never write `.npmrc` files with tokens to tracked paths — use temp files and delete immediately after use. The npm publish tokens (`npm_...`), Play Store service account JSON, and App Store Connect API keys must never appear in any committed file.
+- **Open-source safety — nothing sensitive may leak through any file that ends up in the repo.** Everything in `yaver.io/` is published publicly. Before saving a file, assume it will be read by strangers: no hardcoded credentials, no private infra IPs or hostnames, no internal-only URLs, no customer data, no personal identifiers, no file paths that embed usernames or secrets, no Slack/issue/PR links that could leak context, no raw logs from real users. Any "dev-only" shim, test fixture, or debug helper that touches real infra belongs outside the repo (e.g. `.env.test`, `../talos/`, or a gitignored scratch dir) — never inline it into a committed file because "it's just local." This applies to CLAUDE.md memory notes too.
 
 ## Repository & Deployment
 - **Source of truth**: GitLab (`gitlab.com/kivanccakmak/yaver.io`) — development happens here
@@ -1008,13 +1009,50 @@ The `.env.test` file (gitignored) contains credentials for the shared Hetzner se
 ```
 The test suite auto-detects the remote server's CPU architecture (aarch64 on the Hetzner server) and cross-compiles accordingly. Each remote test deploys, tests, and tears down — nothing is left running on the server after the test suite finishes. Credentials are in `.env.test` or `../talos/.env.test` — **never commit these to the repo**.
 
+### Browser E2E Tests (`e2e/`)
+Playwright-driven browser tests that exercise the Next.js landing page + auth flow in Chromium. Free to run on GitHub Actions; public repo so minutes are unmetered.
+
+```bash
+cd e2e
+npm install
+npx playwright install --with-deps chromium   # first run only
+npm test                                      # boots web dev server, runs headless
+npm run test:headed                           # watch it in a real browser window
+npm run test:ui                               # Playwright UI mode
+npm run report                                # open last HTML report
+```
+
+**Dummy test user:** `global-setup.ts` creates a throwaway user against the live Convex backend (`POST /auth/signup` with a randomized `e2e-<uuid>@yaver.test` email) and `global-teardown.ts` deletes it via `/auth/delete-account` after the run. No credentials live in the repo and parallel runs never collide. To point tests at a deployed URL instead of the local dev server, set `E2E_BASE_URL=https://yaver.io` before running.
+
+**CI:** `.github/workflows/e2e.yml` runs on PRs and pushes to `main` that touch `web/` or `e2e/`. It boots the Next.js dev server inside the job, runs Playwright against it, and uploads the HTML report + failure traces as artifacts.
+
+### Running GitHub CI Tests from the Terminal
+Use `./scripts/run-gh-ci.sh` to trigger one or all GitHub Actions workflows on the current branch, wait for them to finish, and dump the failing logs inline. Intended as the single entry point when the user says "run tests" / "run CI".
+
+```bash
+./scripts/run-gh-ci.sh                 # run every workflow_dispatch-enabled workflow on the current branch
+./scripts/run-gh-ci.sh e2e             # run just .github/workflows/e2e.yml
+./scripts/run-gh-ci.sh ci test-suite   # run several by name
+./scripts/run-gh-ci.sh --list          # list available workflows on the current branch
+```
+The script requires `gh auth login` and assumes the workflows support `workflow_dispatch` (add `on: workflow_dispatch:` in any workflow you want to trigger manually). Failing step logs are printed with `gh run view --log-failed` so you can react without opening the browser.
+
 ## Local Development
 - `cd backend && npx convex dev` — Start Convex dev server
 - `cd web && npm run dev` — Start web dev server
 - `cd mobile/ios && xcodebuild ...` or open in Xcode — Build and run on device/simulator
+- `cd mobile && npm run web` — Run the mobile app in a browser (dev/preview only)
 - `cd desktop/agent && go run . serve` — Run desktop agent
 - `cd desktop/installer && npm run dist` — Build desktop installers (Electron GUI)
 - `cd relay && go run . serve --password your-secret` — Run relay server locally
+
+### Mobile Web Target (dev-only)
+The mobile app supports `expo start --web` as a development convenience so the UI can be iterated on in a browser without running a simulator. **Production is still iOS + Android only.** Notes:
+- Enabled via `react-native-web`, `react-dom`, `@expo/metro-runtime` and the `web` section in `mobile/app.json`.
+- The LAN beacon (`src/lib/beacon.ts`, `react-native-udp`) cannot run in a browser. A no-op stub at `src/lib/beacon.web.ts` is picked up automatically by Metro's `.web.ts` platform extension. Discovery just returns no local devices; the QUIC client falls through to its Convex-IP / relay paths.
+- Apple Sign-In is unavailable on web (`expo-apple-authentication` stubs to `isAvailableAsync() => false`); the login screen falls back to the OAuth redirect flow.
+- Direct HTTP connections to a desktop agent are subject to browser CORS/mixed-content rules — running against `http://localhost:18080` works; hitting private LAN IPs from an `https://` origin will not. Relay connections work as long as the relay serves HTTPS.
+- Do not ship the web target anywhere user-facing without a security review: the mobile app talks to users' own desktop agents, and the browser threat model is different.
 
 ### CLI Development (`desktop/agent/`)
 The `yaver` CLI is a Go binary in `desktop/agent/`. Run from source during development:
