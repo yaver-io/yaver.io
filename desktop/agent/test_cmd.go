@@ -47,6 +47,8 @@ func runTest(args []string) {
 	}
 
 	switch args[0] {
+	case "init":
+		runTestInit(args[1:])
 	case "run":
 		runTestSDK(args[1:])
 	case "record":
@@ -86,10 +88,13 @@ func runTest(args []string) {
 
 func printTestUsage() {
 	fmt.Print(`Usage:
+  yaver test init [flags]             Scaffold yaver-tests/ with example specs
   yaver test run [path] [flags]       Run yaver-test-sdk specs (yaver-tests/**/*.test.yaml)
   yaver test record [flags]           Open a browser, record clicks/inputs, write a YAML spec
   yaver test history [path]           Show recent runs from local .history.jsonl
   yaver test flake [path]             Per-spec failure ratios from local history
+  yaver test sync [flags]             Local pass markers (for GH Actions short-circuit)
+  yaver test schedule <cron> [root]   Register a cron entry with the agent scheduler
   yaver test unit [--dir <path>]      Auto-detect and run unit tests (legacy spawn)
   yaver test flutter [--dir <path>]   Run Flutter tests (legacy spawn)
   yaver test android [--dir <path>]   Run Android tests (legacy spawn)
@@ -99,10 +104,17 @@ func printTestUsage() {
   yaver test status <id>              Show test results
 
 'yaver test run' is the embedded yaver-test-sdk runner — pure Go, no
-external Playwright/Selenium needed. See yaver-tests/landing.test.yaml
-for the spec format. Targets: web today; ios-sim / android-emu /
-device coming in the next slice. Run 'yaver install list' to see
-which integrations are installed on this machine.
+external Playwright/Selenium needed. Targets supported today:
+  - web           (via embedded Chromium, chromedp / CDP)
+  - web           (via geckodriver for firefox browser)
+  - android-emu   (via emulator + adb + uiautomator selectors)
+  - android device (via USB + adb + uiautomator selectors)
+  - ios-sim       (via simctl — boot/install/launch/screenshot, taps via coords)
+  - ios device    (via libimobiledevice — install/launch/screenshot)
+
+Run 'yaver install list' to see which integrations are installed on
+this machine, or 'yaver test init' to drop example specs into a new
+project.
 `)
 }
 
@@ -186,6 +198,34 @@ func runTestHistory(args []string) {
 			}
 		}
 	}
+}
+
+// runTestInit drops a starter `yaver-tests/` directory into the
+// user's project with a README, a gitignore, and one or two example
+// specs. Idempotent — re-running it doesn't clobber anything.
+func runTestInit(args []string) {
+	fs := flag.NewFlagSet("test init", flag.ExitOnError)
+	dir := fs.String("dir", ".", "project directory")
+	webURL := fs.String("url", "", "local web dev server URL (default http://127.0.0.1:3000)")
+	flavor := fs.String("flavor", "both", "which examples to emit: web | rn | both")
+	fs.Parse(args)
+
+	files, err := testkit.Scaffold(testkit.ScaffoldOptions{
+		Dir:    *dir,
+		WebURL: *webURL,
+		Flavor: *flavor,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(testkit.ScaffoldSummary(files))
+	fmt.Println()
+	fmt.Println("Next steps:")
+	fmt.Println("  cd " + *dir)
+	fmt.Println("  yaver test run                # run everything")
+	fmt.Println("  yaver test run --watch        # vibe-coding loop")
+	fmt.Println("  yaver test record --url http://127.0.0.1:3000  # record a new spec")
 }
 
 // runTestSync prints local pass markers and (when --check <sha> is
