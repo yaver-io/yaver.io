@@ -28,6 +28,7 @@ import {
   quicClient,
   TestkitAutoFix,
   TestkitFlakeStats,
+  type TestkitFrameList,
   TestkitHistoryEntry,
   TestkitIntegration,
   TestkitNotification,
@@ -60,6 +61,9 @@ export default function RunsScreen() {
   // comparator. null closes the modal.
   const [snapshotBase, setSnapshotBase] = useState<string | null>(null);
   const [snapshotPane, setSnapshotPane] = useState<"baseline" | "current" | "diff">("baseline");
+  // Frame-sequence player (screencast playback on step failure).
+  // Holds the directory path; the player fetches frames on mount.
+  const [framesDir, setFramesDir] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [starting, setStarting] = useState(false);
   const [headful, setHeadful] = useState(false);
@@ -371,6 +375,22 @@ export default function RunsScreen() {
                   </Text>
                 </Pressable>
               )}
+              {item.screenshot && (
+                <Pressable
+                  onPress={() => {
+                    // Every `<step>-frames/` dir sits next to the
+                    // step's screenshot, so derive the directory
+                    // path from the screenshot filename.
+                    const lastSlash = item.screenshot!.lastIndexOf("/");
+                    const dir = item.screenshot!.slice(0, lastSlash) + "/frames";
+                    setFramesDir(dir);
+                  }}
+                >
+                  <Text style={[styles.cardSub, { color: c.accent || "#6366f1", marginTop: 2 }]} numberOfLines={1}>
+                    🎞  Play failure video
+                  </Text>
+                </Pressable>
+              )}
             </View>
           )}
         />
@@ -591,7 +611,146 @@ export default function RunsScreen() {
           )}
         </View>
       </Modal>
+
+      {/* Frame-sequence player — scrubs through the PNGs a failing
+          spec's screencast left behind. Opens from the "Play failure
+          video" pressable on each alert card. */}
+      <Modal
+        visible={!!framesDir}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setFramesDir(null)}
+      >
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.96)" }}>
+          {framesDir && <FrameSequencePlayer dir={framesDir} onClose={() => setFramesDir(null)} />}
+        </View>
+      </Modal>
     </SafeAreaView>
+  );
+}
+
+// FrameSequencePlayer scrubs through a directory of screencast PNGs
+// via the /testkit/frames listing + /testkit/artifact per-frame
+// endpoints. Play/pause toggles a setInterval that advances the
+// current index; the scrub bar is a PanResponder that maps the
+// touch x-position to a frame index.
+function FrameSequencePlayer({ dir, onClose }: { dir: string; onClose: () => void }) {
+  const c = useColors();
+  const [list, setList] = useState<TestkitFrameList | null>(null);
+  const [idx, setIdx] = useState(0);
+  const [playing, setPlaying] = useState(true);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+  const barWidthRef = useRef(1);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const res = await quicClient.testkitFrames(dir);
+      if (!alive) return;
+      if (!res || !res.frames || res.frames.length === 0) {
+        setLoadErr("no frames captured for this step");
+        return;
+      }
+      setList(res);
+      setIdx(0);
+      setPlaying(true);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [dir]);
+
+  useEffect(() => {
+    if (!list || !playing) return;
+    const interval = Math.max(16, Math.round(1000 / (list.fps || 15)));
+    const id = setInterval(() => {
+      setIdx((prev) => (prev + 1) % list.frames.length);
+    }, interval);
+    return () => clearInterval(id);
+  }, [list, playing]);
+
+  const pan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: (_, g) => {
+        setPlaying(false);
+        if (list) {
+          const pct = Math.max(0, Math.min(1, g.x0 / barWidthRef.current));
+          setIdx(Math.floor(pct * (list.frames.length - 1)));
+        }
+      },
+      onPanResponderMove: (_, g) => {
+        if (!list) return;
+        const pct = Math.max(0, Math.min(1, (g.moveX || g.x0) / barWidthRef.current));
+        setIdx(Math.floor(pct * (list.frames.length - 1)));
+      },
+    }),
+  ).current;
+
+  return (
+    <>
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+        {loadErr ? (
+          <Text style={{ color: "#fff", padding: 24, textAlign: "center" }}>{loadErr}</Text>
+        ) : list ? (
+          <Image
+            source={{
+              uri: quicClient.testkitArtifactUrl(list.frames[idx]),
+              headers: quicClient.testkitArtifactHeaders,
+            }}
+            style={{ width: "100%", height: "80%", resizeMode: "contain" }}
+          />
+        ) : (
+          <ActivityIndicator color="#fff" />
+        )}
+      </View>
+      {list && (
+        <View style={{ paddingBottom: 40, paddingTop: 12, paddingHorizontal: 16 }}>
+          <Text style={{ color: "#fff", textAlign: "center", marginBottom: 6, fontSize: 12 }}>
+            Frame {idx + 1} / {list.frames.length} · {list.fps} fps
+          </Text>
+          <View
+            onLayout={(e) => {
+              barWidthRef.current = e.nativeEvent.layout.width || 1;
+            }}
+            {...pan.panHandlers}
+            style={{
+              height: 28,
+              justifyContent: "center",
+            }}
+          >
+            <View style={{ height: 4, backgroundColor: "rgba(255,255,255,0.15)", borderRadius: 2 }} />
+            <View
+              style={{
+                position: "absolute",
+                left: 0,
+                height: 4,
+                width: `${((idx + 1) / list.frames.length) * 100}%`,
+                backgroundColor: c.accent || "#6366f1",
+                borderRadius: 2,
+              }}
+            />
+          </View>
+          <View style={{ flexDirection: "row", justifyContent: "center", marginTop: 14 }}>
+            <Pressable
+              onPress={() => setPlaying((p) => !p)}
+              style={{
+                paddingHorizontal: 22,
+                paddingVertical: 8,
+                borderRadius: 999,
+                backgroundColor: "#6366f1",
+              }}
+            >
+              <Text style={{ color: "#fff", fontWeight: "700" }}>{playing ? "Pause" : "Play"}</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+      <Pressable onPress={onClose} style={{ position: "absolute", top: 50, right: 20, padding: 8 }}>
+        <Text style={{ color: "#fff", fontSize: 18 }}>✕</Text>
+      </Pressable>
+    </>
   );
 }
 

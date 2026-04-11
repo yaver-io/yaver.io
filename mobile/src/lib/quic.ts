@@ -2333,6 +2333,28 @@ export class QuicClient {
     return `${this.baseUrl}/testkit/artifact?${params.toString()}`;
   }
 
+  /** List the PNG frames in a screencast directory (written by
+   *  testkit.FlushFrames on step failure). Returns absolute frame
+   *  paths + fps so the FrameSequencePlayer can play them back via
+   *  testkitArtifactUrl. */
+  async testkitFrames(
+    dir: string,
+    root?: string,
+  ): Promise<TestkitFrameList | null> {
+    try {
+      const params = new URLSearchParams({ dir });
+      if (root) params.set("root", root);
+      const res = await fetch(
+        `${this.baseUrl}/testkit/frames?${params.toString()}`,
+        { headers: this.authHeaders },
+      );
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
   /** Headers the mobile <Image> component must include when pulling
    *  artifacts from the agent. Image already accepts a `headers`
    *  prop on iOS / Android. */
@@ -2445,6 +2467,15 @@ export class QuicClient {
       return { ok: false, reason: e?.message ?? "network error" };
     }
   }
+}
+
+/** Response shape of GET /testkit/frames — one entry per PNG in a
+ *  screencast directory. Frames are absolute paths the player feeds
+ *  back into testkitArtifactUrl. */
+export interface TestkitFrameList {
+  frames: string[];
+  fps: number;
+  count: number;
 }
 
 /** Auto Dev loop row — wire shape of GET /autodev/loops. */
