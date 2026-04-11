@@ -95,7 +95,7 @@ export default function NewProjectScreen() {
   return (
     <View style={[styles.container, { backgroundColor: c.bg }]}>
       <View style={[styles.header, { borderBottomColor: c.border, paddingTop: insets.top + 12 }]}>
-        <Pressable onPress={() => router.back()} style={{ paddingVertical: 8 }}>
+        <Pressable onPress={() => router.navigate("/(tabs)/more" as any)} style={{ paddingVertical: 8 }}>
           <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
         </Pressable>
         <Text style={{ fontSize: 17, fontWeight: "700", color: c.textPrimary }}>New Project</Text>

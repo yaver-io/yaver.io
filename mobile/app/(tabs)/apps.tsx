@@ -156,11 +156,15 @@ export default function AppsScreen() {
 
   const router = useRouter();
 
-  // Tap project → if dev server running for it, build native + load. Otherwise show action sheet.
+  // Tap project → if dev server running for it, dispatch to native-on-LAN or Hermes-on-relay.
   const handleTapProject = useCallback(async (projectName: string) => {
     const isRunning = devStatus?.workDir?.endsWith(projectName);
     if (isRunning) {
-      handleOpenNative(devStatus!.workDir!);
+      if (Platform.OS === "ios" && quicClient.connectionMode === "direct") {
+        handleDirectBuild();
+      } else {
+        handleOpenNative(devStatus!.workDir!);
+      }
       return;
     }
 
@@ -418,10 +422,16 @@ export default function AppsScreen() {
   }, []);
 
   const handleOpen = useCallback(() => {
-    if (devStatus?.workDir) {
+    if (!devStatus?.workDir) return;
+    // iOS + same WiFi → native xcodebuild + xcrun devicectl install (like Xcode deploy).
+    // Any other case (Android, relay/cellular) → Hermes bytecode bundle into Yaver super-host.
+    // Never WebView — WebView is banned for third-party apps per CLAUDE.md.
+    if (Platform.OS === "ios" && quicClient.connectionMode === "direct") {
+      handleDirectBuild();
+    } else {
       handleOpenNative(devStatus.workDir);
     }
-  }, [devStatus, handleOpenNative]);
+  }, [devStatus, handleOpenNative, handleDirectBuild]);
 
   const handleReload = useCallback(async () => {
     setWebViewLoading(true);

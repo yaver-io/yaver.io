@@ -158,15 +158,37 @@ func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []str
 		}
 		return fmt.Sprintf("xcodebuild build -scheme %s -destination 'generic/platform=iOS' -quiet", scheme), nil
 	case PlatformXcodeDeviceInstall:
-		scheme := "App"
-		if extra != "" {
-			scheme = strings.TrimSpace(extra)
+		// React Native / Expo projects keep the iOS project in ./ios. Auto-detect
+		// the workspace (or project) + scheme so SFMG, Yaver, and any other
+		// Expo-style project build without hardcoded names. `xcodebuild build`
+		// + `-allowProvisioningUpdates` mirrors what a developer runs manually
+		// from Xcode — then devicectl installs the resulting .app over the LAN.
+		iosSub := "ios"
+		if _, err := os.Stat(filepath.Join(workDir, "ios")); err != nil {
+			iosSub = "."
+		}
+		extraEsc := strings.TrimSpace(extra)
+		schemeOverride := ""
+		if extraEsc != "" {
+			schemeOverride = extraEsc
 			extra = ""
 		}
-		// Build for device with derived data. detectIOSDevice + install happens post-build.
-		// Detect workspace vs project
-		wsFlag := fmt.Sprintf("-scheme %s", scheme)
-		return fmt.Sprintf("xcodebuild build %s -destination 'generic/platform=iOS' -derivedDataPath build/DerivedData -configuration Release -allowProvisioningUpdates", wsFlag), []string{
+		script := `set -e; ` +
+			`WS=$(ls -1 *.xcworkspace 2>/dev/null | head -1 || true); ` +
+			`PROJ=$(ls -1 *.xcodeproj 2>/dev/null | head -1 || true); ` +
+			`if [ -n "$WS" ]; then FLAG="-workspace $WS"; SCHEME=$(basename "$WS" .xcworkspace); ` +
+			`elif [ -n "$PROJ" ]; then FLAG="-project $PROJ"; SCHEME=$(basename "$PROJ" .xcodeproj); ` +
+			`else echo "no .xcworkspace or .xcodeproj found" >&2; exit 1; fi; `
+		if schemeOverride != "" {
+			script += fmt.Sprintf("SCHEME=%q; ", schemeOverride)
+		}
+		script += `xcodebuild build $FLAG -scheme "$SCHEME" ` +
+			`-destination 'generic/platform=iOS' ` +
+			`-derivedDataPath build/DerivedData ` +
+			`-configuration Release ` +
+			`-allowProvisioningUpdates`
+		return fmt.Sprintf("cd %s && %s", iosSub, script), []string{
+			"ios/build/DerivedData/Build/Products/Release-iphoneos/*.app",
 			"build/DerivedData/Build/Products/Release-iphoneos/*.app",
 		}
 	case PlatformHermesBundlePush:
@@ -318,6 +340,20 @@ func (bm *BuildManager) monitorBuild(build *Build, session *ExecSession, pattern
 				} else {
 					build.InstallStatus = "installed"
 					log.Printf("[build] %s installed on device %s", build.ID, udid[:8])
+
+					// Auto-launch after install so Open App actually opens the app.
+					if bundleID := readBundleIDFromApp(build.ArtifactPath); bundleID != "" {
+						bm.mu.Unlock()
+						launchCtx, launchCancel := context.WithTimeout(context.Background(), 30*time.Second)
+						launchErr := launchAppOnDevice(launchCtx, udid, bundleID)
+						launchCancel()
+						bm.mu.Lock()
+						if launchErr != nil {
+							log.Printf("[build] %s launch failed (install still succeeded): %v", build.ID, launchErr)
+						}
+					} else {
+						log.Printf("[build] %s could not read bundle ID from %s — skipping auto-launch", build.ID, build.ArtifactPath)
+					}
 				}
 			}
 		}

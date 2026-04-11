@@ -347,7 +347,7 @@ export default function TodosScreen() {
     <View style={[s.container, { backgroundColor: c.bg }]}>
       {/* Header */}
       <View style={[s.header, { paddingTop: insets.top + 12, borderBottomColor: c.border }]}>
-        <Pressable onPress={() => router.back()} style={{ paddingVertical: 8 }}>
+        <Pressable onPress={() => router.navigate("/(tabs)/more" as any)} style={{ paddingVertical: 8 }}>
           <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
         </Pressable>
         <Text style={[s.headerTitle, { color: c.textPrimary }]}>Todos</Text>

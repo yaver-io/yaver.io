@@ -123,3 +123,13 @@ func findAppInDerivedData(workDir string) string {
 	}
 	return detectArtifact(workDir, patterns)
 }
+
+// readBundleIDFromApp extracts CFBundleIdentifier from the Info.plist inside an .app bundle.
+func readBundleIDFromApp(appPath string) string {
+	plist := appPath + "/Info.plist"
+	out, err := exec.Command("/usr/libexec/PlistBuddy", "-c", "Print :CFBundleIdentifier", plist).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
