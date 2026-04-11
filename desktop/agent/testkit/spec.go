@@ -184,6 +184,21 @@ type Step struct {
 
 	// Eval runs raw JavaScript in the page context. Result is logged.
 	Eval string `yaml:"eval,omitempty"`
+
+	// Include is a path to another *.test.yaml whose setup+steps are
+	// inlined at this position instead of at the top of setup. Lets
+	// the dev drop a "log in as admin" macro in the middle of a flow:
+	//
+	//	steps:
+	//	  - goto: /
+	//	  - click: 'a.dashboard'
+	//	  - include: macros/admin-login.test.yaml
+	//	  - click: 'button.delete-user'
+	//
+	// When set, the other step fields on this Step are ignored — it
+	// is purely a position marker. Resolved at LoadSpec time; the
+	// runner never sees the include step itself.
+	Include string `yaml:"include,omitempty"`
 }
 
 // A11yStep controls an accessibility audit step.
@@ -245,34 +260,90 @@ func loadSpecDepth(path string, depth int) (*Spec, error) {
 	}
 	s.Path = abs
 
-	// Expand include:/<path> directives by inlining each referenced
-	// file's Setup + Steps at the front of this spec's own blocks.
-	// The included spec's target/url/etc are ignored — includes are
-	// step macros, not full specs. Solo-dev's expected flow:
+	// Expand spec-level include: directives by inlining each
+	// referenced file's Setup + Steps at the front of this spec's
+	// own setup. The included spec's target/url/etc are ignored —
+	// includes are step macros, not full specs. Solo-dev flow:
 	//
 	//   yaver-tests/macros/login.test.yaml  (setup + steps only)
 	//   yaver-tests/checkout.test.yaml      (include: ["macros/login.test.yaml"])
+	baseDir := filepath.Dir(abs)
 	if len(s.Include) > 0 {
-		baseDir := filepath.Dir(abs)
-		var preSetup, preSteps []Step
+		var preSetup []Step
 		for _, inc := range s.Include {
-			incPath := inc
-			if !filepath.IsAbs(incPath) {
-				incPath = filepath.Join(baseDir, incPath)
-			}
-			incSpec, err := loadSpecDepth(incPath, depth+1)
+			body, err := loadIncludeBody(inc, baseDir, depth)
 			if err != nil {
-				return nil, fmt.Errorf("include %q: %w", inc, err)
+				return nil, err
 			}
-			preSetup = append(preSetup, incSpec.Setup...)
-			preSetup = append(preSetup, incSpec.Steps...)
-			_ = preSteps // reserved for future "inline at the step site" marker
+			preSetup = append(preSetup, body...)
 		}
-		// Prepend the macro body to this spec's setup so "log in"
-		// fires before the first real step.
 		s.Setup = append(preSetup, s.Setup...)
 	}
+
+	// Expand step-level `- include: path` markers inside setup /
+	// steps / teardown. This is the positional variant — the macro
+	// fires at the exact point the dev drops the marker instead of
+	// being hoisted to the top of setup. Useful for long specs
+	// where the "log in as admin" macro should run mid-flow.
+	expanded, err := expandStepIncludes(s.Setup, baseDir, depth)
+	if err != nil {
+		return nil, fmt.Errorf("setup: %w", err)
+	}
+	s.Setup = expanded
+	expanded, err = expandStepIncludes(s.Steps, baseDir, depth)
+	if err != nil {
+		return nil, fmt.Errorf("steps: %w", err)
+	}
+	s.Steps = expanded
+	expanded, err = expandStepIncludes(s.Teardown, baseDir, depth)
+	if err != nil {
+		return nil, fmt.Errorf("teardown: %w", err)
+	}
+	s.Teardown = expanded
+
 	return &s, nil
+}
+
+// loadIncludeBody resolves a single include path (relative to baseDir)
+// and returns the concatenation of its Setup + Steps. Used by both
+// spec-level and step-level include expansion.
+func loadIncludeBody(inc, baseDir string, depth int) ([]Step, error) {
+	incPath := inc
+	if !filepath.IsAbs(incPath) {
+		incPath = filepath.Join(baseDir, incPath)
+	}
+	incSpec, err := loadSpecDepth(incPath, depth+1)
+	if err != nil {
+		return nil, fmt.Errorf("include %q: %w", inc, err)
+	}
+	var body []Step
+	body = append(body, incSpec.Setup...)
+	body = append(body, incSpec.Steps...)
+	return body, nil
+}
+
+// expandStepIncludes walks a step list and replaces any step whose
+// Include field is set with the body of the referenced macro. Non-
+// include steps are passed through unchanged. The macro is loaded
+// through loadSpecDepth so the global cycle / depth guard still
+// applies.
+func expandStepIncludes(steps []Step, baseDir string, depth int) ([]Step, error) {
+	if len(steps) == 0 {
+		return steps, nil
+	}
+	out := make([]Step, 0, len(steps))
+	for _, step := range steps {
+		if step.Include == "" {
+			out = append(out, step)
+			continue
+		}
+		body, err := loadIncludeBody(step.Include, baseDir, depth)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, body...)
+	}
+	return out, nil
 }
 
 // DiscoverSpecs walks `root` looking for *.test.yaml or *.test.yml files.
