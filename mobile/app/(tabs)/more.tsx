@@ -2206,6 +2206,21 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
+        {/* Studio — Clips, Chat, Invoices, Affiliates, A/B, Casts */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/studio" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F3AC}"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Studio</Text>
+              <Text style={[s.desc, { color: c.textMuted }]}>Screen clips, chat, invoices, A/B, affiliates, casts</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
         {/* Mail — Gmail / O365 triage + AI-boosted replies */}
         {connected && (
           <Pressable
