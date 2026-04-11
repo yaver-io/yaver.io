@@ -124,10 +124,14 @@ func runOnce(ctx context.Context, spec *Spec, opts RunOptions) *Result {
 	switch spec.Target {
 	case TargetWeb:
 		runWebSpec(ctx, spec, opts, res)
-	case TargetIOSSim, TargetAndroidEmu, TargetDevice:
-		// Drivers for these land in M5; for now we surface a clear,
-		// actionable error rather than silently passing.
-		res.Err = fmt.Errorf("target %q is not implemented yet — see docs/roadmap_ci_solo_developer_lower_costs.md (M5)", spec.Target)
+	case TargetAndroidEmu:
+		runAndroidSpec(ctx, spec, opts, res, false)
+	case TargetIOSSim:
+		runIOSSpec(ctx, spec, opts, res, false)
+	case TargetDevice:
+		// Real USB-attached device; platform disambiguation happens
+		// inside the handler based on what's plugged in.
+		runDeviceSpec(ctx, spec, opts, res)
 	default:
 		res.Err = fmt.Errorf("unknown target %q", spec.Target)
 	}
