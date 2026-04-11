@@ -111,7 +111,9 @@ type LoopThink struct {
 	Runner       string   `yaml:"runner" json:"runner"`                                 // claude-code | codex | aider | ollama:<model>
 	Fallback     []string `yaml:"fallback,omitempty" json:"fallback,omitempty"`         // provider chain when primary is rate-limited
 	Prompt       string   `yaml:"prompt,omitempty" json:"prompt,omitempty"`             // path to prompt file
+	PromptInline string   `yaml:"prompt_inline,omitempty" json:"prompt_inline,omitempty"` // inline prompt embedded in the spec
 	MaxEdits     int      `yaml:"max_edits,omitempty" json:"max_edits,omitempty"`       // default 1
+	MaxKicksPerRun int    `yaml:"max_kicks_per_run,omitempty" json:"max_kicks_per_run,omitempty"` // develop-mode safety cap (default 10)
 	RequireGreen []string `yaml:"require_green,omitempty" json:"require_green,omitempty"` // [typecheck, test]
 	Worktree     string   `yaml:"worktree,omitempty" json:"worktree,omitempty"`
 
@@ -182,25 +184,61 @@ type LoopKnobs struct {
 
 // LoopState is the persisted runtime state for a loop.
 type LoopState struct {
-	ID               string     `json:"id"`
-	Spec             LoopSpec   `json:"spec"`
-	Status           LoopStatus `json:"status"`
-	CreatedAt        string     `json:"createdAt"`
+	ID        string     `json:"id"`
+	Spec      LoopSpec   `json:"spec"`
+	Status    LoopStatus `json:"status"`
+	CreatedAt string     `json:"createdAt"`
 	// WorkDir is the project directory this loop operates on. Captured
 	// at `loop add` time from the dev's current working directory — the
 	// repo root they want the loop to edit, commit, and push in. The
 	// scheduler's subprocess invocations `cd` into this directory before
 	// running the iteration, so a loop registered from ~/Workspace/sfmg
 	// always operates on sfmg no matter who invokes it.
-	WorkDir          string     `json:"workDir,omitempty"`
+	WorkDir string `json:"workDir,omitempty"`
 	// ScheduleID is the ID of the ScheduledTask the daemon registered
 	// for this loop (empty if the daemon wasn't running at add time).
 	// Used by `loop remove` / `loop stop` to tear down the schedule.
-	ScheduleID       string     `json:"scheduleId,omitempty"`
-	LastIterationAt  string     `json:"lastIterationAt,omitempty"`
-	IterationCount   int        `json:"iterationCount"`
-	ConsecutiveStuck int        `json:"consecutiveStuck"`
-	LastSummary      string     `json:"lastSummary,omitempty"`
+	ScheduleID       string `json:"scheduleId,omitempty"`
+	LastIterationAt  string `json:"lastIterationAt,omitempty"`
+	IterationCount   int    `json:"iterationCount"`
+	ConsecutiveStuck int    `json:"consecutiveStuck"`
+	LastSummary      string `json:"lastSummary,omitempty"`
+
+	// PromptInline is a runtime-set feature prompt that overrides
+	// anything in the spec. Set via `yaver loop prompt set <name>
+	// "<message>"` (or the mobile Auto Dev tab once wired). The
+	// override persists until explicitly cleared via `yaver loop
+	// prompt clear <name>` — that lets the dev write a prompt on the
+	// phone, kick the loop, and have the same prompt drive every
+	// tick until the feature is done without having to re-send it.
+	PromptInline string `json:"promptInline,omitempty"`
+
+	// Budget counters — reset on day change (UTC). Enforced in
+	// develop-mode multi-kick loops to keep an Auto Develop session
+	// from blowing past the dev's max_commits_per_day or
+	// max_patches_per_day before they wake up.
+	BudgetDayKey  string `json:"budgetDayKey,omitempty"` // YYYY-MM-DD UTC
+	CommitsToday  int    `json:"commitsToday"`
+	PatchesToday  int    `json:"patchesToday"`
+	TestflightToday int  `json:"testflightToday"`
+
+	// LastIdeasPath is the filesystem path to the most recently
+	// generated ideas.json from an ideas-mode kick. Populated by
+	// runIdeasKick and read by the mobile Auto Dev tab over HTTP.
+	LastIdeasPath string `json:"lastIdeasPath,omitempty"`
+}
+
+// rollBudgetDay zeroes the daily counters if the current UTC day is
+// different from BudgetDayKey. Idempotent; safe to call on every kick.
+func (l *LoopState) rollBudgetDay() {
+	today := time.Now().UTC().Format("2006-01-02")
+	if l.BudgetDayKey == today {
+		return
+	}
+	l.BudgetDayKey = today
+	l.CommitsToday = 0
+	l.PatchesToday = 0
+	l.TestflightToday = 0
 }
 
 // loopsStorePath returns the JSON file where loop state is persisted.
@@ -275,6 +313,10 @@ func runLoop(args []string) {
 		loopStatus(rest)
 	case "remove", "rm":
 		loopRemove(rest)
+	case "prompt":
+		loopPrompt(rest)
+	case "ideas":
+		loopIdeas(rest)
 	case "help", "--help", "-h", "":
 		printLoopUsage()
 	default:
@@ -288,24 +330,179 @@ func printLoopUsage() {
 	fmt.Print(`Yaver auto-dev loops — test → fix → deploy in a loop.
 
 Usage:
-  yaver loop add <path-to-loop.yaml>     Register a loop from a YAML spec
-  yaver loop list                        List all registered loops and their status
-  yaver loop run <name>                  Run one iteration of a loop (blocking)
-  yaver loop stop <name>                 Stop a running loop immediately
-  yaver loop pause <name>                Pause a loop until resumed
-  yaver loop resume <name>               Resume a paused loop
-  yaver loop status <name>               Show detailed status for one loop
-  yaver loop remove <name>               Unregister a loop (does not delete branch)
+  yaver loop add <path-to-loop.yaml>      Register a loop from a YAML spec
+  yaver loop list                         List all registered loops and their status
+  yaver loop run <name>                   Run one iteration of a loop (blocking)
+  yaver loop stop <name>                  Stop a running loop immediately
+  yaver loop pause <name>                 Pause a loop until resumed
+  yaver loop resume <name>                Resume a paused loop
+  yaver loop status <name>                Show detailed status for one loop
+  yaver loop remove <name>                Unregister a loop (does not delete branch)
+
+Auto Develop prompt management:
+  yaver loop prompt set <name> "<msg>"    Set inline feature prompt for develop loop
+  yaver loop prompt show <name>           Show current active prompt
+  yaver loop prompt clear <name>          Clear inline prompt (fall back to spec file)
+
+Ideas mode:
+  yaver loop ideas show <name>            Print the latest generated ideas.json
+  yaver loop ideas kick <name>            Regenerate ideas immediately (same as run)
 
 Modes (set via the spec's "mode:" field):
   fix         Persona fuzzer finds friction, AI writes one small patch per tick.
   auto-fix    Always-on hardening — typos, overlaps, contrast, diacritics, dead
               buttons. Pinned to radicalness 0, zero creativity allowed.
-  develop     "Kick until done" against a dev-authored feature prompt.
+  develop     "Kick until done" against a dev-authored feature prompt. Runs
+              multiple kicks per invocation, threading next_step between them,
+              stops on done/stuck/needs_human/budget_hit/stopped.
   ideas       Agent proposes features; dev multi-selects; loop queues them.
 
 See docs/roadmap_ci_solo_developer_lower_costs.md for the full M8 spec.
 `)
+}
+
+// loopPrompt handles `yaver loop prompt {set|show|clear} <name>`.
+// This is the Auto Develop entry point for devs writing one-off
+// feature prompts from their phone / terminal without touching any
+// .md files on disk.
+func loopPrompt(args []string) {
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "usage: yaver loop prompt {set|show|clear} <name> [<msg>]")
+		os.Exit(1)
+	}
+	sub := args[0]
+	name := args[1]
+	loops, err := loadLoops()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load loops: %v\n", err)
+		os.Exit(1)
+	}
+	l, ok := loops[name]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "loop %q not found\n", name)
+		os.Exit(1)
+	}
+
+	switch sub {
+	case "set":
+		if len(args) < 3 {
+			fmt.Fprintln(os.Stderr, "usage: yaver loop prompt set <name> \"<feature prompt>\"")
+			os.Exit(1)
+		}
+		// Join any remaining args so quoted multi-word prompts work
+		// without the shell fighting us.
+		msg := strings.Join(args[2:], " ")
+		msg = strings.TrimSpace(msg)
+		if msg == "" {
+			fmt.Fprintln(os.Stderr, "prompt is empty — use `yaver loop prompt clear` to wipe")
+			os.Exit(1)
+		}
+		l.PromptInline = msg
+		// Clearing consecutive_stuck gives the new prompt a clean start;
+		// otherwise an ambiguous previous prompt could immediately pause
+		// the loop before the new feature has a chance to run.
+		l.ConsecutiveStuck = 0
+		if l.Status == LoopStatusPaused || l.Status == LoopStatusStuck ||
+			l.Status == LoopStatusNeedsHuman || l.Status == LoopStatusBudgetHit {
+			l.Status = LoopStatusIdle
+		}
+		loops[name] = l
+		if err := saveLoops(loops); err != nil {
+			fmt.Fprintf(os.Stderr, "save loops: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Prompt set for loop %q (%d chars). The next `yaver loop run %s` will use it.\n",
+			name, len(msg), name)
+
+	case "show":
+		if l.PromptInline != "" {
+			fmt.Println("--- runtime inline prompt (yaver loop prompt set) ---")
+			fmt.Println(l.PromptInline)
+			return
+		}
+		if l.Spec.Think.PromptInline != "" {
+			fmt.Println("--- spec inline prompt (.loop.yaml think.prompt_inline) ---")
+			fmt.Println(l.Spec.Think.PromptInline)
+			return
+		}
+		if l.Spec.Think.Prompt != "" {
+			path := l.Spec.Think.Prompt
+			if !filepath.IsAbs(path) && l.WorkDir != "" {
+				path = filepath.Join(l.WorkDir, path)
+			}
+			fmt.Printf("--- file prompt (%s) ---\n", path)
+			if data, rerr := os.ReadFile(path); rerr == nil {
+				fmt.Print(string(data))
+			} else {
+				fmt.Fprintf(os.Stderr, "(could not read prompt file: %v)\n", rerr)
+			}
+			return
+		}
+		fmt.Println("(no prompt set — use `yaver loop prompt set " + name + " \"<msg>\"`)")
+
+	case "clear":
+		if l.PromptInline == "" {
+			fmt.Println("(no inline prompt to clear)")
+			return
+		}
+		l.PromptInline = ""
+		loops[name] = l
+		if err := saveLoops(loops); err != nil {
+			fmt.Fprintf(os.Stderr, "save loops: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Cleared inline prompt for loop %q. Next run falls back to the spec's prompt source.\n", name)
+
+	default:
+		fmt.Fprintf(os.Stderr, "unknown prompt subcommand %q (want set|show|clear)\n", sub)
+		os.Exit(1)
+	}
+}
+
+// loopIdeas handles `yaver loop ideas {show|kick} <name>` — inspect
+// or regenerate the ranked feature list an ideas-mode loop writes.
+func loopIdeas(args []string) {
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "usage: yaver loop ideas {show|kick} <name>")
+		os.Exit(1)
+	}
+	sub := args[0]
+	name := args[1]
+	loops, err := loadLoops()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load loops: %v\n", err)
+		os.Exit(1)
+	}
+	l, ok := loops[name]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "loop %q not found\n", name)
+		os.Exit(1)
+	}
+
+	switch sub {
+	case "show":
+		path := l.LastIdeasPath
+		if path == "" {
+			// Fall back to the canonical path if this is the first
+			// time we're looking after a daemon-side kick.
+			base, _ := ConfigDir()
+			path = filepath.Join(base, "loops", name, "ideas.json")
+		}
+		data, rerr := os.ReadFile(path)
+		if rerr != nil {
+			fmt.Fprintf(os.Stderr, "no ideas.json yet for loop %q (run `yaver loop ideas kick %s` to generate one)\n", name, name)
+			os.Exit(1)
+		}
+		fmt.Println(string(data))
+
+	case "kick":
+		// Reuse loopRun by delegating — ideas mode is just one kick.
+		loopRun([]string{name})
+
+	default:
+		fmt.Fprintf(os.Stderr, "unknown ideas subcommand %q (want show|kick)\n", sub)
+		os.Exit(1)
+	}
 }
 
 // loopAdd loads a .loop.yaml file, validates it, and stores it under ~/.yaver/loops/.
@@ -719,14 +916,41 @@ func loopRun(args []string) {
 		os.Exit(1)
 	}
 
+	// Persistence callback — runDevelopLoop calls this between kicks
+	// so the mobile Auto Dev tab and `yaver loop status` always see
+	// fresh budget counters / kick summaries in real time.
+	saveCallback := func(state *LoopState) {
+		latest, lerr := loadLoops()
+		if lerr != nil {
+			return
+		}
+		latest[state.Spec.Name] = state
+		_ = saveLoops(latest)
+	}
+
 	ctx := contextBackground()
-	result := runLoopIteration(ctx, l)
+	result := runLoopIteration(ctx, l, saveCallback)
 
 	// Reload + merge state under a fresh handle in case a sibling
 	// process (scheduler) wrote between our save above and now.
 	loops, _ = loadLoops()
 	if cur, ok := loops[name]; ok {
-		l = cur
+		// Preserve budget counters updated inside runDevelopLoop —
+		// the reloaded copy may be stale.
+		reloadKeep := cur
+		reloadKeep.CommitsToday = l.CommitsToday
+		reloadKeep.PatchesToday = l.PatchesToday
+		reloadKeep.BudgetDayKey = l.BudgetDayKey
+		reloadKeep.LastIdeasPath = l.LastIdeasPath
+		l = reloadKeep
+	}
+	// Auto-fix / fix modes run a single kick and don't go through the
+	// develop-loop counter path, so bump the budget here if the kick
+	// actually committed something.
+	if l.Spec.Mode != LoopModeDevelop && result.PatchCommit != "" {
+		l.rollBudgetDay()
+		l.CommitsToday++
+		l.PatchesToday++
 	}
 	switch result.Status {
 	case "done":
@@ -743,6 +967,8 @@ func loopRun(args []string) {
 		l.Status = LoopStatusStopped
 	case "needs_human":
 		l.Status = LoopStatusNeedsHuman
+	case "budget_hit":
+		l.Status = LoopStatusBudgetHit
 	case "failed":
 		l.Status = LoopStatusStuck
 		l.ConsecutiveStuck++
@@ -774,12 +1000,27 @@ func loopRun(args []string) {
 	if result.ReportPath != "" {
 		fmt.Printf("report:         %s\n", result.ReportPath)
 	}
+	if len(result.Kicks) > 0 {
+		fmt.Printf("kicks:          %d\n", len(result.Kicks))
+		for _, k := range result.Kicks {
+			sha := k.CommitSHA
+			if len(sha) > 8 {
+				sha = sha[:8]
+			}
+			fmt.Printf("  %d. [%s] %s (%s)\n", k.Index, k.Status, k.Summary, sha)
+		}
+	}
+	if l.Spec.Budget.MaxCommitsPerDay > 0 || l.Spec.Budget.MaxPatchesPerDay > 0 {
+		fmt.Printf("budget today:   commits=%d/%d  patches=%d/%d\n",
+			l.CommitsToday, l.Spec.Budget.MaxCommitsPerDay,
+			l.PatchesToday, l.Spec.Budget.MaxPatchesPerDay)
+	}
 	if result.Err != "" {
 		fmt.Printf("error:          %s\n", result.Err)
 	}
 	fmt.Printf("duration:       %s\n", result.FinishedAt.Sub(result.StartedAt).Round(time.Millisecond))
 
-	if result.Status != "done" && result.Status != "stuck" {
+	if result.Status != "done" && result.Status != "stuck" && result.Status != "budget_hit" {
 		os.Exit(1)
 	}
 }

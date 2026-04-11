@@ -59,15 +59,31 @@ import (
 )
 
 // IterationResult is the outcome of a single `yaver loop run` tick.
+// For single-kick modes (auto-fix / fix / ideas) it mirrors one kick;
+// for develop mode it is the rolled-up result of "kick until done",
+// with Kicks listing each individual kick that ran.
 type IterationResult struct {
-	Status       string    `json:"status"` // "done" | "stuck" | "stopped" | "failed" | "needs_human"
-	Summary      string    `json:"summary"`
-	StartedAt    time.Time `json:"startedAt"`
-	FinishedAt   time.Time `json:"finishedAt"`
-	ReportPath   string    `json:"reportPath,omitempty"`
-	PatchCommit  string    `json:"patchCommit,omitempty"`
-	FilesChanged []string  `json:"filesChanged,omitempty"`
-	Err          string    `json:"err,omitempty"`
+	Status       string       `json:"status"` // "done" | "stuck" | "stopped" | "failed" | "needs_human" | "budget_hit"
+	Summary      string       `json:"summary"`
+	StartedAt    time.Time    `json:"startedAt"`
+	FinishedAt   time.Time    `json:"finishedAt"`
+	ReportPath   string       `json:"reportPath,omitempty"`
+	PatchCommit  string       `json:"patchCommit,omitempty"`
+	FilesChanged []string     `json:"filesChanged,omitempty"`
+	Err          string       `json:"err,omitempty"`
+	AIResponse   *AIResponse  `json:"aiResponse,omitempty"`
+	Kicks        []*KickRecap `json:"kicks,omitempty"`
+}
+
+// KickRecap is a one-line summary of each kick in a multi-kick
+// develop-mode iteration. Stored on the final IterationResult so
+// the dev can see what each step of a feature prompt produced.
+type KickRecap struct {
+	Index       int    `json:"index"`
+	Status      string `json:"status"`
+	Summary     string `json:"summary"`
+	CommitSHA   string `json:"commitSha,omitempty"`
+	FilesTouched []string `json:"filesTouched,omitempty"`
 }
 
 // HeuristicReport is what the chromedp scan writes to disk as JSON
@@ -102,16 +118,358 @@ type Finding struct {
 // The runner writes exactly one of these as the last JSON object in
 // its stdout. Anything else is treated as "stuck".
 type AIResponse struct {
-	Status       string   `json:"status"`        // "done" | "stuck" | "needs_human" | "in_progress"
+	Status       string   `json:"status"` // "done" | "stuck" | "needs_human" | "in_progress"
 	Summary      string   `json:"summary"`
 	FilesTouched []string `json:"files_touched,omitempty"`
 	NextStep     string   `json:"next_step,omitempty"`
 	Blockers     []string `json:"blockers,omitempty"`
+
+	// Ideas-mode only: the generated feature list. Parsed separately
+	// because the shape is mode-specific, but carried on the same
+	// struct so parseAIResponse stays unified.
+	Ideas       []FeatureIdea `json:"ideas,omitempty"`
+	GeneratedAt string        `json:"generated_at,omitempty"`
+}
+
+// FeatureIdea is one entry in an Ideas-mode generation. The mobile
+// Auto Dev tab reads a list of these from ~/.yaver/loops/<name>/
+// ideas.json and renders them as a multi-select picker.
+type FeatureIdea struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Radicalness int    `json:"radicalness"`
+	Effort      string `json:"effort"` // "small" | "medium" | "large"
+	WhyPersona  string `json:"why_persona,omitempty"`
+	WhyNot      string `json:"why_not,omitempty"`
 }
 
 // runLoopIteration is the entry point called by `yaver loop run <name>`.
-// It blocks until the iteration finishes, is cancelled, or fails.
-func runLoopIteration(ctx context.Context, l *LoopState) *IterationResult {
+// It dispatches by mode: auto-fix / fix run one kick, ideas generates a
+// feature list and writes it to disk, develop runs the "kick until
+// done" loop until the AI signals completion or a budget / safety
+// cap triggers.
+//
+// saveState is invoked after every state mutation so the mobile app /
+// `yaver loop status` always sees fresh data mid-iteration; pass nil
+// from tests or one-off runs where intermediate persistence is not
+// needed.
+func runLoopIteration(ctx context.Context, l *LoopState, saveState func(*LoopState)) *IterationResult {
+	switch l.Spec.Mode {
+	case LoopModeIdeas:
+		return runIdeasKick(ctx, l)
+	case LoopModeDevelop:
+		return runDevelopLoop(ctx, l, saveState)
+	default:
+		// auto-fix and fix are single-kick modes.
+		return runSingleKick(ctx, l, "")
+	}
+}
+
+// runDevelopLoop implements the "kick until done" behavior for
+// develop-mode loops. It calls runSingleKick repeatedly, threading
+// each kick's next_step forward as the nudge for the following kick,
+// and terminates when:
+//
+//   - the AI returns status=done (the whole feature prompt is
+//     complete — normal success)
+//   - the AI returns status=needs_human or stuck repeatedly
+//   - the daily commit/patch budget runs out
+//   - the STOP kill-file appears or the context is cancelled
+//   - the max-kicks-per-run safety cap is hit (default 10, override
+//     via spec.think.max_kicks_per_run)
+//
+// Every kick that lands a commit increments CommitsToday /
+// PatchesToday on the LoopState and saveState is called after each
+// kick so `yaver loop status` and the mobile app see fresh numbers
+// in real time.
+func runDevelopLoop(ctx context.Context, l *LoopState, saveState func(*LoopState)) *IterationResult {
+	aggregate := &IterationResult{
+		Status:     "done",
+		StartedAt:  time.Now().UTC(),
+		FinishedAt: time.Now().UTC(), // defensive default so bare early-returns still show a valid duration
+	}
+	defer func() {
+		aggregate.FinishedAt = time.Now().UTC()
+	}()
+
+	maxKicks := l.Spec.Think.MaxKicksPerRun
+	if maxKicks <= 0 {
+		maxKicks = 10 // safety default — a single `yaver loop run` tick
+	}
+
+	nudge := "" // first kick has no nudge; subsequent kicks get prev.next_step
+	kickIndex := 0
+	consecutiveStuck := 0
+
+	for {
+		// Roll the daily budget bucket. Doing this inside the kick
+		// loop means a loop that runs across midnight gets a fresh
+		// quota for day-2 without the dev having to intervene.
+		l.rollBudgetDay()
+
+		// Budget: stop before the next kick if the daily caps are hit.
+		if l.Spec.Budget.MaxCommitsPerDay > 0 && l.CommitsToday >= l.Spec.Budget.MaxCommitsPerDay {
+			aggregate.Status = "budget_hit"
+			aggregate.Summary = fmt.Sprintf(
+				"daily commit budget reached (%d/%d) — pausing until tomorrow",
+				l.CommitsToday, l.Spec.Budget.MaxCommitsPerDay)
+			break
+		}
+		if l.Spec.Budget.MaxPatchesPerDay > 0 && l.PatchesToday >= l.Spec.Budget.MaxPatchesPerDay {
+			aggregate.Status = "budget_hit"
+			aggregate.Summary = fmt.Sprintf(
+				"daily patch budget reached (%d/%d) — pausing until tomorrow",
+				l.PatchesToday, l.Spec.Budget.MaxPatchesPerDay)
+			break
+		}
+
+		// Physical STOP check between kicks.
+		if killFile, err := loopKillFilePath(l.Spec.Name); err == nil {
+			if _, err := os.Stat(killFile); err == nil {
+				aggregate.Status = "stopped"
+				aggregate.Summary = "stop signal received between kicks"
+				break
+			}
+		}
+		if ctx.Err() != nil {
+			aggregate.Status = "stopped"
+			aggregate.Summary = "context cancelled between kicks"
+			break
+		}
+
+		// Safety cap: bounded number of kicks per `yaver loop run`
+		// invocation. The scheduler will fire us again on the next
+		// tick if the feature isn't done yet.
+		if kickIndex >= maxKicks {
+			aggregate.Status = "stuck"
+			aggregate.Summary = fmt.Sprintf(
+				"reached max_kicks_per_run=%d — will resume on next scheduled tick",
+				maxKicks)
+			break
+		}
+		kickIndex++
+
+		fmt.Fprintf(os.Stderr, "\n=== kick %d/%d (develop: %s) ===\n",
+			kickIndex, maxKicks, l.Spec.Name)
+		if nudge != "" {
+			fmt.Fprintf(os.Stderr, "nudge: %s\n", nudge)
+		}
+
+		kickResult := runSingleKick(ctx, l, nudge)
+
+		recap := &KickRecap{
+			Index:       kickIndex,
+			Status:      kickResult.Status,
+			Summary:     kickResult.Summary,
+			CommitSHA:   kickResult.PatchCommit,
+			FilesTouched: kickResult.FilesChanged,
+		}
+		aggregate.Kicks = append(aggregate.Kicks, recap)
+
+		// Carry the most recent per-kick data up to the aggregate so
+		// `yaver loop status` has the latest values without having to
+		// dig into Kicks[].
+		aggregate.ReportPath = kickResult.ReportPath
+		if kickResult.PatchCommit != "" {
+			aggregate.PatchCommit = kickResult.PatchCommit
+			aggregate.FilesChanged = kickResult.FilesChanged
+			aggregate.AIResponse = kickResult.AIResponse
+			aggregate.Summary = kickResult.Summary
+
+			// A green commit landed — tick the budget counters.
+			l.CommitsToday++
+			l.PatchesToday++
+		}
+
+		if saveState != nil {
+			saveState(l)
+		}
+
+		// Terminal statuses — bail out immediately.
+		switch kickResult.Status {
+		case "stopped":
+			aggregate.Status = "stopped"
+			aggregate.Summary = kickResult.Summary
+			return aggregate
+		case "failed":
+			aggregate.Status = "failed"
+			aggregate.Err = kickResult.Err
+			aggregate.Summary = kickResult.Summary
+			return aggregate
+		case "needs_human":
+			aggregate.Status = "needs_human"
+			aggregate.Summary = kickResult.Summary
+			return aggregate
+		}
+
+		// Consecutive-stuck cap: if the AI can't make progress twice
+		// in a row inside the same develop run, give up — the feature
+		// prompt is probably ambiguous and needs a human.
+		if kickResult.Status == "stuck" {
+			consecutiveStuck++
+			if consecutiveStuck >= 2 {
+				aggregate.Status = "stuck"
+				aggregate.Summary = "AI reported stuck on two consecutive kicks — feature prompt may be ambiguous"
+				return aggregate
+			}
+			continue
+		}
+		consecutiveStuck = 0
+
+		// Route on the AI's own status.
+		if kickResult.AIResponse == nil {
+			// No parseable response → treat as stuck.
+			consecutiveStuck++
+			continue
+		}
+		switch kickResult.AIResponse.Status {
+		case "done":
+			aggregate.Status = "done"
+			return aggregate
+		case "in_progress":
+			nudge = strings.TrimSpace(kickResult.AIResponse.NextStep)
+			if nudge == "" {
+				// AI said "in progress" but gave no next step → nothing
+				// actionable for a follow-up kick; stop.
+				aggregate.Status = "done"
+				aggregate.Summary = kickResult.Summary + " (in_progress with no next_step — treating as done)"
+				return aggregate
+			}
+			// loop around for another kick
+			continue
+		default:
+			// Any unknown status → treat as done on the final kick
+			// we've already performed. Defensive fallback.
+			aggregate.Status = "done"
+			return aggregate
+		}
+	}
+
+	aggregate.FinishedAt = time.Now().UTC()
+	return aggregate
+}
+
+// runIdeasKick implements ideas mode: spawn claude with the
+// ideas-generator prompt, parse the ranked feature list out of the
+// response, and write it to ~/.yaver/loops/<name>/ideas.json. No
+// commits, no deploys, no touching the working tree.
+func runIdeasKick(ctx context.Context, l *LoopState) *IterationResult {
+	result := &IterationResult{
+		Status:    "done",
+		StartedAt: time.Now().UTC(),
+	}
+
+	workDir, err := deriveWorkDir(l)
+	if err != nil {
+		result.Status = "failed"
+		result.Err = err.Error()
+		result.FinishedAt = time.Now().UTC()
+		return result
+	}
+
+	killFile, _ := loopKillFilePath(l.Spec.Name)
+	watchCtx, cancelAll := context.WithCancel(ctx)
+	defer cancelAll()
+	go stopFileWatchdog(watchCtx, killFile, cancelAll)
+
+	// Ideas mode does not read a heuristic report — the prompt itself
+	// instructs claude on what to consider (recent commits, product.md,
+	// fuzzer history). We still pass an empty report so the prompt
+	// wrapping logic is unified.
+	emptyReport := &HeuristicReport{
+		StartedAt:     time.Now().UTC(),
+		Target:        l.Spec.Target,
+		URL:           l.Spec.URL,
+		Persona:       l.Spec.Persona,
+		RadicalnessUI: l.Spec.Knobs.RadicalnessUI,
+		Tone:          l.Spec.Knobs.Tone,
+		Summary:       "ideas mode — generate feature list",
+	}
+	reportPath, _ := persistReport(l, emptyReport)
+	result.ReportPath = reportPath
+
+	aiResp, aiErr := phaseThink(watchCtx, l, workDir, emptyReport, reportPath, "")
+	if aiErr != nil {
+		result.Status = "failed"
+		result.Err = aiErr.Error()
+		result.Summary = "ideas generator failed"
+		result.FinishedAt = time.Now().UTC()
+		return result
+	}
+	if aiResp == nil {
+		result.Status = "stuck"
+		result.Summary = "ideas generator produced no parseable response"
+		result.FinishedAt = time.Now().UTC()
+		return result
+	}
+	result.AIResponse = aiResp
+
+	if len(aiResp.Ideas) == 0 {
+		result.Status = "stuck"
+		result.Summary = "claude responded but the ideas array was empty"
+		result.FinishedAt = time.Now().UTC()
+		return result
+	}
+
+	// Persist the ideas list to a well-known path the mobile Auto Dev
+	// tab and future `yaver loop ideas show` command will read.
+	ideasPath, perr := persistIdeas(l, aiResp)
+	if perr != nil {
+		result.Status = "failed"
+		result.Err = perr.Error()
+		result.Summary = "could not persist ideas.json"
+		result.FinishedAt = time.Now().UTC()
+		return result
+	}
+	l.LastIdeasPath = ideasPath
+
+	result.Summary = fmt.Sprintf("generated %d feature ideas → %s", len(aiResp.Ideas), ideasPath)
+	result.FinishedAt = time.Now().UTC()
+	return result
+}
+
+// persistIdeas writes the AI's feature-ideas list to the loop's
+// ideas.json (and a timestamped sibling for history). Both files live
+// under ~/.yaver/loops/<name>/.
+func persistIdeas(l *LoopState, resp *AIResponse) (string, error) {
+	base, err := ConfigDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(base, "loops", l.Spec.Name)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", err
+	}
+
+	payload := map[string]interface{}{
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
+		"loop_name":    l.Spec.Name,
+		"persona":      l.Spec.Persona,
+		"ideas":        resp.Ideas,
+	}
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	// Canonical path the mobile app + CLI read.
+	canonical := filepath.Join(dir, "ideas.json")
+	if err := os.WriteFile(canonical, data, 0600); err != nil {
+		return "", err
+	}
+	// Timestamped history sibling so the dev can diff yesterday's
+	// list against today's.
+	ts := time.Now().UTC().Format("20060102-150405")
+	_ = os.WriteFile(filepath.Join(dir, ts+"-ideas.json"), data, 0600)
+	return canonical, nil
+}
+
+// runSingleKick runs exactly one iteration — phases 1..5 — and returns
+// a result the caller can inspect to decide whether to kick again.
+// `nudge` is an optional string that gets appended to the AI prompt
+// (used by runDevelopLoop to pass the previous kick's `next_step`
+// hint forward into the next kick).
+func runSingleKick(ctx context.Context, l *LoopState, nudge string) *IterationResult {
 	result := &IterationResult{
 		Status:    "failed",
 		StartedAt: time.Now().UTC(),
@@ -206,7 +564,7 @@ func runLoopIteration(ctx context.Context, l *LoopState) *IterationResult {
 	result.ReportPath = reportPath
 
 	// --- Phase 3: AI think step ---
-	aiResp, aiErr := phaseThink(watchCtx, l, workDir, report, reportPath)
+	aiResp, aiErr := phaseThink(watchCtx, l, workDir, report, reportPath, nudge)
 	if watchCtx.Err() != nil {
 		result.Status = "stopped"
 		result.Summary = "stop signal received during AI think phase"
@@ -229,6 +587,7 @@ func runLoopIteration(ctx context.Context, l *LoopState) *IterationResult {
 		result.FinishedAt = time.Now().UTC()
 		return result
 	}
+	result.AIResponse = aiResp
 	result.Summary = aiResp.Summary
 
 	// Did the AI actually change anything?
@@ -543,46 +902,70 @@ func runHeuristicDetectors(visibleText string, consoleMsgs []string) []Finding {
 
 // --- Phase 3: AI think -------------------------------------------------
 
-func phaseThink(ctx context.Context, l *LoopState, workDir string, report *HeuristicReport, reportPath string) (*AIResponse, error) {
+func phaseThink(ctx context.Context, l *LoopState, workDir string, report *HeuristicReport, reportPath string, nudge string) (*AIResponse, error) {
 	runner := strings.ToLower(l.Spec.Think.Runner)
 	switch {
 	case runner == "claude-code" || runner == "claude":
-		return spawnClaudeCode(ctx, l, workDir, report, reportPath)
+		return spawnClaudeCode(ctx, l, workDir, report, reportPath, nudge)
 	case runner == "codex" || runner == "aider" || strings.HasPrefix(runner, "ollama"):
-		return nil, fmt.Errorf("runner %q is not wired yet (this MVP ships claude-code only — PRs welcome)", runner)
+		return nil, fmt.Errorf("runner %q is not wired yet (claude-code is the only runner in this build)", runner)
 	default:
 		return nil, fmt.Errorf("unknown runner %q", runner)
 	}
 }
 
 // spawnClaudeCode invokes the `claude` CLI in print mode with the
-// loop's prompt file plus the heuristic report piped via stdin. The
-// expected contract: claude reads the prompt, makes at most one edit,
-// and emits a JSON AIResponse as the last line of its stdout.
+// loop's effective prompt plus the heuristic report piped via stdin.
+// The expected contract: claude reads the prompt, makes at most one
+// edit, and emits a JSON AIResponse as the last line of its stdout.
 //
 // Wire is intentionally thin — no special MCP tricks, no fancy flags.
 // If the claude CLI flags change, only this function needs a tweak.
-func spawnClaudeCode(ctx context.Context, l *LoopState, workDir string, report *HeuristicReport, reportPath string) (*AIResponse, error) {
+func spawnClaudeCode(ctx context.Context, l *LoopState, workDir string, report *HeuristicReport, reportPath string, nudge string) (*AIResponse, error) {
 	if _, err := exec.LookPath("claude"); err != nil {
 		return nil, fmt.Errorf("`claude` CLI not on PATH — install Claude Code from https://claude.com/product/claude-code")
 	}
 
-	prompt, err := loadPromptFile(workDir, l.Spec.Think.Prompt)
+	prompt, err := effectivePrompt(l, workDir)
 	if err != nil {
-		return nil, fmt.Errorf("load prompt file: %w", err)
+		return nil, err
 	}
 
-	// Build the full prompt: system-prompt file + heuristic report + a
-	// contract reminder. The prompt file itself already documents the
-	// output JSON format; the reminder is belt-and-braces.
+	// Build the full prompt: system prompt + heuristic report + nudge
+	// (if the previous kick left one) + contract reminder. The prompt
+	// source already documents the output JSON format; the reminder is
+	// belt-and-braces so single-shot runs with untrusted prompts still
+	// get something parseable.
 	reportJSON, _ := json.MarshalIndent(report, "", "  ")
-	fullPrompt := fmt.Sprintf(
-		"%s\n\n---\n\n# Heuristic report for this iteration\n\n```json\n%s\n```\n\n---\n\n"+
-			"Pick exactly one finding to act on. Make the smallest possible patch. "+
-			"Emit the JSON status contract as the last line of your response. "+
-			"Do not ask clarifying questions — make a judgment call and proceed.",
-		prompt, string(reportJSON),
-	)
+	parts := []string{
+		prompt,
+		"\n\n---\n\n# Heuristic report for this iteration\n\n```json\n" + string(reportJSON) + "\n```",
+	}
+	if strings.TrimSpace(nudge) != "" {
+		parts = append(parts,
+			"\n\n---\n\n# Continuing from a previous kick\n\n"+
+				"The previous kick reported `status: in_progress` with this next_step:\n\n"+
+				"> "+strings.TrimSpace(nudge)+"\n\n"+
+				"Do not redo work already committed. Focus on the next_step and keep the diff small. "+
+				"If the next_step turns out to be already done or no longer relevant, respond with `status: done`.")
+	}
+	if l.Spec.Mode == LoopModeDevelop {
+		parts = append(parts,
+			"\n\n---\n\n# Auto Develop mode contract\n\n"+
+				"Pick the smallest coherent slice of this feature that can land in one commit. "+
+				"Prefer adding files over rewriting them. Do not touch tests unless the feature "+
+				"explicitly requires a test change. When the whole feature prompt is complete "+
+				"(not just the current slice), respond with `status: done`. If more work remains, "+
+				"respond with `status: in_progress` and put the next concrete slice in `next_step`. "+
+				"The loop will re-kick you with that next_step as a nudge.")
+	} else {
+		parts = append(parts,
+			"\n\n---\n\n"+
+				"Pick exactly one finding to act on. Make the smallest possible patch. "+
+				"Emit the JSON status contract as the last line of your response. "+
+				"Do not ask clarifying questions — make a judgment call and proceed.")
+	}
+	fullPrompt := strings.Join(parts, "")
 
 	// Use `claude --print` for non-interactive mode. Feed the prompt
 	// via stdin so we don't run into argv length limits.
@@ -670,6 +1053,61 @@ func loadPromptFile(workDir, path string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// effectivePrompt resolves the actual text the AI runner should see for
+// this iteration. Precedence, highest to lowest:
+//
+//   1. LoopState.PromptInline — set at runtime via `yaver loop prompt
+//      set <name> "<msg>"` (or the mobile Auto Dev tab once wired).
+//      This is how the dev writes a one-off feature prompt from their
+//      phone and kicks the loop without editing any files.
+//   2. LoopSpec.Think.PromptInline — inline prompt embedded in the
+//      .loop.yaml spec itself. Useful for short, version-controlled
+//      prompts that do not warrant a separate .md file.
+//   3. LoopSpec.Think.Prompt — path to a markdown prompt file on disk.
+//      The traditional approach for long / reusable prompts.
+//
+// The effective prompt is always wrapped with an instruction reminding
+// the AI about the output JSON contract if none of the sources already
+// document it (the three shipped prompts under .yaver/prompts/ do).
+func effectivePrompt(l *LoopState, workDir string) (string, error) {
+	if strings.TrimSpace(l.PromptInline) != "" {
+		return wrapInlinePrompt(l, l.PromptInline), nil
+	}
+	if strings.TrimSpace(l.Spec.Think.PromptInline) != "" {
+		return wrapInlinePrompt(l, l.Spec.Think.PromptInline), nil
+	}
+	if l.Spec.Think.Prompt == "" {
+		return "", fmt.Errorf("think.prompt is empty and no inline prompt is set — run `yaver loop prompt set %s \"<your feature prompt>\"` to provide one", l.Spec.Name)
+	}
+	return loadPromptFile(workDir, l.Spec.Think.Prompt)
+}
+
+// wrapInlinePrompt injects the canonical JSON-contract reminder around
+// a terse inline prompt so the dev can write "add a weekly market-crash
+// event" from their phone without having to also type the JSON shape.
+func wrapInlinePrompt(l *LoopState, body string) string {
+	return "# Feature prompt (loop: " + l.Spec.Name + ")\n\n" +
+		strings.TrimSpace(body) + "\n\n" +
+		"---\n\n" +
+		"## Output contract\n\n" +
+		"When you finish your edit, emit exactly one JSON object as the LAST\n" +
+		"line of your response:\n\n" +
+		"```json\n" +
+		"{\n" +
+		"  \"status\": \"done\" | \"in_progress\" | \"stuck\" | \"needs_human\",\n" +
+		"  \"summary\": \"one short sentence for the commit message\",\n" +
+		"  \"files_touched\": [\"path/to/file.ts\"],\n" +
+		"  \"next_step\": \"only if status=in_progress: the next concrete slice to land\",\n" +
+		"  \"blockers\": [\"only if status=needs_human: human decisions needed\"]\n" +
+		"}\n" +
+		"```\n\n" +
+		"Rules:\n" +
+		"- Make the smallest coherent patch that advances the feature.\n" +
+		"- Do not touch test files unless the feature requires it.\n" +
+		"- Preserve Turkish diacritics (ç ş ğ ı ö ü İ) in user-visible strings.\n" +
+		"- Never add real brand, club, or player names (see CLAUDE.md).\n"
 }
 
 // --- Phase 4: green gate -----------------------------------------------
