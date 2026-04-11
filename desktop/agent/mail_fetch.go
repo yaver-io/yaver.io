@@ -503,6 +503,20 @@ func fetchGraph(cfg *EmailConfig, opts MailFetchOptions) ([]MailMessage, error) 
 //    20–40 marketing
 //    < 20  bulk
 func classifyMessage(m *MailMessage, all []MailMessage) {
+	// Learned allow/deny lists take precedence — the dev told us
+	// their verdict, we respect it. See mail_learning.go for how
+	// these lists get populated from /mail/mark.
+	if isMailDenied(m.From) {
+		m.Score = 0
+		m.Classification = "bulk"
+		return
+	}
+	if isMailAllowed(m.From) {
+		m.Score = 100
+		m.Classification = "personal"
+		return
+	}
+
 	score := 50
 	if m.ThreadID != "" {
 		replies := 0

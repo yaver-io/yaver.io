@@ -141,6 +141,30 @@ func saveInvoices() error {
 	return os.WriteFile(p, data, 0o600)
 }
 
+// findInvoiceAndCustomer resolves a (invoice, customer) pair
+// from an invoice ID or number. Used by the MCP dispatcher so
+// tool callers can reference invoices by either identifier.
+func findInvoiceAndCustomer(id string) (*Invoice, *Customer) {
+	var inv *Invoice
+	list := loadInvoices()
+	for i := range list {
+		if list[i].ID == id || list[i].Number == id {
+			inv = &invoiceCache[i]
+			break
+		}
+	}
+	if inv == nil {
+		return nil, nil
+	}
+	for _, c := range loadCustomers() {
+		if c.ID == inv.CustomerID {
+			cc := c
+			return inv, &cc
+		}
+	}
+	return inv, nil
+}
+
 // nextInvoiceNumber returns the next sequential INV-NNN. Cheap
 // because the solo dev volume is low.
 func nextInvoiceNumber() string {

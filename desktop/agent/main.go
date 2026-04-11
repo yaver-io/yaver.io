@@ -176,6 +176,8 @@ func main() {
 		runAutotest(os.Args[2:])
 	case "mail":
 		runMail(os.Args[2:])
+	case "copilot":
+		runCopilot(os.Args[2:])
 	case "completion":
 		runCompletion(os.Args[2:])
 	case "help", "--help", "-h":

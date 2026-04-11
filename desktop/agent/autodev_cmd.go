@@ -248,6 +248,19 @@ func splitAutodevArgs(args []string) (positional, flags []string) {
 }
 
 func applyAutodevDefaults(d autodevDefaults, kind, wd string) autodevDefaults {
+	// Auto-detect a repo-local remained.md checklist. Lets the
+	// common case be zero-flag: a dev drops a remained.md into
+	// the repo root, runs `yaver autodev sfmg`, and the loop
+	// picks it up automatically without --remained. Still
+	// overridable by passing --remained explicitly.
+	if d.remained == "" {
+		for _, candidate := range []string{"remained.md", "REMAINED.md", "TODO.md"} {
+			if fileExists(filepath.Join(wd, candidate)) {
+				d.remained = candidate
+				break
+			}
+		}
+	}
 	if d.deploy == "" {
 		// Mobile repos default to testflight. Go CLI repos (yaver.io)
 		// detected via desktop/agent/main.go presence default to none.
