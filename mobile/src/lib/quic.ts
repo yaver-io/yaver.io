@@ -2339,6 +2339,155 @@ export class QuicClient {
   get testkitArtifactHeaders(): Record<string, string> {
     return this.authHeaders;
   }
+
+  // ---- Auto Dev (M8) -----------------------------------------------------
+
+  /** Fetch all registered Auto Dev loops. */
+  async autodevLoops(): Promise<AutoDevLoop[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/autodev/loops`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.loops || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Kick one iteration of a loop. Returns immediately — the kick
+   *  runs in the background on the agent; poll autodevLoops() for
+   *  status updates. */
+  async autodevRun(name: string): Promise<{ ok: boolean; reason?: string }> {
+    try {
+      const res = await fetch(
+        `${this.baseUrl}/autodev/loops/${encodeURIComponent(name)}/run`,
+        { method: "POST", headers: this.authHeaders },
+      );
+      if (res.ok || res.status === 202) return { ok: true };
+      return { ok: false, reason: `HTTP ${res.status}` };
+    } catch (e: any) {
+      return { ok: false, reason: e?.message ?? "network error" };
+    }
+  }
+
+  /** Stop a loop — drops the STOP file and marks it stopped. */
+  async autodevStop(name: string): Promise<boolean> {
+    try {
+      const res = await fetch(
+        `${this.baseUrl}/autodev/loops/${encodeURIComponent(name)}/stop`,
+        { method: "POST", headers: this.authHeaders },
+      );
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Read a loop's latest ideas.json. Returns an empty list if the
+   *  ideas loop has not been run yet. */
+  async autodevIdeas(name: string): Promise<AutoDevIdeasPayload | null> {
+    try {
+      const res = await fetch(
+        `${this.baseUrl}/autodev/loops/${encodeURIComponent(name)}/ideas`,
+        { headers: this.authHeaders },
+      );
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  /** Set a loop's runtime inline prompt. Pass an empty string to
+   *  clear the override. */
+  async autodevSetPrompt(name: string, prompt: string): Promise<boolean> {
+    try {
+      const res = await fetch(
+        `${this.baseUrl}/autodev/loops/${encodeURIComponent(name)}/prompt`,
+        {
+          method: "POST",
+          headers: { ...this.authHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt }),
+        },
+      );
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Pick an idea by ID and stash its prompt as the target loop's
+   *  inline prompt. Optionally kick immediately. */
+  async autodevPickIdea(
+    name: string,
+    ideaId: string,
+    opts: { source?: string; run?: boolean } = {},
+  ): Promise<{ ok: boolean; title?: string; reason?: string }> {
+    try {
+      const res = await fetch(
+        `${this.baseUrl}/autodev/loops/${encodeURIComponent(name)}/prompt/pick`,
+        {
+          method: "POST",
+          headers: { ...this.authHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ideaId,
+            source: opts.source,
+            run: opts.run ?? false,
+          }),
+        },
+      );
+      if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` };
+      const data = await res.json();
+      return { ok: true, title: data.title };
+    } catch (e: any) {
+      return { ok: false, reason: e?.message ?? "network error" };
+    }
+  }
+}
+
+/** Auto Dev loop row — wire shape of GET /autodev/loops. */
+export interface AutoDevLoop {
+  id: string;
+  name: string;
+  mode: "fix" | "auto-fix" | "develop" | "ideas";
+  status:
+    | "idle"
+    | "running"
+    | "paused"
+    | "stopped"
+    | "stuck"
+    | "budget_hit"
+    | "needs_human";
+  iterationCount: number;
+  lastSummary?: string;
+  branch: string;
+  tone?: string;
+  radicalnessUi?: number;
+  radicalnessFeatures?: number;
+  promptInline?: string;
+  commitsToday: number;
+  patchesToday: number;
+  lastIterationAt?: string;
+}
+
+/** Shape of a loop's ideas.json — the runner writes this, the
+ *  mobile tab reads it verbatim. */
+export interface AutoDevIdeasPayload {
+  generated_at?: string;
+  loop_name?: string;
+  persona?: string;
+  ideas: Array<{
+    id: string;
+    title: string;
+    description?: string;
+    prompt: string;
+    radicalness?: number;
+    effort?: "small" | "medium" | "large";
+    whyPersona?: string;
+    whyNot?: string;
+  }>;
 }
 
 export interface TestkitUSBDevice {

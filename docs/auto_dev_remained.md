@@ -62,32 +62,24 @@ last handoff" below).
   so the detached head still lands on `main`. The dirty-tree bail is
   gone — Auto Dev no longer refuses to run against active repos.
   Dead code `deriveWorkDir` / `gitIsDirty` removed.
+- **Concurrency guard for loops.json** — `loadLoops` / `saveLoops`
+  serialize through `loopsFileMu`; `saveLoops` writes via
+  `loops.json.tmp` + `os.Rename` so readers never see a
+  half-written file. New `withLoops(fn)` helper wraps
+  read-modify-write sequences and is used by the new HTTP handlers.
+- **Mobile `/autodev/*` HTTP endpoints** — new `autodev_http.go`
+  exposes `GET /autodev/loops`, `POST /autodev/loops/<name>/run`,
+  `/stop`, `GET /ideas`, `POST /prompt`, `POST /prompt/pick`.
+  Shared helper `kickLoopOnce` runs one iteration without CLI side
+  effects; `pickIdeaPrompt` is the lookup path both the CLI and
+  the HTTP handler use. `quicClient.autodev*` methods in
+  `mobile/src/lib/quic.ts` + `mobile/app/(tabs)/autodev.tsx` now
+  load real data (loops, prompts mirrored from inline prompts,
+  ideas from the first ideas-mode loop).
 
 ## Gaps, ordered by value
 
-### 1. Mobile HTTP endpoints (`/autodev/*`)
-The mobile Auto Dev tab (`mobile/app/(tabs)/autodev.tsx`) renders an
-empty state because no endpoints exist. The Go side needs to expose:
-
-- `GET /autodev/loops` — returns `map[string]LoopState` (the same
-  loops.json but served over HTTP so mobile can consume it)
-- `POST /autodev/loops/<name>/run` — kick a loop immediately
-- `POST /autodev/loops/<name>/stop` — touch the STOP file
-- `GET /autodev/loops/<name>/ideas` — serves `ideas.json`
-- `POST /autodev/loops/<name>/prompt` — set inline prompt from phone
-- `POST /autodev/loops/<name>/prompt/pick` — pick an idea by ID
-- `POST /autodev/loops/<name>/deploy/stop` — pause release train
-
-Files to touch:
-- new `desktop/agent/autodev_http.go` (like `testkit_http.go`)
-- `desktop/agent/httpserver.go` — register the routes next to
-  `/schedules` at `main.go`-style switch / `mux.HandleFunc` lines
-- `mobile/src/lib/quic.ts` — add `quicClient.autodevLoops()`,
-  `autodevRun(name)`, `autodevStop(name)`, etc.
-- `mobile/app/(tabs)/autodev.tsx` — replace empty-state fallbacks
-  with real calls through `quicClient.autodev*`
-
-### 2. Auto Test mode
+### 1. Auto Test mode
 User explicitly asked for "auto test things". Today there's no
 `auto-test` mode. Likely shape: a loop mode that runs the existing
 yaver-test-sdk specs (`yaver-tests/*.test.yaml`) and, on failure,
@@ -108,7 +100,7 @@ Sketch:
 - New `.loop.yaml` spec: `mode: auto-test`, `test.specs: [...]`,
   `test.retry_flake: 2`
 
-### 3. Session-limits tracker runtime
+### 2. Session-limits tracker runtime
 `think.respect_session_limits` field is parsed but nothing enforces
 it. Claude Code's 5h rolling window shared with interactive use
 needs to be tracked so the loop yields during active hours.
@@ -125,7 +117,7 @@ Sketch:
   terminate with `budget_hit`
 - Persist the counter to `~/.yaver/loops/<name>/session_usage.json`
 
-### 4. Release-train TestFlight gating
+### 3. Release-train TestFlight gating
 `Budget.MaxTestFlightPerDay` is parsed and hard-capped at 10, but
 nothing actually checks it before running a deploy. The doc's
 "release train" (deploy to TF only when N consecutive green
@@ -145,20 +137,7 @@ Sketch:
 - Expose a `ship.release_train: {N: 3, paused: false, target: "testflight"}`
   block in the spec
 
-### 5. Concurrency guard for loops.json
-`loadLoops` + `saveLoops` have no mutex or file lock. Two concurrent
-`yaver loop run` invocations (or a scheduled tick plus a manual
-`loop stop`) can race and clobber state.
-
-Sketch:
-- Use a per-process mutex AROUND `loadLoops` → mutate → `saveLoops`
-  inside `loop_cmd.go`. Doesn't help cross-process.
-- For cross-process: use `flock(2)` on the loops.json file via
-  `golang.org/x/sys/unix`, or adopt a write-then-rename pattern
-- Minimum viable: atomic rename `loops.json.tmp → loops.json` in
-  `saveLoops` so partial writes never corrupt the live file
-
-### 6. codex / aider / ollama runner support
+### 4. codex / aider / ollama runner support
 Only `claude-code` is wired in `phaseThink`. Stubs return a clear
 error (not a silent fake). Adding codex / aider is ~50 lines each:
 new `spawnCodex(...)`, same JSON contract parsing. Ollama is
