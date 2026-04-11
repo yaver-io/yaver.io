@@ -160,13 +160,15 @@ func runLoopIteration(ctx context.Context, l *LoopState) *IterationResult {
 	// Record the pre-run SHA so we can roll back on green-gate failure.
 	preSHA := gitHeadSHA(workDir)
 
-	// --- Phase 1: target readiness ---
-	if err := phaseReadiness(watchCtx, l); err != nil {
-		result.Status = classifyError(watchCtx, err)
-		result.Err = err.Error()
-		result.Summary = "phase 1 readiness check failed"
-		result.FinishedAt = time.Now().UTC()
-		return result
+	// --- Phase 1: target readiness (only when playtest will run) ---
+	if l.Spec.Playtest.playtestEnabled(l.Spec.Mode) {
+		if err := phaseReadiness(watchCtx, l); err != nil {
+			result.Status = classifyError(watchCtx, err)
+			result.Err = err.Error()
+			result.Summary = "phase 1 readiness check failed"
+			result.FinishedAt = time.Now().UTC()
+			return result
+		}
 	}
 
 	// --- Phase 2: heuristic playtest ---
@@ -303,12 +305,19 @@ func deriveWorkDir(l *LoopState) (string, error) {
 	if l.Spec.Target == "web" && l.Spec.URL == "" {
 		return "", fmt.Errorf("spec.url is required for target=web")
 	}
-	wd, err := os.Getwd()
-	if err != nil {
-		return "", err
+	// Prefer the work dir captured at `loop add` time — it's the only
+	// path that's stable across scheduler subprocess invocations and
+	// interactive CLI runs.
+	wd := l.WorkDir
+	if wd == "" {
+		var err error
+		wd, err = os.Getwd()
+		if err != nil {
+			return "", err
+		}
 	}
 	if !looksLikeGitRepo(wd) {
-		return "", fmt.Errorf("cwd %s is not a git repo — run `yaver loop run` from the project root", wd)
+		return "", fmt.Errorf("work dir %s is not a git repo — re-register the loop from the project root", wd)
 	}
 	return wd, nil
 }
@@ -577,7 +586,17 @@ func spawnClaudeCode(ctx context.Context, l *LoopState, workDir string, report *
 
 	// Use `claude --print` for non-interactive mode. Feed the prompt
 	// via stdin so we don't run into argv length limits.
-	cmd := exec.CommandContext(ctx, "claude", "--print")
+	//
+	// --permission-mode acceptEdits: auto-approve Edit/Write without
+	//   an interactive prompt. The loop is explicitly autonomous; we
+	//   cannot show permission dialogs to a user who's asleep.
+	// --add-dir: grant explicit filesystem access to the project root
+	//   so tool calls don't trip over sandbox boundaries.
+	cmd := exec.CommandContext(ctx, "claude",
+		"--print",
+		"--permission-mode", "acceptEdits",
+		"--add-dir", workDir,
+	)
 	cmd.Dir = workDir
 	cmd.Stdin = strings.NewReader(fullPrompt)
 	cmd.Stderr = os.Stderr
@@ -678,11 +697,23 @@ func phaseGreenGate(ctx context.Context, l *LoopState, workDir string) error {
 // runTypecheck runs the project's TypeScript typechecker. Convention
 // for RN/web projects: `npx tsc --noEmit`. Output is streamed to
 // stderr so the dev can see what the AI broke when rollback fires.
+//
+// We require a local `node_modules/.bin/tsc` — if the project has not
+// installed TypeScript, the green gate cannot enforce anything and we
+// warn rather than fail (a failing gate over a missing tool would
+// roll back every iteration and kill the loop).
 func runTypecheck(ctx context.Context, workDir string) error {
 	if _, err := os.Stat(filepath.Join(workDir, "tsconfig.json")); err != nil {
 		return nil // no tsconfig → nothing to check
 	}
-	cmd := exec.CommandContext(ctx, "npx", "--no-install", "tsc", "--noEmit")
+	tscBin := filepath.Join(workDir, "node_modules", ".bin", "tsc")
+	if _, err := os.Stat(tscBin); err != nil {
+		fmt.Fprintf(os.Stderr,
+			"[green-gate] tsconfig.json exists but node_modules/.bin/tsc is missing — "+
+				"skipping typecheck (run `npm install` to enable the gate)\n")
+		return nil
+	}
+	cmd := exec.CommandContext(ctx, tscBin, "--noEmit")
 	cmd.Dir = workDir
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
@@ -765,12 +796,20 @@ func gitChangedFiles(workDir string) []string {
 	if err != nil {
 		return nil
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	files := []string{}
-	for _, line := range lines {
-		if len(line) > 3 {
-			files = append(files, strings.TrimSpace(line[3:]))
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
 		}
+		// Porcelain v1: "XY filename" (X/Y are single chars). Split on
+		// whitespace so we're robust to one-space vs multi-space padding.
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		// For renames the format is `R  old -> new` — we want the
+		// destination name, which is always the last field.
+		files = append(files, fields[len(fields)-1])
 	}
 	return files
 }

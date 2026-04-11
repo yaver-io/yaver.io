@@ -10,6 +10,7 @@ package main
 // step (playtest, AI patch, deploy) to the existing subsystems.
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -185,6 +186,17 @@ type LoopState struct {
 	Spec             LoopSpec   `json:"spec"`
 	Status           LoopStatus `json:"status"`
 	CreatedAt        string     `json:"createdAt"`
+	// WorkDir is the project directory this loop operates on. Captured
+	// at `loop add` time from the dev's current working directory — the
+	// repo root they want the loop to edit, commit, and push in. The
+	// scheduler's subprocess invocations `cd` into this directory before
+	// running the iteration, so a loop registered from ~/Workspace/sfmg
+	// always operates on sfmg no matter who invokes it.
+	WorkDir          string     `json:"workDir,omitempty"`
+	// ScheduleID is the ID of the ScheduledTask the daemon registered
+	// for this loop (empty if the daemon wasn't running at add time).
+	// Used by `loop remove` / `loop stop` to tear down the schedule.
+	ScheduleID       string     `json:"scheduleId,omitempty"`
 	LastIterationAt  string     `json:"lastIterationAt,omitempty"`
 	IterationCount   int        `json:"iterationCount"`
 	ConsecutiveStuck int        `json:"consecutiveStuck"`
@@ -327,21 +339,116 @@ func loopAdd(args []string) {
 		fmt.Fprintf(os.Stderr, "load loops: %v\n", err)
 		os.Exit(1)
 	}
+	wd, _ := os.Getwd()
+	var state *LoopState
 	if existing, ok := loops[spec.Name]; ok {
 		existing.Spec = spec
+		if wd != "" {
+			existing.WorkDir = wd
+		}
+		state = existing
 		fmt.Printf("Updated loop %q (mode=%s, target=%s).\n", spec.Name, spec.Mode, spec.Target)
 	} else {
-		loops[spec.Name] = &LoopState{
+		state = &LoopState{
 			ID:        uuid.New().String(),
 			Spec:      spec,
 			Status:    LoopStatusIdle,
 			CreatedAt: time.Now().UTC().Format(time.RFC3339),
+			WorkDir:   wd,
 		}
+		loops[spec.Name] = state
 		fmt.Printf("Registered loop %q (mode=%s, target=%s).\n", spec.Name, spec.Mode, spec.Target)
 	}
 	if err := saveLoops(loops); err != nil {
 		fmt.Fprintf(os.Stderr, "save loops: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Try to register a recurring schedule with the running daemon so
+	// the loop ticks on its own. This is best-effort: if the daemon is
+	// not running or the endpoint rejects us, we fall through with a
+	// warning and the dev can still trigger iterations manually via
+	// `yaver loop run <name>`.
+	if schedID, serr := scheduleLoopViaDaemon(state); serr == nil && schedID != "" {
+		state.ScheduleID = schedID
+		loops[spec.Name] = state
+		_ = saveLoops(loops)
+		fmt.Printf("Scheduled via daemon: schedule_id=%s (next tick via scheduler.go)\n", schedID)
+	} else if serr != nil {
+		fmt.Fprintf(os.Stderr, "[warn] could not register schedule with daemon: %v\n", serr)
+		fmt.Fprintln(os.Stderr, "      run iterations manually with `yaver loop run "+spec.Name+"` for now.")
+	}
+}
+
+// scheduleLoopViaDaemon POSTs a ScheduledTask to the running daemon so
+// the loop ticks automatically on its `schedule.every` / `schedule.cron`
+// cadence. Returns the schedule ID on success, or an error that callers
+// treat as non-fatal.
+func scheduleLoopViaDaemon(state *LoopState) (string, error) {
+	s := state.Spec.Schedule
+
+	// Convert `every: 15m` to RepeatInterval (minutes). Scheduler's
+	// RepeatInterval is an int of minutes, so anything under 1 minute
+	// rounds up to 1 and the dev gets a warning.
+	repeatMinutes := 0
+	cronExpr := ""
+	if s.Every != "" {
+		d, err := time.ParseDuration(s.Every)
+		if err != nil {
+			return "", fmt.Errorf("schedule.every %q is not a valid duration", s.Every)
+		}
+		repeatMinutes = int(d.Minutes())
+		if repeatMinutes < 1 {
+			repeatMinutes = 1
+		}
+	} else if s.Cron != "" {
+		cronExpr = s.Cron
+	} else {
+		// No schedule = on-demand only. Not an error; we just skip
+		// registering anything with the daemon.
+		return "", nil
+	}
+
+	workDir := state.WorkDir
+	if workDir == "" {
+		workDir, _ = os.Getwd()
+	}
+	customCmd := fmt.Sprintf("cd %q && yaver loop run %s", workDir, state.Spec.Name)
+
+	body := map[string]interface{}{
+		"title":         fmt.Sprintf("yaver-loop:%s", state.Spec.Name),
+		"description":   fmt.Sprintf("Auto-dev loop %s (mode=%s, target=%s)", state.Spec.Name, state.Spec.Mode, state.Spec.Target),
+		"customCommand": customCmd,
+		"runner":        "",
+	}
+	if repeatMinutes > 0 {
+		body["repeatInterval"] = repeatMinutes
+	}
+	if cronExpr != "" {
+		body["cron"] = cronExpr
+	}
+
+	resp, err := localAgentRequest("POST", "/schedules", body)
+	if err != nil {
+		return "", err
+	}
+	if sched, ok := resp["schedule"].(map[string]interface{}); ok {
+		if id, ok := sched["id"].(string); ok {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("daemon returned no schedule ID")
+}
+
+// unscheduleLoopViaDaemon removes a loop's scheduled task from the
+// daemon. Best-effort: failures are logged but not fatal.
+func unscheduleLoopViaDaemon(state *LoopState) {
+	if state.ScheduleID == "" {
+		return
+	}
+	if _, err := localAgentRequest("DELETE", "/schedules/"+state.ScheduleID, nil); err != nil {
+		fmt.Fprintf(os.Stderr, "[warn] could not remove schedule %s from daemon: %v\n",
+			state.ScheduleID, err)
 	}
 }
 
@@ -447,11 +554,12 @@ func warnLoopDependencies(s *LoopSpec) {
 	if s.Playtest.playtestEnabled(s.Mode) {
 		switch s.Target {
 		case "web":
-			// Web playtest uses embedded CDP (chromedp is baked into the
-			// agent), so Chrome/Chromium is the only external dependency.
-			_, chromeErr := exec.LookPath("google-chrome")
-			_, chromiumErr := exec.LookPath("chromium")
-			if chromeErr != nil && chromiumErr != nil {
+			// chromedp auto-detects Chrome in a handful of well-known
+			// locations (macOS .app bundle, Linux PATH, Windows Program
+			// Files), so we mirror that logic instead of just probing
+			// PATH — otherwise the warning cries wolf on every Mac that
+			// has Chrome installed the normal way.
+			if !chromeLooksInstalled() {
 				missing = append(missing,
 					fmt.Sprintf("  - %-14s %s", "google-chrome",
 						"needed for web target playtest (install Chrome or Chromium)"))
@@ -497,6 +605,37 @@ func warnLoopDependencies(s *LoopSpec) {
 	}
 }
 
+// chromeLooksInstalled checks the usual suspects for a Chrome /
+// Chromium install across macOS, Linux, and Windows. Mirrors what
+// chromedp's default exec allocator will try at runtime.
+func chromeLooksInstalled() bool {
+	pathProbes := []string{
+		"google-chrome",
+		"google-chrome-stable",
+		"chromium",
+		"chromium-browser",
+	}
+	for _, p := range pathProbes {
+		if _, err := exec.LookPath(p); err == nil {
+			return true
+		}
+	}
+	fileProbes := []string{
+		"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+		"/Applications/Chromium.app/Contents/MacOS/Chromium",
+		"/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+		"/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta",
+		"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+		"C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+	}
+	for _, p := range fileProbes {
+		if _, err := os.Stat(p); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func loopList(_ []string) {
 	loops, err := loadLoops()
 	if err != nil {
@@ -525,11 +664,14 @@ func loopList(_ []string) {
 }
 
 func loopRun(args []string) {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: yaver loop run <name>")
+	fs := flag.NewFlagSet("loop run", flag.ExitOnError)
+	dryRun := fs.Bool("dry-run", false, "Print what the iteration would do without executing it")
+	fs.Parse(args)
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "usage: yaver loop run [--dry-run] <name>")
 		os.Exit(1)
 	}
-	name := args[0]
+	name := fs.Arg(0)
 	loops, err := loadLoops()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "load loops: %v\n", err)
@@ -560,29 +702,92 @@ func loopRun(args []string) {
 	fmt.Printf("budget: patches/day=%d commits/day=%d testflight/day=%d\n",
 		l.Spec.Budget.MaxPatchesPerDay, l.Spec.Budget.MaxCommitsPerDay, l.Spec.Budget.MaxTestFlightPerDay)
 
-	phases := loopPhasesForMode(l.Spec.Mode)
-	fmt.Println("\nPhases for one iteration:")
-	for i, phase := range phases {
-		fmt.Printf("  %d. %s\n", i+1, phase)
+	if *dryRun {
+		phases := loopPhasesForMode(l.Spec.Mode)
+		fmt.Println("\n[dry-run] Phases for one iteration:")
+		for i, phase := range phases {
+			fmt.Printf("  %d. %s\n", i+1, phase)
+		}
+		return
 	}
-
-	// Scaffolding stub: a future revision wires these phases to TaskManager.CreateTask()
-	// so each phase becomes a managed yaver task with streamed stdout and artifacts
-	// routed through the existing per-task store. Until M8 is fully implemented,
-	// this command records the intent and leaves execution to the human operator
-	// (or the shell wrapper in scripts/).
-	fmt.Println("\n[scaffolding] Phase execution is not yet wired to TaskManager.CreateTask.")
-	fmt.Println("[scaffolding] This iteration recorded intent to loop state only.")
 
 	l.Status = LoopStatusRunning
 	l.IterationCount++
 	l.LastIterationAt = time.Now().UTC().Format(time.RFC3339)
-	l.LastSummary = fmt.Sprintf("scaffolding run #%d (%d phases)", l.IterationCount, len(phases))
 	if err := saveLoops(loops); err != nil {
 		fmt.Fprintf(os.Stderr, "save loops: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("\nRecorded iteration #%d.\n", l.IterationCount)
+
+	ctx := contextBackground()
+	result := runLoopIteration(ctx, l)
+
+	// Reload + merge state under a fresh handle in case a sibling
+	// process (scheduler) wrote between our save above and now.
+	loops, _ = loadLoops()
+	if cur, ok := loops[name]; ok {
+		l = cur
+	}
+	switch result.Status {
+	case "done":
+		l.Status = LoopStatusIdle
+		l.ConsecutiveStuck = 0
+	case "stuck":
+		l.Status = LoopStatusStuck
+		l.ConsecutiveStuck++
+		if l.Spec.Budget.StopAfterConsecutiveStuck > 0 &&
+			l.ConsecutiveStuck >= l.Spec.Budget.StopAfterConsecutiveStuck {
+			l.Status = LoopStatusPaused
+		}
+	case "stopped":
+		l.Status = LoopStatusStopped
+	case "needs_human":
+		l.Status = LoopStatusNeedsHuman
+	case "failed":
+		l.Status = LoopStatusStuck
+		l.ConsecutiveStuck++
+	default:
+		l.Status = LoopStatusIdle
+	}
+	l.LastSummary = result.Summary
+	loops[name] = l
+	if err := saveLoops(loops); err != nil {
+		fmt.Fprintf(os.Stderr, "save loops: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Human-friendly footer.
+	fmt.Println()
+	fmt.Printf("iteration status=%s\n", result.Status)
+	if result.Summary != "" {
+		fmt.Printf("summary:        %s\n", result.Summary)
+	}
+	if result.PatchCommit != "" {
+		fmt.Printf("patch commit:   %s\n", result.PatchCommit)
+	}
+	if len(result.FilesChanged) > 0 {
+		fmt.Printf("files changed:  %d\n", len(result.FilesChanged))
+		for _, f := range result.FilesChanged {
+			fmt.Printf("  - %s\n", f)
+		}
+	}
+	if result.ReportPath != "" {
+		fmt.Printf("report:         %s\n", result.ReportPath)
+	}
+	if result.Err != "" {
+		fmt.Printf("error:          %s\n", result.Err)
+	}
+	fmt.Printf("duration:       %s\n", result.FinishedAt.Sub(result.StartedAt).Round(time.Millisecond))
+
+	if result.Status != "done" && result.Status != "stuck" {
+		os.Exit(1)
+	}
+}
+
+// contextBackground is a tiny indirection so tests can swap in a
+// cancellable parent context in the future.
+func contextBackground() context.Context {
+	return context.Background()
 }
 
 func loopPhasesForMode(mode LoopMode) []string {
@@ -670,6 +875,9 @@ func loopStop(args []string) {
 	if killPath, err := loopKillFilePath(name); err == nil {
 		_ = os.WriteFile(killPath, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0600)
 	}
+	// Also remove the daemon schedule so the loop does not auto-tick
+	// again after being stopped.
+	unscheduleLoopViaDaemon(l)
 	fmt.Printf("Stopped loop %q.\n", name)
 }
 
@@ -759,10 +967,12 @@ func loopRemove(args []string) {
 		fmt.Fprintf(os.Stderr, "load loops: %v\n", err)
 		os.Exit(1)
 	}
-	if _, ok := loops[name]; !ok {
+	l, ok := loops[name]
+	if !ok {
 		fmt.Fprintf(os.Stderr, "loop %q not found\n", name)
 		os.Exit(1)
 	}
+	unscheduleLoopViaDaemon(l)
 	delete(loops, name)
 	if err := saveLoops(loops); err != nil {
 		fmt.Fprintf(os.Stderr, "save loops: %v\n", err)
