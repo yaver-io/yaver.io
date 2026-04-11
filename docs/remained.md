@@ -28,7 +28,10 @@ Status at the time this was written:
 | 2 | **Mobile frame-sequence video player** | Backend captures CDP screencast PNGs on failure (`testkit/video.go`, per-step ring buffer → PNG sequence on disk). The mobile "Runs" tab's viewer modal only renders single stills. The dev can eyeball the frames on disk but can't scrub the failure on their phone. Build a small `FrameSequencePlayer` component that reads the manifest and steps through the PNGs with play/pause and a scrub bar. Reuses the existing `/testkit/artifact` endpoint. | ~1 day |
 | 3 | **yaver-test-sdk user docs** | The feature set now rivals Playwright + Percy + axe-core + Applitools combined, but there's no single `docs/yaver-test-sdk.md` a new dev can read top-to-bottom. Everything is in commit messages and code comments. Write one canonical page with: intro, install, `yaver test init`, spec vocabulary reference, targets, capture config, macros, autofix log, dep installer, Hetzner deploy. Link it from README.md. | ~half day |
 | 4 | **Safari driver smoke test on macOS** | `testkit/driver_safari.go` compiles and the transport path is proven by the Firefox W3C client it reuses, but there's no integration test that actually opens Safari. Safari needs `sudo safaridriver --enable` once on the host so this can't run in GH Actions — has to be a local opt-in test guarded by an env var (`YAVER_SAFARI_SMOKE=1`). | ~2 hours |
-| 5 | **`include:` with positional inlining** | Right now `include:` prepends macro steps to the spec's `setup:` block. Dev can't say "inline this macro at this specific point" via a `- include: macros/x.test.yaml` step marker. Small quality-of-life for devs who write long specs where the login macro should fire mid-flow instead of at the start. Add an `IncludeInline string` field on `Step` that the loader expands in place. | ~half day |
+<!-- #5 landed: step-level `- include: macros/x.test.yaml` expands in
+place. Implemented via `Step.Include` + `expandStepIncludes` in
+testkit/spec.go. Test: `TestStepIncludeExpandsInPlace`. -->
+
 
 ---
 
@@ -71,8 +74,7 @@ Status at the time this was written:
 1. #3 docs
 2. #1 WDA install helper
 3. #2 mobile frame-sequence player
-4. #5 `- include:` inline step marker
-5. #4 local Safari smoke target (guarded by env var)
+4. #4 local Safari smoke target (guarded by env var)
 
 After that the feature matrix for the solo-RN-dev-with-own-hardware
 persona is **fully green** against every paid SaaS row that isn't a

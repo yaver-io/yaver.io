@@ -88,6 +88,77 @@ steps:
 	}
 }
 
+func TestStepIncludeExpandsInPlace(t *testing.T) {
+	dir := t.TempDir()
+
+	// Macro: a two-step "log in" flow, two steps total (goto + fill).
+	macro := `name: login-macro
+target: web
+url: http://x
+steps:
+  - goto: /login
+  - fill:
+      selector: 'input[type=email]'
+      text: 'admin@example.test'
+`
+	macroDir := filepath.Join(dir, "macros")
+	if err := os.MkdirAll(macroDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(macroDir, "admin.test.yaml"), []byte(macro), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Main spec: the include sits in the *middle* of steps, not in
+	// spec-level include. That's the whole point — the macro runs
+	// after `goto /` and before `click button.delete`.
+	main := `name: delete-user
+target: web
+url: http://x
+steps:
+  - goto: /
+  - include: macros/admin.test.yaml
+  - click: 'button.delete'
+`
+	mainPath := filepath.Join(dir, "delete.test.yaml")
+	if err := os.WriteFile(mainPath, []byte(main), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := LoadSpec(mainPath)
+	if err != nil {
+		t.Fatalf("LoadSpec: %v", err)
+	}
+
+	// Setup is empty (no spec-level include).
+	if len(s.Setup) != 0 {
+		t.Errorf("setup len = %d, want 0 (macro should be in steps, not setup)", len(s.Setup))
+	}
+
+	// Steps should be: goto / , goto /login, fill, click delete = 4.
+	if len(s.Steps) != 4 {
+		t.Fatalf("steps len = %d, want 4 — macro did not expand in place: %+v", len(s.Steps), s.Steps)
+	}
+	if s.Steps[0].Goto != "/" {
+		t.Errorf("steps[0].Goto = %q, want /", s.Steps[0].Goto)
+	}
+	if s.Steps[1].Goto != "/login" {
+		t.Errorf("steps[1].Goto = %q, want /login", s.Steps[1].Goto)
+	}
+	if s.Steps[2].Fill == nil || s.Steps[2].Fill.Text != "admin@example.test" {
+		t.Errorf("steps[2] should be the macro fill step: %+v", s.Steps[2])
+	}
+	if s.Steps[3].Click != "button.delete" {
+		t.Errorf("steps[3].Click = %q, want button.delete", s.Steps[3].Click)
+	}
+	// Sanity: no surviving Include markers in the expanded step list.
+	for i, step := range s.Steps {
+		if step.Include != "" {
+			t.Errorf("steps[%d] still has Include = %q — expansion failed", i, step.Include)
+		}
+	}
+}
+
 func TestSpecIncludeRelativePath(t *testing.T) {
 	dir := t.TempDir()
 	macroDir := filepath.Join(dir, "macros")
