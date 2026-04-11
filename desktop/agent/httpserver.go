@@ -161,6 +161,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/testkit/notifications", s.auth(s.handleTestkitNotifications))
 	mux.HandleFunc("/testkit/markers", s.auth(s.handleTestkitMarkers))
 	mux.HandleFunc("/testkit/artifact", s.auth(s.handleTestkitArtifact))
+	mux.HandleFunc("/testkit/devices", s.auth(s.handleTestkitDevices))
+	mux.HandleFunc("/testkit/integrations", s.auth(s.handleTestkitIntegrations))
+	mux.HandleFunc("/testkit/autofix", s.auth(s.handleTestkitAutoFix))
+	mux.HandleFunc("/testkit/autofix/", s.auth(s.handleTestkitAutoFixAction))
 
 	// Feedback (visual bug reports from device testing) — SDK-accessible
 	mux.HandleFunc("/feedback", s.authSDK(s.handleFeedback))

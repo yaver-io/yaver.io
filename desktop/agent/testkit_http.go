@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -256,6 +257,149 @@ func (s *HTTPServer) handleTestkitNotifications(w http.ResponseWriter, r *http.R
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"notifications": nc.List(50),
 	})
+}
+
+// handleTestkitDevices returns every USB-attached real device the
+// host can see (iOS via libimobiledevice, Android via adb), plus any
+// already-booted iOS simulators and Android emulators. The mobile /
+// desktop / web UI uses this to show "iPhone 15 Pro plugged in,
+// ready to run" before the user kicks off a `target: device` spec.
+func (s *HTTPServer) handleTestkitDevices(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	devices, _ := testkit.ListUSBDevices(ctx)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"devices": devices,
+	})
+}
+
+// handleTestkitIntegrations returns the install state of every
+// integration the local-CI runner cares about. Same shape as
+// `yaver doctor`'s "Local CI integrations" section, but as JSON so
+// the mobile / desktop / web UI can render it without scraping the
+// CLI output. Each entry says whether it's installed and a one-line
+// hint for how to install it.
+func (s *HTTPServer) handleTestkitIntegrations(w http.ResponseWriter, r *http.Request) {
+	type integ struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Installed   bool   `json:"installed"`
+		Hint        string `json:"hint"`
+	}
+	type intlist []integ
+	out := intlist{}
+	probes := []struct {
+		name, desc, hint string
+		check            func() bool
+	}{
+		{"chrome", "Chrome / Chromium for `target: web`", "yaver install chrome", func() bool {
+			path, _ := detectChromeForCI()
+			return path != ""
+		}},
+		{"firefox", "Firefox for cross-browser snapshots", "yaver install firefox", func() bool {
+			p, _ := detectBinaryWithVersion("firefox", "--version")
+			return p != ""
+		}},
+		{"adb", "Android SDK platform-tools (real devices + emulator)", "yaver install android-sdk", func() bool {
+			p, _ := detectBinaryWithVersion("adb", "--version")
+			return p != ""
+		}},
+		{"emulator", "Android emulator", "yaver install android-sdk", func() bool {
+			p, _ := exec.LookPath("emulator")
+			return p != ""
+		}},
+		{"xcode", "Xcode / simctl for iOS Simulator (macOS only)", "Install Xcode from the App Store", func() bool {
+			if runtime.GOOS != "darwin" {
+				return false
+			}
+			out, _ := exec.Command("xcode-select", "-p").Output()
+			s := strings.TrimSpace(string(out))
+			return s != "" && !strings.HasSuffix(s, "CommandLineTools")
+		}},
+		{"libimobiledevice", "USB iOS device tools (real iPhone over USB)", "brew install libimobiledevice", func() bool {
+			_, err := exec.LookPath("idevice_id")
+			return err == nil
+		}},
+		{"appium", "Appium (optional fallback for legacy specs)", "yaver install appium", func() bool {
+			_, err := exec.LookPath("appium")
+			return err == nil
+		}},
+		{"node", "Node.js (optional fallback for Playwright/Cypress)", "yaver install node", func() bool {
+			_, err := exec.LookPath("node")
+			return err == nil
+		}},
+		{"ollama", "Ollama for local $0 LLM visual inspection", "yaver install ollama", func() bool {
+			_, err := exec.LookPath("ollama")
+			return err == nil
+		}},
+	}
+	for _, p := range probes {
+		out = append(out, integ{
+			Name: p.name, Description: p.desc, Hint: p.hint, Installed: p.check(),
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"integrations": out})
+}
+
+// handleTestkitAutoFix returns the recent fixes the autonomous loop
+// has applied to the project, newest first. There's no approval
+// step — solo dev = the loop applies high-confidence patches and
+// records them here so the dev can scan + Undo if they disagree.
+//
+// POST submits a new entry (called by the loop itself, not humans).
+func (s *HTTPServer) handleTestkitAutoFix(w http.ResponseWriter, r *http.Request) {
+	root, err := resolveSpecRoot(r.URL.Query().Get("root"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	log := testkit.NewAutoFixLog(root)
+	switch r.Method {
+	case http.MethodGet:
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"autofixes": log.List(50),
+			"applied":   log.AppliedCount(),
+		})
+	case http.MethodPost:
+		var a testkit.AutoFix
+		if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
+			http.Error(w, fmt.Sprintf("bad json: %v", err), http.StatusBadRequest)
+			return
+		}
+		out := log.Record(a)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(out)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleTestkitAutoFixAction — POST /testkit/autofix/<id>/undo from
+// the dev's mobile / desktop / web surface. Marks the entry as
+// rolled-back. The actual file edit reversal is the autonomous
+// loop's responsibility (it watches the log for state transitions).
+func (s *HTTPServer) handleTestkitAutoFixAction(w http.ResponseWriter, r *http.Request) {
+	root, err := resolveSpecRoot(r.URL.Query().Get("root"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/testkit/autofix/"), "/")
+	if len(parts) != 2 || parts[1] != "undo" {
+		http.Error(w, "expected /testkit/autofix/<id>/undo", http.StatusBadRequest)
+		return
+	}
+	log := testkit.NewAutoFixLog(root)
+	out, err := log.MarkUndone(parts[0])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
 }
 
 // handleTestkitArtifact serves a screenshot, trace, or video frame

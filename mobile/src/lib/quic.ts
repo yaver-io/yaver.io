@@ -2265,6 +2265,109 @@ export class QuicClient {
       return [];
     }
   }
+
+  /** Connected USB devices the agent can drive. */
+  async testkitDevices(): Promise<TestkitUSBDevice[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/testkit/devices`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.devices || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Local CI integration install state (chrome, adb, xcode, etc). */
+  async testkitIntegrations(): Promise<TestkitIntegration[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/testkit/integrations`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.integrations || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Recent autofixes the autonomous loop has applied. */
+  async testkitAutoFix(root?: string): Promise<TestkitAutoFix[]> {
+    try {
+      const url = root
+        ? `${this.baseUrl}/testkit/autofix?root=${encodeURIComponent(root)}`
+        : `${this.baseUrl}/testkit/autofix`;
+      const res = await fetch(url, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.autofixes || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Roll back a previously-applied autofix. */
+  async testkitAutoFixUndo(id: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/testkit/autofix/${encodeURIComponent(id)}/undo`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ by: "mobile" }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Resolve an artifact path on the agent into a fetchable URL.
+   *  Used by the screenshot viewer modal — pass the absolute path
+   *  the runner reported (e.g. spec.steps[i].screenshot) and you get
+   *  back a URL the <Image> component can hit directly. */
+  testkitArtifactUrl(path: string, root?: string): string {
+    const params = new URLSearchParams({ path });
+    if (root) params.set("root", root);
+    return `${this.baseUrl}/testkit/artifact?${params.toString()}`;
+  }
+
+  /** Headers the mobile <Image> component must include when pulling
+   *  artifacts from the agent. Image already accepts a `headers`
+   *  prop on iOS / Android. */
+  get testkitArtifactHeaders(): Record<string, string> {
+    return this.authHeaders;
+  }
+}
+
+export interface TestkitUSBDevice {
+  Platform: "ios" | "android";
+  UDID: string;
+  Name: string;
+  OS: string;
+}
+
+export interface TestkitIntegration {
+  name: string;
+  description: string;
+  installed: boolean;
+  hint: string;
+}
+
+export interface TestkitAutoFix {
+  id: string;
+  state: "applied" | "rolled_back" | "skipped";
+  created_at: string;
+  undone_at?: string;
+  spec_name: string;
+  spec_path: string;
+  strategy: string;
+  description: string;
+  notes?: string;
+  confidence?: number;
+  old_value?: string;
+  new_value?: string;
 }
 
 export interface TestkitNotification {
