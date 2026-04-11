@@ -551,6 +551,26 @@ function UptimePane() {
                 {m.lastCheckAt ? ` · last ${timeAgo(m.lastCheckAt)}` : ""}
                 {m.state !== "unknown" ? ` · streak ${m.streak}` : ""}
               </Text>
+              {m.checkSsl && m.sslDaysLeft != null ? (
+                <Text
+                  style={[
+                    styles.cardMeta,
+                    {
+                      marginTop: 2,
+                      color:
+                        m.sslDaysLeft <= (m.sslWarnDays ?? 14)
+                          ? "#ef4444"
+                          : m.sslDaysLeft <= 30
+                            ? "#eab308"
+                            : "#22c55e",
+                      fontWeight: "600",
+                    },
+                  ]}
+                >
+                  🔒 cert expires in {m.sslDaysLeft}d
+                  {m.sslExpiresAt ? ` (${m.sslExpiresAt.slice(0, 10)})` : ""}
+                </Text>
+              ) : null}
               <View style={{ flexDirection: "row", marginTop: 8, flexWrap: "wrap" }}>
                 <ActionButton label="Check now" onPress={() => checkNow(m.id)} />
                 <ActionButton

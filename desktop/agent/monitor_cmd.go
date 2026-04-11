@@ -39,26 +39,40 @@ import (
 
 // Monitor is one URL check.
 type Monitor struct {
-	ID       string        `json:"id"`
-	Name     string        `json:"name,omitempty"`
-	URL      string        `json:"url"`
-	Interval string        `json:"interval"` // duration string, e.g. "60s"
-	Method   string        `json:"method,omitempty"` // default GET
-	Paused   bool          `json:"paused,omitempty"`
-	State    string        `json:"state"` // "up" | "down" | "unknown"
-	Streak   int           `json:"streak"` // consecutive same-state checks
-	History  []MonitorCheck `json:"history,omitempty"` // last 100
-	CreatedAt string       `json:"createdAt"`
-	LastCheckAt string     `json:"lastCheckAt,omitempty"`
+	ID          string         `json:"id"`
+	Name        string         `json:"name,omitempty"`
+	URL         string         `json:"url"`
+	Interval    string         `json:"interval"` // duration string, e.g. "60s"
+	Method      string         `json:"method,omitempty"` // default GET
+	Paused      bool           `json:"paused,omitempty"`
+	State       string         `json:"state"` // "up" | "down" | "unknown"
+	Streak      int            `json:"streak"` // consecutive same-state checks
+	History     []MonitorCheck `json:"history,omitempty"` // last 100
+	CreatedAt   string         `json:"createdAt"`
+	LastCheckAt string         `json:"lastCheckAt,omitempty"`
+	// CheckSSL enables TLS cert expiry checks on the probe. When
+	// true and the URL is https, every check records the
+	// certificate's NotAfter and an alert fires once days-left
+	// drops below SSLWarnDays (default 14).
+	CheckSSL    bool `json:"checkSsl,omitempty"`
+	SSLWarnDays int  `json:"sslWarnDays,omitempty"`
+	// SSLExpiresAt / SSLDaysLeft carry the most recent cert
+	// observation so the mobile card can render an "expires in
+	// N days" badge without re-parsing every history entry.
+	SSLExpiresAt string `json:"sslExpiresAt,omitempty"`
+	SSLDaysLeft  int    `json:"sslDaysLeft,omitempty"`
+	SSLAlertedAt string `json:"sslAlertedAt,omitempty"` // set when we last fired a cert-expiry push
 }
 
 // MonitorCheck is a single result.
 type MonitorCheck struct {
-	At        string `json:"at"`
-	Status    int    `json:"status"`
-	DurationMS int64 `json:"durationMs"`
-	Err       string `json:"err,omitempty"`
-	Ok        bool   `json:"ok"`
+	At           string `json:"at"`
+	Status       int    `json:"status"`
+	DurationMS   int64  `json:"durationMs"`
+	Err          string `json:"err,omitempty"`
+	Ok           bool   `json:"ok"`
+	SSLExpiresAt string `json:"sslExpiresAt,omitempty"`
+	SSLDaysLeft  int    `json:"sslDaysLeft,omitempty"`
 }
 
 type monitorLedger struct {
@@ -172,6 +186,8 @@ func monitorAdd(args []string) {
 	interval := fs.String("interval", "60s", "check interval")
 	intervalShort := fs.String("i", "", "check interval (short)")
 	method := fs.String("method", "GET", "HTTP method")
+	checkSSL := fs.Bool("ssl", false, "also track TLS cert expiry (HTTPS URLs only)")
+	sslWarnDays := fs.Int("ssl-warn-days", 14, "alert when cert has fewer days left than this")
 	fs.Parse(args)
 
 	if *nameShort != "" {
@@ -205,13 +221,15 @@ func monitorAdd(args []string) {
 	}
 
 	m := &Monitor{
-		ID:        uuid.New().String()[:8],
-		Name:      *name,
-		URL:       url,
-		Interval:  *interval,
-		Method:    strings.ToUpper(*method),
-		State:     "unknown",
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		ID:          uuid.New().String()[:8],
+		Name:        *name,
+		URL:         url,
+		Interval:    *interval,
+		Method:      strings.ToUpper(*method),
+		State:       "unknown",
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+		CheckSSL:    *checkSSL || strings.HasPrefix(url, "https://"), // default on for https
+		SSLWarnDays: *sslWarnDays,
 	}
 	if m.Name == "" {
 		m.Name = deriveMonitorName(url)
@@ -333,7 +351,10 @@ func monitorCheckNow(args []string) {
 
 // runMonitorProbe does one HTTP probe and returns the result.
 // Deliberately no retries — it's one check; the loop handles
-// sequencing.
+// sequencing. When Monitor.CheckSSL is on and the URL is HTTPS,
+// the probe also records the TLS cert's expiry timestamp so
+// the uptime loop can alert on "certificate expires in N days"
+// before the dev notices in a browser.
 func runMonitorProbe(ctx context.Context, m *Monitor) MonitorCheck {
 	start := time.Now()
 	ch := MonitorCheck{At: start.UTC().Format(time.RFC3339)}
@@ -355,17 +376,38 @@ func runMonitorProbe(ctx context.Context, m *Monitor) MonitorCheck {
 	defer resp.Body.Close()
 	ch.Status = resp.StatusCode
 	ch.Ok = resp.StatusCode >= 200 && resp.StatusCode < 400
+
+	// TLS cert expiry observation. `resp.TLS` is nil for plain
+	// HTTP so the branch is a no-op automatically, but we still
+	// gate on m.CheckSSL so a monitor that was added without
+	// SSL tracking doesn't start recording extra fields.
+	if m.CheckSSL && resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
+		cert := resp.TLS.PeerCertificates[0]
+		ch.SSLExpiresAt = cert.NotAfter.UTC().Format(time.RFC3339)
+		ch.SSLDaysLeft = int(time.Until(cert.NotAfter).Hours() / 24)
+	}
 	return ch
 }
 
 // applyMonitorCheck updates a monitor's state + streak + history
 // after a new check, mutating in place. Caller holds monitorMu.
+// Also handles SSL cert observation — records latest expiry and
+// flags whether the warn threshold was freshly crossed.
 func applyMonitorCheck(m *Monitor, check MonitorCheck) (changed bool) {
 	m.History = append(m.History, check)
 	if len(m.History) > 100 {
 		m.History = m.History[len(m.History)-100:]
 	}
 	m.LastCheckAt = check.At
+
+	// Update the SSL observation fields. If the cert has moved
+	// under the warning threshold since the last alert, surface
+	// that so the notifier fires a dedicated cert-expiry push.
+	if check.SSLExpiresAt != "" {
+		m.SSLExpiresAt = check.SSLExpiresAt
+		m.SSLDaysLeft = check.SSLDaysLeft
+	}
+
 	prev := m.State
 	newState := "up"
 	if !check.Ok {
@@ -379,6 +421,31 @@ func applyMonitorCheck(m *Monitor, check MonitorCheck) (changed bool) {
 		changed = true
 	}
 	return changed
+}
+
+// monitorSSLAlertThreshold returns the effective days-left
+// threshold for firing a cert-expiry alert. Defaults to 14.
+func monitorSSLAlertThreshold(m *Monitor) int {
+	if m.SSLWarnDays > 0 {
+		return m.SSLWarnDays
+	}
+	return 14
+}
+
+// monitorNeedsSSLAlert decides whether the latest check should
+// emit a cert-expiry notification. Fires when we're under the
+// threshold AND we haven't already alerted on the same expiry
+// (prevents flapping every probe).
+func monitorNeedsSSLAlert(m *Monitor) bool {
+	if !m.CheckSSL || m.SSLExpiresAt == "" {
+		return false
+	}
+	if m.SSLDaysLeft > monitorSSLAlertThreshold(m) {
+		// Cleared above threshold — reset so a future drop alerts again.
+		m.SSLAlertedAt = ""
+		return false
+	}
+	return m.SSLAlertedAt == "" || m.SSLAlertedAt != m.SSLExpiresAt
 }
 
 // StartMonitorLoops is called from runServe to start one goroutine
@@ -433,6 +500,13 @@ func monitorTickLoop(ctx context.Context, m *Monitor, interval time.Duration) {
 				return // paused
 			}
 			stateChanged := applyMonitorCheck(live, check)
+			// SSL observation alert — separate from the state-
+			// change flow so a cert alert doesn't get swallowed
+			// while the service is "up".
+			shouldAlertSSL := monitorNeedsSSLAlert(live)
+			if shouldAlertSSL {
+				live.SSLAlertedAt = live.SSLExpiresAt
+			}
 			_ = saveMonitors(list)
 			monitorMu.Unlock()
 
@@ -442,7 +516,23 @@ func monitorTickLoop(ctx context.Context, m *Monitor, interval time.Duration) {
 				// First "officially down" signal (3 consecutive fails).
 				notifyMonitorStateChange(live, check)
 			}
+			if shouldAlertSSL {
+				notifyMonitorSSLExpiry(live)
+			}
 		}
+	}
+}
+
+// notifyMonitorSSLExpiry fires a dedicated cert-expiry alert
+// independent of the up/down state. Called by the tick loop
+// exactly once per expiry observation to avoid flapping.
+func notifyMonitorSSLExpiry(m *Monitor) {
+	title := fmt.Sprintf("Monitor: %s SSL", m.Name)
+	body := fmt.Sprintf("⚠ %s cert expires in %d day(s) (%s)",
+		m.URL, m.SSLDaysLeft, m.SSLExpiresAt)
+	fmt.Fprintf(os.Stderr, "[monitor] %s — %s\n", title, body)
+	if nm := globalMonitorNotifier; nm != nil {
+		nm(m.Name+" SSL", m.URL, "cert-expiring", int64(m.SSLDaysLeft))
 	}
 }
 

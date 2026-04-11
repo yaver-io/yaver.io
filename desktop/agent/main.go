@@ -29,7 +29,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.78.0"
+const version = "1.80.0"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
@@ -114,6 +114,16 @@ func main() {
 		runEnv(os.Args[2:])
 	case "status-page", "statuspage":
 		runStatusPage(os.Args[2:])
+	case "blob", "blobs":
+		runBlob(os.Args[2:])
+	case "changelog":
+		runChangelog(os.Args[2:])
+	case "cron":
+		runCron(os.Args[2:])
+	case "apikey", "apikeys":
+		runAPIKey(os.Args[2:])
+	case "backup":
+		runBackup(os.Args[2:])
 	case "debug":
 		runDebug(os.Args[2:])
 	case "expo":
@@ -5085,13 +5095,19 @@ func runMCPStdio(taskMgr *TaskManager, aclMgr *ACLManager, emailMgr *EmailManage
 
 func runEmail(args []string) {
 	if len(args) == 0 {
-		fmt.Print(`Yaver Email — connect Office 365 or Gmail
+		fmt.Print(`Yaver Email — inbox sync + transactional outbound mail
 
 Usage:
-  yaver email setup     Interactive email setup
-  yaver email test      Send a test email
-  yaver email sync      Sync emails from provider to local database
-  yaver email status    Show email configuration status
+  yaver email setup           Interactive email setup (inbox sync)
+  yaver email test            Send a test email via the inbox provider
+  yaver email sync            Sync emails from provider to local database
+  yaver email status          Show email configuration status
+
+Transactional outbound (SMTP relay, for "password reset" style mail):
+  yaver email send --to <addr> --subject <s> [--body <t>] [--html <h>]
+  yaver email config smtp --host <h> --port <p> --user <u> --pass <p> --from <addr>
+  yaver email config show
+  yaver email sent [N]
 `)
 		return
 	}
@@ -5105,6 +5121,13 @@ Usage:
 		runEmailSync()
 	case "status":
 		runEmailStatus()
+	// --- transactional outbound ---
+	case "send":
+		emailSendCmd(args[1:])
+	case "config":
+		emailConfigCmd(args[1:])
+	case "sent":
+		emailSentCmd(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown email command: %s\n", args[0])
 		os.Exit(1)

@@ -145,6 +145,12 @@ func (s *BlackBoxSession) PushEvent(event BlackBoxEvent) {
 		GlobalErrorStore().Record(s.DeviceID, event)
 	}
 
+	// Network events fan out to the APM aggregator for per-route
+	// p50/p95/p99 rollups. Cheap no-op when Duration is zero.
+	if event.Type == "network" && event.Duration > 0 {
+		GlobalAPMStore().Record(event)
+	}
+
 	// Log events fan out to the cross-device log ledger so the
 	// mobile Logs tab can grep across every SDK session. Includes
 	// info/warn/error levels per the SDK's BlackBox.log/warn/error
