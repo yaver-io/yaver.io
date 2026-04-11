@@ -35,20 +35,30 @@ import (
 // CaptureConfig turns collection on/off. The runner pulls this off
 // the Spec during execution.
 type CaptureConfig struct {
-	ConsoleErrors  bool `yaml:"console_errors,omitempty"`
+	ConsoleErrors   bool `yaml:"console_errors,omitempty"`
 	NetworkRequests bool `yaml:"network,omitempty"`
-	Performance    bool `yaml:"performance,omitempty"`
-	Accessibility  bool `yaml:"accessibility,omitempty"`
+	// NetworkBodies extends network capture with response body
+	// text (via CDP Network.getResponseBody). Off by default — it
+	// roughly 10x the disk footprint of HAR files for API-heavy
+	// apps. Turn it on with `capture: {network: true, network_bodies: true}`
+	// when you actually want to inspect payloads in the HAR viewer.
+	NetworkBodies bool `yaml:"network_bodies,omitempty"`
+	Performance   bool `yaml:"performance,omitempty"`
+	Accessibility bool `yaml:"accessibility,omitempty"`
 }
 
 // InstrumentationState is the runner-scoped collection bucket. One
 // per spec run; written to disk on completion.
 type InstrumentationState struct {
-	mu        sync.Mutex
-	Console   []ConsoleEvent   `json:"console"`
-	PageErrs  []string         `json:"page_errors"`
-	Requests  []NetworkEvent   `json:"network_requests"`
-	Perf      PerformanceMetrics `json:"performance"`
+	mu       sync.Mutex
+	Console  []ConsoleEvent     `json:"console"`
+	PageErrs []string           `json:"page_errors"`
+	Requests []NetworkEvent     `json:"network_requests"`
+	Perf     PerformanceMetrics `json:"performance"`
+	// pendingBody is the list of CDP request IDs queued for
+	// Network.getResponseBody fetch during FinalizeInstrumentation.
+	// Only populated when CaptureConfig.NetworkBodies is true.
+	pendingBody []cdpnetwork.RequestID
 }
 
 // ConsoleEvent captures one console.log/warn/error line from the page.
@@ -62,15 +72,24 @@ type ConsoleEvent struct {
 
 // NetworkEvent is a minimal request/response record.
 type NetworkEvent struct {
-	RequestID string    `json:"request_id"`
-	Method    string    `json:"method"`
-	URL       string    `json:"url"`
-	Status    int       `json:"status"`
-	StatusText string   `json:"status_text,omitempty"`
-	Type      string    `json:"type"`
-	SizeBytes int64     `json:"size_bytes"`
-	DurationMS int64    `json:"duration_ms"`
-	StartedAt time.Time `json:"started_at"`
+	RequestID  string    `json:"request_id"`
+	Method     string    `json:"method"`
+	URL        string    `json:"url"`
+	Status     int       `json:"status"`
+	StatusText string    `json:"status_text,omitempty"`
+	Type       string    `json:"type"`
+	MimeType   string    `json:"mime_type,omitempty"`
+	SizeBytes  int64     `json:"size_bytes"`
+	DurationMS int64     `json:"duration_ms"`
+	StartedAt  time.Time `json:"started_at"`
+	// Body is the response body captured via
+	// CDP Network.getResponseBody. Only populated when
+	// CaptureConfig.NetworkBodies is true.
+	Body []byte `json:"body,omitempty"`
+	// BodyBase64 is set when the body couldn't be decoded to UTF-8
+	// text (binary images, fonts, etc). HAR viewers show the raw
+	// base64 in that case.
+	BodyBase64 bool `json:"body_base64,omitempty"`
 }
 
 // PerformanceMetrics captures Core Web Vitals-ish numbers from the
@@ -186,6 +205,9 @@ func InstallInstrumentation(ctx context.Context, cfg CaptureConfig) *Instrumenta
 				}
 				state.Requests[i].Status = int(e.Response.Status)
 				state.Requests[i].StatusText = e.Response.StatusText
+				if e.Response != nil {
+					state.Requests[i].MimeType = e.Response.MimeType
+				}
 				if started, ok := startTimes[e.RequestID]; ok {
 					state.Requests[i].DurationMS = time.Since(started).Milliseconds()
 				}
@@ -209,6 +231,17 @@ func InstallInstrumentation(ctx context.Context, cfg CaptureConfig) *Instrumenta
 				break
 			}
 			state.mu.Unlock()
+
+			// Opt-in body capture — stash the request ID for
+			// FinalizeInstrumentation to pull once the run is
+			// done. We can't call GetResponseBody inside the
+			// listener goroutine because it would re-enter the
+			// CDP event pump.
+			if cfg.NetworkBodies {
+				state.mu.Lock()
+				state.pendingBody = append(state.pendingBody, e.RequestID)
+				state.mu.Unlock()
+			}
 		}
 	})
 
@@ -225,9 +258,17 @@ func InstallInstrumentation(ctx context.Context, cfg CaptureConfig) *Instrumenta
 
 // FinalizeInstrumentation pulls the page performance API values out
 // of the tab at the end of the run. Called once per spec after the
-// last step fires.
+// last step fires. Also drains the opt-in response-body queue — any
+// request IDs that were marked pending during the run get their
+// bodies fetched now so they can ride into the HAR export.
 func FinalizeInstrumentation(ctx context.Context, state *InstrumentationState, cfg CaptureConfig) {
-	if state == nil || !cfg.Performance {
+	if state == nil {
+		return
+	}
+	if cfg.NetworkBodies {
+		drainResponseBodies(ctx, state)
+	}
+	if !cfg.Performance {
 		return
 	}
 	var raw string
@@ -270,6 +311,77 @@ func FinalizeInstrumentation(ctx context.Context, state *InstrumentationState, c
 	state.Perf.FirstContentfulPaintMS = parsed.FCP
 	state.Perf.LargestContentfulPaintMS = parsed.LCP
 	state.mu.Unlock()
+}
+
+// drainResponseBodies fetches every queued response body via CDP
+// Network.getResponseBody. Runs on the main goroutine (called from
+// FinalizeInstrumentation) so it has exclusive access to the
+// browser context. Bodies that fail the fetch (navigation left the
+// tab, request evicted from the cache) are silently skipped —
+// having most bodies is much more useful than losing the whole HAR
+// because one request's body expired.
+func drainResponseBodies(ctx context.Context, state *InstrumentationState) {
+	if state == nil {
+		return
+	}
+	state.mu.Lock()
+	queue := state.pendingBody
+	state.pendingBody = nil
+	state.mu.Unlock()
+	if len(queue) == 0 {
+		return
+	}
+	for _, reqID := range queue {
+		var body []byte
+		err := chromedp.Run(ctx, chromedp.ActionFunc(func(c context.Context) error {
+			b, berr := cdpnetwork.GetResponseBody(reqID).Do(c)
+			if berr != nil {
+				return berr
+			}
+			body = b
+			return nil
+		}))
+		if err != nil {
+			continue
+		}
+		state.mu.Lock()
+		for i := range state.Requests {
+			if state.Requests[i].RequestID != string(reqID) {
+				continue
+			}
+			state.Requests[i].Body = body
+			// GetResponseBody's Do() already decodes base64, so
+			// what we got is raw bytes. Flag base64 when the
+			// bytes aren't valid UTF-8 so HAR viewers decode
+			// them back to binary correctly.
+			if !isLikelyUTF8(body) {
+				state.Requests[i].BodyBase64 = true
+			}
+			break
+		}
+		state.mu.Unlock()
+	}
+}
+
+// isLikelyUTF8 is a cheap heuristic: scan the first 512 bytes for
+// any byte that isn't a tab/newline/return or a valid printable
+// range. Good enough to distinguish JSON / text responses from
+// fonts, images, and compressed payloads.
+func isLikelyUTF8(b []byte) bool {
+	limit := len(b)
+	if limit > 512 {
+		limit = 512
+	}
+	for i := 0; i < limit; i++ {
+		c := b[i]
+		if c == '\t' || c == '\n' || c == '\r' {
+			continue
+		}
+		if c < 0x20 || c == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 // WriteInstrumentation serializes the state as JSON under the spec's
