@@ -206,6 +206,14 @@ Ranked by what unlocks the most cost-saving for the persona:
     GPU is busy, defer the run. If they're plugged in and idle, kick
     it off.
 
+11. **Autonomous test → fix → deploy loops.** The endgame: the dev
+    defines a spec, a persona and a budget, and the agent runs the
+    whole test → AI patch → commit → re-deploy cycle on its own while
+    the dev is away from the machine. This is where Yaver stops being
+    "a CI runner" and starts being "a second developer the dev hired
+    for the price of electricity." See the Autonomous loops section
+    below for M8.
+
 ## Cost comparison (rough, single dev)
 
 For a dev shipping ~10 PRs/week, ~50 commits/week to a private repo,

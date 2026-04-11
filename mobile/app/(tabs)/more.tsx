@@ -2031,6 +2031,21 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
+        {/* Local CI (yaver-test-sdk) */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/runs" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u25B6"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Local CI</Text>
+              <Text style={[s.desc, { color: c.textMuted }]}>Run yaver-tests/* on your own machine — $0</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
         {/* Health Monitor — navigate to dedicated screen */}
         {connected && (
           <Pressable

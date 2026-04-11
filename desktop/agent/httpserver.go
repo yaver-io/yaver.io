@@ -146,9 +146,18 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/tunnels", s.auth(s.handleTunnels))
 	mux.HandleFunc("/tunnels/", s.auth(s.handleTunnelByID))
 
-	// Tests (automated test sessions)
+	// Tests (automated test sessions — legacy "spawn an external runner" path)
 	mux.HandleFunc("/tests", s.auth(s.handleTests))
 	mux.HandleFunc("/tests/", s.auth(s.handleTestByID))
+
+	// yaver-test-sdk: embedded local-CI runner (Chromium via CDP, no
+	// external Playwright/Selenium needed). Mobile app uses these to
+	// list specs, kick off runs, and read history over the existing P2P
+	// transport. Nothing here ever talks to Convex.
+	mux.HandleFunc("/testkit/specs", s.auth(s.handleTestkitListSpecs))
+	mux.HandleFunc("/testkit/run", s.auth(s.handleTestkitRun))
+	mux.HandleFunc("/testkit/history", s.auth(s.handleTestkitHistory))
+	mux.HandleFunc("/testkit/flake", s.auth(s.handleTestkitFlake))
 
 	// Feedback (visual bug reports from device testing) — SDK-accessible
 	mux.HandleFunc("/feedback", s.authSDK(s.handleFeedback))
