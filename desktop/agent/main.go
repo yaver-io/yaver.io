@@ -102,6 +102,10 @@ func main() {
 		runBuild(os.Args[2:])
 	case "release":
 		runRelease(os.Args[2:])
+	case "monitor":
+		runMonitor(os.Args[2:])
+	case "flags":
+		runFlags(os.Args[2:])
 	case "debug":
 		runDebug(os.Args[2:])
 	case "expo":

@@ -145,6 +145,24 @@ func (s *BlackBoxSession) PushEvent(event BlackBoxEvent) {
 		GlobalErrorStore().Record(s.DeviceID, event)
 	}
 
+	// Track events get appended to the analytics ledger for CSV
+	// export. Zero dashboards here — the ledger is a tunnel.
+	if event.Type == "track" {
+		props := map[string]string{}
+		for k, v := range event.Metadata {
+			if sv, ok := v.(string); ok {
+				props[k] = sv
+			}
+		}
+		AnalyticsAppend(TrackEvent{
+			Name:      event.Message,
+			DeviceID:  s.DeviceID,
+			Route:     event.Route,
+			Props:     props,
+			Timestamp: event.Timestamp,
+		})
+	}
+
 	// Notify SSE subscribers (non-blocking)
 	s.subMu.Lock()
 	for _, ch := range s.subscribers {

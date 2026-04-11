@@ -2474,6 +2474,164 @@ export class QuicClient {
     }
   }
 
+  // ---- Uptime monitors (U1) ----------------------------------------------
+
+  async monitorsList(): Promise<YaverMonitor[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/monitors`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.monitors ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  async monitorsAdd(input: {
+    url: string;
+    name?: string;
+    interval?: string;
+    method?: string;
+  }): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/monitors`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  async monitorsRemove(id: string): Promise<boolean> {
+    try {
+      const res = await fetch(
+        `${this.baseUrl}/monitors/${encodeURIComponent(id)}`,
+        { method: "DELETE", headers: this.authHeaders },
+      );
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  async monitorsPause(id: string, paused: boolean): Promise<boolean> {
+    try {
+      const action = paused ? "pause" : "resume";
+      const res = await fetch(
+        `${this.baseUrl}/monitors/${encodeURIComponent(id)}/${action}`,
+        { method: "POST", headers: this.authHeaders },
+      );
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  async monitorsCheck(id: string): Promise<MonitorCheck | null> {
+    try {
+      const res = await fetch(
+        `${this.baseUrl}/monitors/${encodeURIComponent(id)}/check`,
+        { method: "POST", headers: this.authHeaders },
+      );
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data.check ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  // ---- Analytics ingest (A1) ---------------------------------------------
+
+  async analyticsEvents(since?: number, limit: number = 100): Promise<TrackEvent[]> {
+    try {
+      const params = new URLSearchParams({ limit: String(limit) });
+      if (since) params.set("since", String(since));
+      const res = await fetch(
+        `${this.baseUrl}/analytics/events?${params.toString()}`,
+        { headers: this.authHeaders },
+      );
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.events ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  analyticsCSVUrl(): string {
+    return `${this.baseUrl}/analytics/events.csv`;
+  }
+
+  // ---- Feature flags (F1) ------------------------------------------------
+
+  async flagsList(): Promise<YaverFlag[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/flags`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.flags ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  async flagsSet(flag: YaverFlag): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/flags`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(flag),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  async flagsDelete(key: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/flags/delete`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ key }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  async flagsOverride(key: string, userId: string, value: string, clear: boolean = false): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/flags/override`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ key, userId, value, clear }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  async flagsEval(userId: string): Promise<Record<string, unknown> | null> {
+    try {
+      const res = await fetch(
+        `${this.baseUrl}/flags/eval?userId=${encodeURIComponent(userId)}`,
+        { headers: this.authHeaders },
+      );
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data.flags ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   // ---- Auto Dev (M8) -----------------------------------------------------
 
   /** Fetch all registered Auto Dev loops. */
@@ -2660,6 +2818,51 @@ export interface ErrorsListResponse {
     openLast24h: number;
     totalDistinct: number;
   };
+}
+
+/** Uptime monitor — one URL check. */
+export interface YaverMonitor {
+  id: string;
+  name?: string;
+  url: string;
+  interval: string;
+  method?: string;
+  paused?: boolean;
+  state: "up" | "down" | "unknown";
+  streak: number;
+  history?: MonitorCheck[];
+  createdAt: string;
+  lastCheckAt?: string;
+}
+
+export interface MonitorCheck {
+  at: string;
+  status: number;
+  durationMs: number;
+  err?: string;
+  ok: boolean;
+}
+
+/** One track() event persisted in the analytics ledger. */
+export interface TrackEvent {
+  name: string;
+  deviceId?: string;
+  timestamp: number;
+  route?: string;
+  props?: Record<string, string>;
+}
+
+/** Feature flag — one entry in the ledger. */
+export interface YaverFlag {
+  key: string;
+  description?: string;
+  type: "bool" | "string";
+  defaultBool?: boolean;
+  defaultString?: string;
+  rolloutPercent: number;
+  stringVariant?: string;
+  overrides?: Record<string, string>;
+  updatedAt?: string;
 }
 
 /** Auto Dev loop row — wire shape of GET /autodev/loops. */

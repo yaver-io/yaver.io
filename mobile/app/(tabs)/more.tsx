@@ -2046,6 +2046,23 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
+        {/* Monitor — errors + releases + uptime + events + flags */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/monitor" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F4CA}"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Monitor</Text>
+              <Text style={[s.desc, { color: c.textMuted }]}>
+                Errors, OTA releases, uptime, events, feature flags
+              </Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
         {/* Health Monitor — navigate to dedicated screen */}
         {connected && (
           <Pressable
