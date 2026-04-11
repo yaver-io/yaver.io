@@ -59,9 +59,20 @@ testkit/spec.go. Test: `TestStepIncludeExpandsInPlace`. -->
 online|fast-3g|slow-3g|2g|offline via chromedp
 Network.EmulateNetworkConditionsByRule in runWebSpec. -->
 
-| 7 | Retry-on-LLM-rate-limit for self-healing | Currently the self-heal call in `testkit/autonomous.go` is one-shot. If Mistral / Anthropic rate-limits, the step just fails through to the normal error path — which is actually fine most of the time. |
-| 8 | Pinch-zoom + pan in the mobile screenshot modal | The three-tab (Baseline / Current / Diff) viewer works. Proper gesture-driven zoom would be nicer for dense UIs but isn't blocking. Use `react-native-zoom-reanimated` or equivalent. |
-| 9 | HAR response body capture | We dump request metadata + timings but not response bodies. Adding them would balloon disk (~10x for API-heavy apps) and Chrome DevTools already lets the dev do it once manually via the "Preserve log" toggle. Only add if a user asks. |
+<!-- #7 landed: runInteractiveFixClaude retries up to 3 times with
+exponential backoff on errors that match a rate-limit / 429 / 503 /
+timeout signature. -->
+
+<!-- #8 landed: ZoomableImage component in runs.tsx implements
+pinch-to-zoom + drag-to-pan directly with PanResponder + Animated,
+no new deps. Used by both the failure screenshot modal and the
+three-pane snapshot diff modal. -->
+
+<!-- #9 landed: opt-in via `capture: {network_bodies: true}`. The
+instrumentation queues request IDs during the run and
+FinalizeInstrumentation drains them via Network.getResponseBody;
+HARContent picks up Text + Encoding fields when bodies are captured. -->
+
 <!-- #10 landed: `yaver test report [path] [-o out.html]` renders
 the latest runs from .history.jsonl as a single-file HTML report
 with no JS or external assets. -->

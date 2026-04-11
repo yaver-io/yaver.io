@@ -33,24 +33,62 @@ import (
 // tab. Kept deliberately flat so the TS side doesn't need to reach
 // into LoopState internals.
 type autodevLoopRow struct {
-	ID                string `json:"id"`
-	Name              string `json:"name"`
-	Mode              string `json:"mode"`
-	Status            string `json:"status"`
-	IterationCount    int    `json:"iterationCount"`
-	LastSummary       string `json:"lastSummary,omitempty"`
-	Branch            string `json:"branch"`
-	Tone              string `json:"tone,omitempty"`
-	RadicalnessUI     int    `json:"radicalnessUi,omitempty"`
-	RadicalnessFeats  int    `json:"radicalnessFeatures,omitempty"`
-	PromptInline      string `json:"promptInline,omitempty"`
-	CommitsToday      int    `json:"commitsToday"`
-	PatchesToday      int    `json:"patchesToday"`
-	LastIterationAt   string `json:"lastIterationAt,omitempty"`
+	ID               string               `json:"id"`
+	Name             string               `json:"name"`
+	Mode             string               `json:"mode"`
+	Status           string               `json:"status"`
+	IterationCount   int                  `json:"iterationCount"`
+	LastSummary      string               `json:"lastSummary,omitempty"`
+	Branch           string               `json:"branch"`
+	Tone             string               `json:"tone,omitempty"`
+	RadicalnessUI    int                  `json:"radicalnessUi,omitempty"`
+	RadicalnessFeats int                  `json:"radicalnessFeatures,omitempty"`
+	PromptInline     string               `json:"promptInline,omitempty"`
+	CommitsToday     int                  `json:"commitsToday"`
+	PatchesToday     int                  `json:"patchesToday"`
+	TestflightToday  int                  `json:"testflightToday"`
+	LastIterationAt  string               `json:"lastIterationAt,omitempty"`
+	Runner           string               `json:"runner,omitempty"`
+	// ReleaseTrain is the configured train + live counter so the
+	// mobile Auto Dev tab can show "2/3 green, ready after next
+	// kick" without computing anything locally.
+	ReleaseTrain *autodevReleaseTrainRow `json:"releaseTrain,omitempty"`
+	// SessionUsage lists per-runner wall-clock usage inside the
+	// current provider window so the mobile tab can surface
+	// "Claude: 2h 10m of 5h used today" next to each loop.
+	SessionUsage []autodevProviderUsageRow `json:"sessionUsage,omitempty"`
+	// TestRoot is populated for auto-test mode loops so the mobile
+	// UI can show the spec directory the loop is watching.
+	TestRoot string `json:"testRoot,omitempty"`
+}
+
+// autodevReleaseTrainRow is the subset of LoopShip.ReleaseTrain +
+// counter state the mobile UI needs to render an "armed / waiting
+// / paused" badge.
+type autodevReleaseTrainRow struct {
+	Enabled                 bool   `json:"enabled"`
+	N                       int    `json:"n"`
+	GreenRunSinceLastDeploy int    `json:"greenRunSinceLastDeploy"`
+	Paused                  bool   `json:"paused"`
+	Target                  string `json:"target,omitempty"`
+	MaxTestFlightPerDay     int    `json:"maxTestFlightPerDay,omitempty"`
+}
+
+// autodevProviderUsageRow is a per-runner session-window usage
+// summary. Seconds are absolute and unitless; the mobile UI format
+// converts to h/m. Empty SessionWindow means "unlimited" (local
+// ollama).
+type autodevProviderUsageRow struct {
+	Runner          string `json:"runner"`
+	UsedSeconds     int    `json:"usedSeconds"`
+	CapSeconds      int    `json:"capSeconds"`
+	SessionWindow   string `json:"sessionWindow"`
+	WindowStartedAt string `json:"windowStartedAt,omitempty"`
+	OverCap         bool   `json:"overCap"`
 }
 
 func loopStateToRow(l *LoopState) autodevLoopRow {
-	return autodevLoopRow{
+	row := autodevLoopRow{
 		ID:               l.ID,
 		Name:             l.Spec.Name,
 		Mode:             string(l.Spec.Mode),
@@ -64,8 +102,58 @@ func loopStateToRow(l *LoopState) autodevLoopRow {
 		PromptInline:     l.PromptInline,
 		CommitsToday:     l.CommitsToday,
 		PatchesToday:     l.PatchesToday,
+		TestflightToday:  l.TestflightToday,
 		LastIterationAt:  l.LastIterationAt,
+		Runner:           l.Spec.Think.Runner,
 	}
+
+	// Auto Test loops carry their spec root so the mobile tab can
+	// show "watching yaver-tests/" without parsing the full spec.
+	if l.Spec.Mode == LoopModeAutoTest {
+		root := l.Spec.Test.Root
+		if root == "" {
+			root = "yaver-tests"
+		}
+		row.TestRoot = root
+	}
+
+	// Release-train state — only attached when the spec has a
+	// real train configured, so the mobile UI can use a null
+	// check to decide whether to render the badge.
+	if l.Spec.Ship.ReleaseTrain.N > 0 {
+		row.ReleaseTrain = &autodevReleaseTrainRow{
+			Enabled:                 true,
+			N:                       l.Spec.Ship.ReleaseTrain.N,
+			GreenRunSinceLastDeploy: l.GreenRunSinceLastDeploy,
+			Paused:                  l.Spec.Ship.ReleaseTrain.Paused,
+			Target:                  l.Spec.Ship.ReleaseTrain.Target,
+			MaxTestFlightPerDay:     l.Spec.Budget.MaxTestFlightPerDay,
+		}
+	}
+
+	// Session-usage — load the on-disk counter and compute the
+	// soft cap for each tracked runner. Read-only; never
+	// mutates state.
+	if f, err := loadSessionUsage(l.Spec.Name); err == nil && f != nil {
+		rollExpiredWindows(f)
+		for runner, usage := range f.Providers {
+			if usage == nil {
+				continue
+			}
+			used, cap, over := runnerBudgetState(f, runner)
+			lim := defaultProviderLimits(runner)
+			row.SessionUsage = append(row.SessionUsage, autodevProviderUsageRow{
+				Runner:          runner,
+				UsedSeconds:     used,
+				CapSeconds:      cap,
+				SessionWindow:   lim.SessionWindow,
+				WindowStartedAt: usage.WindowStartedAt,
+				OverCap:         over,
+			})
+		}
+	}
+
+	return row
 }
 
 // handleAutodevLoops serves `GET /autodev/loops`.
