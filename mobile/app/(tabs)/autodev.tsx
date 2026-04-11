@@ -13,23 +13,28 @@
 // Kill-switch is always reachable as a sticky header button, matching
 // the "stop from anywhere" rule in M8's safety rails.
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Alert,
   FlatList,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useLocalSearchParams } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import {
   quicClient,
   type AutoDevLoop,
   type AutoDevIdeasPayload,
+  type RunnerInfo,
 } from "../../src/lib/quic";
 
 type LoopRow = AutoDevLoop;
@@ -58,12 +63,88 @@ export default function AutoDevScreen() {
   const c = useColors();
   const { connectionStatus } = useDevice();
   const isConnected = connectionStatus === "connected";
+  const params = useLocalSearchParams<{ project?: string; path?: string }>();
 
   const [section, setSection] = useState<Section>("loops");
   const [loops, setLoops] = useState<LoopRow[]>([]);
   const [prompts, setPrompts] = useState<PromptRow[]>([]);
   const [ideas, setIdeas] = useState<IdeaRow[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+
+  // ── Start form state ──────────────────────────────────────────────
+  // Everything is pre-filled with sensible defaults so the user can
+  // just tap Start. Runners come from GET /agent/runners so the dropdown
+  // only lists the runners actually installed on the remote machine —
+  // we never show aider to the user if aider isn't there.
+  const [showStart, setShowStart] = useState(!!params.path);
+  const [runners, setRunners] = useState<RunnerInfo[]>([]);
+  const [runnersLoading, setRunnersLoading] = useState(false);
+  const [formProject, setFormProject] = useState(params.project ?? "");
+  const [formWorkDir, setFormWorkDir] = useState(params.path ?? "");
+  const [formHours, setFormHours] = useState("8");
+  const [formInfinite, setFormInfinite] = useState(false);
+  const [formLoad, setFormLoad] = useState<"lite" | "high">("lite");
+  const [formRunner, setFormRunner] = useState<string>("");
+  const [formPrompt, setFormPrompt] = useState("");
+  const [formDeploy, setFormDeploy] = useState<"auto" | "none" | "testflight" | "playstore" | "both">("auto");
+  const [formNoAutotest, setFormNoAutotest] = useState(false);
+  const [starting, setStarting] = useState(false);
+
+  // Load available runners from the remote agent once connected. The
+  // Go side reports which runners are installed via /agent/runners —
+  // we filter out the uninstalled ones so the dropdown only shows
+  // things the user can actually pick.
+  useEffect(() => {
+    if (!isConnected) return;
+    let mounted = true;
+    setRunnersLoading(true);
+    quicClient
+      .getRunners()
+      .then((list) => {
+        if (!mounted) return;
+        const installed = list.filter((r) => r.installed);
+        setRunners(installed);
+        // Default runner: agent-reported default, else first installed.
+        const pref = installed.find((r) => r.isDefault) ?? installed[0];
+        if (pref && !formRunner) setFormRunner(pref.id);
+      })
+      .finally(() => mounted && setRunnersLoading(false));
+    return () => { mounted = false; };
+  }, [isConnected]);
+
+  const canStart = useMemo(() => {
+    if (!formWorkDir.trim()) return false;
+    if (!formInfinite && !/^\d+$/.test(formHours)) return false;
+    return true;
+  }, [formWorkDir, formInfinite, formHours]);
+
+  const handleStart = useCallback(async () => {
+    if (!canStart || starting) return;
+    setStarting(true);
+    try {
+      const res = await quicClient.autodevStart({
+        project: formProject || undefined,
+        workDir: formWorkDir,
+        hours: formInfinite ? "infinite" : formHours,
+        load: formLoad,
+        runner: formRunner || undefined,
+        prompt: formPrompt || undefined,
+        deploy: formDeploy,
+        noAutotest: formNoAutotest,
+      });
+      if (!res.ok) {
+        Alert.alert("Start failed", res.error || "Could not start auto dev");
+      } else {
+        Alert.alert("Started", `Loop ${res.loopName} is running in the background.`);
+        setShowStart(false);
+        refreshRef.current?.();
+      }
+    } finally {
+      setStarting(false);
+    }
+  }, [canStart, starting, formProject, formWorkDir, formInfinite, formHours, formLoad, formRunner, formPrompt, formDeploy, formNoAutotest]);
+
+  const refreshRef = React.useRef<(() => void) | undefined>(undefined);
 
   const refresh = useCallback(async () => {
     if (!isConnected) return;
@@ -115,6 +196,7 @@ export default function AutoDevScreen() {
 
   useEffect(() => {
     refresh();
+    refreshRef.current = refresh;
   }, [refresh]);
 
   const stopAll = useCallback(async () => {
@@ -163,13 +245,43 @@ export default function AutoDevScreen() {
           data={loops}
           keyExtractor={(it) => it.id}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
+          ListHeaderComponent={
+            <StartForm
+              c={c}
+              open={showStart}
+              onToggle={() => setShowStart((v) => !v)}
+              project={formProject}
+              setProject={setFormProject}
+              workDir={formWorkDir}
+              setWorkDir={setFormWorkDir}
+              hours={formHours}
+              setHours={setFormHours}
+              infinite={formInfinite}
+              setInfinite={setFormInfinite}
+              load={formLoad}
+              setLoad={setFormLoad}
+              runner={formRunner}
+              setRunner={setFormRunner}
+              runners={runners}
+              runnersLoading={runnersLoading}
+              prompt={formPrompt}
+              setPrompt={setFormPrompt}
+              deploy={formDeploy}
+              setDeploy={setFormDeploy}
+              noAutotest={formNoAutotest}
+              setNoAutotest={setFormNoAutotest}
+              canStart={canStart}
+              starting={starting}
+              onStart={handleStart}
+            />
+          }
           ListEmptyComponent={
             <View style={styles.empty}>
               <Text style={[styles.emptyTitle, { color: c.textPrimary }]}>
                 No loops registered
               </Text>
               <Text style={[styles.emptyBody, { color: c.textSecondary }]}>
-                Register one from the Mac mini:{"\n\n"}
+                Tap <Text style={{ fontWeight: "700" }}>Start a new loop</Text> above, or register one from the Mac mini:{"\n\n"}
                 <Text style={{ fontFamily: "Courier" }}>
                   yaver loop add ./sfmg-autofix.loop.yaml
                 </Text>
@@ -214,6 +326,223 @@ export default function AutoDevScreen() {
         </ScrollView>
       )}
     </SafeAreaView>
+  );
+}
+
+function StartForm(props: {
+  c: ReturnType<typeof useColors>;
+  open: boolean;
+  onToggle: () => void;
+  project: string;
+  setProject: (v: string) => void;
+  workDir: string;
+  setWorkDir: (v: string) => void;
+  hours: string;
+  setHours: (v: string) => void;
+  infinite: boolean;
+  setInfinite: (v: boolean) => void;
+  load: "lite" | "high";
+  setLoad: (v: "lite" | "high") => void;
+  runner: string;
+  setRunner: (v: string) => void;
+  runners: RunnerInfo[];
+  runnersLoading: boolean;
+  prompt: string;
+  setPrompt: (v: string) => void;
+  deploy: "auto" | "none" | "testflight" | "playstore" | "both";
+  setDeploy: (v: "auto" | "none" | "testflight" | "playstore" | "both") => void;
+  noAutotest: boolean;
+  setNoAutotest: (v: boolean) => void;
+  canStart: boolean;
+  starting: boolean;
+  onStart: () => void;
+}) {
+  const { c } = props;
+  return (
+    <View style={[styles.formCard, { borderColor: c.border, backgroundColor: c.bgCard }]}>
+      <Pressable onPress={props.onToggle} style={styles.formHeader}>
+        <Text style={[styles.formTitle, { color: c.textPrimary }]}>
+          {props.open ? "\u25BC" : "\u25B6"} Start a new loop
+        </Text>
+        <Text style={[styles.formSubtitle, { color: c.textSecondary }]}>
+          {props.open ? "Pick parameters, tap Start" : "Tap to expand"}
+        </Text>
+      </Pressable>
+      {props.open && (
+        <View style={{ gap: 10, paddingTop: 6 }}>
+          <FormField label="Project name" c={c}>
+            <TextInput
+              style={[styles.input, { color: c.textPrimary, borderColor: c.border }]}
+              value={props.project}
+              onChangeText={props.setProject}
+              placeholder="sfmg"
+              placeholderTextColor={c.textMuted}
+              autoCapitalize="none"
+            />
+          </FormField>
+
+          <FormField label="Work dir (absolute path)" c={c}>
+            <TextInput
+              style={[styles.input, { color: c.textPrimary, borderColor: c.border }]}
+              value={props.workDir}
+              onChangeText={props.setWorkDir}
+              placeholder="/Users/me/Workspace/sfmg"
+              placeholderTextColor={c.textMuted}
+              autoCapitalize="none"
+            />
+          </FormField>
+
+          <FormField label="Time limit" c={c}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <TextInput
+                style={[styles.input, { color: c.textPrimary, borderColor: c.border, flex: 1, opacity: props.infinite ? 0.4 : 1 }]}
+                value={props.infinite ? "" : props.hours}
+                editable={!props.infinite}
+                onChangeText={props.setHours}
+                keyboardType="numeric"
+                placeholder="8"
+                placeholderTextColor={c.textMuted}
+              />
+              <Text style={{ color: c.textSecondary, fontSize: 12 }}>hours</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Text style={{ color: c.textSecondary, fontSize: 12 }}>Infinite</Text>
+                <Switch value={props.infinite} onValueChange={props.setInfinite} />
+              </View>
+            </View>
+          </FormField>
+
+          <FormField label="Load preset" c={c}>
+            <Segmented
+              c={c}
+              value={props.load}
+              options={[
+                { v: "lite", label: "Lite" },
+                { v: "high", label: "Heavy" },
+              ]}
+              onChange={(v) => props.setLoad(v as "lite" | "high")}
+            />
+          </FormField>
+
+          <FormField label="Runner (from this machine)" c={c}>
+            {props.runnersLoading ? (
+              <Text style={{ color: c.textMuted, fontSize: 12 }}>Loading installed runners…</Text>
+            ) : props.runners.length === 0 ? (
+              <Text style={{ color: c.textMuted, fontSize: 12 }}>
+                No runners installed on the remote agent. Install one (claude, codex, aider, ollama, …) and refresh.
+              </Text>
+            ) : (
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                {props.runners.map((r) => {
+                  const active = props.runner === r.id;
+                  return (
+                    <Pressable
+                      key={r.id}
+                      onPress={() => props.setRunner(r.id)}
+                      style={[
+                        styles.chip,
+                        { borderColor: active ? c.tabActive : c.border, backgroundColor: active ? c.tabActive + "22" : "transparent" },
+                      ]}
+                    >
+                      <Text style={[styles.chipText, { color: active ? c.tabActive : c.textSecondary }]}>
+                        {r.name}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            )}
+          </FormField>
+
+          <FormField label="Deploy" c={c}>
+            <Segmented
+              c={c}
+              value={props.deploy}
+              options={[
+                { v: "auto", label: "Auto" },
+                { v: "none", label: "None" },
+                { v: "testflight", label: "iOS" },
+                { v: "playstore", label: "Android" },
+                { v: "both", label: "Both" },
+              ]}
+              onChange={(v) => props.setDeploy(v as any)}
+            />
+          </FormField>
+
+          <FormField label="Prompt (optional)" c={c}>
+            <TextInput
+              style={[styles.input, styles.inputMulti, { color: c.textPrimary, borderColor: c.border }]}
+              value={props.prompt}
+              onChangeText={props.setPrompt}
+              multiline
+              numberOfLines={3}
+              placeholder="Focus on purchase flow bugs"
+              placeholderTextColor={c.textMuted}
+            />
+          </FormField>
+
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Switch value={!props.noAutotest} onValueChange={(v) => props.setNoAutotest(!v)} />
+            <Text style={{ color: c.textSecondary, fontSize: 12 }}>
+              Interleave auto-test regression
+            </Text>
+          </View>
+
+          <Pressable
+            onPress={props.onStart}
+            disabled={!props.canStart || props.starting}
+            style={[
+              styles.startBtn,
+              { backgroundColor: props.canStart ? "#22c55e" : c.border, opacity: props.starting ? 0.6 : 1 },
+            ]}
+          >
+            <Text style={styles.startBtnText}>
+              {props.starting ? "Starting…" : "Start loop"}
+            </Text>
+          </Pressable>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function FormField({ label, c, children }: { label: string; c: ReturnType<typeof useColors>; children: React.ReactNode }) {
+  return (
+    <View style={{ gap: 4 }}>
+      <Text style={{ color: c.textSecondary, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: "600" }}>
+        {label}
+      </Text>
+      {children}
+    </View>
+  );
+}
+
+function Segmented<T extends string>(props: {
+  c: ReturnType<typeof useColors>;
+  value: T;
+  options: { v: T; label: string }[];
+  onChange: (v: T) => void;
+}) {
+  const { c } = props;
+  return (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+      {props.options.map((o) => {
+        const active = props.value === o.v;
+        return (
+          <Pressable
+            key={o.v}
+            onPress={() => props.onChange(o.v)}
+            style={[
+              styles.chip,
+              { borderColor: active ? c.tabActive : c.border, backgroundColor: active ? c.tabActive + "22" : "transparent" },
+            ]}
+          >
+            <Text style={[styles.chipText, { color: active ? c.tabActive : c.textSecondary }]}>
+              {o.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
   );
 }
 
@@ -359,4 +688,41 @@ const styles = StyleSheet.create({
   cardStatus: { fontSize: 12, fontWeight: "700", textTransform: "uppercase" },
   cardMeta: { fontSize: 12, marginTop: 6 },
   cardSummary: { fontSize: 12, marginTop: 6 },
+  formCard: {
+    marginHorizontal: 16,
+    marginTop: 14,
+    marginBottom: 4,
+    padding: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    gap: 6,
+  },
+  formHeader: { paddingVertical: 4 },
+  formTitle: { fontSize: 15, fontWeight: "700" },
+  formSubtitle: { fontSize: 11, marginTop: 2 },
+  input: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 13,
+  },
+  inputMulti: {
+    minHeight: 60,
+    textAlignVertical: "top",
+  },
+  chip: {
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  chipText: { fontSize: 12, fontWeight: "600" },
+  startBtn: {
+    marginTop: 4,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: "center",
+  },
+  startBtnText: { color: "#ffffff", fontWeight: "700", fontSize: 14 },
 });
