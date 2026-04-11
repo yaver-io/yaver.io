@@ -62,6 +62,8 @@ func runTest(args []string) {
 		runTestFlake(args[1:])
 	case "sync":
 		runTestSync(args[1:])
+	case "report":
+		runTestReport(args[1:])
 	case "schedule":
 		runTestSchedule(args[1:])
 	case "unit":
@@ -97,6 +99,7 @@ func printTestUsage() {
   yaver test history [path]           Show recent runs from local .history.jsonl
   yaver test flake [path]             Per-spec failure ratios from local history
   yaver test sync [flags]             Local pass markers (for GH Actions short-circuit)
+  yaver test report [path] [-o out]   Render latest run history as a standalone HTML file
   yaver test schedule <cron> [root]   Register a cron entry with the agent scheduler
   yaver test unit [--dir <path>]      Auto-detect and run unit tests (legacy spawn)
   yaver test flutter [--dir <path>]   Run Flutter tests (legacy spawn)
@@ -476,6 +479,11 @@ Flags:`)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	// Install the interactive self-heal handler so a failing step
+	// that SelectorReplaceFromSelfHeal can't rescue gets one shot at
+	// a claude-backed fix. No-op when claude isn't on PATH.
+	registerInteractiveFixHandler()
 
 	snapCfg := testkit.DefaultSnapshotConfig()
 	if *updateSnaps {
