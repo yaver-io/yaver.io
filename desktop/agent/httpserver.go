@@ -300,6 +300,21 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/chat/reply", s.auth(s.handleChatReply))
 	mux.HandleFunc("/chat/widget.js", s.handleChatWidgetJS)
 
+	// Copilot-lite — local Ollama autocomplete (replaces Copilot/Cursor)
+	mux.HandleFunc("/copilot/complete", s.auth(s.handleCopilotComplete))
+	mux.HandleFunc("/copilot/models", s.auth(s.handleCopilotModels))
+
+	// Analytics UI (PostHog / Plausible-lite)
+	mux.HandleFunc("/analytics/views", s.handleAnalyticsViewsJS)
+	mux.HandleFunc("/analytics/top", s.auth(s.handleAnalyticsTop))
+	mux.HandleFunc("/analytics/funnel", s.auth(s.handleAnalyticsFunnel))
+	mux.HandleFunc("/analytics/retention", s.auth(s.handleAnalyticsRetention))
+	mux.HandleFunc("/analytics/summary", s.auth(s.handleAnalyticsSummary))
+
+	// Mail classifier learning loop (mark-as-bulk / mark-as-personal)
+	mux.HandleFunc("/mail/mark", s.auth(s.handleMailMark))
+	mux.HandleFunc("/mail/learning", s.auth(s.handleMailLearning))
+
 	mux.HandleFunc("/analytics", s.auth(s.handleAnalytics))
 	mux.HandleFunc("/session/list", s.auth(s.handleSessionList))
 	mux.HandleFunc("/session/export", s.auth(s.handleSessionExport))
@@ -6815,6 +6830,483 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 			}
 		}
 		return mcpToolJSON(map[string]interface{}{"hits": hits})
+
+	// --- Studio modules (clips, chat, A/B, invoices, affiliates, asciinema) ---
+
+	case "ab_experiment_create":
+		var e Experiment
+		json.Unmarshal(call.Arguments, &e)
+		if e.Key == "" || len(e.Variants) == 0 {
+			return mcpToolError("key and variants required")
+		}
+		if e.StartedAt.IsZero() {
+			e.StartedAt = time.Now().UTC()
+		}
+		exps := loadExperiments()
+		found := false
+		for i := range exps {
+			if exps[i].Key == e.Key {
+				exps[i] = e
+				found = true
+				break
+			}
+		}
+		if !found {
+			exps = append(exps, e)
+		}
+		abMu.Lock()
+		abExperiments = exps
+		_ = saveExperiments()
+		abMu.Unlock()
+		return mcpToolJSON(map[string]interface{}{"experiment": e})
+	case "ab_experiment_list":
+		return mcpToolJSON(map[string]interface{}{"experiments": loadExperiments()})
+	case "ab_assign":
+		var args struct {
+			Key, UserID string
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.Key == "" || args.UserID == "" {
+			return mcpToolError("key and userId required")
+		}
+		var exp *Experiment
+		for i, e := range loadExperiments() {
+			if e.Key == args.Key {
+				exp = &abExperiments[i]
+				break
+			}
+		}
+		if exp == nil || !exp.StoppedAt.IsZero() {
+			return mcpToolJSON(map[string]interface{}{"variant": "", "running": false})
+		}
+		variant := AssignVariant(exp, args.UserID)
+		go func() {
+			_ = appendABEvent(ABEvent{Key: args.Key, Variant: variant, UserID: args.UserID, Kind: "exposure", At: time.Now().UTC()})
+		}()
+		return mcpToolJSON(map[string]interface{}{"variant": variant, "running": true})
+	case "ab_event":
+		var e ABEvent
+		json.Unmarshal(call.Arguments, &e)
+		if e.Key == "" || e.Kind == "" {
+			return mcpToolError("key and kind required")
+		}
+		e.At = time.Now().UTC()
+		if err := appendABEvent(e); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult("ok")
+	case "ab_results":
+		var args struct{ Key string }
+		json.Unmarshal(call.Arguments, &args)
+		if args.Key == "" {
+			return mcpToolError("key required")
+		}
+		p, _ := abEventsFile()
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return mcpToolJSON(map[string]interface{}{"results": map[string]interface{}{}})
+		}
+		type bucket struct {
+			Exposures, Conversions int
+		}
+		results := map[string]*bucket{}
+		for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+			if line == "" {
+				continue
+			}
+			var ev ABEvent
+			if err := json.Unmarshal([]byte(line), &ev); err != nil {
+				continue
+			}
+			if ev.Key != args.Key {
+				continue
+			}
+			b := results[ev.Variant]
+			if b == nil {
+				b = &bucket{}
+				results[ev.Variant] = b
+			}
+			switch ev.Kind {
+			case "exposure":
+				b.Exposures++
+			case "conversion":
+				b.Conversions++
+			}
+		}
+		out := map[string]interface{}{}
+		for v, b := range results {
+			rate := 0.0
+			if b.Exposures > 0 {
+				rate = float64(b.Conversions) / float64(b.Exposures)
+			}
+			out[v] = map[string]interface{}{"exposures": b.Exposures, "conversions": b.Conversions, "conversionRate": rate}
+		}
+		return mcpToolJSON(map[string]interface{}{"results": out})
+
+	case "clip_start":
+		var body struct {
+			Title, Description string
+		}
+		json.Unmarshal(call.Arguments, &body)
+		clipMu.Lock()
+		if clipActive != nil {
+			clipMu.Unlock()
+			return mcpToolError("a recording is already running — call clip_stop first")
+		}
+		clipMu.Unlock()
+		session := &ClipSession{
+			ID:          "clip-" + randomFormID(),
+			Title:       body.Title,
+			Description: body.Description,
+			StartedAt:   time.Now().UTC(),
+			Streams:     []ClipStream{{Kind: "agent-screen", File: "agent-screen.mp4", Mime: "video/mp4"}},
+		}
+		if err := saveClipSession(session); err != nil {
+			return mcpToolError(err.Error())
+		}
+		cmd, err := startAgentCapture(session)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		clipMu.Lock()
+		clipActive = &activeSession{session: session, cmd: cmd, stopCh: make(chan struct{})}
+		clipMu.Unlock()
+		return mcpToolJSON(map[string]interface{}{"session": session, "shareUrl": "/clips/" + session.ID})
+	case "clip_stop":
+		clipMu.Lock()
+		active := clipActive
+		clipActive = nil
+		clipMu.Unlock()
+		if active == nil {
+			return mcpToolError("no active recording")
+		}
+		_ = active.cmd.Process.Signal(os.Interrupt)
+		_ = active.cmd.Wait()
+		active.session.StoppedAt = time.Now().UTC()
+		active.session.DurationSec = int(active.session.StoppedAt.Sub(active.session.StartedAt).Seconds())
+		for i := range active.session.Streams {
+			if active.session.Streams[i].Kind == "agent-screen" {
+				p, _ := sessionDir(active.session.ID)
+				if info, err := os.Stat(filepath.Join(p, active.session.Streams[i].File)); err == nil {
+					active.session.Streams[i].Bytes = info.Size()
+				}
+				active.session.Streams[i].Uploaded = true
+			}
+		}
+		_ = saveClipSession(active.session)
+		return mcpToolJSON(map[string]interface{}{"session": active.session})
+	case "clip_list":
+		sessions, _ := listClipSessions()
+		return mcpToolJSON(map[string]interface{}{"sessions": sessions})
+
+	case "chat_conversations":
+		dir, _ := chatDir()
+		entries, _ := os.ReadDir(dir)
+		out := []map[string]interface{}{}
+		for _, e := range entries {
+			if !strings.HasSuffix(e.Name(), ".jsonl") {
+				continue
+			}
+			vid := strings.TrimSuffix(e.Name(), ".jsonl")
+			msgs, _ := readChatMessages(vid, 5)
+			last := ""
+			if len(msgs) > 0 {
+				last = msgs[len(msgs)-1].Text
+			}
+			out = append(out, map[string]interface{}{"vid": vid, "last": last, "count": len(msgs)})
+		}
+		return mcpToolJSON(map[string]interface{}{"conversations": out})
+	case "chat_history":
+		var args struct {
+			VID   string `json:"vid"`
+			Limit int    `json:"limit"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.VID == "" {
+			return mcpToolError("vid required")
+		}
+		if args.Limit == 0 {
+			args.Limit = 100
+		}
+		msgs, _ := readChatMessages(sanitizeVID(args.VID), args.Limit)
+		return mcpToolJSON(map[string]interface{}{"messages": msgs})
+	case "chat_reply":
+		var args struct{ VID, Text string }
+		json.Unmarshal(call.Arguments, &args)
+		if args.VID == "" || args.Text == "" {
+			return mcpToolError("vid and text required")
+		}
+		m := ChatMessage{ID: randomFormID(), VID: sanitizeVID(args.VID), From: "owner", Text: args.Text, At: time.Now().UTC()}
+		_ = appendChatMessage(m)
+		publishChatMessage(m)
+		return mcpToolResult("sent")
+
+	case "customer_create":
+		var c Customer
+		json.Unmarshal(call.Arguments, &c)
+		if c.Name == "" || c.Email == "" {
+			return mcpToolError("name and email required")
+		}
+		c.ID = randomFormID()
+		invMu.Lock()
+		customerCache = append(loadCustomers(), c)
+		_ = saveCustomers()
+		invMu.Unlock()
+		return mcpToolJSON(map[string]interface{}{"customer": c})
+	case "customer_list":
+		return mcpToolJSON(map[string]interface{}{"customers": loadCustomers()})
+	case "invoice_create":
+		var body struct {
+			CustomerID string     `json:"customerId"`
+			Currency   string     `json:"currency"`
+			DueAt      string     `json:"dueAt"`
+			TaxPercent float64    `json:"taxPercent"`
+			Notes      string     `json:"notes"`
+			LineItems  []LineItem `json:"lineItems"`
+		}
+		json.Unmarshal(call.Arguments, &body)
+		if body.CustomerID == "" || len(body.LineItems) == 0 {
+			return mcpToolError("customerId and lineItems required")
+		}
+		if body.Currency == "" {
+			body.Currency = "USD"
+		}
+		inv := Invoice{
+			ID: randomFormID(), Number: nextInvoiceNumber(),
+			CustomerID: body.CustomerID, IssuedAt: time.Now().UTC(),
+			Currency: body.Currency, LineItems: body.LineItems,
+			Status: "draft", Notes: body.Notes,
+		}
+		if body.DueAt != "" {
+			if t, err := time.Parse("2006-01-02", body.DueAt); err == nil {
+				inv.DueAt = t
+			}
+		}
+		for i := range inv.LineItems {
+			if inv.LineItems[i].Total == 0 {
+				inv.LineItems[i].Total = inv.LineItems[i].Quantity * inv.LineItems[i].UnitPrice
+			}
+			inv.Subtotal += inv.LineItems[i].Total
+		}
+		if body.TaxPercent > 0 {
+			inv.Tax = inv.Subtotal * body.TaxPercent / 100
+		}
+		inv.Total = inv.Subtotal + inv.Tax
+		invMu.Lock()
+		invoiceCache = append(loadInvoices(), inv)
+		_ = saveInvoices()
+		invMu.Unlock()
+		return mcpToolJSON(map[string]interface{}{"invoice": inv})
+	case "invoice_list":
+		return mcpToolJSON(map[string]interface{}{"invoices": loadInvoices()})
+	case "invoice_render_pdf":
+		var args struct{ ID string }
+		json.Unmarshal(call.Arguments, &args)
+		inv, cust := findInvoiceAndCustomer(args.ID)
+		if inv == nil || cust == nil {
+			return mcpToolError("invoice or customer not found")
+		}
+		pdf, err := RenderPDF(PDFRenderOptions{HTML: renderInvoiceHTML(inv, cust), Format: "A4", PrintBackground: true})
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(map[string]interface{}{"size": len(pdf), "base64": base64.StdEncoding.EncodeToString(pdf)})
+	case "invoice_payment_link":
+		var args struct {
+			ID, Provider, APIKey, ReturnURL string
+		}
+		json.Unmarshal(call.Arguments, &args)
+		inv, _ := findInvoiceAndCustomer(args.ID)
+		if inv == nil {
+			return mcpToolError("invoice not found")
+		}
+		link, err := createPaymentLink(args.Provider, args.APIKey, inv, args.ReturnURL)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		invMu.Lock()
+		inv.PaymentLink = link
+		inv.PaymentSource = args.Provider
+		_ = saveInvoices()
+		invMu.Unlock()
+		return mcpToolJSON(map[string]interface{}{"paymentLink": link})
+	case "invoice_send":
+		var args struct{ ID string }
+		json.Unmarshal(call.Arguments, &args)
+		inv, cust := findInvoiceAndCustomer(args.ID)
+		if inv == nil || cust == nil {
+			return mcpToolError("invoice or customer not found")
+		}
+		body := fmt.Sprintf("Your invoice %s for %s %.2f is ready.\n", inv.Number, inv.Currency, inv.Total)
+		if inv.PaymentLink != "" {
+			body += "Pay now: " + inv.PaymentLink + "\n"
+		}
+		_, err := SendTransactionalEmail(SendEmailRequest{
+			To: []string{cust.Email}, Subject: fmt.Sprintf("Invoice %s", inv.Number), Body: body,
+		})
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		invMu.Lock()
+		inv.Status = "sent"
+		_ = saveInvoices()
+		invMu.Unlock()
+		return mcpToolResult("sent")
+
+	case "affiliate_create":
+		var a Affiliate
+		json.Unmarshal(call.Arguments, &a)
+		if a.Email == "" {
+			return mcpToolError("email required")
+		}
+		if a.Code == "" {
+			a.Code = randomShortCode()
+		}
+		if a.ID == "" {
+			a.ID = randomFormID()
+		}
+		if a.CommissionPercent <= 0 {
+			a.CommissionPercent = 20
+		}
+		a.CreatedAt = time.Now().UTC()
+		affMu.Lock()
+		affCache = append(loadAffiliates(), a)
+		_ = saveAffiliates()
+		affMu.Unlock()
+		return mcpToolJSON(map[string]interface{}{"affiliate": a, "referralUrl": "?ref=" + a.Code})
+	case "affiliate_list":
+		return mcpToolJSON(map[string]interface{}{"affiliates": loadAffiliates()})
+	case "affiliate_conversion":
+		var args struct {
+			ID, Currency, SourceRef string
+			Amount                  float64
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.Amount <= 0 {
+			return mcpToolError("amount required")
+		}
+		list := loadAffiliates()
+		var aff *Affiliate
+		for i := range list {
+			if list[i].ID == args.ID || list[i].Code == args.ID {
+				aff = &affCache[i]
+				break
+			}
+		}
+		if aff == nil {
+			return mcpToolError("affiliate not found")
+		}
+		if args.Currency == "" {
+			args.Currency = "USD"
+		}
+		commission := args.Amount * aff.CommissionPercent / 100
+		conv := Conversion{AffiliateID: aff.ID, Amount: args.Amount, Currency: args.Currency, Commission: commission, SourceRef: args.SourceRef, At: time.Now().UTC()}
+		_ = appendConversionRow(conv)
+		affMu.Lock()
+		aff.TotalOwed += commission
+		_ = saveAffiliates()
+		affMu.Unlock()
+		return mcpToolJSON(map[string]interface{}{"conversion": conv})
+	case "affiliate_payout":
+		var p Payout
+		json.Unmarshal(call.Arguments, &p)
+		if p.Amount <= 0 {
+			return mcpToolError("amount required")
+		}
+		list := loadAffiliates()
+		var aff *Affiliate
+		for i := range list {
+			if list[i].ID == p.AffiliateID || list[i].Code == p.AffiliateID {
+				aff = &affCache[i]
+				break
+			}
+		}
+		if aff == nil {
+			return mcpToolError("affiliate not found")
+		}
+		p.At = time.Now().UTC()
+		affMu.Lock()
+		aff.TotalOwed -= p.Amount
+		aff.TotalPaid += p.Amount
+		_ = saveAffiliates()
+		affMu.Unlock()
+		return mcpToolJSON(map[string]interface{}{"payout": p, "affiliate": aff})
+
+	case "cast_list":
+		return mcpToolJSON(map[string]interface{}{"casts": loadCasts()})
+	case "cast_start":
+		var body struct{ Title, Command string }
+		json.Unmarshal(call.Arguments, &body)
+		if body.Command == "" {
+			body.Command = os.Getenv("SHELL")
+			if body.Command == "" {
+				body.Command = "/bin/bash"
+			}
+		}
+		if _, err := osexec.LookPath("asciinema"); err != nil {
+			return mcpToolError("asciinema not installed — brew install asciinema")
+		}
+		castMu.Lock()
+		if activeCast != nil {
+			castMu.Unlock()
+			return mcpToolError("a recording is already running")
+		}
+		id := "cast-" + randomFormID()
+		dir, _ := asciinemaDir()
+		file := filepath.Join(dir, id+".cast")
+		cmd := osexec.Command("asciinema", "rec", "-q", "--title", body.Title, "-c", body.Command, file)
+		if err := cmd.Start(); err != nil {
+			castMu.Unlock()
+			return mcpToolError(err.Error())
+		}
+		activeCast = cmd
+		activeCastInfo = &AsciiCast{ID: id, Title: body.Title, File: id + ".cast", CreatedAt: time.Now().UTC()}
+		castMu.Unlock()
+		return mcpToolJSON(map[string]interface{}{"id": id})
+	case "cast_stop":
+		castMu.Lock()
+		defer castMu.Unlock()
+		if activeCast == nil || activeCastInfo == nil {
+			return mcpToolError("no active recording")
+		}
+		_ = activeCast.Process.Signal(os.Interrupt)
+		_ = activeCast.Wait()
+		cast := *activeCastInfo
+		castIndex = append(loadCasts(), cast)
+		_ = saveCasts()
+		activeCast = nil
+		activeCastInfo = nil
+		return mcpToolJSON(map[string]interface{}{"cast": cast})
+
+	case "copilot_complete":
+		var req CopilotRequest
+		json.Unmarshal(call.Arguments, &req)
+		if req.Prefix == "" {
+			return mcpToolError("prefix required")
+		}
+		res, err := CompleteOnce(req)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(res)
+	case "copilot_models":
+		cmd := osexec.Command("ollama", "list")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return mcpToolJSON(map[string]interface{}{"models": []string{}, "error": err.Error()})
+		}
+		models := []string{}
+		for _, line := range strings.Split(string(out), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "NAME") {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) > 0 {
+				models = append(models, fields[0])
+			}
+		}
+		return mcpToolJSON(map[string]interface{}{"models": models, "default": defaultCopilotModel})
 
 	// --- Meetings ---
 	case "meeting_create":

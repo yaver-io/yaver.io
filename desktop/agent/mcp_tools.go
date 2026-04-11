@@ -1697,6 +1697,18 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		{"name": "cast_list", "description": "List recorded terminal casts (asciicast v2).", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
 		{"name": "cast_start", "description": "Start an agent-side terminal recording. Wraps the given command via the asciinema CLI. Only one recording at a time.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"title": map[string]interface{}{"type": "string"}, "command": map[string]interface{}{"type": "string"}}}},
 		{"name": "cast_stop", "description": "Stop the active terminal recording and save it to the cast index.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+
+		// Copilot-lite (local Ollama)
+		{"name": "copilot_complete", "description": "Generate a code completion via the dev's local Ollama model. Supports fill-in-the-middle via prefix+suffix for Qwen2.5-Coder / StarCoder / DeepSeek. Replaces GitHub Copilot / Cursor for solo devs running Ollama.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"prefix"}, "properties": map[string]interface{}{
+			"prefix":     map[string]interface{}{"type": "string", "description": "Text before the cursor"},
+			"suffix":     map[string]interface{}{"type": "string", "description": "Text after the cursor for FIM"},
+			"language":   map[string]interface{}{"type": "string"},
+			"file":       map[string]interface{}{"type": "string"},
+			"maxTokens":  map[string]interface{}{"type": "integer"},
+			"model":      map[string]interface{}{"type": "string", "description": "Ollama tag, default qwen2.5-coder:7b"},
+			"temperature": map[string]interface{}{"type": "number"},
+		}}},
+		{"name": "copilot_models", "description": "List the Ollama models the dev has pulled locally. Handy before calling copilot_complete.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
 	}
 	tools = append(tools, soloStackTools...)
 
