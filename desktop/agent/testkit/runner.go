@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	cdpnetwork "github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 )
 
@@ -211,6 +212,16 @@ func runWebSpec(ctx context.Context, spec *Spec, opts RunOptions, res *Result) {
 	instr := InstallInstrumentation(browserCtx, spec.Capture)
 	res.instr = instr
 
+	// Network emulation — CDP lets us throttle the whole session
+	// to mimic slow 3G or go fully offline. The profile applies
+	// for the entire spec; individual steps can't opt back in
+	// mid-run yet (add a per-step knob later if a solo dev
+	// asks for it).
+	if err := applyNetworkProfile(browserCtx, spec.NetworkProfile); err != nil {
+		fmt.Fprintf(os.Stderr, "[testkit] network profile %q failed: %v — continuing without throttle\n",
+			spec.NetworkProfile, err)
+	}
+
 	// Screencast capture — opt-in via `artifacts: {video: true}`.
 	// Holds the last ~120 frames in memory; flushed to disk next
 	// to a failing step's screenshot so the mobile
@@ -316,6 +327,34 @@ func runPhase(ctx context.Context, spec *Spec, opts RunOptions, res *Result, pha
 				patched.Fill = &FillStep{Selector: fix.SelectorReplace, Text: step.Fill.Text}
 				if retryErr := executeStep(stepCtx, spec, patched); retryErr == nil {
 					sr.Description += " (auto-healed)"
+					err = nil
+				}
+			}
+		}
+		// Last-resort general self-heal: the handler-backed path.
+		// SelectorReplaceFromSelfHeal above only handles selector
+		// failures on Click/Fill steps via the built-in heuristic
+		// LLM call. If the registered FixHandler can do better —
+		// e.g. an assertion failed because the copy changed and the
+		// LLM can propose a new selector targeting the new text —
+		// give it one shot. Bounded by the handler's own 60s timeout.
+		if err != nil && fixDispatch != nil {
+			fixReq := FixRequest{
+				Spec:      spec,
+				StepIndex: i,
+				Phase:     phase,
+				Action:    stepDescription(step),
+				Error:     err.Error(),
+			}
+			if fix := AttemptAutonomousFix(stepCtx, fixReq); fix != nil && fix.Strategy == "selector_replace" && fix.SelectorReplace != "" {
+				patched := step
+				if step.Click != "" {
+					patched.Click = fix.SelectorReplace
+				} else if step.Fill != nil {
+					patched.Fill = &FillStep{Selector: fix.SelectorReplace, Text: step.Fill.Text}
+				}
+				if retryErr := executeStep(stepCtx, spec, patched); retryErr == nil {
+					sr.Description += " (auto-healed via handler)"
 					err = nil
 				}
 			}
@@ -590,4 +629,59 @@ func artifactDirFor(spec *Spec, opts RunOptions) string {
 func sanitizeName(name string) string {
 	r := strings.NewReplacer(" ", "-", "/", "-", string(filepath.Separator), "-")
 	return r.Replace(name)
+}
+
+// applyNetworkProfile issues a CDP
+// Network.emulateNetworkConditions command for the profile name,
+// using Chrome DevTools' documented preset values. Empty /
+// "online" is a no-op.
+func applyNetworkProfile(ctx context.Context, profile string) error {
+	p := strings.ToLower(strings.TrimSpace(profile))
+	if p == "" || p == "online" || p == "wifi" {
+		return nil
+	}
+	// Latency (ms), download (bytes/s), upload (bytes/s).
+	var (
+		offline  bool
+		latency  float64
+		download float64
+		upload   float64
+	)
+	switch p {
+	case "offline":
+		offline = true
+	case "fast-3g":
+		latency = 150
+		download = 1.6 * 1024 * 1024 / 8
+		upload = 768 * 1024 / 8
+	case "slow-3g", "3g":
+		latency = 400
+		download = 500 * 1024 / 8
+		upload = 500 * 1024 / 8
+	case "2g":
+		latency = 800
+		download = 250 * 1024 / 8
+		upload = 250 * 1024 / 8
+	default:
+		return fmt.Errorf("unknown network_profile %q (expected online|fast-3g|slow-3g|2g|offline)", profile)
+	}
+	// Newer cdproto/network dropped the simple
+	// EmulateNetworkConditions wrapper in favor of
+	// EmulateNetworkConditionsByRule, whose Do() returns
+	// ([]string, error) so it isn't a chromedp.Action. We wrap
+	// it in an ActionFunc so chromedp.Run can still sequence it.
+	conds := []*cdpnetwork.Conditions{{
+		URLPattern:         "",
+		Latency:            latency,
+		DownloadThroughput: download,
+		UploadThroughput:   upload,
+	}}
+	emulate := chromedp.ActionFunc(func(c context.Context) error {
+		_, err := cdpnetwork.EmulateNetworkConditionsByRule(offline, conds).Do(c)
+		return err
+	})
+	return chromedp.Run(ctx,
+		cdpnetwork.Enable(),
+		emulate,
+	)
 }
