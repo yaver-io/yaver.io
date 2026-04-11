@@ -81,10 +81,20 @@ func NewErrorStore() (*ErrorStore, error) {
 }
 
 // Record ingests one error event from a BlackBox session,
-// bumping the matching fingerprint or creating a new one.
+// bumping the matching fingerprint or creating a new one. The
+// stack is run through Symbolicate() first so uploaded source
+// maps turn obfuscated frames into readable source locations
+// before dedup fingerprinting happens.
 func (s *ErrorStore) Record(deviceID string, ev BlackBoxEvent) {
 	if ev.Type != "error" && !ev.IsFatal {
 		return
+	}
+	// Symbolicate before fingerprinting so "src/Foo.tsx:42" and
+	// "index.bundle:12345:67" don't end up in separate buckets.
+	if len(ev.Stack) > 0 {
+		app, _ := ev.Metadata["app"].(string)
+		version, _ := ev.Metadata["version"].(string)
+		ev.Stack = Symbolicate(app, version, ev.Stack)
 	}
 	fp := errorFingerprint(ev)
 	s.mu.Lock()

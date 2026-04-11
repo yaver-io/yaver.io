@@ -29,7 +29,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.77.0"
+const version = "1.78.0"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
@@ -106,6 +106,14 @@ func main() {
 		runMonitor(os.Args[2:])
 	case "flags":
 		runFlags(os.Args[2:])
+	case "analytics":
+		runAnalytics(os.Args[2:])
+	case "sourcemaps", "source-maps":
+		runSourceMaps(os.Args[2:])
+	case "env":
+		runEnv(os.Args[2:])
+	case "status-page", "statuspage":
+		runStatusPage(os.Args[2:])
 	case "debug":
 		runDebug(os.Args[2:])
 	case "expo":
@@ -2954,16 +2962,18 @@ func runRestart(args []string) {
 func runStatus() {
 	cfg, err := LoadConfig()
 	if err != nil || cfg.AuthToken == "" {
-		fmt.Println("Status: not signed in")
+		fmt.Println("Status: ✗ not signed in")
 		fmt.Println()
 		fmt.Println("Run 'yaver auth' to sign in.")
 		return
 	}
 
-	// Check agent first (local, instant)
-	agentStatus := "stopped"
+	// Check agent first (local, instant). Prefix with a green dot
+	// for running, red dot for stopped so terminals with color
+	// show intent at a glance.
+	agentStatus := "\033[31m●\033[0m stopped"
 	if pid, running := isAgentRunning(); running {
-		agentStatus = fmt.Sprintf("running (PID %d)", pid)
+		agentStatus = fmt.Sprintf("\033[32m●\033[0m running (PID %d)", pid)
 	}
 	fmt.Printf("Yaver:    v%s\n", version)
 
@@ -2978,18 +2988,18 @@ func runStatus() {
 	statusClient := &http.Client{Timeout: 3 * time.Second}
 	req, reqErr := newBearerRequest("GET", cfg.ConvexSiteURL+"/auth/validate", cfg.AuthToken, nil)
 	if reqErr != nil {
-		fmt.Printf("Auth:     token present (validation skipped)\n")
+		fmt.Printf("Auth:     \033[33m●\033[0m token present (validation skipped)\n")
 		return
 	}
 	resp, respErr := statusClient.Do(req)
 	if respErr != nil {
-		fmt.Printf("Auth:     token present (could not reach server)\n")
+		fmt.Printf("Auth:     \033[33m●\033[0m token present (could not reach server)\n")
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("Auth:     session expired (agent still running)\n")
+		fmt.Printf("Auth:     \033[31m●\033[0m session expired (agent still running)\n")
 		fmt.Println()
 		fmt.Println("Your session expired but the agent is still running locally.")
 		fmt.Println("Run 'yaver auth' to refresh. Only 'yaver signout' will clear your credentials.")
@@ -3000,11 +3010,11 @@ func runStatus() {
 		User UserInfo `json:"user"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		fmt.Printf("Auth:     valid\n")
+		fmt.Printf("Auth:     \033[32m●\033[0m valid\n")
 		return
 	}
 
-	fmt.Printf("Auth:     valid\n")
+	fmt.Printf("Auth:     \033[32m●\033[0m valid\n")
 	fmt.Printf("User:     %s (%s)\n", result.User.Email, result.User.Provider)
 	if result.User.FullName != "" && result.User.FullName != result.User.Email {
 		fmt.Printf("Name:     %s\n", result.User.FullName)
