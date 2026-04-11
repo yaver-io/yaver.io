@@ -411,6 +411,24 @@ func (s *HTTPServer) handleFormDetail(w http.ResponseWriter, r *http.Request) {
 	jsonError(w, http.StatusMethodNotAllowed, "use GET or DELETE")
 }
 
+// handleFormsRouter fans out /forms/:id, /forms/:id/submit,
+// and /forms/:id/submissions. Mixed auth: /submit is public,
+// everything else requires owner auth (applied by the caller
+// wrapping this with s.auth for the /forms/ prefix — but we
+// need /submit to NOT be auth-gated, so the router itself
+// strips auth off for that path).
+func (s *HTTPServer) handleFormsRouter(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) >= 3 && parts[0] == "forms" && parts[2] == "submit" {
+		// Public — no auth.
+		s.handleFormSubmit(w, r)
+		return
+	}
+	// Everything else is owner-only; run the auth middleware
+	// inline to keep this single mux handler simple.
+	s.auth(s.handleFormDetail)(w, r)
+}
+
 func randomFormID() string {
 	const alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
 	out := make([]byte, 8)

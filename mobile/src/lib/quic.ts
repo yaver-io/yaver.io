@@ -2660,6 +2660,101 @@ export class QuicClient {
     }
   }
 
+  // ---- Forms -----------------------------------------------------------
+
+  async formsList(): Promise<any[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/forms`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.forms || [];
+    } catch { return []; }
+  }
+
+  async formCreate(body: { name: string; notifyEmail?: string; honeypotField?: string; rateLimitPerHour?: number }): Promise<any | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/forms`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) return null;
+      return (await res.json()).form;
+    } catch { return null; }
+  }
+
+  async formSubmissions(id: string): Promise<any[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/forms/${id}/submissions`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      return (await res.json()).submissions || [];
+    } catch { return []; }
+  }
+
+  // ---- Newsletter -------------------------------------------------------
+
+  async newsletterSubscribers(): Promise<{ subscribers: any[]; count: any } | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/newsletter/subscribers`, { headers: this.authHeaders });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  async newsletterCampaigns(): Promise<any[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/newsletter/campaigns`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      return (await res.json()).campaigns || [];
+    } catch { return []; }
+  }
+
+  async newsletterCreate(body: { subject: string; body: string; htmlBody?: string }): Promise<any | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/newsletter/campaigns`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) return null;
+      return (await res.json()).campaign;
+    } catch { return null; }
+  }
+
+  async newsletterSend(id: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/newsletter/campaigns/${id}/send`, {
+        method: "POST",
+        headers: this.authHeaders,
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
+  // ---- Job queue --------------------------------------------------------
+
+  async jobsList(): Promise<{ queue: any[]; dlq: any[] } | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/jobs`, { headers: this.authHeaders });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  async jobRetry(id: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/jobs/${id}/retry`, { method: "POST", headers: this.authHeaders });
+      return res.ok;
+    } catch { return false; }
+  }
+
+  async jobCancel(id: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/jobs/${id}/cancel`, { method: "POST", headers: this.authHeaders });
+      return res.ok;
+    } catch { return false; }
+  }
+
   // ---- Project wizard (fullstack generator) -----------------------------
 
   async wizardStart(): Promise<WizardStartResponse | null> {

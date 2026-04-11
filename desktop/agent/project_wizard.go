@@ -1174,14 +1174,20 @@ func expoAppJSON(a map[string]string) string {
 }
 
 func expoPackageJSON(a map[string]string) string {
+	// scripts intentionally drop `expo build` / EAS — yaver's
+	// convention is native local builds via xcodebuild (iOS) and
+	// gradle (Android). `prebuild` generates ios/ and android/
+	// once; from then on the dev ships bytecode through the
+	// yaver container or archives a signed release here.
 	return fmt.Sprintf(`{
-  "name": "%s-mobile",
+  "name": "@%s/mobile",
   "version": "0.0.1",
   "private": true,
   "scripts": {
+    "prebuild": "expo prebuild",
     "start": "expo start",
-    "ios": "expo run:ios",
-    "android": "expo run:android"
+    "ios": "cd ios && xcodebuild -workspace *.xcworkspace -scheme %s -configuration Debug",
+    "android": "cd android && ./gradlew assembleDebug"
   },
   "dependencies": {
     "expo": "~52.0.0",
@@ -1189,7 +1195,7 @@ func expoPackageJSON(a map[string]string) string {
     "react-native": "0.76.3"
   }
 }
-`, a["slug"])
+`, a["slug"], a["app_name"])
 }
 
 func expoAppTSX(a map[string]string) string {
@@ -1209,28 +1215,51 @@ export default function App() {
 }
 
 func deployScript(a map[string]string) string {
+	// deploy.sh follows yaver's native-build convention: no EAS,
+	// no `expo build`, never a WebView. iOS goes through
+	// xcodebuild archive → export → app-store-connect upload;
+	// Android through gradle bundleRelease → Play Console
+	// service-account upload. The web app always deploys via
+	// wrangler when the host is Cloudflare.
 	var b strings.Builder
 	b.WriteString("#!/usr/bin/env bash\n")
+	b.WriteString("# deploy.sh — native builds only.\n")
 	b.WriteString("set -euo pipefail\n")
 	b.WriteString("cd \"$(dirname \"$0\")/..\"\n\n")
 	b.WriteString("case \"${1:-}\" in\n")
-	if a["web_host"] == "cloudflare" {
+	if a["include_web"] == "true" && a["web_host"] == "cloudflare" {
 		b.WriteString("  web)\n")
-		b.WriteString("    cd web && npm run deploy ;;\n")
+		b.WriteString("    cd apps/web && npm run deploy ;;\n")
 	}
-	if a["backend"] == "convex" {
+	if a["include_landing"] == "true" && a["web_host"] == "cloudflare" {
+		b.WriteString("  landing)\n")
+		b.WriteString("    cd apps/landing && npx wrangler pages deploy . ;;\n")
+	}
+	if a["include_backend"] == "true" && a["backend"] == "convex" {
 		b.WriteString("  backend)\n")
 		b.WriteString("    cd backend && npx convex deploy --yes ;;\n")
 	}
 	if a["include_mobile"] == "true" && a["mobile_stack"] == "expo-rn" {
 		b.WriteString("  testflight)\n")
-		b.WriteString("    echo \"Run: cd mobile && npx expo prebuild --platform ios && \\\\\"\n")
-		b.WriteString("    echo \"       cd ios && xcodebuild -workspace *.xcworkspace -scheme App -configuration Release archive\" ;;\n")
+		b.WriteString("    cd apps/mobile && npx expo prebuild --platform ios\n")
+		b.WriteString("    cd apps/mobile/ios && xcodebuild -workspace *.xcworkspace \\\n")
+		b.WriteString("      -scheme \"" + a["app_name"] + "\" -configuration Release \\\n")
+		b.WriteString("      -archivePath /tmp/app.xcarchive archive \\\n")
+		b.WriteString("      DEVELOPMENT_TEAM=\"$APPLE_TEAM_ID\" CODE_SIGN_STYLE=Automatic \\\n")
+		b.WriteString("      -allowProvisioningUpdates \\\n")
+		b.WriteString("      -authenticationKeyPath \"$APP_STORE_KEY_PATH\" \\\n")
+		b.WriteString("      -authenticationKeyID \"$APP_STORE_KEY_ID\" \\\n")
+		b.WriteString("      -authenticationKeyIssuerID \"$APP_STORE_KEY_ISSUER\"\n")
+		b.WriteString("    xcodebuild -exportArchive -archivePath /tmp/app.xcarchive \\\n")
+		b.WriteString("      -exportOptionsPlist ../../scripts/ExportOptions.plist \\\n")
+		b.WriteString("      -exportPath /tmp/export \\\n")
+		b.WriteString("      -allowProvisioningUpdates ;;\n")
 		b.WriteString("  playstore)\n")
-		b.WriteString("    cd mobile && npx expo prebuild --platform android && cd android && JAVA_HOME=$(/usr/libexec/java_home -v 17) ./gradlew bundleRelease ;;\n")
+		b.WriteString("    cd apps/mobile && npx expo prebuild --platform android\n")
+		b.WriteString("    cd apps/mobile/android && JAVA_HOME=$(/usr/libexec/java_home -v 17) ./gradlew bundleRelease ;;\n")
 	}
 	b.WriteString("  *)\n")
-	b.WriteString("    echo \"usage: $0 web|backend|testflight|playstore\" ;;\n")
+	b.WriteString("    echo \"usage: $0 web|landing|backend|testflight|playstore\" ;;\n")
 	b.WriteString("esac\n")
 	return b.String()
 }

@@ -120,6 +120,7 @@ export default function TabLayout() {
       <Tabs.Screen name="newproject" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="gitproviders" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="guests" options={{ href: null, headerShown: false }} />
+      <Tabs.Screen name="solostack" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="qualitygates" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="settings" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="runs" options={{ href: null, title: "Local CI", headerShown: true }} />

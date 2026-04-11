@@ -2191,6 +2191,21 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
+        {/* Solo Stack — Forms + Newsletter + Job queue in one place */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/solostack" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F9F0}"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Solo Stack</Text>
+              <Text style={[s.desc, { color: c.textMuted }]}>Forms, newsletter, job queue</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
         {/* Git Providers — dedicated screen for consistency */}
         {connected && (
           <Pressable
