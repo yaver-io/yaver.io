@@ -19,6 +19,8 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -94,4 +96,148 @@ func isProbableGitSHA(s string) bool {
 		}
 	}
 	return true
+}
+
+// handleAutodevStart is the entry point used by mobile, desktop,
+// web, and MCP clients to kick off an autodev run without shelling
+// to the CLI. Body shape:
+//
+//	{
+//	  "project":          "sfmg",                // loop name suffix
+//	  "work_dir":         "/Users/me/Workspace/sfmg", // repo to run in
+//	  "hours":            "8",                   // int hours or "infinite"
+//	  "load":             "lite",                // lite | high
+//	  "prompt":           "focus on purchase flow",
+//	  "deploy":           "testflight",          // auto | testflight | playstore | both | none
+//	  "runner":           "claude-code",
+//	  "branch":           "main",
+//	  "remained_content": "- [ ] item 1\n- [ ] item 2\n", // optional
+//	  "remained_path":    "remained.md",                 // optional, default remained.md
+//	  "no_autotest":      false
+//	}
+//
+// On success returns {loop_name, work_dir}; the run is spawned in
+// a goroutine so the HTTP response is immediate. Progress surfaces
+// via /autodev/loops and /autodev/reports — watchable from mobile
+// / web / another machine just like any other loop.
+func (s *HTTPServer) handleAutodevStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+	var body struct {
+		Project         string `json:"project"`
+		WorkDir         string `json:"work_dir"`
+		Hours           string `json:"hours"`
+		Load            string `json:"load"`
+		Prompt          string `json:"prompt"`
+		Deploy          string `json:"deploy"`
+		Runner          string `json:"runner"`
+		Branch          string `json:"branch"`
+		Target          string `json:"target"`
+		RemainedPath    string `json:"remained_path"`
+		RemainedContent string `json:"remained_content"`
+		NoAutotest      bool   `json:"no_autotest"`
+		MaxIterations   int    `json:"max_iterations"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if body.WorkDir == "" {
+		jsonError(w, http.StatusBadRequest, "work_dir required")
+		return
+	}
+	if _, err := os.Stat(body.WorkDir); err != nil {
+		jsonError(w, http.StatusBadRequest, "work_dir does not exist: "+body.WorkDir)
+		return
+	}
+	// If a remained_content was supplied, write it to the target
+	// path inside the workdir BEFORE spawning the run — that way
+	// the loop starts with the checklist already in place and the
+	// runner sees it on the first kick.
+	remainedPath := body.RemainedPath
+	if body.RemainedContent != "" && remainedPath == "" {
+		remainedPath = "remained.md"
+	}
+	if body.RemainedContent != "" {
+		full := remainedPath
+		if !filepath.IsAbs(full) {
+			full = filepath.Join(body.WorkDir, full)
+		}
+		if err := os.WriteFile(full, []byte(body.RemainedContent), 0o644); err != nil {
+			jsonError(w, http.StatusInternalServerError, "write remained file: "+err.Error())
+			return
+		}
+	}
+
+	project := body.Project
+	if project == "" {
+		project = filepath.Base(body.WorkDir)
+	}
+
+	d := autodevDefaults{
+		hours:      body.Hours,
+		load:       body.Load,
+		deploy:     body.Deploy,
+		prompt:     body.Prompt,
+		project:    project,
+		runner:     body.Runner,
+		branch:     body.Branch,
+		target:     body.Target,
+		maxIter:    body.MaxIterations,
+		noAutotest: body.NoAutotest,
+		remained:   remainedPath,
+	}
+	if d.hours == "" {
+		d.hours = autodevSleepHours
+	}
+	if d.load == "" {
+		d.load = autodevSleepLoad
+	}
+	d = applyAutodevDefaults(d, "autodev", body.WorkDir)
+	plan := buildAutodevPlan("autodev", d, body.WorkDir)
+
+	// Scaffold under the repo's workdir so the specs land where
+	// the CLI would have put them.
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(body.WorkDir); err != nil {
+		jsonError(w, http.StatusInternalServerError, "chdir: "+err.Error())
+		return
+	}
+	if err := ensureAutodevSpec(plan); err != nil {
+		_ = os.Chdir(origWd)
+		jsonError(w, http.StatusInternalServerError, "scaffold spec: "+err.Error())
+		return
+	}
+	if plan.IncludeAutotest {
+		if err := ensureAutodevRegressionSpec(plan); err != nil {
+			_ = os.Chdir(origWd)
+			jsonError(w, http.StatusInternalServerError, "scaffold regression: "+err.Error())
+			return
+		}
+	}
+	if d.prompt != "" {
+		loopPrompt([]string{"set", plan.LoopName, d.prompt})
+	}
+	// Spawn the run in a goroutine so the HTTP response is fast.
+	// The goroutine locks its own cwd via syscall in runAutodevLoop
+	// indirectly — loopRun already cds into the loop's workdir.
+	go func(workDir string, p autodevPlan) {
+		// The goroutine inherits cwd from the parent; lock it
+		// to the repo for the duration so git calls land there.
+		_ = os.Chdir(workDir)
+		runAutodevLoop(p)
+		runAutodevDeploy(p)
+	}(body.WorkDir, plan)
+	_ = os.Chdir(origWd)
+
+	jsonReply(w, http.StatusAccepted, map[string]interface{}{
+		"ok":        true,
+		"loop_name": plan.LoopName,
+		"work_dir":  body.WorkDir,
+		"hours":     plan.Hours,
+		"deploy":    plan.Deploy,
+		"remained":  plan.RemainedFile,
+	})
 }
