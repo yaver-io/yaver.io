@@ -2482,7 +2482,7 @@ export interface TestkitFrameList {
 export interface AutoDevLoop {
   id: string;
   name: string;
-  mode: "fix" | "auto-fix" | "develop" | "ideas";
+  mode: "fix" | "auto-fix" | "develop" | "ideas" | "auto-test";
   status:
     | "idle"
     | "running"
@@ -2500,7 +2500,35 @@ export interface AutoDevLoop {
   promptInline?: string;
   commitsToday: number;
   patchesToday: number;
+  testflightToday: number;
   lastIterationAt?: string;
+  runner?: string;
+  releaseTrain?: AutoDevReleaseTrain;
+  sessionUsage?: AutoDevProviderUsage[];
+  testRoot?: string;
+}
+
+/** Release-train state — only populated when the spec has
+ *  ship.release_train configured. `greenRunSinceLastDeploy` is the
+ *  live counter the runtime maintains. */
+export interface AutoDevReleaseTrain {
+  enabled: boolean;
+  n: number;
+  greenRunSinceLastDeploy: number;
+  paused: boolean;
+  target?: string;
+  maxTestFlightPerDay?: number;
+}
+
+/** Per-runner session-window usage for a loop. `sessionWindow` is
+ *  a duration string ("5h", "1h"); empty means unlimited. */
+export interface AutoDevProviderUsage {
+  runner: string;
+  usedSeconds: number;
+  capSeconds: number;
+  sessionWindow: string;
+  windowStartedAt?: string;
+  overCap: boolean;
 }
 
 /** Shape of a loop's ideas.json — the runner writes this, the

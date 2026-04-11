@@ -121,16 +121,17 @@ last handoff" below).
 
 ## All tracked Auto Dev gaps are closed.
 
-Every item from the original handoff is landed. The remaining
-work is:
+Every item from the original handoff is landed. Follow-ups:
 
 - Replacing the ollama runner's "classify-only" response with a
   real tool-using local runner (Cline, Roo, etc) once one ships
   a stable subprocess driver.
-- Surfacing session-limits / release-train state on the mobile
-  Auto Dev tab so devs can see "2h 10m of 5h Claude window used
-  today" without opening the terminal.
-- Whatever the dev asks for in the next iteration.
+- Next iteration's asks.
+
+The mobile Auto Dev tab now shows release-train state (armed /
+paused / N-green) and per-runner session-limits ("⏱ claude: 2h 10m
+of 4h window") inline on each loop card. Auto Test loops display
+their watched spec directory.
 
 ## Quick verification commands
 

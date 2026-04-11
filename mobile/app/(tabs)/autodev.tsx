@@ -238,16 +238,82 @@ function LoopCard({ row }: { row: LoopRow }) {
       </View>
       <Text style={[styles.cardMeta, { color: c.textSecondary }]}>
         {row.mode} · branch={row.branch} · iter {row.iterationCount}
+        {row.runner ? ` · ${row.runner}` : ""}
         {row.radicalnessUi != null ? ` · rad ui:${row.radicalnessUi}` : ""}
         {row.tone ? ` · ${row.tone}` : ""}
       </Text>
+
+      {/* Auto Test: show the watched spec directory. */}
+      {row.mode === "auto-test" && row.testRoot ? (
+        <Text style={[styles.cardMeta, { color: c.textSecondary, marginTop: 2 }]}>
+          🧪 {row.testRoot}/
+        </Text>
+      ) : null}
+
       {row.lastSummary ? (
         <Text style={[styles.cardSummary, { color: c.textSecondary }]} numberOfLines={2}>
           {row.lastSummary}
         </Text>
       ) : null}
+
+      {/* Release train badge — "2/3 green · armed" or "paused". */}
+      {row.releaseTrain && row.releaseTrain.enabled ? (
+        <Text
+          style={[
+            styles.cardMeta,
+            {
+              marginTop: 6,
+              color: row.releaseTrain.paused
+                ? "#eab308"
+                : row.releaseTrain.greenRunSinceLastDeploy >= row.releaseTrain.n
+                  ? "#22c55e"
+                  : c.textSecondary,
+              fontWeight: "600",
+            },
+          ]}
+        >
+          🚂 {row.releaseTrain.paused ? "paused" : "armed"} · {row.releaseTrain.greenRunSinceLastDeploy}/
+          {row.releaseTrain.n} green
+          {row.releaseTrain.target ? ` → ${row.releaseTrain.target}` : ""}
+          {row.releaseTrain.maxTestFlightPerDay
+            ? ` · ${row.testflightToday}/${row.releaseTrain.maxTestFlightPerDay} today`
+            : ""}
+        </Text>
+      ) : null}
+
+      {/* Session-limits: one line per tracked runner window. */}
+      {row.sessionUsage && row.sessionUsage.length > 0
+        ? row.sessionUsage.map((u) => (
+            <Text
+              key={u.runner}
+              style={[
+                styles.cardMeta,
+                {
+                  marginTop: 2,
+                  color: u.overCap ? "#ef4444" : c.textSecondary,
+                },
+              ]}
+            >
+              ⏱  {u.runner}: {formatDuration(u.usedSeconds)}
+              {u.capSeconds > 0 ? ` / ${formatDuration(u.capSeconds)}` : ""}
+              {u.sessionWindow ? ` (${u.sessionWindow} window)` : " (unlimited)"}
+              {u.overCap ? " · OVER CAP" : ""}
+            </Text>
+          ))
+        : null}
     </View>
   );
+}
+
+// formatDuration converts seconds to a short human string
+// — 30s / 2m / 1h 20m. Matches the vibe of the commit budgets
+// line ("commits=3/5") rather than a raw second count.
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
 const styles = StyleSheet.create({
