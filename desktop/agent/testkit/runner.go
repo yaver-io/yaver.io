@@ -30,6 +30,13 @@ type Result struct {
 	// teardown). Per-step failures are in Steps[i].Err and also leave Passed
 	// false.
 	Err error
+
+	// InstrumentationPath is where the console/network/perf dump
+	// was written for this run (empty when capture: is all off).
+	InstrumentationPath string
+	// instr is the live state used by step handlers (save_har).
+	// Unexported so it doesn't leak into the JSON reporter.
+	instr *InstrumentationState
 }
 
 // Duration returns wall-clock duration of the run.
@@ -193,10 +200,20 @@ func runWebSpec(ctx context.Context, spec *Spec, opts RunOptions, res *Result) {
 		return
 	}
 
+	// Instrumentation — console errors, network capture, perf
+	// metrics, etc. Each stream is cheap when off and only adds
+	// visible cost when the spec turns it on via `capture:`.
+	instr := InstallInstrumentation(browserCtx, spec.Capture)
+	res.instr = instr
+
 	// Setup phase
 	if !runPhase(browserCtx, spec, opts, res, "setup", spec.Setup, artifactDir) {
 		// Setup failed — still try teardown but don't run main steps.
 		runPhase(browserCtx, spec, opts, res, "teardown", spec.Teardown, artifactDir)
+		FinalizeInstrumentation(browserCtx, instr, spec.Capture)
+		if p, err := WriteInstrumentation(instr, artifactDir); err == nil {
+			res.InstrumentationPath = p
+		}
 		return
 	}
 
@@ -205,6 +222,21 @@ func runWebSpec(ctx context.Context, spec *Spec, opts RunOptions, res *Result) {
 
 	// Teardown always runs, regardless of main outcome.
 	runPhase(browserCtx, spec, opts, res, "teardown", spec.Teardown, artifactDir)
+
+	// Pull perf metrics + write instrumentation.json after the run.
+	FinalizeInstrumentation(browserCtx, instr, spec.Capture)
+	if p, err := WriteInstrumentation(instr, artifactDir); err == nil {
+		res.InstrumentationPath = p
+	}
+	// Auto-fail the run if capture.console_errors is on and anything
+	// landed in the error bucket — paid SaaS tools bill this as
+	// "error tracking integration"; we just treat it as a step
+	// failure after the fact.
+	if spec.Capture.ConsoleErrors && instr.ConsoleErrorCount() > 0 && res.Err == nil {
+		res.Err = fmt.Errorf("captured %d console error(s) during run — see %s",
+			instr.ConsoleErrorCount(),
+			res.InstrumentationPath)
+	}
 
 	_ = mainOK
 }
@@ -223,6 +255,22 @@ func runPhase(ctx context.Context, spec *Spec, opts RunOptions, res *Result, pha
 			StartedAt:   time.Now(),
 		}
 		err := executeStep(stepCtx, spec, step)
+		// Step-level post-processing. The executor handles the
+		// chromedp side; these run here because they need access to
+		// the artifact dir + the per-run instrumentation state.
+		if err == nil && step.A11y != nil {
+			label := fmt.Sprintf("%s-%02d", phase, i)
+			if a11yErr := RunA11yAudit(stepCtx, step.A11y, artifactDir, label); a11yErr != nil {
+				err = a11yErr
+			}
+		}
+		if err == nil && step.SaveHAR != "" {
+			if p, harErr := SaveHAR(res.instr, artifactDir, step.SaveHAR); harErr != nil {
+				err = harErr
+			} else if opts.VerboseLog {
+				fmt.Fprintf(os.Stderr, "  [%s %d] HAR dumped to %s\n", phase, i, p)
+			}
+		}
 		// On a selector-not-found failure, give the autonomous fix
 		// loop one shot at proposing a replacement selector before we
 		// declare the step failed. This is the "tests don't rot"
@@ -419,6 +467,18 @@ func executeStep(ctx context.Context, spec *Spec, step Step) error {
 		// step's chromedp action returns.
 		return nil
 
+	case step.A11y != nil:
+		// Accessibility audit via axe-core. Injects the bundle,
+		// runs axe.run, writes the full violation list to the
+		// spec's artifacts dir, fails the step if any violation
+		// crosses min_impact (default "serious").
+		return nil
+
+	case step.SaveHAR != "":
+		// HAR dump is handled by the runner (needs access to the
+		// per-spec instrumentation state).
+		return nil
+
 	case step.Screenshot:
 		// Handled by the runner (it knows the artifact dir + index).
 		return nil
@@ -481,6 +541,10 @@ func stepDescription(step Step) string {
 		return "eval"
 	case step.Snapshot != "":
 		return "snapshot " + step.Snapshot
+	case step.A11y != nil:
+		return "a11y audit"
+	case step.SaveHAR != "":
+		return "save_har " + step.SaveHAR
 	case step.Screenshot:
 		return "screenshot"
 	}

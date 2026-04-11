@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -53,6 +54,8 @@ func runTest(args []string) {
 		runTestSDK(args[1:])
 	case "record":
 		runTestRecord(args[1:])
+	case "debug":
+		runTestDebug(args[1:])
 	case "history":
 		runTestHistory(args[1:])
 	case "flake":
@@ -198,6 +201,88 @@ func runTestHistory(args []string) {
 			}
 		}
 	}
+}
+
+// runTestDebug is a thin wrapper around tcpdump + optional axe-core
+// install. Off by default; dev runs it on demand when CDP-based
+// network capture doesn't answer the question they have.
+func runTestDebug(args []string) {
+	if len(args) == 0 {
+		fmt.Println(`Usage:
+  yaver test debug --capture-packets --iface <if> --duration <N> --out <file>
+                   Shell out to tcpdump for N seconds, write pcap to <file>.
+                   Needs sudo; open the pcap in Wireshark afterwards.
+                   Defaults: iface=en0 (macOS) / any (linux), duration=30s.
+
+  yaver test debug --install-axe
+                   Download the axe-core bundle to ~/.yaver/axe-core.js so the
+                   a11y: step works without a stub.`)
+		return
+	}
+	fs := flag.NewFlagSet("test debug", flag.ExitOnError)
+	capturePackets := fs.Bool("capture-packets", false, "run tcpdump for --duration")
+	installAxe := fs.Bool("install-axe", false, "download axe-core to ~/.yaver/axe-core.js")
+	iface := fs.String("iface", "", "network interface (default: en0 on macOS, any on linux)")
+	filter := fs.String("filter", "", "tcpdump BPF filter")
+	durationStr := fs.String("duration", "30s", "capture duration (e.g. 30s, 2m)")
+	out := fs.String("out", "", "output pcap path")
+	fs.Parse(args)
+
+	switch {
+	case *installAxe:
+		runInstallAxe()
+	case *capturePackets:
+		dur, err := time.ParseDuration(*durationStr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "bad --duration: %v\n", err)
+			os.Exit(2)
+		}
+		if *out == "" {
+			fmt.Fprintln(os.Stderr, "error: --out <file> is required for --capture-packets")
+			os.Exit(2)
+		}
+		fmt.Fprintf(os.Stderr, "▶ tcpdump starting (%s, %s) — Ctrl+C to stop\n", *iface, dur)
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		err = testkit.CapturePackets(ctx, testkit.CapturePacketsOptions{
+			Interface: *iface,
+			Filter:    *filter,
+			Duration:  dur,
+			OutPath:   *out,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "✓ wrote %s — open in Wireshark or `tcpdump -r %s`\n", *out, *out)
+	default:
+		fmt.Fprintln(os.Stderr, "nothing to do — pass --capture-packets or --install-axe")
+		os.Exit(2)
+	}
+}
+
+// runInstallAxe pulls the official axe-core bundle from jsdelivr to
+// ~/.yaver/axe-core.js. Run once per machine; the file is versioned
+// so the dev can bump by deleting and re-running.
+func runInstallAxe() {
+	home, _ := os.UserHomeDir()
+	if home == "" {
+		fmt.Fprintln(os.Stderr, "error: cannot resolve home dir")
+		os.Exit(1)
+	}
+	dir := filepath.Join(home, ".yaver")
+	_ = os.MkdirAll(dir, 0o755)
+	path := filepath.Join(dir, "axe-core.js")
+	fmt.Printf("=> downloading axe-core.js to %s\n", path)
+	cmd := exec.Command("curl", "-fsSL", "-o", path,
+		"https://cdn.jsdelivr.net/npm/axe-core@4/axe.min.js")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "curl: %v — retry later or set YAVER_AXE_CORE_PATH\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("✓ axe-core installed")
 }
 
 // runTestInit drops a starter `yaver-tests/` directory into the
