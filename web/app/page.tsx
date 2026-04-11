@@ -1558,17 +1558,17 @@ if (isDev) {
       <section className="border-t border-surface-800/60 px-6 py-24">
         <div className="mx-auto max-w-3xl">
           <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Set it up once. It runs forever.
+            Set it up once. It runs forever. Even before you sign in.
           </h2>
           <p className="mb-12 text-center text-sm text-surface-400">
-            Install as a system service on any Linux machine. Survives reboots, auto-updates itself.
+            Install on any Linux/macOS/Windows machine. The first <code className="text-surface-300">yaver serve</code> registers the OS auto-start hook and starts a minimal HTTP server in <span className="text-surface-200">bootstrap mode</span> — your phone can pair the box without you ever opening a terminal again.
           </p>
 
           <div className="space-y-6">
             {[
-              { step: 1, label: "Sign in (once — token persists across reboots)", cmd: "yaver auth", output: null },
-              { step: 2, label: "Install as systemd service", cmd: "yaver serve --install-systemd", output: "Yaver agent installed as systemd user service.\nThe agent starts automatically on login and survives reboots." },
-              { step: 3, label: "That's it. Manage with:", cmd: "systemctl --user status yaver    # status\njournalctl --user -u yaver -f    # live logs\nsystemctl --user restart yaver   # restart", output: null },
+              { step: 1, label: "First run installs the auto-start hook AND starts bootstrap mode (no auth required)", cmd: "yaver serve", output: "Registered as macOS LaunchAgent (will auto-start on login).\nYaver agent started in bootstrap mode (PID …, port 18080).\n\nThis machine has no auth token yet. The agent is up and waiting.\nOpen the Yaver mobile app (already signed in) on the same Wi-Fi —\nthe box will appear as 'needs auth', tap it to pair." },
+              { step: 2, label: "Tap the box from your phone to pair it (LAN beacon, no QR codes)", cmd: "# nothing — your phone discovers the box automatically and\n# the host check happens server-side. Guests are blocked.", output: null },
+              { step: 3, label: "Reboot any time. It comes back in bootstrap mode if unpaired,\n# normal mode if signed in. Manage with:", cmd: "yaver status                       # bootstrap / signed in\nsystemctl --user status yaver      # Linux\nlaunchctl list io.yaver.agent      # macOS", output: null },
             ].map((s) => (
               <div key={s.step} className="flex items-start gap-4">
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#22c55e]/10 text-sm font-bold text-[#22c55e]">
@@ -1601,34 +1601,28 @@ if (isDev) {
 
           <div className="mt-10 grid gap-4 md:grid-cols-3">
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <p className="text-sm font-semibold text-surface-200">Auth persists</p>
+              <p className="text-sm font-semibold text-surface-200">Bootstrap mode (zero-auth)</p>
               <p className="mt-1 text-xs text-surface-400">
-                OAuth sign-in (Google/Apple/Microsoft) saves a long-lived token to ~/.yaver/config.json. No re-auth after reboot.
+                Fresh installs come up serving <code className="text-surface-300">/health</code>, <code className="text-surface-300">/info</code>, <code className="text-surface-300">/auth/pair/*</code>, and <code className="text-surface-300">/auth/recover</code>. Everything else stays gated until a phone pairs the box.
               </p>
             </div>
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <p className="text-sm font-semibold text-surface-200">Auto-updates</p>
+              <p className="text-sm font-semibold text-surface-200">Host-only remote re-auth</p>
               <p className="mt-1 text-xs text-surface-400">
-                Checks GitHub releases every 6 hours. Downloads new binary, restarts automatically via systemd.
+                Lost the token on a remote box? The mobile app POSTs to <code className="text-surface-300">/auth/recover</code> with your Convex Bearer token. Convex looks up the device by stable hardware fingerprint — only the original host (not guests) can trigger the recovery flow. No pre-shared secret to remember.
               </p>
             </div>
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <p className="text-sm font-semibold text-surface-200">Wake-on-LAN</p>
+              <p className="text-sm font-semibold text-surface-200">Auto-updates + reboot survival</p>
               <p className="mt-1 text-xs text-surface-400">
-                Enable{" "}
-                <a href="https://wiki.archlinux.org/title/Wake-on-LAN" target="_blank" rel="noopener noreferrer" className="text-surface-300 underline hover:text-surface-100">Wake-on-LAN</a>
-                {" "}or{" "}
-                <a href="https://support.apple.com/guide/mac-help/wake-your-mac-mh11775/mac" target="_blank" rel="noopener noreferrer" className="text-surface-300 underline hover:text-surface-100">Power Nap (macOS)</a>
-                {" "}to wake your machine remotely from your phone.
+                LaunchAgent on macOS (KeepAlive=true), systemd user unit on Linux (with linger), scheduled task on Windows. Checks GitHub releases every 6h and re-execs into the new binary.
               </p>
             </div>
           </div>
 
           <p className="mt-6 text-center text-xs text-surface-500">
-            Works on any Linux machine — Mac Mini, Raspberry Pi, cloud VPS, or your desktop.
-            {" "}macOS users: <code className="text-surface-400">yaver serve</code> auto-forks to background. Use the{" "}
-            <a href="https://github.com/kivanccakmak/yaver.io" target="_blank" rel="noopener noreferrer" className="text-surface-300 underline hover:text-surface-100">desktop installer</a>
-            {" "}for login-item auto-start.
+            Works on any Mac, Linux, or Windows machine — Mac Mini, Raspberry Pi, cloud VPS, or your desktop.
+            {" "}The first <code className="text-surface-400">yaver serve</code> auto-installs the OS auto-start hook on every platform. Bootstrap mode runs even on a freshly downloaded binary with no token, so your phone is the only thing you ever need to touch.
           </p>
         </div>
       </section>

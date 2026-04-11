@@ -29,7 +29,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.85.0"
+const version = "1.86.0"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
@@ -1061,11 +1061,34 @@ func runServe(args []string) {
 		}
 	}
 
+	// Auto-register as a system service (LaunchAgent / systemd
+	// user unit / Windows scheduled task) on the very first
+	// `yaver serve`. Done BEFORE the bootstrap branch so that a
+	// brand-new install with no token still gets the always-up
+	// guarantee — on the next reboot the OS launches us in
+	// bootstrap mode automatically and the phone can pair us
+	// without anyone touching the box.
+	if execPath, execErr := os.Executable(); execErr == nil {
+		if msg := ensureAutoStart(execPath, *workDir); msg != "" {
+			fmt.Printf("  %s\n", msg)
+		}
+	}
+
 	// Bootstrap mode: if we have no token yet, don't exit with
 	// "Not signed in" — run a minimal pairing HTTP server so the
 	// user can push a token from their phone. See auth_bootstrap.go.
+	//
+	// In non-debug mode we fork the bootstrap server into the
+	// background just like the authed serve branch does, so the
+	// user can close the terminal and the box stays reachable.
 	bootstrapCfg, bootstrapErr := LoadConfig()
 	if needsBootstrap(bootstrapCfg, bootstrapErr) {
+		if !*debug {
+			if forkBootstrapToBackground(*httpPort, *workDir) {
+				return
+			}
+			// Fall through to foreground bootstrap if fork fails.
+		}
 		runBootstrapServe(*httpPort)
 		return
 	}
@@ -1234,12 +1257,13 @@ func runServe(args []string) {
 	if !offlineMode {
 		log.Printf("Registering device %s (%s) at %s:%d...", hostname, cfg.DeviceID, localIP, *httpPort)
 		if err := RegisterDevice(cfg.ConvexSiteURL, RegisterDeviceRequest{
-			Token:    cfg.AuthToken,
-			DeviceID: cfg.DeviceID,
-			Name:     hostname,
-			Platform: platform,
-			QuicHost: localIP,
-			QuicPort: *httpPort,
+			Token:      cfg.AuthToken,
+			DeviceID:   cfg.DeviceID,
+			Name:       hostname,
+			Platform:   platform,
+			QuicHost:   localIP,
+			QuicPort:   *httpPort,
+			HardwareID: HardwareID(),
 		}); err != nil {
 			if strings.Contains(err.Error(), "belongs to another user") {
 				log.Printf("Device ID conflict — generating new device ID")
@@ -1248,12 +1272,13 @@ func runServe(args []string) {
 					log.Fatalf("save config after device ID reset: %v", saveErr)
 				}
 				if err2 := RegisterDevice(cfg.ConvexSiteURL, RegisterDeviceRequest{
-					Token:    cfg.AuthToken,
-					DeviceID: cfg.DeviceID,
-					Name:     hostname,
-					Platform: platform,
-					QuicHost: localIP,
-					QuicPort: *httpPort,
+					Token:      cfg.AuthToken,
+					DeviceID:   cfg.DeviceID,
+					Name:       hostname,
+					Platform:   platform,
+					QuicHost:   localIP,
+					QuicPort:   *httpPort,
+					HardwareID: HardwareID(),
 				}); err2 != nil {
 					log.Printf("Warning: device registration failed: %v", err2)
 					offlineMode = true
@@ -3091,10 +3116,49 @@ func runRestart(args []string) {
 
 func runStatus() {
 	cfg, err := LoadConfig()
-	if err != nil || cfg.AuthToken == "" {
-		fmt.Println("Status: ✗ not signed in")
+	if err != nil || cfg == nil || cfg.AuthToken == "" {
+		// Unauthenticated path: don't bail. The agent may be
+		// running in bootstrap mode waiting for a phone to push
+		// a token over the LAN beacon or the relay tunnel. Show
+		// the user what's actually up so they know what to do
+		// next instead of just "Run yaver auth".
+		fmt.Printf("Yaver:    v%s\n", version)
+		fmt.Println("Auth:     \033[33m●\033[0m not signed in")
+
+		// Probe the local HTTP surface. If the agent is up in
+		// bootstrap mode, /info answers without auth and reports
+		// `mode: "bootstrap"`. If the full HTTPServer is running
+		// it also answers /info but with a different shape — we
+		// only claim "bootstrap" when the mode field says so.
+		info := probeBootstrapInfo(18080)
+		if info != nil && info.OK && info.Mode == "bootstrap" {
+			fmt.Printf("Agent:    \033[32m●\033[0m running (bootstrap mode, port 18080)\n")
+			if info.Hostname != "" {
+				fmt.Printf("Host:     %s\n", info.Hostname)
+			}
+			if info.Version != "" {
+				fmt.Printf("Binary:   v%s\n", info.Version)
+			}
+			fmt.Println("Mode:     bootstrap — waiting for a phone to pair")
+		} else if pid, running := isAgentRunning(); running {
+			fmt.Printf("Agent:    \033[33m●\033[0m running (PID %d, not responding to /info)\n", pid)
+		} else {
+			fmt.Printf("Agent:    \033[31m●\033[0m stopped\n")
+		}
+
+		// Auto-start state — the LaunchAgent / systemd unit
+		// will keep us up across reboots even before auth.
+		if isAutoStartInstalled() {
+			fmt.Println("Auto-start: \033[32m●\033[0m installed (will run on login/boot)")
+		} else {
+			fmt.Println("Auto-start: \033[33m●\033[0m not installed (run 'yaver serve' to install)")
+		}
+
 		fmt.Println()
-		fmt.Println("Run 'yaver auth' to sign in.")
+		fmt.Println("To sign in, either:")
+		fmt.Println("  • Run 'yaver auth' here, or")
+		fmt.Println("  • Open the Yaver mobile app on the same Wi-Fi —")
+		fmt.Println("    this machine appears as 'needs auth', tap to pair.")
 		return
 	}
 

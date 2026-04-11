@@ -115,7 +115,7 @@ for (const path of [
   "/auth/logout", "/auth/update-profile", "/auth/delete-account",
   "/auth/forgot-password", "/auth/reset-password", "/auth/change-password",
   "/auth/verify-totp",
-  "/devices/list", "/config", "/settings",
+  "/devices/list", "/devices/owner-by-hardware", "/config", "/settings",
   "/guests/invite", "/guests/accept", "/guests/accept-code",
   "/guests/revoke", "/guests/list", "/guests/hosts", "/guests/allowed",
   "/guests/config", "/guests/usage",
@@ -596,9 +596,54 @@ http.route({
       publicKey: body.publicKey || undefined,
       quicHost: body.quicHost,
       quicPort: body.quicPort,
+      hardwareId: body.hardwareId || undefined,
     });
 
     return jsonResponse({ deviceId });
+  }),
+});
+
+/**
+ * POST /devices/owner-by-hardware — Look up the owner of a
+ * device by stable hardware fingerprint. Used by the agent's
+ * /auth/recover handler to verify that a Convex bearer token
+ * (presented by a mobile app trying to remote-reauth a box)
+ * actually belongs to the same user that originally registered
+ * this hardware. The agent makes the call on behalf of the
+ * caller; we authenticate the bearer token here and reply with
+ * a simple boolean + the device record.
+ *
+ * Body: { hardwareId: string }
+ * Headers: Authorization: Bearer <caller's convex token>
+ */
+http.route({
+  path: "/devices/owner-by-hardware",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const caller = await authenticateRequest(ctx, request);
+    if (!caller) return errorResponse("Unauthorized", 401);
+
+    const body = await request.json();
+    if (!body.hardwareId || typeof body.hardwareId !== "string") {
+      return errorResponse("hardwareId required", 400);
+    }
+    const owner = await ctx.runQuery(api.devices.ownerByHardwareId, {
+      hardwareId: body.hardwareId,
+    });
+    if (!owner) {
+      return jsonResponse({ ok: true, isOwner: false, deviceFound: false });
+    }
+    return jsonResponse({
+      ok: true,
+      isOwner: owner.ownerUserId === caller.userId,
+      deviceFound: true,
+      deviceId: owner.deviceId,
+      name: owner.name,
+    });
   }),
 });
 

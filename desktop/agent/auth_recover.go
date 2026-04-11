@@ -48,8 +48,10 @@ import (
 
 // RecoveryRequest is the POST body for /auth/recover.
 type RecoveryRequest struct {
-	// Secret is the pre-shared bootstrap secret. Compared
-	// against the hash stored in Config.BootstrapSecretHash.
+	// Secret is the optional pre-shared bootstrap secret. If
+	// set, compared against the hash stored in
+	// Config.BootstrapSecretHash. Either this OR a Bearer
+	// Authorization header (host-token mode) must be present.
 	Secret string `json:"secret"`
 	// Mode picks the recovery path:
 	//   "pair"        — start a 10-minute pair window and
@@ -157,13 +159,32 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if body.Secret == "" {
-		jsonError(w, http.StatusBadRequest, "secret required")
-		return
+
+	// Two ways to authenticate this call:
+	//   1. host-token mode (preferred): the caller presents their
+	//      own Convex Bearer token. We ask Convex who owns the
+	//      hardware fingerprint of *this* machine and only allow
+	//      the request if the caller IS that owner. Means there
+	//      is nothing to remember — only the original host can
+	//      remote-reauth their own box.
+	//   2. shared-secret mode (legacy / no-prior-pairing): the
+	//      caller presents the pre-shared bootstrap secret that
+	//      was set up at install time.
+	authedAsHost := false
+	if bearer := extractBearerToken(r); bearer != "" {
+		if ok, hostErr := verifyHostToken(bearer); hostErr == nil && ok {
+			authedAsHost = true
+		}
 	}
-	if !verifyBootstrapSecret(body.Secret) {
-		jsonError(w, http.StatusForbidden, "invalid bootstrap secret")
-		return
+	if !authedAsHost {
+		if body.Secret == "" {
+			jsonError(w, http.StatusUnauthorized, "host token or bootstrap secret required")
+			return
+		}
+		if !verifyBootstrapSecret(body.Secret) {
+			jsonError(w, http.StatusForbidden, "invalid bootstrap secret")
+			return
+		}
 	}
 	if body.Mode == "" {
 		body.Mode = "pair"
@@ -220,6 +241,65 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 	default:
 		jsonError(w, http.StatusBadRequest, "mode must be 'pair' or 'device-code'")
 	}
+}
+
+// extractBearerToken pulls a Bearer token out of the
+// Authorization header, returning "" if absent or malformed.
+func extractBearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	if !strings.HasPrefix(h, "Bearer ") {
+		return ""
+	}
+	return strings.TrimSpace(h[7:])
+}
+
+// verifyHostToken asks Convex whether the bearer token belongs
+// to the original host of this machine. The check is:
+//
+//	convex /devices/owner-by-hardware
+//	  Bearer <caller token>
+//	  body  {hardwareId: <our hardware fingerprint>}
+//
+// Convex authenticates the bearer to a userId and looks up the
+// device by stable hardware fingerprint. The reply is a simple
+// {isOwner: bool}. We allow the recovery action only when the
+// caller is the registered owner. The agent might be in
+// bootstrap mode (no token of its own) — that's fine, the
+// hardware ID is local and Convex doesn't need our token to
+// answer the lookup.
+func verifyHostToken(bearer string) (bool, error) {
+	cfg, _ := LoadConfig()
+	convexURL := defaultConvexSiteURL
+	if cfg != nil && cfg.ConvexSiteURL != "" {
+		convexURL = cfg.ConvexSiteURL
+	}
+	hwid := HardwareID()
+	if hwid == "" {
+		return false, fmt.Errorf("no hardware id")
+	}
+	payload := fmt.Sprintf(`{"hardwareId":%q}`, hwid)
+	req, err := http.NewRequest("POST", convexURL+"/devices/owner-by-hardware", strings.NewReader(payload))
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		OK      bool `json:"ok"`
+		IsOwner bool `json:"isOwner"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false, err
+	}
+	return result.OK && result.IsOwner, nil
 }
 
 // requestDeviceCode is a thin wrapper around the existing

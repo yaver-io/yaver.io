@@ -559,13 +559,14 @@ func ChangePassword(baseURL, token, currentPassword, newPassword string) error {
 
 // RegisterDeviceRequest contains the fields sent when registering a device.
 type RegisterDeviceRequest struct {
-	Token     string `json:"-"`
-	DeviceID  string `json:"deviceId"`
-	Name      string `json:"name"`
-	Platform  string `json:"platform"`
-	PublicKey string `json:"publicKey"`
-	QuicHost  string `json:"quicHost"`
-	QuicPort  int    `json:"quicPort"`
+	Token      string `json:"-"`
+	DeviceID   string `json:"deviceId"`
+	Name       string `json:"name"`
+	Platform   string `json:"platform"`
+	PublicKey  string `json:"publicKey"`
+	QuicHost   string `json:"quicHost"`
+	QuicPort   int    `json:"quicPort"`
+	HardwareID string `json:"hardwareId,omitempty"`
 }
 
 // RelayServerInfo describes a relay server from platform config.
@@ -660,8 +661,9 @@ var ErrAuthExpired = fmt.Errorf("auth token expired (401)")
 // Returns ErrAuthExpired if the server returns 401.
 func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, quicHost string) error {
 	payload := map[string]interface{}{
-		"deviceId": deviceID,
-		"runners":  runners,
+		"deviceId":   deviceID,
+		"runners":    runners,
+		"hardwareId": HardwareID(),
 	}
 	if quicHost != "" {
 		payload["quicHost"] = quicHost

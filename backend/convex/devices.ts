@@ -19,6 +19,7 @@ export const registerDevice = mutation({
     publicKey: v.optional(v.string()),
     quicHost: v.string(),
     quicPort: v.number(),
+    hardwareId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -42,6 +43,7 @@ export const registerDevice = mutation({
         quicPort: args.quicPort,
         isOnline: true,
         lastHeartbeat: Date.now(),
+        ...(args.hardwareId ? { hardwareId: args.hardwareId } : {}),
       });
       return existing._id;
     }
@@ -57,7 +59,34 @@ export const registerDevice = mutation({
       isOnline: true,
       lastHeartbeat: Date.now(),
       createdAt: Date.now(),
+      hardwareId: args.hardwareId,
     });
+  },
+});
+
+/**
+ * Look up the owner of a device by its stable hardware ID.
+ * Used by the agent's /auth/recover endpoint to verify that the
+ * caller (mobile app) is the original host of a machine that has
+ * lost its auth token. No tokenHash required — the agent calls
+ * this on behalf of the caller and the host check is what gates
+ * the recovery action.
+ */
+export const ownerByHardwareId = query({
+  args: {
+    hardwareId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_hardwareId", (q) => q.eq("hardwareId", args.hardwareId))
+      .first();
+    if (!device) return null;
+    return {
+      deviceId: device.deviceId,
+      ownerUserId: device.userId,
+      name: device.name,
+    };
   },
 });
 
@@ -77,6 +106,7 @@ export const heartbeat = mutation({
       title: v.string(),
     }))),
     quicHost: v.optional(v.string()),
+    hardwareId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -98,6 +128,12 @@ export const heartbeat = mutation({
     // Update stored IP if the agent reports a new one
     if (args.quicHost && args.quicHost !== device.quicHost) {
       patch.quicHost = args.quicHost;
+    }
+    // Capture hardwareId on heartbeats too — older agents that
+    // were registered before the field existed will pick it up
+    // on their next heartbeat.
+    if (args.hardwareId && args.hardwareId !== device.hardwareId) {
+      patch.hardwareId = args.hardwareId;
     }
     await ctx.db.patch(device._id, patch);
   },
