@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -48,6 +49,16 @@ func runTest(args []string) {
 	switch args[0] {
 	case "run":
 		runTestSDK(args[1:])
+	case "record":
+		runTestRecord(args[1:])
+	case "history":
+		runTestHistory(args[1:])
+	case "flake":
+		runTestFlake(args[1:])
+	case "sync":
+		runTestSync(args[1:])
+	case "schedule":
+		runTestSchedule(args[1:])
 	case "unit":
 		runTestUnit(args[1:])
 	case "flutter":
@@ -76,19 +87,211 @@ func runTest(args []string) {
 func printTestUsage() {
 	fmt.Print(`Usage:
   yaver test run [path] [flags]       Run yaver-test-sdk specs (yaver-tests/**/*.test.yaml)
-  yaver test unit [--dir <path>]      Auto-detect and run unit tests
-  yaver test flutter [--dir <path>]   Run Flutter tests
-  yaver test android [--dir <path>]   Run Android tests (Gradle + emulator)
-  yaver test ios [--dir <path>]       Run iOS tests (Xcode + simulator)
-  yaver test e2e [--dir <path>]       Run E2E tests (Playwright/Cypress/Maestro)
+  yaver test record [flags]           Open a browser, record clicks/inputs, write a YAML spec
+  yaver test history [path]           Show recent runs from local .history.jsonl
+  yaver test flake [path]             Per-spec failure ratios from local history
+  yaver test unit [--dir <path>]      Auto-detect and run unit tests (legacy spawn)
+  yaver test flutter [--dir <path>]   Run Flutter tests (legacy spawn)
+  yaver test android [--dir <path>]   Run Android tests (legacy spawn)
+  yaver test ios [--dir <path>]       Run iOS tests (legacy spawn)
+  yaver test e2e [--dir <path>]       Run E2E tests (legacy spawn)
   yaver test list                     List test sessions
   yaver test status <id>              Show test results
 
 'yaver test run' is the embedded yaver-test-sdk runner — pure Go, no
-external Playwright/Selenium needed. See yaver-tests/example.test.yaml
-in the repo root for the spec format. Targets: web only today;
-ios-sim/android-emu/device land in M5.
+external Playwright/Selenium needed. See yaver-tests/landing.test.yaml
+for the spec format. Targets: web today; ios-sim / android-emu /
+device coming in the next slice. Run 'yaver install list' to see
+which integrations are installed on this machine.
 `)
+}
+
+func runTestRecord(args []string) {
+	fs := flag.NewFlagSet("test record", flag.ExitOnError)
+	url := fs.String("url", "", "URL to open in the browser")
+	name := fs.String("name", "recorded", "spec name (also drives the YAML filename)")
+	out := fs.String("out", "", "output path (default: yaver-tests/<name>.test.yaml)")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, `Usage: yaver test record --url <url> [flags]
+
+Opens a Chrome window pointed at --url, records every click and form
+input you make, and writes a yaver-test-sdk YAML spec to disk when
+you close the browser. Edit the resulting file to tighten selectors
+or add assertions.
+
+Flags:`)
+		fs.PrintDefaults()
+	}
+	fs.Parse(args)
+	if *url == "" {
+		fs.Usage()
+		os.Exit(2)
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	fmt.Fprintln(os.Stderr, "▶ Recording — perform the flow you want to test, then close the browser to save.")
+	spec, err := testkit.Record(ctx, testkit.RecordOptions{
+		Name:    *name,
+		URL:     *url,
+		OutPath: *out,
+	})
+	outPath := *out
+	if outPath == "" {
+		outPath = "yaver-tests/" + *name + ".test.yaml"
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "record error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintln(os.Stderr, testkit.FormatRecordSummary(spec, outPath))
+}
+
+func runTestHistory(args []string) {
+	root := "yaver-tests"
+	if len(args) > 0 {
+		root = args[0]
+	}
+	abs, _ := filepath.Abs(root)
+	hist := &testkit.History{Path: testkit.HistoryPathFor(abs)}
+	entries, err := hist.Tail(20)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	if len(entries) == 0 {
+		fmt.Println("No runs in history. Run `yaver test run` first.")
+		return
+	}
+	for _, e := range entries {
+		mark := "✓"
+		if e.Failed > 0 {
+			mark = "✗"
+		}
+		ts := e.StartedAt.Format("2006-01-02 15:04:05")
+		branch := ""
+		if e.GitBranch != "" {
+			branch = " · " + e.GitBranch
+		}
+		flaky := ""
+		if e.FlakyCount > 0 {
+			flaky = fmt.Sprintf(" · %d flaky", e.FlakyCount)
+		}
+		fmt.Printf("%s %s  %d/%d passed (%dms)%s%s\n",
+			mark, ts, e.Passed, e.Total, e.DurationMS, branch, flaky)
+		for _, sp := range e.Specs {
+			if !sp.Passed {
+				fmt.Printf("    ✗ %s: %s\n", sp.Name, sp.Error)
+			}
+		}
+	}
+}
+
+// runTestSync prints local pass markers and (when --check <sha> is
+// passed) exits non-zero if the given SHA hasn't been verified locally
+// yet. Designed to be called from a GH Actions step that wants to
+// skip a redundant cloud run.
+func runTestSync(args []string) {
+	fs := flag.NewFlagSet("test sync", flag.ExitOnError)
+	check := fs.String("check", "", "exit 0 if this SHA has a local pass marker, 1 otherwise")
+	root := fs.String("root", "yaver-tests", "spec root directory")
+	fs.Parse(args)
+	abs, _ := filepath.Abs(*root)
+
+	if *check != "" {
+		short := *check
+		if len(short) > 7 {
+			short = short[:7]
+		}
+		if testkit.HasPassMarker(abs, *check) {
+			fmt.Printf("✓ %s already passed locally\n", short)
+			os.Exit(0)
+		}
+		fmt.Printf("✗ %s has no local pass marker — run yaver test run\n", short)
+		os.Exit(1)
+	}
+
+	markers, err := testkit.LatestPassMarkers(abs, 20)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	if len(markers) == 0 {
+		fmt.Println("No pass markers yet. Run `yaver test run` first.")
+		return
+	}
+	for _, m := range markers {
+		fmt.Println(testkit.FormatMarker(m))
+	}
+}
+
+// runTestSchedule registers a cron expression with the agent so the
+// embedded runner fires automatically. Reuses the agent's existing
+// /schedules infrastructure (the same one cron jobs already use for
+// AI tasks). Solo dev never has to remember to run tests.
+func runTestSchedule(args []string) {
+	if len(args) < 2 || args[0] == "list" {
+		runTestScheduleList(args)
+		return
+	}
+	cron := args[0]
+	specRoot := "yaver-tests"
+	if len(args) >= 2 && args[1] != "" {
+		specRoot = args[1]
+	}
+
+	// POST /schedules to the local agent — registers a "yaver test
+	// run" entry that the agent's existing scheduler will fire.
+	body := map[string]interface{}{
+		"name":      "yaver-test-sdk",
+		"cron":      cron,
+		"command":   "yaver test run " + specRoot,
+		"work_dir":  ".",
+		"on_failure_notify": true,
+		"hardware_aware":    true,
+	}
+	resp, err := localAgentRequest("POST", "/schedules", body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\nIs the agent running? Start with 'yaver serve'.\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Scheduled: %v\n", resp["id"])
+}
+
+func runTestScheduleList(args []string) {
+	resp, err := localAgentRequest("GET", "/schedules", nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	enc, _ := json.MarshalIndent(resp, "", "  ")
+	fmt.Println(string(enc))
+}
+
+func runTestFlake(args []string) {
+	root := "yaver-tests"
+	if len(args) > 0 {
+		root = args[0]
+	}
+	abs, _ := filepath.Abs(root)
+	hist := &testkit.History{Path: testkit.HistoryPathFor(abs)}
+	stats, err := hist.FlakeReport(100)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	if len(stats) == 0 {
+		fmt.Println("No history yet. Run `yaver test run` a few times to populate.")
+		return
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "SPEC\tTOTAL\tPASSED\tFAILED\tFLAKY\tFAIL %")
+	for _, st := range stats {
+		fmt.Fprintf(w, "%s\t%d\t%d\t%d\t%d\t%.1f%%\n",
+			st.Name, st.Total, st.Passed, st.Failed, st.Flaky, st.FailureRatio()*100)
+	}
+	w.Flush()
 }
 
 // runTestSDK is the entry point for `yaver test run` — the embedded
@@ -205,6 +408,14 @@ Flags:`)
 	if !*noHistory {
 		hist := &testkit.History{Path: testkit.HistoryPathFor(abs)}
 		_ = hist.AppendSuite(suite, gitSHA(abs), gitBranch(abs), runtime.GOOS)
+	}
+
+	// Write a pass marker if everything succeeded. Lets a future
+	// `yaver test sync` (or a GH Actions step) skip a redundant
+	// cloud run when this SHA already passed locally.
+	if suite.Passed() {
+		_ = testkit.WritePassMarker(abs, gitSHA(abs), gitBranch(abs), runtime.GOOS,
+			len(suite.Results), suite.FinishedAt.Sub(suite.StartedAt))
 	}
 
 	suite.WriteTTY(os.Stdout)

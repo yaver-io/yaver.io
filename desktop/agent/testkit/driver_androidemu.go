@@ -155,3 +155,33 @@ func waitForBootComplete(ctx context.Context, deviceID string, timeout time.Dura
 func writeFile(path string, data []byte) error {
 	return writeFileImpl(path, data)
 }
+
+// Tap sends a tap event at (x, y) using `adb shell input tap`. Used
+// by the runner for `target: android-emu` specs once we add coordinate
+// resolution from selectors. Solo dev typically records taps via
+// `yaver test record` against an android-emu target.
+func (d *AndroidEmuDriver) Tap(ctx context.Context, deviceID string, x, y int) error {
+	_, err := runCtx(ctx, "adb", "-s", deviceID, "shell", "input", "tap", fmt.Sprintf("%d", x), fmt.Sprintf("%d", y))
+	return err
+}
+
+// Text sends keystrokes via `adb shell input text`. Spaces in text get
+// converted to %s per the adb input convention.
+func (d *AndroidEmuDriver) Text(ctx context.Context, deviceID, text string) error {
+	escaped := ""
+	for _, r := range text {
+		if r == ' ' {
+			escaped += "%s"
+		} else {
+			escaped += string(r)
+		}
+	}
+	_, err := runCtx(ctx, "adb", "-s", deviceID, "shell", "input", "text", escaped)
+	return err
+}
+
+// KeyEvent sends a hardware key (e.g. KEYCODE_BACK = 4, KEYCODE_HOME = 3).
+func (d *AndroidEmuDriver) KeyEvent(ctx context.Context, deviceID string, keycode int) error {
+	_, err := runCtx(ctx, "adb", "-s", deviceID, "shell", "input", "keyevent", fmt.Sprintf("%d", keycode))
+	return err
+}
