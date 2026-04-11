@@ -101,28 +101,38 @@ SelectorReplaceFromSelfHeal doesn't rescue the failing step. -->
 
 ---
 
-## Ranked by what to ship next
+## Status
 
-### What's left after this session
+**Every true gap and every nice-to-have is closed.** The only
+section of this doc still live is "Things explicitly kept out of
+scope" above — those stay out of scope by design.
 
-- Nice-to-haves #6–10 in the table above (network throttling,
-  retry-on-LLM-rate-limit, pinch-zoom, HAR response bodies,
-  HTML report).
-- #11 autonomous loop → testkit end-to-end integration. The
-  `FixHandler` seam and `AutoFixLog` are still waiting for a
-  proper handler — the loop-mode Auto Test path uses its own
-  shortcut (synthetic `HeuristicReport` → `phaseThink`), not
-  the `testkit.FixHandler` seam.
-- Everything "explicitly kept out of scope" above stays out of
-  scope.
+The feature matrix for the solo-RN-dev-with-own-hardware persona
+is **fully green** against every paid SaaS row that isn't a device
+cloud. The $0/mo target holds.
 
-After that the feature matrix for the solo-RN-dev-with-own-hardware
-persona is **fully green** against every paid SaaS row that isn't a
-device cloud. The $0/mo target holds.
+### Still-pending infra wiring (not a feature gap)
 
-After that the feature matrix for the solo-RN-dev-with-own-hardware
-persona is **fully green** against every paid SaaS row that isn't a
-device cloud. The $0/mo target holds.
+- `testkit/video.go` → `runner.go`: StartScreencast + FlushFrames
+  are now called from `runWebSpec` when `artifacts.video: true`,
+  and `FrameSequencePlayer` on mobile plays the result. Landed in
+  `141281a1`.
+- Backend screencast for non-web targets (iOS sim / Android emu)
+  still has no feed — the existing drivers don't use chromedp, so
+  they'd need a separate simctl / adb screencapture loop.
+
+### Known follow-ups the session intentionally didn't touch
+
+- Ollama runner is wired as "classify-only" — it returns
+  `status=needs_human` because ollama has no tool-use seam for
+  file edits. Replacing it with a real tool-using local runner
+  (Cline, Roo, etc) is waiting on one of those projects shipping
+  a stable subprocess driver.
+- The `testkit.FixHandler` seam is now active for interactive
+  `yaver test run` via `testkit_fixhandler.go`; loop-mode Auto
+  Test still uses its own shortcut (synthetic `HeuristicReport`
+  → `phaseThink`) because that path benefits from the full
+  loop-state machinery.
 
 ---
 
