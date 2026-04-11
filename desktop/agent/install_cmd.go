@@ -24,6 +24,7 @@ import (
 	"runtime"
 	"strings"
 	"text/tabwriter"
+	"time"
 )
 
 type installPlan struct {
@@ -133,6 +134,13 @@ func runInstall(args []string) {
 		return
 	}
 	for _, target := range args {
+		// WDA has its own handler — it's not a simple package
+		// install but a build+install+launch sequence against the
+		// booted iOS Simulator.
+		if target == "wda" {
+			runInstallWDA(args[1:])
+			return
+		}
 		plan, ok := lookupIntegration(target)
 		if !ok {
 			fmt.Fprintf(os.Stderr, "unknown integration %q. Try `yaver install list`.\n", target)
@@ -160,7 +168,23 @@ func listIntegrations() {
 		state := checkInstalled(plan.name)
 		fmt.Fprintf(w, "%s\t%s\t%s\n", plan.name, state, plan.description)
 	}
+	// wda is handled by wda_cmd.go, not the generic installPlan
+	// table — its "installed" probe is whether WDA answers on
+	// :8100, not whether a binary is on PATH.
+	wdaState := "—"
+	if wdaIsLive() {
+		wdaState = "✓"
+	}
+	fmt.Fprintf(w, "%s\t%s\t%s\n", "wda",
+		wdaState,
+		"WebDriverAgent for iOS Simulator tap-by-selector (`yaver install wda`)")
 	w.Flush()
+}
+
+// wdaIsLive reports whether WebDriverAgent is currently answering
+// on its default port. Cheap probe used by `yaver install list`.
+func wdaIsLive() bool {
+	return waitForWDAStatus(500*time.Millisecond) == nil
 }
 
 func checkInstalled(name string) string {
