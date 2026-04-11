@@ -26,7 +26,9 @@ Status at the time this was written:
 |---|---|---|---|
 | 1 | **iOS Simulator tap-by-selector via WDA (one-command install)** | Today `target: ios-sim` boots the sim, installs the app, launches it, and takes screenshots, but taps only work by coordinate. Selector taps need WebDriverAgent running on :8100. `testkit/driver_wda.go` already speaks WDA correctly (Click / SendKeys / Screenshot / findElement with predicate + class-chain + accessibility-id strategies). What's missing is a `yaver install wda` one-liner that downloads or builds a pre-signed WebDriverAgent.app + stands it up against the booted simulator so the dev never has to open Xcode. | ~1 day |
 | 2 | **Mobile frame-sequence video player** | Backend captures CDP screencast PNGs on failure (`testkit/video.go`, per-step ring buffer → PNG sequence on disk). The mobile "Runs" tab's viewer modal only renders single stills. The dev can eyeball the frames on disk but can't scrub the failure on their phone. Build a small `FrameSequencePlayer` component that reads the manifest and steps through the PNGs with play/pause and a scrub bar. Reuses the existing `/testkit/artifact` endpoint. | ~1 day |
-| 3 | **yaver-test-sdk user docs** | The feature set now rivals Playwright + Percy + axe-core + Applitools combined, but there's no single `docs/yaver-test-sdk.md` a new dev can read top-to-bottom. Everything is in commit messages and code comments. Write one canonical page with: intro, install, `yaver test init`, spec vocabulary reference, targets, capture config, macros, autofix log, dep installer, Hetzner deploy. Link it from README.md. | ~half day |
+<!-- #3 landed: docs/yaver-test-sdk.md is the canonical page; linked
+from README.md next to the auto-detect testing bullet. -->
+
 | 4 | **Safari driver smoke test on macOS** | `testkit/driver_safari.go` compiles and the transport path is proven by the Firefox W3C client it reuses, but there's no integration test that actually opens Safari. Safari needs `sudo safaridriver --enable` once on the host so this can't run in GH Actions — has to be a local opt-in test guarded by an env var (`YAVER_SAFARI_SMOKE=1`). | ~2 hours |
 <!-- #5 landed: step-level `- include: macros/x.test.yaml` expands in
 place. Implemented via `Step.Include` + `expandStepIncludes` in
@@ -67,14 +69,12 @@ testkit/spec.go. Test: `TestStepIncludeExpandsInPlace`. -->
 ## Ranked by what to ship next
 
 ### One-evening option
-1. **#3 docs** (half day) — the dev needs to find all the features we've already built.
-2. **#1 WDA install helper** (1 day) — kills the last iOS selector gap.
+1. **#1 WDA install helper** (1 day) — kills the last iOS selector gap.
 
 ### One-week option
-1. #3 docs
-2. #1 WDA install helper
-3. #2 mobile frame-sequence player
-4. #4 local Safari smoke target (guarded by env var)
+1. #1 WDA install helper
+2. #2 mobile frame-sequence player
+3. #4 local Safari smoke target (guarded by env var)
 
 After that the feature matrix for the solo-RN-dev-with-own-hardware
 persona is **fully green** against every paid SaaS row that isn't a
