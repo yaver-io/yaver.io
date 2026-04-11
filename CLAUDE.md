@@ -8,23 +8,19 @@
 - **Open-source safety — nothing sensitive may leak through any file that ends up in the repo.** Everything in `yaver.io/` is published publicly. Before saving a file, assume it will be read by strangers: no hardcoded credentials, no private infra IPs or hostnames, no internal-only URLs, no customer data, no personal identifiers, no file paths that embed usernames or secrets, no Slack/issue/PR links that could leak context, no raw logs from real users. Any "dev-only" shim, test fixture, or debug helper that touches real infra belongs outside the repo (e.g. `.env.test`, `../talos/`, or a gitignored scratch dir) — never inline it into a committed file because "it's just local." This applies to CLAUDE.md memory notes too.
 
 ## Repository & Deployment
-- **Source of truth**: GitLab (`gitlab.com/kivanccakmak/yaver.io`) — development happens here
-- **Public mirror**: GitHub (`github.com/kivanccakmak/yaver.io`) — open-source, single squashed initial commit, no git history
-- **To update GitHub mirror**: Push to GitLab first, then sync to GitHub with a squashed commit (see below)
+- **Source of truth**: GitHub (`github.com/kivanccakmak/yaver.io`) — open-source, all development happens here. Push directly to `main` (or via PR). The local `origin` remote may still point at the legacy GitLab mirror — use the `github` remote (`git remote add github https://github.com/kivanccakmak/yaver.io.git`) or just `git push github main`.
 - **Cloudflare Workers**: web deployed via `wrangler`. Manual deploy: `./scripts/deploy-vercel.sh` (name kept for backward compat, deploys to Cloudflare)
 - **Landing page links**: point to `https://github.com/kivanccakmak/yaver.io`
 
-### Syncing GitLab → GitHub
+### Pushing to GitHub
 ```bash
-# After pushing to GitLab, create a fresh GitHub mirror:
-cd /tmp && rm -rf yaver-github-mirror && mkdir yaver-github-mirror && cd yaver-github-mirror
-git init && git remote add origin git@github.com:kivanccakmak/yaver.io.git
-rsync -a --exclude='.git' --exclude='node_modules' --exclude='.next' --exclude='.env.test' --exclude='.env.local' --exclude='backend/.env.local' --exclude='keys/' /path/to/yaver.io/ .
-rm -rf node_modules .next keys/ .env.test backend/.env.local mobile/ios/Pods/ web/.next/ web/node_modules/ mobile/node_modules/ backend/node_modules/ desktop/installer/node_modules/ 2>/dev/null
-# SCAN FOR CREDENTIALS before pushing:
-grep -rn '37\.27\|5SJZ4KA39A\|77Z6B543D5\|7bd9329e\|NJ2VE6KEM55' . --include='*.go' --include='*.ts' --include='*.sh' --include='*.py' --include='*.md'
-git add -A && git commit -m "Update open-source release" && git push --force origin main
+# GitHub is the source of truth. The legacy GitLab mirror may still
+# be wired as `origin`; add the github remote once and push directly:
+git remote get-url github 2>/dev/null || git remote add github https://github.com/kivanccakmak/yaver.io.git
+git push github main
 ```
+Before pushing, scan for any credentials, IPs, or hostnames that
+should not be in a public repo (the open-source safety rule).
 
 ## Dev Server Proxy (Hot Reload to Phone)
 When a user asks to "run an app on my phone", "hot reload", "load the app", or "start the app":
