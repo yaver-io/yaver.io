@@ -182,6 +182,8 @@ func runLoopIteration(ctx context.Context, l *LoopState, saveState func(*LoopSta
 		return runIdeasKick(ctx, l)
 	case LoopModeDevelop:
 		return runDevelopLoop(ctx, l, saveState)
+	case LoopModeAutoTest:
+		return runAutoTestLoop(ctx, l, saveState)
 	default:
 		// auto-fix and fix are single-kick modes.
 		return runSingleKick(ctx, l, "")

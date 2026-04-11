@@ -41,6 +41,7 @@ const (
 	LoopModeAutoFix  LoopMode = "auto-fix"  // always-on hardening, radicalness 0
 	LoopModeDevelop  LoopMode = "develop"   // dev prompt → "kick until done"
 	LoopModeIdeas    LoopMode = "ideas"     // agent proposes features to multi-select
+	LoopModeAutoTest LoopMode = "auto-test" // run yaver-test-sdk specs → fix failures → re-run
 )
 
 // LoopStatus tracks the state of a loop between iterations.
@@ -71,6 +72,9 @@ type LoopSpec struct {
 	Ship     LoopShip     `yaml:"ship" json:"ship"`
 	Budget   LoopBudget   `yaml:"budget" json:"budget"`
 	Knobs    LoopKnobs    `yaml:"knobs,omitempty" json:"knobs,omitempty"`
+	// Test is the auto-test-mode config block. Only read when
+	// Mode == auto-test.
+	Test LoopTest `yaml:"test,omitempty" json:"test,omitempty"`
 }
 
 type LoopSchedule struct {

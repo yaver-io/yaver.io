@@ -88,31 +88,17 @@ last handoff" below).
   Claude and Codex see byte-identical prompts, so `think.fallback:
   [claude, codex]` can cycle between them on rate-limit errors
   without the prompt changing shape.
+- **Auto Test mode** — new `LoopMode = "auto-test"` in
+  `loop_autotest.go`. `runAutoTestLoop` walks `yaver-tests/` via
+  `testkit.DiscoverSpecs` + `testkit.Run`, wraps the first failing
+  spec as a synthetic `HeuristicReport`, hands it to `phaseThink`,
+  re-runs until green / stuck / max kicks. Spec field `test:
+  {root, retry_flake, headful}`. Tested end-to-end in the agent
+  suite.
 
 ## Gaps, ordered by value
 
-### 1. Auto Test mode
-User explicitly asked for "auto test things". Today there's no
-`auto-test` mode. Likely shape: a loop mode that runs the existing
-yaver-test-sdk specs (`yaver-tests/*.test.yaml`) and, on failure,
-asks claude to fix the failing spec or the code under test and
-re-runs. The existing `testkit/autonomous.go` has scaffolding
-hooks (`FixRequest`, `FixResult`, `FixHandler`) that were never
-wired — this is the right place to bolt Auto Dev onto.
-
-Sketch:
-- New `LoopMode = "auto-test"` in `loop_cmd.go`
-- New `runAutoTestLoop(ctx, l, saveState)` in `loop_exec.go` that:
-  1. Runs `yaver test <spec>` via the existing test runner
-  2. On red, builds a `FixRequest` and passes it through a claude
-     subprocess (same pattern as `runSingleKick` phase 3)
-  3. Re-runs the spec, loops until green or stuck budget / max kicks
-- Wire the `testkit.FixHandler` seam so the autonomous loop is the
-  implementation the test runner calls on failure
-- New `.loop.yaml` spec: `mode: auto-test`, `test.specs: [...]`,
-  `test.retry_flake: 2`
-
-### 2. Session-limits tracker runtime
+### 1. Session-limits tracker runtime
 `think.respect_session_limits` field is parsed but nothing enforces
 it. Claude Code's 5h rolling window shared with interactive use
 needs to be tracked so the loop yields during active hours.
@@ -129,7 +115,7 @@ Sketch:
   terminate with `budget_hit`
 - Persist the counter to `~/.yaver/loops/<name>/session_usage.json`
 
-### 3. aider / ollama runner support
+### 2. aider / ollama runner support
 Claude and Codex are wired. Aider is ~50 lines (subprocess, same
 JSON contract). Ollama is slightly bigger because it needs a local
 HTTP client to the ollama daemon instead of a subprocess.
