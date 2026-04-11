@@ -382,7 +382,16 @@ func (em *ExecManager) KillExec(id string) error {
 	return nil
 }
 
-// Subscribe returns a channel that receives output events for an exec session.
+// Subscribe returns a channel that receives output events for an exec
+// session. If the session is still running, the channel is registered
+// as a live listener and gets every event broadcast() emits. If the
+// session has *already* finished by the time the caller subscribes
+// (the common race on a fast CI runner where a one-shot `echo`
+// command exits before the SSE consumer connects), we replay the
+// buffered stdout/stderr + the exit event into a fresh buffered
+// channel and close it. This guarantees late subscribers always see
+// the full stream — fixing a flake in TestExecStreamSSE that only
+// reproduced under CPU pressure on GHA.
 func (em *ExecManager) Subscribe(id string) (<-chan ExecOutputEvent, error) {
 	em.mu.RLock()
 	s, ok := em.sessions[id]
@@ -390,11 +399,68 @@ func (em *ExecManager) Subscribe(id string) (<-chan ExecOutputEvent, error) {
 	if !ok {
 		return nil, fmt.Errorf("exec session not found: %s", id)
 	}
+
+	s.mu.RLock()
+	finished := s.Status != ExecStatusRunning
+	stdout := s.Stdout
+	if stdout == "" {
+		stdout = s.stdout.String()
+	}
+	stderr := s.Stderr
+	if stderr == "" {
+		stderr = s.stderr.String()
+	}
+	exitCode := s.ExitCode
+	s.mu.RUnlock()
+
+	if finished {
+		// Replay buffered output then close. Buffer big enough to
+		// hold every line + the exit event without blocking.
+		stdoutLines := splitNonEmptyLines(stdout)
+		stderrLines := splitNonEmptyLines(stderr)
+		ch := make(chan ExecOutputEvent, len(stdoutLines)+len(stderrLines)+2)
+		for _, line := range stdoutLines {
+			ch <- ExecOutputEvent{Type: "stdout", Text: line + "\n"}
+		}
+		for _, line := range stderrLines {
+			ch <- ExecOutputEvent{Type: "stderr", Text: line + "\n"}
+		}
+		exit := ExecOutputEvent{Type: "exit"}
+		if exitCode != nil {
+			code := *exitCode
+			exit.Code = &code
+		}
+		ch <- exit
+		close(ch)
+		return ch, nil
+	}
+
 	ch := make(chan ExecOutputEvent, 64)
 	s.listenersMu.Lock()
 	s.listeners = append(s.listeners, ch)
 	s.listenersMu.Unlock()
 	return ch, nil
+}
+
+// splitNonEmptyLines splits text on newlines and drops empty trailers.
+func splitNonEmptyLines(text string) []string {
+	if text == "" {
+		return nil
+	}
+	out := []string{}
+	start := 0
+	for i := 0; i < len(text); i++ {
+		if text[i] == '\n' {
+			if i > start {
+				out = append(out, text[start:i])
+			}
+			start = i + 1
+		}
+	}
+	if start < len(text) {
+		out = append(out, text[start:])
+	}
+	return out
 }
 
 // Snapshot returns a copy of the session data safe for JSON serialization.
