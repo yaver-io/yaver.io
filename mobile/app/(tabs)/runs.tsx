@@ -533,28 +533,34 @@ export default function RunsScreen() {
 
       {/* Screenshot viewer modal — opens when a failure card's
           screenshot path is tapped. Pulls the PNG via the new
-          /testkit/artifact endpoint over the existing P2P transport. */}
+          /testkit/artifact endpoint over the existing P2P transport.
+          Wrapped in ZoomableImage so the dev can pinch / pan a
+          dense UI screenshot on the phone. */}
       <Modal
         visible={!!shotPath}
         animationType="fade"
         transparent
         onRequestClose={() => setShotPath(null)}
       >
-        <Pressable
+        <View
           style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "center", alignItems: "center" }}
-          onPress={() => setShotPath(null)}
         >
           {shotPath && (
-            <Image
-              source={{
-                uri: quicClient.testkitArtifactUrl(shotPath),
-                headers: quicClient.testkitArtifactHeaders,
-              }}
-              style={{ width: "100%", height: "100%", resizeMode: "contain" }}
+            <ZoomableImage
+              uri={quicClient.testkitArtifactUrl(shotPath)}
+              headers={quicClient.testkitArtifactHeaders}
             />
           )}
-          <Text style={{ position: "absolute", bottom: 32, color: "#fff", fontSize: 12 }}>Tap to close</Text>
-        </Pressable>
+          <Pressable
+            onPress={() => setShotPath(null)}
+            style={{ position: "absolute", top: 50, right: 20, padding: 8 }}
+          >
+            <Text style={{ color: "#fff", fontSize: 18 }}>✕</Text>
+          </Pressable>
+          <Text style={{ position: "absolute", bottom: 32, color: "#fff", fontSize: 12 }}>
+            Pinch to zoom · drag to pan · ✕ to close
+          </Text>
+        </View>
       </Modal>
 
       {/* Snapshot diff viewer — three panes (baseline / current /
@@ -573,18 +579,16 @@ export default function RunsScreen() {
           {snapshotBase && (
             <>
               <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-                <Image
-                  source={{
-                    uri: quicClient.testkitArtifactUrl(
-                      snapshotPane === "baseline"
-                        ? snapshotBase
-                        : snapshotPane === "current"
-                          ? snapshotBase.replace(/\.png$/i, ".current.png")
-                          : snapshotBase.replace(/\.png$/i, ".diff.png"),
-                    ),
-                    headers: quicClient.testkitArtifactHeaders,
-                  }}
-                  style={{ width: "100%", height: "85%", resizeMode: "contain" }}
+                <ZoomableImage
+                  uri={quicClient.testkitArtifactUrl(
+                    snapshotPane === "baseline"
+                      ? snapshotBase
+                      : snapshotPane === "current"
+                        ? snapshotBase.replace(/\.png$/i, ".current.png")
+                        : snapshotBase.replace(/\.png$/i, ".diff.png"),
+                  )}
+                  headers={quicClient.testkitArtifactHeaders}
+                  heightPercent="85%"
                 />
               </View>
               <View style={{ flexDirection: "row", justifyContent: "space-around", paddingBottom: 40, paddingTop: 16 }}>
@@ -755,6 +759,107 @@ function FrameSequencePlayer({ dir, onClose }: { dir: string; onClose: () => voi
         <Text style={{ color: "#fff", fontSize: 18 }}>✕</Text>
       </Pressable>
     </>
+  );
+}
+
+// ZoomableImage wraps an <Image> with pinch-to-zoom and drag-to-pan
+// gestures implemented directly with PanResponder + Animated. Two
+// pointers → scale; one pointer → pan. Keeps the dep surface small
+// (no react-native-gesture-handler / reanimated needed), which is
+// the same philosophy as the rest of the mobile app.
+function ZoomableImage({
+  uri,
+  headers,
+  heightPercent,
+}: {
+  uri: string;
+  headers: Record<string, string>;
+  heightPercent?: `${number}%`;
+}) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const translateX = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(0)).current;
+
+  // Static baselines we reset to at the start of each gesture so
+  // the animated value deltas stay relative to the last committed
+  // transform instead of compounding across gestures.
+  const baseScale = useRef(1);
+  const basePanX = useRef(0);
+  const basePanY = useRef(0);
+  const initialPinchDistance = useRef<number | null>(null);
+
+  const pan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        initialPinchDistance.current = null;
+      },
+      onPanResponderMove: (evt, gestureState) => {
+        const touches = evt.nativeEvent.touches;
+        if (touches.length >= 2) {
+          // Pinch: two pointers → measure distance and scale
+          // relative to the first recorded distance.
+          const [a, b] = touches;
+          const dx = a.pageX - b.pageX;
+          const dy = a.pageY - b.pageY;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (initialPinchDistance.current == null) {
+            initialPinchDistance.current = dist;
+            return;
+          }
+          const next = Math.max(
+            1,
+            Math.min(5, (baseScale.current * dist) / initialPinchDistance.current),
+          );
+          scale.setValue(next);
+        } else {
+          // Single-pointer pan — only active when we're zoomed in.
+          if (baseScale.current <= 1.01) return;
+          translateX.setValue(basePanX.current + gestureState.dx);
+          translateY.setValue(basePanY.current + gestureState.dy);
+        }
+      },
+      onPanResponderRelease: () => {
+        // Commit the current transform as the next baseline.
+        // @ts-expect-error — Animated.Value exposes _value at runtime
+        baseScale.current = scale._value;
+        // @ts-expect-error
+        basePanX.current = translateX._value;
+        // @ts-expect-error
+        basePanY.current = translateY._value;
+        if (baseScale.current <= 1.01) {
+          // Snap back to centered 1x when the user zooms out
+          // below the threshold.
+          Animated.parallel([
+            Animated.spring(scale, { toValue: 1, useNativeDriver: true }),
+            Animated.spring(translateX, { toValue: 0, useNativeDriver: true }),
+            Animated.spring(translateY, { toValue: 0, useNativeDriver: true }),
+          ]).start();
+          baseScale.current = 1;
+          basePanX.current = 0;
+          basePanY.current = 0;
+        }
+        initialPinchDistance.current = null;
+      },
+    }),
+  ).current;
+
+  return (
+    <View
+      style={{ width: "100%" as const, height: heightPercent ?? ("100%" as const), overflow: "hidden" }}
+      {...pan.panHandlers}
+    >
+      <Animated.Image
+        source={{ uri, headers }}
+        style={{
+          width: "100%",
+          height: "100%",
+          resizeMode: "contain",
+          transform: [{ translateX }, { translateY }, { scale }],
+        }}
+      />
+    </View>
   );
 }
 
