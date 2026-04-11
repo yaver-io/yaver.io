@@ -15,8 +15,7 @@ import (
 
 func TestFeedbackManagerCRUD(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, err := NewFeedbackManager()
@@ -105,8 +104,7 @@ func TestFeedbackManagerCRUD(t *testing.T) {
 
 func TestFeedbackGeneratePrompt(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -147,8 +145,7 @@ func TestFeedbackGeneratePrompt(t *testing.T) {
 
 func TestFeedbackHTTPUpload(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -195,8 +192,7 @@ func TestFeedbackHTTPUpload(t *testing.T) {
 
 func TestFeedbackHTTPList(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -213,8 +209,7 @@ func TestFeedbackHTTPList(t *testing.T) {
 
 func TestFeedbackHTTPNotFound(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()
@@ -243,8 +238,7 @@ func TestFeedbackHTTPNoManager(t *testing.T) {
 
 func TestFeedbackHTTPVideoServe(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", "")
+	t.Setenv("HOME", tmpDir)
 	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
 
 	fm, _ := NewFeedbackManager()

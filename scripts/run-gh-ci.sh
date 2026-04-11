@@ -41,7 +41,7 @@ fi
 REPO_SLUG=""
 if git remote | grep -qx github; then
   REPO_SLUG="$(git remote get-url github \
-    | sed -E 's#.*github\.com[:/]+([^/]+/[^/.]+)(\.git)?#\1#')"
+    | sed -E 's#^.*github\.com[:/]##; s#\.git$##')"
 else
   REPO_SLUG="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"
 fi
@@ -54,13 +54,16 @@ echo "=> repo: $REPO_SLUG"
 echo "=> branch: $BRANCH"
 
 # Build the list of dispatchable workflows: those whose YAML contains `workflow_dispatch`.
-mapfile -t ALL_WORKFLOWS < <(
-  for f in .github/workflows/*.yml .github/workflows/*.yaml; do
-    [[ -f "$f" ]] || continue
-    grep -q "workflow_dispatch" "$f" || continue
-    basename "$f" | sed -E 's/\.(yml|yaml)$//'
-  done
-)
+# Avoid `mapfile` so this runs on macOS bash 3.
+ALL_WORKFLOWS=()
+for f in .github/workflows/*.yml .github/workflows/*.yaml; do
+  [[ -f "$f" ]] || continue
+  grep -q "workflow_dispatch" "$f" || continue
+  name="$(basename "$f")"
+  name="${name%.yml}"
+  name="${name%.yaml}"
+  ALL_WORKFLOWS+=("$name")
+done
 
 if [[ "${1:-}" == "--list" ]]; then
   echo "Dispatchable workflows on $BRANCH:"
@@ -96,9 +99,10 @@ fi
 echo "=> workflows to run: ${TARGETS[*]}"
 echo
 
-# Trigger each workflow and record its pre-dispatch run count so we can
-# identify the new run reliably (gh gives no run ID on dispatch).
-declare -A RUN_IDS=()
+# Trigger each workflow and record its run id. We keep parallel arrays so
+# this runs on macOS bash 3 (no associative arrays).
+RUN_NAMES=()
+RUN_IDS=()
 for w in "${TARGETS[@]}"; do
   echo "-- dispatching: $w"
   before_ids=$(gh run list --repo "$REPO_SLUG" --workflow "$w.yml" --branch "$BRANCH" --limit 20 --json databaseId -q '[.[].databaseId] | join(",")' || echo "")
@@ -106,7 +110,7 @@ for w in "${TARGETS[@]}"; do
 
   # Poll for the new run (up to 30s) — dispatch → run creation has lag.
   new_id=""
-  for _ in {1..30}; do
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
     sleep 1
     after_ids=$(gh run list --repo "$REPO_SLUG" --workflow "$w.yml" --branch "$BRANCH" --limit 20 --json databaseId -q '[.[].databaseId] | join(",")' || echo "")
     # First id in the new set that isn't in the old set is our run.
@@ -122,7 +126,8 @@ for w in "${TARGETS[@]}"; do
     echo "   ! could not locate new run for $w (maybe dispatch was rate-limited)"
     continue
   fi
-  RUN_IDS["$w"]="$new_id"
+  RUN_NAMES+=("$w")
+  RUN_IDS+=("$new_id")
   echo "   run: https://github.com/$REPO_SLUG/actions/runs/$new_id"
 done
 
@@ -135,8 +140,10 @@ echo
 echo "=> waiting for runs to finish..."
 
 exit_code=0
-for w in "${!RUN_IDS[@]}"; do
-  id="${RUN_IDS[$w]}"
+i=0
+while [[ $i -lt ${#RUN_IDS[@]} ]]; do
+  w="${RUN_NAMES[$i]}"
+  id="${RUN_IDS[$i]}"
   echo
   echo "── $w (run $id) ──────────────────────────────────────────────"
   # gh run watch blocks until completion and exits non-zero on failure.
@@ -147,6 +154,7 @@ for w in "${!RUN_IDS[@]}"; do
     echo "✗ $w failed — dumping failing step logs:"
     gh run view "$id" --repo "$REPO_SLUG" --log-failed || true
   fi
+  i=$((i + 1))
 done
 
 exit "$exit_code"
