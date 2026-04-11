@@ -4,7 +4,8 @@ Pick-up notes for the next session. This is a focused checklist, not
 a full design doc — the design lives in
 `docs/roadmap_ci_solo_developer_lower_costs.md` M8.
 
-Last session ended at commit `bbd5ecaf` on github/main.
+Last session ended with worktree isolation landed (see "Done since
+last handoff" below).
 
 ## Current state (what's already wired)
 
@@ -43,40 +44,28 @@ Last session ended at commit `bbd5ecaf` on github/main.
   the running daemon's `/schedules` endpoint so loops auto-tick.
   `loop stop / remove` DELETE the schedule.
 - **Safety rails** (runtime, not just docs):
-  - Refuses to run over a dirty working tree (pragmatic substitute
-    for worktree isolation until that lands)
+  - Per-loop worktree isolation — kicks run inside
+    `~/.yaver/loops/<name>/worktree` (detached HEAD off
+    `ship.branch`), never touching the dev's main tree
   - STOP kill-file watchdog cancels iteration context
   - Green-gate failure triggers `git reset --hard preSHA &&
-    git clean -fd`
+    git clean -fd` inside the worktree
   - `schedule.timeout` honored as context deadline
+
+## Done since last handoff
+
+- **Worktree isolation** — `runSingleKick` and `runIdeasKick` now run
+  inside `~/.yaver/loops/<name>/worktree`, created with `--detach` off
+  `ship.branch`. `ensureWorktree` refreshes the worktree to the
+  branch tip before every kick; `removeWorktree` (called from
+  `loop remove`) prunes it. `phaseCommit` pushes via `HEAD:<branch>`
+  so the detached head still lands on `main`. The dirty-tree bail is
+  gone — Auto Dev no longer refuses to run against active repos.
+  Dead code `deriveWorkDir` / `gitIsDirty` removed.
 
 ## Gaps, ordered by value
 
-### 1. Worktree isolation (highest)
-Right now Auto Dev bails if the working tree is dirty. The doc
-promises `.yaver/loops/<name>/worktree/` per-loop worktrees so the
-dev's main tree is never touched. Without this the loop is useless
-on the dev's active repo.
-
-Implementation sketch:
-- `git worktree add -B yaver-loop-<name> .yaver/loops/<name>/worktree <branch>`
-  on first run (or if the worktree dir is missing)
-- `runSingleKick` should operate inside the worktree path, not cwd
-- Between kicks: `git -C worktree fetch && git -C worktree reset --hard origin/<branch>`
-  to refresh from the current branch tip before the next kick
-- On stop / rollback: `git -C worktree reset --hard preSHA && git -C worktree clean -fd`
-- The worktree branch defaults to the spec's `ship.branch` — if
-  that's `main`, the worktree is on a detached `main` head so
-  commits still land on `main`
-- Must prune the worktree cleanly on `yaver loop remove`
-
-Files to touch:
-- `loop_exec.go:runSingleKick` (replace `workDir := deriveWorkDir(l)` with a worktree-aware version)
-- `loop_exec.go:gitIsDirty` (still useful as a check on the worktree itself)
-- new `loop_exec.go:ensureWorktree(l *LoopState) (string, error)` helper
-- `loop_cmd.go:loopRemove` — `git worktree remove -f` cleanup
-
-### 2. Mobile HTTP endpoints (`/autodev/*`)
+### 1. Mobile HTTP endpoints (`/autodev/*`)
 The mobile Auto Dev tab (`mobile/app/(tabs)/autodev.tsx`) renders an
 empty state because no endpoints exist. The Go side needs to expose:
 
@@ -98,7 +87,7 @@ Files to touch:
 - `mobile/app/(tabs)/autodev.tsx` — replace empty-state fallbacks
   with real calls through `quicClient.autodev*`
 
-### 3. Auto Test mode
+### 2. Auto Test mode
 User explicitly asked for "auto test things". Today there's no
 `auto-test` mode. Likely shape: a loop mode that runs the existing
 yaver-test-sdk specs (`yaver-tests/*.test.yaml`) and, on failure,
@@ -119,7 +108,7 @@ Sketch:
 - New `.loop.yaml` spec: `mode: auto-test`, `test.specs: [...]`,
   `test.retry_flake: 2`
 
-### 4. Session-limits tracker runtime
+### 3. Session-limits tracker runtime
 `think.respect_session_limits` field is parsed but nothing enforces
 it. Claude Code's 5h rolling window shared with interactive use
 needs to be tracked so the loop yields during active hours.
@@ -136,7 +125,7 @@ Sketch:
   terminate with `budget_hit`
 - Persist the counter to `~/.yaver/loops/<name>/session_usage.json`
 
-### 5. Release-train TestFlight gating
+### 4. Release-train TestFlight gating
 `Budget.MaxTestFlightPerDay` is parsed and hard-capped at 10, but
 nothing actually checks it before running a deploy. The doc's
 "release train" (deploy to TF only when N consecutive green
@@ -156,7 +145,7 @@ Sketch:
 - Expose a `ship.release_train: {N: 3, paused: false, target: "testflight"}`
   block in the spec
 
-### 6. Concurrency guard for loops.json
+### 5. Concurrency guard for loops.json
 `loadLoops` + `saveLoops` have no mutex or file lock. Two concurrent
 `yaver loop run` invocations (or a scheduled tick plus a manual
 `loop stop`) can race and clobber state.
@@ -169,7 +158,7 @@ Sketch:
 - Minimum viable: atomic rename `loops.json.tmp → loops.json` in
   `saveLoops` so partial writes never corrupt the live file
 
-### 7. codex / aider / ollama runner support
+### 6. codex / aider / ollama runner support
 Only `claude-code` is wired in `phaseThink`. Stubs return a clear
 error (not a silent fake). Adding codex / aider is ~50 lines each:
 new `spawnCodex(...)`, same JSON contract parsing. Ollama is
@@ -211,10 +200,11 @@ yaver loop prompt pick e2e-autofix <idea-id> --ideas-from e2e-ideas --run
   offline, `loop add` prints a warning but the spec is still
   registered locally. Iterations run via manual `yaver loop run`
   until the daemon comes back.
-- **Dirty-tree bail** will fire on every run against sfmg / yaver.io
-  because those repos are under active edit. Until worktree
-  isolation lands, run Auto Dev only against scratch repos or
-  after stashing manual work.
+- **Worktree first run** does a full `git worktree add` which can
+  take a few seconds on large repos. Subsequent kicks just reset
+  + fetch, so they're fast. The worktree lives at
+  `~/.yaver/loops/<name>/worktree` and is torn down by
+  `yaver loop remove`.
 
 ## Relevant commits (github/main)
 

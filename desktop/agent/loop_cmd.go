@@ -1366,6 +1366,9 @@ func loopRemove(args []string) {
 		os.Exit(1)
 	}
 	unscheduleLoopViaDaemon(l)
+	if err := removeWorktree(l); err != nil {
+		fmt.Fprintf(os.Stderr, "warn: prune worktree for %q: %v\n", name, err)
+	}
 	delete(loops, name)
 	if err := saveLoops(loops); err != nil {
 		fmt.Fprintf(os.Stderr, "save loops: %v\n", err)
