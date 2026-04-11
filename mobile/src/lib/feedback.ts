@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { NativeModules, Platform } from 'react-native';
 
 export interface FeedbackSession {

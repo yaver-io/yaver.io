@@ -2509,7 +2509,7 @@ export default function SettingsScreen() {
                     { text: "Cancel", style: "cancel" },
                     {
                       text: "Next",
-                      onPress: (currentPw) => {
+                      onPress: (currentPw?: string) => {
                         if (!currentPw) return;
                         Alert.prompt(
                           "New Password",
@@ -2518,7 +2518,7 @@ export default function SettingsScreen() {
                             { text: "Cancel", style: "cancel" },
                             {
                               text: "Change",
-                              onPress: async (newPw) => {
+                              onPress: async (newPw?: string) => {
                                 if (!newPw || newPw.length < 8) {
                                   Alert.alert("Error", "Password must be at least 8 characters.");
                                   return;

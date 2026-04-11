@@ -3,6 +3,7 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -12,18 +13,19 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      cli: ${{ steps.filter.outputs.cli }}
-      relay: ${{ steps.filter.outputs.relay }}
-      mobile: ${{ steps.filter.outputs.mobile }}
-      web: ${{ steps.filter.outputs.web }}
-      backend: ${{ steps.filter.outputs.backend }}
-      installer: ${{ steps.filter.outputs.installer }}
-      mcp: ${{ steps.filter.outputs.mcp }}
-      sdk: ${{ steps.filter.outputs.sdk }}
+      cli: ${{ steps.resolve.outputs.cli }}
+      relay: ${{ steps.resolve.outputs.relay }}
+      mobile: ${{ steps.resolve.outputs.mobile }}
+      web: ${{ steps.resolve.outputs.web }}
+      backend: ${{ steps.resolve.outputs.backend }}
+      installer: ${{ steps.resolve.outputs.installer }}
+      mcp: ${{ steps.resolve.outputs.mcp }}
+      sdk: ${{ steps.resolve.outputs.sdk }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
         id: filter
+        if: github.event_name == 'pull_request'
         with:
           filters: |
             cli:
@@ -42,8 +44,29 @@ jobs:
               - 'desktop/installer/**'
             sdk:
               - 'sdk/**'
+      # On workflow_dispatch we don't have a base ref to diff against, so run
+      # every component unconditionally. On pull_request, forward the
+      # paths-filter output as-is.
+      - name: Resolve filter outputs
+        id: resolve
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            for name in cli relay mcp mobile web backend installer sdk; do
+              echo "$name=true" >> "$GITHUB_OUTPUT"
+            done
+          else
+            echo "cli=${{ steps.filter.outputs.cli }}" >> "$GITHUB_OUTPUT"
+            echo "relay=${{ steps.filter.outputs.relay }}" >> "$GITHUB_OUTPUT"
+            echo "mcp=${{ steps.filter.outputs.mcp }}" >> "$GITHUB_OUTPUT"
+            echo "mobile=${{ steps.filter.outputs.mobile }}" >> "$GITHUB_OUTPUT"
+            echo "web=${{ steps.filter.outputs.web }}" >> "$GITHUB_OUTPUT"
+            echo "backend=${{ steps.filter.outputs.backend }}" >> "$GITHUB_OUTPUT"
+            echo "installer=${{ steps.filter.outputs.installer }}" >> "$GITHUB_OUTPUT"
+            echo "sdk=${{ steps.filter.outputs.sdk }}" >> "$GITHUB_OUTPUT"
+          fi
 
   version-check:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
