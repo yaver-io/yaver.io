@@ -1,0 +1,28 @@
+# yaver-test-sdk spec — landing page smoke
+#
+# Run with:
+#   cd web && npm run dev &      # start the Next.js dev server on :3000
+#   yaver test run               # picks up every yaver-tests/*.test.yaml
+#
+# Failure artifacts (screenshots) land in
+# yaver-tests/.yaver-test-results/landing/. The runner ships inside the
+# `yaver` Go binary — no Playwright, no Selenium, no Node test runner
+# needed. The dev's own machine is the CI runner; cost = $0.
+
+name: landing
+target: web
+url: http://127.0.0.1:3000
+viewport: { width: 1280, height: 800 }
+timeout_ms: 10000
+
+artifacts:
+  on: failure
+  screenshot: true
+
+steps:
+  - goto: /
+  - wait_for: h1
+  - assert.title: Yaver
+  - assert.visible: 'h1'
+  - assert.text: AI writes the code
+  - assert.text: Yaver tests it on your real device

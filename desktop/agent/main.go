@@ -3826,6 +3826,112 @@ func runDoctor() {
 		warning("sdk-manifest.json not found in cwd")
 	}
 
+	// 8. Local CI integrations (yaver-test-sdk M4+)
+	// What the dev needs on their own machine to run the embedded test
+	// runner against the various targets — so they can stop paying for
+	// BrowserStack/Sauce/Percy and use their own laptop instead.
+	fmt.Println("\n── Local CI integrations (yaver-test-sdk) ──")
+
+	// Chrome / Chromium for `target: web`
+	check("Chrome / Chromium")
+	if path, ver := detectChromeForCI(); path != "" {
+		pass(fmt.Sprintf("%s (%s)", path, ver))
+	} else {
+		warning("not found — install Google Chrome or Chromium for `yaver test run` web target")
+	}
+
+	// Firefox (optional second browser)
+	check("Firefox")
+	if path, ver := detectBinaryWithVersion("firefox", "--version"); path != "" {
+		pass(fmt.Sprintf("%s (%s)", path, ver))
+	} else {
+		warning("not installed (optional — only needed for cross-browser snapshots)")
+	}
+
+	// Xcode + simctl for iOS Simulator (M5)
+	check("Xcode / simctl")
+	if runtime.GOOS == "darwin" {
+		if path, _ := detectBinaryWithVersion("xcrun", "--version"); path != "" {
+			// `xcrun simctl help` exits 0 even when only the placeholder
+			// CommandLineTools shim is installed; check for a real Xcode
+			// developer dir to avoid false positives.
+			out, _ := osexec.Command("xcode-select", "-p").Output()
+			devPath := strings.TrimSpace(string(out))
+			if devPath != "" && !strings.HasSuffix(devPath, "CommandLineTools") {
+				pass(fmt.Sprintf("xcode-select -p: %s", devPath))
+			} else {
+				warning("only Command Line Tools installed — full Xcode required for iOS Simulator (M5)")
+			}
+		} else {
+			warning("xcrun not found — install Xcode from the App Store for iOS Simulator (M5)")
+		}
+	} else {
+		warning("not on macOS — iOS Simulator unavailable (use a Mac)")
+	}
+
+	// Android SDK (emulator + adb) for Android Emulator (M5)
+	check("Android SDK (adb)")
+	if path, ver := detectBinaryWithVersion("adb", "--version"); path != "" {
+		pass(fmt.Sprintf("%s (%s)", path, firstLine(ver)))
+	} else {
+		warning("adb not found — install Android Studio / Android SDK for Android Emulator (M5)")
+	}
+	check("Android emulator")
+	if path, _ := osexec.LookPath("emulator"); path != "" {
+		out, _ := osexec.Command(path, "-list-avds").Output()
+		avds := strings.TrimSpace(string(out))
+		if avds != "" {
+			pass(fmt.Sprintf("%s — AVDs: %s", path, strings.ReplaceAll(avds, "\n", ", ")))
+		} else {
+			warning(fmt.Sprintf("%s present but no AVDs created (run `avdmanager create avd`)", path))
+		}
+	} else {
+		warning("not found — install via `sdkmanager emulator`")
+	}
+
+	// Appium (optional — agent will eventually drive it directly, but
+	// today the dev may already be using it)
+	check("Appium")
+	if path, ver := detectBinaryWithVersion("appium", "--version"); path != "" {
+		pass(fmt.Sprintf("%s (%s)", path, ver))
+	} else {
+		warning("not installed (optional — yaver-test-sdk M5 will embed the WebDriver bridge)")
+	}
+
+	// Selenium server (almost always optional — chromedp speaks CDP
+	// directly, so most users will never need this)
+	check("Selenium server")
+	if path, _ := detectBinaryWithVersion("selenium-server", "--version"); path != "" {
+		pass(path)
+	} else if path, _ := osexec.LookPath("selenium-side-runner"); path != "" {
+		pass(path)
+	} else {
+		warning("not installed (optional — chromedp drives Chrome via CDP, no Selenium needed)")
+	}
+
+	// Node, npm, npx — only needed if the dev still wants to run
+	// Playwright / Cypress as a fallback for things yaver-test-sdk
+	// doesn't cover yet.
+	check("Node.js")
+	if path, ver := detectBinaryWithVersion("node", "--version"); path != "" {
+		pass(fmt.Sprintf("%s (%s)", path, ver))
+	} else {
+		warning("not installed (optional — only for legacy Playwright/Cypress fallback)")
+	}
+
+	// Hardware status — battery + load
+	hs := testkitHostStatus()
+	check("Host status")
+	if hs.OnBattery {
+		warning(fmt.Sprintf("on battery (%d%%) — `yaver test schedule` will defer runs", hs.BatteryPct))
+	} else {
+		if hs.BatteryPct >= 0 {
+			pass(fmt.Sprintf("AC power, %d%% battery, %d cores, load %.2f", hs.BatteryPct, hs.NumCPU, hs.LoadAvg1))
+		} else {
+			pass(fmt.Sprintf("AC power, %d cores, load %.2f", hs.NumCPU, hs.LoadAvg1))
+		}
+	}
+
 	// Summary
 	fmt.Println()
 	fmt.Printf("Doctor summary: %d passed, %d warnings, %d failures\n", ok, warn, fail)

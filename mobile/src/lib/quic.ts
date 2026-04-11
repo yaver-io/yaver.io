@@ -2156,6 +2156,173 @@ export class QuicClient {
       return res.ok;
     } catch { return false; }
   }
+
+  // ── yaver-test-sdk (embedded local CI runner) ───────────────────────
+  // Drives the agent's chromedp-backed runner over the existing P2P
+  // transport. Specs live in the user's repo at yaver-tests/*.test.yaml,
+  // results live on the agent's disk; nothing here ever talks to Convex.
+
+  /** List the spec files the agent would run. */
+  async testkitListSpecs(root?: string): Promise<TestkitSpec[]> {
+    try {
+      const url = root
+        ? `${this.baseUrl}/testkit/specs?root=${encodeURIComponent(root)}`
+        : `${this.baseUrl}/testkit/specs`;
+      const res = await fetch(url, { headers: this.authHeaders });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const data = await res.json();
+      return data.specs || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Get the current run status (running flag + last suite). */
+  async testkitRunStatus(): Promise<TestkitRunStatus | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/testkit/run`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  /** Kick off a new run. Returns false if another run is already in progress. */
+  async testkitStartRun(opts: TestkitRunOpts = {}): Promise<{ ok: boolean; reason?: string }> {
+    try {
+      const res = await fetch(`${this.baseUrl}/testkit/run`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(opts),
+      });
+      if (res.ok || res.status === 202) return { ok: true };
+      const text = await res.text();
+      return { ok: false, reason: text || `HTTP ${res.status}` };
+    } catch (e: any) {
+      return { ok: false, reason: e?.message ?? "network error" };
+    }
+  }
+
+  /** Local run history (most recent 50 entries). */
+  async testkitHistory(root?: string): Promise<TestkitHistoryEntry[]> {
+    try {
+      const url = root
+        ? `${this.baseUrl}/testkit/history?root=${encodeURIComponent(root)}`
+        : `${this.baseUrl}/testkit/history`;
+      const res = await fetch(url, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.entries || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Per-spec failure ratios over the last 100 runs. */
+  async testkitFlakeReport(root?: string): Promise<TestkitFlakeStats[]> {
+    try {
+      const url = root
+        ? `${this.baseUrl}/testkit/flake?root=${encodeURIComponent(root)}`
+        : `${this.baseUrl}/testkit/flake`;
+      const res = await fetch(url, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.stats || [];
+    } catch {
+      return [];
+    }
+  }
+}
+
+export interface TestkitSpec {
+  name: string;
+  path: string;
+  target: "web" | "ios-sim" | "android-emu" | "device";
+  url?: string;
+  step_count: number;
+}
+
+export interface TestkitRunOpts {
+  root?: string;
+  concurrency?: number;
+  retries?: number;
+  headful?: boolean;
+  update_snapshots?: boolean;
+  ac_power_only?: boolean;
+  max_load?: number;
+}
+
+export interface TestkitRunStatus {
+  running: boolean;
+  root: string;
+  started_at?: string;
+  last_suite?: TestkitSuite;
+}
+
+export interface TestkitSuite {
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  total: number;
+  passed: number;
+  failed: number;
+  results: TestkitSuiteResult[];
+}
+
+export interface TestkitSuiteResult {
+  name: string;
+  path: string;
+  target: string;
+  passed: boolean;
+  duration_ms: number;
+  error?: string;
+  steps: TestkitSuiteStep[];
+}
+
+export interface TestkitSuiteStep {
+  index: number;
+  phase: string;
+  description: string;
+  duration_ms: number;
+  error?: string;
+  screenshot?: string;
+}
+
+export interface TestkitHistoryEntry {
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  total: number;
+  passed: number;
+  failed: number;
+  flaky_count: number;
+  git_sha?: string;
+  git_branch?: string;
+  host_os: string;
+  specs: TestkitHistorySpec[];
+}
+
+export interface TestkitHistorySpec {
+  name: string;
+  path: string;
+  target: string;
+  passed: boolean;
+  flaky?: boolean;
+  attempt: number;
+  duration_ms: number;
+  error?: string;
+}
+
+export interface TestkitFlakeStats {
+  name: string;
+  path: string;
+  total: number;
+  passed: number;
+  failed: number;
+  flaky: number;
 }
 
 /** Container sandbox status returned by the agent. */
