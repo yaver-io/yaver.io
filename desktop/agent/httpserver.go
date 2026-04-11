@@ -189,6 +189,41 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/project/wizard/generate", s.auth(s.handleWizardGenerate))
 	mux.HandleFunc("/project/wizard/session", s.auth(s.handleWizardSession))
 	mux.HandleFunc("/project/wizard/questions", s.auth(s.handleWizardQuestions))
+
+	// Forms — public submit endpoint, owner-managed CRUD
+	mux.HandleFunc("/forms", s.auth(s.handleForms))
+	mux.HandleFunc("/forms/", s.handleFormsRouter)
+
+	// Newsletter — public subscribe/confirm/unsub, owner broadcast
+	mux.HandleFunc("/newsletter/subscribe", s.handleNewsletterSubscribe)
+	mux.HandleFunc("/newsletter/confirm", s.handleNewsletterConfirm)
+	mux.HandleFunc("/newsletter/unsubscribe", s.handleNewsletterUnsubscribe)
+	mux.HandleFunc("/newsletter/subscribers", s.auth(s.handleNewsletterSubscribers))
+	mux.HandleFunc("/newsletter/campaigns", s.auth(s.handleNewsletterCampaigns))
+	mux.HandleFunc("/newsletter/campaigns/", s.auth(s.handleNewsletterSend))
+
+	// Job queue — persistent background jobs with retries/DLQ
+	mux.HandleFunc("/jobs", s.auth(s.handleJobs))
+	mux.HandleFunc("/jobs/enqueue", s.auth(s.handleJobsEnqueue))
+	mux.HandleFunc("/jobs/", s.auth(s.handleJobAction))
+
+	// Image optimizer — on-demand resize + reencode + disk cache
+	mux.HandleFunc("/img", s.auth(s.handleImgOptimize))
+
+	// PDF generation — HTML or URL → PDF via embedded Chromium
+	mux.HandleFunc("/pdf/render", s.auth(s.handlePDFRender))
+
+	// Self-hosted OAuth provider — discovery, authorize, token, jwks
+	// All unauthenticated because OAuth is its own auth system.
+	mux.HandleFunc("/oauth/.well-known/openid-configuration", s.handleOauthDiscovery)
+	mux.HandleFunc("/oauth/authorize", s.handleOauthAuthorize)
+	mux.HandleFunc("/oauth/login", s.handleOauthLogin)
+	mux.HandleFunc("/oauth/token", s.handleOauthToken)
+	mux.HandleFunc("/oauth/userinfo", s.handleOauthUserinfo)
+	mux.HandleFunc("/oauth/jwks", s.handleOauthJWKS)
+	// CRUD for registered clients + users — owner-only
+	mux.HandleFunc("/oauth/clients", s.auth(s.handleOauthClients))
+	mux.HandleFunc("/oauth/users", s.auth(s.handleOauthUsers))
 	mux.HandleFunc("/analytics", s.auth(s.handleAnalytics))
 	mux.HandleFunc("/session/list", s.auth(s.handleSessionList))
 	mux.HandleFunc("/session/export", s.auth(s.handleSessionExport))
