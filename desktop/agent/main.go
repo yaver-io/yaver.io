@@ -114,6 +114,8 @@ func main() {
 		runRepo(os.Args[2:])
 	case "pipeline":
 		runPipeline(os.Args[2:])
+	case "loop":
+		runLoop(os.Args[2:])
 	case "feedback":
 		runFeedback(os.Args[2:])
 	case "voice":
@@ -132,6 +134,8 @@ func main() {
 		runForgotPassword(os.Args[2:])
 	case "change-password":
 		runChangePassword(os.Args[2:])
+	case "install":
+		runInstall(os.Args[2:])
 	case "doctor":
 		runDoctor()
 	case "completion":
@@ -220,6 +224,13 @@ Usage:
   yaver repo switch <name>  Switch working directory to a project
   yaver repo refresh   Re-run project discovery
   yaver pipeline --test --deploy <target>  Build → test → deploy in one command
+  yaver loop add <spec.yaml>   Register an auto-dev loop from a .loop.yaml
+  yaver loop list              List registered loops and their status
+  yaver loop run <name>        Run one iteration of a loop (blocking)
+  yaver loop stop <name>       Stop a running loop immediately
+  yaver loop pause <name>      Pause a loop until resumed
+  yaver loop resume <name>     Resume a paused loop
+  yaver loop status <name>     Show detailed status for one loop
   yaver voice setup [--provider <name>]  Set up a voice provider (personaplex, openai)
   yaver voice serve      Start voice inference server (PersonaPlex)
   yaver voice status     Show voice provider status
