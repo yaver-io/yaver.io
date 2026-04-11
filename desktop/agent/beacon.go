@@ -27,6 +27,10 @@ type beaconPayload struct {
 	TLSFingerprint   string `json:"tf,omitempty"`  // SHA256 of TLS cert
 	TLSPort          int    `json:"tp,omitempty"`  // HTTPS port
 	HardwareID       string `json:"hw,omitempty"`  // stable hardware identifier (P2P only, never sent to Convex)
+	// Bootstrap mode fields — only set while the box is running
+	// `yaver serve` with no auth token.
+	NeedsAuth        bool   `json:"na,omitempty"`  // true = waiting for a token via /auth/pair/submit
+	BootstrapPasskey string `json:"pk,omitempty"`  // 6-char pairing passkey (LAN-trust model; empty if suppressed)
 }
 
 // tokenFingerprint returns the first 8 hex chars of SHA256(userId).

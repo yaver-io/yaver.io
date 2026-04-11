@@ -17,6 +17,8 @@ import { Device, RunnerInfo, useDevice } from "../../src/context/DeviceContext";
 import { useAuth } from "../../src/context/AuthContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient } from "../../src/lib/quic";
+import { beaconListener, type DiscoveredDevice } from "../../src/lib/beacon";
+import { submitPair, fetchPairInfo } from "../../src/lib/pairDevice";
 
 function ConnectionBadge({ status }: { status: string }) {
   const c = useColors();
@@ -410,7 +412,7 @@ function SetupInstructions() {
 
 export default function DevicesScreen() {
   const c = useColors();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const {
     devices,
     activeDevice,
@@ -425,6 +427,65 @@ export default function DevicesScreen() {
 
   const [guestCode, setGuestCode] = useState("");
   const [guestLoading, setGuestLoading] = useState(false);
+
+  // Bootstrap devices — fresh yaver boxes on the LAN that are
+  // running `yaver serve` in unauthenticated mode. Tapping one
+  // pushes this phone's token to it so the box joins the user's
+  // account without ever needing SSH/terminal access.
+  const [bootstrapDevices, setBootstrapDevices] = useState<DiscoveredDevice[]>([]);
+  const [adoptingId, setAdoptingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const refresh = () => setBootstrapDevices(beaconListener.getBootstrapDevices());
+    refresh();
+    const iv = setInterval(refresh, 2000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const handleAdoptBootstrap = useCallback(
+    async (dev: DiscoveredDevice) => {
+      if (!token) {
+        Alert.alert("Not signed in", "Sign into the Yaver app first, then try again.");
+        return;
+      }
+      if (!dev.bootstrapPasskey) {
+        Alert.alert(
+          "Passkey hidden",
+          "This box has hidden its passkey from the beacon. Open More → Pair a device and type the 6-character passkey shown on the machine."
+        );
+        return;
+      }
+      const targetUrl = `http://${dev.ip}:${dev.port}`;
+      setAdoptingId(dev.deviceId);
+      try {
+        const info = await fetchPairInfo(targetUrl);
+        if (!info.ok) {
+          Alert.alert("Pair failed", info.error ?? "Target is not in pairing mode.");
+          return;
+        }
+        const res = await submitPair({
+          code: dev.bootstrapPasskey,
+          targetUrl,
+          token,
+          userId: user?.id,
+        });
+        if (!res.ok) {
+          Alert.alert("Pair failed", res.error ?? "Target rejected the token.");
+          return;
+        }
+        Alert.alert(
+          "Paired",
+          `Signed ${user?.email ?? "your account"} into ${res.host ?? dev.name ?? "the machine"}. It should appear as online shortly.`
+        );
+        // Refresh devices so the newly paired box shows up once
+        // it registers with Convex.
+        setTimeout(() => refreshDevices(), 3000);
+      } finally {
+        setAdoptingId(null);
+      }
+    },
+    [token, user, refreshDevices],
+  );
 
   const handleAcceptGuestCode = async () => {
     const code = guestCode.trim();
@@ -474,6 +535,57 @@ export default function DevicesScreen() {
             <Text style={styles.guestCodeBtnText}>{guestLoading ? "..." : "Join"}</Text>
           </Pressable>
         </View>
+
+        {/* Needs-auth section: fresh yaver boxes on this LAN */}
+        {bootstrapDevices.length > 0 && (
+          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+            <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", marginBottom: 6 }}>
+              NEEDS AUTH ({bootstrapDevices.length})
+            </Text>
+            <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 10 }}>
+              A yaver machine on this Wi-Fi is waiting for a sign-in.
+              Tap to sign it into {user?.email ? `${user.email}` : "your account"}
+              {user?.provider ? ` (${user.provider})` : ""}.
+            </Text>
+            {bootstrapDevices.map((d) => {
+              const isBusy = adoptingId === d.deviceId;
+              return (
+                <Pressable
+                  key={d.deviceId}
+                  onPress={() => handleAdoptBootstrap(d)}
+                  disabled={isBusy}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    padding: 12,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: c.border,
+                    backgroundColor: c.bgCard,
+                    marginBottom: 8,
+                    gap: 12,
+                    opacity: isBusy ? 0.6 : 1,
+                  }}
+                >
+                  <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: c.warn }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "600" }}>
+                      {d.name || d.deviceId}
+                    </Text>
+                    <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 2 }}>
+                      {d.ip}:{d.port} — tap to adopt
+                    </Text>
+                  </View>
+                  {isBusy ? (
+                    <ActivityIndicator color={c.accent} />
+                  ) : (
+                    <Text style={{ color: c.accent, fontSize: 13, fontWeight: "600" }}>Adopt</Text>
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
 
         <FlatList
           data={devices}

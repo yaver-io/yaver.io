@@ -38,6 +38,15 @@ type Config struct {
 	// goroutines or who've wired the same checks elsewhere.
 	DisableDiskHealth bool `json:"disable_disk_health,omitempty"`
 	DisableHeartbeatWatcher bool `json:"disable_heartbeat_watcher,omitempty"`
+
+	// BootstrapSecretHash is the SHA-256 of a pre-shared
+	// secret used by the unauthenticated /auth/recover
+	// endpoint. Empty = recovery disabled. The dev sets this
+	// once via `yaver config set bootstrap-secret <value>`
+	// and stores the plaintext in their password manager so
+	// they can unlock a headless agent that's lost auth
+	// without SSH'ing in.
+	BootstrapSecretHash string `json:"bootstrap_secret_hash,omitempty"`
 	HAURL         string              `json:"ha_url,omitempty"`
 	HAToken       string              `json:"ha_token,omitempty"`
 	AllowedIPs    []string            `json:"allowed_ips,omitempty"`     // IP allowlist CIDRs
