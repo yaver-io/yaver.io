@@ -109,14 +109,28 @@ last handoff" below).
   `buildLoopPrompt` as Claude and Codex; uses `--yes-always
   --no-git --message` for autonomous one-shot runs so our
   phaseCommit stays the single commit path.
+- **Ollama runner** — `spawnOllama` POSTs to the local ollama
+  daemon via `OLLAMA_HOST` (default `http://127.0.0.1:11434`).
+  Runner string is `ollama:<model>` (default `qwen2.5-coder`).
+  Ollama can classify failures but can't edit files, so a
+  successful analysis returns `status=needs_human` with the
+  rationale — valuable in a fallback chain for "at least tell me
+  what went wrong" when the primary is rate-limited.
 
 ## Gaps, ordered by value
 
-### 1. ollama runner
-Claude, Codex, and Aider are wired. Ollama still needs a
-small subprocess wrapper that POSTs to `/api/generate` on the
-local ollama daemon and maps the response to `AIResponse`.
-Additive, not blocking — the fallback chain already cycles.
+## All tracked Auto Dev gaps are closed.
+
+Every item from the original handoff is landed. The remaining
+work is:
+
+- Replacing the ollama runner's "classify-only" response with a
+  real tool-using local runner (Cline, Roo, etc) once one ships
+  a stable subprocess driver.
+- Surfacing session-limits / release-train state on the mobile
+  Auto Dev tab so devs can see "2h 10m of 5h Claude window used
+  today" without opening the terminal.
+- Whatever the dev asks for in the next iteration.
 
 ## Quick verification commands
 
