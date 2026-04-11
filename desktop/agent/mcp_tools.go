@@ -1627,6 +1627,76 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		}}},
 		{"name": "meeting_list", "description": "List all bookable event types.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
 		{"name": "meeting_bookings", "description": "List confirmed bookings across all event types.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+
+		// --- Studio modules (clips, chat, A/B, invoices, affiliates, asciinema) ---
+
+		// A/B experiments on top of flags
+		{"name": "ab_experiment_create", "description": "Create or update an A/B experiment. Variants are weighted (summed, normalised); bucketing is sticky per userId via SHA256. Metric is the event name that counts as a conversion.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"key", "variants"}, "properties": map[string]interface{}{
+			"key":      map[string]interface{}{"type": "string"},
+			"name":     map[string]interface{}{"type": "string"},
+			"variants": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"name": map[string]interface{}{"type": "string"}, "weight": map[string]interface{}{"type": "integer"}}}},
+			"metric":   map[string]interface{}{"type": "string"},
+		}}},
+		{"name": "ab_experiment_list", "description": "List all A/B experiments.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "ab_assign", "description": "Deterministically assign a userId to a variant. Returns the variant name; empty if the experiment is not running. Logs an exposure event.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"key", "userId"}, "properties": map[string]interface{}{"key": map[string]interface{}{"type": "string"}, "userId": map[string]interface{}{"type": "string"}}}},
+		{"name": "ab_event", "description": "Log an A/B exposure or conversion event. Use kind='conversion' when the tracked metric fires.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"key", "variant", "userId", "kind"}, "properties": map[string]interface{}{"key": map[string]interface{}{"type": "string"}, "variant": map[string]interface{}{"type": "string"}, "userId": map[string]interface{}{"type": "string"}, "kind": map[string]interface{}{"type": "string", "enum": []string{"exposure", "conversion"}}}}},
+		{"name": "ab_results", "description": "Return exposure + conversion counts and conversion rate per variant.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"key"}, "properties": map[string]interface{}{"key": map[string]interface{}{"type": "string"}}}},
+
+		// Clips (screen recording)
+		{"name": "clip_start", "description": "Start a local screen recording on the agent's Mac or Linux box via ffmpeg. Returns the session id; call clip_stop to finalise.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"title": map[string]interface{}{"type": "string"}, "description": map[string]interface{}{"type": "string"}}}},
+		{"name": "clip_stop", "description": "Stop the active screen recording. Finalises the mp4 with a flushed moov atom.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "clip_list", "description": "List recorded clip sessions with titles + durations.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+
+		// Live chat
+		{"name": "chat_conversations", "description": "List open chat conversations with the visitors from the self-hosted chat widget.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "chat_history", "description": "Return the full message history for one conversation (by visitor id).", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"vid"}, "properties": map[string]interface{}{"vid": map[string]interface{}{"type": "string"}, "limit": map[string]interface{}{"type": "integer"}}}},
+		{"name": "chat_reply", "description": "Send an owner-side reply to a visitor. Shows up live in the browser widget via SSE.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"vid", "text"}, "properties": map[string]interface{}{"vid": map[string]interface{}{"type": "string"}, "text": map[string]interface{}{"type": "string"}}}},
+
+		// Invoices + Stripe / LemonSqueezy
+		{"name": "customer_create", "description": "Add a billing customer (name, email, address). Required before creating an invoice for them.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"name", "email"}, "properties": map[string]interface{}{"name": map[string]interface{}{"type": "string"}, "email": map[string]interface{}{"type": "string"}, "address": map[string]interface{}{"type": "string"}, "taxId": map[string]interface{}{"type": "string"}}}},
+		{"name": "customer_list", "description": "List billing customers.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "invoice_create", "description": "Create a draft invoice with line items. Invoice number is assigned sequentially (INV-001, ...).", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"customerId", "lineItems"}, "properties": map[string]interface{}{
+			"customerId": map[string]interface{}{"type": "string"},
+			"currency":   map[string]interface{}{"type": "string"},
+			"dueAt":      map[string]interface{}{"type": "string", "description": "YYYY-MM-DD"},
+			"taxPercent": map[string]interface{}{"type": "number"},
+			"notes":      map[string]interface{}{"type": "string"},
+			"lineItems":  map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"description": map[string]interface{}{"type": "string"}, "quantity": map[string]interface{}{"type": "number"}, "unitPrice": map[string]interface{}{"type": "number"}}}},
+		}}},
+		{"name": "invoice_list", "description": "List invoices (draft / sent / paid).", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "invoice_render_pdf", "description": "Render an invoice to PDF via the embedded Chromium. Returns base64 bytes.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"id"}, "properties": map[string]interface{}{"id": map[string]interface{}{"type": "string", "description": "Invoice ID or number (INV-001)"}}}},
+		{"name": "invoice_payment_link", "description": "Mint a Stripe or LemonSqueezy hosted checkout URL for an invoice. Pass the dev's API key (never stored). Writes the resulting link onto the invoice.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"id", "provider", "apiKey"}, "properties": map[string]interface{}{
+			"id":       map[string]interface{}{"type": "string"},
+			"provider": map[string]interface{}{"type": "string", "enum": []string{"stripe", "lemonsqueezy"}},
+			"apiKey":   map[string]interface{}{"type": "string"},
+		}}},
+		{"name": "invoice_send", "description": "Mark an invoice sent and email it to the customer with the payment link via the SMTP relay.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"id"}, "properties": map[string]interface{}{"id": map[string]interface{}{"type": "string"}}}},
+
+		// Affiliates
+		{"name": "affiliate_create", "description": "Register an affiliate with a commission percentage. Returns the referral code (same space as /s/:code short links).", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"email"}, "properties": map[string]interface{}{
+			"email":             map[string]interface{}{"type": "string"},
+			"name":              map[string]interface{}{"type": "string"},
+			"commissionPercent": map[string]interface{}{"type": "number"},
+		}}},
+		{"name": "affiliate_list", "description": "List affiliates with owed / paid totals.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "affiliate_conversion", "description": "Record a sale attributed to an affiliate. Commission is computed from the affiliate's percentage.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"id", "amount"}, "properties": map[string]interface{}{
+			"id":        map[string]interface{}{"type": "string", "description": "Affiliate ID or code"},
+			"amount":    map[string]interface{}{"type": "number"},
+			"currency":  map[string]interface{}{"type": "string"},
+			"sourceRef": map[string]interface{}{"type": "string"},
+		}}},
+		{"name": "affiliate_payout", "description": "Record that a payout was sent to an affiliate. Decrements totalOwed, increments totalPaid.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"id", "amount"}, "properties": map[string]interface{}{
+			"id":       map[string]interface{}{"type": "string"},
+			"amount":   map[string]interface{}{"type": "number"},
+			"currency": map[string]interface{}{"type": "string"},
+			"method":   map[string]interface{}{"type": "string"},
+			"note":     map[string]interface{}{"type": "string"},
+		}}},
+
+		// Asciinema-lite
+		{"name": "cast_list", "description": "List recorded terminal casts (asciicast v2).", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "cast_start", "description": "Start an agent-side terminal recording. Wraps the given command via the asciinema CLI. Only one recording at a time.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"title": map[string]interface{}{"type": "string"}, "command": map[string]interface{}{"type": "string"}}}},
+		{"name": "cast_stop", "description": "Stop the active terminal recording and save it to the cast index.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
 	}
 	tools = append(tools, soloStackTools...)
 
@@ -1998,6 +2068,62 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 	}
 	tools = append(tools, monitorTools...)
+
+	autodevTools := []map[string]interface{}{
+		{
+			"name": "autodev_start",
+			"description": "Start a yaver autodev run against a local project. Scaffolds a develop-mode AI loop that kicks the runner until a deadline, interleaving a smart-regression autotest pass after each successful dev kick. Optionally accepts a remained.md checklist — each kick picks the next unchecked item, does it, checks it off, commits. Progress is visible via autodev_status and autodev_reports.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"work_dir"},
+				"properties": map[string]interface{}{
+					"project":          map[string]interface{}{"type": "string", "description": "Loop name suffix (default: basename of work_dir)"},
+					"work_dir":         map[string]interface{}{"type": "string", "description": "Absolute path to the repo"},
+					"hours":            map[string]interface{}{"type": "string", "description": "Duration: int hours, or 'infinite' (default: 8)"},
+					"load":             map[string]interface{}{"type": "string", "enum": []string{"lite", "high"}, "description": "lite respects AI session limits (default), high burns through them"},
+					"prompt":           map[string]interface{}{"type": "string", "description": "Focus prompt for this run (optional)"},
+					"deploy":           map[string]interface{}{"type": "string", "enum": []string{"testflight", "playstore", "both", "none"}, "description": "Deploy target at end of run (default: auto-detected)"},
+					"runner":           map[string]interface{}{"type": "string", "description": "Primary AI runner (default: claude-code)"},
+					"branch":           map[string]interface{}{"type": "string", "description": "Git branch to ship to (default: main)"},
+					"remained_content": map[string]interface{}{"type": "string", "description": "Inline markdown checklist content; writes to remained_path before starting the loop"},
+					"remained_path":    map[string]interface{}{"type": "string", "description": "Path of the checklist file (default: remained.md)"},
+					"no_autotest":      map[string]interface{}{"type": "boolean", "description": "Skip the interleaved regression autotest pass"},
+					"max_iterations":   map[string]interface{}{"type": "integer", "description": "Hard cap on total kicks (0 = no cap)"},
+				},
+			},
+		},
+		{
+			"name":        "autodev_status",
+			"description": "List all autodev / autotest loops on this machine with their current status, prompt, work directory, and last run timestamp.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "autodev_reports",
+			"description": "List all autodev per-run reports saved to ~/.yaver/autodev-reports. Each report contains the plan, per-kick git SHAs, commit subjects, and deploy outcome. Pass name to get one report in full.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{"type": "string", "description": "Loop name (optional — omit to list all)"},
+				},
+			},
+		},
+		{
+			"name":        "autodev_revert",
+			"description": "Revert a subset of commits produced by an autodev run. Runs `git revert --no-edit <sha>` for each SHA in the loop's work dir, then pushes.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"name", "commit_shas"},
+				"properties": map[string]interface{}{
+					"name":        map[string]interface{}{"type": "string", "description": "Loop name (e.g. sfmg-autodev)"},
+					"commit_shas": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Git SHAs to revert"},
+				},
+			},
+		},
+	}
+	tools = append(tools, autodevTools...)
 
 	return map[string]interface{}{
 		"tools": tools,

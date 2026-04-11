@@ -6837,6 +6837,150 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 	case "meeting_bookings":
 		return mcpToolJSON(map[string]interface{}{"bookings": loadBookings()})
 
+	case "autodev_start":
+		// Same JSON shape as the POST /autodev/start HTTP endpoint.
+		// We reuse handleAutodevStart by synthesising a request — but
+		// that's more ceremony than value, so inline the minimal logic
+		// here: write any remained_content, scaffold the plan, spawn
+		// the loop in a goroutine, return the loop name.
+		var args struct {
+			Project         string `json:"project"`
+			WorkDir         string `json:"work_dir"`
+			Hours           string `json:"hours"`
+			Load            string `json:"load"`
+			Prompt          string `json:"prompt"`
+			Deploy          string `json:"deploy"`
+			Runner          string `json:"runner"`
+			Branch          string `json:"branch"`
+			Target          string `json:"target"`
+			RemainedPath    string `json:"remained_path"`
+			RemainedContent string `json:"remained_content"`
+			NoAutotest      bool   `json:"no_autotest"`
+			MaxIterations   int    `json:"max_iterations"`
+		}
+		_ = json.Unmarshal(call.Arguments, &args)
+		if args.WorkDir == "" {
+			return mcpToolError("work_dir required")
+		}
+		if _, err := os.Stat(args.WorkDir); err != nil {
+			return mcpToolError("work_dir does not exist: " + args.WorkDir)
+		}
+		remainedPath := args.RemainedPath
+		if args.RemainedContent != "" && remainedPath == "" {
+			remainedPath = "remained.md"
+		}
+		if args.RemainedContent != "" {
+			full := remainedPath
+			if !filepath.IsAbs(full) {
+				full = filepath.Join(args.WorkDir, full)
+			}
+			if err := os.WriteFile(full, []byte(args.RemainedContent), 0o644); err != nil {
+				return mcpToolError("write remained file: " + err.Error())
+			}
+		}
+		project := args.Project
+		if project == "" {
+			project = filepath.Base(args.WorkDir)
+		}
+		d := autodevDefaults{
+			hours: args.Hours, load: args.Load, deploy: args.Deploy,
+			prompt: args.Prompt, project: project, runner: args.Runner,
+			branch: args.Branch, target: args.Target,
+			maxIter: args.MaxIterations, noAutotest: args.NoAutotest,
+			remained: remainedPath,
+		}
+		if d.hours == "" {
+			d.hours = autodevSleepHours
+		}
+		if d.load == "" {
+			d.load = autodevSleepLoad
+		}
+		d = applyAutodevDefaults(d, "autodev", args.WorkDir)
+		plan := buildAutodevPlan("autodev", d, args.WorkDir)
+		origWd, _ := os.Getwd()
+		if err := os.Chdir(args.WorkDir); err != nil {
+			return mcpToolError("chdir: " + err.Error())
+		}
+		if err := ensureAutodevSpec(plan); err != nil {
+			_ = os.Chdir(origWd)
+			return mcpToolError("scaffold spec: " + err.Error())
+		}
+		if plan.IncludeAutotest {
+			if err := ensureAutodevRegressionSpec(plan); err != nil {
+				_ = os.Chdir(origWd)
+				return mcpToolError("scaffold regression: " + err.Error())
+			}
+		}
+		if d.prompt != "" {
+			loopPrompt([]string{"set", plan.LoopName, d.prompt})
+		}
+		go func(wd string, p autodevPlan) {
+			_ = os.Chdir(wd)
+			runAutodevLoop(p)
+			runAutodevDeploy(p)
+		}(args.WorkDir, plan)
+		_ = os.Chdir(origWd)
+		return mcpToolJSON(map[string]interface{}{
+			"ok":        true,
+			"loop_name": plan.LoopName,
+			"hours":     plan.Hours,
+			"deploy":    plan.Deploy,
+			"remained":  plan.RemainedFile,
+			"work_dir":  args.WorkDir,
+		})
+
+	case "autodev_status":
+		loops, err := loadLoops()
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		out := []map[string]interface{}{}
+		for name, l := range loops {
+			if !strings.HasSuffix(name, "-autodev") && !strings.HasSuffix(name, "-autotest") && !strings.HasSuffix(name, "-autodev-regression") {
+				continue
+			}
+			out = append(out, map[string]interface{}{
+				"name":     name,
+				"status":   l.Status,
+				"mode":     string(l.Spec.Mode),
+				"work_dir": l.WorkDir,
+				"prompt":   l.PromptInline,
+			})
+		}
+		return mcpToolJSON(map[string]interface{}{"loops": out})
+
+	case "autodev_reports":
+		var args struct {
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal(call.Arguments, &args)
+		if args.Name != "" {
+			rep, err := LoadAutodevReport(args.Name)
+			if err != nil {
+				return mcpToolError(err.Error())
+			}
+			return mcpToolJSON(rep)
+		}
+		reps, err := ListAutodevReports()
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(map[string]interface{}{"reports": reps})
+
+	case "autodev_revert":
+		var args struct {
+			Name       string   `json:"name"`
+			CommitSHAs []string `json:"commit_shas"`
+		}
+		_ = json.Unmarshal(call.Arguments, &args)
+		if args.Name == "" || len(args.CommitSHAs) == 0 {
+			return mcpToolError("name and commit_shas required")
+		}
+		if err := RevertAutodevCommits(args.Name, args.CommitSHAs); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(map[string]interface{}{"ok": true, "reverted": args.CommitSHAs})
+
 	default:
 		return mcpToolError("unknown tool: " + call.Name)
 	}

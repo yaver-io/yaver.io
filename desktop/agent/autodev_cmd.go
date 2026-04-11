@@ -66,6 +66,7 @@ type autodevDefaults struct {
 	maxIter    int
 	notify     bool
 	noAutotest bool
+	remained   string
 }
 
 // runAutodev is `yaver autodev <project> [flags]`.
@@ -102,6 +103,8 @@ func runAutodevOrTest(kind string, args []string) {
 	notify := fs.Bool("notify", false, "Notify mobile when run ends")
 	showPlan := fs.Bool("plan", false, "Print plan and exit (dry-run)")
 	noAutotest := fs.Bool("no-autotest", false, "autodev only: skip the interleaved autotest pass")
+	remained := fs.String("remained", "", "Path to a remained.md checklist file — each kick picks the next unchecked item, implements it, checks it off, commits")
+	_ = remained
 	fs.Usage = func() { printAutodevHelp(kind) }
 
 	positional, flagArgs := splitAutodevArgs(args)
@@ -138,6 +141,7 @@ func runAutodevOrTest(kind string, args []string) {
 		maxIter:    *maxIter,
 		notify:     *notify,
 		noAutotest: *noAutotest,
+		remained:   *remained,
 	}
 	d = applyAutodevDefaults(d, kind, wd)
 
@@ -263,9 +267,39 @@ func applyAutodevDefaults(d autodevDefaults, kind, wd string) autodevDefaults {
 		}
 	}
 	if d.prompt == "" {
-		d.prompt = defaultAutodevPrompt(kind)
+		if d.remained != "" {
+			d.prompt = remainedPromptTemplate(d.remained)
+		} else {
+			d.prompt = defaultAutodevPrompt(kind)
+		}
 	}
 	return d
+}
+
+// remainedPromptTemplate is the prompt the runner sees when the
+// user passed --remained <file>. Each kick picks the top
+// unchecked item, does it, marks it done, commits both the code
+// and the updated checklist together, and pushes.
+func remainedPromptTemplate(file string) string {
+	return "You are driving an autodev loop against a markdown checklist at `" + file + "`.\n\n" +
+		"For this kick:\n" +
+		"  1. Read `" + file + "`. It's a plain markdown file where TODO items are\n" +
+		"     lines starting with `- [ ]` (unchecked) or `- [x]` (checked).\n" +
+		"  2. If every item is already `- [x]`, say so explicitly and stop —\n" +
+		"     the loop will exit on its own next tick.\n" +
+		"  3. Otherwise, pick the first unchecked item in file order.\n" +
+		"  4. Implement that item completely. Write code + tests. Keep the\n" +
+		"     change minimal and coherent — no scope creep from other items.\n" +
+		"  5. Run typecheck and tests; they must pass before commit.\n" +
+		"  6. Replace the `- [ ]` for the item you just did with `- [x]` in\n" +
+		"     `" + file + "` (leave other items alone).\n" +
+		"  7. Commit the code change and the updated checklist together,\n" +
+		"     message `autodev: <short item title>`, then push.\n" +
+		"\n" +
+		"Do not skip items. Do not re-order the list. Do not mark items done\n" +
+		"that you did not actually implement. If you get stuck on an item,\n" +
+		"leave it unchecked, add a short `<!-- blocked: reason -->` comment\n" +
+		"next to it, pick the next item, and keep going."
 }
 
 func defaultAutodevPrompt(kind string) string {
@@ -306,6 +340,14 @@ type autodevPlan struct {
 	// loop's identifiers (only populated when IncludeAutotest).
 	TestLoopName string
 	TestSpecPath string
+	// RemainedFile is an optional path to a markdown checklist
+	// ("remained.md") that drives the loop — each kick picks the
+	// next unchecked item, implements it, checks it off, commits
+	// both the code change and the updated file together, and
+	// pushes. When all items are checked, the loop exits early.
+	// Makes autodev usable as a "dump a TODO list and go to bed"
+	// primitive, callable from CLI, HTTP, MCP, or mobile.
+	RemainedFile string
 }
 
 func buildAutodevPlan(kind string, d autodevDefaults, wd string) autodevPlan {
@@ -353,6 +395,13 @@ func buildAutodevPlan(kind string, d autodevDefaults, wd string) autodevPlan {
 		testLoopName = d.project + "-autodev-regression"
 		testSpecPath = filepath.Join(wd, ".autodev-regression.loop.yaml")
 	}
+	// Resolve a relative --remained path against the repo's
+	// working directory so the runner can find the file from
+	// whichever cwd it ends up in.
+	remainedFile := d.remained
+	if remainedFile != "" && !filepath.IsAbs(remainedFile) {
+		remainedFile = filepath.Join(wd, remainedFile)
+	}
 	return autodevPlan{
 		Kind:            kind,
 		Project:         d.project,
@@ -376,6 +425,7 @@ func buildAutodevPlan(kind string, d autodevDefaults, wd string) autodevPlan {
 		IncludeAutotest: includeAutotest,
 		TestLoopName:    testLoopName,
 		TestSpecPath:    testSpecPath,
+		RemainedFile:    remainedFile,
 	}
 }
 
@@ -591,6 +641,13 @@ func runAutodevLoop(p autodevPlan) {
 		}
 		if p.MaxIterHardCap > 0 && iter >= p.MaxIterHardCap {
 			fmt.Printf("%s: hard cap of %d kicks reached\n", p.Kind, p.MaxIterHardCap)
+			break
+		}
+		// --remained early exit: if the checklist has no
+		// unchecked items left, the job is done — don't keep
+		// kicking the runner on nothing.
+		if p.RemainedFile != "" && !remainedHasWork(p.RemainedFile) {
+			fmt.Printf("%s: all items in %s are checked off — done\n", p.Kind, p.RemainedFile)
 			break
 		}
 		// Rolling 24h window for the daily-budget cap. Past the
@@ -998,6 +1055,23 @@ SSH (detached so you can disconnect):
 }
 
 // NOTE: fileExists() lives in classify.go — reused here.
+
+// remainedHasWork returns true iff the remained.md file contains
+// at least one unchecked line. Missing / unreadable file counts as
+// "has work" so a transient read error doesn't silently end the run.
+func remainedHasWork(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return true
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "- [ ]") || strings.HasPrefix(trimmed, "* [ ]") {
+			return true
+		}
+	}
+	return false
+}
 
 // autodevGitHead reads HEAD in the current working directory.
 // Separate from loop_exec's gitHeadSHA(workDir) which takes a
