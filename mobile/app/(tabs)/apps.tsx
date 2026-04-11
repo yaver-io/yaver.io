@@ -171,10 +171,12 @@ export default function AppsScreen() {
     setLoadingActions(true);
     try {
       const result = await quicClient.getProjectActions(projectName);
-      // Always prepend "Vibing" as the first option
+      // Always prepend "Vibing" + "Auto Dev" + "Auto Test" as the first three options
       const vibingAction = { label: "Vibing", target: ".", type: "vibing", icon: "\u{1F3B5}", framework: "", platform: "", command: "" };
+      const autoDevAction = { label: "Auto Dev", target: ".", type: "autodev", icon: "\u{1F916}", framework: "", platform: "", command: "" };
+      const autoTestAction = { label: "Auto Test", target: ".", type: "autotest", icon: "\u{1F9EA}", framework: "", platform: "", command: "" };
       const gitSyncAction = { label: "Git Sync", target: ".", type: "git-sync", icon: "\u{1F504}", framework: "", platform: "", command: "" };
-      result.actions = [vibingAction, gitSyncAction, ...result.actions];
+      result.actions = [vibingAction, autoDevAction, autoTestAction, gitSyncAction, ...result.actions];
       setActionSheet(result);
     } catch {
       // Fallback
@@ -220,6 +222,21 @@ export default function AppsScreen() {
           Alert.alert("Failed", String(e));
         }
       }, 400);
+      return;
+    }
+
+    if (action.type === "autodev") {
+      // Jump to the Auto Dev screen (manages develop-mode loops). The
+      // screen shows all loops across projects; the user picks or starts
+      // one targeted at this path from there.
+      router.navigate({ pathname: "/(tabs)/autodev", params: { project, path } } as any);
+      return;
+    }
+
+    if (action.type === "autotest") {
+      // Jump to Local CI / runs screen (yaver-test-sdk), which is where
+      // auto-test loops live. Same pattern as Auto Dev.
+      router.navigate({ pathname: "/(tabs)/runs", params: { project, path } } as any);
       return;
     }
 

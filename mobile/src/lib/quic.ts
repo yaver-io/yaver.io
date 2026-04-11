@@ -3232,6 +3232,61 @@ export class QuicClient {
 
   // ---- Auto Dev (M8) -----------------------------------------------------
 
+  /** Kick off a new Auto Dev run. Mirrors POST /autodev/start body
+   *  shape on the Go side (autodev_reports_http.go). Returns the
+   *  spawned loop name and the server's echoed plan metadata. */
+  async autodevStart(params: {
+    project?: string;
+    workDir: string;
+    hours?: string;
+    load?: string;
+    prompt?: string;
+    deploy?: string;
+    runner?: string;
+    branch?: string;
+    target?: string;
+    remainedPath?: string;
+    remainedContent?: string;
+    noAutotest?: boolean;
+    maxIterations?: number;
+  }): Promise<{ ok: boolean; loopName?: string; workDir?: string; hours?: string; deploy?: string; error?: string }> {
+    try {
+      const res = await fetch(`${this.baseUrl}/autodev/start`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project: params.project ?? "",
+          work_dir: params.workDir,
+          hours: params.hours ?? "",
+          load: params.load ?? "",
+          prompt: params.prompt ?? "",
+          deploy: params.deploy ?? "",
+          runner: params.runner ?? "",
+          branch: params.branch ?? "",
+          target: params.target ?? "",
+          remained_path: params.remainedPath ?? "",
+          remained_content: params.remainedContent ?? "",
+          no_autotest: params.noAutotest ?? false,
+          max_iterations: params.maxIterations ?? 0,
+        }),
+      });
+      if (!res.ok && res.status !== 202) {
+        const text = await res.text().catch(() => "");
+        return { ok: false, error: text || `HTTP ${res.status}` };
+      }
+      const data = await res.json();
+      return {
+        ok: true,
+        loopName: data.loop_name,
+        workDir: data.work_dir,
+        hours: data.hours,
+        deploy: data.deploy,
+      };
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? "network error" };
+    }
+  }
+
   /** Fetch all registered Auto Dev loops. */
   async autodevLoops(): Promise<AutoDevLoop[]> {
     try {
