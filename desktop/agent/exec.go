@@ -383,15 +383,20 @@ func (em *ExecManager) KillExec(id string) error {
 }
 
 // Subscribe returns a channel that receives output events for an exec
-// session. If the session is still running, the channel is registered
-// as a live listener and gets every event broadcast() emits. If the
-// session has *already* finished by the time the caller subscribes
-// (the common race on a fast CI runner where a one-shot `echo`
-// command exits before the SSE consumer connects), we replay the
-// buffered stdout/stderr + the exit event into a fresh buffered
-// channel and close it. This guarantees late subscribers always see
-// the full stream — fixing a flake in TestExecStreamSSE that only
-// reproduced under CPU pressure on GHA.
+// session. The race we need to handle: a fast one-shot command can
+// finish between the moment the caller calls Subscribe and the moment
+// we register the listener — leaving them with an empty channel that
+// never sees the buffered stdout. The fix is to take the listeners
+// lock first, snapshot status + buffered output under it, and either
+//
+//   (a) push everything we already have + the exit event into a
+//       newly-created channel and close it, OR
+//   (b) drain the buffered output into the channel *before* appending
+//       it to the live listener list, so the consumer sees both the
+//       past lines and any future ones the broadcast loop emits.
+//
+// closeListeners must hold the same lock so it cannot run between
+// our snapshot and our append.
 func (em *ExecManager) Subscribe(id string) (<-chan ExecOutputEvent, error) {
 	em.mu.RLock()
 	s, ok := em.sessions[id]
@@ -400,8 +405,11 @@ func (em *ExecManager) Subscribe(id string) (<-chan ExecOutputEvent, error) {
 		return nil, fmt.Errorf("exec session not found: %s", id)
 	}
 
+	s.listenersMu.Lock()
+	defer s.listenersMu.Unlock()
+
 	s.mu.RLock()
-	finished := s.Status != ExecStatusRunning
+	status := s.Status
 	stdout := s.Stdout
 	if stdout == "" {
 		stdout = s.stdout.String()
@@ -413,18 +421,24 @@ func (em *ExecManager) Subscribe(id string) (<-chan ExecOutputEvent, error) {
 	exitCode := s.ExitCode
 	s.mu.RUnlock()
 
-	if finished {
-		// Replay buffered output then close. Buffer big enough to
-		// hold every line + the exit event without blocking.
-		stdoutLines := splitNonEmptyLines(stdout)
-		stderrLines := splitNonEmptyLines(stderr)
-		ch := make(chan ExecOutputEvent, len(stdoutLines)+len(stderrLines)+2)
-		for _, line := range stdoutLines {
-			ch <- ExecOutputEvent{Type: "stdout", Text: line + "\n"}
-		}
-		for _, line := range stderrLines {
-			ch <- ExecOutputEvent{Type: "stderr", Text: line + "\n"}
-		}
+	stdoutLines := splitNonEmptyLines(stdout)
+	stderrLines := splitNonEmptyLines(stderr)
+
+	// Generous buffer: buffered lines + room for live broadcast.
+	bufSize := len(stdoutLines) + len(stderrLines) + 64
+	ch := make(chan ExecOutputEvent, bufSize)
+
+	// Replay everything we have so the caller never misses lines that
+	// happened before they subscribed.
+	for _, line := range stdoutLines {
+		ch <- ExecOutputEvent{Type: "stdout", Text: line + "\n"}
+	}
+	for _, line := range stderrLines {
+		ch <- ExecOutputEvent{Type: "stderr", Text: line + "\n"}
+	}
+
+	if status != ExecStatusRunning {
+		// Session already finished — append the exit event and close.
 		exit := ExecOutputEvent{Type: "exit"}
 		if exitCode != nil {
 			code := *exitCode
@@ -435,10 +449,9 @@ func (em *ExecManager) Subscribe(id string) (<-chan ExecOutputEvent, error) {
 		return ch, nil
 	}
 
-	ch := make(chan ExecOutputEvent, 64)
-	s.listenersMu.Lock()
+	// Session still running — append to the live listener list under
+	// the same lock, so closeListeners can't race past us.
 	s.listeners = append(s.listeners, ch)
-	s.listenersMu.Unlock()
 	return ch, nil
 }
 
