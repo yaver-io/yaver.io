@@ -399,7 +399,11 @@ func runIdeasKick(ctx context.Context, l *LoopState) *IterationResult {
 	}
 	defer func() { result.FinishedAt = time.Now().UTC() }()
 
-	workDir, err := deriveWorkDir(l)
+	// Ideas kick doesn't edit or commit, but we still run it inside the
+	// loop's worktree so the context gathering (git log, README, TODO)
+	// sees the same snapshot the dev/loops see and stays isolated from
+	// any in-progress edits in the main tree.
+	workDir, err := ensureWorktree(ctx, l)
 	if err != nil {
 		result.Status = "failed"
 		result.Err = err.Error()
@@ -687,25 +691,15 @@ func runSingleKick(ctx context.Context, l *LoopState, nudge string) *IterationRe
 		StartedAt: time.Now().UTC(),
 	}
 
-	// The dev's own sfmg/yaver.io project directory is the working dir
-	// for the loop — this is where the AI runner will see the code, and
-	// where git commit will land the patch. We derive it from the spec:
-	// the loop.yaml path the dev registered lives in their repo root.
-	workDir, err := deriveWorkDir(l)
+	// Ensure the per-loop worktree exists and is refreshed from the
+	// target branch tip. The worktree — not the dev's main tree — is
+	// what the AI runner sees and what phaseCommit writes to, so the
+	// dev can keep editing their repo in parallel without collisions.
+	workDir, err := ensureWorktree(ctx, l)
 	if err != nil {
+		result.Status = "failed"
 		result.Err = err.Error()
-		result.FinishedAt = time.Now().UTC()
-		return result
-	}
-
-	// Hard bail: refuse to run over uncommitted work in the main tree.
-	// This is the pragmatic stand-in for worktree isolation until that
-	// lands. Never destroy user work.
-	if dirty, files := gitIsDirty(workDir); dirty {
-		result.Status = "stuck"
-		result.Summary = fmt.Sprintf(
-			"refusing to run: working tree has %d uncommitted change(s). Stash or commit first.",
-			len(files))
+		result.Summary = "could not prepare loop worktree"
 		result.FinishedAt = time.Now().UTC()
 		return result
 	}
@@ -866,36 +860,113 @@ func runSingleKick(ctx context.Context, l *LoopState, nudge string) *IterationRe
 	return result
 }
 
-// deriveWorkDir figures out which project directory a loop belongs to.
-// The convention is: the spec file lives in the repo root, so the dir
-// the dev ran `yaver loop add <path>` from is the working directory.
-// We stash that as an absolute path on the LoopState at add time; for
-// now we fall back to the current working directory so the behavior
-// is predictable until the persistence lands.
-func deriveWorkDir(l *LoopState) (string, error) {
-	if l.Spec.Target == "web" && l.Spec.URL == "" {
-		return "", fmt.Errorf("spec.url is required for target=web")
-	}
-	// Prefer the work dir captured at `loop add` time — it's the only
-	// path that's stable across scheduler subprocess invocations and
-	// interactive CLI runs.
-	wd := l.WorkDir
-	if wd == "" {
-		var err error
-		wd, err = os.Getwd()
-		if err != nil {
-			return "", err
-		}
-	}
-	if !looksLikeGitRepo(wd) {
-		return "", fmt.Errorf("work dir %s is not a git repo — re-register the loop from the project root", wd)
-	}
-	return wd, nil
-}
-
 func looksLikeGitRepo(dir string) bool {
 	_, err := os.Stat(filepath.Join(dir, ".git"))
 	return err == nil
+}
+
+// loopWorktreePath returns the absolute path to the per-loop worktree
+// — `~/.yaver/loops/<name>/worktree`. Auto Dev uses a sibling worktree
+// instead of editing the dev's main tree so the dev can keep hacking
+// in their own repo while the loop runs in parallel.
+func loopWorktreePath(name string) (string, error) {
+	base, err := ConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "loops", name, "worktree"), nil
+}
+
+// ensureWorktree creates (or refreshes) the per-loop git worktree and
+// returns its absolute path. The worktree is created with --detach so
+// the dev's main tree is free to check out any branch — Auto Dev runs
+// on a detached HEAD at the tip of `ship.branch`, makes its edits,
+// commits, and pushes back via `HEAD:<branch>` (phaseCommit).
+//
+// Between kicks the worktree is hard-reset to the current branch tip,
+// so each kick starts from a pristine copy of whatever is live on
+// `origin/<branch>` (or the local branch if the repo has no remote).
+// Stale state from a rolled-back kick never leaks into the next one.
+func ensureWorktree(ctx context.Context, l *LoopState) (string, error) {
+	srcRepo := l.WorkDir
+	if srcRepo == "" {
+		return "", fmt.Errorf("loop has no WorkDir — re-register via `yaver loop add`")
+	}
+	if !looksLikeGitRepo(srcRepo) {
+		return "", fmt.Errorf("source %s is not a git repo", srcRepo)
+	}
+	wtPath, err := loopWorktreePath(l.Spec.Name)
+	if err != nil {
+		return "", err
+	}
+	branch := l.Spec.Ship.Branch
+	if branch == "" || branch == "local" {
+		branch = "HEAD"
+	}
+
+	registered := false
+	if out, lerr := exec.Command("git", "-C", srcRepo, "worktree", "list", "--porcelain").Output(); lerr == nil {
+		// Porcelain lines look like `worktree /abs/path`. We just
+		// substring-match on the wtPath.
+		if strings.Contains(string(out), wtPath) {
+			registered = true
+		}
+	}
+
+	if !registered {
+		// Stale dir from a previous run without the matching git
+		// registration — wipe it so `git worktree add` doesn't refuse.
+		_ = os.RemoveAll(wtPath)
+		if err := os.MkdirAll(filepath.Dir(wtPath), 0700); err != nil {
+			return "", fmt.Errorf("create worktree parent: %w", err)
+		}
+		// Best-effort fetch so we create the worktree at an up-to-date tip.
+		_ = exec.CommandContext(ctx, "git", "-C", srcRepo, "fetch", "origin").Run()
+		addArgs := []string{"-C", srcRepo, "worktree", "add", "--detach", wtPath}
+		if branch != "HEAD" {
+			addArgs = append(addArgs, branch)
+		}
+		if out, aerr := exec.CommandContext(ctx, "git", addArgs...).CombinedOutput(); aerr != nil {
+			return "", fmt.Errorf("git worktree add %s: %v (%s)",
+				wtPath, aerr, strings.TrimSpace(string(out)))
+		}
+		return wtPath, nil
+	}
+
+	// Worktree already registered. Refresh it: reset + clean, then
+	// fetch and hard-reset to the target branch tip. Every step is
+	// best-effort — a missing remote just means we reset to the
+	// local branch instead.
+	_ = exec.CommandContext(ctx, "git", "-C", wtPath, "reset", "--hard").Run()
+	_ = exec.CommandContext(ctx, "git", "-C", wtPath, "clean", "-fd").Run()
+	_ = exec.CommandContext(ctx, "git", "-C", wtPath, "fetch", "origin").Run()
+	if branch != "HEAD" {
+		target := "origin/" + branch
+		if err := exec.CommandContext(ctx, "git", "-C", wtPath, "reset", "--hard", target).Run(); err != nil {
+			_ = exec.CommandContext(ctx, "git", "-C", wtPath, "reset", "--hard", branch).Run()
+		}
+	}
+	return wtPath, nil
+}
+
+// removeWorktree tears a loop's worktree down. Called from
+// `yaver loop remove` so stale worktrees don't accumulate under
+// ~/.yaver/loops/. Best-effort: if git refuses to remove the
+// worktree (e.g. it's locked) we still rm -rf the dir and prune.
+func removeWorktree(l *LoopState) error {
+	srcRepo := l.WorkDir
+	wtPath, err := loopWorktreePath(l.Spec.Name)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(wtPath); os.IsNotExist(err) {
+		return nil
+	}
+	if srcRepo != "" && looksLikeGitRepo(srcRepo) {
+		_ = exec.Command("git", "-C", srcRepo, "worktree", "remove", "-f", wtPath).Run()
+		_ = exec.Command("git", "-C", srcRepo, "worktree", "prune").Run()
+	}
+	return os.RemoveAll(wtPath)
 }
 
 // --- Phase 1: readiness ------------------------------------------------
@@ -1398,13 +1469,17 @@ func phaseCommit(ctx context.Context, l *LoopState, workDir string, aiResp *AIRe
 	// Only push if the spec targets a branch that looks like it
 	// should be remote-tracked. Skip if ship.branch is empty or
 	// explicitly "local".
+	//
+	// The worktree runs on a detached HEAD pointing at ship.branch's
+	// tip, so the push has to use the `HEAD:<branch>` refspec — a
+	// plain `git push origin <branch>` fails in detached state.
 	branch := l.Spec.Ship.Branch
 	if branch != "" && branch != "local" {
-		if err := runGitCtx(ctx, workDir,"push", "origin", branch); err != nil {
+		if err := runGitCtx(ctx, workDir, "push", "origin", "HEAD:"+branch); err != nil {
 			// Push failure is not fatal — the commit is still on local,
 			// the dev can push manually later. We surface the error in
 			// stderr but return success.
-			fmt.Fprintf(os.Stderr, "[loop %s] git push origin %s failed: %v\n",
+			fmt.Fprintf(os.Stderr, "[loop %s] git push origin HEAD:%s failed: %v\n",
 				l.Spec.Name, branch, err)
 		}
 	}
@@ -1420,18 +1495,6 @@ func phaseDeploy(ctx context.Context, l *LoopState, workDir string) error {
 }
 
 // --- git helpers -------------------------------------------------------
-
-func gitIsDirty(workDir string) (bool, []string) {
-	out, err := exec.Command("git", "-C", workDir, "status", "--porcelain").Output()
-	if err != nil {
-		return false, nil
-	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) == 1 && lines[0] == "" {
-		return false, nil
-	}
-	return true, lines
-}
 
 func gitHeadSHA(workDir string) string {
 	out, err := exec.Command("git", "-C", workDir, "rev-parse", "HEAD").Output()
