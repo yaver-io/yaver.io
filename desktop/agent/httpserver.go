@@ -658,6 +658,40 @@ func (s *HTTPServer) auth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		// Second fast path: paired tokens (multi-user pairing).
+		// A startup that bought one Mac Studio can have 5 phones
+		// paired with it — each gets the same scope as the primary
+		// owner WITHOUT depending on Convex round-tripping. This
+		// lives *before* the Convex check so lag / outage on the
+		// auth broker can't lock out paired users.
+		if IsPairedToken(token) {
+			TouchPairedToken(token)
+			// If multi-user mode is on, resolve the paired token
+			// to its own userId via Convex (best-effort; the cache
+			// makes this cheap after the first hit) so the
+			// MultiUserManager routes the request to an isolated
+			// workspace. Otherwise just hand the request through
+			// as the owner.
+			if cached, ok := s.tokenCache.Load(token); ok {
+				info := cached.(*cachedTokenInfo)
+				r = withPairedUser(r, info.userID)
+				next(w, r)
+				return
+			}
+			// First paired request — hydrate the cache in the
+			// background, never block the request. If Convex is
+			// reachable we'll know which isolated user slot to
+			// route to on the next call; for this one we treat
+			// the paired token as owner-equivalent.
+			go func() {
+				if uid, err := ValidateTokenUser(s.convexURL, token); err == nil {
+					s.tokenCache.Store(token, &cachedTokenInfo{userID: uid, isSdk: false})
+				}
+			}()
+			next(w, r)
+			return
+		}
+
 		// Check token cache
 		if cached, ok := s.tokenCache.Load(token); ok {
 			info := cached.(*cachedTokenInfo)
@@ -697,6 +731,19 @@ func (s *HTTPServer) auth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// withPairedUser attaches the resolved userId for a paired
+// token to the request context so downstream handlers
+// (tasks.go, exec.go, etc) can route to an isolated multi-user
+// workspace via s.multiUserMgr.GetOrCreateSession(userID).
+func withPairedUser(r *http.Request, userID string) *http.Request {
+	if userID == "" {
+		return r
+	}
+	ctx := r.Context()
+	ctx = contextWithPairedUser(ctx, userID)
+	return r.WithContext(ctx)
+}
+
 // authSDK is for SDK-accessible endpoints (feedback, blackbox, voice, builds).
 // Accepts all token types: agent's own, CLI session, and SDK tokens (with scope check).
 func (s *HTTPServer) authSDK(next http.HandlerFunc) http.HandlerFunc {
@@ -710,6 +757,24 @@ func (s *HTTPServer) authSDK(next http.HandlerFunc) http.HandlerFunc {
 
 		// Fast path: agent's own token (full access)
 		if token == s.token {
+			next(w, r)
+			return
+		}
+
+		// Multi-user paired tokens — same treatment as the
+		// full auth() middleware. Paired tokens get SDK-scope
+		// access automatically since they come from a user
+		// who's signed in with a full session on another
+		// device. Lives before the Convex / SDK checks so a
+		// paired phone can drive feedback / blackbox /
+		// voice / builds without round-tripping the auth
+		// broker.
+		if IsPairedToken(token) {
+			TouchPairedToken(token)
+			if cached, ok := s.tokenCache.Load(token); ok {
+				info := cached.(*cachedTokenInfo)
+				r = withPairedUser(r, info.userID)
+			}
 			next(w, r)
 			return
 		}
