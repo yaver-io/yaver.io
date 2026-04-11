@@ -55,12 +55,22 @@ testkit/spec.go. Test: `TestStepIncludeExpandsInPlace`. -->
 
 | # | Item | Why it's low priority |
 |---|---|---|
-| 6 | Network throttling (slow 3G / offline) | chromedp can set it via CDP (`Network.emulateNetworkConditions`). Useful for PWA / RN-web work but most solo devs don't need it until shipping to production. Wire as a spec-level `network_profile:` field. |
+<!-- #6 landed: Spec.NetworkProfile supports
+online|fast-3g|slow-3g|2g|offline via chromedp
+Network.EmulateNetworkConditionsByRule in runWebSpec. -->
+
 | 7 | Retry-on-LLM-rate-limit for self-healing | Currently the self-heal call in `testkit/autonomous.go` is one-shot. If Mistral / Anthropic rate-limits, the step just fails through to the normal error path — which is actually fine most of the time. |
 | 8 | Pinch-zoom + pan in the mobile screenshot modal | The three-tab (Baseline / Current / Diff) viewer works. Proper gesture-driven zoom would be nicer for dense UIs but isn't blocking. Use `react-native-zoom-reanimated` or equivalent. |
 | 9 | HAR response body capture | We dump request metadata + timings but not response bodies. Adding them would balloon disk (~10x for API-heavy apps) and Chrome DevTools already lets the dev do it once manually via the "Preserve log" toggle. Only add if a user asks. |
-| 10 | `yaver test report` HTML export | JSON + JUnit reporters already exist; a pretty HTML report is standalone marketing value, not a dev blocker. |
-| 11 | Autonomous loop → testkit end-to-end integration | The `FixHandler` registry + `AutoFixLog` are wired. The parallel autodev thread needs to register its handler and write to the log. Runs on its own schedule. |
+<!-- #10 landed: `yaver test report [path] [-o out.html]` renders
+the latest runs from .history.jsonl as a single-file HTML report
+with no JS or external assets. -->
+
+<!-- #11 landed: testkit_fixhandler.go registers a claude-backed
+FixHandler in runTestSDK. runner.go now calls
+AttemptAutonomousFix as a last-resort self-heal when
+SelectorReplaceFromSelfHeal doesn't rescue the failing step. -->
+
 
 ---
 
