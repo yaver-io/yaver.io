@@ -6,7 +6,10 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
+  Image,
+  Modal,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -19,16 +22,18 @@ import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import {
   quicClient,
+  TestkitAutoFix,
   TestkitFlakeStats,
   TestkitHistoryEntry,
+  TestkitIntegration,
   TestkitNotification,
   TestkitPassMarker,
   TestkitRunStatus,
   TestkitSpec,
-  TestkitSuiteResult,
+  TestkitUSBDevice,
 } from "../../src/lib/quic";
 
-type Tab = "specs" | "history" | "flake" | "alerts";
+type Tab = "specs" | "history" | "flake" | "alerts" | "devices" | "fixes" | "setup";
 
 export default function RunsScreen() {
   const c = useColors();
@@ -42,6 +47,10 @@ export default function RunsScreen() {
   const [flake, setFlake] = useState<TestkitFlakeStats[]>([]);
   const [alerts, setAlerts] = useState<TestkitNotification[]>([]);
   const [markers, setMarkers] = useState<TestkitPassMarker[]>([]);
+  const [devices, setDevices] = useState<TestkitUSBDevice[]>([]);
+  const [integrations, setIntegrations] = useState<TestkitIntegration[]>([]);
+  const [autofixes, setAutofixes] = useState<TestkitAutoFix[]>([]);
+  const [shotPath, setShotPath] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [starting, setStarting] = useState(false);
   const [headful, setHeadful] = useState(false);
@@ -52,13 +61,16 @@ export default function RunsScreen() {
     if (!isConnected) return;
     setRefreshing(true);
     try {
-      const [s, st, h, f, a, m] = await Promise.all([
+      const [s, st, h, f, a, m, d, i, af] = await Promise.all([
         quicClient.testkitListSpecs(),
         quicClient.testkitRunStatus(),
         quicClient.testkitHistory(),
         quicClient.testkitFlakeReport(),
         quicClient.testkitNotifications(),
         quicClient.testkitMarkers(),
+        quicClient.testkitDevices(),
+        quicClient.testkitIntegrations(),
+        quicClient.testkitAutoFix(),
       ]);
       setSpecs(s);
       setStatus(st);
@@ -66,6 +78,9 @@ export default function RunsScreen() {
       setFlake(f);
       setAlerts(a);
       setMarkers(m);
+      setDevices(d);
+      setIntegrations(i);
+      setAutofixes(af);
     } finally {
       setRefreshing(false);
     }
@@ -128,29 +143,48 @@ export default function RunsScreen() {
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
-      {/* Tabs */}
+      {/* Tabs — horizontally scrollable since we now have 7 */}
       <View style={[styles.tabBar, { borderColor: c.border }]}>
-        {(["specs", "history", "flake", "alerts"] as Tab[]).map((t) => {
-          const label =
-            t === "specs" ? "Specs" :
-            t === "history" ? "Runs" :
-            t === "flake" ? "Flake" : "Alerts";
-          const badge = t === "alerts" && alerts.length > 0 ? ` (${alerts.length})` : "";
-          return (
-            <Pressable
-              key={t}
-              onPress={() => setTab(t)}
-              style={[
-                styles.tabButton,
-                tab === t && { borderBottomColor: c.accent, borderBottomWidth: 2 },
-              ]}
-            >
-              <Text style={{ color: tab === t ? c.textPrimary : c.textMuted, fontWeight: "600" }}>
-                {label}{badge}
-              </Text>
-            </Pressable>
-          );
-        })}
+        <FlatList
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          data={["specs", "history", "alerts", "fixes", "devices", "flake", "setup"] as Tab[]}
+          keyExtractor={(t) => t}
+          renderItem={({ item: t }) => {
+            const label =
+              t === "specs" ? "Specs" :
+              t === "history" ? "Runs" :
+              t === "flake" ? "Flake" :
+              t === "alerts" ? "Alerts" :
+              t === "devices" ? "Devices" :
+              t === "fixes" ? "Auto-fixes" :
+              "Setup";
+            let badge = "";
+            if (t === "alerts" && alerts.length > 0) badge = ` (${alerts.length})`;
+            if (t === "devices" && devices.length > 0) badge = ` (${devices.length})`;
+            if (t === "fixes" && autofixes.filter(f => f.state === "applied").length > 0) {
+              badge = ` (${autofixes.filter(f => f.state === "applied").length})`;
+            }
+            if (t === "setup") {
+              const missing = integrations.filter(i => !i.installed).length;
+              if (missing > 0) badge = ` (${missing})`;
+            }
+            return (
+              <Pressable
+                onPress={() => setTab(t)}
+                style={[
+                  styles.tabButton,
+                  tab === t && { borderBottomColor: c.accent, borderBottomWidth: 2 },
+                  { paddingHorizontal: 16 },
+                ]}
+              >
+                <Text style={{ color: tab === t ? c.textPrimary : c.textMuted, fontWeight: "600" }}>
+                  {label}{badge}
+                </Text>
+              </Pressable>
+            );
+          }}
+        />
       </View>
 
       {/* Run controls */}
@@ -304,9 +338,11 @@ export default function RunsScreen() {
                 </Text>
               )}
               {item.screenshot && (
-                <Text style={[styles.cardSub, { color: c.textMuted, marginTop: 4 }]} numberOfLines={1}>
-                  📷 {item.screenshot}
-                </Text>
+                <Pressable onPress={() => setShotPath(item.screenshot!)}>
+                  <Text style={[styles.cardSub, { color: c.accent || "#6366f1", marginTop: 4 }]} numberOfLines={1}>
+                    📷 View screenshot
+                  </Text>
+                </Pressable>
               )}
             </View>
           )}
@@ -338,13 +374,139 @@ export default function RunsScreen() {
           }}
         />
       )}
+
+      {tab === "devices" && (
+        <FlatList
+          data={devices}
+          keyExtractor={(it) => it.UDID}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.textPrimary} />}
+          contentContainerStyle={{ padding: 12 }}
+          ListEmptyComponent={
+            <Text style={[styles.muted, { color: c.textMuted, textAlign: "center", marginTop: 32 }]}>
+              No USB devices connected. Plug your iPhone or Android in and pull to refresh.
+            </Text>
+          }
+          renderItem={({ item }) => (
+            <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+              <Text style={[styles.cardTitle, { color: c.textPrimary }]}>
+                {item.Platform === "ios" ? "🍎" : "🤖"} {item.Name}
+              </Text>
+              <Text style={[styles.cardSub, { color: c.textMuted }]}>
+                {item.OS} · {item.UDID}
+              </Text>
+            </View>
+          )}
+        />
+      )}
+
+      {tab === "fixes" && (
+        <FlatList
+          data={autofixes}
+          keyExtractor={(it) => it.id}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.textPrimary} />}
+          contentContainerStyle={{ padding: 12 }}
+          ListEmptyComponent={
+            <Text style={[styles.muted, { color: c.textMuted, textAlign: "center", marginTop: 32 }]}>
+              No autonomous fixes yet. The agent records here whenever it patches a broken spec.
+            </Text>
+          }
+          renderItem={({ item }) => {
+            const tint = item.state === "rolled_back" ? "#a1a1aa" : "#4ade80";
+            return (
+              <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+                <Text style={[styles.cardTitle, { color: tint }]}>
+                  {item.state === "rolled_back" ? "↩" : "✓"} {item.spec_name}
+                </Text>
+                <Text style={[styles.cardSub, { color: c.textMuted }]}>
+                  {item.strategy} · {new Date(item.created_at).toLocaleString()}
+                </Text>
+                {item.description && (
+                  <Text style={[styles.cardSub, { color: c.textPrimary }]}>{item.description}</Text>
+                )}
+                {item.notes && (
+                  <Text style={[styles.cardSub, { color: c.textMuted }]} numberOfLines={3}>
+                    {item.notes}
+                  </Text>
+                )}
+                {item.state === "applied" && (
+                  <Pressable
+                    style={{
+                      marginTop: 8,
+                      paddingHorizontal: 12,
+                      paddingVertical: 6,
+                      borderRadius: 6,
+                      backgroundColor: "#ef444422",
+                      alignSelf: "flex-start",
+                    }}
+                    onPress={async () => {
+                      const ok = await quicClient.testkitAutoFixUndo(item.id);
+                      if (ok) refresh();
+                      else Alert.alert("Undo failed");
+                    }}
+                  >
+                    <Text style={{ color: "#f87171", fontSize: 12, fontWeight: "600" }}>Undo</Text>
+                  </Pressable>
+                )}
+              </View>
+            );
+          }}
+        />
+      )}
+
+      {tab === "setup" && (
+        <FlatList
+          data={integrations}
+          keyExtractor={(it) => it.name}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.textPrimary} />}
+          contentContainerStyle={{ padding: 12 }}
+          ListHeaderComponent={
+            <Text style={[styles.muted, { color: c.textMuted, marginBottom: 12 }]}>
+              {"Run `yaver install <name>` from your terminal to install missing pieces."}
+            </Text>
+          }
+          renderItem={({ item }) => (
+            <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+              <Text style={[styles.cardTitle, { color: item.installed ? "#4ade80" : c.textMuted }]}>
+                {item.installed ? "✓" : "—"} {item.name}
+              </Text>
+              <Text style={[styles.cardSub, { color: c.textMuted }]}>{item.description}</Text>
+              {!item.installed && (
+                <Text style={[styles.cardSub, { color: c.textPrimary, marginTop: 4 }]}>
+                  $ {item.hint}
+                </Text>
+              )}
+            </View>
+          )}
+        />
+      )}
+
+      {/* Screenshot viewer modal — opens when a failure card's
+          screenshot path is tapped. Pulls the PNG via the new
+          /testkit/artifact endpoint over the existing P2P transport. */}
+      <Modal
+        visible={!!shotPath}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setShotPath(null)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "center", alignItems: "center" }}
+          onPress={() => setShotPath(null)}
+        >
+          {shotPath && (
+            <Image
+              source={{
+                uri: quicClient.testkitArtifactUrl(shotPath),
+                headers: quicClient.testkitArtifactHeaders,
+              }}
+              style={{ width: "100%", height: "100%", resizeMode: "contain" }}
+            />
+          )}
+          <Text style={{ position: "absolute", bottom: 32, color: "#fff", fontSize: 12 }}>Tap to close</Text>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
-}
-
-function recentFailures(results: TestkitSuiteResult[] | undefined): string {
-  if (!results) return "";
-  return results.filter((r) => !r.passed).map((r) => r.name).join(", ");
 }
 
 const styles = StyleSheet.create({
