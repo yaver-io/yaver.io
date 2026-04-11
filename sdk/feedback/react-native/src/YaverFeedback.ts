@@ -17,6 +17,13 @@ let maxErrors = 5;
 let blackBoxWasStreaming = false;
 
 /**
+ * Flag evaluation cache — 30s TTL per `userId|key`. Prevents a
+ * tight render loop from hammering /flags/eval when the dev calls
+ * `YaverFeedback.getFlag()` every frame.
+ */
+const flagCache: Map<string, { value: unknown; at: number }> = new Map();
+
+/**
  * Main entry point for the Yaver Feedback SDK.
  * Call `YaverFeedback.init()` once at app startup.
  */
@@ -312,6 +319,103 @@ export class YaverFeedback {
   /** Returns the agent commentary level (0-10). */
   static getCommentaryLevel(): number {
     return config?.agentCommentaryLevel ?? 0;
+  }
+
+  // ─── One-stop SaaS replacement methods ─────────────────────────
+  //
+  // These are the three solo-dev SaaS-replacement entry points
+  // wired into YaverFeedback so there's exactly one import path
+  // for the dev's app code: track / getFlag / checkUpdate.
+
+  /**
+   * Record a business event. Routes through BlackBox so the agent
+   * persists it to the analytics ledger (no dashboards — export
+   * via CSV or webhook into PostHog).
+   *
+   * @example
+   * ```ts
+   * YaverFeedback.track('purchase_completed', { amount: '9.99' });
+   * ```
+   */
+  static track(name: string, props?: Record<string, unknown>, route?: string): void {
+    if (!enabled) return;
+    BlackBox.track(name, props, route);
+  }
+
+  /**
+   * Evaluate a single feature flag for a user. Results are cached
+   * for 30 seconds inside YaverFeedback so a tight loop evaluating
+   * the same key doesn't hammer the agent.
+   *
+   * @param key — flag key (must exist on the agent)
+   * @param defaultValue — returned if the flag is missing / offline
+   * @param userId — stable user identifier for rollout bucketing
+   */
+  static async getFlag<T = boolean | string>(
+    key: string,
+    defaultValue: T,
+    userId: string = 'anonymous',
+  ): Promise<T> {
+    if (!enabled || !p2pClient) return defaultValue;
+    const cacheKey = `${userId}|${key}`;
+    const now = Date.now();
+    const cached = flagCache.get(cacheKey);
+    if (cached && now - cached.at < 30_000) {
+      return (cached.value as T) ?? defaultValue;
+    }
+    try {
+      const val = await p2pClient.flagsEvaluateOne<T>(key, userId);
+      flagCache.set(cacheKey, { value: val ?? defaultValue, at: now });
+      return (val as T) ?? defaultValue;
+    } catch {
+      return defaultValue;
+    }
+  }
+
+  /**
+   * Bulk evaluate every flag for a user. Cached on the same 30s
+   * window as getFlag — use this when boot needs a handful of
+   * flags in one roundtrip.
+   */
+  static async getFlags(
+    userId: string = 'anonymous',
+  ): Promise<Record<string, unknown>> {
+    if (!enabled || !p2pClient) return {};
+    const cacheKey = `all|${userId}`;
+    const now = Date.now();
+    const cached = flagCache.get(cacheKey);
+    if (cached && now - cached.at < 30_000) {
+      return (cached.value as Record<string, unknown>) ?? {};
+    }
+    try {
+      const flags = await p2pClient.flagsEvaluate(userId);
+      flagCache.set(cacheKey, { value: flags, at: now });
+      return flags;
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * Ask what bundle this device should run. Returns the latest
+   * release manifest in the configured channel plus a rollout
+   * gate. The dev can then compare against what's currently
+   * running and prompt the user to reload.
+   *
+   * On-disk bundle swap is platform-specific — see
+   * `YaverFeedback.onUpdateAvailable` if you want a hook.
+   */
+  static async checkUpdate(
+    channel: string = 'production',
+    deviceId?: string,
+  ): Promise<Awaited<ReturnType<P2PClient['releasesLatest']>>> {
+    if (!enabled || !p2pClient) return null;
+    return p2pClient.releasesLatest(channel, deviceId);
+  }
+
+  /** Clear the in-memory flag cache. Useful for tests or after sign-out. */
+  static clearFlagCache(): void {
+    flagCache.clear();
   }
 
   /**

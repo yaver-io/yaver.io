@@ -1650,6 +1650,140 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, testkitTools...)
 
+	// --- Monitor tools (errors / flags / releases / uptime / analytics) ---
+	monitorTools := []map[string]interface{}{
+		{
+			"name":        "error_list",
+			"description": "List cross-device error records aggregated from every SDK session. Each record has a fingerprint, message, count, device list, and recent samples.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{
+					"include_resolved": map[string]interface{}{"type": "boolean", "description": "Include resolved errors in the list"},
+				},
+			},
+		},
+		{
+			"name":        "error_resolve",
+			"description": "Mark an error as resolved with an optional note. The record stays in the ledger but drops off the open-errors view.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"fingerprint"},
+				"properties": map[string]interface{}{
+					"fingerprint": map[string]interface{}{"type": "string"},
+					"note":        map[string]interface{}{"type": "string", "description": "One-liner on what fixed it"},
+				},
+			},
+		},
+		{
+			"name":        "flag_list",
+			"description": "List every self-hosted feature flag with default, rollout percent, and overrides.",
+			"inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+		{
+			"name":        "flag_set",
+			"description": "Create or update a feature flag. Use this to flip a kill switch, start a rollout, or add a new flag.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"key"},
+				"properties": map[string]interface{}{
+					"key":             map[string]interface{}{"type": "string"},
+					"type":            map[string]interface{}{"type": "string", "enum": []string{"bool", "string"}},
+					"defaultBool":     map[string]interface{}{"type": "boolean"},
+					"defaultString":   map[string]interface{}{"type": "string"},
+					"rolloutPercent":  map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 100},
+					"description":     map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+		{
+			"name":        "flag_evaluate",
+			"description": "Evaluate every flag for a specific userId. Useful for debugging rollout bucketing.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"userId"},
+				"properties": map[string]interface{}{
+					"userId": map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+		{
+			"name":        "release_list",
+			"description": "List releases in a self-hosted OTA channel (default: production). Shows latest pointer, rollout percent, and every historical bundle.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{
+					"channel": map[string]interface{}{"type": "string", "description": "Channel name, default production"},
+				},
+			},
+		},
+		{
+			"name":        "release_rollout",
+			"description": "Set the rollout percentage for a release channel (0..100).",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"channel", "percent"},
+				"properties": map[string]interface{}{
+					"channel": map[string]interface{}{"type": "string"},
+					"percent": map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 100},
+				},
+			},
+		},
+		{
+			"name":        "release_rollback",
+			"description": "Roll a channel's latest pointer back to a previously published semver.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"channel", "semver"},
+				"properties": map[string]interface{}{
+					"channel": map[string]interface{}{"type": "string"},
+					"semver":  map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+		{
+			"name":        "monitor_list",
+			"description": "List every uptime monitor with state, streak, interval, and last-check timestamp.",
+			"inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+		{
+			"name":        "monitor_add",
+			"description": "Register a new uptime monitor for a URL. The agent probes every interval; three consecutive failures fire a push alert.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"url"},
+				"properties": map[string]interface{}{
+					"url":      map[string]interface{}{"type": "string"},
+					"name":     map[string]interface{}{"type": "string"},
+					"interval": map[string]interface{}{"type": "string", "description": "Go duration, e.g. 60s, 5m"},
+					"method":   map[string]interface{}{"type": "string", "description": "HTTP method, default GET"},
+				},
+			},
+		},
+		{
+			"name":        "monitor_remove",
+			"description": "Delete an uptime monitor by id or name.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"id"},
+				"properties": map[string]interface{}{
+					"id": map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+		{
+			"name":        "analytics_events",
+			"description": "Read recent business-event records from the analytics ledger (BlackBox track() channel). Returns the tail since a unix-ms timestamp.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{
+					"since": map[string]interface{}{"type": "integer", "description": "Unix ms filter — only return events newer than this"},
+					"limit": map[string]interface{}{"type": "integer", "description": "Max events to return, default 100"},
+				},
+			},
+		},
+	}
+	tools = append(tools, monitorTools...)
+
 	return map[string]interface{}{
 		"tools": tools,
 	}

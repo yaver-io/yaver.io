@@ -7,7 +7,15 @@ import { YaverFeedback } from './YaverFeedback';
  * These mirror the Go BlackBoxEvent struct on the agent side.
  */
 export interface BlackBoxEvent {
-  type: 'log' | 'error' | 'navigation' | 'lifecycle' | 'network' | 'state' | 'render';
+  type:
+    | 'log'
+    | 'error'
+    | 'navigation'
+    | 'lifecycle'
+    | 'network'
+    | 'state'
+    | 'render'
+    | 'track';
   level?: 'info' | 'warn' | 'error';
   message: string;
   timestamp: number;
@@ -151,6 +159,37 @@ export class BlackBox {
 
   static error(message: string, source?: string, metadata?: Record<string, unknown>): void {
     BlackBox.push({ type: 'log', level: 'error', message, timestamp: Date.now(), source, metadata });
+  }
+
+  // ─── Track events ────────────────────────────────────────────────
+  //
+  // Business-event ingest. Routed into the agent's analytics ledger
+  // via the same BlackBox stream so the dev doesn't pay Mixpanel
+  // / Amplitude for "the user tapped Purchase." Zero dashboards in
+  // yaver; export to CSV / webhook into PostHog if you want charts.
+
+  /**
+   * Record a business event. Fires into the analytics ledger on
+   * the agent — see GET /analytics/events.csv.
+   *
+   * @example
+   * ```ts
+   * BlackBox.track('purchase_completed', {
+   *   amount: '9.99',
+   *   currency: 'USD',
+   *   plan: 'pro',
+   * });
+   * ```
+   */
+  static track(name: string, props?: Record<string, unknown>, route?: string): void {
+    if (!name) return;
+    BlackBox.push({
+      type: 'track',
+      message: name,
+      timestamp: Date.now(),
+      route,
+      metadata: props,
+    });
   }
 
   // ─── Errors ──────────────────────────────────────────────────────

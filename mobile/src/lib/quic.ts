@@ -2632,6 +2632,30 @@ export class QuicClient {
     }
   }
 
+  // ---- Log aggregation (E cross-device) ---------------------------------
+
+  async logsSearch(
+    opts: { q?: string; level?: string; device?: string; since?: number; limit?: number } = {},
+  ): Promise<LogEntry[]> {
+    try {
+      const params = new URLSearchParams();
+      if (opts.q) params.set("q", opts.q);
+      if (opts.level) params.set("level", opts.level);
+      if (opts.device) params.set("device", opts.device);
+      if (opts.since) params.set("since", String(opts.since));
+      params.set("limit", String(opts.limit ?? 200));
+      const res = await fetch(
+        `${this.baseUrl}/logs/search?${params.toString()}`,
+        { headers: this.authHeaders },
+      );
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.entries ?? [];
+    } catch {
+      return [];
+    }
+  }
+
   // ---- Auto Dev (M8) -----------------------------------------------------
 
   /** Fetch all registered Auto Dev loops. */
@@ -2850,6 +2874,16 @@ export interface TrackEvent {
   timestamp: number;
   route?: string;
   props?: Record<string, string>;
+}
+
+/** Cross-device log entry. */
+export interface LogEntry {
+  deviceId: string;
+  level: string;
+  message: string;
+  source?: string;
+  route?: string;
+  timestamp: number;
 }
 
 /** Feature flag — one entry in the ledger. */

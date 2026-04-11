@@ -141,6 +141,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/flags/eval", s.authSDK(s.handleFlagsEval))
 	mux.HandleFunc("/flags/override", s.auth(s.handleFlagOverride))
 	mux.HandleFunc("/flags/delete", s.auth(s.handleFlagDelete))
+	mux.HandleFunc("/logs/search", s.auth(s.handleLogsSearch))
 	mux.HandleFunc("/analytics", s.auth(s.handleAnalytics))
 	mux.HandleFunc("/session/list", s.auth(s.handleSessionList))
 	mux.HandleFunc("/session/export", s.auth(s.handleSessionExport))
@@ -6122,6 +6123,32 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 		return s.mcpTestkitFlakeReport(call.Arguments)
 	case "testkit_self_heal_selector":
 		return s.mcpTestkitSelfHealSelector(call.Arguments)
+
+	// --- Monitor (errors / flags / releases / uptime / analytics) ---
+	case "error_list":
+		return s.mcpErrorList(call.Arguments)
+	case "error_resolve":
+		return s.mcpErrorResolve(call.Arguments)
+	case "flag_list":
+		return s.mcpFlagList()
+	case "flag_set":
+		return s.mcpFlagSet(call.Arguments)
+	case "flag_evaluate":
+		return s.mcpFlagEvaluate(call.Arguments)
+	case "release_list":
+		return s.mcpReleaseList(call.Arguments)
+	case "release_rollout":
+		return s.mcpReleaseRollout(call.Arguments)
+	case "release_rollback":
+		return s.mcpReleaseRollback(call.Arguments)
+	case "monitor_list":
+		return s.mcpMonitorList()
+	case "monitor_add":
+		return s.mcpMonitorAdd(call.Arguments)
+	case "monitor_remove":
+		return s.mcpMonitorRemove(call.Arguments)
+	case "analytics_events":
+		return s.mcpAnalyticsEvents(call.Arguments)
 
 	default:
 		return mcpToolError("unknown tool: " + call.Name)

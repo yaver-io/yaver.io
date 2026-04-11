@@ -145,6 +145,21 @@ func (s *BlackBoxSession) PushEvent(event BlackBoxEvent) {
 		GlobalErrorStore().Record(s.DeviceID, event)
 	}
 
+	// Log events fan out to the cross-device log ledger so the
+	// mobile Logs tab can grep across every SDK session. Includes
+	// info/warn/error levels per the SDK's BlackBox.log/warn/error
+	// helpers.
+	if event.Type == "log" {
+		GlobalLogStore().Append(LogEntry{
+			DeviceID:  s.DeviceID,
+			Level:     event.Level,
+			Message:   event.Message,
+			Source:    event.Source,
+			Route:     event.Route,
+			Timestamp: event.Timestamp,
+		})
+	}
+
 	// Track events get appended to the analytics ledger for CSV
 	// export. Zero dashboards here — the ledger is a tunnel.
 	if event.Type == "track" {
