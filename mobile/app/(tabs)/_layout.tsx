@@ -96,6 +96,15 @@ export default function TabLayout() {
       }}
     >
       <Tabs.Screen
+        name="hotreload"
+        options={{
+          title: "Hot Reload",
+          tabBarIcon: ({ focused }) => (
+            <TabIcon label="Hot Reload" focused={focused} showGreenDot={devServerRunning} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="tasks"
         options={{
           title: "Tasks",
@@ -111,7 +120,6 @@ export default function TabLayout() {
           ),
         }}
       />
-      <Tabs.Screen name="hotreload" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="builds" options={{ href: null, headerShown: false }} />
       <Tabs.Screen
         name="devices"
