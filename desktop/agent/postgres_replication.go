@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // ReplicationConfig describes a primary→replica streaming replication setup.
@@ -96,35 +97,77 @@ func ConfigurePrimary(projectDir string, slotName, replicationUser, replicationP
 	}, nil
 }
 
-// ConfigureReplica wires up a replica container to stream from the primary.
-// This is a guidance endpoint: we can't run a base_backup inside a container we
-// don't control, so we return the exact docker exec commands the user runs on
-// the replica machine.
-func ConfigureReplica(primaryHost string, primaryPort int, replicationUser, replicationPassword, slotName string) map[string]interface{} {
+// ConfigureReplica sets up the replica. Two modes:
+//
+//   - confirm=false: guidance only (safe default)
+//   - confirm=true: actually wipes the replica volume and runs pg_basebackup
+//     to stream a fresh copy, then starts the replica attached to the slot.
+//
+// The replica must already be a configured service in services.yaml (preset
+// "postgres-replica"). If missing, we add it.
+func ConfigureReplica(projectDir, primaryHost string, primaryPort int, replicationUser, replicationPassword, slotName string, confirm bool) map[string]interface{} {
 	if primaryPort == 0 {
 		primaryPort = 5432
 	}
 	if slotName == "" {
 		slotName = "yaver_slot"
 	}
-	conn := fmt.Sprintf("host=%s port=%d user=%s password=%s", primaryHost, primaryPort, replicationUser, replicationPassword)
 
-	return map[string]interface{}{
-		"primaryConnInfo": conn,
-		"steps": []string{
-			"On the replica machine, stop postgres if running: docker stop <replica-container>",
-			"Wipe its data volume: docker volume rm yaver-pg-replica-data",
-			"Start an empty replica container and exec in. Then:",
-			"  pg_basebackup -h " + primaryHost + " -p " + fmt.Sprint(primaryPort) +
-				" -U " + replicationUser + " -D /var/lib/postgresql/data -R -S " + slotName + " -X stream",
-			"  (Prompts for password: " + replicationPassword + ")",
-			"pg_basebackup -R writes standby.signal + postgresql.auto.conf with primary_conninfo.",
-			"Start the replica — it attaches to slot '" + slotName + "' and streams.",
-			"",
-			"Verify: SELECT client_addr, state, sync_state FROM pg_stat_replication;  (on primary)",
-		},
-		"notes": "Yaver returns the commands instead of auto-running because base_backup is destructive to the replica volume. Run explicitly once to avoid footguns.",
+	if !confirm {
+		return map[string]interface{}{
+			"primaryConnInfo": fmt.Sprintf("host=%s port=%d user=%s password=%s", primaryHost, primaryPort, replicationUser, replicationPassword),
+			"steps": []string{
+				"Preview mode (pass confirm=true to run):",
+				"1. Ensure postgres-replica service is in services.yaml",
+				"2. Stop replica (if running) + wipe its volume",
+				"3. pg_basebackup -h " + primaryHost + " -p " + fmt.Sprint(primaryPort) +
+					" -U " + replicationUser + " -D /var/lib/postgresql/data -R -S " + slotName + " -X stream",
+				"4. Start replica — it streams from the primary's slot",
+			},
+		}
 	}
+
+	// 1. Ensure the preset exists.
+	sm := NewServicesManager(projectDir)
+	if _, err := sm.Add("postgres-replica", nil); err != nil {
+		// Not fatal — maybe already added.
+	}
+
+	// 2. Stop + wipe the replica.
+	stopCmds := [][]string{
+		{"compose", "-p", "yaver-services", "-f", sm.composePath(), "stop", "postgres-replica"},
+		{"volume", "rm", "-f", "yaver-pg-replica-data"},
+	}
+	var steps []string
+	for _, c := range stopCmds {
+		out, err := sm.runDocker(c...)
+		steps = append(steps, fmt.Sprintf("%s → %s", strings.Join(c, " "), strings.TrimSpace(out)))
+		_ = err // best-effort
+	}
+
+	// 3. Run pg_basebackup in a fresh postgres container, writing into the volume.
+	runBackup := []string{"run", "--rm",
+		"-v", "yaver-pg-replica-data:/var/lib/postgresql/data",
+		"-e", "PGPASSWORD=" + replicationPassword,
+		"--entrypoint", "sh",
+		"postgres:16",
+		"-c", fmt.Sprintf("rm -rf /var/lib/postgresql/data/* && pg_basebackup -h %s -p %d -U %s -D /var/lib/postgresql/data -R -S %s -X stream -Fp",
+			primaryHost, primaryPort, replicationUser, slotName),
+	}
+	if out, err := sm.runDocker(runBackup...); err != nil {
+		return map[string]interface{}{"error": "pg_basebackup failed: " + err.Error(), "output": out, "steps": steps}
+	} else {
+		steps = append(steps, "pg_basebackup complete")
+	}
+
+	// 4. Start the replica.
+	if msg, err := sm.Start("postgres-replica"); err != nil {
+		return map[string]interface{}{"error": "start replica: " + err.Error(), "output": msg, "steps": steps}
+	} else {
+		steps = append(steps, "replica started: "+msg)
+	}
+	AuditLog("", "replica_setup", projectDir, primaryHost, "success", "", "")
+	return map[string]interface{}{"ok": true, "steps": steps}
 }
 
 // ---- HTTP ----
@@ -141,6 +184,7 @@ func (s *HTTPServer) handleReplicaSetup(w http.ResponseWriter, r *http.Request) 
 		ReplicationPassword  string `json:"replicationPassword"`
 		PrimaryHost          string `json:"primaryHost"`
 		PrimaryPort          int    `json:"primaryPort"`
+		Confirm              bool   `json:"confirm"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&b)
 	switch b.Role {
@@ -152,7 +196,7 @@ func (s *HTTPServer) handleReplicaSetup(w http.ResponseWriter, r *http.Request) 
 		}
 		writeJSON(w, http.StatusOK, res)
 	case "replica":
-		res := ConfigureReplica(b.PrimaryHost, b.PrimaryPort, b.ReplicationUser, b.ReplicationPassword, b.SlotName)
+		res := ConfigureReplica(s.dirParam(r), b.PrimaryHost, b.PrimaryPort, b.ReplicationUser, b.ReplicationPassword, b.SlotName, b.Confirm)
 		writeJSON(w, http.StatusOK, res)
 	default:
 		jsonError(w, http.StatusBadRequest, "role must be 'primary' or 'replica'")

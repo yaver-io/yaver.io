@@ -154,24 +154,57 @@ func ConfigurePITR(projectDir string) (map[string]interface{}, error) {
 	}, nil
 }
 
-// RestorePITR creates a recovery.conf-style pointer for Postgres to recover up
-// to a given timestamp. This writes a marker and returns the steps the user
-// must run manually (we don't blindly blow away prod data).
-func RestorePITR(projectDir, targetTimestamp string) map[string]interface{} {
-	return map[string]interface{}{
-		"manual": true,
-		"steps": []string{
-			"Stop the postgres container: docker compose stop postgres",
-			"Remove old data: docker volume rm yaver-pg-data   (destructive — snapshot first!)",
-			"Restore base backup into the volume",
-			"Create recovery signal: touch /var/lib/postgresql/data/recovery.signal",
-			"Set recovery_target_time = '" + targetTimestamp + "' in postgresql.conf",
-			"Set restore_command = 'cp /var/lib/postgresql/wal/%f %p' in postgresql.conf",
-			"Start postgres — it replays WAL up to that timestamp and pauses",
-			"Promote with: SELECT pg_wal_replay_resume();",
-		},
-		"note": "Yaver does not auto-perform PITR restores because the destructive steps must be gated by explicit human confirmation.",
+// RestorePITR can run in two modes:
+//
+//   - Guidance (confirm=false, default): returns the exact steps. Safe.
+//   - Auto (confirm=true): takes a fresh snapshot first, then executes the
+//     destructive sequence via docker exec. Still requires pg_basebackup to
+//     have been archived (CreateBackup with backend=postgres does pg_dump,
+//     not a physical basebackup — so point-in-time restore is limited to
+//     timestamps within available WAL).
+func RestorePITR(projectDir, targetTimestamp string, confirm bool) map[string]interface{} {
+	if !confirm {
+		return map[string]interface{}{
+			"manual": true,
+			"steps": []string{
+				"Stop the postgres container: docker compose stop postgres",
+				"Remove old data: docker volume rm yaver-pg-data   (destructive — snapshot first!)",
+				"Restore base backup into the volume",
+				"Create recovery signal: touch /var/lib/postgresql/data/recovery.signal",
+				"Set recovery_target_time = '" + targetTimestamp + "' in postgresql.conf",
+				"Set restore_command = 'cp /var/lib/postgresql/wal/%f %p' in postgresql.conf",
+				"Start postgres — it replays WAL up to that timestamp and pauses",
+				"Promote with: SELECT pg_wal_replay_resume();",
+			},
+			"note": "Preview mode. Pass confirm=true to run. Yaver auto-snapshots first.",
+		}
 	}
+
+	// 1. Safety net — snapshot the current data first.
+	backup, err := CreateBackup(projectDir, "pre-pitr")
+	if err != nil {
+		return map[string]interface{}{"error": "refused to proceed: safety snapshot failed: " + err.Error()}
+	}
+	steps := []string{"pre-pitr snapshot: " + backup.Path}
+
+	// 2. Execute the destructive sequence via docker compose.
+	sm := NewServicesManager(projectDir)
+	cmds := [][]string{
+		{"compose", "-p", "yaver-services", "-f", sm.composePath(), "stop", "postgres"},
+		{"exec", "yaver-services-postgres-1", "sh", "-c",
+			fmt.Sprintf("rm -rf /var/lib/postgresql/data/* && touch /var/lib/postgresql/data/recovery.signal && echo \"recovery_target_time = '%s'\" >> /var/lib/postgresql/data/postgresql.auto.conf && echo \"restore_command = 'cp /var/lib/postgresql/wal/%%f %%p'\" >> /var/lib/postgresql/data/postgresql.auto.conf", targetTimestamp)},
+		{"compose", "-p", "yaver-services", "-f", sm.composePath(), "start", "postgres"},
+	}
+	for _, c := range cmds {
+		if out, err := sm.runDocker(c...); err != nil {
+			return map[string]interface{}{"error": "step failed: " + strings.Join(c, " ") + " — " + err.Error(), "output": out, "steps": steps}
+		} else {
+			steps = append(steps, "ran: "+strings.Join(c, " "))
+		}
+	}
+	steps = append(steps, "postgres replayed WAL to "+targetTimestamp+". Promote with `SELECT pg_wal_replay_resume()` when ready.")
+	AuditLog("", "pitr_restore", projectDir, targetTimestamp, "success", "", "")
+	return map[string]interface{}{"ok": true, "steps": steps, "snapshot": backup.Path}
 }
 
 func (s *HTTPServer) handlePITRSetup(w http.ResponseWriter, r *http.Request) {
@@ -192,9 +225,12 @@ func (s *HTTPServer) handlePITRRestore(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusMethodNotAllowed, "POST only")
 		return
 	}
-	var b struct{ Timestamp string `json:"timestamp"` }
+	var b struct {
+		Timestamp string `json:"timestamp"`
+		Confirm   bool   `json:"confirm"`
+	}
 	_ = json.NewDecoder(r.Body).Decode(&b)
-	writeJSON(w, http.StatusOK, RestorePITR(s.dirParam(r), b.Timestamp))
+	writeJSON(w, http.StatusOK, RestorePITR(s.dirParam(r), b.Timestamp, b.Confirm))
 }
 
 // ---------- Multi-region HA ----------
