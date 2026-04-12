@@ -31,6 +31,26 @@ type ObjectFile struct {
 	ETag         string    `json:"etag,omitempty"`
 }
 
+// applyS3Auth picks the right auth scheme for the storage target:
+// - MinIO default (minioadmin): basic auth (MinIO accepts it for root)
+// - Anything else (AWS, R2, B2): SigV4 with extracted region
+func applyS3Auth(req *http.Request, s ObjectStorage, body []byte) {
+	// MinIO default credentials — basic auth works.
+	if s.AccessKey == "minioadmin" && strings.Contains(s.Endpoint, "127.0.0.1") {
+		req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
+		req.SetBasicAuth(s.AccessKey, s.SecretKey)
+		return
+	}
+	region := s.Region
+	if region == "" {
+		region = regionFromS3URL(s.Endpoint)
+	}
+	if region == "" {
+		region = "auto"
+	}
+	signSigV4(req, s.AccessKey, s.SecretKey, region, "s3", body)
+}
+
 // defaultLocalStorage points at Yaver's local MinIO preset.
 func defaultLocalStorage(bucket string) ObjectStorage {
 	if bucket == "" {
@@ -58,8 +78,7 @@ func ListObjects(s ObjectStorage, prefix string, limit int) ([]ObjectFile, error
 	// MinIO with default creds accepts unsigned requests when built-in policy
 	// allows it; for AWS/R2 we'd need SigV4. Solo-dev mode uses MinIO locally,
 	// so we try unsigned first, then fall back to basic-auth-ish query creds.
-	req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
-	req.SetBasicAuth(s.AccessKey, s.SecretKey)
+	applyS3Auth(req, s, nil)
 	res, err := provisionHTTP.Do(req)
 	if err != nil {
 		return nil, err
@@ -96,7 +115,7 @@ func UploadObject(s ObjectStorage, key string, body []byte, contentType string) 
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
-	req.SetBasicAuth(s.AccessKey, s.SecretKey)
+	applyS3Auth(req, s, body)
 	res, err := provisionHTTP.Do(req)
 	if err != nil {
 		return err
@@ -113,7 +132,7 @@ func UploadObject(s ObjectStorage, key string, body []byte, contentType string) 
 func DeleteObject(s ObjectStorage, key string) error {
 	u := strings.TrimRight(s.Endpoint, "/") + "/" + url.PathEscape(s.Bucket) + "/" + key
 	req, _ := http.NewRequest("DELETE", u, nil)
-	req.SetBasicAuth(s.AccessKey, s.SecretKey)
+	applyS3Auth(req, s, nil)
 	res, err := provisionHTTP.Do(req)
 	if err != nil {
 		return err

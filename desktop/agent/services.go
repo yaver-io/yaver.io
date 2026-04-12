@@ -208,6 +208,19 @@ func presets() map[string]*DevServiceConfig {
 			Port:   8090,
 			Volume: "yaver-pb-data",
 		},
+		"postgres-replica": {
+			Image:  "postgres:16",
+			Port:   5433,
+			Volume: "yaver-pg-replica-data",
+			Env: map[string]string{
+				"POSTGRES_USER":       "postgres",
+				"POSTGRES_PASSWORD":   "dev",
+				"PGUSER":              "postgres",
+				"POSTGRES_DB":         "myapp",
+			},
+			// Command: run base_backup → recovery, then start as replica.
+			// Concrete setup handled by ConfigureReplication below.
+		},
 		"dynamodb-local": {
 			Image:   "amazon/dynamodb-local:latest",
 			Port:    8000,
@@ -723,6 +736,8 @@ func (sm *ServicesManager) generateComposeFile(cfg *DevServicesConfig, serviceFi
 				dataPath = "/data"
 			case "code-server":
 				dataPath = "/home/coder"
+			case "postgres-replica":
+				dataPath = "/var/lib/postgresql/data"
 			}
 			buf.WriteString(fmt.Sprintf("      - %s:%s\n", svc.Volume, dataPath))
 		}

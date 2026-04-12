@@ -2146,6 +2146,21 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
+        {/* Ops — deploy, backups, domains, uptime, secret rotate */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/ops" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\uD83D\uDE80"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Ops</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Deploy · Backups · Domains · Uptime · Rotate</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
         {/* Health Monitor — navigate to dedicated screen */}
         {connected && (
           <Pressable
