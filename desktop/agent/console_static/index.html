@@ -57,11 +57,17 @@
 
 <nav id="tabs">
   <button class="active" data-tab="overview">Overview</button>
+  <button data-tab="machines">Machines</button>
   <button data-tab="containers">Containers</button>
+  <button data-tab="switch">Switch</button>
+  <button data-tab="accounts">Accounts</button>
+  <button data-tab="catalog">Catalog</button>
   <button data-tab="deploys">Deploys</button>
   <button data-tab="backups">Backups</button>
   <button data-tab="domains">Domains</button>
   <button data-tab="uptime">Uptime</button>
+  <button data-tab="schema">Schema</button>
+  <button data-tab="storage">Storage</button>
   <button data-tab="logs">Logs</button>
 </nav>
 
@@ -118,11 +124,17 @@ async function render() {
   try {
     switch (currentTab) {
       case "overview": return renderOverview();
+      case "machines": return renderMachines();
       case "containers": return renderContainers();
+      case "switch": return renderSwitch();
+      case "accounts": return renderAccounts();
+      case "catalog": return renderCatalog();
       case "deploys": return renderDeploys();
       case "backups": return renderBackups();
       case "domains": return renderDomains();
       case "uptime": return renderUptime();
+      case "schema": return renderSchema();
+      case "storage": return renderStorage();
       case "logs": return renderLogs();
     }
   } catch (e) { view.innerHTML = `<div class="err">${e.message}</div>`; }
@@ -259,6 +271,140 @@ window.doSearch = async () => {
   const out = document.getElementById("logOut");
   out.textContent = (r.hits || []).map(h => `[${h.service}] ${h.ts?.slice(11,19)} ${h.line}`).join("\n") || "(no matches)";
 };
+
+async function renderMachines() {
+  const r = await api("/console/machines");
+  view.innerHTML = `<div class="grid">` + (r.machines || []).map(m => `
+    <div class="card">
+      <h3>${m.isLocal ? '★ ' : ''}${m.name}</h3>
+      <div class="v" style="font-size:14px">${m.provider || 'unknown'}</div>
+      <div class="s">${m.platform || ''} · ${m.arch || ''}</div>
+      <div class="s"><span class="tag ${m.isOnline ? 'ok' : 'down'}">${m.isOnline ? 'online' : 'offline'}</span></div>
+    </div>`).join("") + `</div>`;
+}
+
+async function renderSwitch() {
+  const [targets, history] = await Promise.all([api("/switch/targets"), api("/switch/history")]);
+  const grouped = {};
+  for (const t of targets.targets || []) {
+    (grouped[t.family] = grouped[t.family] || []).push(t);
+  }
+  view.innerHTML = `
+    <p class="tip">Pick a target to plan a switch. Convex/Supabase Cloud: seamless (auto-captures creds).</p>
+    ${Object.entries(grouped).map(([fam, list]) => `
+      <h3 style="color:#818cf8;font-size:11px;text-transform:uppercase;margin:12px 0 6px">${fam}</h3>
+      ${list.map(t => `
+        <div class="row" onclick="planSwitch('${t.id}')" style="cursor:pointer">
+          <span class="name">${t.label}</span>
+          <span class="muted">${t.cost}</span>
+          ${t.requiresAccount ? '<span class="tag">account</span>' : ''}
+        </div>`).join("")}`).join("")}
+    <h3 style="margin-top:16px;font-size:11px;text-transform:uppercase;color:#737373">History</h3>
+    ${(history.switches || []).slice(0, 10).map(s => `
+      <div class="row">
+        <span class="tag ${s.status === 'done' ? 'ok' : 'down'}">${s.status}</span>
+        <span class="name">${s.fromBackend} → ${s.to}</span>
+        <span class="muted">${s.complexity}</span>
+        ${s.status === 'done' ? `<button class="act" onclick="rollbackSwitch('${s.id}')">Rollback</button>` : ''}
+      </div>`).join("")}
+  `;
+}
+window.planSwitch = async (target) => {
+  const plan = await api("/switch/plan", { method: "POST", body: JSON.stringify({ target, dryRun: false }) });
+  if (plan.error) { alert(plan.error); return; }
+  if (!confirm(`Switch complexity: ${plan.complexity}. ${plan.steps.length} steps. Execute?`)) return;
+  const result = await api("/switch/run", { method: "POST", body: JSON.stringify({ id: plan.id }) });
+  alert(result.status || result.error);
+  render();
+};
+window.rollbackSwitch = async (id) => {
+  if (!confirm("Rollback this switch?")) return;
+  await api("/switch/rollback", { method: "POST", body: JSON.stringify({ id }) });
+  render();
+};
+
+async function renderAccounts() {
+  const r = await api("/accounts");
+  const providers = r.providers || [];
+  const byID = {};
+  (r.accounts || []).forEach(a => byID[a.provider] = a);
+  view.innerHTML = `<div class="grid">` + providers.map(p => {
+    const acct = byID[p.id];
+    const connected = acct && acct.connected;
+    return `<div class="card">
+      <h3>${p.label}</h3>
+      <div class="s"><span class="tag ${connected ? 'ok' : ''}">${connected ? 'connected' : 'not connected'}</span></div>
+      <div class="s" style="margin-top:8px">
+        ${connected
+          ? `<button class="act" onclick="disconnect('${p.id}')">Disconnect</button>`
+          : `<button class="act primary" onclick="connect('${p.id}', ${JSON.stringify(p.fields).replace(/"/g, "&quot;")})">Connect</button>`}
+      </div>
+      ${p.tokenURL && p.tokenURL.startsWith('http') ? `<div class="s" style="margin-top:4px"><a href="${p.tokenURL}" target="_blank" style="color:#818cf8">get token →</a></div>` : ''}
+    </div>`;
+  }).join("") + `</div>`;
+}
+window.connect = async (provider, fieldsArr) => {
+  const fields = {};
+  for (const f of fieldsArr) {
+    const v = prompt("Enter " + f + ":");
+    if (!v) return;
+    fields[f] = v;
+  }
+  await api("/accounts/connect", { method: "POST", body: JSON.stringify({ provider, fields }) });
+  render();
+};
+window.disconnect = async (provider) => {
+  if (!confirm("Disconnect " + provider + "?")) return;
+  await api("/accounts/disconnect", { method: "POST", body: JSON.stringify({ provider }) });
+  render();
+};
+
+async function renderCatalog() {
+  const r = await api("/console/catalog");
+  view.innerHTML = `<p class="tip">One-click install onto the current project.</p>`
+    + Object.entries(r.categories || {}).map(([cat, list]) => `
+      <h3 style="color:#818cf8;font-size:11px;text-transform:uppercase;margin:12px 0 6px">${cat}</h3>
+      <div class="grid">${list.map(e => `
+        <div class="card">
+          <h3>${e.name}</h3>
+          <div class="s">${e.description}</div>
+          <div class="s" style="margin-top:6px"><button class="act primary" onclick="installService('${e.id}')">Install</button></div>
+        </div>`).join("")}</div>`).join("");
+}
+window.installService = async (id) => {
+  const r = await api("/console/catalog/install", { method: "POST", body: JSON.stringify({ id, fields: {} }) });
+  alert(r.error || "Installed: " + JSON.stringify(r.entry?.name || id));
+  render();
+};
+
+async function renderSchema() {
+  const r = await api("/backend/schema");
+  if (r.error) { view.innerHTML = `<div class="err">${r.error}</div>`; return; }
+  view.innerHTML = `
+    <p class="muted">Backend: ${r.backend} · Source: ${r.source}</p>
+    ${(r.tables || []).map(t => `
+      <div class="card" style="margin-bottom:8px">
+        <h3>${t.name}</h3>
+        ${(t.columns || []).map(c => `<div class="s">${c.name} <span class="muted">${c.type}</span>${c.primaryKey ? ' <span class="tag">PK</span>' : ''}</div>`).join("")}
+      </div>`).join("")}
+    <h3 style="margin-top:12px;font-size:11px">Mermaid ERD</h3>
+    <pre>${r.mermaid || ''}</pre>
+  `;
+}
+
+async function renderStorage() {
+  const r = await api("/storage/list");
+  view.innerHTML = `
+    <p class="muted">Source: ${r.source || 'none'}</p>
+    ${r.error ? `<div class="err">${r.error}</div>` : ''}
+    ${(r.files || []).map(f => `
+      <div class="row">
+        <span class="name">${f.name}</span>
+        <span class="muted">${fmtBytes(f.size)}</span>
+        <span class="muted">${(f.createdAt || '').slice(0,10)}</span>
+      </div>`).join("")}
+  `;
+}
 
 (async () => {
   await connectCheck();

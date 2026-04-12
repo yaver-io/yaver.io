@@ -230,11 +230,26 @@ func execProvision(state *SwitchState, step *SwitchStep) (string, error) {
 		}
 		return "", fmt.Errorf("no local-docker provisioner for %s", target.Backend)
 	case HostConvexCloud:
-		return runSwitchCmd(state.ProjectDir, "npx", "convex", "login")
+		details, err := seamlessConvexCloud(state.ProjectDir)
+		if err != nil {
+			return "", err
+		}
+		b, _ := json.Marshal(details)
+		return "convex cloud ready: " + string(b), nil
 	case HostSupabaseCloud:
-		return fmt.Sprintf("Manual: create project at https://supabase.com/dashboard/projects, then run `supabase link --project-ref <ref>` in %s", state.ProjectDir), nil
+		details, err := seamlessSupabaseCloud(state.ProjectDir, filepath.Base(state.ProjectDir))
+		if err != nil {
+			return "", err
+		}
+		b, _ := json.Marshal(details)
+		return "supabase cloud ready: " + string(b), nil
 	case HostNeon:
-		return "Manual: create project at https://console.neon.tech, copy the DATABASE_URL, export it before retrying this step", nil
+		details, err := seamlessNeon(state.ProjectDir, filepath.Base(state.ProjectDir))
+		if err != nil {
+			return "", err
+		}
+		b, _ := json.Marshal(details)
+		return "neon ready: " + string(b), nil
 	case HostRDS:
 		return "Manual: aws rds create-db-instance … (Yaver AWS integration pending)", nil
 	case HostHetzner, HostYaverCloud:
@@ -302,10 +317,16 @@ func pgRestore(projectDir, dump string, target *SwitchTarget) (string, error) {
 	if dump == "" {
 		return "", fmt.Errorf("no pg_dump snapshot")
 	}
-	// Need target DSN. We can't fetch it from the cloud — ask user to export PG_TARGET_DSN.
+	// Target DSN resolution order:
+	// 1. PG_TARGET_DSN env var (set by the provisioner step of this switch)
+	// 2. DATABASE_URL from .env.local (set by seamless provisioners)
+	// 3. Error with a helpful message
 	targetDSN := os.Getenv("PG_TARGET_DSN")
 	if targetDSN == "" {
-		return "", fmt.Errorf("set PG_TARGET_DSN env var to the connection string of %s before running this step", target.Label)
+		targetDSN = readEnvValue(projectDir, "DATABASE_URL")
+	}
+	if targetDSN == "" {
+		return "", fmt.Errorf("no target DSN (ran seamless provision? PG_TARGET_DSN not set and no DATABASE_URL in .env.local)")
 	}
 	f, err := os.Open(dump)
 	if err != nil {

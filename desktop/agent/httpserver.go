@@ -657,6 +657,14 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/multiregion/deploy", s.auth(s.handleMultiRegionDeploy))
 	mux.HandleFunc("/provider/rotate", s.auth(s.handleProviderRotate))
 	mux.HandleFunc("/replication/setup", s.auth(s.handleReplicaSetup))
+	mux.HandleFunc("/multiregion/orchestrate", s.auth(s.handleMultiRegionOrchestrate))
+
+	// Cross-machine aggregation
+	mux.HandleFunc("/aggregated/logs", s.auth(s.handleAggregatedLogs))
+	mux.HandleFunc("/aggregated/errors", s.auth(s.handleAggregatedErrors))
+	mux.HandleFunc("/aggregated/audit", s.auth(s.handleAggregatedAudit))
+	mux.HandleFunc("/aggregated/uptime", s.auth(s.handleAggregatedUptime))
+	mux.HandleFunc("/aggregated/deploys", s.auth(s.handleAggregatedDeploys))
 
 	// Guest access management (host invites guests to use their agent)
 	mux.HandleFunc("/guests", s.auth(s.handleGuestList))
