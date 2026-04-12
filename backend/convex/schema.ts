@@ -72,6 +72,9 @@ export default defineSchema({
     }))),
     lastHeartbeat: v.number(),
     createdAt: v.number(),
+    // Bootstrap state: true when agent is running without a valid token.
+    // Clients show a "NEEDS AUTH" badge and can auto-pair via relay.
+    needsAuth: v.optional(v.boolean()),
     // hardwareId is a stable per-machine fingerprint reported by
     // the agent on registration and every heartbeat. Used by the
     // remote-OAuth-trigger flow: when an agent loses its token

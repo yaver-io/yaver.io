@@ -575,7 +575,10 @@ func runSignout() {
 	}
 
 	cfg.AuthToken = ""
-	cfg.DeviceID = ""
+	// Keep DeviceID so the bootstrap agent can re-register with Convex
+	// + relay with a stable identity. The mobile app and web UI show
+	// the device in the list with a "NEEDS AUTH" badge and auto-pair
+	// using encrypted token push.
 	if err := SaveConfig(cfg); err != nil {
 		log.Fatalf("save config: %v", err)
 	}
