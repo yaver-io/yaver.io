@@ -3173,16 +3173,19 @@ export class QuicClient {
     } catch { return false; }
   }
 
-  async mailConnectStart(provider: "gmail" | "o365"): Promise<{ sessionId: string; authUrl: string } | null> {
+  async mailConnectStart(provider: "gmail" | "o365"): Promise<{ sessionId: string; authUrl: string } | { error: string } | null> {
     try {
       const res = await fetch(`${this.baseUrl}/mail/onboard/start`, {
         method: "POST",
         headers: { ...this.authHeaders, "Content-Type": "application/json" },
         body: JSON.stringify({ provider }),
       });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        return { error: body?.error || `HTTP ${res.status}` } as any;
+      }
       return await res.json();
-    } catch { return null; }
+    } catch (e: any) { return { error: e?.message || "network error" } as any; }
   }
 
   async mailConnectStatus(sessionId: string): Promise<{ session: any; ready: boolean } | null> {

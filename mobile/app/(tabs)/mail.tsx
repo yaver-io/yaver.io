@@ -110,9 +110,13 @@ export default function MailScreen() {
   }, [selected, draftText]);
 
   const startConnect = useCallback(async (provider: "gmail" | "o365") => {
-    const res = await quicClient.mailConnectStart(provider);
-    if (!res) {
-      Alert.alert("Could not start OAuth flow", "Check email config in agent.");
+    const res: any = await quicClient.mailConnectStart(provider);
+    if (!res || res.error || !res.authUrl) {
+      const msg = res?.error || "Unknown error";
+      Alert.alert(
+        "Email not configured",
+        `${msg}\n\nRun this once on your Mac:\n\n  yaver email setup\n\nYou'll be prompted for Google OAuth client ID + secret. Get them from:\nhttps://console.cloud.google.com/apis/credentials`,
+      );
       return;
     }
     Linking.openURL(res.authUrl);
@@ -310,7 +314,7 @@ const s = StyleSheet.create({
   section: { fontSize: 14, fontWeight: "700" },
   input: { borderWidth: 1, borderRadius: 8, padding: 12, fontSize: 15, marginTop: 10 },
   promptBox: { borderWidth: 1, borderRadius: 8, padding: 12, marginTop: 8 },
-  modalWrap: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "rgba(0,0,0,0.5)", padding: 20 },
+  modalWrap: { flex: 1, alignItems: "stretch", backgroundColor: "rgba(0,0,0,0.5)", paddingHorizontal: 20, paddingTop: 80 },
   modalCard: { width: "100%", borderWidth: 1, borderRadius: 12, padding: 18 },
   connectBtn: { paddingVertical: 14, borderRadius: 10, alignItems: "center", marginTop: 14 },
   btnText: { color: "#fff", fontWeight: "700" },
