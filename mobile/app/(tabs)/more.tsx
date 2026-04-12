@@ -2108,7 +2108,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u2714"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Quality Gates</Text>
-              <Text style={[s.desc, { color: c.textMuted }]}>Run tests, lint, typecheck, format</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Run tests, lint, typecheck, format</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2123,7 +2123,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u25B6"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Local CI</Text>
-              <Text style={[s.desc, { color: c.textMuted }]}>Run yaver-tests/* on your own machine — $0</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Run yaver-tests/* on your own machine — $0</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2138,7 +2138,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F4CA}"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Monitor</Text>
-              <Text style={[s.desc, { color: c.textMuted }]}>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
                 Errors, OTA releases, uptime, events, feature flags
               </Text>
             </View>
@@ -2155,7 +2155,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u2661"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Health Monitor</Text>
-              <Text style={[s.desc, { color: c.textMuted }]}>Monitor production URLs</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Monitor production URLs</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2170,7 +2170,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F4C1}"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Files</Text>
-              <Text style={[s.desc, { color: c.textMuted }]}>Browse project files (read-only)</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Browse project files (read-only)</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2185,7 +2185,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u2728"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>New Project</Text>
-              <Text style={[s.desc, { color: c.textMuted }]}>Fullstack wizard — web, mobile, DNS, OAuth</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Fullstack wizard — web, mobile, DNS, OAuth</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2200,7 +2200,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F9F0}"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Solo Stack</Text>
-              <Text style={[s.desc, { color: c.textMuted }]}>Forms, newsletter, job queue</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Forms, newsletter, job queue</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2215,7 +2215,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F3AC}"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Studio</Text>
-              <Text style={[s.desc, { color: c.textMuted }]}>Screen clips, chat, invoices, A/B, affiliates, casts</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Screen clips, chat, invoices, A/B, affiliates, casts</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2230,7 +2230,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F4E7}"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Mail</Text>
-              <Text style={[s.desc, { color: c.textMuted }]}>Gmail / O365 inbox, smart classifier, AI drafts</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Gmail / O365 inbox, smart classifier, AI drafts</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2245,7 +2245,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F511}"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Git Providers</Text>
-              <Text style={[s.desc, { color: c.textMuted }]}>GitHub / GitLab — browse repos, clone to machine</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>GitHub / GitLab — browse repos, clone to machine</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2333,7 +2333,7 @@ export default function MoreScreen() {
                     <Text style={[s.icon, { color: c.accent }]}>{"\u25CF"}</Text>
                     <View style={{ flex: 1 }}>
                       <Text style={[s.label, { color: c.textPrimary }]}>{d.name || d.deviceId}</Text>
-                      <Text style={[s.desc, { color: c.textMuted }]}>
+                      <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
                         {d.ip}:{d.port} — needs auth
                         {d.bootstrapPasskey ? ` · passkey ${d.bootstrapPasskey}` : ""}
                       </Text>
@@ -2429,7 +2429,7 @@ export default function MoreScreen() {
                 <Text style={[s.icon, { color: c.textMuted }]}>{t.icon}</Text>
                 <View style={{ flex: 1 }}>
                   <Text style={[s.label, { color: c.textPrimary }]}>{t.label}</Text>
-                  <Text style={[s.desc, { color: c.textMuted }]}>{t.desc}</Text>
+                  <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>{t.desc}</Text>
                 </View>
                 <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
               </Pressable>
