@@ -64,6 +64,28 @@
     "expo-system-ui": "4.0.9",
     "@expo/vector-icons": "15.1.1",
     "react-native-get-random-values": "2.0.0",
-    "react-native-iap": "14.7.20"
+    "react-native-iap": "14.7.20",
+    "expo-mail-composer": "55.0.13",
+    "expo-image": "55.0.8",
+    "expo-local-authentication": "55.0.13",
+    "expo-contacts": "55.0.13",
+    "expo-calendar": "55.0.14",
+    "expo-media-library": "55.0.14",
+    "expo-print": "55.0.13",
+    "expo-blur": "55.0.14",
+    "expo-linear-gradient": "55.0.13",
+    "expo-video": "55.0.15",
+    "expo-screen-orientation": "55.0.13",
+    "expo-screen-capture": "55.0.13",
+    "expo-background-fetch": "55.0.14",
+    "expo-task-manager": "55.0.14",
+    "expo-video-thumbnails": "55.0.14",
+
+    "lottie-react-native": "7.3.6",
+    "react-native-pager-view": "8.0.1",
+    "@gorhom/bottom-sheet": "5.2.9",
+    "react-native-video": "6.19.1",
+    "@react-native-community/datetimepicker": "9.1.0",
+    "@react-native-community/slider": "5.2.0"
   }
 }
