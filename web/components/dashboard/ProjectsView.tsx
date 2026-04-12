@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { agentClient } from "@/lib/agent-client";
+import EnvironmentSwitcher from "./EnvironmentSwitcher";
 
 interface Project {
   name: string;
@@ -33,6 +34,7 @@ function getCategory(framework?: string): "mobile" | "web" | "other" {
 }
 
 export default function ProjectsView({ onTaskCreated }: { onTaskCreated?: (taskId: string) => void }) {
+  const [envProject, setEnvProject] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [devStatus, setDevStatus] = useState<{ running: boolean; framework?: string; workDir?: string } | null>(null);
@@ -181,11 +183,24 @@ export default function ProjectsView({ onTaskCreated }: { onTaskCreated?: (taskI
                     {p.tags && p.tags.length > 0 && <span className="ml-1 text-surface-600">&middot; {p.tags.join(", ")}</span>}
                   </div>
                 </div>
+                <button onClick={() => setEnvProject(p.path)} className="px-2 py-1 text-[10px] rounded-md bg-surface-800 text-surface-400 hover:text-indigo-400" title="Switch environment">Env</button>
                 <button onClick={() => gitSync(p)} className="px-3 py-1 text-xs rounded-md bg-surface-800 text-surface-300 hover:bg-surface-700">Sync</button>
                 <button onClick={() => startProject(p)} className="px-3 py-1 text-xs rounded-md bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20">Start</button>
               </div>
             );
           })}
+        </div>
+      )}
+
+      {envProject && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setEnvProject(null)}>
+          <div className="bg-surface-950 border border-surface-700 rounded-xl p-4 max-w-lg w-full space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold">Environment · <span className="font-mono text-surface-500">{envProject.split("/").pop()}</span></h3>
+              <button onClick={() => setEnvProject(null)} className="text-xs text-surface-500">close</button>
+            </div>
+            <EnvironmentSwitcher directory={envProject} />
+          </div>
         </div>
       )}
     </div>

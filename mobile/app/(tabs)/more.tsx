@@ -2206,6 +2206,21 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
+        {/* Terminal — native shell over WebSocket PTY */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/terminal" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u2328\uFE0F"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Terminal</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Native shell · WebSocket PTY · no WebView</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
         {/* Health Monitor — navigate to dedicated screen */}
         {connected && (
           <Pressable

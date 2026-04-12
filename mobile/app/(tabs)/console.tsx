@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import Svg, { Polyline } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
@@ -55,24 +56,76 @@ async function call(path: string, init: RequestInit = {}): Promise<any> {
 
 function OverviewTab({ c }: { c: any }) {
   const [m, setM] = useState<any>(null);
+  const [history, setHistory] = useState<any[]>([]);
+  const [window, setWindow] = useState("1h");
   useEffect(() => {
     loadMetrics();
+    loadHistory();
     const i = setInterval(loadMetrics, 5000);
-    return () => clearInterval(i);
-  }, []);
-  async function loadMetrics() {
-    try { setM(await call("/console/metrics")); } catch {}
+    const j = setInterval(loadHistory, 30000);
+    return () => { clearInterval(i); clearInterval(j); };
+  }, [window]);
+  async function loadMetrics() { try { setM(await call("/console/metrics")); } catch {} }
+  async function loadHistory() {
+    try {
+      const r = await call(`/console/metrics/history?window=${encodeURIComponent(window)}`);
+      setHistory(r.samples || []);
+    } catch {}
   }
   if (!m) return <ActivityIndicator color={c.accent} />;
+  const cpuSeries = history.slice().reverse().map((s: any) => s.cpuPct || 0);
+  const ramSeries = history.slice().reverse().map((s: any) => s.ramPct || 0);
   return (
     <View style={{ gap: 10 }}>
       <Card c={c} label="CPU" value={`${(m.cpuPct || 0).toFixed(1)}%`} sub={`${m.cores || 0} cores`} />
       <Card c={c} label="RAM" value={`${(m.ramPct || 0).toFixed(0)}%`} sub={`${fmtBytes(m.ramUsed)} / ${fmtBytes(m.ramTotal)}`} />
       <Card c={c} label="Disk" value={`${(m.diskPct || 0).toFixed(0)}%`} sub={`${fmtBytes(m.diskUsed)} / ${fmtBytes(m.diskTotal)}`} />
       <Card c={c} label="Network" value={`↓ ${fmtBps(m.netRxBps)}`} sub={`↑ ${fmtBps(m.netTxBps)}`} />
+      <View style={{ flexDirection: "row", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+        {["15m", "1h", "6h", "24h", "7d"].map((w) => (
+          <Pressable key={w} onPress={() => setWindow(w)}
+            style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: window === w ? c.accent + "30" : c.surface, borderWidth: 1, borderColor: window === w ? c.accent : c.border }}>
+            <Text style={{ color: window === w ? c.accent : c.textMuted, fontSize: 11, fontWeight: "600" }}>{w}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <Sparkline c={c} title="CPU history" series={cpuSeries} color="#818cf8" />
+      <Sparkline c={c} title="RAM history" series={ramSeries} color="#34d399" />
+      <Text style={{ color: c.textMuted, fontSize: 10, textAlign: "center" }}>{history.length} samples · 7-day retention</Text>
       <Text style={{ color: c.textMuted, fontSize: 11, textAlign: "center", marginTop: 8 }}>
         {m.hostname} · {m.os}
       </Text>
+    </View>
+  );
+}
+
+function Sparkline({ c, title, series, color }: { c: any; title: string; series: number[]; color: string }) {
+  if (series.length === 0) {
+    return (
+      <View style={[card(c)]}>
+        <Text style={{ color: c.textMuted, fontSize: 10 }}>{title}</Text>
+        <Text style={{ color: c.textMuted, fontSize: 11, textAlign: "center", paddingVertical: 20 }}>no data yet</Text>
+      </View>
+    );
+  }
+  const w = 300, h = 80;
+  const n = series.length;
+  const max = Math.max(...series, 100);
+  const points = series.map((v, i) => `${(i / Math.max(1, n - 1)) * w},${h - (v / max) * h}`).join(" ");
+  const latest = series[n - 1];
+  const avg = series.reduce((a, b) => a + b, 0) / n;
+  const peak = Math.max(...series);
+  return (
+    <View style={[card(c)]}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <Text style={{ color: c.textMuted, fontSize: 10, textTransform: "uppercase", fontWeight: "700" }}>{title}</Text>
+        <Text style={{ color: c.textPrimary, fontSize: 11, marginLeft: "auto" }}>now <Text style={{ fontFamily: "Menlo" }}>{latest.toFixed(1)}%</Text></Text>
+        <Text style={{ color: c.textMuted, fontSize: 10 }}>avg {avg.toFixed(1)}%</Text>
+        <Text style={{ color: c.textMuted, fontSize: 10 }}>max {peak.toFixed(1)}%</Text>
+      </View>
+      <Svg width="100%" height={80} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ marginTop: 6 }}>
+        <Polyline points={points} fill="none" stroke={color} strokeWidth={1.5} />
+      </Svg>
     </View>
   );
 }

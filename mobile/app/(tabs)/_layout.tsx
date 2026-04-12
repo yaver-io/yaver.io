@@ -151,6 +151,7 @@ export default function TabLayout() {
       <Tabs.Screen name="data" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="console" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="home" options={{ href: null, headerShown: false }} />
+      <Tabs.Screen name="terminal" options={{ href: null, headerShown: false }} />
       <Tabs.Screen
         name="runs"
         options={{ href: null, title: "Local CI", headerShown: true, headerLeft: backToMore }}
