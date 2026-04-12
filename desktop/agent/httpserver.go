@@ -59,6 +59,28 @@ type HTTPServer struct {
 	uptimeMonitor  *UptimeMonitor    // nil until first monitor_add
 	modelMgr       *ModelManager     // nil until first models_*
 	lemonMgr       *LemonSqueezyManager // nil until first lemonsqueezy_*
+	servicesMgr    *ServicesManager     // nil until first services_*
+	proxyMgr       *ProxyManager        // nil until first proxy_*
+	dnsMgr         *DNSManager          // nil until first dns_*
+	storageMgr     *StorageManager      // nil until first storage_*
+	mockServer     *MockServer          // nil until first mock_*
+	preCheckMgr    *PreCheckManager     // nil until first check_*
+	perfMgr        *PerfManager         // nil until first perf_lighthouse
+	dbLifecycleMgr *DBLifecycleManager  // nil until first db_migrate
+	previewMgr     *PreviewManager      // nil until first preview_*
+	oauthWizardMgr *OAuthWizardManager  // nil until first auth_oauth_*
+	cloudDeployMgr *CloudDeployManager  // nil until first cloud_*
+	migrateMgr     *MigrateManager      // nil until first migrate_*
+	remoteMgr      *RemoteManager       // nil until first remote_*
+	scaleMgr       *ScaleManager        // nil until first scale_*
+	pocketBaseMgr  *PocketBaseManager   // nil until first backend_*
+	platformMgr    *PlatformManager     // nil until first platform_*
+	domainMgr      *DomainManager       // nil until first domain_*
+	siteMgr        *SiteManager         // nil until first site_*
+	formMgr        *FormManager         // nil until first form_*
+	seoMgr         *SEOManager          // nil until first seo_*
+	cmsMgr         *CMSManager          // nil until first cms_*
+	templateMgr    *TemplateManager     // nil until first template_*
 	multiUserMgr   *MultiUserManager // nil in single-user mode
 	server       *http.Server
 	tlsServer    *http.Server
@@ -8362,6 +8384,10 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 		return mcpToolResult(s.lemonMgr.Setup())
 
 	default:
+		// Try workspace tools (services, proxy, dns, storage, mock, check, perf, db, preview, oauth, cloud, migrate, remote, scale, backend, platform, domain, site, form, seo, cms, template)
+		if result := s.handleWorkspaceMCPTool(call); result != nil {
+			return result
+		}
 		return mcpToolError("unknown tool: " + call.Name)
 	}
 }
