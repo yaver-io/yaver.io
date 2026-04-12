@@ -55,6 +55,7 @@ type HTTPServer struct {
 	authDevMgr     *AuthDevManager   // nil until first auth_dev_start
 	mailDevMgr     *MailDevManager   // nil until first mail_dev_start
 	exposeMgr      *ExposeManager    // nil until first expose_start
+	relayExposeMgr *RelayExposeManager // relay-based subdomain expose (set when relay connected)
 	stripeDevMgr   *StripeDevManager // nil until first stripe_listen
 	uptimeMonitor  *UptimeMonitor    // nil until first monitor_add
 	modelMgr       *ModelManager     // nil until first models_*
@@ -372,6 +373,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/tunnels", s.auth(s.handleTunnels))
 	mux.HandleFunc("/tunnels/", s.auth(s.handleTunnelByID))
 
+
 	// Tests (automated test sessions — legacy "spawn an external runner" path)
 	mux.HandleFunc("/tests", s.auth(s.handleTests))
 	mux.HandleFunc("/tests/", s.auth(s.handleTestByID))
@@ -424,6 +426,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/dev/native-bundle", s.handleServeNativeBundle) // No auth — serves compiled bundle
 	mux.HandleFunc("/dev/native-assets", s.handleServeNativeAssets) // No auth — serves compiled assets
 	mux.HandleFunc("/dev/", s.handleDevServerProxy) // No auth — serves app bundle in WebView (not sensitive)
+
+	// Relay-based expose (subdomain routing via QUIC relay)
+	mux.HandleFunc("/expose/start", s.auth(s.handleRelayExposeStart))
+	mux.HandleFunc("/expose/stop", s.auth(s.handleRelayExposeStop))
+	mux.HandleFunc("/expose/list", s.auth(s.handleRelayExposeList))
 
 	// Browser automation (AI-driven browser control)
 	mux.HandleFunc("/browser/sessions", s.auth(s.handleBrowserSessions))

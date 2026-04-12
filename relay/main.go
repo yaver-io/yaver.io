@@ -67,10 +67,11 @@ Usage:
   yaver-relay help           Show this help
 
 Serve flags:
-  --quic-port    QUIC port for agent tunnels (default 4433)
-  --http-port    HTTP port for mobile clients (default 8443)
-  --password     Shared password for relay authentication (env: RELAY_PASSWORD)
-  --convex-url   Convex backend URL for per-user password validation (env: CONVEX_URL)
+  --quic-port      QUIC port for agent tunnels (default 4433)
+  --http-port      HTTP port for mobile clients (default 8443)
+  --password       Shared password for relay authentication (env: RELAY_PASSWORD)
+  --convex-url     Convex backend URL for per-user password validation (env: CONVEX_URL)
+  --expose-domain  Base domain for subdomain expose routing (default yaver.io, env: EXPOSE_DOMAIN)
 
 Tunnel flags:
   --relay        Relay server address (e.g. relay.yaver.io:4433)
@@ -106,6 +107,7 @@ func runServe(args []string) {
 	httpPort := fs.Int("http-port", 8443, "HTTP port for mobile clients")
 	password := fs.String("password", "", "Shared password for relay authentication (env: RELAY_PASSWORD)")
 	convexURL := fs.String("convex-url", "", "Convex backend URL for per-user password validation (env: CONVEX_URL)")
+	exposeDomain := fs.String("expose-domain", "yaver.io", "Base domain for subdomain expose routing (env: EXPOSE_DOMAIN)")
 	fs.Parse(args)
 
 	pw := *password
@@ -126,6 +128,13 @@ func runServe(args []string) {
 		cURL = os.Getenv("CONVEX_URL")
 	}
 
+	eDomain := *exposeDomain
+	if eDomain == "" {
+		if ed := os.Getenv("EXPOSE_DOMAIN"); ed != "" {
+			eDomain = ed
+		}
+	}
+
 	log.Printf("yaver-relay %s starting...", version)
 	log.Printf("  QUIC tunnel port: %d", *quicPort)
 	log.Printf("  HTTP proxy port:  %d", *httpPort)
@@ -139,6 +148,9 @@ func runServe(args []string) {
 	if cURL != "" {
 		log.Printf("  Convex backend:   %s", cURL)
 	}
+	if eDomain != "" {
+		log.Printf("  Expose domain:    %s", eDomain)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -151,7 +163,7 @@ func runServe(args []string) {
 		cancel()
 	}()
 
-	server := NewRelayServer(*quicPort, *httpPort, pw, cURL)
+	server := NewRelayServer(*quicPort, *httpPort, pw, cURL, eDomain)
 	if err := server.Start(ctx); err != nil {
 		log.Fatalf("server error: %v", err)
 	}

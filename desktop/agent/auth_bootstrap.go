@@ -254,7 +254,7 @@ func runBootstrapServe(httpPort int) {
 				continue
 			}
 			log.Printf("[BOOTSTRAP-RELAY] Starting tunnel to %s (device %s)…", rs.QuicAddr, cfg.DeviceID[:8])
-			go runRelayTunnel(relayCtx, rs.QuicAddr, agentAddr, cfg.DeviceID, "bootstrap-pending", pw)
+			go runRelayTunnel(relayCtx, rs.QuicAddr, agentAddr, cfg.DeviceID, "bootstrap-pending", pw, nil)
 			started++
 		}
 		if started > 0 {
