@@ -1645,6 +1645,7 @@ func runServe(args []string) {
 	httpServer.emailMgr = emailMgr
 	httpServer.analytics = NewAnalytics()
 	httpServer.notifyMgr = NewNotificationManager(cfg.Notifications)
+	SetGlobalNotifier(httpServer.notifyMgr)
 	httpServer.buildMgr = NewBuildManager(httpServer.execMgr, taskMgr.workDir)
 	httpServer.tunnelMgr = NewTunnelManager()
 	httpServer.testMgr = NewTestManager(httpServer.execMgr, taskMgr.workDir)

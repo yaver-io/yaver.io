@@ -86,8 +86,10 @@ func AddDomain(domain, upstream, static, dnsMode string) (*YaverDomain, error) {
 		return nil, err
 	}
 	if err := RegenerateCaddyfile(); err != nil {
+		AuditLog("", "domain_add", domain, upstream, "caddy-failed", err.Error(), "")
 		return r, fmt.Errorf("domain saved but Caddy reload failed: %w", err)
 	}
+	AuditLog("", "domain_add", domain, upstream, "success", "", "")
 	return r, nil
 }
 
@@ -144,9 +146,11 @@ func RegenerateCaddyfile() error {
 	if err := os.WriteFile(path, []byte(sb.String()), 0o644); err != nil {
 		return err
 	}
-	// Reload Caddy if it's running.
+	// Reload Caddy if it's running. Auto-install if missing.
 	if _, err := exec.LookPath("caddy"); err != nil {
-		return fmt.Errorf("caddy not installed — install with `brew install caddy` or see https://caddyserver.com/docs/install")
+		if installErr := autoInstallCaddy(); installErr != nil {
+			return fmt.Errorf("caddy not installed and auto-install failed: %w — try manually: brew install caddy (or see https://caddyserver.com/docs/install)", installErr)
+		}
 	}
 	cmd := exec.Command("caddy", "reload", "--config", path)
 	out, err := cmd.CombinedOutput()

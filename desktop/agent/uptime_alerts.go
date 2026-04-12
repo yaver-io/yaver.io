@@ -209,21 +209,35 @@ func fireUptimeRecovery(m YaverUptimeAlert) {
 	})
 }
 
-// notifyAllChannels is a thin wrapper that feeds into Yaver's existing
-// notification plumbing. Falls back to logging if no manager is wired.
+// globalNotifyManager is a package-level reference set during HTTP server init
+// so side features (uptime, deploy, backup) can fire real push notifications
+// without threading the manager through every call site.
+var globalNotifyManager *NotificationManager
+
+func SetGlobalNotifier(nm *NotificationManager) { globalNotifyManager = nm }
+
+// notifyAllChannels routes to the user's configured notification channels
+// (mobile push, email, Slack, etc.) via the existing NotificationManager.
 func notifyAllChannels(title, body string, data map[string]string) {
-	payload, _ := json.Marshal(map[string]interface{}{
-		"title": title, "body": body, "data": data, "ts": time.Now().UTC().Format(time.RFC3339),
-	})
-	fmt.Printf("[notify] %s\n", string(payload))
-	// Best-effort: write to event store so the mobile app's event feed picks it up.
+	if globalNotifyManager != nil {
+		// Use the health-check path — it already fans out to push/email/Slack.
+		status := "down"
+		if data["kind"] == "uptime-up" {
+			status = "up"
+		}
+		globalNotifyManager.NotifyHealthCheck(title, data["url"], status, 0)
+	} else {
+		payload, _ := json.Marshal(map[string]interface{}{
+			"title": title, "body": body, "data": data, "ts": time.Now().UTC().Format(time.RFC3339),
+		})
+		fmt.Printf("[notify] %s\n", string(payload))
+	}
+	// Always mirror to the error tracker so the Errors tab / event feed sees it.
 	if globalErrorTracker != nil {
-		// Re-use the error tracker as an event log for now (alerts show up in the
-		// Errors tab under fingerprint "uptime-<monitor>").
 		_ = globalErrorTracker.Ingest(&ErrorEvent{
-			Message: title + ": " + body,
+			Message:     title + ": " + body,
 			Fingerprint: "uptime-" + data["monitor"],
-			Context: map[string]interface{}{"kind": data["kind"], "url": data["url"]},
+			Context:     map[string]interface{}{"kind": data["kind"], "url": data["url"]},
 		})
 	}
 }

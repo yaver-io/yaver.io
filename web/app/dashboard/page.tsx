@@ -174,9 +174,27 @@ export default function DashboardPage() {
   ];
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      {/* Sidebar */}
-      <aside className="w-60 flex flex-col border-r border-surface-800 bg-surface-900/50 shrink-0 overflow-y-auto">
+    <div className="flex flex-col md:flex-row h-screen overflow-hidden">
+      {/* Mobile top bar — visible only below md */}
+      <div className="md:hidden border-b border-surface-800 bg-surface-900/50">
+        <div className="flex items-center gap-2 px-3 py-2">
+          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-surface-800 text-[10px] font-bold text-surface-300">{user?.email?.charAt(0).toUpperCase()}</div>
+          <span className="text-xs font-medium text-surface-200 flex-1 truncate">{connectedDevice?.name || "No device"}</span>
+          <span className={`h-1.5 w-1.5 rounded-full ${isConnected ? "bg-emerald-400" : "bg-surface-600"}`} />
+        </div>
+        <div className="flex overflow-x-auto no-scrollbar border-t border-surface-800">
+          {tabs.map((t) => (
+            <button key={t.id} onClick={() => setActiveTab(t.id)}
+              className={`flex items-center gap-1 px-3 py-2 text-[11px] whitespace-nowrap ${activeTab === t.id ? "text-indigo-400 border-b-2 border-indigo-400" : "text-surface-400"}`}>
+              <span>{t.icon}</span>{t.label}
+              {t.badge != null && t.badge > 0 && <span className="ml-1 text-[9px] bg-indigo-500 text-white rounded-full px-1">{t.badge}</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Sidebar — hidden on mobile */}
+      <aside className="hidden md:flex w-60 flex-col border-r border-surface-800 bg-surface-900/50 shrink-0 overflow-y-auto">
         <div className="p-3 space-y-4">
           {/* User */}
           <div className="flex items-center gap-2 rounded-lg border border-surface-800/50 px-3 py-2">
