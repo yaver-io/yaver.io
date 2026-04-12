@@ -57,9 +57,16 @@ function DeviceCard({
   const c = useColors();
   const [pingState, setPingState] = useState<{ pinging: boolean; rttMs?: number; ok?: boolean }>({ pinging: false });
   const [killing, setKilling] = useState<string | null>(null);
-  const [needsAuth, setNeedsAuth] = useState<boolean>(false);
+  // Seed needsAuth from Convex device record so the badge shows immediately
+  // (without waiting for the /info poll to complete).
+  const [needsAuth, setNeedsAuth] = useState<boolean>(device.needsAuth === true);
   const [autoPairing, setAutoPairing] = useState(false);
   const isOnline = device.online;
+
+  // Keep state in sync when Convex list refreshes
+  useEffect(() => {
+    setNeedsAuth(device.needsAuth === true);
+  }, [device.needsAuth]);
 
   // Poll /info for bootstrap/auth state — shows a "needs auth" badge
   // on the card AND auto-pairs when the remote agent is in bootstrap.

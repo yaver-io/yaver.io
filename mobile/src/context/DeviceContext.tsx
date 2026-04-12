@@ -94,6 +94,8 @@ export interface Device {
   runners: RunnerInfo[];
   /** X25519 public key (base64) for encrypted pairing — stored in Convex */
   publicKey?: string;
+  /** true when the agent is running in bootstrap mode (no valid token) */
+  needsAuth?: boolean;
   /** true when device is discovered via LAN beacon (same network) */
   local?: boolean;
   /** stable hardware ID (P2P only, never sent to Convex) */
@@ -242,6 +244,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             os: d.platform || d.os || "",
             runners: d.runners ?? [],
             publicKey: d.publicKey,
+            needsAuth: d.needsAuth ?? false,
             isGuest: d.isGuest || false,
             hostName: d.hostName,
             hostEmail: d.hostEmail,
@@ -638,8 +641,12 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
 
     const probed = new Set<string>();
     const iv = setInterval(async () => {
+      // Target:
+      //   - offline devices (may be in bootstrap but not yet re-registered)
+      //   - online devices with needsAuth=true (re-registered via /devices/bootstrap)
+      // Both need the same encrypted-pair flow via relay.
       const offlineDevices = devices.filter(
-        (d) => !d.online && !d.isGuest && d.publicKey && !probed.has(d.id) && !autoPairedRef.current.has(d.id)
+        (d) => (!d.online || d.needsAuth === true) && !d.isGuest && d.publicKey && !probed.has(d.id) && !autoPairedRef.current.has(d.id)
       );
       for (const dev of offlineDevices) {
         probed.add(dev.id);
