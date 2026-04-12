@@ -1284,6 +1284,17 @@ class AgentClient {
     return res.json();
   }
 
+  async multiRegionOrchestrate(name: string, regions: string[], domain: string, gitRepo: string, directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/multiregion/orchestrate${q}`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ name, regions, domain, gitRepo }),
+    });
+    return res.json();
+  }
+
   async consoleMachines(): Promise<{ machines: any[] }> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/console/machines`, { headers: this.authHeaders });

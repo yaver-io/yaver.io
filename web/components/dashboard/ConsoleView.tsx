@@ -4,14 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import { agentClient } from "@/lib/agent-client";
 import TerminalView from "./TerminalView";
 
-type Tab = "overview" | "machines" | "containers" | "terminal" | "catalog" | "images";
+type Tab = "overview" | "machines" | "containers" | "terminal" | "catalog" | "images" | "multiregion";
 
 export default function ConsoleView() {
   const [tab, setTab] = useState<Tab>("overview");
   return (
     <div className="space-y-4">
       <div className="flex gap-1 border-b border-surface-800">
-        {(["overview", "machines", "containers", "terminal", "catalog", "images"] as Tab[]).map((t) => (
+        {(["overview", "machines", "containers", "terminal", "catalog", "images", "multiregion"] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)}
             className={`px-3 py-2 text-xs uppercase font-semibold ${tab === t ? "text-indigo-400 border-b-2 border-indigo-400" : "text-surface-500 hover:text-surface-300"}`}>
             {t}
@@ -24,6 +24,7 @@ export default function ConsoleView() {
       {tab === "terminal" && <TerminalView />}
       {tab === "catalog" && <Catalog />}
       {tab === "images" && <Images />}
+      {tab === "multiregion" && <MultiRegion />}
     </div>
   );
 }
@@ -281,6 +282,90 @@ function Images() {
           <span className="text-surface-600 font-mono">{i.id.slice(7, 19)}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+function MultiRegion() {
+  const [name, setName] = useState("");
+  const [regions, setRegions] = useState("nbg1,fsn1");
+  const [domain, setDomain] = useState("");
+  const [gitRepo, setGitRepo] = useState("");
+  const [directory, setDirectory] = useState("");
+  const [result, setResult] = useState<any>(null);
+  const [running, setRunning] = useState(false);
+
+  async function deploy() {
+    if (!name || !regions) { alert("name + regions required"); return; }
+    const regionList = regions.split(",").map((r) => r.trim()).filter(Boolean);
+    if (regionList.length < 2) { alert("need at least 2 regions"); return; }
+    if (!confirm(`Provision ${regionList.length} Hetzner VPSes in ${regionList.join(", ")} and bootstrap each? This creates real billable servers.`)) return;
+    setRunning(true);
+    const r = await agentClient.multiRegionOrchestrate(name, regionList, domain, gitRepo, directory || undefined);
+    setRunning(false);
+    setResult(r);
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="text-xs text-surface-500">
+        Provisions N Hetzner VPSes across the chosen regions via the connected Hetzner account,
+        SSHes in, installs Docker + Yaver agent, rsyncs your project (or git clones), starts services,
+        and writes a Caddy round-robin config on the first healthy server.
+      </div>
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="deployment name (e.g. myapp-ha)"
+        className="w-full rounded border border-surface-700 bg-surface-900 px-3 py-2 text-sm" />
+      <input value={regions} onChange={(e) => setRegions(e.target.value)} placeholder="regions (comma-separated, e.g. nbg1,fsn1,hel1)"
+        className="w-full rounded border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-mono" />
+      <input value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="domain (e.g. myapp.com — Caddy writes round-robin config)"
+        className="w-full rounded border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-mono" />
+      <input value={gitRepo} onChange={(e) => setGitRepo(e.target.value)} placeholder="git clone URL (optional — rsync current project if blank)"
+        className="w-full rounded border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-mono" />
+      <input value={directory} onChange={(e) => setDirectory(e.target.value)} placeholder="project directory (defaults to agent cwd)"
+        className="w-full rounded border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-mono" />
+      <button onClick={deploy} disabled={running} className="px-4 py-2 text-sm rounded bg-indigo-500 text-white hover:bg-indigo-400 disabled:opacity-50">
+        {running ? "Provisioning + bootstrapping…" : "🌍 Deploy multi-region"}
+      </button>
+
+      {result?.error && <div className="text-xs text-red-400 p-2 rounded bg-red-900/20 border border-red-500/30">{result.error}</div>}
+      {result?.provision?.servers && (
+        <div className="space-y-2">
+          <h3 className="text-xs uppercase text-surface-500 font-semibold mt-4">Servers</h3>
+          {result.provision.servers.map((srv: any, i: number) => (
+            <div key={i} className="bg-surface-900/50 border border-surface-800 rounded-lg p-3 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-indigo-300">{srv.resource}/{srv.id}</span>
+                <span className="text-xs text-surface-500 flex-1">{srv.details?.ipv4}</span>
+                <span className="text-xs text-emerald-400">{srv.details?.status || "ok"}</span>
+              </div>
+              {srv.notes && <div className="text-xs text-surface-500 mt-1">{srv.notes}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+      {result?.orchestrate?.servers && (
+        <div className="space-y-2">
+          <h3 className="text-xs uppercase text-surface-500 font-semibold mt-4">Bootstrap</h3>
+          {result.orchestrate.servers.map((os: any, i: number) => (
+            <div key={i} className="bg-surface-900/50 border border-surface-800 rounded-lg p-3 text-sm">
+              <div className="flex items-center gap-2">
+                <span className={`px-1.5 py-0.5 rounded text-[10px] uppercase ${os.status === "ready" ? "bg-emerald-500/20 text-emerald-300" : os.status === "failed" ? "bg-red-500/20 text-red-300" : "bg-amber-500/20 text-amber-300"}`}>{os.status}</span>
+                <span className="font-mono flex-1">{os.ip} · {os.region} · {os.role}</span>
+              </div>
+              <ul className="text-[10px] text-surface-500 mt-2 space-y-0.5">
+                {(os.steps || []).map((step: string, j: number) => <li key={j}>· {step}</li>)}
+              </ul>
+              {os.error && <div className="text-xs text-red-400 mt-1">{os.error}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+      {result?.orchestrate?.caddyConfig && (
+        <div>
+          <h3 className="text-xs uppercase text-surface-500 font-semibold mt-4">Caddy round-robin</h3>
+          <pre className="bg-surface-900/50 border border-surface-800 rounded p-2 text-[10px] font-mono overflow-auto">{result.orchestrate.caddyConfig}</pre>
+        </div>
+      )}
     </div>
   );
 }

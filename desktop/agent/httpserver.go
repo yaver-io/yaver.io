@@ -696,6 +696,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/dashboard/list", s.auth(s.handleDashboardList))
 	mux.HandleFunc("/dashboard/", s.auth(s.handleDashboardProxy))
 
+	// Mailpit viewer (native mobile + web — no iframe)
+	mux.HandleFunc("/mail/list", s.auth(s.handleMailpitList))
+	mux.HandleFunc("/mail/message", s.auth(s.handleMailpitMessage))
+	mux.HandleFunc("/mail/delete", s.auth(s.handleMailpitDelete))
+
 	// Guest access management (host invites guests to use their agent)
 	mux.HandleFunc("/guests", s.auth(s.handleGuestList))
 	mux.HandleFunc("/guests/invite", s.auth(s.handleGuestInvite))
