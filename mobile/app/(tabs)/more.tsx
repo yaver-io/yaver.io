@@ -2155,7 +2155,37 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\uD83D\uDE80"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Ops</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Deploy · Backups · Domains · Uptime · Rotate</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Deploy · Backups · Domains · Uptime · CI · Alerts · Errors</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
+        {/* Data browser — tables, query, schema, storage, jobs */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/data" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\uD83D\uDDC4\uFE0F"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Data</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Tables · Query · Schema · Storage · Jobs</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
+        {/* Console — machines, containers, catalog */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/console" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\uD83D\uDCBB"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Console</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Machines · Containers · Services catalog</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
