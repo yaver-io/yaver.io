@@ -34,7 +34,32 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>159</string>
+	<string>167</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>airmail</string>
+		<string>message</string>
+		<string>bluemail</string>
+		<string>canary</string>
+		<string>edisonmail</string>
+		<string>szn-email</string>
+		<string>fastmail</string>
+		<string>x-gmxmail-netid-v1</string>
+		<string>googlegmail</string>
+		<string>mailrumail</string>
+		<string>ms-outlook</string>
+		<string>protonmail</string>
+		<string>ctxmail</string>
+		<string>readdle-spark</string>
+		<string>superhuman</string>
+		<string>telekommail</string>
+		<string>tutanota</string>
+		<string>x-webdemail-netid-v1</string>
+		<string>ymail</string>
+		<string>yandexmail</string>
+		<string>appcenter-f45b4c0b-75c9-2d01-7ab6-41f6a6015be2</string>
+		<string>mymail-mailto</string>
+	</array>
 	<key>LSMinimumSystemVersion</key>
 	<string>12.0</string>
 	<key>LSRequiresIPhoneOS</key>
@@ -50,8 +75,14 @@
 	<string>Yaver provides Bluetooth access to apps you run for testing.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>Yaver provides Bluetooth access to apps you run for testing.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Allow $(PRODUCT_NAME) to access your calendars</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Apps running inside Yaver may request calendar access for scheduling and event management features.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Yaver needs camera access to take photos for tasks.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Apps running inside Yaver may request contacts access to look up or manage contact information.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Allow $(PRODUCT_NAME) to access your Face ID biometric data.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
@@ -64,8 +95,14 @@
 	<string>Yaver uses your microphone for voice input — send tasks by speaking instead of typing.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>Yaver provides motion sensor access to apps you run for testing.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Allow $(PRODUCT_NAME) to save photos</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Yaver needs photo access to attach images to tasks.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Allow $(PRODUCT_NAME) to access your reminders</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>Allow $(PRODUCT_NAME) to access your reminders</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Yaver uses speech recognition to transcribe your voice into task descriptions.</string>
 	<key>NSUserActivityTypes</key>
@@ -74,6 +111,10 @@
 	</array>
 	<key>RCTNewArchEnabled</key>
 	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>SplashScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>

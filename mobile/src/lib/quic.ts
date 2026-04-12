@@ -3903,6 +3903,7 @@ export interface SandboxConfig {
 export interface DevServerStatus {
   framework: string;
   running: boolean;
+  building?: boolean;
   port: number;
   bundleUrl: string;
   deepLink?: string;
