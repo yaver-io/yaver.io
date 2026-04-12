@@ -255,6 +255,74 @@ var (
 	onboardSessions = map[string]*OnboardSession{}
 )
 
+// handleMailConfig saves email OAuth credentials from the mobile app.
+// POST /mail/config { provider: "gmail", clientId: "...", clientSecret: "..." }
+// Returns { ok: true, redirectUri: "https://public.yaver.io/mail/onboard/callback" }
+// so the user can paste the redirect URI into Google Cloud Console.
+func (s *HTTPServer) handleMailConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		// Return current config state (without secrets) + redirect URI to paste
+		cfg, _ := LoadConfig()
+		resp := map[string]interface{}{
+			"redirectUri":    publicOauthBase(r) + "/mail/onboard/callback",
+			"gmailConfigured": cfg != nil && cfg.Email != nil && cfg.Email.GoogleClientID != "",
+			"o365Configured":  cfg != nil && cfg.Email != nil && cfg.Email.AzureClientID != "",
+		}
+		jsonReply(w, http.StatusOK, resp)
+		return
+	}
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+	var body struct {
+		Provider     string `json:"provider"`
+		ClientID     string `json:"clientId"`
+		ClientSecret string `json:"clientSecret"`
+		TenantID     string `json:"tenantId,omitempty"` // o365 only
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if body.ClientID == "" || body.ClientSecret == "" {
+		jsonError(w, http.StatusBadRequest, "clientId and clientSecret required")
+		return
+	}
+	cfg, _ := LoadConfig()
+	if cfg == nil {
+		jsonError(w, http.StatusInternalServerError, "no config loaded")
+		return
+	}
+	if cfg.Email == nil {
+		cfg.Email = &EmailConfig{}
+	}
+	switch body.Provider {
+	case "gmail":
+		cfg.Email.Provider = "gmail"
+		cfg.Email.GoogleClientID = body.ClientID
+		cfg.Email.GoogleClientSecret = body.ClientSecret
+	case "o365", "office365":
+		cfg.Email.Provider = "office365"
+		cfg.Email.AzureClientID = body.ClientID
+		cfg.Email.AzureClientSecret = body.ClientSecret
+		if body.TenantID != "" {
+			cfg.Email.AzureTenantID = body.TenantID
+		}
+	default:
+		jsonError(w, http.StatusBadRequest, "provider must be 'gmail' or 'o365'")
+		return
+	}
+	if err := SaveConfig(cfg); err != nil {
+		jsonError(w, http.StatusInternalServerError, "save failed: "+err.Error())
+		return
+	}
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":          true,
+		"redirectUri": publicOauthBase(r) + "/mail/onboard/callback",
+	})
+}
+
 func (s *HTTPServer) handleMailOnboardStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonError(w, http.StatusMethodNotAllowed, "use POST")

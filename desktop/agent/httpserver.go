@@ -277,6 +277,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/mail/onboard/start", s.auth(s.handleMailOnboardStart))
 	mux.HandleFunc("/mail/onboard/status", s.auth(s.handleMailOnboardStatus))
 	mux.HandleFunc("/mail/onboard/callback", s.handleMailOnboardCallback)
+	mux.HandleFunc("/mail/config", s.auth(s.handleMailConfig))
 
 	// URL shortener — public /s/:code redirect, owner CRUD on /shortener
 	mux.HandleFunc("/s/", s.handleShortRedirect)
