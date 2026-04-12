@@ -707,158 +707,19 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		}
 	}
 
-	projectHash := strings.ReplaceAll(filepath.Base(opts.WorkDir), " ", "_")
-	buildMarker := filepath.Join(yaverBuildsDir(), projectHash+".built")
-
-	// Detect connected device for build targeting
-	device := detectIOSDevice(ctx)
-
-	// Smart build marker: validates deps hash + device UDID.
-	// Marker invalidates when package.json/Podfile.lock changes or device changes
-	// (e.g., TestFlight overwrites dev client, or new dependencies added).
-	currentDepsHash := expoDepsHash(opts.WorkDir)
-	hasValidBuild := false
-	if data, err := os.ReadFile(buildMarker); err == nil {
-		var marker struct {
-			DepsHash string `json:"depsHash"`
-			Device   string `json:"device"`
-		}
-		if json.Unmarshal(data, &marker) == nil && marker.DepsHash != "" {
-			hasValidBuild = marker.DepsHash == currentDepsHash && (device == "" || marker.Device == device)
-			if !hasValidBuild {
-				if marker.DepsHash != currentDepsHash {
-					log.Printf("[dev:expo] Dependencies changed — rebuilding")
-				} else {
-					log.Printf("[dev:expo] Device changed (%s → %s) — rebuilding", marker.Device, device)
-				}
-			}
-		}
-		// Legacy marker (plain timestamp) — treat as invalid, rebuild
-	}
-
-	if hasValidBuild {
-		// Dev client already on phone → just start Metro
-		// Dev client discovers Metro via Bonjour on same WiFi — no proxy URL needed
-		log.Printf("[dev:expo] Dev client installed — starting Metro (port %d)", e.port)
-		e.devMode = "dev-client"
-		args := []string{"expo", "start",
-			"--dev-client",
-			"--port", fmt.Sprintf("%d", e.port),
-			"--host", "lan",
-		}
-		readyURL := fmt.Sprintf("http://127.0.0.1:%d", e.port)
-		return e.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
-	}
-
-	// Build + install native dev client on phone
-	// Two steps: 1) expo run:ios (build+install), 2) expo start --dev-client --host lan
-	// expo run:ios starts its own Metro on localhost which the phone can't reach.
-	// After build we kill it and restart with --host lan so the phone discovers it.
-	log.Printf("[dev:expo] Building native dev client...")
+	// HERMES-FIRST FLOW: never run `expo run:ios` from dev server start.
+	// Just start Metro with --host lan. The phone uses `/dev/build-native`
+	// to compile a Hermes bundle and load it inside Yaver's container.
+	// No native dev client install needed — super-host handles everything.
+	log.Printf("[dev:expo] Starting Metro (port %d, Hermes-push mode)", e.port)
 	e.devMode = "dev-client"
-	// --no-bundler and --port are mutually exclusive in Expo, so just use --no-bundler
-	buildArgs := []string{"expo", "run:ios", "--no-bundler"}
-	if device != "" {
-		buildArgs = append(buildArgs, "--device", device)
-		log.Printf("[dev:expo] Target: %s", device)
+	args := []string{"expo", "start",
+		"--dev-client",
+		"--port", fmt.Sprintf("%d", e.port),
+		"--host", "lan",
 	}
-
-	e.mu.Lock()
-	e.startedAt = time.Now()
-	e.building = true
-	// NOT marking as running yet — build hasn't started Metro
-	e.mu.Unlock()
-
-	log.Printf("[dev:expo] Building (this takes 3-5 min first time)...")
-
-	// Emit a "building" event so the mobile app knows to show build logs
-	if e.emitFn != nil {
-		e.emitFn(DevServerEvent{
-			Type:      "building",
-			Framework: "expo",
-			Message:   "Building native app (this takes 3-5 min first time)...",
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-		})
-	}
-
-	// Run build in background, then start Metro with --host lan
-	go func() {
-		logW := &devLogWriter{prefix: "[dev:expo:build]"}
-		// Stream build logs to SSE so the mobile app shows them in real-time
-		if e.emitFn != nil {
-			emitFn := e.emitFn
-			logW.onLogLine = func(line string) {
-				emitFn(DevServerEvent{
-					Type:      "log",
-					Framework: "expo",
-					LogLine:   line,
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-				})
-			}
-		}
-		buildCmd := exec.CommandContext(ctx, "npx", buildArgs...)
-		buildCmd.Dir = opts.WorkDir
-		buildCmd.Stdout = logW
-		buildCmd.Stderr = logW
-
-		buildErr := buildCmd.Run()
-
-		// Clear building state regardless of outcome
-		e.mu.Lock()
-		e.building = false
-		e.mu.Unlock()
-
-		// expo run:ios may exit non-zero even when build succeeds (e.g., device locked,
-		// app launch failed). Check the log output for "Build Succeeded" to distinguish.
-		buildSucceeded := logW.Contains("Build Succeeded")
-		if buildErr != nil && !buildSucceeded {
-			log.Printf("[dev:expo] Build failed: %v", buildErr)
-			os.Remove(buildMarker)
-			if e.emitFn != nil {
-				e.emitFn(DevServerEvent{
-					Type:      "error",
-					Framework: "expo",
-					Message:   fmt.Sprintf("Build failed: %v", buildErr),
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-				})
-			}
-			return
-		}
-		if buildErr != nil && buildSucceeded {
-			log.Printf("[dev:expo] Build succeeded but launch failed (device locked?) — continuing to Metro")
-		}
-
-		// Build succeeded — write smart marker with deps hash + device
-		os.MkdirAll(yaverBuildsDir(), 0755)
-		markerData, _ := json.Marshal(map[string]string{
-			"depsHash": currentDepsHash,
-			"device":   device,
-			"builtAt":  time.Now().UTC().Format(time.RFC3339),
-		})
-		os.WriteFile(buildMarker, markerData, 0644)
-		log.Printf("[dev:expo] Build succeeded — starting Metro with --host lan")
-
-		// Start Metro with --host lan so the phone can reach it via Bonjour.
-		// Use a fresh context — the build's ctx may have been canceled when
-		// expo run:ios exited (e.g., device locked, launch failed).
-		metroCtx := context.Background()
-		if ctx.Err() != nil {
-			log.Printf("[dev:expo] Build context was canceled — using fresh context for Metro")
-		} else {
-			metroCtx = ctx
-		}
-		metroArgs := []string{"expo", "start",
-			"--dev-client",
-			"--port", fmt.Sprintf("%d", e.port),
-			"--host", "lan",
-		}
-		readyURL := fmt.Sprintf("http://127.0.0.1:%d", e.port)
-		if err := e.startProcess(metroCtx, "npx", metroArgs, opts.WorkDir, nil, readyURL); err != nil {
-			log.Printf("[dev:expo] Metro start failed: %v", err)
-		}
-	}()
-
-	return nil
+	readyURL := fmt.Sprintf("http://127.0.0.1:%d", e.port)
+	return e.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
 }
 
 // detectIOSDevice finds a connected iOS device (USB or wireless).
