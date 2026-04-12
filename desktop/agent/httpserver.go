@@ -680,6 +680,16 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Backup encryption toggle (encrypts new backups with the master key)
 	mux.HandleFunc("/backups/encryption", s.auth(s.handleBackupEncryption))
 
+	// Project environments (local/staging/production switcher)
+	mux.HandleFunc("/project/env/list", s.auth(s.handleProjectEnvList))
+	mux.HandleFunc("/project/env/switch", s.auth(s.handleProjectEnvSwitch))
+	mux.HandleFunc("/project/env/save", s.auth(s.handleProjectEnvSave))
+	mux.HandleFunc("/project/env/load", s.auth(s.handleProjectEnvLoad))
+	mux.HandleFunc("/project/env/delete", s.auth(s.handleProjectEnvDelete))
+
+	// Overview home summary
+	mux.HandleFunc("/overview/summary", s.auth(s.handleOverviewSummary))
+
 	// Guest access management (host invites guests to use their agent)
 	mux.HandleFunc("/guests", s.auth(s.handleGuestList))
 	mux.HandleFunc("/guests/invite", s.auth(s.handleGuestInvite))

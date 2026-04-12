@@ -64,11 +64,32 @@ export default function SwitchView() {
     } catch {}
   }
 
+  const [migrateModal, setMigrateModal] = useState<Target | null>(null);
+  const [migrateData, setMigrateData] = useState(true);
+  const [keepLocal, setKeepLocal] = useState(true);
+
   async function plan(target: string) {
+    const t = targets.find(x => x.id === target);
+    // For cloud migrations with Convex/Supabase, show the polished migrate modal first.
+    if (t && (target === "convex-cloud" || target === "supabase-cloud" || target === "postgres-neon")) {
+      setMigrateModal(t);
+      return;
+    }
+    await doPlan(target);
+  }
+
+  async function doPlan(target: string) {
     const s = await agentClient.switchPlan(target, { dryRun: false, directory: directory || undefined });
     if (s.error) { alert(s.error); return; }
     setCurrent(s);
     load();
+  }
+
+  async function executeMigration() {
+    if (!migrateModal) return;
+    const target = migrateModal.id;
+    setMigrateModal(null);
+    await doPlan(target);
   }
 
   async function run(id: string) {
@@ -108,6 +129,71 @@ export default function SwitchView() {
       </div>
 
       {current && <CurrentPlan current={current} running={running} onRun={run} onClose={() => setCurrent(null)} />}
+
+      {migrateModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface-950 border border-surface-700 rounded-xl p-5 max-w-lg w-full space-y-4">
+            <div>
+              <h3 className="text-lg font-semibold text-surface-100">
+                Migrate to {migrateModal.label}
+              </h3>
+              <p className="text-xs text-surface-500 mt-1">
+                Seamless switch — Yaver handles provisioning, credentials, and data migration.
+              </p>
+            </div>
+
+            <div className="space-y-2 text-sm text-surface-300 bg-surface-900/50 border border-surface-800 rounded-lg p-3">
+              <div className="font-semibold text-xs uppercase text-surface-500">This will:</div>
+              {migrateModal.id === "convex-cloud" && <>
+                <div>1. Run <code className="text-indigo-300">npx convex deploy</code> to create/link your cloud project</div>
+                <div>2. Capture <code>CONVEX_URL</code> + <code>CONVEX_DEPLOYMENT</code> into <code>.env.local</code></div>
+                <div>3. Push functions + schema</div>
+                {migrateData && <div>4. Stream-export local data → import to cloud</div>}
+              </>}
+              {migrateModal.id === "supabase-cloud" && <>
+                <div>1. Create Supabase Cloud project via REST API (using your stored token)</div>
+                <div>2. Wait for project to provision (ACTIVE_HEALTHY)</div>
+                <div>3. Capture anon + service-role keys + DB password into <code>.env.local</code></div>
+                {migrateData && <div>4. pg_dump local → pg_restore to cloud</div>}
+              </>}
+              {migrateModal.id === "postgres-neon" && <>
+                <div>1. Create Neon project via REST API</div>
+                <div>2. Capture <code>DATABASE_URL</code> into <code>.env.local</code></div>
+                {migrateData && <div>3. pg_dump local → pg_restore to Neon</div>}
+              </>}
+              {keepLocal && <div className="text-emerald-400 text-xs pt-1">✓ Local backend stays intact — switch back anytime</div>}
+            </div>
+
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={migrateData} onChange={(e) => setMigrateData(e.target.checked)} />
+                <span>Migrate existing data</span>
+                <span className="text-xs text-surface-500">(pg_dump or streaming_export → target)</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={keepLocal} onChange={(e) => setKeepLocal(e.target.checked)} />
+                <span>Keep local backend as dev fallback</span>
+                <span className="text-xs text-surface-500">(adds `local` env alongside `production`)</span>
+              </label>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button onClick={executeMigration}
+                className="flex-1 px-4 py-2 text-sm rounded-lg bg-indigo-500 text-white hover:bg-indigo-400 font-semibold">
+                Migrate now
+              </button>
+              <button onClick={() => setMigrateModal(null)}
+                className="px-4 py-2 text-sm rounded-lg bg-surface-800 text-surface-200 hover:bg-surface-700">
+                Cancel
+              </button>
+            </div>
+            <div className="text-xs text-surface-500">
+              ⓘ Migration is audited + reversible within 7 days via{" "}
+              <code>yaver switch rollback</code>.
+            </div>
+          </div>
+        </div>
+      )}
 
       <section>
         <h2 className="text-xs uppercase text-surface-500 font-semibold mb-2">Switch to…</h2>

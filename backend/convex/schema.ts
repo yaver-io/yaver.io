@@ -415,4 +415,75 @@ export default defineSchema({
     createdAt: v.number(),
   }).index("by_createdAt", ["createdAt"])
     .index("by_userId", ["userId", "createdAt"]),
+
+  // Projects — synced from each agent via /projects/sync. Source of truth for
+  // the dashboard overview grid, recent activity feed, and cross-machine
+  // project discovery.
+  userProjects: defineTable({
+    userId: v.id("users"),
+    deviceId: v.string(),         // Yaver device id where this project lives
+    slug: v.string(),              // filesystem basename
+    path: v.string(),              // absolute path on the device
+    name: v.string(),
+    stack: v.optional(v.string()), // nextjs, vite, expo, hono, etc.
+    backend: v.optional(v.string()),
+    auth: v.optional(v.string()),
+    activeEnv: v.optional(v.string()),
+    localPort: v.optional(v.number()),
+    tunnelUrl: v.optional(v.string()),
+    gitBranch: v.optional(v.string()),
+    lastCommit: v.optional(v.string()),
+    status: v.union(
+      v.literal("running"),
+      v.literal("stopped"),
+      v.literal("error"),
+      v.literal("creating"),
+    ),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId", "updatedAt"])
+    .index("by_device", ["deviceId"])
+    .index("by_user_slug", ["userId", "slug"]),
+
+  // Services running on each device — synced from /services/status.
+  userServices: defineTable({
+    userId: v.id("users"),
+    deviceId: v.string(),
+    projectSlug: v.optional(v.string()),
+    name: v.string(),
+    image: v.optional(v.string()),
+    port: v.number(),
+    status: v.string(),
+    cpuPercent: v.optional(v.number()),
+    ramMB: v.optional(v.number()),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId", "updatedAt"])
+    .index("by_device", ["deviceId"]),
+
+  // Deployment records from /deploy/list fanned out into Convex.
+  userDeployments: defineTable({
+    userId: v.id("users"),
+    deviceId: v.string(),
+    projectSlug: v.string(),
+    deployId: v.string(),
+    target: v.optional(v.string()),     // vercel, cloudflare, fly, vps
+    environment: v.optional(v.string()),
+    status: v.string(),                 // success, failed, rolled-back
+    commit: v.optional(v.string()),
+    message: v.optional(v.string()),
+    duration: v.optional(v.string()),
+    startedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+  }).index("by_user", ["userId", "startedAt"])
+    .index("by_project", ["userId", "projectSlug"]),
+
+  // Agent audit log mirrored into Convex for cross-machine activity feed.
+  userActivity: defineTable({
+    userId: v.id("users"),
+    deviceId: v.string(),
+    action: v.string(),
+    target: v.optional(v.string()),
+    outcome: v.string(),
+    error: v.optional(v.string()),
+    timestamp: v.number(),
+  }).index("by_user", ["userId", "timestamp"]),
 });
