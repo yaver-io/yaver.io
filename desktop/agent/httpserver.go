@@ -50,6 +50,15 @@ type HTTPServer struct {
 	containerizeGuests bool            // run guest tasks in containers
 	containerizeHost   bool            // run host tasks in containers
 	browserMgr     *BrowserManager   // nil until first browser_open
+	pipelineRunner *PipelineRunner   // nil until first pipeline_run
+	analyticsMgr   *AnalyticsManager // nil until first analytics_start
+	authDevMgr     *AuthDevManager   // nil until first auth_dev_start
+	mailDevMgr     *MailDevManager   // nil until first mail_dev_start
+	exposeMgr      *ExposeManager    // nil until first expose_start
+	stripeDevMgr   *StripeDevManager // nil until first stripe_listen
+	uptimeMonitor  *UptimeMonitor    // nil until first monitor_add
+	modelMgr       *ModelManager     // nil until first models_*
+	lemonMgr       *LemonSqueezyManager // nil until first lemonsqueezy_*
 	multiUserMgr   *MultiUserManager // nil in single-user mode
 	server       *http.Server
 	tlsServer    *http.Server
@@ -7749,6 +7758,608 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 		}
 		data, _ := json.Marshal(evalResult)
 		return mcpToolResult(string(data))
+
+	// --- Pipeline ---
+	case "pipeline_run":
+		var args struct {
+			File   string `json:"file"`
+			Job    string `json:"job"`
+			DryRun bool   `json:"dry_run"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if s.pipelineRunner == nil {
+			s.pipelineRunner = NewPipelineRunner()
+		}
+		result, err := s.pipelineRunner.Run(args.File, args.Job, args.DryRun)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("pipeline_run: %v", err))
+		}
+		return mcpToolJSON(result)
+	case "pipeline_status":
+		if s.pipelineRunner == nil {
+			return mcpToolJSON(map[string]interface{}{"running": false})
+		}
+		return mcpToolJSON(s.pipelineRunner.Status())
+	case "pipeline_list":
+		var args struct{ Dir string `json:"dir"` }
+		json.Unmarshal(call.Arguments, &args)
+		if args.Dir == "" {
+			args.Dir = s.taskMgr.workDir
+		}
+		if s.pipelineRunner == nil {
+			s.pipelineRunner = NewPipelineRunner()
+		}
+		list, err := s.pipelineRunner.List(args.Dir)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(list)
+	case "pipeline_stop":
+		if s.pipelineRunner != nil {
+			s.pipelineRunner.Stop()
+		}
+		return mcpToolResult("Pipeline cancelled.")
+	case "pipeline_cancel_cloud":
+		var args struct{ Provider string `json:"provider"` }
+		json.Unmarshal(call.Arguments, &args)
+		if s.pipelineRunner == nil {
+			s.pipelineRunner = NewPipelineRunner()
+		}
+		if err := s.pipelineRunner.CancelCloudCI(args.Provider); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult(fmt.Sprintf("Cloud CI cancelled (%s).", args.Provider))
+	case "pipeline_hardware":
+		if s.pipelineRunner == nil {
+			s.pipelineRunner = NewPipelineRunner()
+		}
+		return mcpToolJSON(DetectHardware())
+
+	// --- Analytics (self-hosted) ---
+	case "analytics_start":
+		var args struct{ Engine string `json:"engine"` }
+		json.Unmarshal(call.Arguments, &args)
+		if s.analyticsMgr == nil {
+			s.analyticsMgr = NewAnalyticsManager()
+		}
+		if err := s.analyticsMgr.Start(args.Engine); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult("Analytics started. Check analytics_status for URL.")
+	case "analytics_stop":
+		if s.analyticsMgr == nil {
+			return mcpToolResult("Analytics not running.")
+		}
+		if err := s.analyticsMgr.Stop(); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult("Analytics stopped.")
+	case "analytics_status":
+		if s.analyticsMgr == nil {
+			s.analyticsMgr = NewAnalyticsManager()
+		}
+		st, err := s.analyticsMgr.Status()
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(st)
+	case "analytics_selfhost_events":
+		var args struct {
+			Event    string `json:"event"`
+			PersonID string `json:"person_id"`
+			Last     string `json:"last"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if s.analyticsMgr == nil {
+			return mcpToolError("Analytics not started. Run analytics_start first.")
+		}
+		events, err := s.analyticsMgr.Events(args.Event, args.PersonID, args.Last)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(events)
+	case "analytics_dashboard":
+		if s.analyticsMgr == nil {
+			return mcpToolError("Analytics not started.")
+		}
+		dash, err := s.analyticsMgr.Dashboard()
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(dash)
+	case "analytics_setup":
+		var args struct{ Framework string `json:"framework"` }
+		json.Unmarshal(call.Arguments, &args)
+		if s.analyticsMgr == nil {
+			s.analyticsMgr = NewAnalyticsManager()
+		}
+		return mcpToolResult(s.analyticsMgr.Setup(args.Framework))
+
+	// --- Auth dev server ---
+	case "auth_dev_start":
+		var args struct{ Engine string `json:"engine"` }
+		json.Unmarshal(call.Arguments, &args)
+		if s.authDevMgr == nil {
+			s.authDevMgr = NewAuthDevManager()
+		}
+		if err := s.authDevMgr.Start(args.Engine); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult("Auth server started. Check auth_dev_status for URL.")
+	case "auth_dev_stop":
+		if s.authDevMgr == nil {
+			return mcpToolResult("Auth server not running.")
+		}
+		if err := s.authDevMgr.Stop(); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult("Auth server stopped.")
+	case "auth_dev_status":
+		if s.authDevMgr == nil {
+			s.authDevMgr = NewAuthDevManager()
+		}
+		st, err := s.authDevMgr.Status()
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(st)
+	case "auth_dev_users":
+		var args struct {
+			Action   string `json:"action"`
+			Email    string `json:"email"`
+			Password string `json:"password"`
+			Role     string `json:"role"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if s.authDevMgr == nil {
+			return mcpToolError("Auth server not started.")
+		}
+		result, err := s.authDevMgr.Users(args.Action, args.Email, args.Password, args.Role)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(result)
+	case "auth_dev_setup":
+		var args struct{ Framework string `json:"framework"` }
+		json.Unmarshal(call.Arguments, &args)
+		if s.authDevMgr == nil {
+			s.authDevMgr = NewAuthDevManager()
+		}
+		return mcpToolResult(s.authDevMgr.Setup(args.Framework))
+	case "auth_dev_tokens":
+		var args struct {
+			Action string `json:"action"`
+			Email  string `json:"email"`
+			Token  string `json:"token"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if s.authDevMgr == nil {
+			s.authDevMgr = NewAuthDevManager()
+		}
+		result, err := s.authDevMgr.Tokens(args.Action, args.Email, args.Token)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(result)
+
+	// --- Mail dev ---
+	case "mail_dev_start":
+		if s.mailDevMgr == nil {
+			s.mailDevMgr = NewMailDevManager()
+		}
+		if err := s.mailDevMgr.Start(); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult("Mail server started. SMTP: localhost:1025, Web UI: http://localhost:8025")
+	case "mail_dev_stop":
+		if s.mailDevMgr == nil {
+			return mcpToolResult("Mail server not running.")
+		}
+		if err := s.mailDevMgr.Stop(); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult("Mail server stopped.")
+	case "mail_dev_status":
+		if s.mailDevMgr == nil {
+			s.mailDevMgr = NewMailDevManager()
+		}
+		st, err := s.mailDevMgr.Status()
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(st)
+	case "mail_dev_inbox":
+		var args struct {
+			To      string `json:"to"`
+			Subject string `json:"subject"`
+			Limit   int    `json:"limit"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if s.mailDevMgr == nil {
+			return mcpToolError("Mail server not started.")
+		}
+		msgs, err := s.mailDevMgr.Inbox(args.To, args.Subject, args.Limit)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(msgs)
+	case "mail_dev_read":
+		var args struct{ ID string `json:"id"` }
+		json.Unmarshal(call.Arguments, &args)
+		if s.mailDevMgr == nil {
+			return mcpToolError("Mail server not started.")
+		}
+		msg, err := s.mailDevMgr.Read(args.ID)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(msg)
+	case "mail_dev_clear":
+		if s.mailDevMgr == nil {
+			return mcpToolError("Mail server not started.")
+		}
+		if err := s.mailDevMgr.Clear(); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult("All emails cleared.")
+	case "mail_dev_config":
+		if s.mailDevMgr == nil {
+			s.mailDevMgr = NewMailDevManager()
+		}
+		return mcpToolJSON(s.mailDevMgr.Config())
+
+	// --- Expose ---
+	case "expose_start":
+		var args struct {
+			Port      int    `json:"port"`
+			Subdomain string `json:"subdomain"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.Port == 0 {
+			return mcpToolError("port is required")
+		}
+		if s.exposeMgr == nil {
+			s.exposeMgr = NewExposeManager()
+		}
+		tunnel, err := s.exposeMgr.Start(args.Port, args.Subdomain)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(tunnel)
+	case "expose_stop":
+		var args struct{ Port int `json:"port"` }
+		json.Unmarshal(call.Arguments, &args)
+		if s.exposeMgr == nil {
+			return mcpToolResult("No active tunnels.")
+		}
+		if args.Port == 0 {
+			s.exposeMgr.StopAll()
+		} else {
+			s.exposeMgr.Stop(args.Port)
+		}
+		return mcpToolResult("Tunnel stopped.")
+	case "expose_list":
+		if s.exposeMgr == nil {
+			return mcpToolJSON([]interface{}{})
+		}
+		return mcpToolJSON(s.exposeMgr.List())
+
+	// --- Stripe ---
+	case "stripe_listen":
+		var args struct {
+			Port   int      `json:"port"`
+			Path   string   `json:"path"`
+			Events []string `json:"events"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if s.stripeDevMgr == nil {
+			s.stripeDevMgr = NewStripeDevManager()
+		}
+		if err := s.stripeDevMgr.Listen(args.Port, args.Path, args.Events); err != nil {
+			return mcpToolError(err.Error())
+		}
+		listenSt, listenErr := s.stripeDevMgr.Status()
+		if listenErr != nil {
+			return mcpToolResult("Stripe listener started.")
+		}
+		return mcpToolJSON(listenSt)
+	case "stripe_stop":
+		if s.stripeDevMgr == nil {
+			return mcpToolResult("Stripe listener not running.")
+		}
+		if err := s.stripeDevMgr.Stop(); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult("Stripe listener stopped.")
+	case "stripe_trigger":
+		var args struct{ Event string `json:"event"` }
+		json.Unmarshal(call.Arguments, &args)
+		if s.stripeDevMgr == nil {
+			s.stripeDevMgr = NewStripeDevManager()
+		}
+		out, err := s.stripeDevMgr.Trigger(args.Event)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult(out)
+	case "stripe_status":
+		if s.stripeDevMgr == nil {
+			s.stripeDevMgr = NewStripeDevManager()
+		}
+		st, err := s.stripeDevMgr.Status()
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(st)
+
+	// --- Uptime Monitor ---
+	case "uptime_monitor_add":
+		var args struct {
+			Name           string `json:"name"`
+			URL            string `json:"url"`
+			IntervalSec    int    `json:"interval_sec"`
+			ExpectedStatus int    `json:"expected_status"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if s.uptimeMonitor == nil {
+			s.uptimeMonitor = NewUptimeMonitor()
+			s.uptimeMonitor.Start()
+		}
+		if err := s.uptimeMonitor.Add(args.Name, args.URL, args.IntervalSec, args.ExpectedStatus); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult(fmt.Sprintf("Monitoring %s (%s) every %ds.", args.Name, args.URL, args.IntervalSec))
+	case "uptime_monitor_remove":
+		var args struct{ Name string `json:"name"` }
+		json.Unmarshal(call.Arguments, &args)
+		if s.uptimeMonitor == nil {
+			return mcpToolError("No monitors configured.")
+		}
+		if err := s.uptimeMonitor.Remove(args.Name); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult(fmt.Sprintf("Removed monitor %q.", args.Name))
+	case "uptime_monitor_list":
+		if s.uptimeMonitor == nil {
+			return mcpToolJSON([]interface{}{})
+		}
+		return mcpToolJSON(s.uptimeMonitor.List())
+	case "uptime_monitor_status":
+		if s.uptimeMonitor == nil {
+			return mcpToolJSON(map[string]interface{}{"totalMonitors": 0})
+		}
+		return mcpToolJSON(s.uptimeMonitor.Status())
+	case "uptime_monitor_history":
+		var args struct {
+			Name  string `json:"name"`
+			Limit int    `json:"limit"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if s.uptimeMonitor == nil {
+			return mcpToolError("No monitors configured.")
+		}
+		hist, err := s.uptimeMonitor.History(args.Name, args.Limit)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(hist)
+
+	// --- Models ---
+	case "models_list":
+		if s.modelMgr == nil {
+			s.modelMgr = NewModelManager()
+		}
+		models, err := s.modelMgr.List()
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(models)
+	case "models_pull":
+		var args struct{ Name string `json:"name"` }
+		json.Unmarshal(call.Arguments, &args)
+		if s.modelMgr == nil {
+			s.modelMgr = NewModelManager()
+		}
+		progress := make(chan string, 64)
+		var pullErr error
+		go func() {
+			pullErr = s.modelMgr.Pull(args.Name, progress)
+		}()
+		var lastMsg string
+		for msg := range progress {
+			lastMsg = msg
+		}
+		if pullErr != nil {
+			return mcpToolError(pullErr.Error())
+		}
+		return mcpToolResult(fmt.Sprintf("Pulled %s. %s", args.Name, lastMsg))
+	case "models_remove":
+		var args struct{ Name string `json:"name"` }
+		json.Unmarshal(call.Arguments, &args)
+		if s.modelMgr == nil {
+			s.modelMgr = NewModelManager()
+		}
+		if err := s.modelMgr.Remove(args.Name); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult(fmt.Sprintf("Removed %s.", args.Name))
+	case "models_run":
+		var args struct {
+			Model  string `json:"model"`
+			Prompt string `json:"prompt"`
+			System string `json:"system"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if s.modelMgr == nil {
+			s.modelMgr = NewModelManager()
+		}
+		resp, err := s.modelMgr.Run(args.Model, args.Prompt, args.System)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult(resp)
+	case "models_serve":
+		if s.modelMgr == nil {
+			s.modelMgr = NewModelManager()
+		}
+		if err := s.modelMgr.Serve(); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult("Ollama server running.")
+	case "models_ps":
+		if s.modelMgr == nil {
+			s.modelMgr = NewModelManager()
+		}
+		running, err := s.modelMgr.PS()
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(running)
+	case "models_recommend":
+		if s.modelMgr == nil {
+			s.modelMgr = NewModelManager()
+		}
+		recs, err := s.modelMgr.Recommend()
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(recs)
+	case "models_status":
+		if s.modelMgr == nil {
+			s.modelMgr = NewModelManager()
+		}
+		st, err := s.modelMgr.Status()
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(st)
+
+	// --- Lemon Squeezy ---
+	case "lemonsqueezy_status":
+		if s.lemonMgr == nil {
+			s.lemonMgr = NewLemonSqueezyManager()
+		}
+		st, err := s.lemonMgr.Status()
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(st)
+	case "lemonsqueezy_products":
+		var args struct{ Limit int `json:"limit"` }
+		json.Unmarshal(call.Arguments, &args)
+		if s.lemonMgr == nil {
+			s.lemonMgr = NewLemonSqueezyManager()
+		}
+		products, err := s.lemonMgr.Products(args.Limit)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(products)
+	case "lemonsqueezy_orders":
+		var args struct {
+			Limit int    `json:"limit"`
+			Email string `json:"email"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if s.lemonMgr == nil {
+			s.lemonMgr = NewLemonSqueezyManager()
+		}
+		orders, err := s.lemonMgr.Orders(args.Limit, args.Email)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(orders)
+	case "lemonsqueezy_subscriptions":
+		var args struct {
+			Limit  int    `json:"limit"`
+			Status string `json:"status"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if s.lemonMgr == nil {
+			s.lemonMgr = NewLemonSqueezyManager()
+		}
+		subs, err := s.lemonMgr.Subscriptions(args.Limit, args.Status)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(subs)
+	case "lemonsqueezy_customers":
+		var args struct {
+			Limit int    `json:"limit"`
+			Email string `json:"email"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if s.lemonMgr == nil {
+			s.lemonMgr = NewLemonSqueezyManager()
+		}
+		customers, err := s.lemonMgr.Customers(args.Limit, args.Email)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(customers)
+	case "lemonsqueezy_revenue":
+		if s.lemonMgr == nil {
+			s.lemonMgr = NewLemonSqueezyManager()
+		}
+		rev, err := s.lemonMgr.Revenue()
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(rev)
+	case "lemonsqueezy_discounts":
+		var args struct{ Limit int `json:"limit"` }
+		json.Unmarshal(call.Arguments, &args)
+		if s.lemonMgr == nil {
+			s.lemonMgr = NewLemonSqueezyManager()
+		}
+		discounts, err := s.lemonMgr.Discounts(args.Limit)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(discounts)
+	case "lemonsqueezy_create_discount":
+		var args struct {
+			Name       string `json:"name"`
+			Code       string `json:"code"`
+			Amount     int    `json:"amount"`
+			AmountType string `json:"amount_type"`
+			ProductID  string `json:"product_id"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if s.lemonMgr == nil {
+			s.lemonMgr = NewLemonSqueezyManager()
+		}
+		disc, err := s.lemonMgr.CreateDiscount(args.Name, args.Code, args.Amount, args.AmountType, args.ProductID)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(disc)
+	case "lemonsqueezy_webhook_listen":
+		var args struct {
+			Port int    `json:"port"`
+			Path string `json:"path"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if s.lemonMgr == nil {
+			s.lemonMgr = NewLemonSqueezyManager()
+		}
+		if err := s.lemonMgr.WebhookListen(args.Port, args.Path); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult(fmt.Sprintf("Lemon Squeezy webhook listener started on port %d.", args.Port))
+	case "lemonsqueezy_webhook_stop":
+		if s.lemonMgr == nil {
+			return mcpToolResult("Webhook listener not running.")
+		}
+		if err := s.lemonMgr.WebhookStop(); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult("Webhook listener stopped.")
+	case "lemonsqueezy_setup":
+		if s.lemonMgr == nil {
+			s.lemonMgr = NewLemonSqueezyManager()
+		}
+		return mcpToolResult(s.lemonMgr.Setup())
 
 	default:
 		return mcpToolError("unknown tool: " + call.Name)
