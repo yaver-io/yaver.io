@@ -101,13 +101,15 @@
         }
       ],
       "expo-sensors",
-
       [
         "expo-notifications",
         {
           "icon": "./assets/icon.png"
         }
-      ]
+      ],
+      "expo-localization",
+      "expo-mail-composer",
+      "expo-video"
     ]
   }
 }
