@@ -878,37 +878,35 @@ export default function HomePage() {
   return (
     <>
       {/* ── Section 1: Hero ── */}
-      <section className="px-6 pb-8 pt-14 md:pt-20">
+      <section className="px-6 pb-12 pt-20 md:pt-32">
         <div className="mx-auto max-w-4xl text-center">
-          <h1 className="mb-4 text-3xl font-bold tracking-tight text-surface-50 sm:text-4xl md:text-5xl">
-            Your machine is your cloud.
+          <h1 className="mb-6 text-5xl font-bold leading-[1.05] tracking-tight text-surface-50 sm:text-6xl md:text-7xl lg:text-8xl">
+            Your machine.
             <br />
-            Yaver is the remote control.
+            <span className="bg-gradient-to-r from-indigo-400 to-emerald-400 bg-clip-text text-transparent">Your cloud.</span>
           </h1>
-          <p className="mx-auto max-w-2xl text-base leading-relaxed text-surface-400 md:text-lg">
-            Create full-stack projects. Run Convex, Supabase, Postgres on your own hardware.
-            <br />
-            Test on real devices. Deploy anywhere. All from your phone.
+          <p className="mx-auto max-w-xl text-lg leading-snug text-surface-300 md:text-xl">
+            Build, test, and ship full-stack apps from your phone.
           </p>
-          <p className="mx-auto mt-2 max-w-2xl text-sm text-surface-500">
-            Open source &middot; P2P encrypted &middot; Free forever.
+          <p className="mx-auto mt-3 text-xs uppercase tracking-[0.2em] text-surface-500">
+            Open source &middot; P2P &middot; Free forever
           </p>
-          <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <a href="#get-started" className="btn-primary inline-flex items-center gap-2 px-8 py-3 text-sm font-medium">
-              Get Started &mdash; 60 seconds
+          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <a href="#get-started" className="btn-primary inline-flex items-center gap-2 px-10 py-3.5 text-base font-semibold">
+              Start free {"\u2192"}
             </a>
             <a
               href="https://github.com/kivanccakmak/yaver.io"
               target="_blank"
               rel="noopener noreferrer"
-              className="btn-secondary inline-flex items-center gap-2 px-8 py-3 text-sm font-medium"
+              className="btn-secondary inline-flex items-center gap-2 px-10 py-3.5 text-base font-semibold"
             >
-              <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.405.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+              <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.405.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
               GitHub
             </a>
           </div>
-          <p className="mt-6 text-xs text-surface-500">
-            Works with: Claude Code &middot; Codex &middot; Aider &middot; Ollama &middot; Goose &middot; any terminal
+          <p className="mt-8 text-xs text-surface-500">
+            Claude Code &middot; Codex &middot; Aider &middot; Ollama &middot; any terminal
           </p>
         </div>
       </section>
