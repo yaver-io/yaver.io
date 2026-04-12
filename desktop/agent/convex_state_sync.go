@@ -25,6 +25,11 @@ type convexSyncer struct {
 	deviceID    string
 	lastAudit   int64 // last pushed audit entry timestamp (unix ns)
 	client      *http.Client
+	// Stats for /sync/status visibility.
+	lastSyncAt  time.Time
+	successCount int
+	failCount    int
+	lastError    string
 }
 
 var globalConvexSync *convexSyncer
@@ -63,6 +68,9 @@ func (s *convexSyncer) syncAll(ctx context.Context) {
 	s.syncProjects(ctx)
 	s.syncServices(ctx)
 	s.syncRecentActivity(ctx)
+	s.mu.Lock()
+	s.lastSyncAt = time.Now()
+	s.mu.Unlock()
 }
 
 // syncProjects walks every project directory the agent knows about and pushes
@@ -179,10 +187,51 @@ func (s *convexSyncer) callMutation(path string, args map[string]interface{}) {
 	req.Header.Set("Authorization", "Bearer "+s.authToken)
 	res, err := s.client.Do(req)
 	if err != nil {
+		s.mu.Lock()
+		s.failCount++
+		s.lastError = err.Error()
+		s.mu.Unlock()
 		return
 	}
 	defer res.Body.Close()
 	_, _ = io.Copy(io.Discard, res.Body)
+	s.mu.Lock()
+	if res.StatusCode >= 400 {
+		s.failCount++
+		s.lastError = fmt.Sprintf("%s: HTTP %d", path, res.StatusCode)
+	} else {
+		s.successCount++
+	}
+	s.mu.Unlock()
+}
+
+// SyncStatus exposes a snapshot of the syncer's state for /sync/status.
+type SyncStatus struct {
+	Enabled      bool      `json:"enabled"`
+	ConvexURL    string    `json:"convexUrl,omitempty"`
+	DeviceID     string    `json:"deviceId,omitempty"`
+	LastSyncAt   time.Time `json:"lastSyncAt,omitempty"`
+	SuccessCount int       `json:"successCount"`
+	FailCount    int       `json:"failCount"`
+	LastError    string    `json:"lastError,omitempty"`
+}
+
+func (s *HTTPServer) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
+	if globalConvexSync == nil {
+		writeJSON(w, http.StatusOK, SyncStatus{Enabled: false})
+		return
+	}
+	globalConvexSync.mu.Lock()
+	defer globalConvexSync.mu.Unlock()
+	writeJSON(w, http.StatusOK, SyncStatus{
+		Enabled:      true,
+		ConvexURL:    globalConvexSync.convexURL,
+		DeviceID:     globalConvexSync.deviceID,
+		LastSyncAt:   globalConvexSync.lastSyncAt,
+		SuccessCount: globalConvexSync.successCount,
+		FailCount:    globalConvexSync.failCount,
+		LastError:    globalConvexSync.lastError,
+	})
 }
 
 // RecordDeployToConvex is called from finishDeploy to push deploy records
