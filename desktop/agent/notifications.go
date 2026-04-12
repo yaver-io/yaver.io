@@ -215,6 +215,15 @@ func (nm *NotificationManager) NotifyQualityCheck(checkType, status string, issu
 	}
 }
 
+// NotifyMorningSummary sends a daily digest of task activity.
+func (nm *NotificationManager) NotifyMorningSummary(summaryText string) {
+	if summaryText == "" {
+		return
+	}
+	msg := "☀️ Morning Summary\n\n" + summaryText
+	nm.sendAll(msg)
+}
+
 // sendAll sends a message to all configured notification channels.
 func (nm *NotificationManager) sendAll(message string) {
 	if nm.config.Telegram != nil && nm.config.Telegram.Enabled {

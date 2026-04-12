@@ -484,6 +484,15 @@ type Task struct {
 	TmuxSession  string `json:"tmuxSession,omitempty"` // tmux session name (for adopted sessions)
 	IsAdopted    bool   `json:"isAdopted,omitempty"`   // true if adopted from an existing tmux session
 
+	// Chained tasks: execute in order, next starts when previous completes
+	ChainID    string `json:"chainId,omitempty"`    // shared ID linking tasks in a chain
+	ChainOrder int    `json:"chainOrder,omitempty"` // 0-based position in the chain
+
+	// Auto-retry: retry failed tasks with error context
+	AutoRetry      bool `json:"autoRetry,omitempty"`      // enable auto-retry on task failure
+	AutoRetryCount int  `json:"autoRetryCount,omitempty"` // how many task-level retries so far
+	AutoRetryMax   int  `json:"autoRetryMax,omitempty"`   // max task-level retries (default 3)
+
 	// Speech context from mobile — passed through to the AI runner prompt
 	SpeechContext *SpeechContext `json:"-"`
 
@@ -517,6 +526,11 @@ type TaskInfo struct {
 	CreatedAt   time.Time          `json:"createdAt"`
 	StartedAt   *time.Time         `json:"startedAt,omitempty"`
 	FinishedAt  *time.Time         `json:"finishedAt,omitempty"`
+	ChainID    string `json:"chainId,omitempty"`
+	ChainOrder int    `json:"chainOrder,omitempty"`
+	AutoRetry      bool `json:"autoRetry,omitempty"`
+	AutoRetryCount int  `json:"autoRetryCount,omitempty"`
+	AutoRetryMax   int  `json:"autoRetryMax,omitempty"`
 }
 
 // TaskManager manages the lifecycle of tasks.
@@ -2182,6 +2196,11 @@ func (tm *TaskManager) ListTasks() []TaskInfo {
 			CreatedAt:   t.CreatedAt,
 			StartedAt:   t.StartedAt,
 			FinishedAt:  t.FinishedAt,
+			ChainID:       t.ChainID,
+			ChainOrder:    t.ChainOrder,
+			AutoRetry:      t.AutoRetry,
+			AutoRetryCount: t.AutoRetryCount,
+			AutoRetryMax:   t.AutoRetryMax,
 		})
 	}
 	return result
@@ -2214,4 +2233,346 @@ func (tm *TaskManager) BroadcastControlSignal(signal string) {
 			log.Printf("[control] Sent to task %s: %s", t.ID, signal)
 		}
 	}
+}
+
+// ── Chained Tasks ──────────────────────────────────────────────────
+
+// CreateChainedTasks creates multiple tasks linked by a chain ID.
+// Tasks execute sequentially: the next starts when the previous completes successfully.
+// Only the first task starts immediately; the rest stay queued.
+func (tm *TaskManager) CreateChainedTasks(tasks []ChainedTaskInput, model, source, runnerID string, autoRetry bool) ([]*Task, error) {
+	if len(tasks) == 0 {
+		return nil, fmt.Errorf("no tasks provided")
+	}
+
+	chainID := uuid.New().String()[:8]
+	var created []*Task
+
+	for i, input := range tasks {
+		var taskRunner RunnerConfig
+		if runnerID != "" {
+			if r, ok := builtinRunners[runnerID]; ok {
+				taskRunner = r
+			} else {
+				taskRunner = tm.runner
+			}
+		} else {
+			taskRunner = tm.runner
+		}
+
+		if !tm.DummyMode {
+			if err := CheckRunnerBinary(taskRunner.Command); err != nil {
+				return created, fmt.Errorf("runner not ready: %w", err)
+			}
+		}
+
+		if source == "" {
+			source = "mobile"
+		}
+
+		id := uuid.New().String()[:8]
+		now := time.Now()
+		retryMax := 0
+		if autoRetry {
+			retryMax = 3
+		}
+		task := &Task{
+			ID:           id,
+			Title:        input.Title,
+			Description:  input.Description,
+			Status:       TaskStatusQueued,
+			Source:       source,
+			Model:        model,
+			RunnerID:     taskRunner.RunnerID,
+			runner:       taskRunner,
+			CreatedAt:    now,
+			outputCh:     make(chan string, 512),
+			doneCh:       make(chan struct{}),
+			ChainID:      chainID,
+			ChainOrder:   i,
+			AutoRetry:    autoRetry,
+			AutoRetryMax: retryMax,
+			Turns: []ConversationTurn{
+				{Role: "user", Content: input.Title, Timestamp: now},
+			},
+		}
+
+		tm.mu.Lock()
+		tm.tasks[id] = task
+		tm.persist()
+		tm.mu.Unlock()
+
+		created = append(created, task)
+
+		// Only start the first task; the rest wait for chain progression
+		if i == 0 {
+			if !tm.DummyMode {
+				log.Printf("[chain %s] Starting first task %s: %s", chainID, id, input.Title)
+				if err := tm.startProcess(task); err != nil {
+					log.Printf("[chain %s] Failed to start first task %s: %v", chainID, id, err)
+					task.Status = TaskStatusFailed
+					tm.mu.Lock()
+					tm.persist()
+					tm.mu.Unlock()
+				}
+			} else {
+				go tm.runDummyTask(task)
+			}
+		} else {
+			log.Printf("[chain %s] Task %s queued at position %d: %s", chainID, id, i, input.Title)
+		}
+	}
+
+	return created, nil
+}
+
+// ChainedTaskInput represents a single task in a chain creation request.
+type ChainedTaskInput struct {
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+}
+
+// advanceChain starts the next queued task in a chain after one completes.
+// Called from OnTaskDone callback.
+func (tm *TaskManager) advanceChain(completedTask *Task) {
+	if completedTask.ChainID == "" {
+		return
+	}
+
+	// Only advance if the task completed successfully
+	if completedTask.Status != TaskStatusFinished {
+		log.Printf("[chain %s] Task %s finished with status %s — chain stopped", completedTask.ChainID, completedTask.ID, completedTask.Status)
+		return
+	}
+
+	nextOrder := completedTask.ChainOrder + 1
+
+	tm.mu.RLock()
+	var nextTask *Task
+	for _, t := range tm.tasks {
+		if t.ChainID == completedTask.ChainID && t.ChainOrder == nextOrder && t.Status == TaskStatusQueued {
+			nextTask = t
+			break
+		}
+	}
+	tm.mu.RUnlock()
+
+	if nextTask == nil {
+		log.Printf("[chain %s] Chain complete — no more tasks after position %d", completedTask.ChainID, completedTask.ChainOrder)
+		return
+	}
+
+	log.Printf("[chain %s] Advancing to task %s (position %d): %s", completedTask.ChainID, nextTask.ID, nextOrder, nextTask.Title)
+
+	if tm.DummyMode {
+		go tm.runDummyTask(nextTask)
+		return
+	}
+
+	if err := tm.startProcess(nextTask); err != nil {
+		log.Printf("[chain %s] Failed to start next task %s: %v", completedTask.ChainID, nextTask.ID, err)
+		nextTask.Status = TaskStatusFailed
+		tm.mu.Lock()
+		tm.persist()
+		tm.mu.Unlock()
+	}
+}
+
+// GetChainStatus returns the status of all tasks in a chain.
+func (tm *TaskManager) GetChainStatus(chainID string) []TaskInfo {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+
+	var chain []TaskInfo
+	for _, t := range tm.tasks {
+		if t.ChainID == chainID {
+			output := t.Output
+			if len(output) > 2000 {
+				output = output[len(output)-2000:]
+			}
+			chain = append(chain, TaskInfo{
+				ID:         t.ID,
+				Title:      t.Title,
+				Status:     t.Status,
+				ChainID:    t.ChainID,
+				ChainOrder: t.ChainOrder,
+				CreatedAt:  t.CreatedAt,
+				StartedAt:  t.StartedAt,
+				FinishedAt: t.FinishedAt,
+				ResultText: t.ResultText,
+				CostUSD:    t.CostUSD,
+			})
+		}
+	}
+
+	// Sort by chain order
+	for i := 0; i < len(chain); i++ {
+		for j := i + 1; j < len(chain); j++ {
+			if chain[j].ChainOrder < chain[i].ChainOrder {
+				chain[i], chain[j] = chain[j], chain[i]
+			}
+		}
+	}
+	return chain
+}
+
+// ── Auto-Retry (task-level) ────────────────────────────────────────
+
+// autoRetryTask retries a failed task by creating a new run with error context.
+// Returns true if retry was initiated, false if retries exhausted.
+func (tm *TaskManager) autoRetryTask(task *Task) bool {
+	if !task.AutoRetry || task.AutoRetryMax <= 0 {
+		return false
+	}
+	if task.AutoRetryCount >= task.AutoRetryMax {
+		log.Printf("[retry] Task %s exhausted all %d retries", task.ID, task.AutoRetryMax)
+		return false
+	}
+
+	task.AutoRetryCount++
+	log.Printf("[retry] Task %s failed — auto-retrying (attempt %d/%d)", task.ID, task.AutoRetryCount, task.AutoRetryMax)
+
+	// Build retry prompt with error context
+	lastOutput := task.Output
+	if len(lastOutput) > 2000 {
+		lastOutput = lastOutput[len(lastOutput)-2000:]
+	}
+	retryPrompt := fmt.Sprintf(
+		"The previous attempt failed. Here is the error output:\n\n```\n%s\n```\n\nPlease fix the issues and try again. Original task: %s",
+		lastOutput, task.Title,
+	)
+
+	// Reset task state for retry
+	task.Output = fmt.Sprintf("⟳ Auto-retry attempt %d/%d...\n\n", task.AutoRetryCount, task.AutoRetryMax)
+	task.ResultText = ""
+	task.Status = TaskStatusQueued
+	task.FinishedAt = nil
+	task.outputCh = make(chan string, 512)
+	task.doneCh = make(chan struct{})
+
+	// Update the prompt for this retry
+	task.Turns = append(task.Turns, ConversationTurn{
+		Role:      "user",
+		Content:   retryPrompt,
+		Timestamp: time.Now(),
+	})
+
+	tm.mu.Lock()
+	tm.persist()
+	tm.mu.Unlock()
+
+	if err := tm.startProcess(task); err != nil {
+		log.Printf("[retry] Task %s auto-retry failed to start: %v", task.ID, err)
+		tm.mu.Lock()
+		task.Status = TaskStatusFailed
+		now := time.Now()
+		task.FinishedAt = &now
+		tm.persist()
+		tm.mu.Unlock()
+		return false
+	}
+
+	return true
+}
+
+// ── Task Summary ───────────────────────────────────────────────────
+
+// TaskSummary provides a digest of task activity for a time period.
+type TaskSummary struct {
+	Period      string  `json:"period"`      // e.g. "last 24 hours"
+	Total       int     `json:"total"`
+	Completed   int     `json:"completed"`
+	Failed      int     `json:"failed"`
+	Running     int     `json:"running"`
+	Queued      int     `json:"queued"`
+	TotalCost   float64 `json:"totalCost"`
+	Items       []TaskSummaryItem `json:"items"`
+}
+
+// TaskSummaryItem is a brief description of a completed task.
+type TaskSummaryItem struct {
+	Title    string     `json:"title"`
+	Status   TaskStatus `json:"status"`
+	CostUSD  float64    `json:"costUsd,omitempty"`
+	Duration int        `json:"durationSec,omitempty"` // seconds
+}
+
+// GetSummary returns a summary of tasks completed in the given time window.
+func (tm *TaskManager) GetSummary(since time.Time) TaskSummary {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+
+	summary := TaskSummary{Period: fmt.Sprintf("since %s", since.Format("2006-01-02 15:04"))}
+
+	for _, t := range tm.tasks {
+		if t.CreatedAt.Before(since) {
+			continue
+		}
+		summary.Total++
+		switch t.Status {
+		case TaskStatusFinished:
+			summary.Completed++
+		case TaskStatusFailed:
+			summary.Failed++
+		case TaskStatusRunning:
+			summary.Running++
+		case TaskStatusQueued:
+			summary.Queued++
+		}
+		summary.TotalCost += t.CostUSD
+
+		if t.Status == TaskStatusFinished || t.Status == TaskStatusFailed {
+			dur := 0
+			if t.StartedAt != nil && t.FinishedAt != nil {
+				dur = int(t.FinishedAt.Sub(*t.StartedAt).Seconds())
+			}
+			titlePreview := t.Title
+			if len(titlePreview) > 80 {
+				titlePreview = titlePreview[:80] + "..."
+			}
+			summary.Items = append(summary.Items, TaskSummaryItem{
+				Title:    titlePreview,
+				Status:   t.Status,
+				CostUSD:  t.CostUSD,
+				Duration: dur,
+			})
+		}
+	}
+
+	return summary
+}
+
+// GenerateSummaryText creates a human-readable summary for notifications.
+func (tm *TaskManager) GenerateSummaryText(since time.Time) string {
+	s := tm.GetSummary(since)
+	if s.Total == 0 {
+		return "No tasks in the last 24 hours."
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "📊 %d tasks: %d completed, %d failed", s.Total, s.Completed, s.Failed)
+	if s.Running > 0 {
+		fmt.Fprintf(&b, ", %d running", s.Running)
+	}
+	if s.Queued > 0 {
+		fmt.Fprintf(&b, ", %d queued", s.Queued)
+	}
+	if s.TotalCost > 0 {
+		fmt.Fprintf(&b, " ($%.2f)", s.TotalCost)
+	}
+	b.WriteString("\n\n")
+
+	for _, item := range s.Items {
+		icon := "✅"
+		if item.Status == TaskStatusFailed {
+			icon = "❌"
+		}
+		fmt.Fprintf(&b, "%s %s", icon, item.Title)
+		if item.Duration > 0 {
+			fmt.Fprintf(&b, " (%ds)", item.Duration)
+		}
+		b.WriteString("\n")
+	}
+
+	return b.String()
 }

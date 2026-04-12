@@ -146,6 +146,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Authenticated
 	mux.HandleFunc("/tasks", s.auth(s.handleTasks))
 	mux.HandleFunc("/tasks/", s.auth(s.handleTaskByID))
+	mux.HandleFunc("/chain", s.auth(s.handleChainCreate))
+	mux.HandleFunc("/chain/", s.auth(s.handleChainStatus))
+	mux.HandleFunc("/deploy", s.auth(s.handleDeploy))
+	mux.HandleFunc("/summary", s.auth(s.handleSummary))
 	mux.HandleFunc("/info", s.auth(s.handleInfo))
 	mux.HandleFunc("/agent/status", s.auth(s.handleAgentStatus))
 	mux.HandleFunc("/agent/runners", s.auth(s.handleRunners))
