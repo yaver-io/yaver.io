@@ -53,6 +53,65 @@ export default function MailScreen() {
   const [composeSubject, setComposeSubject] = useState("");
   const [composeBody, setComposeBody] = useState("");
 
+  // Setup wizard state — lets the user paste Google OAuth creds
+  // without having to SSH into the Mac and run `yaver email setup`.
+  const [showSetup, setShowSetup] = useState(false);
+  const [setupProvider, setSetupProvider] = useState<"gmail" | "o365">("gmail");
+  const [setupClientId, setSetupClientId] = useState("");
+  const [setupClientSecret, setSetupClientSecret] = useState("");
+  const [setupTenantId, setSetupTenantId] = useState("");
+  const [setupRedirectUri, setSetupRedirectUri] = useState("");
+  const [setupSaving, setSetupSaving] = useState(false);
+
+  const loadRedirectUri = useCallback(async () => {
+    try {
+      const baseUrl = (quicClient as any).baseUrl;
+      const headers = (quicClient as any).authHeaders;
+      const res = await fetch(`${baseUrl}/mail/config`, { headers });
+      if (res.ok) {
+        const j = await res.json();
+        setSetupRedirectUri(j.redirectUri || "");
+      }
+    } catch {}
+  }, []);
+
+  const submitSetup = useCallback(async () => {
+    if (!setupClientId.trim() || !setupClientSecret.trim()) {
+      Alert.alert("Missing fields", "Enter both Client ID and Client Secret.");
+      return;
+    }
+    setSetupSaving(true);
+    try {
+      const baseUrl = (quicClient as any).baseUrl;
+      const headers = { ...(quicClient as any).authHeaders, "Content-Type": "application/json" };
+      const res = await fetch(`${baseUrl}/mail/config`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          provider: setupProvider,
+          clientId: setupClientId.trim(),
+          clientSecret: setupClientSecret.trim(),
+          tenantId: setupTenantId.trim() || undefined,
+        }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        Alert.alert("Save failed", j?.error || `HTTP ${res.status}`);
+        return;
+      }
+      setShowSetup(false);
+      setSetupClientId("");
+      setSetupClientSecret("");
+      setSetupTenantId("");
+      // Auto-start OAuth now that credentials are saved
+      setTimeout(() => startConnectRef.current(setupProvider), 400);
+    } finally {
+      setSetupSaving(false);
+    }
+  }, [setupProvider, setupClientId, setupClientSecret, setupTenantId]);
+
+  const startConnectRef = React.useRef<(provider: "gmail" | "o365") => void>(() => {});
+
   const load = useCallback(async () => {
     if (!connected) return;
     setLoading(true);
@@ -112,11 +171,14 @@ export default function MailScreen() {
   const startConnect = useCallback(async (provider: "gmail" | "o365") => {
     const res: any = await quicClient.mailConnectStart(provider);
     if (!res || res.error || !res.authUrl) {
-      const msg = res?.error || "Unknown error";
-      Alert.alert(
-        "Email not configured",
-        `${msg}\n\nRun this once on your Mac:\n\n  yaver email setup\n\nYou'll be prompted for Google OAuth client ID + secret. Get them from:\nhttps://console.cloud.google.com/apis/credentials`,
-      );
+      // Not configured yet — open the setup wizard instead of SSH-to-Mac.
+      setShowConnect(false);
+      setSetupProvider(provider);
+      setSetupClientId("");
+      setSetupClientSecret("");
+      setSetupTenantId("");
+      await loadRedirectUri();
+      setShowSetup(true);
       return;
     }
     Linking.openURL(res.authUrl);
@@ -135,6 +197,9 @@ export default function MailScreen() {
       }
     }, 3000);
   }, [load]);
+
+  // Wire startConnect into the ref so the setup wizard can call it after save.
+  useEffect(() => { startConnectRef.current = startConnect; }, [startConnect]);
 
   const send = useCallback(async () => {
     if (!composeTo.trim() || !composeSubject.trim()) return;
@@ -266,6 +331,110 @@ export default function MailScreen() {
               <Text style={{ color: c.textMuted }}>Cancel</Text>
             </Pressable>
           </View>
+        </View>
+      </Modal>
+
+      {/* Setup wizard — capture OAuth client ID + secret from mobile */}
+      <Modal visible={showSetup} animationType="slide">
+        <View style={[s.container, { backgroundColor: c.bg, paddingTop: insets.top + 12 }]}>
+          <View style={[s.header, { borderBottomColor: c.border }]}>
+            <Pressable onPress={() => setShowSetup(false)} style={{ paddingVertical: 8 }}>
+              <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>Cancel</Text>
+            </Pressable>
+            <Text style={{ fontSize: 17, fontWeight: "700", color: c.textPrimary }}>
+              Set up {setupProvider === "gmail" ? "Gmail" : "Microsoft"}
+            </Text>
+            <Pressable onPress={submitSetup} disabled={setupSaving} style={{ paddingVertical: 8 }}>
+              {setupSaving ? <ActivityIndicator color={c.accent} /> :
+                <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>Save</Text>}
+            </Pressable>
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 16 }}>
+            <Text style={{ color: c.textPrimary, fontSize: 15, lineHeight: 22, marginBottom: 14 }}>
+              One-time setup. Yaver stores these credentials only on your Mac — never in the cloud.
+            </Text>
+
+            <Text style={[s.section, { color: c.textPrimary, marginTop: 4 }]}>Step 1 — Create OAuth credentials</Text>
+            <Pressable
+              onPress={() => Linking.openURL(setupProvider === "gmail"
+                ? "https://console.cloud.google.com/apis/credentials"
+                : "https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade")}
+              style={[s.connectBtn, { backgroundColor: c.accent, marginTop: 8 }]}
+            >
+              <Text style={s.btnText}>
+                Open {setupProvider === "gmail" ? "Google Cloud Console" : "Azure Portal"}
+              </Text>
+            </Pressable>
+            <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 8, lineHeight: 18 }}>
+              {setupProvider === "gmail"
+                ? "→ Create Credentials → OAuth 2.0 Client ID\n→ Application type: Web application\n→ Name: Yaver\n→ Enable Gmail API (APIs & Services → Library)"
+                : "→ App registrations → New registration\n→ Supported account types: Personal + Work\n→ Redirect URI type: Web"}
+            </Text>
+
+            <Text style={[s.section, { color: c.textPrimary, marginTop: 22 }]}>Step 2 — Add redirect URI</Text>
+            <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 4 }}>
+              Copy this into "Authorized redirect URIs":
+            </Text>
+            <Pressable
+              onPress={() => {
+                import("expo-clipboard").then(({ setStringAsync }) => {
+                  setStringAsync(setupRedirectUri);
+                  Alert.alert("Copied", setupRedirectUri);
+                }).catch(() => {});
+              }}
+              style={{ marginTop: 8, padding: 12, borderRadius: 8, backgroundColor: c.bgInput, borderWidth: 1, borderColor: c.border }}
+            >
+              <Text style={{ color: c.textPrimary, fontFamily: "monospace", fontSize: 13 }} selectable>
+                {setupRedirectUri || "Loading…"}
+              </Text>
+              <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>Tap to copy</Text>
+            </Pressable>
+
+            <Text style={[s.section, { color: c.textPrimary, marginTop: 22 }]}>Step 3 — Paste credentials</Text>
+            <TextInput
+              value={setupClientId}
+              onChangeText={setSetupClientId}
+              placeholder={setupProvider === "gmail" ? "Client ID (xxxxx.apps.googleusercontent.com)" : "Application (client) ID"}
+              placeholderTextColor={c.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={[s.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput }]}
+            />
+            <TextInput
+              value={setupClientSecret}
+              onChangeText={setSetupClientSecret}
+              placeholder="Client Secret"
+              placeholderTextColor={c.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry
+              style={[s.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput, marginTop: 10 }]}
+            />
+            {setupProvider === "o365" && (
+              <TextInput
+                value={setupTenantId}
+                onChangeText={setSetupTenantId}
+                placeholder="Tenant ID (use 'common' for personal accounts)"
+                placeholderTextColor={c.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={[s.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput, marginTop: 10 }]}
+              />
+            )}
+
+            <Pressable
+              onPress={submitSetup}
+              disabled={setupSaving || !setupClientId.trim() || !setupClientSecret.trim()}
+              style={[s.connectBtn, {
+                backgroundColor: (!setupClientId.trim() || !setupClientSecret.trim()) ? c.bgInput : "#22c55e",
+                marginTop: 20,
+                opacity: setupSaving ? 0.6 : 1,
+              }]}
+            >
+              {setupSaving ? <ActivityIndicator color="#fff" /> :
+                <Text style={s.btnText}>Save & continue to sign-in</Text>}
+            </Pressable>
+          </ScrollView>
         </View>
       </Modal>
 
