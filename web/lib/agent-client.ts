@@ -974,6 +974,199 @@ class AgentClient {
     return res.json();
   }
 
+  // ── Yaver Console (Docker + metrics + catalog) ───────────────────
+
+  async consoleContainers(includeAll = false): Promise<{ containers?: any[]; error?: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/console/containers${includeAll ? "?all=1" : ""}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async consoleContainerAction(id: string, action: string): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/console/containers/action`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ id, action }),
+    });
+    return res.json();
+  }
+
+  async consoleContainerStats(id: string): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/console/containers/stats?id=${encodeURIComponent(id)}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async consoleImages(): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/console/images`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async consolePrune(): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/console/prune`, { method: "POST", headers: this.authHeaders });
+    return res.json();
+  }
+
+  async consoleMetricsSnapshot(): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/console/metrics`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async consoleCatalog(): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/console/catalog`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async consoleCatalogInstall(id: string, fields: Record<string, string>, directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/console/catalog/install${q}`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ id, fields }),
+    });
+    return res.json();
+  }
+
+  // WebSocket URL builders — the UI opens the socket itself so auth header
+  // can be passed as a query param (WS doesn't support custom headers in browsers).
+  metricsWsUrl(): string {
+    return `${this.baseUrl.replace(/^http/, "ws")}/ws/metrics?token=${encodeURIComponent(this.authHeaders.Authorization?.replace("Bearer ", "") || "")}`;
+  }
+  containerLogsWsUrl(id: string): string {
+    const token = encodeURIComponent(this.authHeaders.Authorization?.replace("Bearer ", "") || "");
+    return `${this.baseUrl.replace(/^http/, "ws")}/ws/logs?id=${encodeURIComponent(id)}&token=${token}`;
+  }
+  terminalWsUrl(cwd?: string): string {
+    const token = encodeURIComponent(this.authHeaders.Authorization?.replace("Bearer ", "") || "");
+    const c = cwd ? `&cwd=${encodeURIComponent(cwd)}` : "";
+    return `${this.baseUrl.replace(/^http/, "ws")}/ws/terminal?token=${token}${c}`;
+  }
+
+  // ── Schema / storage / jobs / logs SSE ───────────────────────────
+
+  async backendSchema(directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/backend/schema${q}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async storageList(bucket?: string, directory?: string): Promise<any> {
+    this.assertConnected();
+    const p = new URLSearchParams();
+    if (bucket) p.set("bucket", bucket);
+    if (directory) p.set("directory", directory);
+    const res = await fetch(`${this.baseUrl}/storage/list?${p}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async jobsList(directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/jobs/list${q}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async switchCost(directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/switch/cost${q}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  logsSseUrl(service: string, tail = 50): string {
+    return `${this.baseUrl}/logs/stream?service=${encodeURIComponent(service)}&tail=${tail}`;
+  }
+
+  // ── Accounts (cloud provider credentials) ────────────────────────
+
+  async accountsList(): Promise<{ accounts: any[]; providers: any[] }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/accounts`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async accountConnect(provider: string, label: string, fields: Record<string, string>): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/accounts/connect`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ provider, label, fields }),
+    });
+    return res.json();
+  }
+
+  async accountDisconnect(provider: string): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/accounts/disconnect`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ provider }),
+    });
+    return res.json();
+  }
+
+  // ── Switch engine ────────────────────────────────────────────────
+
+  async switchTargets(): Promise<{ targets: any[] }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/switch/targets`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async switchPlan(target: string, opts: { dryRun?: boolean; directory?: string } = {}): Promise<any> {
+    this.assertConnected();
+    const q = opts.directory ? `?directory=${encodeURIComponent(opts.directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/switch/plan${q}`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ target, dryRun: !!opts.dryRun }),
+    });
+    return res.json();
+  }
+
+  async switchRun(id: string, directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/switch/run${q}`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    return res.json();
+  }
+
+  async switchRollback(id: string, directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/switch/rollback${q}`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    return res.json();
+  }
+
+  async switchHistory(directory?: string): Promise<{ switches: any[] }> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/switch/history${q}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async switchCleanup(directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/switch/cleanup${q}`, { method: "POST", headers: this.authHeaders });
+    return res.json();
+  }
+
   // ── Cloud emulators ──────────────────────────────────────────────
 
   async cloudEmuStatus(directory?: string): Promise<{ emulators: { name: string; provider: string; running: boolean; port: number; health: string }[] }> {

@@ -540,6 +540,47 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/cloud/emu/status", s.auth(s.handleCloudEmuStatus))
 	mux.HandleFunc("/cloud/emu/config", s.auth(s.handleCloudEmuConfig))
 
+	// Switch engine: change backend/host with snapshots + 7-day rollback
+	mux.HandleFunc("/switch/targets", s.auth(s.handleSwitchTargets))
+	mux.HandleFunc("/switch/plan", s.auth(s.handleSwitchPlan))
+	mux.HandleFunc("/switch/run", s.auth(s.handleSwitchRun))
+	mux.HandleFunc("/switch/rollback", s.auth(s.handleSwitchRollback))
+	mux.HandleFunc("/switch/history", s.auth(s.handleSwitchHistory))
+	mux.HandleFunc("/switch/cleanup", s.auth(s.handleSwitchCleanup))
+
+	// Cloud accounts (encrypted provider credentials)
+	mux.HandleFunc("/accounts", s.auth(s.handleAccountList))
+	mux.HandleFunc("/accounts/connect", s.auth(s.handleAccountConnect))
+	mux.HandleFunc("/accounts/disconnect", s.auth(s.handleAccountDisconnect))
+	mux.HandleFunc("/accounts/status", s.auth(s.handleAccountStatus))
+
+	// Studio proxy (mobile-access Drizzle/Supabase/Convex/PocketBase dashboards)
+	mux.HandleFunc("/studios", s.auth(s.handleStudioList))
+	mux.HandleFunc("/proxy/", s.auth(s.handleStudioProxy))
+
+	// Switch cost comparator
+	mux.HandleFunc("/switch/cost", s.auth(s.handleSwitchCost))
+
+	// Logs streaming (SSE) + schema viewer
+	mux.HandleFunc("/logs/stream", s.auth(s.handleLogsStream))
+	mux.HandleFunc("/backend/schema", s.auth(s.handleSchemaView))
+	mux.HandleFunc("/storage/list", s.auth(s.handleStorageList))
+	mux.HandleFunc("/jobs/list", s.auth(s.handleJobsList))
+
+	// Yaver Console: Docker engine, live metrics, web terminal, catalog
+	mux.HandleFunc("/console/containers", s.auth(s.handleConsoleContainers))
+	mux.HandleFunc("/console/containers/action", s.auth(s.handleConsoleContainerAction))
+	mux.HandleFunc("/console/containers/stats", s.auth(s.handleConsoleContainerStats))
+	mux.HandleFunc("/console/images", s.auth(s.handleConsoleImages))
+	mux.HandleFunc("/console/volumes", s.auth(s.handleConsoleVolumes))
+	mux.HandleFunc("/console/prune", s.auth(s.handleConsolePrune))
+	mux.HandleFunc("/console/metrics", s.auth(s.handleMetricsSnapshot))
+	mux.HandleFunc("/console/catalog", s.auth(s.handleCatalogList))
+	mux.HandleFunc("/console/catalog/install", s.auth(s.handleCatalogInstall))
+	mux.HandleFunc("/ws/metrics", s.auth(s.handleMetricsStream))
+	mux.HandleFunc("/ws/logs", s.auth(s.handleContainerLogsStream))
+	mux.HandleFunc("/ws/terminal", s.auth(s.handleTerminalWS))
+
 	// Guest access management (host invites guests to use their agent)
 	mux.HandleFunc("/guests", s.auth(s.handleGuestList))
 	mux.HandleFunc("/guests/invite", s.auth(s.handleGuestInvite))
@@ -5732,6 +5773,43 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCloudEmuStatus(a.Dir))
 	case "cloud_emu_config":
 		var a struct { Provider string `json:"provider"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCloudEmuConfig(a.Provider))
+	// --- Switch engine ---
+	case "switch_targets":
+		return mcpToolJSON(mcpSwitchTargets())
+	case "switch_plan":
+		var a struct { Dir string `json:"directory"`; Target string `json:"target"`; DryRun bool `json:"dryRun"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSwitchPlan(a.Dir, a.Target, a.DryRun))
+	case "switch_run":
+		var a struct { Dir string `json:"directory"`; ID string `json:"id"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSwitchRun(a.Dir, a.ID))
+	case "switch_rollback":
+		var a struct { Dir string `json:"directory"`; ID string `json:"id"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSwitchRollback(a.Dir, a.ID))
+	case "switch_history":
+		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSwitchHistory(a.Dir))
+	case "switch_cleanup":
+		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSwitchCleanup(a.Dir))
+	// --- Accounts manager ---
+	case "account_list":
+		return mcpToolJSON(mcpAccountList())
+	case "account_connect":
+		var a struct { Provider string `json:"provider"`; Label string `json:"label"`; Fields string `json:"fields"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpAccountConnect(a.Provider, a.Label, a.Fields))
+	case "account_disconnect":
+		var a struct { Provider string `json:"provider"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpAccountDisconnect(a.Provider))
+	case "account_status":
+		var a struct { Provider string `json:"provider"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpAccountStatus(a.Provider))
+	// --- Cloud provisioning ---
+	case "cloud_provision":
+		var a struct { Host string `json:"host"`; Name string `json:"name"`; Opts string `json:"opts"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCloudProvision(a.Host, a.Name, a.Opts))
+	case "studio_list":
+		return mcpToolJSON(mcpStudioList())
+	case "switch_cost":
+		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSwitchCost(a.Dir))
+	case "init_project":
+		var a struct { Opts string `json:"opts"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpInitProject(a.Opts))
+	case "backend_schema":
+		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSchemaView(a.Dir))
+	case "storage_list":
+		var a struct { Dir string `json:"directory"`; Bucket string `json:"bucket"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpStorageList(a.Dir, a.Bucket))
+	case "cron_list":
+		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpJobsList(a.Dir))
 	// --- Cloudflare ---
 	case "cf_workers":
 		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCFWorkers(a.Dir))
