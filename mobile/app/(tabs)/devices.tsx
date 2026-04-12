@@ -67,13 +67,13 @@ function DeviceCard({
   // so a Convex-offline device that's really in bootstrap gets paired
   // without the user having to "activate" it first.
   useEffect(() => {
-    if (!device.ip || !token) return;
+    if (!device.host || !token) return;
     let cancelled = false;
     let paired = false;
     const check = async () => {
       if (paired || cancelled) return;
       try {
-        const url = `http://${device.ip}:${device.httpPort || 18080}/info`;
+        const url = `http://${device.host}:${device.port || 18080}/info`;
         const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
         if (!res.ok || cancelled) return;
         const info = await res.json();
@@ -86,7 +86,7 @@ function DeviceCard({
         try {
           const { submitEncryptedPair } = await import("../../src/lib/encryptedPair");
           const { submitPair } = await import("../../src/lib/pairDevice");
-          const targetUrl = `http://${device.ip}:${device.httpPort || 18080}`;
+          const targetUrl = `http://${device.host}:${device.port || 18080}`;
           const pubKey = device.publicKey || info.devicePublicKey;
           if (pubKey) {
             const r = await submitEncryptedPair(targetUrl, token, pubKey);
@@ -114,7 +114,7 @@ function DeviceCard({
     check();
     const iv = setInterval(check, 8000);
     return () => { cancelled = true; clearInterval(iv); };
-  }, [device.ip, device.httpPort, device.publicKey, token]);
+  }, [device.host, device.httpPort, device.publicKey, token]);
   const runners = device.runners || [];
   const activeRunners = runners.filter((r) => r.status === "running");
 

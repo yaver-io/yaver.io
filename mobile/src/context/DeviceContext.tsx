@@ -674,24 +674,24 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // deliver beacons to the app, and for offline→bootstrap transitions
   // where the relay path would skip because the device appears online.
   useEffect(() => {
-    if (!token || !user?.id || !activeDevice?.ip) return;
+    if (!token || !user?.id || !activeDevice?.host) return;
     if (autoPairedRef.current.has(activeDevice.id)) return;
     const iv = setInterval(async () => {
       if (autoPairedRef.current.has(activeDevice.id)) return;
       try {
-        const url = `http://${activeDevice.ip}:${activeDevice.httpPort || 18080}/info`;
+        const url = `http://${activeDevice.host}:${activeDevice.port || 18080}/info`;
         const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
         if (!res.ok) return;
         const info = await res.json();
         if (!info.needsAuth) return;
         // Mark before we try so we don't retry-storm
         autoPairedRef.current.add(activeDevice.id);
-        const targetUrl = `http://${activeDevice.ip}:${activeDevice.httpPort || 18080}`;
+        const targetUrl = `http://${activeDevice.host}:${activeDevice.port || 18080}`;
         // Try encrypted pair if we have this device's pubkey in Convex
         if (activeDevice.publicKey) {
           const ok = await submitEncryptedPair(targetUrl, token, activeDevice.publicKey);
           if (ok.ok) {
-            appLog("info", `Direct encrypted auto-pair: ${activeDevice.name} at ${activeDevice.ip}`);
+            appLog("info", `Direct encrypted auto-pair: ${activeDevice.name} at ${activeDevice.host}`);
             setTimeout(() => refreshDevices(), 3000);
             return;
           }
@@ -710,7 +710,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           userId: user.id,
         });
         if (pairRes.ok) {
-          appLog("info", `Direct passkey auto-pair: ${activeDevice.name} at ${activeDevice.ip}`);
+          appLog("info", `Direct passkey auto-pair: ${activeDevice.name} at ${activeDevice.host}`);
           setTimeout(() => refreshDevices(), 3000);
         } else {
           autoPairedRef.current.delete(activeDevice.id);
@@ -720,7 +720,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       }
     }, 5000);
     return () => clearInterval(iv);
-  }, [token, user?.id, activeDevice?.id, activeDevice?.ip, activeDevice?.httpPort, activeDevice?.publicKey, activeDevice?.name, refreshDevices]);
+  }, [token, user?.id, activeDevice?.id, activeDevice?.host, activeDevice?.port, activeDevice?.publicKey, activeDevice?.name, refreshDevices]);
 
   // Fetch devices when token becomes available + poll every 30s (lightweight)
   useEffect(() => {
