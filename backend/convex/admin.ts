@@ -41,7 +41,7 @@ export const getUsersByEmail = query({
   },
 });
 
-/** Delete ALL user data from the system — users, sessions, devices, and all per-user metadata. */
+/** Delete ALL user data from the system — every table that holds user/device/session state. */
 export const deleteAllUserData = mutation({
   args: {},
   handler: async (ctx) => {
@@ -55,6 +55,23 @@ export const deleteAllUserData = mutation({
       "dailyTaskCounts",
       "deviceMetrics",
       "deviceEvents",
+      "passwordResets",
+      "pendingAuth",
+      "authLogs",
+      "developerLogs",
+      "deviceCodes",
+      "downloads",
+      "guestInvitations",
+      "guestAccess",
+      "guestUsage",
+      "sdkTokens",
+      "securityEvents",
+      "mobileStreamLogs",
+      "teams",
+      "teamMembers",
+      "subscriptions",
+      "managedRelays",
+      "cloudMachines",
     ] as const;
 
     const counts: Record<string, number> = {};
@@ -67,6 +84,18 @@ export const deleteAllUserData = mutation({
     }
 
     return counts;
+  },
+});
+
+/** Delete all rows from a single table (paginated to stay within limits). */
+export const clearTable = mutation({
+  args: { table: v.string() },
+  handler: async (ctx, args) => {
+    const docs = await ctx.db.query(args.table as any).take(500);
+    for (const doc of docs) {
+      await ctx.db.delete(doc._id);
+    }
+    return { table: args.table, deleted: docs.length, hasMore: docs.length === 500 };
   },
 });
 
