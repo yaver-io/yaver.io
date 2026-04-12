@@ -158,11 +158,58 @@ func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []str
 		}
 		return fmt.Sprintf("xcodebuild build -scheme %s -destination 'generic/platform=iOS' -quiet", scheme), nil
 	case PlatformXcodeDeviceInstall:
-		// React Native / Expo projects keep the iOS project in ./ios. Auto-detect
-		// the workspace (or project) + scheme so SFMG, Yaver, and any other
-		// Expo-style project build without hardcoded names. `xcodebuild build`
-		// + `-allowProvisioningUpdates` mirrors what a developer runs manually
-		// from Xcode — then devicectl installs the resulting .app over the LAN.
+		// For Expo/RN projects, `npx expo run:ios --device --configuration Release`
+		// is the right command — it handles JS bundling, native prebuild, xcodebuild,
+		// and device install in one step. Raw `xcodebuild build` alone produces a
+		// .app with no embedded JS bundle → "no script url provided" crash.
+		//
+		// For bare Xcode projects (no package.json with expo), fall back to
+		// xcodebuild + manual devicectl install.
+		pkgData, _ := os.ReadFile(filepath.Join(workDir, "package.json"))
+		isExpo := strings.Contains(string(pkgData), `"expo"`)
+		isRN := strings.Contains(string(pkgData), `"react-native"`)
+
+		if isExpo {
+			// `expo run:ios --device` bundles JS, builds with Xcode, and installs
+			// on the connected device — exactly what a developer does manually.
+			// --no-install: we handle install + launch ourselves via devicectl
+			// so we can track the artifact and report status to the phone.
+			cmd := "npx expo run:ios --configuration Release --no-install"
+			if extra != "" {
+				cmd += " " + strings.TrimSpace(extra)
+			}
+			return cmd, []string{
+				"ios/build/Build/Products/Release-iphoneos/*.app",
+				"ios/build/DerivedData/Build/Products/Release-iphoneos/*.app",
+			}
+		} else if isRN {
+			// Bare React Native (no Expo): bundle JS first, then xcodebuild.
+			iosSub := "ios"
+			if _, err := os.Stat(filepath.Join(workDir, "ios")); err != nil {
+				iosSub = "."
+			}
+			bundleCmd := fmt.Sprintf(
+				"npx react-native bundle --platform ios --dev false --entry-file index.js "+
+					"--bundle-output %s/main.jsbundle --assets-dest %s && ",
+				iosSub, iosSub)
+			script := `set -e; ` +
+				`WS=$(ls -1 *.xcworkspace 2>/dev/null | head -1 || true); ` +
+				`PROJ=$(ls -1 *.xcodeproj 2>/dev/null | head -1 || true); ` +
+				`if [ -n "$WS" ]; then FLAG="-workspace $WS"; SCHEME=$(basename "$WS" .xcworkspace); ` +
+				`elif [ -n "$PROJ" ]; then FLAG="-project $PROJ"; SCHEME=$(basename "$PROJ" .xcodeproj); ` +
+				`else echo "no .xcworkspace or .xcodeproj found" >&2; exit 1; fi; ` +
+				`xcodebuild build $FLAG -scheme "$SCHEME" ` +
+				`-destination 'generic/platform=iOS' ` +
+				`-derivedDataPath build/DerivedData ` +
+				`-configuration Release ` +
+				`-allowProvisioningUpdates`
+			return fmt.Sprintf("%scd %s && %s", bundleCmd, iosSub, script), []string{
+				"ios/build/DerivedData/Build/Products/Release-iphoneos/*.app",
+				"build/DerivedData/Build/Products/Release-iphoneos/*.app",
+			}
+		}
+
+		// Bare Xcode project (no RN/Expo): raw xcodebuild
 		iosSub := "ios"
 		if _, err := os.Stat(filepath.Join(workDir, "ios")); err != nil {
 			iosSub = "."
