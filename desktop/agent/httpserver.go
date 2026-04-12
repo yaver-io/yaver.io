@@ -583,6 +583,48 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/ws/terminal", s.auth(s.handleTerminalWS))
 	mux.HandleFunc("/console/machines", s.auth(s.handleConsoleMachines))
 
+	// Deploy pipeline
+	mux.HandleFunc("/deploy/run", s.auth(s.handleDeployRun))
+	mux.HandleFunc("/deploy/list", s.auth(s.handleDeployList))
+	mux.HandleFunc("/deploy/rollback", s.auth(s.handleDeployRollback))
+	mux.HandleFunc("/deploy/config", s.auth(s.handleDeployConfig))
+	mux.HandleFunc("/deploy/webhook", s.handleDeployWebhook)
+
+	// Backups
+	mux.HandleFunc("/backups/create", s.auth(s.handleBackupCreate))
+	mux.HandleFunc("/backups/list", s.auth(s.handleBackupList))
+	mux.HandleFunc("/backups/restore", s.auth(s.handleBackupRestore))
+	mux.HandleFunc("/backups/delete", s.auth(s.handleBackupDelete))
+	mux.HandleFunc("/backups/sync", s.auth(s.handleBackupSync))
+	mux.HandleFunc("/backups/auto", s.auth(s.handleBackupAuto))
+
+	// Domains + SSL (Caddy)
+	mux.HandleFunc("/domains/list", s.auth(s.handleDomainList))
+	mux.HandleFunc("/domains/add", s.auth(s.handleDomainAdd))
+	mux.HandleFunc("/domains/remove", s.auth(s.handleDomainRemove))
+
+	// Log search
+	mux.HandleFunc("/logs/search", s.auth(s.handleLogSearch))
+	mux.HandleFunc("/logs/index/start", s.auth(s.handleLogIndexStart))
+
+	// Error tracking
+	mux.HandleFunc("/errors/ingest", s.handleErrorIngest)
+	mux.HandleFunc("/errors/groups", s.auth(s.handleErrorGroups))
+	mux.HandleFunc("/errors/instances", s.auth(s.handleErrorInstances))
+	mux.HandleFunc("/errors/resolve", s.auth(s.handleErrorResolve))
+
+	// Environment clone
+	mux.HandleFunc("/env/clone", s.auth(s.handleCloneEnvironment))
+
+	// Cron management
+	mux.HandleFunc("/cron/create", s.auth(s.handleCronCreate))
+	mux.HandleFunc("/cron/delete", s.auth(s.handleCronDelete))
+
+	// Uptime alerts
+	mux.HandleFunc("/uptime/list", s.auth(s.handleUptimeList))
+	mux.HandleFunc("/uptime/add", s.auth(s.handleUptimeAdd))
+	mux.HandleFunc("/uptime/remove", s.auth(s.handleUptimeRemove))
+
 	// Guest access management (host invites guests to use their agent)
 	mux.HandleFunc("/guests", s.auth(s.handleGuestList))
 	mux.HandleFunc("/guests/invite", s.auth(s.handleGuestInvite))
@@ -5814,6 +5856,16 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpJobsList(a.Dir))
 	case "console_machines":
 		return mcpToolJSON(mcpConsoleMachines())
+	case "deploy_run":
+		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDeployRun(a.Dir))
+	case "deploy_list":
+		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDeployList(a.Dir))
+	case "deploy_rollback":
+		var a struct { Dir string `json:"directory"`; ID string `json:"id"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDeployRollback(a.Dir, a.ID))
+	case "clone_env":
+		var a struct { Source string `json:"source"`; Target string `json:"target"`; Subset int `json:"subsetRows"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCloneEnv(a.Source, a.Target, a.Subset))
+	case "log_search":
+		var a struct { Q string `json:"q"`; Services string `json:"services"`; Limit int `json:"limit"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpLogSearch(a.Q, a.Services, a.Limit))
 	// --- Cloudflare ---
 	case "cf_workers":
 		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCFWorkers(a.Dir))

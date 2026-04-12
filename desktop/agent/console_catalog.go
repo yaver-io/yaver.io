@@ -65,6 +65,11 @@ func catalogEntries() []CatalogEntry {
 		{ID: "elasticmq", Name: "ElasticMQ (SQS)", Category: "cloud-emulators", Description: "SQS-compatible local queue", Tags: []string{"aws", "queue"}, Image: "softwaremill/elasticmq-native:latest", DefaultPort: 9324, ServicePreset: "elasticmq"},
 		{ID: "azurite", Name: "Azurite", Category: "cloud-emulators", Description: "Azure Blob/Queue/Table emulator", Tags: []string{"azure"}, Image: "mcr.microsoft.com/azure-storage/azurite:latest", DefaultPort: 10000, ServicePreset: "azurite"},
 
+		// IDE
+		{ID: "code-server", Name: "VS Code in Browser", Category: "devtools", Description: "Full VS Code running on this machine — code from iPad/phone/any browser", Tags: []string{"ide", "editor", "remote-dev"}, Image: "codercom/code-server:latest", DefaultPort: 8787, Memory: "1g", Dashboard: "code-server", ServicePreset: "code-server", Fields: []CatalogField{
+			{Key: "PASSWORD", Label: "Access password", Secret: true, Generate: "random_32"},
+		}, EnvTemplate: "CODE_SERVER_URL=http://localhost:{port}"},
+
 		// AI
 		{ID: "ollama", Name: "Ollama", Category: "ai", Description: "Local LLM runtime", Tags: []string{"llm", "inference"}, Image: "ollama/ollama:latest", DefaultPort: 11434, Memory: "4g", Fields: []CatalogField{}, EnvTemplate: "OLLAMA_URL=http://localhost:{port}"},
 		{ID: "chromadb", Name: "ChromaDB", Category: "ai", Description: "Vector database for embeddings", Tags: []string{"vector", "embeddings"}, Image: "chromadb/chroma:latest", DefaultPort: 8000, Memory: "512m"},

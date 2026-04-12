@@ -225,6 +225,15 @@ func presets() map[string]*DevServiceConfig {
 			SMTPPort:    10002, // Table (reusing SMTPPort slot for multi-port mapping)
 			Volume:      "yaver-azurite-data",
 		},
+		"code-server": {
+			Image:  "codercom/code-server:latest",
+			Port:   8787,
+			Volume: "yaver-codeserver-data",
+			Env: map[string]string{
+				"PASSWORD": "yaver",
+			},
+			Command: "--bind-addr 0.0.0.0:8787 /home/coder/project",
+		},
 		"firebase-emulator": {
 			Binary: "firebase",
 			Port:   4000, // Emulator UI
@@ -712,6 +721,8 @@ func (sm *ServicesManager) generateComposeFile(cfg *DevServicesConfig, serviceFi
 				dataPath = "/pb/pb_data"
 			case "azurite":
 				dataPath = "/data"
+			case "code-server":
+				dataPath = "/home/coder"
 			}
 			buf.WriteString(fmt.Sprintf("      - %s:%s\n", svc.Volume, dataPath))
 		}
