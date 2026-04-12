@@ -1042,6 +1042,68 @@ The script requires `gh auth login` and assumes the workflows support `workflow_
 - `cd desktop/installer && npm run dist` — Build desktop installers (Electron GUI)
 - `cd relay && go run . serve --password your-secret` — Run relay server locally
 
+### Testing Yaver mobile on your iPhone — avoid TestFlight for iteration
+
+TestFlight is rate-limited (~15-20 uploads per app per day; Apple returns `Upload limit reached. Please wait 1 day and try again` beyond that). Use it only for dogfooding a stable build, not for iterating on every code change.
+
+**For iteration: direct device install via USB.** Much faster (~2-4 min after the first build) and no daily limit.
+
+```bash
+# 1. Find your iPhone's UDID
+xcrun xctrace list devices 2>&1 | grep -v Simulator
+
+# 2. Build + install to device (uses Xcode's automatic code signing)
+cd mobile
+npx expo run:ios --device <UDID>
+```
+
+This builds Debug configuration which needs Metro running on port 8081 to serve the JS bundle. If the app launches with a red error screen `No script URL provided` / `unsanitizedScriptURLString = (null)`, it means Metro isn't on port 8081 — start it with:
+
+```bash
+cd mobile
+npx expo start --dev-client --port 8081 --host lan
+```
+
+Then tap **Reload JS** on the error screen — the app will fetch the bundle and start.
+
+**Multiple RN projects on the same Mac fight for port 8081.** If Yaver, SFMG, Talos are all running Metros, only the first one gets 8081. Either:
+- Kill the other Metros: `ps aux | grep "expo start" | awk '{print $2}' | xargs kill`
+- Or make each project explicit about its Metro port and rebuild the app binary to match that port.
+
+**Don't try to "upload just to my phone only" via TestFlight for quick tests** — that still counts toward the daily upload quota. TestFlight is for running against real users/stable builds.
+
+### iOS TestFlight deploy gotchas
+
+- **`uploadSymbols` must be `false` in ExportOptions.plist** (already set in `scripts/deploy-testflight.sh`). Xcode 15+ treats missing dSYMs as fatal export errors, and `rnwhisper` ships without dSYMs. Apple symbolicates server-side from bitcode anyway, so skipping local dSYM upload is safe and lets the export succeed.
+- **After TestFlight daily-limit error, wait ~24h**. There is no API to reset or query the remaining quota; the script will just keep failing with `Upload limit reached` until the window rolls over.
+- **Archive is at `/tmp/Yaver.xcarchive`** after a successful archive phase. If the upload portion fails (e.g. Apple transient error, exit 70), re-run just the export step instead of rebuilding:
+  ```bash
+  xcodebuild -exportArchive \
+    -archivePath /tmp/Yaver.xcarchive \
+    -exportOptionsPlist /tmp/ExportOptions.plist \
+    -exportPath /tmp/YaverExport -allowProvisioningUpdates \
+    -authenticationKeyPath "$APP_STORE_KEY_PATH" \
+    -authenticationKeyID "$APP_STORE_KEY_ID" \
+    -authenticationKeyIssuerID "$APP_STORE_KEY_ISSUER"
+  ```
+- **`expo run:ios` with no `--device`** defaults to the iOS Simulator. When a physical iPhone is what the user wants, always pass `--device <UDID>`. The AI agent / Claude Code running tasks should inject the UDID automatically; never run `expo run:ios` bare.
+
+### Android Play Store deploy gotchas
+
+- **The upload keystore in `keys/yaver-upload.keystore` has a different SHA1 than what Google Play Console expects.** Current file SHA1: `5E:8F:16:06:…`; Play expects `12:63:75:D8:…`. This is blocking all Android releases.
+- **Fix: request an upload key reset in Google Play Console** (Settings → App integrity → Upload key → Request upload key reset). Takes ~24-48h after which you upload the public cert of the new keystore. Alternative: locate the original `12:63:…` keystore if it exists on another machine.
+- **`expo prebuild --clean` wipes `android/app/src/main/res/drawable/splashscreen_logo.*` and `android/keystore.properties`.** If a clean prebuild is run, restore both before `bundleRelease`:
+  - `android/keystore.properties` → `storeFile=../../keys/yaver-upload.keystore` + passwords + alias (see existing file)
+  - `android/app/src/main/res/drawable/splashscreen_logo.xml` — transparent shape drawable (already in the repo)
+- **`android/app/build.gradle` signingConfigs.release block must be present** to wire `keystore.properties` into release builds. `expo prebuild --clean` resets this to `signingConfig signingConfigs.debug`, producing an AAB signed with the Android debug key — Play rejects it with SHA1 mismatch even if the upload keystore is correct.
+
+### Dev-server / Hermes-push flow gotchas (mobile app)
+
+- **`/dev/start` must NOT trigger `expo run:ios`** (agent v1.90.0+). Earlier versions ran a native build + install as part of "start dev server" which went to the Simulator by default and took 5 minutes per iteration. The current flow is Metro-only; the app loads via `/dev/build-native` (Hermes bytecode push) into Yaver's super-host bridge.
+- **Second-tap "Open App" must also use Hermes push.** `apps.tsx handleTapProject` and `handleOpen` now always call `handleOpenNative` (Hermes path), never `handleDirectBuild` (Xcode build). When on LAN-direct mode these used to branch to `handleDirectBuild`, which re-triggered a 5-min Xcode build on the Simulator — that branch is gone in the current code and must stay gone.
+- **Back to Yaver (shake overlay) posts `/dev/stop` to the agent** before restoring Yaver's own bundle. This guarantees a clean initial state for the next "Open App". `YaverBundleLoader` stashes agent base URL + auth token in UserDefaults when a guest bundle loads, so the native AppDelegate can hit `/dev/stop` even though no Yaver JS is running at that moment.
+- **Claude Code tasks must not fall back to `expo run:ios`.** The prompts sent from `apps.tsx` fallback path explicitly forbid `expo run:ios`, `xcodebuild`, `gradlew`, etc. If a future prompt sneaks in "start dev server", Claude Code will run `expo run:ios` and the user ends up watching a 5-min build to the simulator. The prompt template must say *"Call POST /dev/start with workDir=X. Metro only — no expo run:ios, no xcodebuild. Mobile loads via Hermes push."*
+
 ### Mobile Web Target (dev-only)
 The mobile app supports `expo start --web` as a development convenience so the UI can be iterated on in a browser without running a simulator. **Production is still iOS + Android only.** Notes:
 - Enabled via `react-native-web`, `react-dom`, `@expo/metro-runtime` and the `web` section in `mobile/app.json`.
