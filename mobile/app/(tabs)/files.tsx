@@ -1,7 +1,10 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Dimensions,
   FlatList,
+  Image,
+  Linking,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -11,6 +14,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import Markdown from "react-native-markdown-display";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
@@ -45,6 +49,7 @@ export default function FilesScreen() {
   const [currentPath, setCurrentPath] = useState("");
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [fileContent, setFileContent] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string>("");
   const [binary, setBinary] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,6 +98,15 @@ export default function FilesScreen() {
   const openFile = useCallback(async (root: FileRoot, path: string) => {
     setLoading(true);
     setError(null);
+    setFileName(path.split("/").pop() || path);
+    const ext = (path.split(".").pop() || "").toLowerCase();
+    // Image files: don't fetch raw bytes as JSON — load via <Image> with auth header URL
+    if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"].includes(ext)) {
+      setFileContent(`__IMAGE__:${root.id}:${path}`);
+      setBinary(false);
+      setLoading(false);
+      return;
+    }
     try {
       const url = `${quicClient.baseUrl}/files/read?root=${encodeURIComponent(root.id)}&path=${encodeURIComponent(path)}`;
       const res = await fetch(url, { headers: quicClient.getAuthHeaders() });
@@ -120,6 +134,7 @@ export default function FilesScreen() {
     if (fileContent != null || binary) {
       setFileContent(null);
       setBinary(false);
+      setFileName("");
       return;
     }
     if (currentPath === "") {
@@ -182,12 +197,12 @@ export default function FilesScreen() {
           <ActivityIndicator color={c.accent} />
         </View>
       ) : fileContent != null ? (
-        <ScrollView
-          style={styles.fileScroll}
-          contentContainerStyle={{ padding: 14, paddingBottom: 80 }}
-        >
-          <Text style={[styles.code, { color: c.textPrimary }]}>{fileContent}</Text>
-        </ScrollView>
+        <FileViewer
+          name={fileName}
+          content={fileContent}
+          currentRoot={currentRoot}
+          colors={c}
+        />
       ) : binary ? (
         <View style={styles.centered}>
           <Text style={{ fontSize: 48 }}>{"\u{1F4E6}"}</Text>
@@ -277,6 +292,288 @@ export default function FilesScreen() {
       )}
     </View>
   );
+}
+
+// FileViewer renders content appropriately per file type:
+// - Markdown → rendered markdown with react-native-markdown-display
+// - Images → <Image>
+// - CSV → table
+// - JSON → pretty-printed with syntax colors
+// - Code (ts/js/go/py/etc.) → monospace with keyword highlighting
+// - Logs / plain text → monospace, word-wrap
+function FileViewer({
+  name, content, currentRoot, colors,
+}: {
+  name: string;
+  content: string;
+  currentRoot: FileRoot | null;
+  colors: any;
+}) {
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  const win = Dimensions.get("window");
+
+  // Image viewer
+  if (content.startsWith("__IMAGE__:") && currentRoot) {
+    const [, rootId, path] = content.split(":", 3);
+    const src = `${(quicClient as any).baseUrl}/files/raw?root=${encodeURIComponent(rootId)}&path=${encodeURIComponent(path)}`;
+    const authHeaders = (quicClient as any).authHeaders || {};
+    return (
+      <ScrollView contentContainerStyle={styles.imageWrap}>
+        <Image
+          source={{ uri: src, headers: authHeaders }}
+          style={{ width: win.width - 24, height: win.width - 24, resizeMode: "contain" }}
+        />
+      </ScrollView>
+    );
+  }
+
+  // Markdown viewer
+  if (ext === "md" || ext === "mdx" || ext === "markdown") {
+    const mdStyles = {
+      body: { color: colors.textPrimary, fontSize: 15, lineHeight: 22 },
+      heading1: { color: colors.textPrimary, fontSize: 26, fontWeight: "700", marginTop: 12, marginBottom: 8 },
+      heading2: { color: colors.textPrimary, fontSize: 22, fontWeight: "700", marginTop: 16, marginBottom: 6 },
+      heading3: { color: colors.textPrimary, fontSize: 18, fontWeight: "700", marginTop: 14, marginBottom: 4 },
+      paragraph: { color: colors.textPrimary, fontSize: 15, lineHeight: 22, marginTop: 4, marginBottom: 8 },
+      strong: { fontWeight: "700", color: colors.textPrimary },
+      em: { fontStyle: "italic", color: colors.textPrimary },
+      code_inline: { fontFamily: "Menlo", fontSize: 13, backgroundColor: colors.bgCard, color: colors.accent, paddingHorizontal: 4, borderRadius: 4 },
+      code_block: { fontFamily: "Menlo", fontSize: 12, backgroundColor: colors.bgCard, color: colors.textPrimary, padding: 10, borderRadius: 8 },
+      fence: { fontFamily: "Menlo", fontSize: 12, backgroundColor: colors.bgCard, color: colors.textPrimary, padding: 10, borderRadius: 8, marginVertical: 6 },
+      link: { color: colors.accent, textDecorationLine: "underline" },
+      blockquote: { borderLeftWidth: 3, borderLeftColor: colors.accent, paddingLeft: 10, marginVertical: 8, color: colors.textMuted },
+      bullet_list: { marginVertical: 4 },
+      ordered_list: { marginVertical: 4 },
+      list_item: { color: colors.textPrimary, marginVertical: 2 },
+      hr: { backgroundColor: colors.border, height: 1, marginVertical: 12 },
+      table: { borderWidth: 1, borderColor: colors.border, borderRadius: 6, marginVertical: 8 },
+      th: { padding: 8, backgroundColor: colors.bgCard, fontWeight: "700" },
+      td: { padding: 8, borderTopWidth: 1, borderColor: colors.border },
+    } as any;
+    return (
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 }}>
+        <Markdown style={mdStyles} onLinkPress={(url) => { Linking.openURL(url).catch(() => {}); return false; }}>
+          {content}
+        </Markdown>
+      </ScrollView>
+    );
+  }
+
+  // CSV / TSV viewer (table)
+  if (ext === "csv" || ext === "tsv") {
+    const sep = ext === "tsv" ? "\t" : ",";
+    const rows = content.split(/\r?\n/).filter(Boolean).slice(0, 500).map((ln) => parseCSVLine(ln, sep));
+    const colCount = Math.max(...rows.map(r => r.length));
+    return (
+      <ScrollView horizontal contentContainerStyle={{ padding: 10 }}>
+        <View>
+          {rows.map((row, i) => (
+            <View key={i} style={{ flexDirection: "row", backgroundColor: i === 0 ? colors.bgCard : "transparent" }}>
+              {Array.from({ length: colCount }).map((_, j) => (
+                <View key={j} style={[styles.tdCell, { borderColor: colors.border, minWidth: 120 }]}>
+                  <Text style={{ color: colors.textPrimary, fontWeight: i === 0 ? "700" : "400", fontSize: 13 }}>
+                    {row[j] ?? ""}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ))}
+        </View>
+      </ScrollView>
+    );
+  }
+
+  // JSON viewer (pretty-print + color keys)
+  if (ext === "json") {
+    let pretty = content;
+    try { pretty = JSON.stringify(JSON.parse(content), null, 2); } catch {}
+    return (
+      <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 80 }}>
+        <Text style={{ fontFamily: "Menlo", fontSize: 12, lineHeight: 18 }}>
+          {highlightJSON(pretty, colors)}
+        </Text>
+      </ScrollView>
+    );
+  }
+
+  // .docx / .xlsx / .pdf — show "open externally" hint
+  if (["docx", "doc", "xlsx", "xls", "pdf", "pptx", "ppt"].includes(ext)) {
+    return (
+      <View style={styles.centered}>
+        <Text style={{ fontSize: 44 }}>{ext === "pdf" ? "\u{1F4D1}" : "\u{1F4C4}"}</Text>
+        <Text style={[styles.emptyText, { color: colors.textPrimary, marginTop: 12, fontWeight: "600" }]}>{name}</Text>
+        <Text style={[styles.emptyText, { color: colors.textMuted, marginTop: 4 }]}>
+          {ext.toUpperCase()} preview not available in app.
+        </Text>
+        <Text style={[styles.emptyText, { color: colors.textMuted, marginTop: 2, fontSize: 12 }]}>
+          Download & open with a system viewer from your dev machine.
+        </Text>
+      </View>
+    );
+  }
+
+  // Code files — syntax-aware highlighting (keywords + strings + comments)
+  const codeExts = ["ts", "tsx", "js", "jsx", "go", "py", "rs", "rb", "swift", "kt", "java", "c", "cpp", "h", "hpp", "cs", "php", "sh", "bash", "sql", "html", "css", "scss", "yaml", "yml", "toml", "xml"];
+  if (codeExts.includes(ext)) {
+    return (
+      <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 80 }}>
+        <Text style={[styles.code, { color: colors.textPrimary }]}>
+          {highlightCode(content, ext, colors)}
+        </Text>
+      </ScrollView>
+    );
+  }
+
+  // Plain text
+  return (
+    <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 80 }}>
+      <Text style={[styles.code, { color: colors.textPrimary }]}>{content}</Text>
+    </ScrollView>
+  );
+}
+
+// --- Simple CSV line parser handling quoted commas.
+function parseCSVLine(line: string, sep: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQ) {
+      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+      else if (ch === '"') inQ = false;
+      else cur += ch;
+    } else {
+      if (ch === '"') inQ = true;
+      else if (ch === sep) { out.push(cur); cur = ""; }
+      else cur += ch;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+// --- JSON syntax highlighter → React children.
+function highlightJSON(src: string, colors: any): React.ReactNode[] {
+  // Tokenize: strings (including keys), numbers, booleans/null, punctuation.
+  const parts: React.ReactNode[] = [];
+  const re = /("(?:[^"\\]|\\.)*")(\s*:)?|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|\b(true|false|null)\b|([{}\[\],])/g;
+  let last = 0; let m; let k = 0;
+  while ((m = re.exec(src)) !== null) {
+    if (m.index > last) parts.push(src.slice(last, m.index));
+    if (m[1]) {
+      const isKey = !!m[2];
+      parts.push(<Text key={k++} style={{ color: isKey ? "#eab308" : "#22c55e" }}>{m[1]}</Text>);
+      if (m[2]) parts.push(m[2]);
+    } else if (m[3]) {
+      parts.push(<Text key={k++} style={{ color: "#3b82f6" }}>{m[3]}</Text>);
+    } else if (m[4]) {
+      parts.push(<Text key={k++} style={{ color: "#a855f7" }}>{m[4]}</Text>);
+    } else {
+      parts.push(<Text key={k++} style={{ color: colors.textMuted }}>{m[5]}</Text>);
+    }
+    last = re.lastIndex;
+  }
+  if (last < src.length) parts.push(src.slice(last));
+  return parts;
+}
+
+// --- Lightweight code highlighter. Not a full parser — just language-agnostic
+// keyword / string / comment coloring. Good enough for readability.
+const LANG_KEYWORDS: Record<string, string[]> = {
+  ts: ["import", "export", "from", "const", "let", "var", "function", "return", "if", "else", "for", "while", "async", "await", "class", "interface", "type", "enum", "new", "this", "true", "false", "null", "undefined", "try", "catch", "throw", "extends", "implements", "public", "private", "protected", "static", "readonly"],
+  tsx: ["import", "export", "from", "const", "let", "var", "function", "return", "if", "else", "for", "while", "async", "await", "class", "interface", "type", "enum", "new", "this", "true", "false", "null", "undefined", "try", "catch", "throw", "extends", "implements"],
+  js: ["import", "export", "from", "const", "let", "var", "function", "return", "if", "else", "for", "while", "async", "await", "class", "new", "this", "true", "false", "null", "undefined", "try", "catch", "throw", "extends"],
+  jsx: ["import", "export", "from", "const", "let", "var", "function", "return", "if", "else", "class", "new", "this"],
+  go: ["package", "import", "func", "return", "var", "const", "type", "struct", "interface", "if", "else", "for", "range", "switch", "case", "default", "go", "defer", "chan", "select", "map", "make", "true", "false", "nil", "break", "continue"],
+  py: ["def", "class", "import", "from", "as", "return", "if", "elif", "else", "for", "while", "try", "except", "finally", "with", "yield", "raise", "pass", "break", "continue", "lambda", "and", "or", "not", "in", "is", "True", "False", "None"],
+  rs: ["fn", "let", "mut", "const", "pub", "use", "struct", "enum", "impl", "trait", "if", "else", "for", "while", "loop", "match", "return", "async", "await", "true", "false", "mod", "crate", "self", "Self"],
+  swift: ["import", "func", "let", "var", "class", "struct", "enum", "protocol", "extension", "if", "else", "for", "in", "while", "return", "async", "await", "throws", "try", "catch", "guard", "self", "true", "false", "nil", "public", "private", "internal", "override"],
+  kt: ["fun", "val", "var", "class", "object", "interface", "import", "return", "if", "else", "for", "while", "when", "true", "false", "null", "override", "private", "public", "internal"],
+  java: ["public", "private", "protected", "static", "final", "class", "interface", "extends", "implements", "import", "package", "new", "this", "return", "if", "else", "for", "while", "try", "catch", "throw", "true", "false", "null"],
+  sh: ["if", "then", "else", "fi", "for", "in", "do", "done", "while", "function", "return", "export", "local", "case", "esac"],
+  yaml: [],
+  yml: [],
+  html: [],
+  css: [],
+};
+
+function highlightCode(src: string, ext: string, colors: any): React.ReactNode[] {
+  const keywords = new Set(LANG_KEYWORDS[ext] || []);
+  const isCLike = ["ts", "tsx", "js", "jsx", "go", "rs", "swift", "kt", "java", "c", "cpp", "cs", "php", "scss", "css"].includes(ext);
+  const isPy = ext === "py";
+  const isSh = ext === "sh" || ext === "bash";
+
+  // Tokenize greedily: comments > strings > numbers > identifiers > other.
+  const parts: React.ReactNode[] = [];
+  let k = 0;
+  let i = 0;
+  const len = src.length;
+
+  const pushText = (s: string) => parts.push(s);
+  const pushColored = (s: string, color: string) =>
+    parts.push(<Text key={k++} style={{ color }}>{s}</Text>);
+
+  while (i < len) {
+    const rest = src.slice(i);
+    // Line comment
+    if (isCLike && rest.startsWith("//")) {
+      const end = rest.indexOf("\n");
+      const chunk = end < 0 ? rest : rest.slice(0, end);
+      pushColored(chunk, colors.textMuted);
+      i += chunk.length;
+      continue;
+    }
+    if ((isPy || isSh) && rest.startsWith("#")) {
+      const end = rest.indexOf("\n");
+      const chunk = end < 0 ? rest : rest.slice(0, end);
+      pushColored(chunk, colors.textMuted);
+      i += chunk.length;
+      continue;
+    }
+    // Block comment (/* ... */)
+    if (isCLike && rest.startsWith("/*")) {
+      const end = rest.indexOf("*/");
+      const chunk = end < 0 ? rest : rest.slice(0, end + 2);
+      pushColored(chunk, colors.textMuted);
+      i += chunk.length;
+      continue;
+    }
+    // Strings: " ' ` (no multi-char escape handling beyond \X)
+    const ch = src[i];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      let j = i + 1;
+      while (j < len && src[j] !== ch) {
+        if (src[j] === "\\") j += 2;
+        else j++;
+      }
+      j = Math.min(j + 1, len);
+      pushColored(src.slice(i, j), "#22c55e");
+      i = j;
+      continue;
+    }
+    // Numbers
+    if (/\d/.test(ch) && (i === 0 || /[^A-Za-z_]/.test(src[i - 1]))) {
+      let j = i;
+      while (j < len && /[0-9.xXoObB_a-fA-F]/.test(src[j])) j++;
+      pushColored(src.slice(i, j), "#3b82f6");
+      i = j;
+      continue;
+    }
+    // Identifier
+    if (/[A-Za-z_$]/.test(ch)) {
+      let j = i;
+      while (j < len && /[A-Za-z0-9_$]/.test(src[j])) j++;
+      const word = src.slice(i, j);
+      if (keywords.has(word)) pushColored(word, "#a855f7");
+      else pushText(word);
+      i = j;
+      continue;
+    }
+    pushText(ch);
+    i++;
+  }
+  return parts;
 }
 
 function humanSize(n: number): string {
@@ -370,4 +667,6 @@ const styles = StyleSheet.create({
   },
   projectName: { fontSize: 16, fontWeight: "700" },
   projectPath: { fontSize: 11, marginTop: 2 },
+  imageWrap: { alignItems: "center", justifyContent: "center", padding: 12 },
+  tdCell: { padding: 10, borderRightWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth },
 });

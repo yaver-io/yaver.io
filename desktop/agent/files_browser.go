@@ -190,6 +190,63 @@ func (s *HTTPServer) handleFilesRead(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleFilesRaw streams the file bytes with the right Content-Type
+// for inline rendering (used by the mobile app's image viewer).
+func (s *HTTPServer) handleFilesRaw(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonError(w, http.StatusMethodNotAllowed, "use GET")
+		return
+	}
+	rootID := r.URL.Query().Get("root")
+	sub := strings.TrimPrefix(r.URL.Query().Get("path"), "/")
+	if sub == "" {
+		jsonError(w, http.StatusBadRequest, "path required")
+		return
+	}
+	root := s.resolveFileRoot(r, rootID)
+	if root == nil {
+		jsonError(w, http.StatusNotFound, "root not found")
+		return
+	}
+	abs, ok := safeJoin(root.Path, sub)
+	if !ok {
+		jsonError(w, http.StatusBadRequest, "path escapes root")
+		return
+	}
+	info, err := os.Stat(abs)
+	if err != nil || info.IsDir() {
+		jsonError(w, http.StatusNotFound, "not a file")
+		return
+	}
+	// 20MB cap to avoid nuking mobile memory
+	const maxRaw = 20 << 20
+	if info.Size() > maxRaw {
+		jsonError(w, http.StatusRequestEntityTooLarge, "file too large")
+		return
+	}
+	ext := strings.ToLower(filepath.Ext(abs))
+	ct := "application/octet-stream"
+	switch ext {
+	case ".png":
+		ct = "image/png"
+	case ".jpg", ".jpeg":
+		ct = "image/jpeg"
+	case ".gif":
+		ct = "image/gif"
+	case ".webp":
+		ct = "image/webp"
+	case ".svg":
+		ct = "image/svg+xml"
+	case ".bmp":
+		ct = "image/bmp"
+	case ".pdf":
+		ct = "application/pdf"
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	http.ServeFile(w, r, abs)
+}
+
 // safeJoin resolves sub against root and verifies the resulting
 // absolute path is still inside root. Prevents ../../../etc/passwd
 // escapes even when the caller is malicious.
