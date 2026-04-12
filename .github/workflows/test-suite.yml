@@ -69,6 +69,9 @@ jobs:
           go install github.com/jstemmer/go-junit-report/v2@latest 2>/dev/null || true
           go test -v -count=1 ./... 2>&1 | go-junit-report > /tmp/go-sdk-junit.xml 2>/dev/null || true
 
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Go agent unit tests (JUnit)
         if: always()
         run: |
@@ -322,10 +325,13 @@ jobs:
           sleep 3
           curl -sf http://localhost:18080/health
 
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Go agent tests (all new features)
         run: |
           cd desktop/agent
-          go test -v -run "TestVault|TestBuild|TestFeedback|TestDetect|TestResolve|TestAgent|TestTunnel|TestParse" -count=1 ./...
+          go test -v -run "TestVault|TestBuild|TestFeedback|TestDetect|TestResolve|TestAgent|TestTunnel|TestParse|TestClip" -count=1 ./...
 
       - name: Feedback HTTP API tests
         env:
