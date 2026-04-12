@@ -133,13 +133,13 @@ export default function ProjectDetailScreen() {
         </View>
 
         <View style={{ flexDirection: "row", gap: 8 }}>
-          <Pressable onPress={deploy} style={[actionBtn(c), { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, flex: 1 }]}>
+          <Pressable onPress={deploy} style={[actionBtn(c), { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, flex: 1 }]}>
             <Text style={{ color: c.textPrimary, fontWeight: "700" }}>🚀 Deploy</Text>
           </Pressable>
-          <Pressable onPress={snapshot} style={[actionBtn(c), { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, flex: 1 }]}>
+          <Pressable onPress={snapshot} style={[actionBtn(c), { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, flex: 1 }]}>
             <Text style={{ color: c.textPrimary, fontWeight: "700" }}>📸 Snapshot</Text>
           </Pressable>
-          <Pressable onPress={() => router.navigate({ pathname: "/(tabs)/data", params: { dir } } as any)} style={[actionBtn(c), { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, flex: 1 }]}>
+          <Pressable onPress={() => router.navigate({ pathname: "/(tabs)/data", params: { dir } } as any)} style={[actionBtn(c), { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, flex: 1 }]}>
             <Text style={{ color: c.textPrimary, fontWeight: "700" }}>🗄️ Data</Text>
           </Pressable>
         </View>
@@ -186,9 +186,9 @@ function Section({ c, title, children }: { c: any; title: string; children: Reac
   );
 }
 
-function card(c: any) { return { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10 } as const; }
+function card(c: any) { return { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10 } as const; }
 function actionBtn(c: any) { return { paddingVertical: 10, borderRadius: 8, alignItems: "center", justifyContent: "center" } as const; }
-function inputStyle(c: any) { return { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10, color: c.textPrimary } as const; }
+function inputStyle(c: any) { return { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10, color: c.textPrimary } as const; }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
