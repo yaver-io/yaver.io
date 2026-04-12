@@ -841,19 +841,37 @@ export default function HomePage() {
 
   return (
     <>
-      {/* ── Section 1: Hero ── */}
+      {/* ── Section 1: Hero — three legs (power / simplicity / free) ── */}
       <section className="px-6 pb-12 pt-20 md:pt-32">
         <div className="mx-auto max-w-4xl text-center">
+          {/* Provocative hook — hits all three legs */}
+          <p className="mb-5 text-sm font-medium leading-relaxed text-surface-400 md:text-base">
+            More powerful than a cloud VM. Simpler than any console.
+            <br className="hidden sm:block" />
+            And free &mdash; not &ldquo;free tier&rdquo; free. Actually free.
+          </p>
+
           <h1 className="mb-6 text-5xl font-bold leading-[1.05] tracking-tight text-surface-50 sm:text-6xl md:text-7xl lg:text-8xl">
             Your machine.
             <br />
             <span className="bg-gradient-to-r from-indigo-400 to-emerald-400 bg-clip-text text-transparent">Your cloud.</span>
           </h1>
-          <p className="mx-auto max-w-xl text-lg leading-snug text-surface-300 md:text-xl">
-            Build, test, and ship full-stack apps from your phone.
+
+          {/* Explainer — weaves in simplicity leg */}
+          <p className="mx-auto max-w-2xl text-base leading-relaxed text-surface-400 md:text-lg">
+            Yaver connects your phone to your MacBook, Linux box, or VPS.
+            <br className="hidden sm:block" />
+            No cloud accounts to configure. No infrastructure to set up.
+            <br className="hidden sm:block" />
+            Run AI agents, start Convex or Supabase locally, test on real devices, deploy &mdash;
+            all from your pocket.{" "}
+            <span className="text-surface-300">
+              Your code never touches someone else&apos;s server.
+            </span>
           </p>
-          <p className="mx-auto mt-3 text-xs uppercase tracking-[0.2em] text-surface-500">
-            Open source &middot; P2P &middot; Free forever
+
+          <p className="mx-auto mt-4 text-xs uppercase tracking-[0.2em] text-surface-500">
+            Open source &middot; P2P encrypted &middot; Free forever
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <a href="#get-started" className="btn-primary inline-flex items-center gap-2 px-10 py-3.5 text-base font-semibold">
@@ -870,7 +888,7 @@ export default function HomePage() {
             </a>
           </div>
           <p className="mt-8 text-xs text-surface-500">
-            Claude Code &middot; Codex &middot; Aider &middot; Ollama &middot; any terminal
+            Works with Claude Code &middot; Codex &middot; Aider &middot; Ollama &middot; Goose &middot; any terminal
           </p>
         </div>
       </section>
