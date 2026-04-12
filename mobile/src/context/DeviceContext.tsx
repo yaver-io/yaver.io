@@ -666,6 +666,62 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(iv);
   }, [token, user?.id, devices, refreshDevices]);
 
+  // Bootstrap detection via direct connection. Covers the case where the
+  // mobile app can reach the Mac's bootstrap HTTP server directly (LAN IP
+  // known from Convex device list, no beacon needed). /info returns
+  // { needsAuth: true } — mobile pushes its token immediately.
+  // This is the catch-all for Release builds where UDP multicast may not
+  // deliver beacons to the app, and for offline→bootstrap transitions
+  // where the relay path would skip because the device appears online.
+  useEffect(() => {
+    if (!token || !user?.id || !activeDevice?.ip) return;
+    if (autoPairedRef.current.has(activeDevice.id)) return;
+    const iv = setInterval(async () => {
+      if (autoPairedRef.current.has(activeDevice.id)) return;
+      try {
+        const url = `http://${activeDevice.ip}:${activeDevice.httpPort || 18080}/info`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+        if (!res.ok) return;
+        const info = await res.json();
+        if (!info.needsAuth) return;
+        // Mark before we try so we don't retry-storm
+        autoPairedRef.current.add(activeDevice.id);
+        const targetUrl = `http://${activeDevice.ip}:${activeDevice.httpPort || 18080}`;
+        // Try encrypted pair if we have this device's pubkey in Convex
+        if (activeDevice.publicKey) {
+          const ok = await submitEncryptedPair(targetUrl, token, activeDevice.publicKey);
+          if (ok.ok) {
+            appLog("info", `Direct encrypted auto-pair: ${activeDevice.name} at ${activeDevice.ip}`);
+            setTimeout(() => refreshDevices(), 3000);
+            return;
+          }
+        }
+        // Fallback: passkey pair — need to fetch passkey from bootstrap /info response
+        const passkey = info.bootstrapPasskey || info.passkey;
+        if (!passkey) {
+          autoPairedRef.current.delete(activeDevice.id);
+          appLog("warn", `Bootstrap device ${activeDevice.name} has no passkey and no known pubkey — cannot auto-pair`);
+          return;
+        }
+        const pairRes = await submitPair({
+          code: passkey,
+          targetUrl,
+          token,
+          userId: user.id,
+        });
+        if (pairRes.ok) {
+          appLog("info", `Direct passkey auto-pair: ${activeDevice.name} at ${activeDevice.ip}`);
+          setTimeout(() => refreshDevices(), 3000);
+        } else {
+          autoPairedRef.current.delete(activeDevice.id);
+        }
+      } catch {
+        // Network error — will retry next tick
+      }
+    }, 5000);
+    return () => clearInterval(iv);
+  }, [token, user?.id, activeDevice?.id, activeDevice?.ip, activeDevice?.httpPort, activeDevice?.publicKey, activeDevice?.name, refreshDevices]);
+
   // Fetch devices when token becomes available + poll every 30s (lightweight)
   useEffect(() => {
     if (token) {
