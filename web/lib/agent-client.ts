@@ -1010,6 +1010,12 @@ class AgentClient {
     return res.json();
   }
 
+  async consoleMachines(): Promise<{ machines: any[] }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/console/machines`, { headers: this.authHeaders });
+    return res.json();
+  }
+
   async consoleMetricsSnapshot(): Promise<any> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/console/metrics`, { headers: this.authHeaders });
