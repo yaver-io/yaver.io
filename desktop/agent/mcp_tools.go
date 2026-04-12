@@ -2137,6 +2137,189 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, autodevTools...)
 
+	// Browser automation tools — AI-driven browser control on the dev machine.
+	browserTools := []map[string]interface{}{
+		{
+			"name":        "browser_open",
+			"description": "Open a new Chrome browser session on the dev machine. Returns a session_id to use in subsequent browser_* calls. Sessions persist across tool calls — cookies, auth state, and current URL survive between steps.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"session_id": map[string]interface{}{"type": "string", "description": "Custom session ID (auto-generated if omitted)"},
+					"headful":    map[string]interface{}{"type": "boolean", "description": "Show browser window visibly (default: false, headless)"},
+				},
+			},
+		},
+		{
+			"name":        "browser_close",
+			"description": "Close a browser session and release the Chrome process.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"session_id"},
+				"properties": map[string]interface{}{
+					"session_id": map[string]interface{}{"type": "string", "description": "Session to close"},
+				},
+			},
+		},
+		{
+			"name":        "browser_sessions",
+			"description": "List all active browser sessions with their current URL, title, and age.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "browser_navigate",
+			"description": "Navigate to a URL. Returns a screenshot of the page after navigation plus the page title. Use this as the first step after browser_open.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"session_id", "url"},
+				"properties": map[string]interface{}{
+					"session_id": map[string]interface{}{"type": "string", "description": "Session ID"},
+					"url":        map[string]interface{}{"type": "string", "description": "URL to navigate to"},
+				},
+			},
+		},
+		{
+			"name":        "browser_click",
+			"description": "Click an element by CSS selector. Returns a screenshot after clicking. Wait for any animations/navigation to settle.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"session_id", "selector"},
+				"properties": map[string]interface{}{
+					"session_id": map[string]interface{}{"type": "string", "description": "Session ID"},
+					"selector":   map[string]interface{}{"type": "string", "description": "CSS selector of element to click"},
+				},
+			},
+		},
+		{
+			"name":        "browser_type",
+			"description": "Type text into an input field by CSS selector. Returns a screenshot after typing. Set clear=true to clear existing text first.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"session_id", "selector", "text"},
+				"properties": map[string]interface{}{
+					"session_id": map[string]interface{}{"type": "string", "description": "Session ID"},
+					"selector":   map[string]interface{}{"type": "string", "description": "CSS selector of input field"},
+					"text":       map[string]interface{}{"type": "string", "description": "Text to type"},
+					"clear":      map[string]interface{}{"type": "boolean", "description": "Clear field before typing (default: false)"},
+				},
+			},
+		},
+		{
+			"name":        "browser_select",
+			"description": "Select a value in a <select> dropdown by CSS selector. Returns a screenshot after selection.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"session_id", "selector", "value"},
+				"properties": map[string]interface{}{
+					"session_id": map[string]interface{}{"type": "string", "description": "Session ID"},
+					"selector":   map[string]interface{}{"type": "string", "description": "CSS selector of <select> element"},
+					"value":      map[string]interface{}{"type": "string", "description": "Option value to select"},
+				},
+			},
+		},
+		{
+			"name":        "browser_scroll",
+			"description": "Scroll the page by pixel offsets. Returns a screenshot after scrolling.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"session_id"},
+				"properties": map[string]interface{}{
+					"session_id": map[string]interface{}{"type": "string", "description": "Session ID"},
+					"x":          map[string]interface{}{"type": "integer", "description": "Horizontal scroll pixels (default: 0)"},
+					"y":          map[string]interface{}{"type": "integer", "description": "Vertical scroll pixels (default: 300)"},
+				},
+			},
+		},
+		{
+			"name":        "browser_wait",
+			"description": "Wait for a CSS selector to become visible on the page. Use before clicking/typing elements that load dynamically.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"session_id", "selector"},
+				"properties": map[string]interface{}{
+					"session_id": map[string]interface{}{"type": "string", "description": "Session ID"},
+					"selector":   map[string]interface{}{"type": "string", "description": "CSS selector to wait for"},
+					"timeout_ms": map[string]interface{}{"type": "integer", "description": "Timeout in milliseconds (default: 10000)"},
+				},
+			},
+		},
+		{
+			"name":        "browser_wait_navigation",
+			"description": "Wait for the page URL to change (e.g., after a form submission or OAuth redirect).",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"session_id"},
+				"properties": map[string]interface{}{
+					"session_id": map[string]interface{}{"type": "string", "description": "Session ID"},
+					"timeout_ms": map[string]interface{}{"type": "integer", "description": "Timeout in milliseconds (default: 10000)"},
+				},
+			},
+		},
+		{
+			"name":        "browser_screenshot",
+			"description": "Capture a screenshot of the current page. Returns base64 PNG. Most action tools (navigate, click, type) already return screenshots — use this only when you need an extra screenshot without performing an action.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"session_id"},
+				"properties": map[string]interface{}{
+					"session_id": map[string]interface{}{"type": "string", "description": "Session ID"},
+				},
+			},
+		},
+		{
+			"name":        "browser_extract_text",
+			"description": "Extract visible text content from an element. Useful for reading API keys, status messages, form values, etc.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"session_id"},
+				"properties": map[string]interface{}{
+					"session_id": map[string]interface{}{"type": "string", "description": "Session ID"},
+					"selector":   map[string]interface{}{"type": "string", "description": "CSS selector (default: body)"},
+				},
+			},
+		},
+		{
+			"name":        "browser_extract_attribute",
+			"description": "Extract an HTML attribute value from an element (e.g., href, src, value, data-*).",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"session_id", "selector", "attribute"},
+				"properties": map[string]interface{}{
+					"session_id": map[string]interface{}{"type": "string", "description": "Session ID"},
+					"selector":   map[string]interface{}{"type": "string", "description": "CSS selector"},
+					"attribute":  map[string]interface{}{"type": "string", "description": "Attribute name (e.g., href, value, data-id)"},
+				},
+			},
+		},
+		{
+			"name":        "browser_get_dom",
+			"description": "Get the full page HTML (truncated to 50KB). Use to understand page structure when screenshots aren't enough — find element selectors, form fields, buttons, etc.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"session_id"},
+				"properties": map[string]interface{}{
+					"session_id": map[string]interface{}{"type": "string", "description": "Session ID"},
+				},
+			},
+		},
+		{
+			"name":        "browser_evaluate",
+			"description": "Execute JavaScript in the browser and return the result. Use for complex interactions, reading localStorage/cookies, or extracting data that CSS selectors can't reach.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"session_id", "javascript"},
+				"properties": map[string]interface{}{
+					"session_id": map[string]interface{}{"type": "string", "description": "Session ID"},
+					"javascript": map[string]interface{}{"type": "string", "description": "JavaScript code to execute. Return value is sent back as JSON."},
+				},
+			},
+		},
+	}
+	tools = append(tools, browserTools...)
+
 	return map[string]interface{}{
 		"tools": tools,
 	}

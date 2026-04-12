@@ -49,6 +49,7 @@ type HTTPServer struct {
 	containerRunner *ContainerRunner   // nil if Docker not available
 	containerizeGuests bool            // run guest tasks in containers
 	containerizeHost   bool            // run host tasks in containers
+	browserMgr     *BrowserManager   // nil until first browser_open
 	multiUserMgr   *MultiUserManager // nil in single-user mode
 	server       *http.Server
 	tlsServer    *http.Server
@@ -392,6 +393,12 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/dev/native-bundle", s.handleServeNativeBundle) // No auth — serves compiled bundle
 	mux.HandleFunc("/dev/native-assets", s.handleServeNativeAssets) // No auth — serves compiled assets
 	mux.HandleFunc("/dev/", s.handleDevServerProxy) // No auth — serves app bundle in WebView (not sensitive)
+
+	// Browser automation (AI-driven browser control)
+	mux.HandleFunc("/browser/sessions", s.auth(s.handleBrowserSessions))
+	mux.HandleFunc("/browser/sessions/", s.auth(s.handleBrowserSessionByID))
+	mux.HandleFunc("/browser/events", s.auth(s.handleBrowserEvents))
+	mux.HandleFunc("/browser/events/", s.auth(s.handleBrowserEvents))
 
 	// Projects (discovery + workdir switching + actions)
 	mux.HandleFunc("/projects", s.auth(s.handleProjects))
@@ -7474,6 +7481,275 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 		}
 		return mcpToolJSON(map[string]interface{}{"ok": true, "reverted": args.CommitSHAs})
 
+	// --- Browser Automation ---
+	case "browser_open":
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available. Ensure Chrome/Chromium is installed.")
+		}
+		var args struct {
+			SessionID string `json:"session_id"`
+			Headful   bool   `json:"headful"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.SessionID == "" {
+			args.SessionID = fmt.Sprintf("browser-%d", time.Now().UnixMilli()%100000)
+		}
+		if err := s.browserMgr.OpenSession(args.SessionID, args.Headful); err != nil {
+			return mcpToolError(fmt.Sprintf("browser_open: %v", err))
+		}
+		return mcpToolJSON(map[string]interface{}{
+			"session_id": args.SessionID,
+			"headful":    args.Headful,
+			"status":     "open",
+			"message":    "Browser session opened. Use browser_navigate to go to a URL.",
+		})
+
+	case "browser_close":
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
+		}
+		var args struct {
+			SessionID string `json:"session_id"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.SessionID == "" {
+			return mcpToolError("session_id is required")
+		}
+		if err := s.browserMgr.CloseSession(args.SessionID); err != nil {
+			return mcpToolError(fmt.Sprintf("browser_close: %v", err))
+		}
+		return mcpToolResult("Browser session closed.")
+
+	case "browser_sessions":
+		if s.browserMgr == nil {
+			return mcpToolJSON(map[string]interface{}{"sessions": []interface{}{}})
+		}
+		return mcpToolJSON(map[string]interface{}{
+			"sessions": s.browserMgr.ListSessions(),
+		})
+
+	case "browser_navigate":
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
+		}
+		var args struct {
+			SessionID string `json:"session_id"`
+			URL       string `json:"url"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.SessionID == "" || args.URL == "" {
+			return mcpToolError("session_id and url are required")
+		}
+		result, err := s.browserMgr.Navigate(args.SessionID, args.URL)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("browser_navigate: %v", err))
+		}
+		return mcpBrowserResult(result, fmt.Sprintf("Navigated to %s — title: %s", result.URL, result.Title))
+
+	case "browser_click":
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
+		}
+		var args struct {
+			SessionID string `json:"session_id"`
+			Selector  string `json:"selector"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.SessionID == "" || args.Selector == "" {
+			return mcpToolError("session_id and selector are required")
+		}
+		result, err := s.browserMgr.Click(args.SessionID, args.Selector)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("browser_click: %v", err))
+		}
+		return mcpBrowserResult(result, fmt.Sprintf("Clicked %q — now at %s", args.Selector, result.URL))
+
+	case "browser_type":
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
+		}
+		var args struct {
+			SessionID string `json:"session_id"`
+			Selector  string `json:"selector"`
+			Text      string `json:"text"`
+			Clear     bool   `json:"clear"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.SessionID == "" || args.Selector == "" || args.Text == "" {
+			return mcpToolError("session_id, selector, and text are required")
+		}
+		result, err := s.browserMgr.Type(args.SessionID, args.Selector, args.Text, args.Clear)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("browser_type: %v", err))
+		}
+		return mcpBrowserResult(result, fmt.Sprintf("Typed into %q", args.Selector))
+
+	case "browser_select":
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
+		}
+		var args struct {
+			SessionID string `json:"session_id"`
+			Selector  string `json:"selector"`
+			Value     string `json:"value"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.SessionID == "" || args.Selector == "" || args.Value == "" {
+			return mcpToolError("session_id, selector, and value are required")
+		}
+		result, err := s.browserMgr.Select(args.SessionID, args.Selector, args.Value)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("browser_select: %v", err))
+		}
+		return mcpBrowserResult(result, fmt.Sprintf("Selected %q in %q", args.Value, args.Selector))
+
+	case "browser_scroll":
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
+		}
+		var args struct {
+			SessionID string `json:"session_id"`
+			X         int    `json:"x"`
+			Y         int    `json:"y"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.SessionID == "" {
+			return mcpToolError("session_id is required")
+		}
+		if args.Y == 0 && args.X == 0 {
+			args.Y = 300
+		}
+		result, err := s.browserMgr.Scroll(args.SessionID, args.X, args.Y)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("browser_scroll: %v", err))
+		}
+		return mcpBrowserResult(result, fmt.Sprintf("Scrolled by (%d, %d)", args.X, args.Y))
+
+	case "browser_wait":
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
+		}
+		var args struct {
+			SessionID string `json:"session_id"`
+			Selector  string `json:"selector"`
+			TimeoutMs int    `json:"timeout_ms"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.SessionID == "" || args.Selector == "" {
+			return mcpToolError("session_id and selector are required")
+		}
+		if err := s.browserMgr.WaitFor(args.SessionID, args.Selector, args.TimeoutMs); err != nil {
+			return mcpToolError(fmt.Sprintf("browser_wait: %v", err))
+		}
+		return mcpToolResult(fmt.Sprintf("Element %q is now visible.", args.Selector))
+
+	case "browser_wait_navigation":
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
+		}
+		var args struct {
+			SessionID string `json:"session_id"`
+			TimeoutMs int    `json:"timeout_ms"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.SessionID == "" {
+			return mcpToolError("session_id is required")
+		}
+		if err := s.browserMgr.WaitForNavigation(args.SessionID, args.TimeoutMs); err != nil {
+			return mcpToolError(fmt.Sprintf("browser_wait_navigation: %v", err))
+		}
+		return mcpToolResult("Navigation completed.")
+
+	case "browser_screenshot":
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
+		}
+		var args struct {
+			SessionID string `json:"session_id"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.SessionID == "" {
+			return mcpToolError("session_id is required")
+		}
+		result, err := s.browserMgr.Screenshot(args.SessionID)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("browser_screenshot: %v", err))
+		}
+		return mcpBrowserResult(result, fmt.Sprintf("Screenshot captured — %s", result.URL))
+
+	case "browser_extract_text":
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
+		}
+		var args struct {
+			SessionID string `json:"session_id"`
+			Selector  string `json:"selector"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.SessionID == "" {
+			return mcpToolError("session_id is required")
+		}
+		text, err := s.browserMgr.ExtractText(args.SessionID, args.Selector)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("browser_extract_text: %v", err))
+		}
+		return mcpToolResult(text)
+
+	case "browser_extract_attribute":
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
+		}
+		var args struct {
+			SessionID string `json:"session_id"`
+			Selector  string `json:"selector"`
+			Attribute string `json:"attribute"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.SessionID == "" || args.Selector == "" || args.Attribute == "" {
+			return mcpToolError("session_id, selector, and attribute are required")
+		}
+		value, err := s.browserMgr.ExtractAttribute(args.SessionID, args.Selector, args.Attribute)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("browser_extract_attribute: %v", err))
+		}
+		return mcpToolResult(value)
+
+	case "browser_get_dom":
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
+		}
+		var args struct {
+			SessionID string `json:"session_id"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.SessionID == "" {
+			return mcpToolError("session_id is required")
+		}
+		htmlContent, err := s.browserMgr.GetDOM(args.SessionID)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("browser_get_dom: %v", err))
+		}
+		return mcpToolResult(htmlContent)
+
+	case "browser_evaluate":
+		if s.browserMgr == nil {
+			return mcpToolError("Browser automation not available.")
+		}
+		var args struct {
+			SessionID  string `json:"session_id"`
+			JavaScript string `json:"javascript"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.SessionID == "" || args.JavaScript == "" {
+			return mcpToolError("session_id and javascript are required")
+		}
+		evalResult, err := s.browserMgr.Evaluate(args.SessionID, args.JavaScript)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("browser_evaluate: %v", err))
+		}
+		data, _ := json.Marshal(evalResult)
+		return mcpToolResult(string(data))
+
 	default:
 		return mcpToolError("unknown tool: " + call.Name)
 	}
@@ -8408,6 +8684,23 @@ func mcpToolError(text string) interface{} {
 			{"type": "text", "text": text},
 		},
 		"isError": true,
+	}
+}
+
+// mcpBrowserResult returns a text message + screenshot image for browser automation tools.
+func mcpBrowserResult(result *BrowserActionResult, message string) interface{} {
+	content := []map[string]interface{}{
+		{"type": "text", "text": message},
+	}
+	if result.ScreenshotB64 != "" {
+		content = append(content, map[string]interface{}{
+			"type":     "image",
+			"data":     result.ScreenshotB64,
+			"mimeType": "image/png",
+		})
+	}
+	return map[string]interface{}{
+		"content": content,
 	}
 }
 
