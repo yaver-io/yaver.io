@@ -360,7 +360,32 @@ public class AppDelegate: ExpoAppDelegate {
     NSLog("[AppDelegate] Back to Yaver tapped")
     dismissOverlay()
     isGuestAppRunning = false
+    // Kill the dev server so next "Open App" starts from a clean initial state
+    stopDevServerOnAgent()
     NotificationCenter.default.post(name: Notification.Name("YaverBundleLoaderRestore"), object: nil)
+  }
+
+  /// POST /dev/stop to the agent so the next Open App starts fresh.
+  /// Uses the baseURL + auth token stored by YaverBundleLoader when the bundle was loaded.
+  private func stopDevServerOnAgent() {
+    guard let baseURL = UserDefaults.standard.string(forKey: "yaverAgentBaseURL"),
+          let auth = UserDefaults.standard.string(forKey: "yaverAgentAuth"),
+          let url = URL(string: "\(baseURL)/dev/stop") else {
+      NSLog("[AppDelegate] stopDevServerOnAgent: missing baseURL or auth")
+      return
+    }
+    var req = URLRequest(url: url)
+    req.httpMethod = "POST"
+    req.setValue(auth, forHTTPHeaderField: "Authorization")
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    req.timeoutInterval = 5
+    URLSession.shared.dataTask(with: req) { _, resp, err in
+      if let err = err {
+        NSLog("[AppDelegate] /dev/stop failed: %@", err.localizedDescription)
+      } else if let http = resp as? HTTPURLResponse {
+        NSLog("[AppDelegate] /dev/stop → %d", http.statusCode)
+      }
+    }.resume()
   }
 
   /// Shows an error screen instead of a white screen when the guest app fails to load.
