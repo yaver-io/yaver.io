@@ -588,13 +588,18 @@ function DebugConsolePreview() {
   );
 }
 
+// Video assets live on GitHub Releases, not Vercel/Cloudflare — keeps the
+// web/ bundle tiny and the 2.3 MB Bento reel out of our CDN bill.
+const VIDEO_CDN = "https://github.com/kivanccakmak/yaver.io/releases/download";
+
 const DEMO_TABS = [
   {
     id: "full-loop",
     label: "Full Loop",
     icon: "\uD83D\uDD04",
     desc: "Create a project, browse your database, vibe code a feature \u2014 all from your phone.",
-    header: "Yaver Mobile App + Terminal \u2014 creating Bento from scratch",
+    header: "Yaver scaffolds Bento + Bento running live on iPhone 16 Pro sim",
+    video: `${VIDEO_CDN}/bento-demo-v1/bento-demo.mp4`,
   },
   {
     id: "push-fix",
@@ -602,6 +607,7 @@ const DEMO_TABS = [
     icon: "\uD83D\uDCF1",
     desc: "Push Bento to your phone in 4s. Shake to report a crash. AI fixes it. Hot reload.",
     header: "Bento running on device + Yaver Debug Console",
+    video: null,
   },
   {
     id: "auto-test",
@@ -609,6 +615,7 @@ const DEMO_TABS = [
     icon: "\uD83E\uDD16",
     desc: "Agent navigates every screen, finds 2 crashes, fixes both, produces a report.",
     header: "Agent autonomously navigating Bento \u2014 phone + terminal",
+    video: null,
   },
 ];
 
@@ -653,17 +660,31 @@ function DemoSection() {
           </div>
 
           {/* Video */}
-          <div className="flex aspect-video items-center justify-center bg-[#050508]">
-            <div className="px-6 text-center">
-              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full border border-surface-700 bg-surface-900">
-                <svg className="ml-1 h-7 w-7 text-surface-400" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          {demo.video ? (
+            <video
+              key={demo.id}
+              src={demo.video}
+              className="w-full bg-[#050508]"
+              autoPlay
+              muted
+              loop
+              playsInline
+              preload="metadata"
+              controls
+            />
+          ) : (
+            <div className="flex aspect-video items-center justify-center bg-[#050508]">
+              <div className="px-6 text-center">
+                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full border border-surface-700 bg-surface-900">
+                  <svg className="ml-1 h-7 w-7 text-surface-400" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                </div>
+                <p className="mb-1 text-sm font-medium text-surface-300">Coming soon</p>
+                <p className="mx-auto max-w-xs text-xs text-surface-500">
+                  Shooting this cut next \u2014 Bento running through the shake-to-report / auto-test flows.
+                </p>
               </div>
-              <p className="mb-1 text-sm font-medium text-surface-300">Coming soon</p>
-              <p className="mx-auto max-w-xs text-xs text-surface-500">
-                &ldquo;Bento&rdquo; &mdash; a meal prep app created, tested, and deployed entirely from a phone.
-              </p>
             </div>
-          </div>
+          )}
         </div>
 
       </div>
