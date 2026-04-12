@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { agentClient } from "@/lib/agent-client";
+import EnvironmentSwitcher from "./EnvironmentSwitcher";
 
 type Tab = "deploy" | "backups" | "domains" | "logs" | "errors" | "clone" | "cron" | "uptime";
 
@@ -13,6 +14,7 @@ export default function OpsView() {
       <input value={directory} onChange={(e) => setDirectory(e.target.value)}
         placeholder="project directory (defaults to agent cwd)"
         className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-mono text-surface-200" />
+      <EnvironmentSwitcher directory={directory || undefined} />
       <div className="flex gap-1 border-b border-surface-800 overflow-auto">
         {(["deploy", "backups", "domains", "logs", "errors", "clone", "cron", "uptime"] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)}

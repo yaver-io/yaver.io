@@ -1156,6 +1156,51 @@ class AgentClient {
     return res.json();
   }
 
+  // ── Environment switcher + Overview summary ──────────────────────
+
+  async overviewSummary(): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/overview/summary`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async projectEnvList(directory?: string): Promise<{ active: string; envs: string[] }> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/project/env/list${q}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async projectEnvSwitch(name: string, directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/project/env/switch${q}`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    return res.json();
+  }
+
+  async projectEnvSave(name: string, body: string, directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/project/env/save${q}`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ name, body }),
+    });
+    return res.json();
+  }
+
+  async projectEnvLoad(name: string, directory?: string): Promise<{ name: string; body: string; error?: string }> {
+    this.assertConnected();
+    const p = new URLSearchParams({ name });
+    if (directory) p.set("directory", directory);
+    const res = await fetch(`${this.baseUrl}/project/env/load?${p}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
   async consoleMachines(): Promise<{ machines: any[] }> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/console/machines`, { headers: this.authHeaders });

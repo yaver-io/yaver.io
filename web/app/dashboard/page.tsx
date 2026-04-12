@@ -18,6 +18,7 @@ import AccountsView from "@/components/dashboard/AccountsView";
 import ConsoleView from "@/components/dashboard/ConsoleView";
 import ObservabilityView from "@/components/dashboard/ObservabilityView";
 import OpsView from "@/components/dashboard/OpsView";
+import OverviewView from "@/components/dashboard/OverviewView";
 import PreviewPane from "@/components/dashboard/PreviewPane";
 
 function statusColor(s: string) {
@@ -42,7 +43,7 @@ export default function DashboardPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [guestCode, setGuestCode] = useState("");
-  const [activeTab, setActiveTab] = useState<"chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops">("chat");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops">("home");
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [relayReady, setRelayReady] = useState(false);
@@ -157,6 +158,7 @@ export default function DashboardPage() {
 
   const runningTask = tasks.find(t => t.status === "running");
   const tabs: { id: typeof activeTab; label: string; icon: string; badge?: number }[] = [
+    { id: "home", label: "Home", icon: "\uD83C\uDFE0" },
     { id: "chat", label: "Chat", icon: "\uD83D\uDCAC" },
     { id: "projects", label: "Projects", icon: "\uD83D\uDCC1" },
     { id: "todos", label: "Todos", icon: "\u2611\uFE0F", badge: todoCount },
@@ -337,6 +339,8 @@ export default function DashboardPage() {
                 )}
               </div>
             </div>
+          ) : activeTab === "home" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><OverviewView user={user ?? undefined} /></div>
           ) : activeTab === "projects" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><ProjectsView onTaskCreated={onTaskCreated} /></div>
           ) : activeTab === "todos" ? (
