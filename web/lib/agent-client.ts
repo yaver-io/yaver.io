@@ -1010,6 +1010,152 @@ class AgentClient {
     return res.json();
   }
 
+  // ── Ops: deploy / backups / domains / logs / errors / cron / uptime / clone ──
+
+  async deployRun(directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/deploy/run${q}`, { method: "POST", headers: this.authHeaders });
+    return res.json();
+  }
+  async deployList(directory?: string): Promise<{ deploys: any[] }> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/deploy/list${q}`, { headers: this.authHeaders });
+    return res.json();
+  }
+  async deployRollback(id: string, directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/deploy/rollback${q}`, { method: "POST", headers: { ...this.authHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+    return res.json();
+  }
+  async deployConfigGet(directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/deploy/config${q}`, { headers: this.authHeaders });
+    return res.json();
+  }
+  async deployConfigSet(cfg: any, directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/deploy/config${q}`, { method: "POST", headers: { ...this.authHeaders, "Content-Type": "application/json" }, body: JSON.stringify(cfg) });
+    return res.json();
+  }
+
+  async backupCreate(directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/backups/create${q}`, { method: "POST", headers: this.authHeaders });
+    return res.json();
+  }
+  async backupList(directory?: string): Promise<{ backups: any[] }> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/backups/list${q}`, { headers: this.authHeaders });
+    return res.json();
+  }
+  async backupRestore(id: string, directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/backups/restore${q}`, { method: "POST", headers: { ...this.authHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+    return res.json();
+  }
+  async backupDelete(id: string, directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/backups/delete${q}`, { method: "POST", headers: { ...this.authHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+    return res.json();
+  }
+  async backupAuto(enabled: boolean, everyHours: number, directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/backups/auto${q}`, { method: "POST", headers: { ...this.authHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ enabled, everyHours }) });
+    return res.json();
+  }
+
+  async domainList(): Promise<{ domains: any[] }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/domains/list`, { headers: this.authHeaders });
+    return res.json();
+  }
+  async domainAdd(domain: string, upstream: string, staticPath?: string): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/domains/add`, { method: "POST", headers: { ...this.authHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ domain, upstream, static: staticPath }) });
+    return res.json();
+  }
+  async domainRemove(domain: string): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/domains/remove`, { method: "POST", headers: { ...this.authHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ domain }) });
+    return res.json();
+  }
+
+  async logSearch(q: string, services?: string, limit = 200): Promise<{ hits: any[]; count: number }> {
+    this.assertConnected();
+    const p = new URLSearchParams({ q, limit: String(limit) });
+    if (services) p.set("services", services);
+    const res = await fetch(`${this.baseUrl}/logs/search?${p}`, { headers: this.authHeaders });
+    return res.json();
+  }
+  async logIndexStart(project?: string): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/logs/index/start`, { method: "POST", headers: { ...this.authHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ project }) });
+    return res.json();
+  }
+
+  async errorGroups(project?: string): Promise<{ groups: any[] }> {
+    this.assertConnected();
+    const p = new URLSearchParams();
+    if (project) p.set("project", project);
+    const res = await fetch(`${this.baseUrl}/errors/groups?${p}`, { headers: this.authHeaders });
+    return res.json();
+  }
+  async errorInstances(fingerprint: string): Promise<{ instances: any[] }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/errors/instances?fingerprint=${encodeURIComponent(fingerprint)}`, { headers: this.authHeaders });
+    return res.json();
+  }
+  async errorResolve(fingerprint: string, resolved: boolean): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/errors/resolve`, { method: "POST", headers: { ...this.authHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ fingerprint, resolved }) });
+    return res.json();
+  }
+
+  async envClone(source: string, target: string, subsetRows = 0): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/env/clone`, { method: "POST", headers: { ...this.authHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ source, target, subsetRows }) });
+    return res.json();
+  }
+
+  async cronCreate(name: string, schedule: string, target: string, directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/cron/create${q}`, { method: "POST", headers: { ...this.authHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ name, schedule, target }) });
+    return res.json();
+  }
+  async cronDelete(name: string, directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/cron/delete${q}`, { method: "POST", headers: { ...this.authHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    return res.json();
+  }
+
+  async uptimeList(): Promise<{ monitors: any[] }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/uptime/list`, { headers: this.authHeaders });
+    return res.json();
+  }
+  async uptimeAdd(monitor: any): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/uptime/add`, { method: "POST", headers: { ...this.authHeaders, "Content-Type": "application/json" }, body: JSON.stringify(monitor) });
+    return res.json();
+  }
+  async uptimeRemove(id: string): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/uptime/remove`, { method: "POST", headers: { ...this.authHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+    return res.json();
+  }
+
   async consoleMachines(): Promise<{ machines: any[] }> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/console/machines`, { headers: this.authHeaders });

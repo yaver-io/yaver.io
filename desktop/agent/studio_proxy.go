@@ -28,6 +28,7 @@ func studioTargets() []StudioTarget {
 		{ID: "minio", Label: "MinIO Console", URL: "http://127.0.0.1:9001", Probe: "http://127.0.0.1:9001"},
 		{ID: "mailpit", Label: "Mailpit", URL: "http://127.0.0.1:8025", Probe: "http://127.0.0.1:8025"},
 		{ID: "firebase", Label: "Firebase Emulator UI", URL: "http://127.0.0.1:4000", Probe: "http://127.0.0.1:4000"},
+		{ID: "code-server", Label: "VS Code", URL: "http://127.0.0.1:8787", Probe: "http://127.0.0.1:8787"},
 	}
 }
 
