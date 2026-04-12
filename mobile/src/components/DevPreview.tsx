@@ -128,16 +128,16 @@ export function DevPreview() {
 
   const handleOpen = useCallback(() => {
     if (isNativeMode) {
-      // Dev-client mode: show controls panel (the native app runs separately)
-      // Don't open WebView — Metro in dev-client mode redirects to exp:// which WebView can't handle
-      setShowPreview(true);
+      // Default: Hermes push (fast, ~10s) — load app inside Yaver's container
+      // The "Back to Yaver" overlay is shown natively by AppDelegate
+      handleRunInYaver();
       return;
     }
     // Web mode: open in WebView
     setShowPreview(true);
     setLoading(true);
     setWebViewKey(k => k + 1);
-  }, [isNativeMode]);
+  }, [isNativeMode, handleRunInYaver]);
 
   // Load the app inside Yaver via the secondary RCTBridge (super-host mode).
   // This gives full native module access (camera, BLE, GPS, etc.) without
@@ -281,7 +281,7 @@ export function DevPreview() {
             <ActivityIndicator size="small" color="#22c55e" />
           ) : (
             <>
-              <Text style={styles.bannerAction}>{isNativeMode ? "Run Native" : "Open App"}</Text>
+              <Text style={styles.bannerAction}>Open App</Text>
               <Text style={styles.bannerArrow}>{"\u203A"}</Text>
             </>
           )}
