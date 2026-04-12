@@ -8,5 +8,6 @@
     "jsx": "preserve",
     "skipLibCheck": true,
     "resolveJsonModule": true
-  }
+  },
+  "extends": "expo/tsconfig.base"
 }
