@@ -152,42 +152,58 @@ export default function FilesScreen() {
       </View>
 
       {currentRoot ? (
-        <View style={[styles.crumbs, { borderColor: c.border }]}>
-          <Pressable onPress={up}>
-            <Text style={[styles.crumb, { color: c.accent }]}>↑</Text>
+        <View style={[styles.crumbs, { borderBottomColor: c.border, backgroundColor: c.bgCard }]}>
+          <Pressable onPress={up} style={styles.upBtn}>
+            <Text style={[styles.upBtnIcon, { color: c.accent }]}>{"\u2190"}</Text>
           </Pressable>
-          <Text style={[styles.crumbPath, { color: c.textMuted }]} numberOfLines={1}>
-            {currentRoot.name}/{currentPath}
-          </Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.crumbProject, { color: c.textPrimary }]} numberOfLines={1}>
+              {currentRoot.name}
+            </Text>
+            {currentPath ? (
+              <Text style={[styles.crumbPath, { color: c.textMuted }]} numberOfLines={1}>
+                {currentPath.split("/").join("  /  ")}
+              </Text>
+            ) : (
+              <Text style={[styles.crumbPath, { color: c.textMuted }]}>root</Text>
+            )}
+          </View>
         </View>
       ) : null}
 
       {error ? (
-        <View style={styles.errorBar}>
-          <Text style={{ color: "#ef4444" }}>{error}</Text>
+        <View style={[styles.errorBar, { backgroundColor: "#fee2e2" }]}>
+          <Text style={{ color: "#dc2626", fontSize: 13, fontWeight: "500" }}>{error}</Text>
         </View>
       ) : null}
 
       {loading ? (
-        <ActivityIndicator style={{ marginTop: 24 }} />
+        <View style={styles.centered}>
+          <ActivityIndicator color={c.accent} />
+        </View>
       ) : fileContent != null ? (
         <ScrollView
           style={styles.fileScroll}
-          contentContainerStyle={{ padding: 12, paddingBottom: 80 }}
+          contentContainerStyle={{ padding: 14, paddingBottom: 80 }}
         >
           <Text style={[styles.code, { color: c.textPrimary }]}>{fileContent}</Text>
         </ScrollView>
       ) : binary ? (
         <View style={styles.centered}>
-          <Text style={[styles.body, { color: c.textMuted }]}>(binary file — cannot preview)</Text>
+          <Text style={{ fontSize: 48 }}>{"\u{1F4E6}"}</Text>
+          <Text style={[styles.emptyText, { color: c.textMuted, marginTop: 12 }]}>Binary file — cannot preview</Text>
         </View>
       ) : currentRoot ? (
         <FlatList
-          data={entries}
+          data={[...entries].sort((a, b) => {
+            if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+            return a.name.localeCompare(b.name);
+          })}
           keyExtractor={(e) => e.path}
           refreshControl={
-            <RefreshControl refreshing={loading} onRefresh={() => loadDirectory(currentRoot, currentPath)} />
+            <RefreshControl refreshing={loading} onRefresh={() => loadDirectory(currentRoot, currentPath)} tintColor={c.textMuted} />
           }
+          contentContainerStyle={{ paddingVertical: 6 }}
           renderItem={({ item }) => (
             <Pressable
               onPress={() =>
@@ -195,40 +211,67 @@ export default function FilesScreen() {
                   ? loadDirectory(currentRoot, item.path)
                   : openFile(currentRoot, item.path)
               }
-              style={[styles.row, { borderColor: c.border }]}
+              style={({ pressed }) => [
+                styles.row,
+                { borderBottomColor: c.border, backgroundColor: pressed ? c.bgCard : "transparent" },
+              ]}
             >
-              <Text style={[styles.name, { color: c.textPrimary }]} numberOfLines={1}>
-                {item.isDir ? "📁" : "📄"} {item.name}
-              </Text>
-              {!item.isDir ? (
-                <Text style={[styles.meta, { color: c.textMuted }]}>{humanSize(item.size)}</Text>
-              ) : null}
+              <View style={[styles.iconWrap, { backgroundColor: item.isDir ? "#818cf822" : c.bgCard }]}>
+                <Text style={{ fontSize: 18 }}>{fileEmoji(item)}</Text>
+              </View>
+              <View style={{ flex: 1, marginRight: 12 }}>
+                <Text style={[styles.name, { color: c.textPrimary }]} numberOfLines={1}>
+                  {item.name}
+                </Text>
+                <Text style={[styles.meta, { color: c.textMuted }]} numberOfLines={1}>
+                  {item.isDir ? "Folder" : humanSize(item.size)} {item.mtime ? `\u00B7 ${relativeTime(item.mtime)}` : ""}
+                </Text>
+              </View>
+              <Text style={[styles.chevron, { color: c.textMuted }]}>{"\u203A"}</Text>
             </Pressable>
           )}
           ListEmptyComponent={
-            <Text style={[styles.body, { color: c.textMuted, padding: 24 }]}>(empty)</Text>
+            <View style={styles.centered}>
+              <Text style={{ fontSize: 42 }}>{"\u{1F4C2}"}</Text>
+              <Text style={[styles.emptyText, { color: c.textMuted, marginTop: 10 }]}>Empty folder</Text>
+            </View>
           }
         />
       ) : (
         <FlatList
           data={roots}
           keyExtractor={(r) => r.id}
-          refreshControl={<RefreshControl refreshing={loading} onRefresh={loadRoots} />}
+          refreshControl={<RefreshControl refreshing={loading} onRefresh={loadRoots} tintColor={c.textMuted} />}
+          contentContainerStyle={{ padding: 12 }}
           renderItem={({ item }) => (
             <Pressable
               onPress={() => loadDirectory(item, "")}
-              style={[styles.row, { borderColor: c.border }]}
+              style={({ pressed }) => [
+                styles.projectCard,
+                { backgroundColor: pressed ? c.bgCardElevated || c.bg : c.bgCard, borderColor: c.border },
+              ]}
             >
-              <Text style={[styles.name, { color: c.textPrimary }]}>📁 {item.name}</Text>
-              <Text style={[styles.meta, { color: c.textMuted }]} numberOfLines={1}>
-                {item.path}
-              </Text>
+              <View style={[styles.projectIcon, { backgroundColor: "#818cf822" }]}>
+                <Text style={{ fontSize: 22 }}>{"\u{1F4C1}"}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.projectName, { color: c.textPrimary }]} numberOfLines={1}>
+                  {item.name}
+                </Text>
+                <Text style={[styles.projectPath, { color: c.textMuted }]} numberOfLines={1}>
+                  {item.path}
+                </Text>
+              </View>
+              <Text style={[styles.chevron, { color: c.textMuted }]}>{"\u203A"}</Text>
             </Pressable>
           )}
           ListEmptyComponent={
-            <Text style={[styles.body, { color: c.textMuted, padding: 24 }]}>
-              No project roots discovered. Run `yaver discover` on the agent.
-            </Text>
+            <View style={styles.centered}>
+              <Text style={{ fontSize: 42 }}>{"\u{1F50D}"}</Text>
+              <Text style={[styles.emptyText, { color: c.textMuted, marginTop: 10, textAlign: "center", paddingHorizontal: 40 }]}>
+                No projects discovered yet. The agent scans your home directory automatically.
+              </Text>
+            </View>
           }
         />
       )}
@@ -241,6 +284,33 @@ function humanSize(n: number): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
   return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+function relativeTime(ts: number): string {
+  const now = Date.now() / 1000;
+  const diff = now - ts;
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 86400 * 7) return `${Math.floor(diff / 86400)}d ago`;
+  const d = new Date(ts * 1000);
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function fileEmoji(item: FileEntry): string {
+  if (item.isDir) return "\u{1F4C1}";
+  const ext = item.name.toLowerCase().split(".").pop() || "";
+  const map: Record<string, string> = {
+    ts: "\u{1F4D8}", tsx: "\u{1F4D8}", js: "\u{1F4D9}", jsx: "\u{1F4D9}",
+    json: "\u{1F4DC}", md: "\u{1F4DD}", yml: "\u2699", yaml: "\u2699",
+    go: "\u{1F43A}", rs: "\u{1F980}", py: "\u{1F40D}", rb: "\u{1F48E}",
+    swift: "\u{1F9A2}", kt: "\u{1F536}", java: "\u2615",
+    sh: "\u{1F4BB}", env: "\u{1F510}", lock: "\u{1F512}",
+    png: "\u{1F5BC}", jpg: "\u{1F5BC}", jpeg: "\u{1F5BC}", gif: "\u{1F5BC}", svg: "\u{1F5BC}",
+    mp4: "\u{1F3AC}", mov: "\u{1F3AC}",
+    zip: "\u{1F4E6}", tar: "\u{1F4E6}", gz: "\u{1F4E6}",
+  };
+  return map[ext] || "\u{1F4C4}";
 }
 
 const styles = StyleSheet.create({
@@ -256,25 +326,48 @@ const styles = StyleSheet.create({
   crumbs: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     borderBottomWidth: 1,
+    gap: 12,
   },
-  crumb: { fontSize: 18, marginRight: 12 },
-  crumbPath: { flex: 1, fontSize: 13 },
+  upBtn: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
+  upBtnIcon: { fontSize: 20, fontWeight: "600" },
+  crumbProject: { fontSize: 15, fontWeight: "700" },
+  crumbPath: { fontSize: 11, marginTop: 2 },
   row: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  name: { fontSize: 15, flex: 1 },
-  meta: { fontSize: 12, marginLeft: 12 },
-  errorBar: { padding: 12, backgroundColor: "#fee2e2" },
-  body: { fontSize: 14 },
-  centered: { alignItems: "center", justifyContent: "center", flex: 1 },
+  iconWrap: {
+    width: 36, height: 36, borderRadius: 10,
+    alignItems: "center", justifyContent: "center",
+    marginRight: 12,
+  },
+  name: { fontSize: 15, fontWeight: "500" },
+  meta: { fontSize: 11, marginTop: 2 },
+  chevron: { fontSize: 20, fontWeight: "300" },
+  errorBar: { padding: 12 },
+  emptyText: { fontSize: 14 },
+  centered: { alignItems: "center", justifyContent: "center", paddingVertical: 60, flex: 1 },
   fileScroll: { flex: 1 },
-  code: { fontFamily: "Menlo", fontSize: 12, lineHeight: 16 },
+  code: { fontFamily: "Menlo", fontSize: 12, lineHeight: 17 },
+  projectCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginBottom: 10,
+  },
+  projectIcon: {
+    width: 44, height: 44, borderRadius: 12,
+    alignItems: "center", justifyContent: "center",
+    marginRight: 12,
+  },
+  projectName: { fontSize: 16, fontWeight: "700" },
+  projectPath: { fontSize: 11, marginTop: 2 },
 });
