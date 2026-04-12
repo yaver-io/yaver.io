@@ -203,6 +203,49 @@ func presets() map[string]*DevServiceConfig {
 				"MEILI_MASTER_KEY": "dev-key",
 			},
 		},
+		"pocketbase": {
+			Image:  "ghcr.io/muchobien/pocketbase:latest",
+			Port:   8090,
+			Volume: "yaver-pb-data",
+		},
+		"dynamodb-local": {
+			Image:   "amazon/dynamodb-local:latest",
+			Port:    8000,
+			Command: "-jar DynamoDBLocal.jar -sharedDb -dbPath /home/dynamodblocal/data",
+			Volume:  "yaver-ddb-data",
+		},
+		"elasticmq": {
+			Image: "softwaremill/elasticmq-native:latest",
+			Port:  9324,
+		},
+		"azurite": {
+			Image:       "mcr.microsoft.com/azure-storage/azurite:latest",
+			Port:        10000, // Blob
+			ConsolePort: 10001, // Queue
+			SMTPPort:    10002, // Table (reusing SMTPPort slot for multi-port mapping)
+			Volume:      "yaver-azurite-data",
+		},
+		"firebase-emulator": {
+			Binary: "firebase",
+			Port:   4000, // Emulator UI
+		},
+		"convex": {
+			Image:       "ghcr.io/get-convex/convex-backend:latest",
+			Port:        3210,
+			ConsolePort: 3211, // HTTP Actions
+			Volume:      "yaver-convex-data",
+			Env: map[string]string{
+				"INSTANCE_NAME":   "yaver-local",
+				"CONVEX_SITE_URL": "http://127.0.0.1:3211",
+			},
+		},
+		"convex-dashboard": {
+			Image: "ghcr.io/get-convex/convex-dashboard:latest",
+			Port:  6791,
+			Env: map[string]string{
+				"NEXT_PUBLIC_DEPLOYMENT_URL": "http://127.0.0.1:3210",
+			},
+		},
 		"typesense": {
 			Image:  "typesense/typesense:27.1",
 			Port:   8108,
@@ -660,6 +703,14 @@ func (sm *ServicesManager) generateComposeFile(cfg *DevServicesConfig, serviceFi
 			case "meili":
 				dataPath = "/meili_data"
 			case "typesense":
+				dataPath = "/data"
+			case "convex":
+				dataPath = "/convex/data"
+			case "dynamodb-local":
+				dataPath = "/home/dynamodblocal/data"
+			case "pocketbase":
+				dataPath = "/pb/pb_data"
+			case "azurite":
 				dataPath = "/data"
 			}
 			buf.WriteString(fmt.Sprintf("      - %s:%s\n", svc.Volume, dataPath))
