@@ -42,6 +42,7 @@ export default function OpsScreen() {
             placeholderTextColor={c.textMuted}
             style={{ backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10, color: c.textPrimary, fontFamily: "Menlo", fontSize: 12 }} />
         </View>
+        <EnvSwitcher c={c} dir={directory} />
         {tab === "deploy" && <DeployTab c={c} dir={directory} />}
         {tab === "backups" && <BackupsTab c={c} dir={directory} />}
         {tab === "uptime" && <UptimeTab c={c} />}
@@ -238,6 +239,49 @@ function RotateTab({ c, dir }: { c: any; dir: string }) {
           <Text style={{ color: c.textPrimary, fontSize: 11 }}>Restarted: {(res.servicesRestarted || []).join(", ")}</Text>
         </View>
       )}
+    </View>
+  );
+}
+
+function EnvSwitcher({ c, dir }: { c: any; dir: string }) {
+  const [active, setActive] = useState("local");
+  const [envs, setEnvs] = useState<string[]>(["local"]);
+  const q = dir ? `?directory=${encodeURIComponent(dir)}` : "";
+
+  async function refresh() { try { const r = await callAgent(`/project/env/list${q}`); setActive(r.active); setEnvs(r.envs || ["local"]); } catch {} }
+  useEffect(() => { refresh(); }, [dir]);
+  async function switchTo(name: string) {
+    const r = await callAgent(`/project/env/switch${q}`, { method: "POST", body: JSON.stringify({ name }) });
+    if (r.error) Alert.alert("Switch failed", r.error);
+    else setActive(name);
+  }
+
+  const iconFor = (n: string) => n === "local" ? "🟢" : n === "staging" ? "☁️" : n === "production" ? "🚀" : "📦";
+  const toneFor = (n: string, isActive: boolean) => {
+    if (!isActive) return { bg: c.surface, border: c.border, fg: c.textMuted };
+    if (n === "local") return { bg: "#10b98120", border: "#10b981", fg: "#10b981" };
+    if (n === "staging") return { bg: "#0ea5e920", border: "#0ea5e9", fg: "#0ea5e9" };
+    if (n === "production") return { bg: "#ef444420", border: "#ef4444", fg: "#ef4444" };
+    return { bg: c.accent + "20", border: c.accent, fg: c.accent };
+  };
+
+  return (
+    <View style={{ marginBottom: 14, padding: 10, backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 8 }}>
+      <Text style={{ fontSize: 10, color: c.textMuted, textTransform: "uppercase", fontWeight: "700", marginBottom: 6 }}>Environment</Text>
+      <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+        {envs.map((n) => {
+          const tone = toneFor(n, active === n);
+          return (
+            <Pressable key={n} onPress={() => switchTo(n)}
+              style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, backgroundColor: tone.bg, borderColor: tone.border }}>
+              <Text style={{ color: tone.fg, fontSize: 12, fontWeight: "700" }}>{iconFor(n)} {n}{active === n ? " ✓" : ""}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <Text style={{ color: c.textMuted, fontSize: 10, marginTop: 6 }}>
+        Swaps .env.local with .yaver/envs/{active}.env
+      </Text>
     </View>
   );
 }

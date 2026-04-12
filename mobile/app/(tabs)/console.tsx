@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
@@ -7,7 +7,7 @@ import { quicClient } from "../../src/lib/quic";
 
 // Native mobile Console — all Docker/machine ops via RN components. No WebViews.
 
-type Tab = "overview" | "machines" | "containers" | "catalog";
+type Tab = "overview" | "machines" | "containers" | "catalog" | "mailpit" | "s3";
 
 export default function ConsoleScreen() {
   const c = useColors();
@@ -26,7 +26,7 @@ export default function ConsoleScreen() {
       </View>
       <View style={[styles.tabbar, { backgroundColor: c.surface, borderBottomColor: c.border }]}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          {(["overview", "machines", "containers", "catalog"] as Tab[]).map((t) => (
+          {(["overview", "machines", "containers", "catalog", "mailpit", "s3"] as Tab[]).map((t) => (
             <Pressable key={t} onPress={() => setTab(t)} style={{ paddingHorizontal: 12, paddingVertical: 10 }}>
               <Text style={{ fontSize: 13, fontWeight: "600", textTransform: "uppercase", color: tab === t ? c.accent : c.textMuted }}>{t}</Text>
             </Pressable>
@@ -38,6 +38,8 @@ export default function ConsoleScreen() {
         {tab === "machines" && <MachinesTab c={c} />}
         {tab === "containers" && <ContainersTab c={c} />}
         {tab === "catalog" && <CatalogTab c={c} />}
+        {tab === "mailpit" && <MailpitTab c={c} />}
+        {tab === "s3" && <S3Tab c={c} />}
       </ScrollView>
     </View>
   );
@@ -77,11 +79,16 @@ function OverviewTab({ c }: { c: any }) {
 
 function MachinesTab({ c }: { c: any }) {
   const [list, setList] = useState<any[]>([]);
+  const [multiOpen, setMultiOpen] = useState(false);
   useEffect(() => { refresh(); const i = setInterval(refresh, 10000); return () => clearInterval(i); }, []);
   async function refresh() { try { setList((await call("/console/machines")).machines || []); } catch {} }
   return (
     <View style={{ gap: 8 }}>
       <Text style={{ color: c.textMuted, fontSize: 11 }}>Hybrid view — own hardware + cloud VPSes as one list.</Text>
+      <Pressable onPress={() => setMultiOpen(!multiOpen)} style={[actionBtn(c), { backgroundColor: c.accent }]}>
+        <Text style={{ color: "#fff", fontWeight: "700" }}>{multiOpen ? "Close" : "🌍 Deploy Multi-Region"}</Text>
+      </Pressable>
+      {multiOpen && <MultiRegionForm c={c} onDone={() => { setMultiOpen(false); refresh(); }} />}
       {list.map((m) => (
         <View key={m.deviceId} style={[card(c), m.isLocal && { borderColor: c.accent, borderWidth: 2 }]}>
           <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
@@ -204,6 +211,134 @@ function CatalogTab({ c }: { c: any }) {
     </View>
   );
 }
+
+function MultiRegionForm({ c, onDone }: { c: any; onDone: () => void }) {
+  const [name, setName] = useState("");
+  const [regions, setRegions] = useState("nbg1,fsn1");
+  const [domain, setDomain] = useState("");
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<any>(null);
+
+  async function deploy() {
+    if (!name) { Alert.alert("Name required"); return; }
+    const regionList = regions.split(",").map((r) => r.trim()).filter(Boolean);
+    if (regionList.length < 2) { Alert.alert("Need 2+ regions"); return; }
+    Alert.alert(
+      "Provision real VPSes?",
+      `This will create ${regionList.length} billable Hetzner VPSes in ${regionList.join(", ")}.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Provision", style: "destructive", onPress: async () => {
+          setRunning(true);
+          const r = await call("/multiregion/orchestrate", { method: "POST", body: JSON.stringify({ name, regions: regionList, domain, gitRepo: "" }) });
+          setRunning(false);
+          setResult(r);
+        }},
+      ],
+    );
+  }
+
+  return (
+    <View style={{ padding: 12, backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 8, gap: 8 }}>
+      <TextInput value={name} onChangeText={setName} placeholder="deployment name" placeholderTextColor={c.textMuted} autoCapitalize="none" style={[inputStyle(c), { fontFamily: "Menlo", fontSize: 12 }]} />
+      <TextInput value={regions} onChangeText={setRegions} placeholder="regions csv (nbg1,fsn1,hel1)" placeholderTextColor={c.textMuted} autoCapitalize="none" style={[inputStyle(c), { fontFamily: "Menlo", fontSize: 12 }]} />
+      <TextInput value={domain} onChangeText={setDomain} placeholder="domain (optional)" placeholderTextColor={c.textMuted} autoCapitalize="none" style={[inputStyle(c), { fontFamily: "Menlo", fontSize: 12 }]} />
+      <Pressable onPress={deploy} disabled={running} style={[actionBtn(c), { backgroundColor: "#ef4444" }]}>
+        {running ? <ActivityIndicator color="#fff" /> : <Text style={{ color: "#fff", fontWeight: "700" }}>Deploy (billable)</Text>}
+      </Pressable>
+      {result?.error && <Text style={{ color: "#ef4444", fontSize: 11 }}>{result.error}</Text>}
+      {result?.orchestrate?.servers?.map((os: any, i: number) => (
+        <View key={i} style={[card(c)]}>
+          <Text style={{ color: os.status === "ready" ? "#10b981" : "#ef4444", fontSize: 11, fontWeight: "700" }}>{os.status.toUpperCase()}</Text>
+          <Text style={{ color: c.textPrimary, fontFamily: "Menlo", fontSize: 11 }}>{os.ip} · {os.region}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function MailpitTab({ c }: { c: any }) {
+  const [list, setList] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
+  const [selected, setSelected] = useState<any>(null);
+  async function refresh() { try { const r = await call("/mail/list"); setList(r.messages || []); setTotal(r.total || 0); } catch {} }
+  useEffect(() => { refresh(); const i = setInterval(refresh, 5000); return () => clearInterval(i); }, []);
+  async function del(id: string) {
+    await call("/mail/delete", { method: "POST", body: JSON.stringify({ ids: [id] }) });
+    setSelected(null); refresh();
+  }
+  async function loadDetail(id: string) {
+    const r = await call(`/mail/message?id=${encodeURIComponent(id)}`);
+    setSelected(r);
+  }
+  if (selected) {
+    return (
+      <View style={{ gap: 8 }}>
+        <Pressable onPress={() => setSelected(null)}>
+          <Text style={{ color: c.accent, fontSize: 13 }}>← Back</Text>
+        </Pressable>
+        <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "700" }}>{selected.Subject || "(no subject)"}</Text>
+        <Text style={{ color: c.textMuted, fontSize: 11 }}>From: {selected.From?.Address}</Text>
+        <Text style={{ color: c.textMuted, fontSize: 11 }}>To: {(selected.To || []).map((t: any) => t.Address).join(", ")}</Text>
+        <View style={[card(c), { marginTop: 6 }]}>
+          <Text style={{ color: c.textPrimary, fontSize: 12 }}>{selected.Text || selected.HTML || "(empty)"}</Text>
+        </View>
+        <Pressable onPress={() => del(selected.ID)} style={[actionBtn(c), { backgroundColor: "#ef444420" }]}>
+          <Text style={{ color: "#ef4444" }}>Delete</Text>
+        </Pressable>
+      </View>
+    );
+  }
+  return (
+    <View style={{ gap: 6 }}>
+      <Text style={{ color: c.textMuted, fontSize: 11 }}>Dev mail caught by Mailpit ({total}) · /mail/list via agent</Text>
+      {list.length === 0 && <Text style={{ color: c.textMuted, textAlign: "center", padding: 20 }}>No messages.</Text>}
+      {list.map((m) => (
+        <Pressable key={m.ID} onPress={() => loadDetail(m.ID)} style={[card(c)]}>
+          <Text style={{ color: c.textPrimary, fontWeight: m.Read ? "400" : "700", fontSize: 13 }} numberOfLines={1}>
+            {m.Subject || "(no subject)"}
+          </Text>
+          <Text style={{ color: c.textMuted, fontSize: 11 }} numberOfLines={1}>{m.From?.Address} → {(m.To?.[0]?.Address) || "?"}</Text>
+          <Text style={{ color: c.textMuted, fontSize: 10, marginTop: 2 }}>{(m.Created || "").slice(0, 19)}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+function S3Tab({ c }: { c: any }) {
+  const [bucket, setBucket] = useState("yaver");
+  const [files, setFiles] = useState<any[]>([]);
+  const [error, setError] = useState("");
+  async function load() {
+    const r = await call(`/objects/list?bucket=${encodeURIComponent(bucket)}`);
+    setFiles(r.files || []);
+    setError(r.error || "");
+  }
+  useEffect(() => { load(); }, []);
+  return (
+    <View style={{ gap: 8 }}>
+      <Text style={{ color: c.textMuted, fontSize: 11 }}>S3-compatible storage (MinIO local default). SigV4 for AWS/R2/B2.</Text>
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        <TextInput value={bucket} onChangeText={setBucket} placeholder="bucket"
+          placeholderTextColor={c.textMuted}
+          style={[inputStyle(c), { flex: 1, fontFamily: "Menlo", fontSize: 12 }]} />
+        <Pressable onPress={load} style={[actionBtn(c), { backgroundColor: c.accent, paddingHorizontal: 16 }]}>
+          <Text style={{ color: "#fff", fontWeight: "700" }}>List</Text>
+        </Pressable>
+      </View>
+      {error && <Text style={{ color: "#ef4444", fontSize: 11 }}>{error}</Text>}
+      {files.map((f) => (
+        <View key={f.key} style={[card(c), { flexDirection: "row", alignItems: "center" }]}>
+          <Text style={{ color: c.textPrimary, fontSize: 12, flex: 1 }} numberOfLines={1}>{f.key}</Text>
+          <Text style={{ color: c.textMuted, fontSize: 11 }}>{fmtBytes(f.size)}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function inputStyle(c: any) { return { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10, color: c.textPrimary } as const; }
 
 function Card({ c, label, value, sub }: { c: any; label: string; value: string; sub: string }) {
   return (

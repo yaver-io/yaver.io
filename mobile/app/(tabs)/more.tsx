@@ -2146,6 +2146,21 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
+        {/* Home — AWS-style overview dashboard */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/home" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\uD83C\uDFE0"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Home</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Machines · Projects · Services · Alerts · Cost · Uptime</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
         {/* Ops — deploy, backups, domains, uptime, secret rotate */}
         {connected && (
           <Pressable
