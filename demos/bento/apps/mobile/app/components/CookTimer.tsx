@@ -4,12 +4,14 @@ import { Text, View } from "react-native";
 type Step = { text: string; duration?: number };
 
 export default function CookTimer({ step }: { step: Step }) {
-  // INTENTIONAL: missing ?? fallback — fixed live in auto-test video
-  const [seconds, setSeconds] = useState<number>(step.duration);
+  // INTENTIONAL: cast to number so TS compiles, but step.duration is
+  // undefined for the "Refrigerate overnight" step → runtime NaN timer.
+  // The auto-test video replaces this with `step.duration ?? 300`.
+  const [seconds, setSeconds] = useState<number>(step.duration as number);
   const [running, setRunning] = useState(true);
 
   useEffect(() => {
-    setSeconds(step.duration);
+    setSeconds(step.duration as number);
   }, [step]);
 
   useEffect(() => {
