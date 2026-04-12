@@ -274,10 +274,13 @@ func nextQuestion(sess *WizardSession) *WizardQuestion {
 // ProjectGenerationResult is what GenerateProject returns — the
 // target directory + a bulleted list of manual follow-up steps.
 type ProjectGenerationResult struct {
-	OK        bool     `json:"ok"`
-	Directory string   `json:"directory"`
-	Files     []string `json:"files"`
-	NextSteps []string `json:"nextSteps"`
+	OK             bool     `json:"ok"`
+	Directory      string   `json:"directory"`
+	Files          []string `json:"files"`
+	NextSteps      []string `json:"nextSteps"`
+	ServicesLog    string   `json:"servicesLog,omitempty"`
+	ServicesError  string   `json:"servicesError,omitempty"`
+	ServicesStarted bool    `json:"servicesStarted,omitempty"`
 }
 
 // GenerateProject materialises the scaffold described by the
@@ -506,6 +509,22 @@ func GenerateProject(id, parentDir string) (*ProjectGenerationResult, error) {
 	}
 	if pushResult != "" {
 		res.NextSteps = append([]string{"Git remote: " + pushResult}, res.NextSteps...)
+	}
+
+	// Auto-start the local backend services the wizard just wired up. This
+	// powers the Video 1 "tap Create Project and the Convex dashboard is live"
+	// flow — no manual `yaver services start` step. Best-effort: if Docker
+	// isn't running or presets are missing, we surface the error in the
+	// result but don't fail generation.
+	if sm := NewServicesManager(dir); sm != nil {
+		if cfg, err := sm.LoadConfig(); err == nil && len(cfg.Services) > 0 {
+			if out, err := sm.Start(); err != nil {
+				res.ServicesError = err.Error()
+			} else {
+				res.ServicesLog = out
+				res.ServicesStarted = true
+			}
+		}
 	}
 	return res, nil
 }

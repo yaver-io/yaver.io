@@ -1790,6 +1790,21 @@ func runServe(args []string) {
 
 		httpServer.notifyMgr.NotifyTaskCompleted(task.ID, task.Title, string(task.Status), task.CostUSD, dur)
 
+		// Auto hot-reload: if the task completed successfully and a dev server
+		// is running, broadcast a reload command so the app on the device picks
+		// up the agent's file changes without a manual tap.
+		if task.Status == TaskStatusFinished && httpServer.devServerMgr != nil && httpServer.devServerMgr.IsRunning() {
+			if err := httpServer.devServerMgr.Reload(); err != nil {
+				log.Printf("[task %s] auto-reload dev server: %v", task.ID, err)
+			}
+			if httpServer.blackboxMgr != nil {
+				httpServer.blackboxMgr.BroadcastCommand(BlackBoxCommand{
+					Command: "reload",
+					Data:    map[string]interface{}{"reason": "task " + task.ID + " completed"},
+				})
+			}
+		}
+
 		// Record guest usage
 		if task.GuestUserID != "" && dur > 0 && httpServer.guestConfigMgr != nil {
 			httpServer.guestConfigMgr.RecordUsage(task.GuestUserID, float64(dur))
