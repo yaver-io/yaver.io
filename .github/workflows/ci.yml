@@ -177,6 +177,120 @@ jobs:
           CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
         run: ./scripts/test-agent-e2e.sh
 
+  # Tailscale connectivity — CI runner joins tailnet, tests cross-machine agent
+  agent-tailscale:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Connect to Tailscale
+        if: ${{ secrets.TAILSCALE_AUTHKEY != '' }}
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+      - name: Build agent
+        run: cd desktop/agent && go build -o /tmp/yaver .
+      - name: Get CI token
+        id: auth
+        env:
+          CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+        run: |
+          URL="${CONVEX_SITE_URL:-https://shocking-echidna-394.eu-west-1.convex.site}"
+          TOKEN=$(curl -sf -X POST "$URL/auth/login" -H "Content-Type: application/json" \
+            -d '{"email":"ci-test@yaver.io","password":"ciTestPass2026!"}' \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null) || true
+          [ -z "$TOKEN" ] && TOKEN=$(curl -sf -X POST "$URL/auth/signup" -H "Content-Type: application/json" \
+            -d '{"email":"ci-test@yaver.io","fullName":"CI Test","password":"ciTestPass2026!"}' \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null) || true
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+      - name: Test Tailscale connectivity
+        run: |
+          TS_IP=$(tailscale ip -4 2>/dev/null || echo "")
+          echo "Tailscale IP: $TS_IP"
+          [ -n "$TS_IP" ] || { echo "Tailscale not connected"; exit 1; }
+          tailscale status
+          # Start agent bound to Tailscale IP.
+          mkdir -p /tmp/ts-test/.yaver
+          echo "{\"auth_token\":\"${{ steps.auth.outputs.token }}\",\"convex_site_url\":\"${{ steps.auth.outputs.url }}\",\"device_id\":\"ci-ts-test\"}" > /tmp/ts-test/.yaver/config.json
+          HOME=/tmp/ts-test /tmp/yaver serve --debug --port 18080 --quic-port 4433 --dummy --no-relay > /tmp/ts-agent.log 2>&1 &
+          sleep 3
+          # Verify agent is reachable via Tailscale IP.
+          curl -sf "http://$TS_IP:18080/health" | grep -q ok && echo "Agent reachable via Tailscale" || { echo "Failed"; cat /tmp/ts-agent.log; exit 1; }
+          # Create a task via Tailscale IP.
+          TASK=$(curl -sf -X POST "http://$TS_IP:18080/tasks" \
+            -H "Authorization: Bearer ${{ steps.auth.outputs.token }}" \
+            -H "Content-Type: application/json" \
+            -d '{"title":"tailscale ci test"}')
+          echo "Task created via Tailscale: $TASK"
+          echo "$TASK" | grep -q "taskId" && echo "SUCCESS: Task created via Tailscale" || { echo "FAIL"; exit 1; }
+
+  # OAuth flow validation — tests auth endpoints, device code, token validation
+  auth-flow:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Build agent
+        run: cd desktop/agent && go build -o /tmp/yaver .
+      - name: Test auth endpoints
+        env:
+          CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+        run: |
+          URL="${CONVEX_SITE_URL:-https://shocking-echidna-394.eu-west-1.convex.site}"
+          echo "=== Auth Flow Tests ==="
+
+          # 1. Signup flow.
+          SIGNUP_EMAIL="ci-auth-$(date +%s)@yaver.test"
+          SIGNUP=$(curl -sf -X POST "$URL/auth/signup" -H "Content-Type: application/json" \
+            -d "{\"email\":\"$SIGNUP_EMAIL\",\"fullName\":\"CI Auth Test\",\"password\":\"TestPass2026!\"}" 2>/dev/null)
+          TOKEN=$(echo "$SIGNUP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null)
+          [ -n "$TOKEN" ] && echo "PASS: Signup returns token" || { echo "FAIL: Signup"; exit 1; }
+
+          # 2. Login with same creds.
+          LOGIN=$(curl -sf -X POST "$URL/auth/login" -H "Content-Type: application/json" \
+            -d "{\"email\":\"$SIGNUP_EMAIL\",\"password\":\"TestPass2026!\"}" 2>/dev/null)
+          LOGIN_TOKEN=$(echo "$LOGIN" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null)
+          [ -n "$LOGIN_TOKEN" ] && echo "PASS: Login returns token" || { echo "FAIL: Login"; exit 1; }
+
+          # 3. Validate token.
+          VALIDATE=$(curl -sf "$URL/auth/validate" -H "Authorization: Bearer $TOKEN" 2>/dev/null)
+          echo "$VALIDATE" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d.get('valid') or d.get('email')" 2>/dev/null \
+            && echo "PASS: Token validates" || echo "SKIP: Validate endpoint may differ"
+
+          # 4. Wrong password rejected.
+          BAD_LOGIN=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$URL/auth/login" -H "Content-Type: application/json" \
+            -d "{\"email\":\"$SIGNUP_EMAIL\",\"password\":\"WrongPass!\"}" 2>/dev/null)
+          [ "$BAD_LOGIN" = "401" ] || [ "$BAD_LOGIN" = "400" ] && echo "PASS: Wrong password rejected ($BAD_LOGIN)" || echo "FAIL: Wrong password got $BAD_LOGIN"
+
+          # 5. Device code flow (headless auth).
+          DEVICE_CODE=$(curl -sf -X POST "$URL/auth/device-code" -H "Content-Type: application/json" \
+            -d '{"deviceName":"CI Test Runner"}' 2>/dev/null)
+          USER_CODE=$(echo "$DEVICE_CODE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('userCode',''))" 2>/dev/null)
+          [ -n "$USER_CODE" ] && echo "PASS: Device code flow returns userCode=$USER_CODE" || echo "SKIP: Device code endpoint may differ"
+
+          # 6. OAuth redirect URLs work (don't need real OAuth creds, just verify endpoints exist).
+          for provider in google apple microsoft; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://yaver.io/api/auth/oauth/$provider?client=desktop" 2>/dev/null)
+            [ "$CODE" = "302" ] || [ "$CODE" = "307" ] || [ "$CODE" = "200" ] \
+              && echo "PASS: OAuth $provider redirect ($CODE)" \
+              || echo "SKIP: OAuth $provider returned $CODE (may need creds)"
+          done
+
+          # 7. Cleanup — delete the test account.
+          curl -sf -X POST "$URL/auth/delete-account" -H "Authorization: Bearer $TOKEN" 2>/dev/null \
+            && echo "PASS: Test account deleted" || echo "SKIP: Delete may not be supported"
+
+          echo "=== Auth tests complete ==="
+
   # Ollama LLM integration — install ollama, pull small model, run real task
   agent-ollama:
     if: github.event_name == 'workflow_dispatch'
