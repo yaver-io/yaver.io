@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
+  NativeModules,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -39,6 +40,10 @@ export default function StudioScreen() {
   const [clips, setClips] = useState<any[]>([]);
   const [recording, setRecording] = useState(false);
   const [clipTitle, setClipTitle] = useState("");
+  type RecordTarget = "agent" | "mobile" | "both";
+  const [recordTarget, setRecordTarget] = useState<RecordTarget>("both");
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [uploadingMobile, setUploadingMobile] = useState(false);
 
   // Chat
   const [conversations, setConversations] = useState<any[]>([]);
@@ -78,24 +83,81 @@ export default function StudioScreen() {
   useEffect(() => { load(); }, [load]);
 
   const startClip = useCallback(async () => {
-    const res = await quicClient.clipStart({ title: clipTitle || "Untitled" });
-    if (res) {
+    const targets: string[] = [];
+    const wantAgent = recordTarget === "agent" || recordTarget === "both";
+    const wantMobile = recordTarget === "mobile" || recordTarget === "both";
+    if (wantAgent) targets.push("agent-screen");
+    if (wantMobile) targets.push("mobile-screen");
+
+    // Start mobile screen recording first (native module).
+    if (wantMobile) {
+      try {
+        if (NativeModules.ScreenRecorder) {
+          await NativeModules.ScreenRecorder.startRecording();
+        } else {
+          Alert.alert("Not available", "Screen recording is not available on this device.");
+          return;
+        }
+      } catch (e: any) {
+        Alert.alert("Recording failed", e?.message || "Could not start screen recording.");
+        return;
+      }
+    }
+
+    // Start agent-side recording (creates the session).
+    const res = await quicClient.clipStart({ title: clipTitle || "Untitled", targets });
+    if (res?.session?.id) {
       setRecording(true);
+      setActiveSessionId(res.session.id);
       setClipTitle("");
-      Alert.alert("Recording", "Screen capture started on the agent.");
+      const where = wantAgent && wantMobile ? "agent + mobile" : wantAgent ? "agent" : "mobile";
+      Alert.alert("Recording", `Capture started on ${where}.`);
     } else {
+      // Roll back mobile recording if agent start failed.
+      if (wantMobile && NativeModules.ScreenRecorder) {
+        try { await NativeModules.ScreenRecorder.stopRecording(); } catch {}
+      }
       Alert.alert("Start failed", "Install ffmpeg on the agent (yaver doctor).");
     }
-  }, [clipTitle]);
+  }, [clipTitle, recordTarget]);
 
   const stopClip = useCallback(async () => {
-    const res = await quicClient.clipStop();
-    setRecording(false);
-    if (res) {
-      load();
-      Alert.alert("Saved", `Clip ${res.session?.id ?? ""} ready.`);
+    const wantAgent = recordTarget === "agent" || recordTarget === "both";
+    const wantMobile = recordTarget === "mobile" || recordTarget === "both";
+
+    // Stop agent and mobile in parallel.
+    const agentStop = wantAgent ? quicClient.clipStop() : Promise.resolve(null);
+    let mobileFilePath: string | null = null;
+    if (wantMobile && NativeModules.ScreenRecorder) {
+      try {
+        mobileFilePath = await NativeModules.ScreenRecorder.stopRecording();
+      } catch {}
     }
-  }, [load]);
+    const agentRes = await agentStop;
+    setRecording(false);
+
+    const sessionId = activeSessionId || agentRes?.session?.id;
+    if (!sessionId) {
+      load();
+      return;
+    }
+
+    // Upload mobile screen recording to agent.
+    if (mobileFilePath && sessionId) {
+      setUploadingMobile(true);
+      await quicClient.clipUploadMobileScreen(sessionId, mobileFilePath);
+      setUploadingMobile(false);
+
+      // Auto-merge if both streams were recorded.
+      if (wantAgent && wantMobile) {
+        await quicClient.clipMerge(sessionId);
+      }
+    }
+
+    setActiveSessionId(null);
+    load();
+    Alert.alert("Saved", `Clip ${sessionId} ready.`);
+  }, [load, recordTarget, activeSessionId]);
 
   const openChat = useCallback(async (vid: string) => {
     setActiveVid(vid);
@@ -139,25 +201,53 @@ export default function StudioScreen() {
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48 }}>
           {pane === "clips" ? (
             <View>
-              {!recording ? (
+              {!recording && !uploadingMobile ? (
                 <>
                   <TextInput value={clipTitle} onChangeText={setClipTitle} placeholder="Recording title" placeholderTextColor={c.textMuted} style={[s.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput }]} />
+                  {/* Target selector */}
+                  <View style={{ flexDirection: "row", marginTop: 10, borderRadius: 9, overflow: "hidden", borderWidth: 1, borderColor: c.border }}>
+                    {(["mobile", "agent", "both"] as RecordTarget[]).map((t) => (
+                      <Pressable
+                        key={t}
+                        onPress={() => setRecordTarget(t)}
+                        style={{ flex: 1, paddingVertical: 10, alignItems: "center", backgroundColor: recordTarget === t ? c.accent : c.bgCard }}
+                      >
+                        <Text style={{ color: recordTarget === t ? "#fff" : c.textMuted, fontWeight: "600", fontSize: 13, textTransform: "capitalize" }}>{t === "both" ? "Both" : t === "agent" ? "Agent" : "Mobile"}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
                   <Pressable onPress={startClip} style={[s.btn, { backgroundColor: "#ef4444", marginTop: 10 }]}>
-                    <Text style={s.btnText}>● Record screen</Text>
+                    <Text style={s.btnText}>{"●"} Record</Text>
                   </Pressable>
                 </>
+              ) : uploadingMobile ? (
+                <View style={{ alignItems: "center", paddingVertical: 20 }}>
+                  <ActivityIndicator />
+                  <Text style={{ color: c.textMuted, marginTop: 8 }}>Uploading mobile recording...</Text>
+                </View>
               ) : (
                 <Pressable onPress={stopClip} style={[s.btn, { backgroundColor: "#ef4444" }]}>
-                  <Text style={s.btnText}>■ Stop</Text>
+                  <Text style={s.btnText}>{"■"} Stop</Text>
                 </Pressable>
               )}
               <Text style={[s.section, { color: c.textPrimary, marginTop: 16 }]}>Recent clips</Text>
-              {clips.map((cl: any) => (
-                <View key={cl.id} style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
-                  <Text style={[s.cardTitle, { color: c.textPrimary }]}>{cl.title || cl.id}</Text>
-                  <Text style={[s.cardMeta, { color: c.textMuted }]}>/clips/{cl.id} · {cl.durationSec || 0}s</Text>
-                </View>
-              ))}
+              {clips.map((cl: any) => {
+                const streams = (cl.streams || []) as { kind: string; uploaded: boolean }[];
+                const hasMerged = streams.some((st) => st.kind === "merged" && st.uploaded);
+                const hasAgent = streams.some((st) => st.kind === "agent-screen" && st.uploaded);
+                const hasMobile = streams.some((st) => st.kind === "mobile-screen" && st.uploaded);
+                return (
+                  <View key={cl.id} style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+                    <Text style={[s.cardTitle, { color: c.textPrimary }]}>{cl.title || cl.id}</Text>
+                    <Text style={[s.cardMeta, { color: c.textMuted }]}>/clips/{cl.id} · {cl.durationSec || 0}s</Text>
+                    <View style={{ flexDirection: "row", marginTop: 6, gap: 6 }}>
+                      {hasAgent && <Text style={s.badge}>Agent</Text>}
+                      {hasMobile && <Text style={s.badge}>Mobile</Text>}
+                      {hasMerged && <Text style={[s.badge, { backgroundColor: "#22c55e" }]}>Merged</Text>}
+                    </View>
+                  </View>
+                );
+              })}
             </View>
           ) : pane === "chat" ? (
             <View>
@@ -257,4 +347,5 @@ const s = StyleSheet.create({
   btn: { paddingVertical: 12, borderRadius: 9, alignItems: "center" },
   btnText: { color: "#fff", fontWeight: "700" },
   input: { borderWidth: 1, borderRadius: 8, padding: 12, marginTop: 10, fontSize: 15 },
+  badge: { fontSize: 10, fontWeight: "700", color: "#fff", backgroundColor: "#334155", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, overflow: "hidden" },
 });

@@ -33,13 +33,13 @@ import { fetchPairInfo, submitPair } from "../../src/lib/pairDevice";
 import { beaconListener, type DiscoveredDevice } from "../../src/lib/beacon";
 
 const TUTORIALS = [
-  { label: "Always-on Setup", icon: "\u{1F50C}", desc: "Auto-boot, systemd, run forever", url: "https://yaver.io/manuals/auto-boot" },
-  { label: "Self-host Relay", icon: "\u{1F310}", desc: "Your own relay server with Docker", url: "https://yaver.io/manuals/relay-setup" },
-  { label: "Local LLM", icon: "\u{1F9E0}", desc: "Ollama, Qwen, zero API keys", url: "https://yaver.io/manuals/local-llm" },
-  { label: "Voice AI", icon: "\u{1F3A4}", desc: "PersonaPlex, Whisper, speech-to-code", url: "https://yaver.io/manuals/voice-ai" },
-  { label: "Feedback SDK", icon: "\u{1F41B}", desc: "Visual bug reports from your app", url: "https://yaver.io/manuals/feedback-loop" },
+  { label: "Always-on Setup", icon: "\u2197", desc: "Auto-boot, systemd, run forever", url: "https://yaver.io/manuals/auto-boot" },
+  { label: "Self-host Relay", icon: "\u2295", desc: "Your own relay server with Docker", url: "https://yaver.io/manuals/relay-setup" },
+  { label: "Local LLM", icon: "\u25C7", desc: "Ollama, Qwen, zero API keys", url: "https://yaver.io/manuals/local-llm" },
+  { label: "Voice AI", icon: "\u2022", desc: "PersonaPlex, Whisper, speech-to-code", url: "https://yaver.io/manuals/voice-ai" },
+  { label: "Feedback SDK", icon: "\u25CB", desc: "Visual bug reports from your app", url: "https://yaver.io/manuals/feedback-loop" },
   { label: "CLI Setup", icon: "\u2699", desc: "Install, auth, configure agents", url: "https://yaver.io/manuals/cli-setup" },
-  { label: "Integrations", icon: "\u{1F517}", desc: "MCP, Claude Desktop, Cursor", url: "https://yaver.io/manuals/integrations" },
+  { label: "Integrations", icon: "\u2190", desc: "MCP, Claude Desktop, Cursor", url: "https://yaver.io/manuals/integrations" },
 ];
 
 // ── Quality Gates types ────────────────────────────────────────────
@@ -2135,7 +2135,7 @@ export default function MoreScreen() {
             style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
             onPress={() => router.navigate("/(tabs)/monitor" as any)}
           >
-            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F4CA}"}</Text>
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u2261"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Monitor</Text>
               <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
@@ -2167,7 +2167,7 @@ export default function MoreScreen() {
             style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
             onPress={() => router.navigate("/(tabs)/files" as any)}
           >
-            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F4C1}"}</Text>
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u25A1"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Files</Text>
               <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Browse project files (read-only)</Text>
@@ -2197,7 +2197,7 @@ export default function MoreScreen() {
             style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
             onPress={() => router.navigate("/(tabs)/solostack" as any)}
           >
-            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F9F0}"}</Text>
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u2630"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Solo Stack</Text>
               <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Forms, newsletter, job queue</Text>
@@ -2212,7 +2212,7 @@ export default function MoreScreen() {
             style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
             onPress={() => router.navigate("/(tabs)/studio" as any)}
           >
-            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F3AC}"}</Text>
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u25CE"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Studio</Text>
               <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Screen clips, chat, invoices, A/B, affiliates, casts</Text>
@@ -2227,7 +2227,7 @@ export default function MoreScreen() {
             style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
             onPress={() => router.navigate("/(tabs)/mail" as any)}
           >
-            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F4E7}"}</Text>
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u2709"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Mail</Text>
               <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Gmail / O365 inbox, smart classifier, AI drafts</Text>
@@ -2242,7 +2242,7 @@ export default function MoreScreen() {
             style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
             onPress={() => router.navigate("/(tabs)/gitproviders" as any)}
           >
-            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F511}"}</Text>
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u2387"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Git Providers</Text>
               <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>GitHub / GitLab — browse repos, clone to machine</Text>
@@ -2265,7 +2265,7 @@ export default function MoreScreen() {
           style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
           onPress={openPair}
         >
-          <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F511}"}</Text>
+          <Text style={[s.icon, { color: c.textMuted }]}>{"\u2194"}</Text>
           <View style={{ flex: 1 }}>
             <Text style={[s.label, { color: c.textPrimary }]}>Pair a device</Text>
             <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Push auth to a headless machine via passkey</Text>
@@ -2277,7 +2277,7 @@ export default function MoreScreen() {
           style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
           onPress={() => router.navigate("/(tabs)/guests" as any)}
         >
-          <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F91D}"}</Text>
+          <Text style={[s.icon, { color: c.textMuted }]}>{"\u2192"}</Text>
           <View style={{ flex: 1 }}>
             <Text style={[s.label, { color: c.textPrimary }]}>Guest Access</Text>
             <Text style={[s.desc, { color: c.textMuted }]}>Invite others to use your machine</Text>
@@ -2286,7 +2286,7 @@ export default function MoreScreen() {
         </Pressable>
 
         <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleTutorials}>
-          <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F4DA}"}</Text>
+          <Text style={[s.icon, { color: c.textMuted }]}>{"\u2302"}</Text>
           <View style={{ flex: 1 }}>
             <Text style={[s.label, { color: c.textPrimary }]}>Tutorials</Text>
             <Text style={[s.desc, { color: c.textMuted }]}>Guides for setup, deploy, voice AI</Text>
