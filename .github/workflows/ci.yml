@@ -187,8 +187,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
-      - name: Install Ollama
-        run: curl -fsSL https://ollama.com/install.sh | sh
+      - name: Install and start Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve &
+          sleep 3
       - name: Pull small model
         run: ollama pull qwen2.5-coder:1.5b
       - name: Build agent
