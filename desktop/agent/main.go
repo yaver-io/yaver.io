@@ -29,7 +29,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.86.0"
+const version = "1.87.0"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
@@ -3168,9 +3168,10 @@ func runStatus() {
 
 		fmt.Println()
 		fmt.Println("To sign in, either:")
-		fmt.Println("  • Run 'yaver auth' here, or")
-		fmt.Println("  • Open the Yaver mobile app on the same Wi-Fi —")
-		fmt.Println("    this machine appears as 'needs auth', tap to pair.")
+		fmt.Println("  • Run 'yaver auth' here (opens browser for Apple/Google/Microsoft sign-in), or")
+		fmt.Println("  • Open the Yaver mobile app — this machine will be auto-paired:")
+		fmt.Println("      - Same Wi-Fi: detected via LAN beacon, paired in ~5 seconds")
+		fmt.Println("      - Any network: detected via relay, paired with encrypted token push")
 		return
 	}
 
