@@ -156,15 +156,12 @@ export default function AppsScreen() {
 
   const router = useRouter();
 
-  // Tap project → if dev server running for it, dispatch to native-on-LAN or Hermes-on-relay.
+  // Tap project → if dev server running, always use Hermes push (fast, ~10s).
+  // Xcode native build is available via "Install Native" action in the sheet.
   const handleTapProject = useCallback(async (projectName: string) => {
     const isRunning = devStatus?.workDir?.endsWith(projectName);
     if (isRunning) {
-      if (Platform.OS === "ios" && quicClient.connectionMode === "direct") {
-        handleDirectBuild();
-      } else {
-        handleOpenNative(devStatus!.workDir!);
-      }
+      handleOpenNative(devStatus!.workDir!);
       return;
     }
 
@@ -255,13 +252,16 @@ export default function AppsScreen() {
         if (!status?.running) {
           await quicClient.sendTask(
             `Hot reload ${project} (${action.framework}) on my phone`,
-            `Start the dev server for ${action.target} in ${targetPath}`,
+            `Call POST /dev/start with workDir=${targetPath} to start Metro. DO NOT run 'expo run:ios', 'expo run:android', 'xcodebuild', 'gradlew', or any native build — the mobile app loads the JS bundle via Hermes push (/dev/build-native). Only Metro is needed.`,
           );
           router.navigate("/(tabs)/tasks");
         }
       } catch {
         const targetPath = action.target === "." ? path : `${path}/${action.target}`.replace(/\/+$/, "");
-        await quicClient.sendTask(`Hot reload ${project} on my phone`, `Start dev server in ${targetPath}`).catch(() => {});
+        await quicClient.sendTask(
+          `Hot reload ${project} on my phone`,
+          `Call POST /dev/start with workDir=${targetPath}. Metro only — no expo run:ios, no xcodebuild. Mobile loads via Hermes push.`,
+        ).catch(() => {});
         router.navigate("/(tabs)/tasks");
       } finally {
         setStartingProject(null);
@@ -440,15 +440,10 @@ export default function AppsScreen() {
 
   const handleOpen = useCallback(() => {
     if (!devStatus?.workDir) return;
-    // iOS + same WiFi → native xcodebuild + xcrun devicectl install (like Xcode deploy).
-    // Any other case (Android, relay/cellular) → Hermes bytecode bundle into Yaver super-host.
-    // Never WebView — WebView is banned for third-party apps per CLAUDE.md.
-    if (Platform.OS === "ios" && quicClient.connectionMode === "direct") {
-      handleDirectBuild();
-    } else {
-      handleOpenNative(devStatus.workDir);
-    }
-  }, [devStatus, handleOpenNative, handleDirectBuild]);
+    // Always Hermes push — fast (~10s), works on LAN and relay equally.
+    // Xcode native device install is available as a separate "Install Native" action.
+    handleOpenNative(devStatus.workDir);
+  }, [devStatus, handleOpenNative]);
 
   const handleReload = useCallback(async () => {
     setWebViewLoading(true);

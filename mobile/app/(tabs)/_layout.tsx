@@ -8,6 +8,7 @@ import { quicClient } from "../../src/lib/quic";
 function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boolean; showGreenDot?: boolean }) {
   const c = useColors();
   const icons: Record<string, string> = {
+    "Hot Reload": "\u21BB",
     Tasks: "T",
     Todos: "\u2610",
     Projects: "\u25B6",
