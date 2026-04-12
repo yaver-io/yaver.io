@@ -158,3 +158,81 @@ jobs:
           node-version: "20"
       - name: Test Feedback SDK (React Native)
         run: cd sdk/feedback/react-native && npm ci && npm test -- --passWithNoTests
+
+  # Deep agent E2E — builds agent, authenticates, tests every API surface
+  agent-e2e:
+    needs: changes
+    if: needs.changes.outputs.cli == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Run agent E2E tests
+        env:
+          CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+        run: ./scripts/test-agent-e2e.sh
+
+  # Ollama LLM integration — install ollama, pull small model, run real task
+  agent-ollama:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+      - name: Pull small model
+        run: ollama pull qwen2.5-coder:1.5b
+      - name: Build agent
+        run: cd desktop/agent && go build -o /tmp/yaver .
+      - name: Get CI token
+        id: auth
+        env:
+          CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+        run: |
+          URL="${CONVEX_SITE_URL:-https://shocking-echidna-394.eu-west-1.convex.site}"
+          TOKEN=$(curl -sf -X POST "$URL/auth/login" -H "Content-Type: application/json" \
+            -d '{"email":"ci-test@yaver.io","password":"ciTestPass2026!"}' \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null) || true
+          if [ -z "$TOKEN" ]; then
+            TOKEN=$(curl -sf -X POST "$URL/auth/signup" -H "Content-Type: application/json" \
+              -d '{"email":"ci-test@yaver.io","fullName":"CI Test","password":"ciTestPass2026!"}' \
+              | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null) || true
+          fi
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+      - name: Start agent (real mode)
+        run: |
+          mkdir -p ~/.yaver
+          echo "{\"auth_token\":\"${{ steps.auth.outputs.token }}\",\"convex_site_url\":\"${{ steps.auth.outputs.url }}\",\"device_id\":\"ci-ollama\"}" > ~/.yaver/config.json
+          /tmp/yaver serve --debug --no-relay --port 18080 --quic-port 4433 > /tmp/agent.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:18080/health >/dev/null 2>&1 && break; sleep 0.5; done
+      - name: Run hello-world task via Ollama
+        run: |
+          TASK=$(curl -sf -X POST http://127.0.0.1:18080/tasks \
+            -H "Authorization: Bearer ${{ steps.auth.outputs.token }}" \
+            -H "Content-Type: application/json" \
+            -d '{"prompt":"Write a Python hello world script. Just output the code, nothing else.","runner":"ollama"}')
+          TASK_ID=$(echo "$TASK" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          echo "Task: $TASK_ID"
+          # Poll until finished (max 120s).
+          for i in $(seq 1 60); do
+            STATUS=$(curl -sf http://127.0.0.1:18080/tasks/$TASK_ID \
+              -H "Authorization: Bearer ${{ steps.auth.outputs.token }}" \
+              | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null)
+            [ "$STATUS" = "finished" ] && break
+            sleep 2
+          done
+          echo "Final status: $STATUS"
+          OUTPUT=$(curl -sf http://127.0.0.1:18080/tasks/$TASK_ID/output \
+            -H "Authorization: Bearer ${{ steps.auth.outputs.token }}" 2>/dev/null)
+          echo "Output: $OUTPUT"
+          [ "$STATUS" = "finished" ] || { echo "Task did not finish"; cat /tmp/agent.log | tail -30; exit 1; }
