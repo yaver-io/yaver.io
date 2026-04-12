@@ -766,7 +766,7 @@ PaymentError: gateway timeout
 
           <Terminal title="Create SDK token">
             <Comment># Default: feedback, blackbox, voice, builds scopes</Comment>
-            <Cmd>yaver sdk-token create --label &quot;AcmeStore dev&quot;</Cmd>
+            <Cmd>yaver sdk-token create --label &quot;BentoApp dev&quot;</Cmd>
             <Output>4a8f9c...b3c2</Output>
             <Divider />
             <Comment># Narrow scopes + IP binding + short expiry</Comment>

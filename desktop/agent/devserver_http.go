@@ -595,7 +595,7 @@ func findHermesc(workDir string) string {
 
 // handleDevServerBuilds lists or clears build markers.
 // GET /dev/builds — list all build markers
-// DELETE /dev/builds?project=AcmeStore — clear a specific build marker
+// DELETE /dev/builds?project=BentoApp — clear a specific build marker
 // DELETE /dev/builds — clear all build markers
 func (s *HTTPServer) handleDevServerBuilds(w http.ResponseWriter, r *http.Request) {
 	buildsDir := yaverBuildsDir()

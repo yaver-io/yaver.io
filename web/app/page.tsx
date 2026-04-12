@@ -844,13 +844,6 @@ export default function HomePage() {
       {/* ── Section 1: Hero — three legs (power / simplicity / free) ── */}
       <section className="px-6 pb-12 pt-20 md:pt-32">
         <div className="mx-auto max-w-4xl text-center">
-          {/* Provocative hook — hits all three legs */}
-          <p className="mb-5 text-sm font-medium leading-relaxed text-surface-400 md:text-base">
-            More powerful than a cloud VM. Simpler than any console.
-            <br className="hidden sm:block" />
-            And free &mdash; not &ldquo;free tier&rdquo; free. Actually free.
-          </p>
-
           <h1 className="mb-6 text-5xl font-bold leading-[1.05] tracking-tight text-surface-50 sm:text-6xl md:text-7xl lg:text-8xl">
             Your machine.
             <br />
@@ -1392,7 +1385,7 @@ function ProjectWizardPreview() {
       </div>
       <div className="space-y-2 text-xs">
         {[
-          ["Name", "invoicehero"],
+          ["Name", "bentoapp"],
           ["Machine", "MacBook Pro"],
           ["Template", "SaaS Starter"],
           ["Backend", "Convex (local)"],
@@ -1415,7 +1408,7 @@ function ProjectWizardPreview() {
           ["\u2705", "Convex local running"],
           ["\u2705", "Mailpit running"],
           ["\uD83D\uDFE2", "Ready at localhost:3000"],
-          ["\uD83D\uDCF1", "Phone: invoicehero.yaver.dev"],
+          ["\uD83D\uDCF1", "Phone: bentoapp.yaver.dev"],
         ].map(([icon, text]) => (
           <div key={text} className="flex items-center gap-2 text-surface-300">
             <span>{icon}</span>
@@ -1450,7 +1443,7 @@ function DashboardComparison() {
       <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-5">
         <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-emerald-400">With Yaver</p>
         <div className="mb-4 space-y-1.5 font-mono text-xs text-surface-200">
-          <div>Convex Dashboard &rarr; <span className="text-emerald-400">yaver.io/db/invoicehero</span></div>
+          <div>Convex Dashboard &rarr; <span className="text-emerald-400">yaver.io/db/bentoapp</span></div>
           <div>Supabase Studio &nbsp;&rarr; <span className="text-emerald-400">yaver.io/db/mobile-app</span></div>
         </div>
         <ul className="space-y-1.5 text-xs text-surface-300">

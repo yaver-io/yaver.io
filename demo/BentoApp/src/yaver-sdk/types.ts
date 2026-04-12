@@ -28,7 +28,7 @@ export interface FeedbackConfig {
    * Project context string — tells the agent what app is being tested.
    * Embedded at build time via yaver.config.js. Included in all todo items
    * and feedback reports so the agent has full context.
-   * Example: 'You are testing "AcmeStore" (/path/to/AcmeStore).'
+   * Example: 'You are testing "BentoApp" (/path/to/BentoApp).'
    */
   projectContext?: string;
   /** Project name (from package.json). Shown as chip in agent UI. */

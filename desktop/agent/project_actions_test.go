@@ -59,13 +59,13 @@ func TestDetectProjectActions_YaverRepo(t *testing.T) {
 
 func TestDetectProjectActions_AcmeStore(t *testing.T) {
 	root := repoRoot(t)
-	acmeStore := filepath.Join(root, "demo", "AcmeStore")
+	acmeStore := filepath.Join(root, "demo", "BentoApp")
 	if _, err := os.Stat(acmeStore); os.IsNotExist(err) {
-		t.Skip("demo/AcmeStore not present — skipping")
+		t.Skip("demo/BentoApp not present — skipping")
 	}
 	actions := DetectProjectActions(acmeStore)
 	if len(actions) == 0 {
-		t.Fatal("expected actions for AcmeStore")
+		t.Fatal("expected actions for BentoApp")
 	}
 	hasHotReload := false
 	for _, a := range actions {

@@ -804,7 +804,7 @@ Request → ipAllowlist → CORS → auth()/authSDK()
 ### CLI Commands
 ```bash
 # Create SDK token (default scopes, 1 year)
-yaver sdk-token create --label "AcmeStore dev"
+yaver sdk-token create --label "BentoApp dev"
 
 # Narrow scopes + IP binding + short expiry
 yaver sdk-token create --scopes feedback,blackbox --allowed-ips 192.168.1.0/24 --expires 7d

@@ -62,7 +62,7 @@ SDK tokens are **long-lived (1 year)** and **independent from CLI session tokens
 
 ```bash
 # Create an SDK token
-yaver sdk-token create --label "AcmeStore dev"
+yaver sdk-token create --label "BentoApp dev"
 # prints: 4a8f...b3c2
 ```
 
@@ -121,7 +121,7 @@ The SDK implements defense-in-depth with 6 security layers:
 
 ```bash
 # Default scopes (safe for embedding in app builds)
-yaver sdk-token create --label "AcmeStore"
+yaver sdk-token create --label "BentoApp"
 # → scopes: feedback, blackbox, voice, builds
 
 # Narrow scopes (feedback only)
@@ -170,7 +170,7 @@ import { BlackBox } from 'yaver-feedback-react-native';
 BlackBox.start({
   flushInterval: 2000,   // send buffered events every 2s (default)
   maxBufferSize: 50,     // flush immediately at 50 events (default)
-  appName: 'AcmeStore',
+  appName: 'BentoApp',
 });
 
 // Logging
@@ -259,7 +259,7 @@ YaverFeedback.init({
 });
 
 // Start BlackBox — this also connects the command channel
-BlackBox.start({ appName: 'AcmeStore' });
+BlackBox.start({ appName: 'BentoApp' });
 ```
 
 ### Custom Command Handlers

@@ -3,8 +3,8 @@
   "convexUrl": "https://shocking-echidna-394.eu-west-1.convex.site",
   "agentUrl": "http://192.168.111.11:18080",
   "project": {
-    "name": "acmestore",
+    "name": "bentoapp",
     "version": "1.0.0",
-    "path": "/Users/kivanccakmak/Workspace/yaver.io/demo/AcmeStore"
+    "path": "/Users/kivanccakmak/Workspace/yaver.io/demo/BentoApp"
   }
 }
