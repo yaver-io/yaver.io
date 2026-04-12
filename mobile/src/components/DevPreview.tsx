@@ -40,14 +40,14 @@ export function DevPreview() {
     const poll = async () => {
       const s = await quicClient.getDevServerStatus();
       if (!mounted) return;
-      const isRunning = s?.running === true;
-      setStatus(isRunning ? s : null);
+      const isActive = s?.running === true || s?.building === true;
+      setStatus(isActive ? s : null);
 
       // Auto-show banner when dev server first starts
-      if (isRunning && !wasRunning.current) {
+      if (isActive && !wasRunning.current) {
         wasRunning.current = true;
       }
-      if (!isRunning) {
+      if (!isActive) {
         wasRunning.current = false;
         if (showPreview) setShowPreview(false);
       }
@@ -59,7 +59,7 @@ export function DevPreview() {
 
   // Subscribe to SSE events for auto-reload + log streaming
   useEffect(() => {
-    if (!status?.running) return;
+    if (!status?.running && !status?.building) return;
 
     const controller = new AbortController();
     const baseUrl = (quicClient as any).baseUrl;
@@ -94,8 +94,12 @@ export function DevPreview() {
                   setWebViewKey(k => k + 1);
                   setLoading(true);
                   setLastLogLine("");
+                } else if (event.type === "building") {
+                  setLastLogLine(event.message || "Building...");
                 } else if (event.type === "log" && event.logLine) {
                   setLastLogLine(event.logLine);
+                } else if (event.type === "error") {
+                  setLastLogLine(event.message || "Build failed");
                 }
               } catch {}
             }
@@ -108,7 +112,7 @@ export function DevPreview() {
     listenSSE();
 
     return () => controller.abort();
-  }, [status?.running]);
+  }, [status?.running, status?.building]);
 
   const isNativeMode = status?.devMode === "dev-client";
   const [nativeLoading, setNativeLoading] = useState(false);
@@ -236,14 +240,22 @@ export function DevPreview() {
     <>
       {/* Banner */}
       <Pressable
-        style={[styles.banner, { backgroundColor: "#0f1a0f", borderColor: "#22c55e" }]}
-        onPress={handleOpen}
+        style={[styles.banner, {
+          backgroundColor: status.building ? "#1a1a0f" : "#0f1a0f",
+          borderColor: status.building ? "#eab308" : "#22c55e",
+        }]}
+        onPress={status.building ? undefined : handleOpen}
+        disabled={!!status.building}
       >
         <View style={styles.bannerLeft}>
-          <View style={[styles.dot, { backgroundColor: "#22c55e" }]} />
-          <View>
+          {status.building ? (
+            <ActivityIndicator size="small" color="#eab308" />
+          ) : (
+            <View style={[styles.dot, { backgroundColor: "#22c55e" }]} />
+          )}
+          <View style={{ flex: 1 }}>
             <Text style={styles.bannerTitle}>
-              {status.framework} dev server
+              {status.building ? "Building native app..." : `${status.framework} dev server`}
             </Text>
             {status.workDir && (
               <Text style={styles.bannerSubtitle} numberOfLines={1}>
@@ -251,14 +263,21 @@ export function DevPreview() {
               </Text>
             )}
             {lastLogLine ? (
-              <Text style={[styles.bannerSubtitle, { color: "#6b7280", fontSize: 10, marginTop: 2 }]} numberOfLines={1}>
+              <Text style={[styles.bannerSubtitle, {
+                color: status.building ? "#eab308" : "#6b7280",
+                fontSize: 10,
+                marginTop: 2,
+                fontFamily: "monospace",
+              }]} numberOfLines={1}>
                 {lastLogLine}
               </Text>
             ) : null}
           </View>
         </View>
         <View style={styles.bannerRight}>
-          {nativeLoading ? (
+          {status.building ? (
+            <Text style={[styles.bannerAction, { color: "#eab308" }]}>Compiling</Text>
+          ) : nativeLoading ? (
             <ActivityIndicator size="small" color="#22c55e" />
           ) : (
             <>
@@ -295,76 +314,123 @@ export function DevPreview() {
             </View>
           </View>
 
-          {isNativeMode ? (
-            /* Native dev-client mode: Yaver is control plane, native app runs separately */
+          {isNativeMode || status.building ? (
+            /* Native dev-client mode or building: show controls / build logs */
             <View style={styles.nativeControls}>
-              <View style={styles.nativeStatus}>
-                <View style={[styles.dot, { backgroundColor: "#22c55e", width: 14, height: 14, borderRadius: 7 }]} />
-                <Text style={styles.nativeTitle}>Metro Running</Text>
-              </View>
-              <Text style={styles.nativeSubtext}>
-                {status.workDir?.split("/").pop() || "app"} — {status.framework} — port {status.port}
-              </Text>
-
-              {/* Metro URL — tap to copy */}
-              {status.deepLink && (
-                <Pressable
-                  onPress={() => {
-                    const url = status.deepLink!;
-                    import("expo-clipboard").then(({ setStringAsync }) => {
-                      setStringAsync(url);
-                      Alert.alert("Copied", url);
-                    }).catch(() => {});
-                  }}
-                  style={{ marginTop: 12, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10, backgroundColor: "#111", borderWidth: 1, borderColor: "#333" }}
-                >
-                  <Text style={{ fontFamily: "monospace", fontSize: 14, color: "#22c55e", textAlign: "center" }}>
-                    {status.deepLink}
+              {status.building ? (
+                /* ── Building state: show compilation progress ── */
+                <>
+                  <View style={styles.nativeStatus}>
+                    <ActivityIndicator size="small" color="#eab308" />
+                    <Text style={[styles.nativeTitle, { color: "#eab308" }]}>Building Native App</Text>
+                  </View>
+                  <Text style={styles.nativeSubtext}>
+                    {status.workDir?.split("/").pop() || "app"} — compiling for device
                   </Text>
-                  <Text style={{ fontSize: 11, color: "#666", textAlign: "center", marginTop: 4 }}>
-                    Tap to copy — paste in dev client if Bonjour fails
+                  <Text style={{ fontSize: 12, color: "#666", textAlign: "center", marginTop: 4 }}>
+                    This takes 3-5 min for the first build, ~30s for incremental
                   </Text>
-                </Pressable>
+
+                  {/* Build log output */}
+                  {lastLogLine ? (
+                    <View style={{
+                      marginTop: 16,
+                      padding: 12,
+                      borderRadius: 10,
+                      backgroundColor: "#111",
+                      borderWidth: 1,
+                      borderColor: "#333",
+                      width: "100%",
+                    }}>
+                      <Text style={{
+                        fontFamily: "monospace",
+                        fontSize: 11,
+                        color: "#eab308",
+                        lineHeight: 16,
+                      }} numberOfLines={3}>
+                        {lastLogLine}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  <View style={styles.nativeButtons}>
+                    <Pressable onPress={handleStop} style={[styles.nativeBtn, { backgroundColor: "#2e1a1a" }]}>
+                      <Text style={[styles.nativeBtnText, { color: "#ef4444" }]}>Cancel Build</Text>
+                    </Pressable>
+                  </View>
+                </>
+              ) : (
+                /* ── Running state: Metro is up, show controls ── */
+                <>
+                  <View style={styles.nativeStatus}>
+                    <View style={[styles.dot, { backgroundColor: "#22c55e", width: 14, height: 14, borderRadius: 7 }]} />
+                    <Text style={styles.nativeTitle}>Dev Server Ready</Text>
+                  </View>
+                  <Text style={styles.nativeSubtext}>
+                    {status.workDir?.split("/").pop() || "app"} — {status.framework} — port {status.port}
+                  </Text>
+
+                  {/* Metro URL — tap to copy */}
+                  {status.deepLink && (
+                    <Pressable
+                      onPress={() => {
+                        const url = status.deepLink!;
+                        import("expo-clipboard").then(({ setStringAsync }) => {
+                          setStringAsync(url);
+                          Alert.alert("Copied", url);
+                        }).catch(() => {});
+                      }}
+                      style={{ marginTop: 12, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10, backgroundColor: "#111", borderWidth: 1, borderColor: "#333" }}
+                    >
+                      <Text style={{ fontFamily: "monospace", fontSize: 14, color: "#22c55e", textAlign: "center" }}>
+                        {status.deepLink}
+                      </Text>
+                      <Text style={{ fontSize: 11, color: "#666", textAlign: "center", marginTop: 4 }}>
+                        Tap to copy — paste in dev client if Bonjour fails
+                      </Text>
+                    </Pressable>
+                  )}
+
+                  {/* Run in Yaver (super-host: load bundle inside Yaver's RCTBridge) */}
+                  <Pressable
+                    onPress={handleRunInYaver}
+                    disabled={nativeLoading}
+                    style={[styles.nativeBtn, { backgroundColor: "#1a2e1a", paddingHorizontal: 40, marginTop: 12 }]}
+                  >
+                    {nativeLoading ? (
+                      <ActivityIndicator size="small" color="#22c55e" />
+                    ) : (
+                      <Text style={[styles.nativeBtnText, { color: "#22c55e" }]}>Run in Yaver</Text>
+                    )}
+                  </Pressable>
+                  <Text style={{ fontSize: 11, color: "#555", textAlign: "center", marginTop: 4 }}>
+                    Full native access — camera, BLE, GPS, etc.
+                  </Text>
+
+                  {/* Open in separate dev client (if installed) */}
+                  {status.deepLink && (
+                    <Pressable
+                      onPress={() => {
+                        Linking.openURL(status.deepLink!).catch(() =>
+                          Alert.alert("Open App", "Open the app from your home screen.")
+                        );
+                      }}
+                      style={[styles.nativeBtn, { backgroundColor: "#1a1a2e", paddingHorizontal: 40, marginTop: 8 }]}
+                    >
+                      <Text style={[styles.nativeBtnText, { color: "#818cf8" }]}>Open Dev Client</Text>
+                    </Pressable>
+                  )}
+
+                  <View style={styles.nativeButtons}>
+                    <Pressable onPress={handleReload} style={[styles.nativeBtn, { backgroundColor: "#1a2e1a" }]}>
+                      <Text style={[styles.nativeBtnText, { color: "#22c55e" }]}>Reload</Text>
+                    </Pressable>
+                    <Pressable onPress={handleStop} style={[styles.nativeBtn, { backgroundColor: "#2e1a1a" }]}>
+                      <Text style={[styles.nativeBtnText, { color: "#ef4444" }]}>Stop Server</Text>
+                    </Pressable>
+                  </View>
+                </>
               )}
-
-              {/* Run in Yaver (super-host: load bundle inside Yaver's RCTBridge) */}
-              <Pressable
-                onPress={handleRunInYaver}
-                disabled={nativeLoading}
-                style={[styles.nativeBtn, { backgroundColor: "#1a2e1a", paddingHorizontal: 40, marginTop: 12 }]}
-              >
-                {nativeLoading ? (
-                  <ActivityIndicator size="small" color="#22c55e" />
-                ) : (
-                  <Text style={[styles.nativeBtnText, { color: "#22c55e" }]}>Run in Yaver</Text>
-                )}
-              </Pressable>
-              <Text style={{ fontSize: 11, color: "#555", textAlign: "center", marginTop: 4 }}>
-                Full native access — camera, BLE, GPS, etc.
-              </Text>
-
-              {/* Open in separate dev client (if installed) */}
-              {status.deepLink && (
-                <Pressable
-                  onPress={() => {
-                    Linking.openURL(status.deepLink!).catch(() =>
-                      Alert.alert("Open App", "Open the app from your home screen.")
-                    );
-                  }}
-                  style={[styles.nativeBtn, { backgroundColor: "#1a1a2e", paddingHorizontal: 40, marginTop: 8 }]}
-                >
-                  <Text style={[styles.nativeBtnText, { color: "#818cf8" }]}>Open Dev Client</Text>
-                </Pressable>
-              )}
-
-              <View style={styles.nativeButtons}>
-                <Pressable onPress={handleReload} style={[styles.nativeBtn, { backgroundColor: "#1a2e1a" }]}>
-                  <Text style={[styles.nativeBtnText, { color: "#22c55e" }]}>Reload</Text>
-                </Pressable>
-                <Pressable onPress={handleStop} style={[styles.nativeBtn, { backgroundColor: "#2e1a1a" }]}>
-                  <Text style={[styles.nativeBtnText, { color: "#ef4444" }]}>Stop Server</Text>
-                </Pressable>
-              </View>
             </View>
           ) : (
             /* Web mode: load app in WebView */

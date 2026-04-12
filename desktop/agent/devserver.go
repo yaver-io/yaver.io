@@ -62,6 +62,7 @@ type DevServerOpts struct {
 type DevServerStatus struct {
 	Framework  string `json:"framework"`
 	Running    bool   `json:"running"`
+	Building   bool   `json:"building,omitempty"`   // true during native compilation (expo run:ios, etc.)
 	Port       int    `json:"port"`
 	BundleURL  string `json:"bundleUrl"`
 	DeepLink   string `json:"deepLink,omitempty"`
@@ -635,7 +636,8 @@ func (w *devLogWriter) Write(p []byte) (int, error) {
 
 type ExpoDevServer struct {
 	baseDevServer
-	devMode string // "dev-client", "web", "expo-go"
+	devMode  string // "dev-client", "web", "expo-go"
+	building bool   // true during native compilation (expo run:ios)
 }
 
 func (e *ExpoDevServer) Detect(workDir string) bool {
@@ -763,26 +765,63 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 
 	e.mu.Lock()
 	e.startedAt = time.Now()
+	e.building = true
 	// NOT marking as running yet — build hasn't started Metro
 	e.mu.Unlock()
 
 	log.Printf("[dev:expo] Building (this takes 3-5 min first time)...")
 
+	// Emit a "building" event so the mobile app knows to show build logs
+	if e.emitFn != nil {
+		e.emitFn(DevServerEvent{
+			Type:      "building",
+			Framework: "expo",
+			Message:   "Building native app (this takes 3-5 min first time)...",
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		})
+	}
+
 	// Run build in background, then start Metro with --host lan
 	go func() {
 		logW := &devLogWriter{prefix: "[dev:expo:build]"}
+		// Stream build logs to SSE so the mobile app shows them in real-time
+		if e.emitFn != nil {
+			emitFn := e.emitFn
+			logW.onLogLine = func(line string) {
+				emitFn(DevServerEvent{
+					Type:      "log",
+					Framework: "expo",
+					LogLine:   line,
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+				})
+			}
+		}
 		buildCmd := exec.CommandContext(ctx, "npx", buildArgs...)
 		buildCmd.Dir = opts.WorkDir
 		buildCmd.Stdout = logW
 		buildCmd.Stderr = logW
 
 		buildErr := buildCmd.Run()
+
+		// Clear building state regardless of outcome
+		e.mu.Lock()
+		e.building = false
+		e.mu.Unlock()
+
 		// expo run:ios may exit non-zero even when build succeeds (e.g., device locked,
 		// app launch failed). Check the log output for "Build Succeeded" to distinguish.
 		buildSucceeded := logW.Contains("Build Succeeded")
 		if buildErr != nil && !buildSucceeded {
 			log.Printf("[dev:expo] Build failed: %v", buildErr)
 			os.Remove(buildMarker)
+			if e.emitFn != nil {
+				e.emitFn(DevServerEvent{
+					Type:      "error",
+					Framework: "expo",
+					Message:   fmt.Sprintf("Build failed: %v", buildErr),
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+				})
+			}
 			return
 		}
 		if buildErr != nil && buildSucceeded {
@@ -891,6 +930,9 @@ func (e *ExpoDevServer) Status() DevServerStatus {
 	s := e.baseDevServer.Status()
 	s.DevMode = e.devMode
 	s.BundleURL = "/dev/"
+	e.mu.Lock()
+	s.Building = e.building
+	e.mu.Unlock()
 	if e.devMode == "dev-client" {
 		// Metro URL for same-network dev client connections
 		s.DeepLink = fmt.Sprintf("exp://%s:%d", getLocalIP(), e.port)
