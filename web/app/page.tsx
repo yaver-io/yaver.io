@@ -887,6 +887,8 @@ export default function HomePage() {
           <p className="mx-auto max-w-2xl text-base leading-relaxed text-surface-400 md:text-lg">
             Push to device in 4s. Shake to report bugs. AI fixes and hot reloads.
             <br />
+            Queue tasks from the beach. Chain them. Auto-retry. One tap to ship.
+            <br />
             Claude Code &middot; Codex &middot; Aider &middot; Ollama &mdash; any agent. P2P encrypted. Free forever.
           </p>
           <div className="mt-5 flex flex-col items-center justify-center gap-4 sm:flex-row">
@@ -1237,6 +1239,17 @@ if (isDev) {
               </p>
             </div>
           </div>
+
+          {/* Always Native callout */}
+          <div className="mx-auto mt-10 max-w-3xl rounded-xl border border-[#22c55e]/30 bg-[#22c55e]/5 p-6">
+            <p className="text-sm font-semibold text-[#86efac]">Always Hermes. Always native. Never WebView.</p>
+            <p className="mt-2 text-xs leading-relaxed text-surface-400">
+              Your JS is compiled to Hermes bytecode (HBC v96), validated on both ends, and loaded into a native bridge
+              via ExpoReactNativeFactory with full New Architecture support &mdash; TurboModules, Fabric, JSI.
+              The safe bridge reload waits for HadesGC cleanup before creating a new bridge, preventing crashes.
+              Your app gets the same runtime as a production Xcode build.
+            </p>
+          </div>
         </div>
       </section>
 
@@ -1353,6 +1366,81 @@ if (isDev) {
               <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.405.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
               Star it if you&apos;re building alone
             </a>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Vibe Coding from Anywhere ── */}
+      <section className="border-t border-surface-800/60 px-6 py-24">
+        <div className="mx-auto max-w-4xl">
+          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
+            Vibe code from the beach.
+          </h2>
+          <p className="mb-12 text-center text-sm text-surface-400">
+            Queue tasks from your phone. Your machine does the work. Ship without opening a laptop.
+          </p>
+
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {[
+              {
+                icon: "\u26D3\uFE0F",
+                label: "Chained Tasks",
+                copy: "Queue a whole feature: \"build landing page, add Stripe, deploy.\" Each task starts when the previous succeeds.",
+              },
+              {
+                icon: "\u{1F504}",
+                label: "Auto-Retry",
+                copy: "Task failed? Agent retries with the error context. Only pings your phone after 3 consecutive failures.",
+              },
+              {
+                icon: "\u{1F680}",
+                label: "Ship It Button",
+                copy: "One tap to deploy. Agent detects your project (Cloudflare, Vercel, TestFlight, Play Store) and ships.",
+              },
+              {
+                icon: "\u{1F4FA}",
+                label: "Live Terminal Stream",
+                copy: "Watch Claude Code work token-by-token from your phone via SSE. Full terminal output in real-time.",
+              },
+              {
+                icon: "\u2600\uFE0F",
+                label: "Morning Summary",
+                copy: "Daily digest at 9am: \"3 tasks done, site live, 2 tests failing.\" Via Telegram, Discord, Slack, or email.",
+              },
+              {
+                icon: "\u{1F3D7}\uFE0F",
+                label: "Always Native",
+                copy: "React Native apps load via Hermes bytecode into a native bridge with TurboModules + Fabric. Never WebView.",
+              },
+            ].map((item) => (
+              <div
+                key={item.label}
+                className="rounded-xl border border-surface-800 bg-surface-900/50 p-6"
+              >
+                <div className="mb-3 text-2xl">{item.icon}</div>
+                <p className="text-sm font-semibold text-surface-200">{item.label}</p>
+                <p className="mt-2 text-xs leading-relaxed text-surface-400">{item.copy}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Chain example */}
+          <div className="mt-10 rounded-xl border border-surface-800 bg-surface-950/80 p-6">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-surface-500">Example: Queue a feature from your phone</p>
+            <pre className="overflow-x-auto text-xs leading-relaxed text-surface-300">
+{`Morning at the beach:
+  1. Queue 5 tasks: "dark mode", "fix login", "payment API", "tests", "deploy"
+  2. Agent chains them — each starts when previous succeeds
+  3. If one fails, agent retries with error context (up to 3x)
+  4. You get notified: "4/5 done, payment API retry 2/3"
+
+Lunchtime:
+  5. Open live terminal — watch Claude Code working in real-time
+  6. Tap "Ship It" — one tap, deployed to Cloudflare
+
+Next morning:
+  7. Summary: "5 tasks done, site live at myapp.com ($0.47)"`}
+            </pre>
           </div>
         </div>
       </section>

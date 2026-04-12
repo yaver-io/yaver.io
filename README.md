@@ -62,11 +62,103 @@ Yaver is built for solo developers and small teams who ship from anywhere. It ha
 - **473 MCP Tools** — Docker, K8s, git, CI/CD, databases.
 - **Feedback SDKs** — Debug console for React Native, Flutter, Web.
 - **Session Transfer** — Move AI sessions between machines.
+- **Chained Tasks** — Queue a whole feature: "build landing page, add Stripe, deploy." Tasks execute sequentially, next starts when previous succeeds.
+- **Auto-Retry** — Failed task? Agent retries with error context. Only pings you after 3 failures.
+- **Ship It Button** — One tap to deploy. Agent detects your project (Cloudflare, Vercel, TestFlight, Play Store, Fly.io, etc.) and ships.
+- **Morning Summary** — Daily digest at 9am: "3 tasks done, landing page live, 2 tests failing." Via Telegram, Discord, Slack, or email.
+- **Live Terminal Stream** — Watch Claude Code work in real-time from your phone via SSE. Full terminal output, not just status updates.
+- **Always Native, Never WebView** — React Native apps always load via Hermes bytecode into a native bridge with TurboModules + Fabric. WebView is never used for app loading.
 - **Task Scheduling** — Cron-like scheduling.
-- **Notifications** — Telegram, Discord, Slack.
+- **Notifications** — Telegram, Discord, Slack, Teams, PagerDuty, Opsgenie, Linear, Jira, email.
 - **CI/CD Webhooks** — GitHub Actions, GitLab CI triggers.
 - **Git Providers** — Browse and clone repos from phone.
 - **SDKs** — Go, Python, JS/TS, Flutter/Dart, C.
+
+## Vibe Coding from Anywhere
+
+Built for the solo developer who ships from a beach in Thailand. Dump tasks from your phone, let your machine do the work, check results over coffee.
+
+```
+Morning at the beach:
+  1. Open Yaver → Queue 5 tasks: "add dark mode", "fix login bug",
+     "write payment API", "add validation", "deploy to Cloudflare"
+  2. Agent chains them — each starts when the previous succeeds
+  3. If one fails, agent retries with the error context (up to 3x)
+  4. You get a push: "4/5 done, payment API retry 2/3 in progress"
+
+Lunchtime:
+  5. Check the Summary — "4 tasks done ($0.32), 1 running"
+  6. Open the live terminal stream — watch Claude Code typing in real-time
+  7. Tap "Ship It" — one tap, agent deploys to Cloudflare Workers
+
+Next morning:
+  8. Morning summary notification: "5 tasks completed, site live at myapp.com"
+```
+
+### Chained Tasks (queue a whole feature)
+
+```bash
+# From the mobile app or API:
+POST /chain
+{
+  "tasks": [
+    { "title": "Build a landing page with pricing section" },
+    { "title": "Add Stripe checkout for $10/mo plan" },
+    { "title": "Write tests for the payment flow" },
+    { "title": "Deploy to Cloudflare Workers" }
+  ],
+  "autoRetry": true
+}
+# → First task starts immediately. Each subsequent task starts when the previous completes.
+# → If any task fails, it auto-retries with error context (up to 3x).
+# → Chain stops if a task fails all retries.
+```
+
+### Ship It (one-tap deploy)
+
+The agent auto-detects your project type and offers the right deploy target:
+
+| Detected | Deploy Target | Command |
+|----------|--------------|---------|
+| `wrangler.toml` | Cloudflare Workers | `npm run deploy` |
+| `vercel.json` | Vercel | `npx vercel --prod` |
+| `netlify.toml` | Netlify | `npx netlify deploy --prod` |
+| `ios/` + deploy script | TestFlight | `scripts/deploy-testflight.sh` |
+| `android/` + deploy script | Google Play | `scripts/deploy-playstore.sh` |
+| `convex/` | Convex | `npx convex deploy` |
+| `firebase.json` | Firebase | `npx firebase deploy` |
+| `fly.toml` | Fly.io | `fly deploy` |
+| `docker-compose.yml` | Docker Compose | `docker compose up -d --build` |
+
+### Morning Summary
+
+Daily digest at 9am via all configured notification channels:
+
+```
+☀️ Morning Summary
+
+📊 5 tasks: 4 completed, 1 failed ($0.47)
+
+✅ Build landing page with pricing (34s)
+✅ Add Stripe checkout (89s)
+✅ Write payment tests (22s)
+✅ Deploy to Cloudflare (15s)
+❌ Add dark mode (failed after 3 retries)
+```
+
+## Always Native, Never WebView
+
+React Native apps pushed to the Yaver phone app **always load natively** — never in a WebView. The pipeline:
+
+1. **Bundle**: Metro bundles your JS into a single file
+2. **Compile**: `hermesc` compiles JS → Hermes bytecode (HBC, version 96, from RN 0.81.5)
+3. **Validate**: Both CLI and phone validate HBC magic (`0x1F1903C1`) and BC version match
+4. **Load**: Phone creates a native bridge via `ExpoReactNativeFactory` with full New Architecture support
+5. **Run**: Your app runs with TurboModules, Fabric, and JSI — same as if built with Xcode
+
+The `safeReloadBridge` sequence invalidates the old bridge, waits for HadesGC cleanup (up to 3s weak-reference poll), then creates a fresh bridge. This prevents SIGABRT crashes from GC touching freed memory.
+
+**Why this matters**: WebView-based "containers" (like some dev tools) can't access native modules, have different performance characteristics, and break any app using `TurboModuleRegistry.getEnforcing()`. Yaver's native bridge gives your app the same runtime as a production build.
 
 ## Full Pipeline from Anywhere
 
