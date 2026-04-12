@@ -226,6 +226,40 @@ func runBootstrapServe(httpPort int) {
 		}
 	}()
 
+	// Relay tunnel: if the agent was previously authed and has
+	// relay credentials + a device ID in config.json, bring up
+	// the relay tunnel now — even without an auth token. This
+	// makes the bootstrap agent reachable from OUTSIDE the LAN
+	// (over the relay, Tailscale, etc.) so the phone can push
+	// a token remotely without SSH access.
+	//
+	// The relay only validates the password, not the auth token.
+	// We send a placeholder token ("bootstrap-pending") since
+	// the relay requires a non-empty string but doesn't call
+	// Convex to validate it.
+	relayCtx, relayCancel := context.WithCancel(context.Background())
+	defer relayCancel()
+	if cfg, loadErr := LoadConfig(); loadErr == nil && cfg != nil && cfg.DeviceID != "" {
+		agentAddr := fmt.Sprintf("127.0.0.1:%d", httpPort)
+		globalPw := cfg.RelayPassword
+		started := 0
+		for _, rs := range cfg.RelayServers {
+			pw := rs.Password
+			if pw == "" {
+				pw = globalPw
+			}
+			if pw == "" {
+				continue
+			}
+			log.Printf("[BOOTSTRAP-RELAY] Starting tunnel to %s (device %s)…", rs.QuicAddr, cfg.DeviceID[:8])
+			go runRelayTunnel(relayCtx, rs.QuicAddr, agentAddr, cfg.DeviceID, "bootstrap-pending", pw)
+			started++
+		}
+		if started > 0 {
+			log.Printf("[BOOTSTRAP-RELAY] %d relay tunnel(s) started — agent reachable remotely", started)
+		}
+	}
+
 	// Block until either a token lands or the pairing window
 	// expires. We give the user a chance to start a fresh
 	// session (new passkey) if they miss the window.
@@ -261,6 +295,7 @@ func runBootstrapServe(httpPort int) {
 			_ = srv.Shutdown(shutdownCtx)
 			cancel()
 			beaconCancel()
+			relayCancel()
 			EndPairingSession()
 			// Re-exec ourselves as `yaver serve`. The real serve
 			// path picks up the freshly saved token and the
