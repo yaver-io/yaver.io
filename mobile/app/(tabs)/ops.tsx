@@ -5,7 +5,7 @@ import { useRouter } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient } from "../../src/lib/quic";
 
-type Tab = "deploy" | "backups" | "uptime" | "domains" | "rotate";
+type Tab = "deploy" | "backups" | "uptime" | "domains" | "rotate" | "ci" | "alerts" | "errors";
 
 export default function OpsScreen() {
   const c = useColors();
@@ -25,7 +25,7 @@ export default function OpsScreen() {
       </View>
       <View style={[styles.tabbar, { backgroundColor: c.surface, borderBottomColor: c.border }]}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12 }}>
-          {(["deploy", "backups", "uptime", "domains", "rotate"] as Tab[]).map((t) => (
+          {(["deploy", "backups", "uptime", "domains", "rotate", "ci", "alerts", "errors"] as Tab[]).map((t) => (
             <Pressable key={t} onPress={() => setTab(t)} style={{ paddingHorizontal: 10, paddingVertical: 10 }}>
               <Text style={{
                 fontSize: 13, fontWeight: "600", textTransform: "uppercase",
@@ -47,6 +47,9 @@ export default function OpsScreen() {
         {tab === "uptime" && <UptimeTab c={c} />}
         {tab === "domains" && <DomainsTab c={c} />}
         {tab === "rotate" && <RotateTab c={c} dir={directory} />}
+        {tab === "ci" && <CITab c={c} dir={directory} />}
+        {tab === "alerts" && <AlertsTab c={c} />}
+        {tab === "errors" && <ErrorsTab c={c} />}
       </ScrollView>
     </View>
   );
@@ -235,6 +238,110 @@ function RotateTab({ c, dir }: { c: any; dir: string }) {
           <Text style={{ color: c.textPrimary, fontSize: 11 }}>Restarted: {(res.servicesRestarted || []).join(", ")}</Text>
         </View>
       )}
+    </View>
+  );
+}
+
+function CITab({ c, dir }: { c: any; dir: string }) {
+  const [runs, setRuns] = useState<any[]>([]);
+  const [running, setRunning] = useState(false);
+  const q = dir ? `?directory=${encodeURIComponent(dir)}` : "";
+  async function refresh() { try { const r = await callAgent(`/ci/list${q}`); setRuns(r.runs || []); } catch {} }
+  useEffect(() => { refresh(); }, [dir]);
+  async function run() {
+    setRunning(true);
+    const r = await callAgent(`/ci/run${q}`, { method: "POST" });
+    setRunning(false);
+    Alert.alert(r.status === "passed" ? "✅ CI passed" : "❌ CI " + (r.status || r.error), "");
+    refresh();
+  }
+  return (
+    <View style={{ gap: 10 }}>
+      <Pressable onPress={run} disabled={running} style={[actionBtn(c), { backgroundColor: c.accent }]}>
+        {running ? <ActivityIndicator color="#fff" /> : <Text style={{ color: "#fff", fontWeight: "700" }}>▶ Run CI</Text>}
+      </Pressable>
+      <Text style={{ color: c.textMuted, fontSize: 11 }}>CI runs before every deploy. Configure in .yaver/ci.yaml.</Text>
+      {runs.map((r) => (
+        <View key={r.id} style={[card(c)]}>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Text style={{ color: r.status === "passed" ? "#10b981" : "#ef4444", fontWeight: "700", fontSize: 11 }}>{r.status?.toUpperCase()}</Text>
+            <Text style={{ color: c.textMuted, fontSize: 11, flex: 1 }}>{r.trigger}</Text>
+          </View>
+          {(r.steps || []).map((s: any, i: number) => (
+            <Text key={i} style={{ color: s.status === "passed" ? "#10b981" : "#ef4444", fontSize: 11, marginTop: 2 }}>
+              {s.status === "passed" ? "✓" : "✗"} {s.name} · {s.duration}
+            </Text>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function AlertsTab({ c }: { c: any }) {
+  const [list, setList] = useState<any[]>([]);
+  const [metric, setMetric] = useState("cpu");
+  const [threshold, setThreshold] = useState("80");
+  async function refresh() { try { const r = await callAgent("/alerts/list"); setList(r.alerts || []); } catch {} }
+  useEffect(() => { refresh(); }, []);
+  async function add() {
+    await callAgent("/alerts/add", { method: "POST", body: JSON.stringify({ metric, threshold: Number(threshold), durationSecs: 300 }) });
+    refresh();
+  }
+  async function rem(id: string) {
+    await callAgent("/alerts/remove", { method: "POST", body: JSON.stringify({ id }) });
+    refresh();
+  }
+  return (
+    <View style={{ gap: 10 }}>
+      <Text style={{ color: c.textMuted, fontSize: 11 }}>Alerts fire to your phone when a metric stays above threshold for 5+ min.</Text>
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        <TextInput value={metric} onChangeText={setMetric} placeholder="cpu|ram|disk" placeholderTextColor={c.textMuted}
+          autoCapitalize="none" style={[inputStyle(c), { flex: 1 }]} />
+        <TextInput value={threshold} onChangeText={setThreshold} placeholder="%" keyboardType="numeric"
+          placeholderTextColor={c.textMuted} style={[inputStyle(c), { width: 80 }]} />
+        <Pressable onPress={add} style={[actionBtn(c), { backgroundColor: c.accent, paddingHorizontal: 16 }]}>
+          <Text style={{ color: "#fff", fontWeight: "700" }}>+</Text>
+        </Pressable>
+      </View>
+      {list.map((a) => (
+        <View key={a.id} style={[card(c)]}>
+          <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+            <Text style={{ color: "#f59e0b", fontSize: 11, fontWeight: "700", textTransform: "uppercase" }}>{a.metric}</Text>
+            <Text style={{ color: c.textPrimary, flex: 1 }}>≥ {a.threshold}% for {a.durationSecs}s</Text>
+            <Pressable onPress={() => rem(a.id)}><Text style={{ color: "#ef4444", fontSize: 14 }}>×</Text></Pressable>
+          </View>
+          {a.lastFiredAt && <Text style={{ color: "#ef4444", fontSize: 10, marginTop: 4 }}>last fired: {a.lastFiredAt.slice(0, 16)}</Text>}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function ErrorsTab({ c }: { c: any }) {
+  const [groups, setGroups] = useState<any[]>([]);
+  async function refresh() { try { const r = await callAgent("/errors/groups"); setGroups(r.groups || []); } catch {} }
+  useEffect(() => { refresh(); const i = setInterval(refresh, 15000); return () => clearInterval(i); }, []);
+  async function resolve(fp: string, resolved: boolean) {
+    await callAgent("/errors/resolve", { method: "POST", body: JSON.stringify({ fingerprint: fp, resolved }) });
+    refresh();
+  }
+  return (
+    <View style={{ gap: 10 }}>
+      <Text style={{ color: c.textMuted, fontSize: 11 }}>Errors ingested via the yaver-errors npm package or /errors/ingest.</Text>
+      {groups.length === 0 && <Text style={{ color: c.textMuted, textAlign: "center", padding: 20 }}>No errors 🎉</Text>}
+      {groups.map((g) => (
+        <View key={g.fingerprint} style={[card(c), { opacity: g.resolved ? 0.5 : 1 }]}>
+          <View style={{ flexDirection: "row", gap: 8, alignItems: "center", marginBottom: 4 }}>
+            <Text style={{ color: "#ef4444", fontSize: 10, fontWeight: "700" }}>× {g.count}</Text>
+            <Text style={{ color: c.textPrimary, flex: 1, fontFamily: "Menlo", fontSize: 12 }} numberOfLines={2}>{g.message}</Text>
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 10 }}>{g.lastSeen?.slice(0, 19)}</Text>
+          <Pressable onPress={() => resolve(g.fingerprint, !g.resolved)} style={{ marginTop: 6 }}>
+            <Text style={{ color: c.accent, fontSize: 12 }}>{g.resolved ? "Unresolve" : "Resolve"}</Text>
+          </Pressable>
+        </View>
+      ))}
     </View>
   );
 }

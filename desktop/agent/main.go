@@ -1647,6 +1647,7 @@ func runServe(args []string) {
 	httpServer.notifyMgr = NewNotificationManager(cfg.Notifications)
 	SetGlobalNotifier(httpServer.notifyMgr)
 	StartMetricsSampler(context.Background())
+	StartConvexStateSync(context.Background())
 	httpServer.buildMgr = NewBuildManager(httpServer.execMgr, taskMgr.workDir)
 	httpServer.tunnelMgr = NewTunnelManager()
 	httpServer.testMgr = NewTestManager(httpServer.execMgr, taskMgr.workDir)
