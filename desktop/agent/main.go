@@ -1254,6 +1254,16 @@ func runServe(args []string) {
 	}
 	localIP := getLocalIP()
 
+	// Load or generate device X25519 keypair for encrypted pairing.
+	deviceKeys, keysErr := LoadOrGenerateKeys()
+	if keysErr != nil {
+		log.Printf("Warning: could not load device keys: %v — encrypted pairing will be unavailable", keysErr)
+	}
+	var devicePubKey string
+	if deviceKeys != nil {
+		devicePubKey = deviceKeys.PublicKeyBase64()
+	}
+
 	if !offlineMode {
 		log.Printf("Registering device %s (%s) at %s:%d...", hostname, cfg.DeviceID, localIP, *httpPort)
 		if err := RegisterDevice(cfg.ConvexSiteURL, RegisterDeviceRequest{
@@ -1261,6 +1271,7 @@ func runServe(args []string) {
 			DeviceID:   cfg.DeviceID,
 			Name:       hostname,
 			Platform:   platform,
+			PublicKey:  devicePubKey,
 			QuicHost:   localIP,
 			QuicPort:   *httpPort,
 			HardwareID: HardwareID(),
@@ -1276,6 +1287,7 @@ func runServe(args []string) {
 					DeviceID:   cfg.DeviceID,
 					Name:       hostname,
 					Platform:   platform,
+					PublicKey:  devicePubKey,
 					QuicHost:   localIP,
 					QuicPort:   *httpPort,
 					HardwareID: HardwareID(),

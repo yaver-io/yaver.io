@@ -18,6 +18,7 @@ import { getUserSettings } from "../lib/auth";
 import { appLog } from "../lib/logger";
 import { beaconListener, type DiscoveredDevice } from "../lib/beacon";
 import { fetchPairInfo, submitPair } from "../lib/pairDevice";
+import { submitEncryptedPair } from "../lib/encryptedPair";
 import { CONVEX_SITE_URL } from "../lib/constants";
 import {
   fetchGuestHosts,
@@ -91,6 +92,8 @@ export interface Device {
   lastSeen: number;
   os: string;
   runners: RunnerInfo[];
+  /** X25519 public key (base64) for encrypted pairing — stored in Convex */
+  publicKey?: string;
   /** true when device is discovered via LAN beacon (same network) */
   local?: boolean;
   /** stable hardware ID (P2P only, never sent to Convex) */
@@ -238,6 +241,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             lastSeen: isActivelyConnected ? Date.now() : (d.lastHeartbeat || d.lastSeen || 0),
             os: d.platform || d.os || "",
             runners: d.runners ?? [],
+            publicKey: d.publicKey,
             isGuest: d.isGuest || false,
             hostName: d.hostName,
             hostEmail: d.hostEmail,
@@ -555,21 +559,44 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     return () => { unsubDiscover(); unsubLost(); };
   }, [token]);
 
-  // Auto-pair bootstrap devices: when the beacon discovers a fresh
-  // yaver box on the same WiFi (needsAuth=true, passkey present), push
-  // this phone's OAuth token to it automatically. The user never has to
-  // touch the Mac — the mobile app is the only interface.
+  // Auto-pair bootstrap devices: when the beacon discovers a device
+  // with needsAuth=true, try to authenticate it from the phone.
+  //
+  // Encrypted path (preferred): look up the device's X25519 public
+  // key from Convex (registered during the first `yaver auth`) and
+  // encrypt the token with NaCl box before sending over HTTP. An
+  // attacker on the same WiFi cannot read the token even if they
+  // intercept the request — only the real Mac's private key can
+  // decrypt it.
+  //
+  // Passkey fallback: if the device has no public key in Convex
+  // (never authed before), fall back to the legacy passkey flow
+  // which requires the user to have run `yaver auth` at least once.
   const autoPairedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!token || !user?.id) return;
     const iv = setInterval(async () => {
       const bootstraps = beaconListener.getBootstrapDevices();
       for (const dev of bootstraps) {
-        if (!dev.bootstrapPasskey) continue;
         if (autoPairedRef.current.has(dev.deviceId)) continue;
         autoPairedRef.current.add(dev.deviceId);
         const targetUrl = `http://${dev.ip}:${dev.port}`;
         try {
+          // Try encrypted path first: match beacon deviceId or hwid
+          // against our known device list to find the public key.
+          const knownDevice = devices.find(
+            (d) => d.id.startsWith(dev.deviceId) || (dev.hwid && d.hwid === dev.hwid)
+          );
+          if (knownDevice?.publicKey) {
+            const res = await submitEncryptedPair(targetUrl, token, knownDevice.publicKey);
+            if (res.ok) {
+              appLog("info", `Encrypted auto-pair: ${dev.name || dev.deviceId} at ${dev.ip}`);
+              setTimeout(() => refreshDevices(), 3000);
+              continue;
+            }
+          }
+          // Fallback: legacy passkey flow (requires passkey in beacon)
+          if (!dev.bootstrapPasskey) continue;
           const info = await fetchPairInfo(targetUrl);
           if (!info.ok) continue;
           const res = await submitPair({
@@ -579,7 +606,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             userId: user.id,
           });
           if (res.ok) {
-            appLog("info", `Auto-paired ${dev.name || dev.deviceId} at ${dev.ip}`);
+            appLog("info", `Passkey auto-pair: ${dev.name || dev.deviceId} at ${dev.ip}`);
             setTimeout(() => refreshDevices(), 3000);
           }
         } catch {
@@ -588,7 +615,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       }
     }, 3000);
     return () => clearInterval(iv);
-  }, [token, user?.id, refreshDevices]);
+  }, [token, user?.id, devices, refreshDevices]);
 
   // Fetch devices when token becomes available + poll every 30s (lightweight)
   useEffect(() => {

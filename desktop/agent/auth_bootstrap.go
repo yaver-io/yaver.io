@@ -58,6 +58,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -196,6 +197,7 @@ func runBootstrapServe(httpPort int) {
 	mux.HandleFunc("/health", bs.handleHealth)
 	mux.HandleFunc("/auth/pair/info", bs.handlePairInfo)
 	mux.HandleFunc("/auth/pair/submit", bs.handlePairSubmit)
+	mux.HandleFunc("/auth/pair/encrypted", bs.handlePairEncrypted)
 	// /info is a cheap liveness check the mobile app pings to
 	// verify the URL before sending the token.
 	mux.HandleFunc("/info", bs.handleInfo)
@@ -392,6 +394,92 @@ func (bs *bootstrapHTTPServer) handlePairInfo(w http.ResponseWriter, r *http.Req
 
 func (bs *bootstrapHTTPServer) handlePairSubmit(w http.ResponseWriter, r *http.Request) {
 	(&HTTPServer{}).handlePairSubmit(w, r)
+}
+
+// handlePairEncrypted accepts a NaCl box-encrypted token from the
+// mobile app. The phone looked up this device's public key in Convex
+// and encrypted the payload with nacl.box(msg, nonce, devicePubKey,
+// phonePriKey). Only this device can decrypt it because only this
+// device has the matching private key in ~/.yaver/device.key.
+//
+// Body: { "encrypted": "<base64(nonce24 + ciphertext)>", "senderPublicKey": "<base64(32)>" }
+// Response: { "ok": true, "host": "..." }
+func (bs *bootstrapHTTPServer) handlePairEncrypted(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Encrypted       string `json:"encrypted"`
+		SenderPublicKey string `json:"senderPublicKey"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	if body.Encrypted == "" || body.SenderPublicKey == "" {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "encrypted and senderPublicKey required"})
+		return
+	}
+	dk, err := LoadOrGenerateKeys()
+	if err != nil {
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "cannot load device keys"})
+		return
+	}
+	senderPubBytes, err := base64.StdEncoding.DecodeString(body.SenderPublicKey)
+	if err != nil || len(senderPubBytes) != 32 {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid senderPublicKey"})
+		return
+	}
+	var senderPub [32]byte
+	copy(senderPub[:], senderPubBytes)
+
+	encBytes, err := base64.StdEncoding.DecodeString(body.Encrypted)
+	if err != nil {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid base64 in encrypted"})
+		return
+	}
+	plaintext, err := dk.DecryptPairPayload(encBytes, senderPub)
+	if err != nil {
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "decryption failed: " + err.Error()})
+		return
+	}
+
+	// plaintext is the raw auth token
+	token := strings.TrimSpace(string(plaintext))
+	if token == "" {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "empty token after decryption"})
+		return
+	}
+
+	cfg, _ := LoadConfig()
+	if cfg == nil {
+		cfg = &Config{}
+	}
+	cfg.AuthToken = token
+	if err := SaveConfig(cfg); err != nil {
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "save config: " + err.Error()})
+		return
+	}
+	hostname, _ := os.Hostname()
+	log.Printf("[bootstrap] Encrypted pair succeeded — token saved, restarting as authenticated agent")
+
+	// Signal the bootstrap loop to exit and re-exec.
+	pairingMu.Lock()
+	if activePairing != nil {
+		activePairing.ReceivedToken = token
+		select {
+		case <-activePairing.done:
+		default:
+			close(activePairing.done)
+		}
+	}
+	pairingMu.Unlock()
+
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":   true,
+		"host": hostname,
+	})
 }
 
 // handleAuthRecover delegates to the same handler used in
