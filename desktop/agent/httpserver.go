@@ -655,6 +655,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/pitr/setup", s.auth(s.handlePITRSetup))
 	mux.HandleFunc("/pitr/restore", s.auth(s.handlePITRRestore))
 	mux.HandleFunc("/multiregion/deploy", s.auth(s.handleMultiRegionDeploy))
+	mux.HandleFunc("/provider/rotate", s.auth(s.handleProviderRotate))
+	mux.HandleFunc("/replication/setup", s.auth(s.handleReplicaSetup))
 
 	// Guest access management (host invites guests to use their agent)
 	mux.HandleFunc("/guests", s.auth(s.handleGuestList))

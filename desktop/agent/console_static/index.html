@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Yaver Console</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+         background: #0b0d10; color: #d1d5db; min-height: 100vh; padding: 16px; }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 8px 20px;
+           border-bottom: 1px solid #1f2937; margin-bottom: 16px; }
+  header h1 { font-size: 16px; font-weight: 700; flex: 1; letter-spacing: .02em; }
+  .dot { width: 8px; height: 8px; border-radius: 4px; background: #10b981; }
+  .dot.offline { background: #ef4444; }
+  nav { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 16px;
+        border-bottom: 1px solid #1f2937; }
+  nav button { background: none; border: 0; color: #737373; font-family: inherit; font-size: 11px;
+               font-weight: 600; text-transform: uppercase; padding: 8px 10px; white-space: nowrap;
+               cursor: pointer; border-bottom: 2px solid transparent; }
+  nav button.active { color: #818cf8; border-color: #818cf8; }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+  .card { background: rgba(20, 22, 28, .5); border: 1px solid #1f2937; border-radius: 8px;
+          padding: 12px; }
+  .card h3 { font-size: 10px; text-transform: uppercase; color: #737373; margin-bottom: 4px; }
+  .card .v { font-size: 22px; font-weight: 700; color: #e5e7eb; }
+  .card .s { font-size: 11px; color: #737373; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+         background: rgba(20, 22, 28, .5); border: 1px solid #1f2937; border-radius: 8px; margin-bottom: 4px; }
+  .row .name { flex: 1; font-size: 13px; }
+  .muted { color: #737373; font-size: 11px; }
+  pre { background: rgba(20, 22, 28, .5); border: 1px solid #1f2937; border-radius: 8px;
+        padding: 10px; font-size: 10px; overflow: auto; max-height: 400px; }
+  input, button.act { font-family: inherit; font-size: 13px;
+                      background: rgba(20, 22, 28, .5); border: 1px solid #1f2937;
+                      color: #e5e7eb; padding: 8px 10px; border-radius: 6px; }
+  input { width: 100%; margin-bottom: 8px; }
+  button.act { cursor: pointer; }
+  button.primary { background: #6366f1; border-color: #6366f1; color: white; font-weight: 700; }
+  button.primary:hover { background: #7c7fff; }
+  .tag { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px;
+         text-transform: uppercase; font-weight: 600; background: #1f2937; color: #a1a1aa; }
+  .tag.ok { background: rgba(16, 185, 129, .2); color: #6ee7b7; }
+  .tag.down { background: rgba(239, 68, 68, .2); color: #fca5a5; }
+  .err { color: #fca5a5; font-size: 12px; padding: 8px; background: rgba(239, 68, 68, .1);
+         border: 1px solid rgba(239, 68, 68, .3); border-radius: 6px; margin: 8px 0; }
+  .tip { color: #737373; font-size: 11px; margin: 8px 0; }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<header>
+  <span id="statusDot" class="dot offline"></span>
+  <h1>Yaver Console</h1>
+  <span id="hostLabel" class="muted">connecting…</span>
+</header>
+
+<nav id="tabs">
+  <button class="active" data-tab="overview">Overview</button>
+  <button data-tab="containers">Containers</button>
+  <button data-tab="deploys">Deploys</button>
+  <button data-tab="backups">Backups</button>
+  <button data-tab="domains">Domains</button>
+  <button data-tab="uptime">Uptime</button>
+  <button data-tab="logs">Logs</button>
+</nav>
+
+<main id="view"></main>
+
+<script>
+/* Minimal standalone SPA that talks to this agent directly. The agent serves
+ * this file at /app/ — same origin, same auth cookie/token. Falls back to
+ * asking for a token if none present. */
+const TOKEN = new URLSearchParams(location.search).get("token")
+           || localStorage.getItem("yaver_token") || "";
+if (TOKEN) localStorage.setItem("yaver_token", TOKEN);
+
+const root = "";
+const headers = TOKEN ? { "Authorization": "Bearer " + TOKEN } : {};
+
+async function api(path, init) {
+  const res = await fetch(root + path, {
+    ...init,
+    headers: { ...headers, "Content-Type": "application/json", ...(init && init.headers) },
+  });
+  return res.json();
+}
+
+const view = document.getElementById("view");
+const tabs = document.getElementById("tabs");
+const statusDot = document.getElementById("statusDot");
+const hostLabel = document.getElementById("hostLabel");
+
+let currentTab = "overview";
+tabs.addEventListener("click", (e) => {
+  const t = e.target.closest("button[data-tab]");
+  if (!t) return;
+  tabs.querySelectorAll("button").forEach(b => b.classList.toggle("active", b === t));
+  currentTab = t.dataset.tab;
+  render();
+});
+
+async function connectCheck() {
+  try {
+    const r = await api("/console/metrics");
+    if (r.hostname) {
+      statusDot.classList.remove("offline");
+      hostLabel.textContent = r.hostname;
+      return true;
+    }
+  } catch {}
+  hostLabel.innerHTML = `<a href="https://yaver.io/dashboard" style="color:#818cf8">open yaver.io/dashboard →</a>`;
+  return false;
+}
+
+async function render() {
+  view.innerHTML = '<p class="muted">Loading…</p>';
+  try {
+    switch (currentTab) {
+      case "overview": return renderOverview();
+      case "containers": return renderContainers();
+      case "deploys": return renderDeploys();
+      case "backups": return renderBackups();
+      case "domains": return renderDomains();
+      case "uptime": return renderUptime();
+      case "logs": return renderLogs();
+    }
+  } catch (e) { view.innerHTML = `<div class="err">${e.message}</div>`; }
+}
+
+function fmtBytes(n) {
+  if (!n) return "0 B";
+  const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return n.toFixed(1) + " " + u[i];
+}
+
+async function renderOverview() {
+  const m = await api("/console/metrics");
+  const c = await api("/console/containers?all=1");
+  const running = (c.containers || []).filter(x => x.state === "running").length;
+  view.innerHTML = `
+    <div class="grid">
+      <div class="card"><h3>CPU</h3><div class="v">${(m.cpuPct || 0).toFixed(1)}%</div><div class="s">${m.cores || 0} cores</div></div>
+      <div class="card"><h3>RAM</h3><div class="v">${(m.ramPct || 0).toFixed(0)}%</div><div class="s">${fmtBytes(m.ramUsed)} / ${fmtBytes(m.ramTotal)}</div></div>
+      <div class="card"><h3>Disk</h3><div class="v">${(m.diskPct || 0).toFixed(0)}%</div><div class="s">${fmtBytes(m.diskUsed)} / ${fmtBytes(m.diskTotal)}</div></div>
+      <div class="card"><h3>Containers</h3><div class="v">${running}</div><div class="s">${(c.containers || []).length} total</div></div>
+    </div>
+    <p class="tip">Standalone in-agent console. Full dashboard with richer UI: <a href="https://yaver.io/dashboard" style="color:#818cf8">yaver.io/dashboard</a></p>
+  `;
+}
+
+async function renderContainers() {
+  const r = await api("/console/containers?all=1");
+  const rows = (r.containers || []).map(c => `
+    <div class="row">
+      <span class="tag ${c.state === 'running' ? 'ok' : 'down'}">${c.state}</span>
+      <span class="name">${c.name}</span>
+      <span class="muted">${c.image}</span>
+      <div class="actions">
+        ${c.state === 'running'
+          ? `<button class="act" onclick="act('${c.id}','restart')">↻</button>
+             <button class="act" onclick="act('${c.id}','stop')">⏹</button>`
+          : `<button class="act" onclick="act('${c.id}','start')">▶</button>`}
+      </div>
+    </div>`).join("");
+  view.innerHTML = rows || '<p class="muted">No containers.</p>';
+}
+window.act = async (id, action) => {
+  await api("/console/containers/action", { method: "POST", body: JSON.stringify({ id, action }) });
+  render();
+};
+
+async function renderDeploys() {
+  const r = await api("/deploy/list");
+  view.innerHTML = `
+    <button class="act primary" onclick="deploy()">🚀 Deploy now</button>
+    <div style="margin-top:12px">
+      ${(r.deploys || []).map(d => `
+        <div class="row">
+          <span class="tag ${d.status === 'success' ? 'ok' : 'down'}">${d.status}</span>
+          <span class="muted">${(d.commit || '').slice(0,8)}</span>
+          <span class="name">${d.message || '(no message)'}</span>
+          <span class="muted">${d.duration || ''}</span>
+          ${d.status === 'success' ? `<button class="act" onclick="rollback('${d.id}')">Rollback</button>` : ''}
+        </div>`).join("")}
+    </div>`;
+}
+window.deploy = async () => { const r = await api("/deploy/run", { method: "POST" }); alert(r.status || r.error); render(); };
+window.rollback = async (id) => { if(!confirm("Rollback?")) return; await api("/deploy/rollback", { method: "POST", body: JSON.stringify({ id }) }); render(); };
+
+async function renderBackups() {
+  const r = await api("/backups/list");
+  view.innerHTML = `
+    <button class="act primary" onclick="snap()">📸 Snapshot now</button>
+    <div style="margin-top:12px">
+      ${(r.backups || []).map(b => `
+        <div class="row">
+          <span class="muted">${b.id}</span>
+          <span class="name">${b.backend}</span>
+          <span class="muted">${fmtBytes(b.size)}</span>
+          <button class="act" onclick="restore('${b.id}')">Restore</button>
+        </div>`).join("")}
+    </div>`;
+}
+window.snap = async () => { const r = await api("/backups/create", { method: "POST" }); alert(r.error || "Snapshot: " + r.path); render(); };
+window.restore = async (id) => { if(!confirm("Restore? Data will be overwritten.")) return; const r = await api("/backups/restore", { method: "POST", body: JSON.stringify({ id }) }); alert(r.error || "Restored"); };
+
+async function renderDomains() {
+  const r = await api("/domains/list");
+  view.innerHTML = `
+    <input id="dm" placeholder="app.example.com">
+    <input id="up" placeholder="localhost:3000">
+    <button class="act primary" onclick="addDomain()">+ Domain</button>
+    <p class="tip">Caddy auto-issues Let's Encrypt certs. Point DNS at this machine's IP.</p>
+    ${(r.domains || []).map(d => `
+      <div class="row">
+        <span class="name">${d.domain} → ${d.upstream}</span>
+        <button class="act" onclick="removeDomain('${d.domain}')">Remove</button>
+      </div>`).join("")}`;
+}
+window.addDomain = async () => {
+  const domain = document.getElementById("dm").value;
+  const upstream = document.getElementById("up").value;
+  const r = await api("/domains/add", { method: "POST", body: JSON.stringify({ domain, upstream }) });
+  if (r.error) alert(r.error); else render();
+};
+window.removeDomain = async (d) => { await api("/domains/remove", { method: "POST", body: JSON.stringify({ domain: d }) }); render(); };
+
+async function renderUptime() {
+  const r = await api("/uptime/list");
+  view.innerHTML = `
+    <input id="uptimeUrl" placeholder="https://myapp.com/health">
+    <button class="act primary" onclick="addMon()">+ Monitor</button>
+    ${(r.monitors || []).map(m => `
+      <div class="row">
+        <span class="tag ${m.status === 'up' ? 'ok' : 'down'}">${m.status || '?'}</span>
+        <span class="name">${m.name || m.url}</span>
+        <span class="muted">${m.lastLatencyMs || 0}ms</span>
+        <button class="act" onclick="rmMon('${m.id}')">×</button>
+      </div>`).join("")}`;
+}
+window.addMon = async () => {
+  const url = document.getElementById("uptimeUrl").value;
+  await api("/uptime/add", { method: "POST", body: JSON.stringify({ url, intervalSeconds: 60, alertOnDown: true }) });
+  render();
+};
+window.rmMon = async (id) => { await api("/uptime/remove", { method: "POST", body: JSON.stringify({ id }) }); render(); };
+
+async function renderLogs() {
+  view.innerHTML = `
+    <input id="q" placeholder="FTS5 query (error OR timeout)">
+    <button class="act primary" onclick="doSearch()">Search</button>
+    <pre id="logOut"></pre>`;
+}
+window.doSearch = async () => {
+  const q = document.getElementById("q").value || "*";
+  const r = await api("/logs/search?q=" + encodeURIComponent(q) + "&limit=200");
+  const out = document.getElementById("logOut");
+  out.textContent = (r.hits || []).map(h => `[${h.service}] ${h.ts?.slice(11,19)} ${h.line}`).join("\n") || "(no matches)";
+};
+
+(async () => {
+  await connectCheck();
+  render();
+  setInterval(connectCheck, 15000);
+})();
+</script>
+</body>
+</html>

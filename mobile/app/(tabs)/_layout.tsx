@@ -147,6 +147,7 @@ export default function TabLayout() {
       <Tabs.Screen name="studio" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="qualitygates" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="settings" options={{ href: null, headerShown: false }} />
+      <Tabs.Screen name="ops" options={{ href: null, headerShown: false }} />
       <Tabs.Screen
         name="runs"
         options={{ href: null, title: "Local CI", headerShown: true, headerLeft: backToMore }}
