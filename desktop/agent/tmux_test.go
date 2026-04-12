@@ -915,12 +915,9 @@ func TestTmuxE2EFullFlow(t *testing.T) {
 	t.Log("E2E full flow passed: list → adopt → input → output → turns → concurrent → detach → MCP")
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
+// min() lived here historically; the same function now lives in
+// console_docker_helpers.go, which ships in every build. Removing the
+// duplicate so `go test ./...` can link without a `min redeclared` error.
 
 // Helper to make the context import not unused
 var _ = context.Background

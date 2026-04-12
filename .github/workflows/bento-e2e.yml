@@ -1,0 +1,116 @@
+name: Bento E2E
+
+# The literal Video 1 storyline driven through yaver's mobile-app HTTP
+# API. Proves the whole "create a project / browse your database /
+# vibe code / deploy — all from your phone" chain stays green.
+#
+# Two jobs:
+#   1. agent-e2e   — Go integration test TestBentoE2E_MobileFlow
+#      (wizard → generate → studios → POST /tasks → /tasks/{id}
+#       → /deploy/preview) with TaskManager in DummyMode. No docker,
+#      no runner — asserts the wiring.
+#   2. bento-build — scaffolds a fresh Bento via `yaver new --quick`
+#      using the committed answers file, installs deps, typechecks,
+#      and produces an iOS Metro bundle. Proves the wizard output
+#      still compiles and can ship.
+#
+# Runs on every PR touching desktop/agent/, demos/bento/, or this file.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "desktop/agent/**"
+      - "demos/bento/**"
+      - ".github/workflows/bento-e2e.yml"
+  push:
+    branches: [main]
+    paths:
+      - "desktop/agent/**"
+      - "demos/bento/**"
+      - ".github/workflows/bento-e2e.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  agent-e2e:
+    name: Agent — mobile-flow integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+          cache-dependency-path: desktop/agent/go.sum
+
+      - name: Run TestBentoE2E_MobileFlow
+        working-directory: desktop/agent
+        run: |
+          go test -v -run TestBentoE2E_MobileFlow -timeout 120s .
+
+      - name: Vet the agent
+        working-directory: desktop/agent
+        run: go vet ./...
+
+  bento-build:
+    name: Bento — wizard reproducibility + iOS bundle
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+          cache-dependency-path: desktop/agent/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build yaver binary
+        working-directory: desktop/agent
+        run: go build -o "$RUNNER_TEMP/yaver" .
+
+      - name: Scaffold fresh Bento via wizard
+        run: |
+          mkdir -p "$RUNNER_TEMP/bento-fresh"
+          "$RUNNER_TEMP/yaver" new --quick \
+            demos/bento/.yaver-wizard-answers.json \
+            "$RUNNER_TEMP/bento-fresh" > "$RUNNER_TEMP/wizard.json"
+          cat "$RUNNER_TEMP/wizard.json"
+
+      - name: Assert scaffold has 19+ files + Convex schema
+        run: |
+          test -f "$RUNNER_TEMP/bento-fresh/bento/backend/convex/schema.ts"
+          test -f "$RUNNER_TEMP/bento-fresh/bento/apps/mobile/App.tsx"
+          test -f "$RUNNER_TEMP/bento-fresh/bento/.yaver/services.yaml"
+          files=$(find "$RUNNER_TEMP/bento-fresh/bento" -type f | wc -l)
+          echo "scaffold file count: $files"
+          test "$files" -ge 19
+
+      - name: Install + typecheck the committed Bento app
+        working-directory: demos/bento/apps/mobile
+        run: |
+          npm install --legacy-peer-deps --no-audit --no-fund
+          npx tsc --noEmit
+
+      - name: Bundle Bento for iOS via Metro
+        working-directory: demos/bento/apps/mobile
+        run: |
+          mkdir -p "$RUNNER_TEMP/bento-export"
+          npx expo export --platform ios --output-dir "$RUNNER_TEMP/bento-export"
+          ls "$RUNNER_TEMP/bento-export/_expo/static/js/ios/"
+
+      - name: Assert 3 intentional Bento bugs survived
+        run: |
+          grep -q "INTENTIONAL" demos/bento/apps/mobile/app/recipe/\[id\].tsx
+          grep -q "INTENTIONAL" demos/bento/apps/mobile/app/components/CookTimer.tsx
+          grep -q "INTENTIONAL" demos/bento/apps/mobile/app/components/GroceryTotal.tsx
+          echo "all 3 runtime bugs are intact for the video shoot ✓"
