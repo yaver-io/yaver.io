@@ -13,6 +13,10 @@ import HealthView from "@/components/dashboard/HealthView";
 import QualityView from "@/components/dashboard/QualityView";
 import ConvexView from "@/components/dashboard/ConvexView";
 import DataView from "@/components/dashboard/DataView";
+import SwitchView from "@/components/dashboard/SwitchView";
+import AccountsView from "@/components/dashboard/AccountsView";
+import ConsoleView from "@/components/dashboard/ConsoleView";
+import ObservabilityView from "@/components/dashboard/ObservabilityView";
 import PreviewPane from "@/components/dashboard/PreviewPane";
 
 function statusColor(s: string) {
@@ -37,7 +41,7 @@ export default function DashboardPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [guestCode, setGuestCode] = useState("");
-  const [activeTab, setActiveTab] = useState<"chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data">("chat");
+  const [activeTab, setActiveTab] = useState<"chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ">("chat");
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [relayReady, setRelayReady] = useState(false);
@@ -160,6 +164,10 @@ export default function DashboardPage() {
     { id: "health", label: "Health", icon: "\uD83D\uDCCA" },
     { id: "quality", label: "Quality", icon: "\u2705" },
     { id: "data", label: "Data", icon: "\uD83D\uDDC4\uFE0F" },
+    { id: "switch", label: "Switch", icon: "\uD83D\uDD04" },
+    { id: "accounts", label: "Accounts", icon: "\uD83D\uDD11" },
+    { id: "console", label: "Console", icon: "\uD83D\uDCBB" },
+    { id: "observ", label: "Observ", icon: "\uD83D\uDCCA" },
     { id: "convex", label: "Convex", icon: "\u26A1" },
   ];
 
@@ -323,6 +331,14 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><QualityView /></div>
           ) : activeTab === "data" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full"><DataView /></div>
+          ) : activeTab === "switch" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full"><SwitchView /></div>
+          ) : activeTab === "accounts" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full"><AccountsView /></div>
+          ) : activeTab === "console" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><ConsoleView /></div>
+          ) : activeTab === "observ" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><ObservabilityView /></div>
           ) : activeTab === "convex" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full"><ConvexView /></div>
           ) : (
