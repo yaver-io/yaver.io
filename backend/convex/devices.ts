@@ -243,6 +243,68 @@ export const setRunnerDown = mutation({
  * Mark a device as offline.
  * Called by the desktop agent on stop/signout.
  */
+/**
+ * Mark a device as in bootstrap mode (agent running, no valid token).
+ * Authenticates on (deviceId, hardwareId, publicKey) triple — these
+ * match the existing Convex record set during the first `yaver auth`.
+ * If all three match, we update needsAuth=true + isOnline=true + heartbeat.
+ * This lets mobile/web show the device as "NEEDS AUTH" in the list so
+ * the user can push an encrypted token to re-auth it remotely.
+ */
+export const markBootstrap = mutation({
+  args: {
+    deviceId: v.string(),
+    hardwareId: v.string(),
+    publicKey: v.string(),
+    quicHost: v.optional(v.string()),
+    quicPort: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+    if (!device) throw new Error("Device not found");
+    // Identity proof: hardwareId + publicKey must match what was stored
+    // during the initial `yaver auth`. Prevents a random caller from
+    // toggling arbitrary devices into bootstrap mode.
+    if (device.hardwareId !== args.hardwareId) throw new Error("Hardware ID mismatch");
+    if (device.publicKey !== args.publicKey) throw new Error("Public key mismatch");
+    const patch: any = {
+      isOnline: true,
+      needsAuth: true,
+      lastHeartbeat: Date.now(),
+    };
+    if (args.quicHost) patch.quicHost = args.quicHost;
+    if (args.quicPort) patch.quicPort = args.quicPort;
+    await ctx.db.patch(device._id, patch);
+    return { ok: true, userId: device.userId };
+  },
+});
+
+/**
+ * Mark a device as no longer in bootstrap mode (just got a token).
+ * Authed via tokenHash. Clears needsAuth flag.
+ */
+export const clearBootstrap = mutation({
+  args: {
+    tokenHash: v.string(),
+    deviceId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) throw new Error("Unauthorized");
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+    if (!device) return { ok: false };
+    if (device.userId !== session.user._id) throw new Error("Unauthorized");
+    await ctx.db.patch(device._id, { needsAuth: false, lastHeartbeat: Date.now() });
+    return { ok: true };
+  },
+});
+
 export const markOffline = mutation({
   args: {
     tokenHash: v.string(),

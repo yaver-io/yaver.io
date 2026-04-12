@@ -260,6 +260,13 @@ func runBootstrapServe(httpPort int) {
 		if started > 0 {
 			log.Printf("[BOOTSTRAP-RELAY] %d relay tunnel(s) started — agent reachable remotely", started)
 		}
+
+		// Tell Convex we're in bootstrap mode so the device list shows
+		// us as online + needsAuth=true. Mobile/web clients can then
+		// auto-pair by pushing an encrypted token. This does NOT require
+		// an auth token — authenticated via (deviceId, hardwareId, pubKey)
+		// triple which is already in Convex from the initial `yaver auth`.
+		go notifyConvexBootstrap(cfg, httpPort)
 	}
 
 	// Block until either a token lands or the pairing window
@@ -641,4 +648,56 @@ func needsBootstrap(cfg *Config, loadErr error) bool {
 		return true
 	}
 	return false
+}
+
+// notifyConvexBootstrap tells the Convex backend this device is
+// running in bootstrap mode (no token). Convex updates the device
+// record with needsAuth=true + isOnline=true so the mobile app and
+// web dashboard surface the device with a "NEEDS AUTH" badge.
+// Auth is by (deviceId, hardwareId, publicKey) triple — Convex
+// verifies they match the existing record from the first yaver auth.
+// Retries every 30s to keep the "online" status fresh.
+func notifyConvexBootstrap(cfg *Config, httpPort int) {
+	if cfg == nil || cfg.ConvexSiteURL == "" || cfg.DeviceID == "" {
+		return
+	}
+	dk, err := LoadOrGenerateKeys()
+	if err != nil {
+		log.Printf("[bootstrap-convex] cannot load keys: %v", err)
+		return
+	}
+	pubKey := dk.PublicKeyBase64()
+	hwid := HardwareID()
+	host := getLocalIP()
+	url := strings.TrimRight(cfg.ConvexSiteURL, "/") + "/devices/bootstrap"
+
+	register := func() {
+		body := map[string]interface{}{
+			"deviceId":   cfg.DeviceID,
+			"hardwareId": hwid,
+			"publicKey":  pubKey,
+			"quicHost":   host,
+			"quicPort":   httpPort,
+		}
+		data, _ := json.Marshal(body)
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Post(url, "application/json", strings.NewReader(string(data)))
+		if err != nil {
+			log.Printf("[bootstrap-convex] request failed: %v", err)
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			log.Printf("[bootstrap-convex] Convex returned %d", resp.StatusCode)
+			return
+		}
+		log.Printf("[bootstrap-convex] Registered as needs-auth (device %s)", cfg.DeviceID[:8])
+	}
+	register()
+	ticker := time.NewTicker(30 * time.Second)
+	go func() {
+		for range ticker.C {
+			register()
+		}
+	}()
 }

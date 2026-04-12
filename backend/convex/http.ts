@@ -647,6 +647,30 @@ http.route({
   }),
 });
 
+/** POST /devices/bootstrap — Mark device as in bootstrap mode (no token; uses hardwareId+publicKey). */
+http.route({
+  path: "/devices/bootstrap",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.json().catch(() => null);
+    if (!body || !body.deviceId || !body.hardwareId || !body.publicKey) {
+      return errorResponse("deviceId, hardwareId, publicKey required", 400);
+    }
+    try {
+      const res = await ctx.runMutation(api.devices.markBootstrap, {
+        deviceId: body.deviceId,
+        hardwareId: body.hardwareId,
+        publicKey: body.publicKey,
+        quicHost: body.quicHost || undefined,
+        quicPort: body.quicPort || undefined,
+      });
+      return jsonResponse({ ok: true, userId: res.userId });
+    } catch (e: any) {
+      return errorResponse(e?.message || "bootstrap failed", 400);
+    }
+  }),
+});
+
 /** POST /devices/heartbeat — Device heartbeat (authed). */
 http.route({
   path: "/devices/heartbeat",
