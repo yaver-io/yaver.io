@@ -345,15 +345,148 @@ public class AppDelegate: ExpoAppDelegate {
   }
 
   @objc private func handleReloadTap() {
-    NSLog("[AppDelegate] Reload App tapped — rebuilding Hermes bundle")
+    NSLog("[AppDelegate] Reload App tapped — fetching fresh Hermes bundle")
     dismissOverlay()
+    rebuildAndReloadGuestBundle()
+  }
 
-    // Re-trigger the Hermes build+push flow by reloading from the saved bundle URL
-    // The guest bridge will reload with the latest JS
+  /// POST /dev/build-native to the agent (Metro bundles + hermesc compiles),
+  /// download the fresh bundle over the existing URL, then reload the guest bridge.
+  /// This is what the JS side does in handleRunInYaver — but we do it natively
+  /// so it works even while the guest bundle is running (no Yaver JS available).
+  private func rebuildAndReloadGuestBundle() {
+    guard let baseURL = UserDefaults.standard.string(forKey: "yaverAgentBaseURL"),
+          let auth = UserDefaults.standard.string(forKey: "yaverAgentAuth"),
+          let buildURL = URL(string: "\(baseURL)/dev/build-native") else {
+      NSLog("[AppDelegate] reload: missing baseURL/auth — falling back to cached reload")
+      if let rootView = window?.rootViewController?.view as? RCTRootView {
+        rootView.bridge.reload()
+      }
+      return
+    }
+
+    // Show a quick loading indicator
+    if let window = self.window {
+      showReloadSpinner(in: window)
+    }
+
+    var req = URLRequest(url: buildURL)
+    req.httpMethod = "POST"
+    req.setValue(auth, forHTTPHeaderField: "Authorization")
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    req.httpBody = try? JSONSerialization.data(withJSONObject: ["platform": "ios"])
+    req.timeoutInterval = 120
+
+    URLSession.shared.dataTask(with: req) { [weak self] data, resp, err in
+      if let err = err {
+        NSLog("[AppDelegate] reload build failed: %@", err.localizedDescription)
+        DispatchQueue.main.async { self?.hideReloadSpinner(); self?.fallbackBridgeReload() }
+        return
+      }
+      guard let data = data,
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let bundleURLPath = obj["bundleUrl"] as? String,
+            let fullBundleURL = URL(string: "\(baseURL)\(bundleURLPath)") else {
+        NSLog("[AppDelegate] reload: invalid build response")
+        DispatchQueue.main.async { self?.hideReloadSpinner(); self?.fallbackBridgeReload() }
+        return
+      }
+
+      // Download fresh bundle
+      var dlReq = URLRequest(url: fullBundleURL)
+      dlReq.setValue(auth, forHTTPHeaderField: "Authorization")
+      dlReq.timeoutInterval = 60
+      URLSession.shared.dataTask(with: dlReq) { [weak self] bundleData, _, dlErr in
+        if let dlErr = dlErr {
+          NSLog("[AppDelegate] reload download failed: %@", dlErr.localizedDescription)
+          DispatchQueue.main.async { self?.hideReloadSpinner(); self?.fallbackBridgeReload() }
+          return
+        }
+        guard let bundleData = bundleData, bundleData.count > 0 else {
+          DispatchQueue.main.async { self?.hideReloadSpinner(); self?.fallbackBridgeReload() }
+          return
+        }
+
+        // Overwrite the cached bundle
+        do {
+          let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+          let bundlePath = docs.appendingPathComponent("bundles/main.jsbundle")
+          try bundleData.write(to: bundlePath, options: .atomic)
+          NSLog("[AppDelegate] reload: wrote %d bytes to %@", bundleData.count, bundlePath.path)
+        } catch {
+          NSLog("[AppDelegate] reload write failed: %@", error.localizedDescription)
+          DispatchQueue.main.async { self?.hideReloadSpinner(); self?.fallbackBridgeReload() }
+          return
+        }
+
+        // Fire reload notification — AppDelegate.safeReloadBridge reads the fresh bundle
+        DispatchQueue.main.async {
+          self?.hideReloadSpinner()
+          let moduleName = UserDefaults.standard.string(forKey: "yaverCurrentModuleName") ?? "main"
+          NotificationCenter.default.post(
+            name: Notification.Name("YaverBundleLoaderReload"),
+            object: nil,
+            userInfo: ["moduleName": moduleName]
+          )
+        }
+      }.resume()
+    }.resume()
+  }
+
+  private func fallbackBridgeReload() {
     if let rootView = window?.rootViewController?.view as? RCTRootView {
       rootView.bridge.reload()
-      NSLog("[AppDelegate] Guest bridge reloaded")
     }
+  }
+
+  private var reloadSpinner: UIView?
+  private func showReloadSpinner(in window: UIWindow) {
+    reloadSpinner?.removeFromSuperview()
+    let bg = UIView()
+    bg.backgroundColor = UIColor.black.withAlphaComponent(0.4)
+    bg.translatesAutoresizingMaskIntoConstraints = false
+
+    let card = UIView()
+    card.backgroundColor = UIColor(red: 0.05, green: 0.05, blue: 0.08, alpha: 0.95)
+    card.layer.cornerRadius = 14
+    card.translatesAutoresizingMaskIntoConstraints = false
+
+    let spinner = UIActivityIndicatorView(style: .large)
+    spinner.color = UIColor(red: 0.13, green: 0.77, blue: 0.37, alpha: 1.0)
+    spinner.startAnimating()
+    spinner.translatesAutoresizingMaskIntoConstraints = false
+
+    let label = UILabel()
+    label.text = "Reloading…"
+    label.font = .boldSystemFont(ofSize: 14)
+    label.textColor = .white
+    label.translatesAutoresizingMaskIntoConstraints = false
+
+    card.addSubview(spinner)
+    card.addSubview(label)
+    bg.addSubview(card)
+    window.addSubview(bg)
+
+    NSLayoutConstraint.activate([
+      bg.leadingAnchor.constraint(equalTo: window.leadingAnchor),
+      bg.trailingAnchor.constraint(equalTo: window.trailingAnchor),
+      bg.topAnchor.constraint(equalTo: window.topAnchor),
+      bg.bottomAnchor.constraint(equalTo: window.bottomAnchor),
+      card.centerXAnchor.constraint(equalTo: bg.centerXAnchor),
+      card.centerYAnchor.constraint(equalTo: bg.centerYAnchor),
+      card.widthAnchor.constraint(equalToConstant: 160),
+      card.heightAnchor.constraint(equalToConstant: 120),
+      spinner.centerXAnchor.constraint(equalTo: card.centerXAnchor),
+      spinner.centerYAnchor.constraint(equalTo: card.centerYAnchor, constant: -14),
+      label.centerXAnchor.constraint(equalTo: card.centerXAnchor),
+      label.topAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 12),
+    ])
+    reloadSpinner = bg
+  }
+
+  private func hideReloadSpinner() {
+    reloadSpinner?.removeFromSuperview()
+    reloadSpinner = nil
   }
 
   @objc private func handleBackTap() {
