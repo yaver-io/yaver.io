@@ -507,6 +507,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+    flex: 1,
   },
   dot: { width: 10, height: 10, borderRadius: 5 },
   dotSmall: { width: 7, height: 7, borderRadius: 4 },
@@ -524,6 +525,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
+    flexShrink: 0,
+    marginLeft: 8,
   },
   bannerAction: {
     fontSize: 14,

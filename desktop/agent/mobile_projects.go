@@ -125,7 +125,11 @@ func scanMobileProjects() []MobileProject {
 			if strings.Contains(content, `"expo"`) {
 				framework = "expo"
 			} else if strings.Contains(content, `"react-native"`) {
-				framework = "react-native"
+				// Verify it's an actual RN app (has dependencies, not just a keyword match)
+				if strings.Contains(content, `"dependencies"`) &&
+					(strings.Contains(content, `"react-native":`) || strings.Contains(content, `"react-native" :`)) {
+					framework = "react-native"
+				}
 			}
 		default:
 			return nil

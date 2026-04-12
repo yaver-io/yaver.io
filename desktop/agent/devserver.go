@@ -838,14 +838,22 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		os.WriteFile(buildMarker, markerData, 0644)
 		log.Printf("[dev:expo] Build succeeded — starting Metro with --host lan")
 
-		// Start Metro with --host lan so the phone can reach it via Bonjour
+		// Start Metro with --host lan so the phone can reach it via Bonjour.
+		// Use a fresh context — the build's ctx may have been canceled when
+		// expo run:ios exited (e.g., device locked, launch failed).
+		metroCtx := context.Background()
+		if ctx.Err() != nil {
+			log.Printf("[dev:expo] Build context was canceled — using fresh context for Metro")
+		} else {
+			metroCtx = ctx
+		}
 		metroArgs := []string{"expo", "start",
 			"--dev-client",
 			"--port", fmt.Sprintf("%d", e.port),
 			"--host", "lan",
 		}
 		readyURL := fmt.Sprintf("http://127.0.0.1:%d", e.port)
-		if err := e.startProcess(ctx, "npx", metroArgs, opts.WorkDir, nil, readyURL); err != nil {
+		if err := e.startProcess(metroCtx, "npx", metroArgs, opts.WorkDir, nil, readyURL); err != nil {
 			log.Printf("[dev:expo] Metro start failed: %v", err)
 		}
 	}()
