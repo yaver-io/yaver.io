@@ -1155,7 +1155,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	}
 
 	// Auto-detect project from task text and switch workDir if needed.
-	// This enables "start AcmeStore" from Yaver mobile when serving from ~.
+	// This enables "start BentoApp" from Yaver mobile when serving from ~.
 	tm.autoSwitchProject(task, prompt)
 
 	// System prompt: behave as a remote terminal agent, tailored to the task source.

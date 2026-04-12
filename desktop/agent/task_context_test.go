@@ -23,9 +23,9 @@ func TestYaverDevServerContext(t *testing.T) {
 
 func TestYaverDevServerContextIncludesProject(t *testing.T) {
 	// Use the actual repo dir to test project detection
-	ctx := yaverDevServerContext("/Users/kivanccakmak/Workspace/yaver.io/demo/AcmeStore")
-	if !strings.Contains(ctx, "AcmeStore") {
+	ctx := yaverDevServerContext("/Users/kivanccakmak/Workspace/yaver.io/demo/BentoApp")
+	if !strings.Contains(ctx, "BentoApp") {
 		t.Log("context:", ctx)
-		t.Fatal("expected AcmeStore in context")
+		t.Fatal("expected BentoApp in context")
 	}
 }

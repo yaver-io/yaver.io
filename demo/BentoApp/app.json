@@ -1,8 +1,8 @@
 {
   "expo": {
     "name": "Acme Store",
-    "slug": "acme-store",
-    "scheme": "acme-store",
+    "slug": "bento-app",
+    "scheme": "bento-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -14,7 +14,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "io.yaver.acmestore"
+      "bundleIdentifier": "io.yaver.bentoapp"
     },
     "android": {
       "adaptiveIcon": {
@@ -24,7 +24,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "io.yaver.acmestore"
+      "package": "io.yaver.bentoapp"
     },
     "web": {
       "favicon": "./assets/favicon.png"

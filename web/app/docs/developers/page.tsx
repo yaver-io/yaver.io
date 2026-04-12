@@ -135,7 +135,7 @@ export default function DevelopersPage() {
               ["guest-access", "Guest Access & Config"],
               ["sdk-token-security", "SDK Token Security"],
               ["sdk", "SDK — Embed Yaver"],
-              ["demo-app", "Demo App (AcmeStore)"],
+              ["demo-app", "Demo App (BentoApp)"],
               ["contributing", "Contributing"],
             ].map(([id, label]) => (
               <a
@@ -2513,7 +2513,7 @@ CLI Agent ◄──QUIC──────────────── Relay (:
 
           <Terminal title="CLI examples">
             <Comment># Create SDK token with defaults (1 year, all SDK scopes)</Comment>
-            <Cmd>yaver sdk-token create --label &quot;AcmeStore dev&quot;</Cmd>
+            <Cmd>yaver sdk-token create --label &quot;BentoApp dev&quot;</Cmd>
             <Divider />
             <Comment># Narrow scopes + IP binding + short expiry</Comment>
             <Cmd>yaver sdk-token create --scopes feedback,blackbox --allowed-ips 192.168.1.0/24 --expires 7d</Cmd>
@@ -2670,12 +2670,12 @@ YaverFreeClient(client);`}</pre>
           </div>
         </section>
 
-        {/* ─── Demo App (AcmeStore) ─── */}
+        {/* ─── Demo App (BentoApp) ─── */}
         <section className="mb-20">
-          <SectionHeading id="demo-app">Demo App (AcmeStore)</SectionHeading>
+          <SectionHeading id="demo-app">Demo App (BentoApp)</SectionHeading>
           <Prose>
-            The <InlineCode>demo/AcmeStore</InlineCode> directory contains a
-            minimal React Native e-commerce app. It exists for one reason: to
+            The <InlineCode>demo/BentoApp</InlineCode> directory contains a
+            minimal React Native bento meal-ordering app. It exists for one reason: to
             showcase the Feedback SDK integration in a real, runnable app that
             anyone can clone and try immediately.
           </Prose>
@@ -2684,8 +2684,8 @@ YaverFreeClient(client);`}</pre>
           <Prose>
             The Feedback SDK is designed to be dropped into any React Native
             app during development. But reading docs about it is not the same
-            as seeing it work. AcmeStore is a deliberately simple app (login,
-            product list, cart) so the SDK integration stands out clearly
+            as seeing it work. BentoApp is a deliberately simple app (browse menu,
+            pick a bento, place an order) so the SDK integration stands out clearly
             without the noise of a real production codebase.
           </Prose>
 
@@ -2707,9 +2707,9 @@ YaverFreeClient(client);`}</pre>
 
           <SubHeading>Project structure</SubHeading>
           <div className="mb-6">
-            <Terminal title="demo/AcmeStore">
+            <Terminal title="demo/BentoApp">
               <pre className="text-surface-300">
-                {`demo/AcmeStore/
+                {`demo/BentoApp/
 ├── app/
 │   ├── _layout.tsx        # SDK init + FloatingButton
 │   ├── index.tsx           # Home / product list
@@ -2731,7 +2731,7 @@ YaverFreeClient(client);`}</pre>
           <SubHeading>Running it</SubHeading>
           <div className="mb-6">
             <Terminal title="terminal">
-              <Cmd>cd demo/AcmeStore</Cmd>
+              <Cmd>cd demo/BentoApp</Cmd>
               <Cmd>npm install</Cmd>
               <Cmd>npx expo start</Cmd>
               <Comment># Scan QR with Expo Go, or run on simulator:</Comment>
@@ -2742,7 +2742,7 @@ YaverFreeClient(client);`}</pre>
           <Prose>
             The SDK connects to your local Yaver agent automatically via LAN
             beacon discovery. Start <InlineCode>yaver serve</InlineCode> on
-            your machine, open AcmeStore on your phone, and the debug button
+            your machine, open BentoApp on your phone, and the debug button
             turns green when connected.
           </Prose>
         </section>

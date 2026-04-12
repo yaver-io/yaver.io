@@ -28,7 +28,7 @@ func runSdkToken(args []string) {
 
 func runSdkTokenCreate(args []string) {
 	fs := flag.NewFlagSet("sdk-token create", flag.ExitOnError)
-	label := fs.String("label", "", "Human-readable label (e.g. 'AcmeStore dev')")
+	label := fs.String("label", "", "Human-readable label (e.g. 'BentoApp dev')")
 	scopes := fs.String("scopes", "", "Comma-separated scopes (default: feedback,blackbox,voice,builds)")
 	allowedIPs := fs.String("allowed-ips", "", "Comma-separated CIDRs (e.g. 192.168.1.0/24)")
 	expires := fs.String("expires", "", "Token lifetime (e.g. 24h, 7d, 30d). Default: 365d")
@@ -105,7 +105,7 @@ Flags:
   --expires "duration"     Token lifetime: 24h, 7d, 30d (default: 365d)
 
 Examples:
-  yaver sdk-token create --label "AcmeStore dev"
+  yaver sdk-token create --label "BentoApp dev"
   yaver sdk-token create --label "CI" --expires 24h --allowed-ips 10.0.0.0/8
   yaver sdk-token create --scopes feedback,blackbox --allowed-ips 192.168.1.0/24
 

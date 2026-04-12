@@ -201,7 +201,7 @@ and accessible via relay at https://<relay>/d/<deviceId>/dev/*
 Examples:
   yaver dev start                           # auto-detect framework
   yaver dev start --framework expo          # force Expo/Metro
-  yaver dev start --dir ./demo/AcmeStore    # specify project dir
+  yaver dev start --dir ./demo/BentoApp    # specify project dir
   yaver dev reload                          # trigger hot reload
   yaver dev stop`)
 }

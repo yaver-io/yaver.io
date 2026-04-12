@@ -565,7 +565,7 @@ yaver autotest growth                       # Show how suite has grown over time
 Sent to user on completion (via mobile push + in-app):
 
 ```markdown
-## Autotest Run Complete — AcmeStore
+## Autotest Run Complete — BentoApp
 
 **Run**: 2026-03-25 14:30 → 14:52 (22 min, 3 iterations)
 
@@ -633,7 +633,7 @@ Sent to user on completion (via mobile push + in-app):
 ```
 $ yaver autotest suite --coverage
 
-Screen Coverage Matrix — AcmeStore
+Screen Coverage Matrix — BentoApp
 ═══════════════════════════════════════════════════════
   Screen            Empty  Loaded  Error  Offline  Auth
 ───────────────────────────────────────────────────────
@@ -656,7 +656,7 @@ Screen Coverage Matrix — AcmeStore
 ```
 $ yaver autotest growth
 
-Autotest Suite Growth — AcmeStore
+Autotest Suite Growth — BentoApp
 ═══════════════════════════════════════════════════
   Run Date       Cases   New   Bugs   Fixed   CI
 ───────────────────────────────────────────────────

@@ -605,8 +605,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/domains/add", s.auth(s.handleDomainAdd))
 	mux.HandleFunc("/domains/remove", s.auth(s.handleDomainRemove))
 
-	// Log search
-	mux.HandleFunc("/logs/search", s.auth(s.handleLogSearch))
+	// Log search — see line 186 for the primary registration (handleLogsSearch)
 	mux.HandleFunc("/logs/index/start", s.auth(s.handleLogIndexStart))
 
 	// Error tracking
