@@ -16,7 +16,8 @@ import { quicClient, RelayServer, TunnelServer } from "../lib/quic";
 import { useAuth } from "./AuthContext";
 import { getUserSettings } from "../lib/auth";
 import { appLog } from "../lib/logger";
-import { beaconListener } from "../lib/beacon";
+import { beaconListener, type DiscoveredDevice } from "../lib/beacon";
+import { fetchPairInfo, submitPair } from "../lib/pairDevice";
 import { CONVEX_SITE_URL } from "../lib/constants";
 import {
   fetchGuestHosts,
@@ -553,6 +554,41 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
 
     return () => { unsubDiscover(); unsubLost(); };
   }, [token]);
+
+  // Auto-pair bootstrap devices: when the beacon discovers a fresh
+  // yaver box on the same WiFi (needsAuth=true, passkey present), push
+  // this phone's OAuth token to it automatically. The user never has to
+  // touch the Mac — the mobile app is the only interface.
+  const autoPairedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!token || !user?.id) return;
+    const iv = setInterval(async () => {
+      const bootstraps = beaconListener.getBootstrapDevices();
+      for (const dev of bootstraps) {
+        if (!dev.bootstrapPasskey) continue;
+        if (autoPairedRef.current.has(dev.deviceId)) continue;
+        autoPairedRef.current.add(dev.deviceId);
+        const targetUrl = `http://${dev.ip}:${dev.port}`;
+        try {
+          const info = await fetchPairInfo(targetUrl);
+          if (!info.ok) continue;
+          const res = await submitPair({
+            code: dev.bootstrapPasskey,
+            targetUrl,
+            token,
+            userId: user.id,
+          });
+          if (res.ok) {
+            appLog("info", `Auto-paired ${dev.name || dev.deviceId} at ${dev.ip}`);
+            setTimeout(() => refreshDevices(), 3000);
+          }
+        } catch {
+          autoPairedRef.current.delete(dev.deviceId);
+        }
+      }
+    }, 3000);
+    return () => clearInterval(iv);
+  }, [token, user?.id, refreshDevices]);
 
   // Fetch devices when token becomes available + poll every 30s (lightweight)
   useEffect(() => {
