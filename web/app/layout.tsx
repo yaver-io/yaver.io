@@ -13,18 +13,20 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Yaver - Use Any AI Agent from Anywhere",
+  title: "Yaver \u2014 Your Machine Is Your Cloud",
   description:
-    "Use any AI coding agent from your phone, tablet, or any device. Open-source P2P tool connecting to your dev machines with real-time streaming and multi-device support.",
+    "Create full-stack projects, run Convex and Supabase locally, test on real devices, deploy anywhere \u2014 all from your phone. Free, open source, P2P encrypted.",
   keywords: [
-    "AI agent",
+    "developer control plane",
+    "local development platform",
+    "Convex local dashboard",
+    "Supabase local",
+    "deploy from phone",
+    "vibe coding",
+    "your machine is your cloud",
     "Claude Code",
-    "Codex",
-    "Aider",
-    "P2P",
-    "mobile coding",
+    "Ollama",
     "MCP server",
-    "remote development",
   ],
   icons: {
     icon: [
@@ -35,9 +37,9 @@ export const metadata: Metadata = {
     apple: [{ url: "/apple-touch-icon.png", sizes: "180x180" }],
   },
   openGraph: {
-    title: "Yaver - Use Any AI Agent from Anywhere",
+    title: "Yaver \u2014 Your Machine Is Your Cloud",
     description:
-      "Access Claude AI from any device with peer-to-peer encrypted connections.",
+      "Control your dev machines from your phone. Create projects, run local backends, test on real devices, deploy. Free forever.",
     url: "https://yaver.io",
     siteName: "Yaver",
     type: "website",
@@ -45,9 +47,9 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Yaver - Use Any AI Agent from Anywhere",
+    title: "Yaver \u2014 Your Machine Is Your Cloud",
     description:
-      "Access Claude AI from any device with peer-to-peer encrypted connections.",
+      "Control your dev machines from your phone. Create projects, run local backends, test on real devices, deploy. Free forever.",
     images: ["/og-image.png"],
   },
   metadataBase: new URL("https://yaver.io"),

@@ -590,24 +590,24 @@ function DebugConsolePreview() {
 
 const DEMO_TABS = [
   {
+    id: "remote",
+    label: "Full Loop",
+    icon: "\u{1F4F1}",
+    desc: "Phone \u2192 create project \u2192 code \u2192 test \u2192 deploy. All from one device.",
+    video: "/demo.mp4",
+  },
+  {
     id: "feedback",
-    label: "Bug Fix Loop",
+    label: "Bug Fix",
     icon: "\uD83D\uDC1B",
-    desc: "Shake to report. AI sees your screen, writes the fix, hot reloads. Under 60 seconds.",
+    desc: "Shake \u2192 screenshot \u2192 AI fixes \u2192 hot reload. Under 60 seconds.",
     video: "/demo-feedback.mp4",
   },
   {
-    id: "remote",
-    label: "Remote Task",
-    icon: "\u{1F4F1}",
-    desc: "Send a task from your phone. Agent writes code on your machine. P2P encrypted.",
-    video: "/demo-remote.mp4",
-  },
-  {
     id: "autotest",
-    label: "Auto Test",
+    label: "Task Queue",
     icon: "\u25B6",
-    desc: "AI navigates every screen, finds crashes, fixes them, builds a growing test suite.",
+    desc: "Queue tasks from phone \u2192 machine runs them \u2192 review results when ready.",
     video: "/demo-autotest.mp4",
   },
 ];
@@ -874,52 +874,56 @@ export default function HomePage() {
     return <div className="flex min-h-[80vh] items-center justify-center"><div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-600 border-t-emerald-400" /></div>;
   }
 
+
   return (
     <>
       {/* ── Section 1: Hero ── */}
       <section className="px-6 pb-8 pt-14 md:pt-20">
         <div className="mx-auto max-w-4xl text-center">
-          <h1 className="mb-3 text-3xl font-bold tracking-tight text-surface-50 sm:text-4xl md:text-5xl">
-            AI writes the code.
+          <h1 className="mb-4 text-3xl font-bold tracking-tight text-surface-50 sm:text-4xl md:text-5xl">
+            Your machine is your cloud.
             <br />
-            Yaver tests it on your real device.
+            Yaver is the remote control.
           </h1>
           <p className="mx-auto max-w-2xl text-base leading-relaxed text-surface-400 md:text-lg">
-            Push to device in 4s. Shake to report bugs. AI fixes and hot reloads.
+            Create full-stack projects. Run Convex, Supabase, Postgres on your own hardware.
             <br />
-            Queue tasks from the beach. Chain them. Auto-retry. One tap to ship.
-            <br />
-            Claude Code &middot; Codex &middot; Aider &middot; Ollama &mdash; any agent. P2P encrypted. Free forever.
+            Test on real devices. Deploy anywhere. All from your phone.
           </p>
-          <div className="mt-5 flex flex-col items-center justify-center gap-4 sm:flex-row">
+          <p className="mx-auto mt-2 max-w-2xl text-sm text-surface-500">
+            Open source &middot; P2P encrypted &middot; Free forever.
+          </p>
+          <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <a href="#get-started" className="btn-primary inline-flex items-center gap-2 px-8 py-3 text-sm font-medium">
+              Get Started &mdash; 60 seconds
+            </a>
             <a
               href="https://github.com/kivanccakmak/yaver.io"
               target="_blank"
               rel="noopener noreferrer"
-              className="btn-primary inline-flex items-center gap-2 px-8 py-3 text-sm font-medium"
+              className="btn-secondary inline-flex items-center gap-2 px-8 py-3 text-sm font-medium"
             >
               <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.405.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-              Star on GitHub
-            </a>
-            <a href="#features" className="btn-secondary px-8 py-3 text-sm font-medium">
-              Get Started
+              GitHub
             </a>
           </div>
+          <p className="mt-6 text-xs text-surface-500">
+            Works with: Claude Code &middot; Codex &middot; Aider &middot; Ollama &middot; Goose &middot; any terminal
+          </p>
         </div>
       </section>
 
       {/* ── Section 2: Demo ── */}
       <DemoSection />
 
-      {/* ── Section 3: Get Started (compact 3-column) ── */}
-      <section id="features" className="border-t border-surface-800/60 px-6 py-16">
+      {/* ── Section 3: Get Started ── */}
+      <section id="get-started" className="border-t border-surface-800/60 px-6 py-16">
         <div className="mx-auto max-w-5xl">
           <h2 className="mb-10 text-center text-2xl font-bold text-surface-50 md:text-3xl">
             Get started in 60 seconds
           </h2>
-
           <div className="grid gap-6 md:grid-cols-3">
-            {/* Column 1: Install + Connect Agent (merged) */}
+            {/* Column 1 */}
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
               <div className="mb-3 flex items-center gap-2">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">1</span>
@@ -935,18 +939,15 @@ export default function HomePage() {
                   <div><span className="text-surface-400">$</span> <span className="text-surface-200">brew install kivanccakmak/yaver/yaver</span></div>
                   <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver auth</span></div>
                   <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver serve</span></div>
-                  <div className="my-1 h-px bg-surface-800/60" />
-                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver mcp setup claude</span></div>
-                  <div className="text-[11px] text-green-400/80">{"MCP configured \u2713"}</div>
                 </div>
               </div>
               <p className="mt-3 text-[11px] text-surface-500">
-                Works with: Claude Code, Codex, Aider, Ollama, Goose, Amp, or any tmux session.
-                {" "}Also: <a href="#install-methods" className="underline hover:text-surface-300">curl, apt, AUR, Docker, Nix, Scoop</a>
+                Works with: Claude Code, Codex, Aider, Ollama, Goose, or any tmux session.
+                {" "}<Link href="/download" className="underline hover:text-surface-300">All install methods</Link>
               </p>
             </div>
 
-            {/* Column 2: Get the app */}
+            {/* Column 2 */}
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
               <div className="mb-3 flex items-center gap-2">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">2</span>
@@ -960,20 +961,20 @@ export default function HomePage() {
                 </a>
                 <a href="https://play.google.com/store/apps/details?id=io.yaver.mobile" target="_blank" rel="noopener noreferrer"
                   className="inline-flex items-center gap-2 rounded-lg bg-surface-800 px-4 py-2.5 text-xs font-medium text-surface-300 transition-colors hover:bg-surface-700">
-                  <svg className="h-4 w-4 shrink-0 text-surface-400" fill="currentColor" viewBox="0 0 24 24"><path d="M17.523 2.238l-1.931 3.334c1.88.907 3.261 2.565 3.713 4.608H4.694c.452-2.043 1.833-3.701 3.714-4.608L6.477 2.238a.357.357 0 01.13-.487.357.357 0 01.487.13l1.962 3.389A8.97 8.97 0 0112 4.749c1.07 0 2.088.188 3.039.521l1.962-3.389a.357.357 0 01.487-.13.357.357 0 01.13.487h-.095zM9.5 7.5a.75.75 0 100-1.5.75.75 0 000 1.5zm5 0a.75.75 0 100-1.5.75.75 0 000 1.5zM4.5 11.68h15c.276 0 .5.224.5.5v7.5c0 1.401-1.119 2.5-2.5 2.5h-11C5.119 22.18 4 21.061 4 19.68v-7.5c0-.276.224-.5.5-.5z"/></svg>
+                  <svg className="h-4 w-4 shrink-0 text-surface-400" fill="currentColor" viewBox="0 0 24 24"><path d="M3 20.5V3.5c0-.35.2-.66.5-.85L13.5 12 3.5 21.35a1 1 0 01-.5-.85zm10.95-9l2.82-2.82 3.93 2.27c.7.4.7 1.38 0 1.78l-3.93 2.27-2.82-2.82L13.95 11.5zM4.5 2.66L14.2 12l-9.7 9.34L14.2 12 4.5 2.66z"/></svg>
                   Google Play
                 </a>
               </div>
               <p className="mt-3 text-[11px] text-surface-500">
-                Sign in with Apple, Google, or Microsoft. Your machine appears automatically on your phone.
+                Sign in with Apple, Google, or Microsoft. Your machine appears on your phone.
               </p>
             </div>
 
-            {/* Column 3: Test your app on device */}
+            {/* Column 3 */}
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
               <div className="mb-3 flex items-center gap-2">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">3</span>
-                <span className="text-sm font-semibold text-surface-100">Test your app on device</span>
+                <span className="text-sm font-semibold text-surface-100">Create your first project</span>
               </div>
               <div className="terminal">
                 <div className="terminal-header">
@@ -982,24 +983,24 @@ export default function HomePage() {
                   <div className="terminal-dot bg-[#28c840]" />
                 </div>
                 <div className="terminal-body space-y-1 text-[12px]">
-                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">cd my-app</span></div>
-                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">npx yaver-cli init</span></div>
-                  <div className="text-[11px] text-green-400/80">{"React Native 0.81 \u2705 Hermes \u2705"}</div>
+                  <div className="text-surface-500"># From your phone or yaver.io:</div>
+                  <div className="text-surface-500"># Tap [+ New Project]</div>
+                  <div className="text-surface-500"># Pick a template + backend</div>
                   <div className="my-1 h-px bg-surface-800/60" />
-                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">npx yaver-cli push</span></div>
-                  <div className="text-[11px] text-green-400/80">{"\uD83D\uDE80 On device in 4.1s"}</div>
+                  <div className="text-surface-500"># Or from CLI:</div>
+                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver init my-app --stack nextjs --backend convex</span></div>
+                  <div className="text-[11px] text-green-400/80">{"\uD83D\uDE80 Full stack running in 60s"}</div>
                 </div>
               </div>
               <p className="mt-3 text-[11px] text-surface-500">
-                Push any existing React Native project to the Yaver app for real-device testing. No project modifications. 40+ native modules pre-installed.
+                Database, auth, email, HTTPS &mdash; all on your machine. $0.
               </p>
             </div>
           </div>
 
-          {/* Feedback SDK install */}
           <div className="mt-6 rounded-xl border border-surface-800 bg-surface-900/30 p-5">
             <p className="mb-2 text-sm font-medium text-surface-200">
-              Optional: Add the Feedback SDK to your app for shake-to-report + AI bug fixing
+              Optional: Add the Feedback SDK for shake-to-report + AI bug fixing
             </p>
             <div className="flex flex-wrap gap-2 text-xs">
               <code className="rounded bg-surface-800 px-2 py-1 text-surface-300 select-all">npm install yaver-feedback-react-native</code>
@@ -1010,71 +1011,160 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ── Section 4: Feedback SDK ── */}
+      {/* ── Section 4: Create a Project ── */}
       <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-4xl">
+        <div className="mx-auto max-w-5xl">
+          <div className="mb-4 text-center">
+            <span className="inline-block rounded-full bg-[#6366f1]/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#a5b4fc]">New Project</span>
+          </div>
           <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            The AI QA loop that doesn&apos;t exist anywhere else.
+            Start a full-stack project from your phone
           </h2>
-          <p className="mx-auto mb-6 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
-            Shake your phone. The AI sees your screen, writes the fix, and hot reloads the app. No laptop. No Slack thread. No Loom video. No waiting.
+          <p className="mx-auto mb-12 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
+            Pick a template. Choose your backend. Yaver scaffolds everything on your machine &mdash;
+            database, auth, email server, HTTPS certs. 60 seconds. $0.
           </p>
 
-          {/* Visual step sequence */}
-          <div className="mx-auto mb-12 max-w-3xl">
-            <div className="flex flex-wrap items-center justify-center gap-2 text-sm">
+          <div className="grid gap-10 lg:grid-cols-2 lg:items-start">
+            {/* Left: numbered list */}
+            <ol className="space-y-6">
               {[
-                { label: "Shake", icon: "\uD83D\uDCF1" },
-                { label: "Screenshot", icon: "\uD83D\uDCF8" },
-                { label: "P2P to agent", icon: "\u2192" },
-                { label: "Fix", icon: "\uD83D\uDD27" },
-                { label: "Hot reload", icon: "\u21BB" },
-                { label: "Done", icon: "\u2713" },
-              ].map((step, i) => (
-                <div key={step.label} className="flex items-center gap-2">
-                  <div className="flex items-center gap-1.5 rounded-full border border-surface-700 bg-surface-900 px-3 py-1.5">
-                    <span>{step.icon}</span>
-                    <span className="text-surface-300">{step.label}</span>
+                { n: 1, t: "Pick a template", d: "SaaS Starter \u00B7 Landing Page \u00B7 Dashboard \u00B7 API Only \u00B7 Mobile App (Expo)" },
+                { n: 2, t: "Choose your backend (all run locally on YOUR machine)", d: "Convex (SQLite, real-time) \u00B7 Supabase (Postgres + Auth + Storage) \u00B7 Postgres + Drizzle \u00B7 SQLite + Drizzle \u00B7 PocketBase" },
+                { n: 3, t: "Add auth (optional)", d: "Better Auth \u00B7 Convex Auth \u00B7 Supabase Auth \u00B7 Auth.js" },
+                { n: 4, t: "One-click services (Docker containers on your machine)", d: "Email (Mailpit) \u00B7 HTTPS (mkcert) \u00B7 Redis \u00B7 S3 (MinIO) \u00B7 AI Models (Ollama) \u00B7 Stripe CLI \u00B7 Analytics (Umami)" },
+                { n: 5, t: "Everything starts automatically", d: "Dev server, backend, email, HTTPS, git repo, tunnel for phone preview. Ready in ~60 seconds." },
+              ].map((s) => (
+                <li key={s.n} className="flex gap-4">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">{s.n}</span>
+                  <div>
+                    <p className="text-sm font-semibold text-surface-100">{s.t}</p>
+                    <p className="mt-1 text-xs leading-relaxed text-surface-400">{s.d}</p>
                   </div>
-                  {i < 5 && <span className="text-surface-600">&rarr;</span>}
-                </div>
+                </li>
               ))}
+            </ol>
+
+            {/* Right: wizard preview */}
+            <ProjectWizardPreview />
+          </div>
+
+          <div className="mt-12 rounded-xl border-l-2 border-[#6366f1]/60 bg-surface-900/50 p-5 text-sm leading-relaxed text-surface-300">
+            All backends run <strong className="text-surface-100">locally</strong> on your machine. No cloud accounts needed.
+            When you&apos;re ready to go live, deploy to your VPS, Vercel, Cloudflare, or anywhere.
+          </div>
+        </div>
+      </section>
+
+      {/* ── Section 5: Your Dashboard ── */}
+      <section className="border-t border-surface-800/60 px-6 py-24">
+        <div className="mx-auto max-w-5xl">
+          <div className="mb-4 text-center">
+            <span className="inline-block rounded-full bg-[#6366f1]/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#a5b4fc]">Web UI</span>
+          </div>
+          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
+            Your database. From your phone.
+          </h2>
+          <p className="mx-auto mb-12 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
+            When you run Convex or Supabase locally, their dashboards are stuck on localhost.
+            Yaver tunnels them through your relay &mdash; browse tables, run queries,
+            check logs from anywhere.
+          </p>
+
+          <DashboardComparison />
+
+          <div className="mt-12 grid gap-4 md:grid-cols-3">
+            {[
+              { t: "Browse Tables", d: "Convex documents, Supabase rows, Postgres tables. Edit inline. Filter, sort, export CSV." },
+              { t: "Run Queries", d: "Execute Convex functions or SQL queries from your phone. See results instantly. Debug data issues on the go." },
+              { t: "Live Logs", d: "Watch function calls, mutations, and errors stream in real-time. Like tail -f, but from the bus." },
+            ].map((c) => (
+              <div key={c.t} className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
+                <p className="mb-2 text-sm font-semibold text-surface-100">{c.t}</p>
+                <p className="text-xs leading-relaxed text-surface-400">{c.d}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-10 text-center">
+            <p className="mb-3 text-xs uppercase tracking-wider text-surface-500">Supported backends</p>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {["Convex Dashboard", "Supabase Studio", "Drizzle Studio", "PocketBase Admin", "pgweb"].map((b) => (
+                <span key={b} className="rounded-full border border-surface-800 bg-surface-900 px-3 py-1 text-xs text-surface-300">{b}</span>
+              ))}
+            </div>
+            <p className="mt-3 text-xs text-surface-500">
+              All tunneled through your relay. All accessible from phone or browser.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Section 6: Test on Real Devices ── */}
+      <section className="border-t border-surface-800/60 px-6 py-24">
+        <div className="mx-auto max-w-5xl">
+          <div className="mb-4 text-center">
+            <span className="inline-block rounded-full bg-[#6366f1]/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#a5b4fc]">Device Testing</span>
+          </div>
+          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
+            Push to device in 4 seconds
+          </h2>
+          <p className="mx-auto mb-10 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
+            Like Expo Go, but for any existing React Native project. Real native views, not WebView.
+            40+ pre-installed modules. Works over WiFi, 4G, or through relay.
+          </p>
+
+          {/* Terminal demo */}
+          <div className="mx-auto mb-10 max-w-2xl">
+            <div className="terminal">
+              <div className="terminal-header">
+                <div className="terminal-dot bg-[#ff5f57]" />
+                <div className="terminal-dot bg-[#febc2e]" />
+                <div className="terminal-dot bg-[#28c840]" />
+              </div>
+              <div className="terminal-body space-y-1 text-[13px]">
+                <div><span className="text-surface-400">$</span> <span className="text-surface-200">cd my-app &amp;&amp; npx yaver-cli init</span></div>
+                <div className="text-[12px] text-green-400/80">{"React Native 0.81 \u2705 Hermes \u2705 15/16 modules \u2705"}</div>
+                <div className="my-1 h-px bg-surface-800/60" />
+                <div><span className="text-surface-400">$</span> <span className="text-surface-200">npx yaver-cli push</span></div>
+                <div className="text-[12px] text-surface-400">{"\uD83D\uDCE1 Found: iPhone 15 (192.168.1.42)"}</div>
+                <div className="text-[12px] text-surface-400">{"\u26A1 Compiling Hermes bytecode..."}</div>
+                <div className="text-[12px] text-surface-400">{"\uD83D\uDCE4 Pushing 847 KB..."}</div>
+                <div className="text-[12px] text-green-400/80">{"\uD83D\uDE80 Done in 4.1s \u2014 app loading on device"}</div>
+              </div>
             </div>
           </div>
 
-
-          <div className="mb-10 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {/* Feature grid */}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {[
-              { icon: ">", color: "text-surface-300 bg-surface-800", label: "Message back and forth", desc: "Send tasks, see agent responses in real-time" },
-              { icon: "\u21BB", color: "text-[#fbbf24] bg-[#fbbf24]/10", label: "Native Hot Reload", desc: "React Native apps run inside Yaver with camera, BLE, GPS — hot reload over WiFi or 4G" },
-              { icon: "\u2692", color: "text-[#60a5fa] bg-[#60a5fa]/10", label: "Build + Deploy", desc: "One button: iOS + Android to TestFlight + Play Store" },
-              { icon: "\uD83D\uDC1B", color: "text-[#f87171] bg-[#f87171]/10", label: "Bug Report", desc: "Auto-screenshot (SDK overlay hidden), AI analyzes, pushes fix" },
-              { icon: "\u25B6", color: "text-[#a78bfa] bg-[#a78bfa]/10", label: "Autonomous Test Loop", desc: "Agent reads codebase, navigates app on device/emulator, catches crashes, writes fixes, hot reloads, and repeats — no human in the loop" },
-              { icon: "\u25CF", color: "text-[#22c55e] bg-[#22c55e]/10", label: "BlackBox", desc: "Streams logs, navigation, crashes like a flight recorder" },
-              { icon: "\u2713", color: "text-[#34d399] bg-[#34d399]/10", label: "Fix Report", desc: "All fixes listed with diffs — staged, never committed — review and accept" },
-              { icon: "\uD83D\uDD12", color: "text-[#818cf8] bg-[#818cf8]/10", label: "6-layer security", desc: "Scoped tokens, IP binding, HTTPS on LAN, rotation, device alerts" },
-              { icon: "\u2717", color: "text-surface-500 bg-surface-800", label: "Auto-disabled in production", desc: "Your users never see it" },
+              { icon: "\uD83D\uDC1B", color: "text-[#f87171] bg-[#f87171]/10", t: "Feedback SDK", d: "Drop <FloatingButton /> in your app. Shake to report bugs. AI sees your screen, writes the fix, hot reloads." },
+              { icon: "\u25B6", color: "text-[#a78bfa] bg-[#a78bfa]/10", t: "Autonomous Testing", d: "Agent navigates every screen, catches crashes, fixes them, hot reloads, repeats. Fix report shows all changes." },
+              { icon: "\u2692", color: "text-[#60a5fa] bg-[#60a5fa]/10", t: "Build + Deploy", d: "One button: iOS + Android \u2192 TestFlight + Play Store. Both platforms or one." },
+              { icon: "\u21BB", color: "text-[#fbbf24] bg-[#fbbf24]/10", t: "Watch Mode", d: "--watch re-pushes on every save. Edit \u2192 save \u2192 see on device in ~1s." },
+              { icon: "\u25CF", color: "text-[#22c55e] bg-[#22c55e]/10", t: "BlackBox", d: "Streams logs, navigation events, crashes to agent like a flight recorder." },
+              { icon: "\uD83D\uDD12", color: "text-[#818cf8] bg-[#818cf8]/10", t: "Security", d: "Scoped tokens, IP binding, HTTPS on LAN, key rotation. Auto-disabled in production." },
             ].map((f) => (
-              <div key={f.label} className="flex items-start gap-3 rounded-xl border border-surface-800 bg-surface-900/50 p-4">
-                <div className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-sm ${f.color}`}>{f.icon}</div>
+              <div key={f.t} className="flex items-start gap-3 rounded-xl border border-surface-800 bg-surface-900/50 p-4">
+                <div className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-sm ${f.color}`}>{f.icon}</div>
                 <div>
-                  <p className="text-sm font-medium text-surface-200">{f.label}</p>
-                  <p className="text-xs text-surface-500">{f.desc}</p>
+                  <p className="text-sm font-medium text-surface-200">{f.t}</p>
+                  <p className="mt-0.5 text-xs leading-relaxed text-surface-500">{f.d}</p>
                 </div>
               </div>
             ))}
           </div>
 
-          {/* DebugConsolePreview component */}
+          {/* Interactive DebugConsolePreview */}
           <DebugConsolePreview />
 
-          {/* Feedback SDK code blocks */}
+          {/* One code block + badges */}
           <div className="mt-10 rounded-xl border border-surface-800/60 bg-surface-900/50 p-5">
             <div className="mb-3 flex items-center gap-2">
               <span className="text-sm font-semibold text-surface-100">React Native</span>
               <span className="rounded-full bg-[#8b5cf6]/20 px-2 py-0.5 text-[10px] text-[#a78bfa]">feedback</span>
             </div>
-            <pre className="rounded-lg bg-surface-950 p-3 text-xs text-surface-300 overflow-x-auto"><code>{`const isDev = __DEV__ && user?.id === 'YOUR_USER_ID';
+            <pre className="overflow-x-auto rounded-lg bg-surface-950 p-3 text-xs text-surface-300"><code>{`const isDev = __DEV__ && user?.id === 'YOUR_USER_ID';
 
 if (isDev && !YaverFeedback.isInitialized()) {
   YaverFeedback.init({ trigger: 'floating-button' });
@@ -1088,1584 +1178,198 @@ return (
     {isDev && <FloatingButton />}
   </>
 );`}</code></pre>
-          </div>
-
-          <div className="mt-4 rounded-xl border border-surface-800/60 bg-surface-900/50 p-5">
-            <div className="mb-3 flex items-center gap-2">
-              <span className="text-sm font-semibold text-surface-100">Flutter</span>
-              <span className="rounded-full bg-[#8b5cf6]/20 px-2 py-0.5 text-[10px] text-[#a78bfa]">feedback</span>
+            <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-surface-500">Available for:</span>
+              <span className="rounded bg-surface-800 px-2 py-1 text-surface-300">React Native</span>
+              <span className="rounded bg-surface-800 px-2 py-1 text-surface-300">Flutter</span>
+              <span className="rounded bg-surface-800 px-2 py-1 text-surface-300">Web</span>
             </div>
-            <pre className="rounded-lg bg-surface-950 p-3 text-xs text-surface-300 overflow-x-auto"><code>{`final isDev = kDebugMode && user?.id == 'YOUR_USER_ID';
-
-if (isDev) {
-  YaverFeedback.init(trigger: FeedbackTrigger.floatingButton);
-  BlackBox.start();
-  BlackBox.wrapPrint();
-}
-
-return MaterialApp(
-  builder: (context, child) => Stack(children: [
-    child!,
-    if (isDev) const FloatingButton(),
-  ]),
-);`}</code></pre>
           </div>
 
-          <div className="mt-4 rounded-xl border border-surface-800/60 bg-surface-900/50 p-5">
-            <div className="mb-3 flex items-center gap-2">
-              <span className="text-sm font-semibold text-surface-100">Web</span>
-              <span className="rounded-full bg-[#8b5cf6]/20 px-2 py-0.5 text-[10px] text-[#a78bfa]">feedback</span>
-            </div>
-            <pre className="rounded-lg bg-surface-950 p-3 text-xs text-surface-300 overflow-x-auto"><code>{`import { YaverFeedback, BlackBox } from '@yaver/feedback-web';
-
-if (isDev) {
-  YaverFeedback.init({ trigger: 'floating-button' });
-  BlackBox.start();
-  BlackBox.wrapConsole();
-}`}</code></pre>
-          </div>
-
-          <div className="mt-6 flex flex-wrap items-center justify-center gap-2 text-xs text-surface-500">
-            <code className="rounded bg-surface-800 px-2 py-1 text-surface-300">npm install yaver-feedback-react-native</code>
-            <span>&middot;</span>
-            <code className="rounded bg-surface-800 px-2 py-1 text-surface-300">flutter pub add yaver_feedback</code>
-            <span>&middot;</span>
-            <code className="rounded bg-surface-800 px-2 py-1 text-surface-300">npm install @yaver/feedback-web</code>
-          </div>
-          <p className="mt-3 text-center text-xs text-surface-500">
-            Available for: React Native &middot; Flutter &middot; Web
-          </p>
-        </div>
-      </section>
-
-      {/* ── QA Testing Workflow ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-4xl">
-          <div className="text-center">
-            <span className="mb-3 inline-block rounded-full bg-[#f59e0b]/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#fcd34d]">QA Testing</span>
-            <h2 className="mb-4 text-2xl font-bold text-surface-50 md:text-3xl">
-              Test on real devices. Fix bugs with AI. Repeat.
-            </h2>
-            <p className="mx-auto mb-12 max-w-2xl text-sm text-surface-400">
-              Push your app to a real phone, find bugs by using it, and let your AI agent fix them automatically.
-              The full loop &mdash; from code to device to fix &mdash; in under a minute.
-            </p>
-          </div>
-
-          <div className="mx-auto max-w-3xl">
-            <div className="space-y-4">
-              {[
-                { step: "1", icon: "📤", title: "Push to device", desc: "npx yaver-cli push — your app loads on a real phone in ~4 seconds" },
-                { step: "2", icon: "🐛", title: "Find bugs by using it", desc: "Tap around on the real device. Shake to report a bug with screenshot + voice annotation." },
-                { step: "3", icon: "🤖", title: "AI agent fixes it", desc: "The Feedback SDK sends the bug report to your AI agent. It sees the screenshot, reads the stack trace, and writes a fix." },
-                { step: "4", icon: "🔄", title: "Re-push and verify", desc: "npx yaver-cli push — the fix is on your phone. Verify in seconds. No rebuild, no TestFlight, no Play Store." },
-              ].map((s) => (
-                <div key={s.step} className="flex items-start gap-4 rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-800 text-lg">{s.icon}</span>
-                  <div>
-                    <p className="text-sm font-semibold text-surface-200">{s.title}</p>
-                    <p className="mt-1 text-xs text-surface-400">{s.desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-8 rounded-xl border border-surface-800 bg-surface-900/30 p-6 text-center">
-              <p className="text-sm text-surface-300">
-                Works with any AI agent: Claude Code, Codex, Aider, Ollama, Goose.
-                <br />
-                <span className="text-surface-500">Skip TestFlight queues. Skip Play Store reviews. Test on real hardware instantly.</span>
-              </p>
-            </div>
+          <div className="mt-10 rounded-xl border-l-2 border-emerald-500/60 bg-surface-900/50 p-5 text-sm leading-relaxed text-surface-300">
+            <strong className="text-surface-100">Always Hermes. Always native. Never WebView.</strong>
+            <br />
+            Your JS is compiled to Hermes bytecode, loaded into a native bridge with
+            TurboModules, Fabric, JSI. Same runtime as a production Xcode build.
           </div>
         </div>
       </section>
 
-      {/* ── Push to Device ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-4xl">
-          <div className="text-center">
-            <span className="mb-3 inline-block rounded-full bg-[#22c55e]/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#86efac]">Push to Device</span>
-            <h2 className="mb-4 text-2xl font-bold text-surface-50 md:text-3xl">
-              Like Expo Go, but for any existing project
-            </h2>
-            <p className="mx-auto mb-12 max-w-2xl text-sm text-surface-400">
-              Push your existing React Native project to the yaver.io app for real-device testing.
-              No project modifications. No WebView. Real native views. 40+ pre-installed native modules.
-            </p>
-          </div>
-
-          <div className="mx-auto max-w-2xl">
-            <div className="terminal">
-              <div className="terminal-header">
-                <div className="terminal-dot bg-[#ff5f57]" />
-                <div className="terminal-dot bg-[#febc2e]" />
-                <div className="terminal-dot bg-[#28c840]" />
-              </div>
-              <div className="terminal-body space-y-1.5 text-[13px]">
-                <div><span className="text-surface-500"># Analyze your existing RN project</span></div>
-                <div><span className="text-surface-400">$</span>{" "}<span className="text-surface-200">cd my-app && npx yaver-cli init</span></div>
-                <div className="text-[#86efac]">  React Native:  0.81.5 ✅</div>
-                <div className="text-[#86efac]">  Hermes:        enabled ✅</div>
-                <div className="text-[#86efac]">  15/16 native modules available ✅</div>
-                <div className="mt-2"><span className="text-surface-500"># Push to your phone</span></div>
-                <div><span className="text-surface-400">$</span>{" "}<span className="text-surface-200">npx yaver-cli push</span></div>
-                <div className="text-surface-300">  📡 Found: iPhone 15 (192.168.1.42)</div>
-                <div className="text-surface-300">  🔨 Bundling for ios...</div>
-                <div className="text-surface-300">  ⚡ Compiling Hermes bytecode...</div>
-                <div className="text-surface-300">  📤 Pushing 847 KB...</div>
-                <div className="text-[#86efac]">  🚀 Done in 4.1s — app loading on device</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="mx-auto mt-12 grid max-w-3xl gap-4 sm:grid-cols-3">
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <p className="text-sm font-semibold text-surface-200">Real native views</p>
-              <p className="mt-1 text-xs text-surface-400">
-                Not a WebView. Every &lt;View&gt; is a real UIView / android.view.View. Full native performance.
-              </p>
-            </div>
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <p className="text-sm font-semibold text-surface-200">40+ native modules</p>
-              <p className="mt-1 text-xs text-surface-400">
-                Reanimated, Gesture Handler, Maps, Skia, Camera, Notifications, and more &mdash; pre-installed.
-              </p>
-            </div>
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <p className="text-sm font-semibold text-surface-200">Watch mode</p>
-              <p className="mt-1 text-xs text-surface-400">
-                <code className="text-[10px]">--watch</code> re-pushes on every file save. Edit &rarr; save &rarr; see it on device in ~1s.
-              </p>
-            </div>
-          </div>
-
-          {/* Always Native callout */}
-          <div className="mx-auto mt-10 max-w-3xl rounded-xl border border-[#22c55e]/30 bg-[#22c55e]/5 p-6">
-            <p className="text-sm font-semibold text-[#86efac]">Always Hermes. Always native. Never WebView.</p>
-            <p className="mt-2 text-xs leading-relaxed text-surface-400">
-              Your JS is compiled to Hermes bytecode (HBC v96), validated on both ends, and loaded into a native bridge
-              via ExpoReactNativeFactory with full New Architecture support &mdash; TurboModules, Fabric, JSI.
-              The safe bridge reload waits for HadesGC cleanup before creating a new bridge, preventing crashes.
-              Your app gets the same runtime as a production Xcode build.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Section 5: Works with every agent ── */}
+      {/* ── Section 7: Deploy ── */}
       <section className="border-t border-surface-800/60 px-6 py-24">
         <div className="mx-auto max-w-5xl">
+          <div className="mb-4 text-center">
+            <span className="inline-block rounded-full bg-[#6366f1]/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#a5b4fc]">Deploy</span>
+          </div>
           <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Not locked to any agent. Not locked to any cloud.
+            Deploy when you&apos;re ready. Not before.
           </h2>
-          <p className="mb-12 text-center text-sm text-surface-400">
-            Anything that runs in a terminal. Switch agents per task or set a default.
+          <p className="mx-auto mb-12 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
+            Build everything locally at $0. When you have paying customers, deploy.
+            Your VPS, Vercel, Cloudflare &mdash; Yaver runs pre-checks and deploys for you.
           </p>
 
-          <div className="mb-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-sm font-medium text-surface-300">
-            {["Ollama", "Aider", "Goose", "OpenCode", "Amp", "Continue", "OpenAI Codex", "Claude Code", "Any tmux session"].map((name) => (
-              <span key={name}>{name}</span>
-            ))}
+          <EnvironmentStepper />
+
+          <div className="mt-10 grid gap-6 lg:grid-cols-2 lg:items-start">
+            <PreDeployCheck />
+
+            <div className="space-y-4">
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-surface-500">Your own hardware</p>
+                <div className="space-y-3">
+                  <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-4">
+                    <p className="text-sm font-medium text-surface-100">{"\uD83D\uDDA5\uFE0F  Your VPS"}</p>
+                    <p className="mt-1 text-xs text-surface-400">Hetzner, DigitalOcean, Vultr &mdash; $5/mo. Docker + Caddy, auto SSL. Yaver deploys to it. You manage the server.</p>
+                  </div>
+                  <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-4">
+                    <p className="text-sm font-medium text-surface-100">{"\uD83C\uDFE0  Your home server"}</p>
+                    <p className="mt-1 text-xs text-surface-400">Mac Mini, old laptop, Raspberry Pi. If it runs Docker, Yaver can deploy to it.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-surface-500">Third-party platforms</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { n: "\u25B2  Vercel", d: "Free tier \u2192 $20/mo" },
+                    { n: "\u2B22  Cloudflare", d: "Workers + Pages, generous free tier" },
+                    { n: "\uD83E\uDEB0  Fly.io", d: "$0 to start, scales" },
+                    { n: "\uD83D\uDE82  Railway", d: "$5/mo hobby tier" },
+                  ].map((p) => (
+                    <div key={p.n} className="rounded-xl border border-surface-800 bg-surface-900/50 p-3">
+                      <p className="text-xs font-medium text-surface-100">{p.n}</p>
+                      <p className="mt-1 text-[11px] text-surface-400">{p.d}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div className="rounded-xl border border-green-500/20 bg-green-500/5 p-6">
-            <p className="text-sm font-medium text-surface-100">
-              Run Llama, Qwen, DeepSeek, Mistral, or CodeGemma on your own hardware.
-            </p>
-            <p className="mt-2 text-sm text-green-400">
-              Zero API keys. Zero cloud. Fully air-gapped if you want. Full remote control from your phone or any terminal.
-            </p>
+          <div className="mt-12 rounded-xl border-l-2 border-[#6366f1]/60 bg-surface-900/50 p-5 text-sm leading-relaxed text-surface-300">
+            <strong className="text-surface-100">Backend migration is separate from frontend deploy.</strong>
+            <br />
+            Convex local &rarr; Convex Cloud: one command, guided by AI. Supabase local &rarr; Supabase Cloud:
+            data export/import included. Postgres local &rarr; any managed Postgres: connection string swap.
+            <br />
+            <span className="text-surface-400">No lock-in. Standard Docker + Postgres. Export anytime.</span>
           </div>
-
         </div>
       </section>
 
-      {/* ── Section 3: Wait, it's free? ── */}
+      {/* ── Section 8: Any Agent ── */}
       <section className="border-t border-surface-800/60 px-6 py-24">
         <div className="mx-auto max-w-4xl text-center">
           <h2 className="mb-4 text-2xl font-bold text-surface-50 md:text-3xl">
+            Not locked to any agent. Not locked to any cloud.
+          </h2>
+          <p className="mx-auto mb-8 max-w-2xl text-sm leading-relaxed text-surface-400">
+            Anything that runs in a terminal. Switch agents per task or set a default.
+          </p>
+          <p className="mb-8 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-sm font-medium text-surface-200">
+            {["Claude Code", "Codex", "Aider", "Ollama", "Goose", "OpenCode", "Amp", "Continue", "any tmux session"].map((a, i, arr) => (
+              <span key={a} className="flex items-center gap-3">
+                <span>{a}</span>
+                {i < arr.length - 1 && <span className="text-surface-600">&middot;</span>}
+              </span>
+            ))}
+          </p>
+          <div className="rounded-xl border-l-2 border-emerald-500/60 bg-surface-900/50 p-5 text-left text-sm leading-relaxed text-surface-300">
+            Run Llama, Qwen, DeepSeek, Mistral, or CodeGemma on your own hardware.
+            Zero API keys. Zero cloud. Fully air-gapped if you want.
+            Full remote control from your phone or any terminal.
+          </div>
+        </div>
+      </section>
+
+      {/* ── Section 9: Free Forever ── */}
+      <section className="border-t border-surface-800/60 px-6 py-24">
+        <div className="mx-auto max-w-4xl">
+          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
             Free forever. No catch.
           </h2>
-          <p className="mb-12 text-sm text-surface-400">
+          <p className="mx-auto mb-10 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
             Self-host everything. Your code never leaves your machine.
           </p>
 
-          <div className="mx-auto max-w-2xl overflow-hidden rounded-xl border border-surface-800">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-surface-800 bg-surface-900/50">
-                  <th className="px-5 py-3 font-medium text-surface-300">Component</th>
-                  <th className="px-5 py-3 font-medium text-surface-300">Runs on</th>
-                  <th className="px-5 py-3 text-right font-medium text-surface-300">Cost</th>
+          <div className="overflow-hidden rounded-xl border border-surface-800">
+            <table className="w-full text-sm">
+              <thead className="bg-surface-900/70 text-left text-xs uppercase tracking-wider text-surface-500">
+                <tr>
+                  <th className="px-4 py-3 font-semibold">Component</th>
+                  <th className="px-4 py-3 font-semibold">Runs on</th>
+                  <th className="px-4 py-3 font-semibold text-right">Cost</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-surface-800/60">
-                <tr><td className="px-5 py-3 text-surface-200">Yaver CLI</td><td className="px-5 py-3 text-surface-400">Your dev machine</td><td className="px-5 py-3 text-right font-semibold text-green-400">$0</td></tr>
-                <tr><td className="px-5 py-3 text-surface-200">Yaver App</td><td className="px-5 py-3 text-surface-400">Your phone</td><td className="px-5 py-3 text-right font-semibold text-green-400">$0</td></tr>
-                <tr><td className="px-5 py-3 text-surface-200">Relay server</td><td className="px-5 py-3 text-surface-400">Your own VPS</td><td className="px-5 py-3 text-right font-semibold text-green-400">$0</td></tr>
-                <tr><td className="px-5 py-3 text-surface-200">LLM (via Ollama)</td><td className="px-5 py-3 text-surface-400">Your GPU or CPU</td><td className="px-5 py-3 text-right font-semibold text-green-400">$0</td></tr>
-              </tbody>
-            </table>
-          </div>
-
-          <p className="mt-6 text-xs text-surface-500">
-            No API keys required for local models. No telemetry. No vendor lock-in.
-            <br />
-            MIT licensed &mdash; fork it, run your own instance of everything.
-          </p>
-        </div>
-      </section>
-
-      {/* ── Built for Solo Founders ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-4xl">
-          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Built for solo founders.
-          </h2>
-          <p className="mb-12 text-center text-sm text-surface-400">
-            One person. One machine. No team. No cloud bill. Just the agent doing the work.
-          </p>
-
-          <div className="grid gap-4 md:grid-cols-3">
-            {[
-              {
-                icon: "\u{1F9D1}\u200D\u{1F4BB}",
-                label: "No team needed",
-                copy: "Autonomous test loop, hot reload, one-tap deploy \u2014 all the things a team would do, running on your laptop.",
-              },
-              {
-                icon: "\u{1F4B8}",
-                label: "No cloud bill",
-                copy: "Your hardware runs the LLM. Your VPS runs the relay. Total cost: what you already pay.",
-              },
-              {
-                icon: "\u{1F319}",
-                label: "Works while you sleep",
-                copy: "Queue tasks from your phone, walk away. Your machine runs them. You review the diff in the morning.",
-              },
-            ].map((item) => (
-              <div
-                key={item.label}
-                className="rounded-xl border border-surface-800 bg-surface-900/50 p-6"
-              >
-                <div className="mb-3 text-2xl">{item.icon}</div>
-                <p className="text-sm font-semibold text-surface-200">{item.label}</p>
-                <p className="mt-2 text-xs leading-relaxed text-surface-400">{item.copy}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-10 text-center">
-            <a
-              href="https://github.com/kivanccakmak/yaver.io"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 rounded-lg border border-surface-700 bg-surface-800/50 px-5 py-2.5 text-sm font-medium text-surface-300 transition-colors hover:bg-surface-800 hover:text-surface-100"
-            >
-              <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.405.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-              Star it if you&apos;re building alone
-            </a>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Vibe Coding from Anywhere ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-4xl">
-          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Vibe code from the beach.
-          </h2>
-          <p className="mb-12 text-center text-sm text-surface-400">
-            Queue tasks from your phone. Your machine does the work. Ship without opening a laptop.
-          </p>
-
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {[
-              {
-                icon: "\u26D3\uFE0F",
-                label: "Chained Tasks",
-                copy: "Queue a whole feature: \"build landing page, add Stripe, deploy.\" Each task starts when the previous succeeds.",
-              },
-              {
-                icon: "\u{1F504}",
-                label: "Auto-Retry",
-                copy: "Task failed? Agent retries with the error context. Only pings your phone after 3 consecutive failures.",
-              },
-              {
-                icon: "\u{1F680}",
-                label: "Ship It Button",
-                copy: "One tap to deploy. Agent detects your project (Cloudflare, Vercel, TestFlight, Play Store) and ships.",
-              },
-              {
-                icon: "\u{1F4FA}",
-                label: "Live Terminal Stream",
-                copy: "Watch Claude Code work token-by-token from your phone via SSE. Full terminal output in real-time.",
-              },
-              {
-                icon: "\u2600\uFE0F",
-                label: "Morning Summary",
-                copy: "Daily digest at 9am: \"3 tasks done, site live, 2 tests failing.\" Via Telegram, Discord, Slack, or email.",
-              },
-              {
-                icon: "\u{1F3D7}\uFE0F",
-                label: "Always Native",
-                copy: "React Native apps load via Hermes bytecode into a native bridge with TurboModules + Fabric. Never WebView.",
-              },
-            ].map((item) => (
-              <div
-                key={item.label}
-                className="rounded-xl border border-surface-800 bg-surface-900/50 p-6"
-              >
-                <div className="mb-3 text-2xl">{item.icon}</div>
-                <p className="text-sm font-semibold text-surface-200">{item.label}</p>
-                <p className="mt-2 text-xs leading-relaxed text-surface-400">{item.copy}</p>
-              </div>
-            ))}
-          </div>
-
-          {/* Chain example */}
-          <div className="mt-10 rounded-xl border border-surface-800 bg-surface-950/80 p-6">
-            <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-surface-500">Example: Queue a feature from your phone</p>
-            <pre className="overflow-x-auto text-xs leading-relaxed text-surface-300">
-{`Morning at the beach:
-  1. Queue 5 tasks: "dark mode", "fix login", "payment API", "tests", "deploy"
-  2. Agent chains them — each starts when previous succeeds
-  3. If one fails, agent retries with error context (up to 3x)
-  4. You get notified: "4/5 done, payment API retry 2/3"
-
-Lunchtime:
-  5. Open live terminal — watch Claude Code working in real-time
-  6. Tap "Ship It" — one tap, deployed to Cloudflare
-
-Next morning:
-  7. Summary: "5 tasks done, site live at myapp.com ($0.47)"`}
-            </pre>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Built for Monorepos ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-4xl">
-          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Full-stack from your phone.
-          </h2>
-          <p className="mb-12 text-center text-sm text-surface-400">
-            Yaver shines when your web frontend, mobile app, backend, and infrastructure all live in one repo.
-          </p>
-
-          <div className="grid gap-4 md:grid-cols-2">
-            {[
-              {
-                icon: "\u21BB",
-                color: "text-[#fbbf24] bg-[#fbbf24]/10",
-                label: "Native hot reload on your phone",
-                copy: "React Native apps run inside Yaver with full native access &mdash; camera, BLE, GPS, sensors. Your CLI pushes code, the app reloads instantly. Works over WiFi, 4G, or any network through the relay.",
-              },
-              {
-                icon: "\uD83E\uDDEA",
-                color: "text-[#a78bfa] bg-[#a78bfa]/10",
-                label: "Test across your stack",
-                copy: "Run backend + frontend + mobile tests in one tap. The agent figures out the test runner for each subdirectory and reports results together.",
-              },
-              {
-                icon: "\uD83D\uDE80",
-                color: "text-[#22c55e] bg-[#22c55e]/10",
-                label: "Deploy everything from one place",
-                copy: "Ship web/ to any host, mobile/ to TestFlight and Play Store, backend/ to Convex &mdash; all from one project card on your phone.",
-              },
-              {
-                icon: "\u2699",
-                color: "text-[#60a5fa] bg-[#60a5fa]/10",
-                label: "Zero config detection",
-                copy: "The agent reads package.json, pubspec.yaml, next.config.ts, vite.config.ts in each subdirectory. No manifest files, no project setup.",
-              },
-              {
-                icon: "\uD83C\uDFAF",
-                color: "text-[#f87171] bg-[#f87171]/10",
-                label: "Perfect for Convex + Expo + Next.js",
-                copy: "The most common solo-founder stack. One repo, three deploy targets, all managed from your phone while you walk the dog.",
-              },
-              {
-                icon: "\uD83D\uDCE6",
-                color: "text-surface-300 bg-surface-800",
-                label: "Works with any structure",
-                copy: "Monorepo with Turborepo, Nx, or just plain directories. Yaver scans recursively and finds every deployable piece.",
-              },
-            ].map((item) => (
-              <div
-                key={item.label}
-                className="flex items-start gap-3 rounded-xl border border-surface-800 bg-surface-900/50 p-5"
-              >
-                <div className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-sm ${item.color}`}>{item.icon}</div>
-                <div>
-                  <p className="text-sm font-semibold text-surface-200">{item.label}</p>
-                  <p className="mt-1 text-xs leading-relaxed text-surface-400" dangerouslySetInnerHTML={{ __html: item.copy }} />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── Section: Browse your apps. Take action. ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-5xl">
-          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            All your projects. One tap to ship.
-          </h2>
-          <p className="mx-auto mb-12 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
-            Your phone discovers every project on your dev machine over P2P. AI detects the framework, finds every deployable target, and gives you one-tap actions &mdash; hot reload, deploy, build.
-          </p>
-
-          {/* Flow visualization */}
-          <div className="mx-auto mb-12 max-w-3xl">
-            <div className="flex flex-wrap items-center justify-center gap-2 text-sm">
-              {[
-                { label: "Phone connects P2P", icon: "\uD83D\uDCF1" },
-                { label: "Agent scans repos", icon: "\uD83D\uDD0D" },
-                { label: "AI detects targets", icon: "\u2699" },
-                { label: "You tap an action", icon: "\u25B6" },
-                { label: "Deployed", icon: "\u2713" },
-              ].map((step, i) => (
-                <div key={step.label} className="flex items-center gap-2">
-                  <div className="flex items-center gap-1.5 rounded-full border border-surface-700 bg-surface-900 px-3 py-1.5">
-                    <span>{step.icon}</span>
-                    <span className="text-surface-300">{step.label}</span>
-                  </div>
-                  {i < 4 && <span className="text-surface-600">&rarr;</span>}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* What the agent detects */}
-          <div className="mb-10 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {[
-              { framework: "React Native / Expo", actions: "Native Hot Reload inside Yaver, Build iOS, Build Android", platforms: "Camera, BLE, GPS — full native access", icon: "\uD83D\uDCF1", color: "text-[#a78bfa] bg-[#a78bfa]/10" },
-              { framework: "Next.js", actions: "Dev Server, Deploy", platforms: "Any host", icon: "\u25B2", color: "text-surface-300 bg-surface-800" },
-              { framework: "Vite", actions: "Dev Server, Deploy", platforms: "Any host", icon: "\u26A1", color: "text-[#fbbf24] bg-[#fbbf24]/10" },
-              { framework: "Convex", actions: "Deploy Backend", platforms: "Convex Cloud", icon: "\uD83E\uDDE0", color: "text-[#f87171] bg-[#f87171]/10" },
-              { framework: "Supabase", actions: "Deploy Backend", platforms: "Supabase Cloud", icon: "\u26A1", color: "text-[#22c55e] bg-[#22c55e]/10" },
-              { framework: "Docker", actions: "Run Container", platforms: "Any server", icon: "\uD83D\uDC33", color: "text-[#60a5fa] bg-[#60a5fa]/10" },
-            ].map((f) => (
-              <div key={f.framework} className="rounded-xl border border-surface-800 bg-surface-900/50 p-4">
-                <div className="mb-2 flex items-center gap-2">
-                  <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-sm ${f.color}`}>{f.icon}</div>
-                  <span className="text-sm font-semibold text-surface-100">{f.framework}</span>
-                </div>
-                <p className="text-xs text-surface-400">{f.actions}</p>
-                <p className="mt-1 text-[11px] text-surface-500">&rarr; {f.platforms}</p>
-              </div>
-            ))}
-          </div>
-
-          {/* Monorepo callout */}
-          <div className="mx-auto max-w-3xl rounded-xl border border-[#6366f1]/20 bg-[#6366f1]/5 p-5">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-surface-100">Monorepo-aware</p>
-                <p className="mt-1 text-xs leading-relaxed text-surface-400">
-                  One project, multiple targets. The agent scans subdirectories and finds every deployable piece &mdash; <code className="rounded bg-surface-800 px-1 py-0.5 text-[11px] text-surface-300">mobile/</code> gets Hot Reload + TestFlight, <code className="rounded bg-surface-800 px-1 py-0.5 text-[11px] text-surface-300">web/</code> gets deployed, <code className="rounded bg-surface-800 px-1 py-0.5 text-[11px] text-surface-300">backend/</code> gets Convex deploy. All from one project card on your phone.
-                </p>
-              </div>
-              <div className="shrink-0 rounded-lg border border-surface-800 bg-surface-900/80 p-3">
-                <div className="space-y-1.5 font-mono text-[11px]">
-                  <div className="text-surface-500">my-app/</div>
-                  <div className="flex items-center gap-2 pl-3"><span className="text-[#a78bfa]">mobile/</span> <span className="rounded bg-[#a78bfa]/10 px-1.5 py-0.5 text-[9px] text-[#a78bfa]">expo</span> <span className="rounded bg-[#22c55e]/10 px-1.5 py-0.5 text-[9px] text-[#22c55e]">testflight</span></div>
-                  <div className="flex items-center gap-2 pl-3"><span className="text-surface-300">web/</span> <span className="rounded bg-surface-700 px-1.5 py-0.5 text-[9px] text-surface-400">nextjs</span> <span className="rounded bg-surface-700 px-1.5 py-0.5 text-[9px] text-surface-400">deploy</span></div>
-                  <div className="flex items-center gap-2 pl-3"><span className="text-[#f87171]">backend/</span> <span className="rounded bg-[#f87171]/10 px-1.5 py-0.5 text-[9px] text-[#f87171]">convex</span></div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Features grid */}
-          <div className="mt-10 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <p className="text-sm font-semibold text-surface-200">Fuzzy search + tags</p>
-              <p className="mt-1 text-xs text-surface-400">
-                Search by name, path, or framework. Filter by tags: expo, nextjs, flutter, convex, docker. Projects discovered automatically &mdash; no config files.
-              </p>
-            </div>
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <p className="text-sm font-semibold text-surface-200">One-tap quick actions</p>
-              <p className="mt-1 text-xs text-surface-400">
-                Running app shows action buttons: Ship It (version bump + build + deploy + changelog), Polish UI (design pass + hot reload), Fix All Bugs (test suite + fix + reload).
-              </p>
-            </div>
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <p className="text-sm font-semibold text-surface-200">Clone repos from your phone</p>
-              <p className="mt-1 text-xs text-surface-400">
-                Yaver auto-detects GitHub and GitLab credentials on your dev machine. Browse your repos from the app and clone to a headless server &mdash; no SSH, no manual git setup.
-              </p>
-            </div>
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <p className="text-sm font-semibold text-surface-200">Zero config</p>
-              <p className="mt-1 text-xs text-surface-400">
-                No manifest. No project file. The agent reads package.json, pubspec.yaml, go.mod, Cargo.toml, Dockerfile &mdash; and figures out the rest.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Section: All Installation Methods ── */}
-      <section id="install-methods" className="border-t border-surface-800/60 px-6 py-16">
-        <div className="mx-auto max-w-3xl">
-          <p className="mb-4 text-center text-xs font-semibold uppercase tracking-wider text-surface-500">All installation methods</p>
-          <div className="overflow-hidden rounded-xl border border-surface-800">
-            <table className="w-full text-left text-sm">
-              <tbody className="divide-y divide-surface-800/60">
                 {[
-                  { method: "Homebrew", cmd: "brew install kivanccakmak/yaver/yaver", os: "macOS / Linux" },
-                  { method: "AUR", cmd: "yay -S yaver", os: "Arch Linux" },
-                  { method: "apt", cmd: "sudo apt install yaver", os: "Debian / Ubuntu" },
-                  { method: "RPM", cmd: "sudo rpm -i yaver_latest_x86_64.rpm", os: "Fedora / RHEL" },
-                  { method: "Nix", cmd: "nix run github:kivanccakmak/yaver.io", os: "NixOS" },
-                  { method: "Docker", cmd: "docker run --rm kivanccakmak/yaver-cli version", os: "Any" },
+                  ["Yaver CLI + Agent", "Your dev machine", "$0"],
+                  ["Yaver Mobile App", "Your phone", "$0"],
+                  ["Web UI (yaver.io)", "Browser", "$0"],
+                  ["Local backends (Convex, Supabase, Postgres)", "Docker on your machine", "$0"],
+                  ["Relay server", "Self-host on any VPS", "$0"],
+                  ["AI models (Ollama)", "Your GPU or CPU", "$0"],
+                  ["Feedback SDK", "Inside your app", "$0"],
                 ].map((row) => (
-                  <tr key={row.method}>
-                    <td className="whitespace-nowrap px-4 py-2.5 text-xs font-medium text-surface-200">{row.method}</td>
-                    <td className="px-4 py-2.5"><code className="text-[11px] text-surface-400 select-all">{row.cmd}</code></td>
-                    <td className="whitespace-nowrap px-4 py-2.5 text-[11px] text-surface-500">{row.os}</td>
+                  <tr key={row[0]} className="bg-surface-900/30">
+                    <td className="px-4 py-3 text-surface-200">{row[0]}</td>
+                    <td className="px-4 py-3 text-surface-400">{row[1]}</td>
+                    <td className="px-4 py-3 text-right font-mono text-emerald-400">{row[2]}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <p className="mt-3 text-center text-xs text-surface-500">
-            Or download binaries from{" "}
-            <a href="https://github.com/kivanccakmak/yaver.io/releases" target="_blank" rel="noopener noreferrer" className="text-surface-300 underline hover:text-surface-100">GitHub Releases</a>.
-          </p>
-        </div>
-      </section>
 
-      {/* ── Section 4b: Always-on (systemd) ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-3xl">
-          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Set it up once. It runs forever. Even before you sign in.
-          </h2>
-          <p className="mb-12 text-center text-sm text-surface-400">
-            Install on any Linux/macOS/Windows machine. The first <code className="text-surface-300">yaver serve</code> registers the OS auto-start hook and starts a minimal HTTP server in <span className="text-surface-200">bootstrap mode</span> — your phone can pair the box without you ever opening a terminal again.
-          </p>
-
-          <div className="space-y-6">
-            {[
-              { step: 1, label: "First run installs the auto-start hook AND starts bootstrap mode (no auth required)", cmd: "yaver serve", output: "Registered as macOS LaunchAgent (will auto-start on login).\nYaver agent started in bootstrap mode (PID …, port 18080).\n\nThis machine has no auth token yet. The agent is up and waiting.\nOpen the Yaver mobile app (already signed in) on the same Wi-Fi —\nthe box will appear as 'needs auth', tap it to pair." },
-              { step: 2, label: "Tap the box from your phone to pair it (LAN beacon, no QR codes)", cmd: "# nothing — your phone discovers the box automatically and\n# the host check happens server-side. Guests are blocked.", output: null },
-              { step: 3, label: "Reboot any time. It comes back in bootstrap mode if unpaired,\n# normal mode if signed in. Manage with:", cmd: "yaver status                       # bootstrap / signed in\nsystemctl --user status yaver      # Linux\nlaunchctl list io.yaver.agent      # macOS", output: null },
-            ].map((s) => (
-              <div key={s.step} className="flex items-start gap-4">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#22c55e]/10 text-sm font-bold text-[#22c55e]">
-                  {s.step}
-                </span>
-                <div className="flex-1">
-                  <p className="mb-2 text-sm font-medium text-surface-200">{s.label}</p>
-                  <div className="terminal">
-                    <div className="terminal-header">
-                      <div className="terminal-dot bg-[#ff5f57]" />
-                      <div className="terminal-dot bg-[#febc2e]" />
-                      <div className="terminal-dot bg-[#28c840]" />
-                    </div>
-                    <div className="terminal-body text-[13px]">
-                      {s.cmd.split("\n").map((line, i) => (
-                        <div key={i}>
-                          <span className="text-surface-400">$</span>{" "}
-                          <span className="text-surface-200">{line}</span>
-                        </div>
-                      ))}
-                      {s.output && (
-                        <div className="mt-1 pl-2 text-green-400/80 whitespace-pre-line">{s.output}</div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-10 grid gap-4 md:grid-cols-3">
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <p className="text-sm font-semibold text-surface-200">Bootstrap mode (zero-auth)</p>
-              <p className="mt-1 text-xs text-surface-400">
-                Fresh installs come up serving <code className="text-surface-300">/health</code>, <code className="text-surface-300">/info</code>, <code className="text-surface-300">/auth/pair/*</code>, and <code className="text-surface-300">/auth/recover</code>. Everything else stays gated until a phone pairs the box.
-              </p>
-            </div>
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <p className="text-sm font-semibold text-surface-200">Host-only remote re-auth</p>
-              <p className="mt-1 text-xs text-surface-400">
-                Lost the token on a remote box? The mobile app POSTs to <code className="text-surface-300">/auth/recover</code> with your Convex Bearer token. Convex looks up the device by stable hardware fingerprint — only the original host (not guests) can trigger the recovery flow. No pre-shared secret to remember.
-              </p>
-            </div>
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <p className="text-sm font-semibold text-surface-200">Auto-updates + reboot survival</p>
-              <p className="mt-1 text-xs text-surface-400">
-                LaunchAgent on macOS (KeepAlive=true), systemd user unit on Linux (with linger), scheduled task on Windows. Checks GitHub releases every 6h and re-execs into the new binary.
-              </p>
-            </div>
-          </div>
-
-          <p className="mt-6 text-center text-xs text-surface-500">
-            Works on any Mac, Linux, or Windows machine — Mac Mini, Raspberry Pi, cloud VPS, or your desktop.
-            {" "}The first <code className="text-surface-400">yaver serve</code> auto-installs the OS auto-start hook on every platform. Bootstrap mode runs even on a freshly downloaded binary with no token, so your phone is the only thing you ever need to touch.
-          </p>
-        </div>
-      </section>
-
-      {/* ── Section 7: How connections work ── */}
-      <section id="how-it-works" className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-5xl">
-          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Three layers. Fastest path wins. Always.
-          </h2>
-          <p className="mb-16 text-center text-sm text-surface-400">
-            Three layers, tried in order. The fastest available path wins.
-          </p>
-
-          {/* Connection waterfall */}
-          <div className="mx-auto max-w-3xl space-y-4">
-            {/* Layer 1 */}
-            <div className="relative rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <div className="flex items-start gap-4">
-                <div className="flex flex-col items-center">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-green-500/10 text-sm font-bold text-green-400">
-                    1
-                  </span>
-                  <div className="mt-2 h-full w-px bg-surface-800" />
-                </div>
-                <div className="flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-sm font-semibold text-surface-50">LAN Discovery</h3>
-                    <span className="rounded-full bg-green-500/10 px-2 py-0.5 text-[11px] font-medium text-green-400">~5ms</span>
-                    <span className="rounded-full bg-surface-800 px-2 py-0.5 text-[11px] font-medium text-surface-400">UDP broadcast</span>
-                  </div>
-                  <p className="mt-2 text-sm leading-relaxed text-surface-400">
-                    UDP broadcast on same WiFi &mdash; zero config. Auth-aware: only your devices match, even on shared networks.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Layer 2 */}
-            <div className="relative rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <div className="flex items-start gap-4">
-                <div className="flex flex-col items-center">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-500/10 text-sm font-bold text-blue-400">
-                    2
-                  </span>
-                  <div className="mt-2 h-full w-px bg-surface-800" />
-                </div>
-                <div className="flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-sm font-semibold text-surface-50">Direct Connection</h3>
-                    <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[11px] font-medium text-blue-400">~5ms</span>
-                    <span className="rounded-full bg-surface-800 px-2 py-0.5 text-[11px] font-medium text-surface-400">HTTP</span>
-                  </div>
-                  <p className="mt-2 text-sm leading-relaxed text-surface-400">
-                    HTTP to known IP from device registry. Works when both devices are on the same network.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Layer 3 */}
-            <div className="relative rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <div className="flex items-start gap-4">
-                <div className="flex flex-col items-center">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-500/10 text-sm font-bold text-amber-400">
-                    3
-                  </span>
-                </div>
-                <div className="flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-sm font-semibold text-surface-50">QUIC Relay</h3>
-                    <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-400">~50ms</span>
-                    <span className="rounded-full bg-surface-800 px-2 py-0.5 text-[11px] font-medium text-surface-400">QUIC</span>
-                  </div>
-                  <p className="mt-2 text-sm leading-relaxed text-surface-400">
-                    NAT traversal &mdash; CLI connects outbound, no port forwarding needed. Relay is a dumb pipe.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Trust bullets */}
-          <div className="mx-auto mt-10 max-w-3xl space-y-3">
-            <div className="flex items-start gap-3">
-              <span className="mt-0.5 text-green-400">&#8226;</span>
-              <p className="text-sm text-surface-400">CLI connects <strong className="text-surface-200">outbound only</strong> &mdash; no port forwarding needed, no firewall changes</p>
-            </div>
-            <div className="flex items-start gap-3">
-              <span className="mt-0.5 text-green-400">&#8226;</span>
-              <p className="text-sm text-surface-400">Relay is a <strong className="text-surface-200">dumb pipe</strong> &mdash; open source, self-hostable, can&apos;t read your traffic</p>
-            </div>
-            <div className="flex items-start gap-3">
-              <span className="mt-0.5 text-green-400">&#8226;</span>
-              <p className="text-sm text-surface-400"><strong className="text-surface-200">WiFi &rarr; cellular &rarr; WiFi</strong> transitions are silent &mdash; no reconnect prompts, no dropped sessions</p>
-            </div>
-          </div>
-
-          {/* Hard NAT */}
-          <div className="mx-auto mt-8 max-w-3xl">
-            <div className="card">
-              <p className="text-sm leading-relaxed text-surface-400">
-                Behind a strict firewall? Use <strong className="text-surface-200">Tailscale</strong> (WireGuard) or <strong className="text-surface-200">Cloudflare Tunnel</strong> (pure HTTPS).
-                Both work as drop-in replacements for the relay.
-              </p>
-            </div>
+          <div className="mt-8 space-y-2 text-center text-sm leading-relaxed text-surface-400">
+            <p><strong className="text-surface-100">Total for development: $0/month.</strong></p>
+            <p>Production costs are between you and your hosting provider.</p>
+            <p>Free tiers (Vercel, Cloudflare, Convex, Supabase) cover most solo projects. A $5/mo VPS handles the rest.</p>
+            <p className="mt-4 text-surface-500">MIT licensed. Fork it. Self-host everything. No telemetry. No vendor lock-in.</p>
           </div>
         </div>
       </section>
 
-      {/* ── Section 7: 473 MCP Tools ── */}
+      {/* ── Section 10: MCP ── */}
       <MCPIntegrationSection />
 
-      {/* ── Section 8: Full Local Stack ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-5xl">
-          <div className="mb-4 text-center">
-            <span className="inline-flex items-center rounded-full border border-green-500/20 bg-green-500/10 px-3 py-1 text-xs font-medium text-green-400">
-              $0/month &middot; No API keys &middot; Nothing leaves your network
-            </span>
-          </div>
-          <h2 className="mb-12 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            $0/month. No API keys. Nothing leaves your network.
-          </h2>
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {[
-              { name: "Ollama", role: "LLM runtime", detail: "Downloads and runs models locally" },
-              { name: "GLM-4.7-Flash", role: "30B MoE model", detail: "59.2% SWE-bench Verified" },
-              { name: "Aider", role: "Coding agent", detail: "Git-aware AI pair programming" },
-              { name: "Yaver", role: "Mobile remote", detail: "Control it all from your phone" },
-            ].map((item) => (
-              <div key={item.name} className="rounded-xl border border-green-500/10 bg-green-500/5 px-4 py-4">
-                <p className="text-sm font-semibold text-surface-100">{item.name}</p>
-                <p className="text-xs text-green-400">{item.role}</p>
-                <p className="mt-2 text-xs text-surface-400">{item.detail}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="mx-auto mt-8 max-w-3xl rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-medium text-surface-200">Runs on a PC with 24 GB RAM</p>
-                <p className="mt-1 text-xs text-surface-400">
-                  Q4 quantization &mdash; 19 GB download, ~22 GB in memory.
-                  GPU optional but faster. Apple Silicon + Linux supported.
-                </p>
-              </div>
-              <Link href="/manuals/free-onprem" className="btn-primary shrink-0 px-6 py-2.5 text-sm text-center">
-                Setup guide &amp; SWE analysis
-              </Link>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Section 9: Real Workflows ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-5xl">
-          <h2 className="mb-12 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            How developers actually use it
-          </h2>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="card">
-              <h3 className="mb-2 text-sm font-semibold text-surface-100">Browse apps, deploy from the couch</h3>
-              <p className="text-sm leading-relaxed text-surface-400">
-                Open the Apps tab. All your projects are there &mdash; auto-discovered. Tap your app, hot reload to your phone, fix a bug with the Feedback SDK, deploy with one tap. Laptop stays closed.
-              </p>
-            </div>
-            <div className="card">
-              <h3 className="mb-2 text-sm font-semibold text-surface-100">Ship on a commute</h3>
-              <p className="text-sm leading-relaxed text-surface-400">
-                Tap &ldquo;Ship It&rdquo; on the bus &mdash; version bump, build iOS + Android, upload to TestFlight + Play Store, deploy Convex backend. Review the changelog when you arrive.
-              </p>
-            </div>
-            <div className="card">
-              <h3 className="mb-2 text-sm font-semibold text-surface-100">Headless server</h3>
-              <p className="text-sm leading-relaxed text-surface-400">
-                <code className="rounded bg-surface-800 px-1.5 py-0.5 text-xs text-surface-300">yaver serve</code> on a Linux box or Raspberry Pi.
-                Browse projects, trigger builds, deploy backends. No SSH session juggling.
-              </p>
-            </div>
-            <div className="card">
-              <h3 className="mb-2 text-sm font-semibold text-surface-100">Multi-machine</h3>
-              <p className="text-sm leading-relaxed text-surface-400">
-                Work laptop during the day. Home server at night.
-                <code className="rounded bg-surface-800 px-1.5 py-0.5 text-xs text-surface-300">yaver session transfer</code> moves the agent context with you.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Section 10: Capabilities ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-5xl">
-          <h2 className="mb-12 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Everything you can do from your phone
-          </h2>
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {[
-              { name: "Browse & Deploy Apps", desc: "Auto-discover projects, one-tap deploy to TestFlight, Play Store, Convex, and more" },
-              { name: "Push to Device", desc: "Push existing RN projects to yaver.io app. Real native views, 40+ modules, Hermes bytecode validated." },
-              { name: "Native Hot Reload", desc: "Run React Native apps inside Yaver with full native access — camera, BLE, GPS. Hot reload over any network." },
-              { name: "Smart Actions", desc: "AI detects frameworks — shows Ship It, Build, Deploy, Hot Reload per target" },
-              { name: "Session Transfer", desc: "Move AI sessions between machines mid-task" },
-              { name: "Remote Exec", desc: "Run agents on any dev machine" },
-              { name: "Adopt Running Sessions", desc: "Start tmux anywhere, continue on phone" },
-              { name: "Task Scheduling", desc: "Cron-like scheduling, GitHub/GitLab webhook triggers" },
-              { name: "Git Operations", desc: "Status, diff, commit from mobile" },
-              { name: "Notifications", desc: "Telegram, Discord, Slack" },
-              { name: "CLI-to-CLI", desc: "yaver connect from any terminal, no phone needed" },
-              { name: "Agent Chaining", desc: "Ollama writes, Claude Code reviews, Aider applies" },
-              { name: "P2P Key Vault", desc: "API keys, SSH keys, signing certs synced phone to machine" },
-            ].map((cap) => (
-              <div key={cap.name} className="rounded-xl border border-surface-800 bg-surface-900/50 px-4 py-3">
-                <p className="text-sm font-medium text-surface-200">{cap.name}</p>
-                <p className="mt-1 text-xs text-surface-500">{cap.desc}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── Section 11: SDKs ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-4xl">
-          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Yaver is a platform. Embed it in your own tools.
-          </h2>
-          <p className="mx-auto mb-16 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
-            SDKs for Go, Python, JavaScript/TypeScript, Flutter/Dart, and C/C++.
-          </p>
-
-          <div className="space-y-4">
-            <div className="rounded-xl border border-surface-800/60 bg-surface-900/50 p-5">
-              <div className="mb-3 flex items-center gap-2">
-                <span className="text-sm font-semibold text-surface-100">Go</span>
-                <span className="rounded-full bg-surface-800 px-2 py-0.5 text-[10px] text-surface-400">Native</span>
-              </div>
-              <pre className="rounded-lg bg-surface-950 p-3 text-xs text-surface-300 overflow-x-auto"><code>{`c := yaver.NewClient(url, token)
-task, _ := c.CreateTask("Fix bug", nil)
-for chunk := range c.StreamOutput(task.ID, 0) {
-    fmt.Print(chunk)
-}`}</code></pre>
-            </div>
-            <div className="rounded-xl border border-surface-800/60 bg-surface-900/50 p-5">
-              <div className="mb-3 flex items-center gap-2">
-                <span className="text-sm font-semibold text-surface-100">Python</span>
-                <span className="rounded-full bg-surface-800 px-2 py-0.5 text-[10px] text-surface-400">pip install</span>
-              </div>
-              <pre className="rounded-lg bg-surface-950 p-3 text-xs text-surface-300 overflow-x-auto"><code>{`client = YaverClient(url, token)
-task = client.create_task("Fix bug")
-for chunk in client.stream_output(task["id"]):
-    print(chunk, end="")`}</code></pre>
-            </div>
-            <div className="rounded-xl border border-surface-800/60 bg-surface-900/50 p-5">
-              <div className="mb-3 flex items-center gap-2">
-                <span className="text-sm font-semibold text-surface-100">TypeScript</span>
-                <span className="rounded-full bg-surface-800 px-2 py-0.5 text-[10px] text-surface-400">npm</span>
-              </div>
-              <pre className="rounded-lg bg-surface-950 p-3 text-xs text-surface-300 overflow-x-auto"><code>{`const task = await c.createTask('Fix bug');
-for await (const chunk of c.streamOutput(task.id)) {
-  process.stdout.write(chunk);
-}`}</code></pre>
-            </div>
-            <div className="rounded-xl border border-surface-800/60 bg-surface-900/50 p-5">
-              <div className="mb-3 flex items-center gap-2">
-                <span className="text-sm font-semibold text-surface-100">Flutter / Dart</span>
-                <span className="rounded-full bg-surface-800 px-2 py-0.5 text-[10px] text-surface-400">pub.dev</span>
-              </div>
-              <pre className="rounded-lg bg-surface-950 p-3 text-xs text-surface-300 overflow-x-auto"><code>{`final task = await c.createTask('Fix bug');
-await for (final chunk in c.streamOutput(task.id)) {
-  stdout.write(chunk);
-}`}</code></pre>
-            </div>
-          </div>
-
-          <div className="mt-8 rounded-xl border border-surface-800/60 bg-surface-900/50 p-5">
-            <div className="space-y-2">
-              <div className="flex items-center gap-3">
-                <span className="w-16 text-xs font-medium text-surface-400">npm</span>
-                <code className="flex-1 rounded bg-surface-950 px-3 py-1.5 text-xs text-surface-300 select-all">npm install yaver-sdk</code>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="w-16 text-xs font-medium text-surface-400">pip</span>
-                <code className="flex-1 rounded bg-surface-950 px-3 py-1.5 text-xs text-surface-300 select-all">pip install yaver</code>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="w-16 text-xs font-medium text-surface-400">Go</span>
-                <code className="flex-1 rounded bg-surface-950 px-3 py-1.5 text-xs text-surface-300 select-all">go get github.com/kivanccakmak/yaver.io/sdk/go/yaver</code>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="w-16 text-xs font-medium text-surface-400">Flutter</span>
-                <code className="flex-1 rounded bg-surface-950 px-3 py-1.5 text-xs text-surface-300 select-all">flutter pub add yaver</code>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Section 12: ACL — Agent Communication Layer ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-4xl">
-          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Connect agents to each other.
-          </h2>
-          <p className="mx-auto mb-12 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
-            ACL (Agent Communication Layer) connects Yaver to other MCP servers &mdash; chain tools across Ollama, databases, filesystems, and any MCP-compatible service.
-          </p>
-
-          <div className="terminal">
-            <div className="terminal-header">
-              <div className="terminal-dot bg-[#ff5f57]" />
-              <div className="terminal-dot bg-[#febc2e]" />
-              <div className="terminal-dot bg-[#28c840]" />
-              <span className="ml-3 text-xs text-surface-500">Agent Communication Layer</span>
-            </div>
-            <div className="terminal-body space-y-3 text-[13px]">
-              <div className="text-surface-500"># Connect to local Ollama</div>
-              <div>
-                <span className="text-surface-400">$</span>{" "}
-                <span className="text-surface-200 select-all">yaver acl add ollama http://localhost:11434/mcp</span>
-              </div>
-              <div className="h-px bg-surface-800/60" />
-              <div className="text-surface-500"># Connect to a filesystem MCP server (stdio)</div>
-              <div>
-                <span className="text-surface-400">$</span>{" "}
-                <span className="text-surface-200 select-all">{`yaver acl add files --stdio "npx -y @modelcontextprotocol/server-filesystem /home"`}</span>
-              </div>
-              <div className="h-px bg-surface-800/60" />
-              <div className="text-surface-500"># Connect to a remote database</div>
-              <div>
-                <span className="text-surface-400">$</span>{" "}
-                <span className="text-surface-200 select-all">yaver acl add mydb https://db.example.com/mcp --auth token123</span>
-              </div>
-              <div className="h-px bg-surface-800/60" />
-              <div className="text-surface-500"># List connected peers</div>
-              <div>
-                <span className="text-surface-400">$</span>{" "}
-                <span className="text-surface-200">yaver acl list</span>
-              </div>
-              <div className="pl-2 text-green-400/80">{`ollama   http://localhost:11434/mcp   ● connected   3 tools`}</div>
-              <div className="pl-2 text-green-400/80">{`files    stdio (npx server-fs)       ● connected   7 tools`}</div>
-              <div className="pl-2 text-green-400/80">{`mydb     https://db.example.com/mcp  ● connected   4 tools`}</div>
-            </div>
-          </div>
-
-          <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-4">
-              <p className="text-sm font-medium text-surface-200">Chain tools</p>
-              <p className="mt-1 text-xs text-surface-500">Claude reads your code via Yaver, queries your DB via ACL, and writes the migration &mdash; one prompt.</p>
-            </div>
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-4">
-              <p className="text-sm font-medium text-surface-200">Any MCP server</p>
-              <p className="mt-1 text-xs text-surface-500">HTTP or stdio transport. Ollama, Supabase, filesystem, Postgres, custom servers &mdash; all work.</p>
-            </div>
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-4">
-              <p className="text-sm font-medium text-surface-200">MCP-accessible</p>
-              <p className="mt-1 text-xs text-surface-500">ACL peers are exposed as MCP tools. Claude Desktop, Cursor, VS Code can call them through Yaver.</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Section 13: Voice ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-4xl">
-          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Speak your tasks. Anywhere.
-          </h2>
-          <p className="mx-auto mb-12 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
-            Voice input works everywhere &mdash; mobile app, feedback SDK, CLI.
-          </p>
-
-          <div className="overflow-hidden rounded-xl border border-surface-800">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-surface-800 bg-surface-900/50">
-                  <th className="px-4 py-3 font-medium text-surface-300">Provider</th>
-                  <th className="px-4 py-3 font-medium text-surface-300">Cost</th>
-                  <th className="px-4 py-3 font-medium text-surface-300">How</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-surface-800/60">
-                <tr><td className="px-4 py-3 text-surface-200">Whisper tiny (on-device)</td><td className="px-4 py-3 text-green-400">Free</td><td className="px-4 py-3 text-surface-400">Runs on your phone, no internet</td></tr>
-                <tr><td className="px-4 py-3 text-surface-200">OpenAI GPT-4o Mini</td><td className="px-4 py-3 text-surface-400">$0.003/min</td><td className="px-4 py-3 text-surface-400">Best accuracy for technical speech</td></tr>
-                <tr><td className="px-4 py-3 text-surface-200">Deepgram Nova-2</td><td className="px-4 py-3 text-surface-400">$0.004/min</td><td className="px-4 py-3 text-surface-400">Real-time WebSocket streaming</td></tr>
-                <tr><td className="px-4 py-3 text-surface-200">NVIDIA PersonaPlex 7B</td><td className="px-4 py-3 text-green-400">Free (needs GPU)</td><td className="px-4 py-3 text-surface-400">170ms full-duplex turn-taking</td></tr>
-              </tbody>
-            </table>
-          </div>
-
-          <p className="mt-6 text-center text-xs text-surface-500">
-            Type <code className="rounded bg-surface-800 px-1">/voice</code> in <code className="rounded bg-surface-800 px-1">yaver connect</code> to use voice from any terminal.
-            Voice input works everywhere &mdash; mobile app, feedback SDK, CLI.
-          </p>
-        </div>
-      </section>
-
-      {/* ── Section 14: Security ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-4xl">
-          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Your code never leaves your machine.
-            <br />
-            <span className="text-surface-400">Here&apos;s how that actually works.</span>
-          </h2>
-
-          <div className="mt-12 space-y-4">
-            {[
-              { title: "P2P", desc: "Tasks, output, and code flow directly phone to machine. No server in the middle." },
-              { title: "Transport", desc: "QUIC+TLS on relay path, HTTPS on mobile, WireGuard via Tailscale." },
-              { title: "Relay", desc: "Open source dumb pipe. Self-host it. It can't read your traffic." },
-              { title: "Auth backend (Convex)", desc: "Stores only: hostname, platform, IP. Never sees code or tasks." },
-              { title: "LAN beacon", desc: "SHA-256 token fingerprint. Only your devices match on shared WiFi." },
-              { title: "Fully local path", desc: "Ollama + Tailscale = zero third-party servers. Zero API keys. Ever." },
-            ].map((item) => (
-              <div key={item.title} className="flex items-start gap-4 rounded-xl border border-surface-800 bg-surface-900/50 p-4">
-                <p className="w-36 shrink-0 text-sm font-semibold text-surface-200">{item.title}</p>
-                <p className="text-sm leading-relaxed text-surface-400">{item.desc}</p>
-              </div>
-            ))}
-          </div>
-
-          {/* Command Sandbox */}
-          <div className="mt-12">
-            <h3 className="mb-4 text-center text-lg font-semibold text-surface-100">
-              Command sandbox enabled by default
-            </h3>
-            <p className="mb-6 text-center text-sm text-surface-400">
-              AI agents can only run what you allow. The sandbox blocks dangerous operations out of the box.
-            </p>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {[
-                { cat: "Filesystem destruction", ex: "rm -rf /, rm -rf ~" },
-                { cat: "Encryption / ransomware", ex: "Bulk encryption of home or root" },
-                { cat: "Privilege escalation", ex: "sudo, su, doas (unless allowed)" },
-                { cat: "Disk manipulation", ex: "mkfs, fdisk, dd to block devices" },
-                { cat: "Network exfiltration", ex: "curl|bash, piping sensitive files" },
-                { cat: "System compromise", ex: "Overwriting /etc/passwd, disabling services" },
-              ].map((b) => (
-                <div key={b.cat} className="rounded-lg border border-surface-800/60 bg-surface-900/50 px-4 py-3">
-                  <p className="text-xs font-medium text-red-400/80">{b.cat}</p>
-                  <p className="mt-1 text-[11px] text-surface-500">{b.ex}</p>
-                </div>
-              ))}
-            </div>
-            <div className="mt-6 terminal">
-              <div className="terminal-header">
-                <div className="terminal-dot bg-[#ff5f57]" />
-                <div className="terminal-dot bg-[#febc2e]" />
-                <div className="terminal-dot bg-[#28c840]" />
-                <span className="ml-3 text-xs text-surface-500">~/.yaver/config.json</span>
-              </div>
-              <div className="terminal-body text-[12px]">
-                <pre className="text-surface-300">{`{
-  "sandbox": {
-    "enabled": true,
-    "allow_sudo": false,
-    "blocked_commands": ["terraform destroy"],
-    "allowed_paths": ["/home/user/projects"]
-  }
-}`}</pre>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-8 flex items-center justify-center gap-4">
-            <a href="https://github.com/kivanccakmak/yaver.io" target="_blank" rel="noopener noreferrer"
-              className="text-sm text-surface-300 underline underline-offset-2 hover:text-surface-100">
-              Read the source &rarr;
-            </a>
-            <span className="text-xs text-surface-500">MIT licensed. Don&apos;t trust. Verify.</span>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Section 15: Self-host the relay ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-4xl">
-          <h2 className="mb-12 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Run your own relay. Free. One command.
-          </h2>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <div className="mb-3 flex items-center gap-2">
-                <span className="rounded-full bg-green-500/10 px-2 py-0.5 text-[10px] font-medium text-green-400">recommended</span>
-                <h4 className="text-sm font-semibold text-surface-100">One-command setup</h4>
-              </div>
-              <div className="terminal">
-                <div className="terminal-header">
-                  <div className="terminal-dot bg-[#ff5f57]" />
-                  <div className="terminal-dot bg-[#febc2e]" />
-                  <div className="terminal-dot bg-[#28c840]" />
-                  <span className="ml-3 text-xs text-surface-500">your laptop</span>
-                </div>
-                <div className="terminal-body space-y-2 text-[13px]">
-                  <div>
-                    <span className="text-surface-400">$</span>{" "}
-                    <span className="text-surface-200 select-all">
-                      ./scripts/setup-relay.sh 1.2.3.4 relay.example.com --password secret
-                    </span>
-                  </div>
-                  <div className="pl-2 text-green-400/80">Relay running at https://relay.example.com</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
-              <h4 className="mb-3 text-sm font-semibold text-surface-100">Docker</h4>
-              <div className="terminal">
-                <div className="terminal-header">
-                  <div className="terminal-dot bg-[#ff5f57]" />
-                  <div className="terminal-dot bg-[#febc2e]" />
-                  <div className="terminal-dot bg-[#28c840]" />
-                  <span className="ml-3 text-xs text-surface-500">on your VPS</span>
-                </div>
-                <div className="terminal-body space-y-2 text-[13px]">
-                  <div>
-                    <span className="text-surface-400">$</span>{" "}
-                    <span className="text-surface-200 select-all">cd relay &amp;&amp; RELAY_PASSWORD=secret docker compose up -d</span>
-                  </div>
-                  <div className="pl-2 text-green-400/80">{`{"status":"ok"}`}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <p className="mt-4 text-center text-xs text-surface-500">
-            Or skip the relay entirely with{" "}
-            <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-300">yaver serve --no-relay</code>
-            {" "}and Tailscale.{" "}
-            <Link href="/docs/self-hosting" className="text-surface-300 underline hover:text-surface-100">
-              Full self-hosting guide &rarr;
-            </Link>
-          </p>
-        </div>
-      </section>
-
-      {/* ── Section 16: Managed Services ── */}
-      <section id="waitlist" className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-2xl text-center">
-          <h2 className="mb-4 text-2xl font-bold text-surface-50 md:text-3xl">
-            Managed relay and cloud dev machines &mdash; coming soon.
-          </h2>
-
-          <div className="mt-12 space-y-4 text-left">
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 px-5 py-4">
-              <p className="text-sm font-medium text-surface-200">Managed Relay</p>
-              <p className="mt-1 text-xs text-surface-500">Zero-config P2P tunneling, no VPS needed</p>
-            </div>
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 px-5 py-4">
-              <p className="text-sm font-medium text-surface-200">Cloud CPU Machine</p>
-              <p className="mt-1 text-xs text-surface-500">8 vCPU / 16 GB RAM, Expo + EAS pre-installed, build iOS without a Mac</p>
-            </div>
-            <div className="rounded-xl border border-surface-800 bg-surface-900/50 px-5 py-4">
-              <p className="text-sm font-medium text-surface-200">Cloud GPU Machine</p>
-              <p className="mt-1 text-xs text-surface-500">RTX 4000, full Ollama stack pre-loaded, no API keys ever</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Section 17: Open Source ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-4xl">
-          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            MIT licensed. Fork it. Own your entire stack.
-          </h2>
-          <p className="mb-12 text-center text-sm text-surface-400">
-            Every component is open source &mdash; you own your entire stack.
-          </p>
-
-          <div className="overflow-hidden rounded-xl border border-surface-800">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-surface-800 bg-surface-900/50">
-                  <th className="px-5 py-3 font-medium text-surface-300">Component</th>
-                  <th className="px-5 py-3 font-medium text-surface-300">Language</th>
-                  <th className="px-5 py-3 font-medium text-surface-300">Description</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-surface-800/60">
-                <tr><td className="px-5 py-3 text-surface-200">CLI Agent</td><td className="px-5 py-3 text-surface-400">Go</td><td className="px-5 py-3 text-surface-400">Runs on your dev machine, manages tmux sessions</td></tr>
-                <tr><td className="px-5 py-3 text-surface-200">Mobile App</td><td className="px-5 py-3 text-surface-400">React Native</td><td className="px-5 py-3 text-surface-400">iOS + Android, send tasks, review output</td></tr>
-                <tr><td className="px-5 py-3 text-surface-200">Relay Server</td><td className="px-5 py-3 text-surface-400">Go</td><td className="px-5 py-3 text-surface-400">QUIC relay, self-hostable via Docker</td></tr>
-                <tr><td className="px-5 py-3 text-surface-200">Auth Bridge</td><td className="px-5 py-3 text-surface-400">Convex</td><td className="px-5 py-3 text-surface-400">OAuth + device discovery only, self-hostable</td></tr>
-                <tr><td className="px-5 py-3 text-surface-200">Key Vault</td><td className="px-5 py-3 text-surface-400">P2P encrypted</td><td className="px-5 py-3 text-surface-400">NaCl secretbox, never touches our servers</td></tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <a href="https://github.com/kivanccakmak/yaver.io" target="_blank" rel="noopener noreferrer" className="btn-primary px-6 py-3 text-sm">
-              GitHub
-            </a>
-            <Link href="/docs/contributing" className="btn-secondary px-6 py-3 text-sm">
-              Contributing Guide
-            </Link>
-            <Link href="/docs/developers" className="btn-secondary px-6 py-3 text-sm">
-              Developer Docs
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Section 18: Integrations ── */}
-      <section id="integrations" className="border-t border-surface-800/60 px-6 py-24">
-        <div className="mx-auto max-w-5xl">
-          <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Works with everything you use
-          </h2>
-          <p className="mx-auto mb-16 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
-            7 AI agents, 4 chat platforms, 5 SDKs, issue trackers, alerting, and every major transport layer.
-            All data flows peer-to-peer &mdash; nothing stored on our servers.
-          </p>
-
-          <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-            {/* AI Agents */}
-            <div className="rounded-xl border border-surface-800 bg-surface-900/40 p-5">
-              <div className="mb-4 flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-500/10 text-violet-400">
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
-                  </svg>
-                </div>
-                <h3 className="text-sm font-semibold text-surface-100">AI Agents</h3>
-              </div>
-              <ul className="space-y-2 text-sm text-surface-400">
-                <li>Claude Code</li>
-                <li>OpenAI Codex</li>
-                <li>Aider</li>
-                <li>Goose</li>
-                <li>Ollama</li>
-                <li>Amp</li>
-                <li>OpenCode</li>
-                <li className="text-surface-600">+ any custom CLI</li>
-              </ul>
-            </div>
-
-            {/* Chat & Notifications */}
-            <div className="rounded-xl border border-surface-800 bg-surface-900/40 p-5">
-              <div className="mb-4 flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400">
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
-                  </svg>
-                </div>
-                <h3 className="text-sm font-semibold text-surface-100">Chat &amp; Notifications</h3>
-              </div>
-              <ul className="space-y-2 text-sm text-surface-400">
-                <li>Telegram <span className="text-emerald-400/70 text-xs">(2-way)</span></li>
-                <li>Discord</li>
-                <li>Slack</li>
-                <li>Teams</li>
-              </ul>
-            </div>
-
-            {/* SDKs */}
-            <div className="rounded-xl border border-surface-800 bg-surface-900/40 p-5">
-              <div className="mb-4 flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10 text-amber-400">
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5" />
-                  </svg>
-                </div>
-                <h3 className="text-sm font-semibold text-surface-100">SDKs</h3>
-              </div>
-              <ul className="space-y-2 text-sm text-surface-400">
-                <li>Go</li>
-                <li>Python</li>
-                <li>JavaScript / TypeScript</li>
-                <li>Flutter / Dart</li>
-                <li>C / C++</li>
-              </ul>
-            </div>
-
-            {/* Connectivity */}
-            <div className="rounded-xl border border-surface-800 bg-surface-900/40 p-5">
-              <div className="mb-4 flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-green-500/10 text-green-400">
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.288 15.038a5.25 5.25 0 017.424 0M5.106 11.856c3.807-3.808 9.98-3.808 13.788 0M1.924 8.674c5.565-5.565 14.587-5.565 20.152 0M12.53 18.22l-.53.53-.53-.53a.75.75 0 011.06 0z" />
-                  </svg>
-                </div>
-                <h3 className="text-sm font-semibold text-surface-100">Connectivity</h3>
-              </div>
-              <ul className="space-y-2 text-sm text-surface-400">
-                <li>Direct LAN <span className="text-surface-600 text-xs">(~5ms)</span></li>
-                <li>QUIC Relay <span className="text-surface-600 text-xs">(self-host)</span></li>
-                <li>Cloudflare Tunnel</li>
-                <li>Tailscale</li>
-              </ul>
-            </div>
-
-            {/* Developer Platforms */}
-            <div className="rounded-xl border border-surface-800 bg-surface-900/40 p-5">
-              <div className="mb-4 flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-500/10 text-orange-400">
-                  <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.405.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
-                  </svg>
-                </div>
-                <h3 className="text-sm font-semibold text-surface-100">Developer Platforms</h3>
-              </div>
-              <ul className="space-y-2 text-sm text-surface-400">
-                <li>GitHub</li>
-                <li>GitLab</li>
-              </ul>
-            </div>
-
-            {/* Dev Tools */}
-            <div className="rounded-xl border border-surface-800 bg-surface-900/40 p-5">
-              <div className="mb-4 flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-500/10 text-red-400">
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
-                  </svg>
-                </div>
-                <h3 className="text-sm font-semibold text-surface-100">Dev Tools</h3>
-              </div>
-              <ul className="space-y-2 text-sm text-surface-400">
-                <li>Linear</li>
-                <li>Jira</li>
-                <li>PagerDuty</li>
-                <li>Opsgenie</li>
-                <li>Email</li>
-              </ul>
-            </div>
-          </div>
-
-          <div className="mt-10 text-center">
-            <Link
-              href="/integrations"
-              className="inline-flex items-center gap-1.5 text-sm text-surface-400 transition-colors hover:text-[#6366f1]"
-            >
-              View all integrations
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-              </svg>
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Section 19: FAQ ── */}
-      <section className="border-t border-surface-800/60 px-6 py-24">
+      {/* ── Section 11: FAQ ── */}
+      <section id="faq" className="border-t border-surface-800/60 px-6 py-24">
         <div className="mx-auto max-w-3xl">
-          <h2 className="mb-12 text-center text-2xl font-bold text-surface-50 md:text-3xl">
+          <h2 className="mb-10 text-center text-2xl font-bold text-surface-50 md:text-3xl">
             FAQ
           </h2>
-
           <div>
             <FAQItem
-              question="What agents work with Yaver?"
-              answer="Anything that runs in a terminal. Claude Code, Codex CLI, OpenCode, Goose, Amp, Aider, Ollama, Qwen, Continue, or whatever custom command you want. Run local models with Ollama for zero-cost, fully private AI coding. Switch agents per task or set a default."
+              question="How is this different from AWS or Vercel?"
+              answer="Yaver doesn't host anything. It doesn't run your code in someone else's data center and it doesn't charge you for compute. Yaver is a remote control for machines you already own — your MacBook, a $5 VPS, a Raspberry Pi. You bring the hardware, Yaver makes it accessible and orchestrable from your phone."
             />
             <FAQItem
-              question="How is this different from Claude Code Remote?"
-              answer="Claude Code Remote is a hosted option by Anthropic for Claude Code. Yaver is agent-agnostic — it works with Claude Code, Ollama, Aider, Goose, Codex, or any tmux session. It runs everything on your own hardware. Both tools are useful depending on your setup."
-            />
-            <FAQItem
-              question="Do I need API keys?"
-              answer="Depends on the agent. Cloud agents like Claude Code or Codex need their own API keys or subscriptions. Local models via Ollama need nothing — just download the model and go. Yaver itself has no API keys and no paid tiers."
-            />
-            <FAQItem
-              question="Do I need a relay server?"
-              answer="It depends on your network setup. On the same WiFi, Yaver discovers your machine automatically via UDP LAN broadcast — no relay needed, connections are direct at ~5ms latency. When your phone is on cellular or a different network, you need a way to reach your machine: either a relay server (self-host with one Docker command), Tailscale (connect over your tailnet, DERP handles hard NAT), or Cloudflare Tunnel (pure TCP/HTTPS). The relay is a pass-through — it forwards encrypted bytes and cannot read your traffic."
-            />
-            <FAQItem
-              question="Can I use Tailscale instead of a relay?"
-              answer="Yes. If both devices are on your tailnet, Yaver connects directly via the Tailscale IP. No relay needed. Tailscale's DERP servers handle hard NAT cases automatically."
+              question="Do I need a powerful machine?"
+              answer="Any modern Mac or Linux machine works. 16GB RAM is comfortable for web development. For local AI models (Ollama), 24GB+ is better. A $5/month Hetzner or DigitalOcean VPS works great as a headless dev machine you control from your phone."
             />
             <FAQItem
               question="Is my code safe?"
-              answer="Yaver connects your phone directly to your dev machine. CLI-to-relay uses QUIC (TLS encrypted), mobile-to-relay uses HTTPS. The relay is password-protected and can't inspect traffic — it just forwards bytes. On Tailscale, you get full WireGuard end-to-end encryption. On LAN, the beacon uses a SHA-256 token fingerprint so only your devices can discover each other. No code, tasks, or output ever reach any server. All of this is open source — read the code yourself."
+              answer="Your code never leaves your machine. All traffic is P2P encrypted (QUIC+TLS). The relay is a dumb pipe — it forwards bytes but can't read your data. Self-host the relay if you want zero third-party servers involved."
             />
             <FAQItem
-              question="Can I use Yaver without the mobile app?"
-              answer="Yes. Run `yaver connect` from any terminal to connect to your remote dev machine. Laptop to desktop, server to server, SSH session to home machine — same connection strategy, same agent support. The mobile app is just one way to interact with your agent."
+              question="Can I use this for web apps, not just mobile?"
+              answer="Yes. Yaver works with any project — Next.js, Vite, Remix, SvelteKit, APIs, Docker containers. The Push to Device feature is React Native specific, but everything else (project creation, local backends, database dashboards, deployment, AI tasks) works with any stack."
             />
             <FAQItem
-              question="Is it actually free?"
-              answer="Yes. MIT license, no paid tiers, no usage limits, no telemetry, no catch. If you find it useful, star the repo or contribute a patch."
+              question="What if I already use Vercel or Supabase Cloud?"
+              answer="Great — keep using them for production. Use Yaver for local development at $0, then deploy to your cloud provider when ready. Yaver bridges your local stack and your production stack."
             />
             <FAQItem
-              question="What if I'm behind a strict corporate firewall?"
-              answer="Yaver's relay uses QUIC, which runs over UDP. Some corporate firewalls block all UDP traffic, which would prevent the relay from working. In that case, you have two options: Tailscale (its DERP relay servers use HTTPS to punch through even the strictest firewalls, and it works with the Tailscale mobile app too), or Cloudflare Tunnel (pure TCP/HTTPS, works through any firewall that allows web browsing). Both options give you a direct connection to your machine without needing Yaver's relay at all."
+              question="Does Yaver manage my servers?"
+              answer="No. Yaver doesn't manage, provision, or host any infrastructure. If you have a VPS, Yaver can deploy to it — but the server is yours. You set it up, you maintain it, you pay for it directly. Yaver is the control plane, not the compute."
             />
             <FAQItem
-              question="Don't some agents already have remote access?"
-              answer="Yes — Claude Code has a remote control feature, and OpenAI Codex runs in the cloud. Yaver is useful when you want a single interface across multiple agents, when you use local models that have no cloud option, or when you want full control over your infrastructure. It's agent-agnostic by design."
+              question="Is this really free?"
+              answer="Yes. MIT licensed. Self-host everything. There is no paid tier, no premium plan, no contact sales. If you want production hosting, that's between you and your hosting provider (Hetzner, Vercel, Cloudflare, etc.). Yaver itself is and will remain free."
             />
-            <FAQItem
-              question="How does the Feedback SDK work?"
-              answer="The Feedback SDK adds a floating debug button to your app during development. From it you can message your AI agent, trigger hot reload, build and deploy to TestFlight and Play Store, and report bugs with auto-screenshots. The SDK streams all logs, navigation events, and crashes to the agent like a flight recorder. When a bug is reported, the agent has full context and can write a fix immediately. It's gated behind your developer user ID so end users never see it."
-            />
-            <FAQItem
-              question="How does voice input work?"
-              answer="Yaver supports speech-to-text on both mobile and CLI. You can use the free on-device option (Whisper, runs entirely on your phone/machine) or bring your own API key for OpenAI, Deepgram, or AssemblyAI. On mobile, tap the mic button in the task modal. On CLI, type /voice in yaver connect. All transcription happens on your device or goes directly to the provider you choose — nothing passes through Yaver servers."
-            />
-            <FAQItem
-              question="Can I embed Yaver in my own app?"
-              answer="Yes — Yaver provides SDKs for Go, Python, and JavaScript/TypeScript. Import the package, point it at a running Yaver agent, and create tasks, stream output, or use speech-to-text from your code. A C shared library (.so/.dylib/.dll) is also available for C/C++ and any language with FFI support (Ruby, Rust, etc)."
-            />
-            <FAQItem
-              question="How does the build pipeline work?"
-              answer="Your dev machine builds the app (Flutter, Gradle, Xcode, React Native, or Expo). The artifact (APK, IPA, AAB) transfers P2P to your phone — free and instant. On Android, tap to install directly. On iOS, use TestFlight or OTA install via relay. You can also push to GitHub Actions or GitLab CI instead. No cloud CI minutes consumed for P2P builds."
-            />
-            <FAQItem
-              question="What about TestFlight and Play Store?"
-              answer="'yaver build push testflight' uploads your IPA directly to TestFlight. 'yaver build push playstore' uploads your AAB to Play Store internal testing. Credentials are stored in the P2P encrypted vault — never on our servers."
-            />
-            <FAQItem
-              question="What is the visual feedback loop?"
-              answer="After deploying a build to your phone, you test it and record bugs — screen recording + voice narration. The report goes back to your AI agent via P2P, which sees the recording, reads your transcript, and fixes the issues. Three modes: Live (agent watches in real-time and comments), Narrated (record + send), and Batch (full dump). You can also embed our feedback SDK (@yaver/feedback-web, yaver-feedback-react-native, yaver_feedback) in your app for shake-to-report during development."
-            />
-            <FAQItem
-              question="How does the Apps tab work?"
-              answer="The agent scans your home directory for projects and detects their stack — React Native, Next.js, Vite, Convex, Supabase, Docker, etc. For React Native apps, you get native hot reload right inside the Yaver app with full device access (camera, BLE, GPS). For web apps, the dev server loads in a WebView. For backends, you get one-tap deploy. Works over WiFi or 4G through the relay. Zero config — no manifest files, no project setup."
-            />
-            <FAQItem
-              question="Can I run tests from my phone?"
-              answer="Yes. 'yaver test unit' auto-detects your test framework (Flutter, Jest, pytest, Go test, Cargo, XCTest, Espresso, Playwright, Cypress, Maestro) and runs it. You see pass/fail counts and failures on your phone. For the full pipeline: 'yaver pipeline --test --deploy p2p' builds, tests, and deploys in one command."
-            />
-            <FAQItem
-              question="Can I hear responses read aloud?"
-              answer="Yes — enable Text-to-Speech in Settings > Voice. It uses your device's built-in TTS engine (Apple TTS on iOS/macOS, espeak on Linux). You can also control response verbosity from 0 (just 'done') to 10 (full diffs and reasoning) so the AI adapts how much detail it gives."
-            />
-            <FAQItem
-              question="How do I contribute?"
-              answer="Fork the repo, hack on it, open a PR. Check the README for dev setup. Bug reports and feature ideas are welcome as GitHub issues."
-            />
-            <FAQItem
-              question="How does the Key Vault work?"
-              answer="Key Vault syncs API keys, SSH keys, and signing certificates between your phone and dev machine over encrypted P2P connections. Keys are encrypted at rest using NaCl secretbox with Argon2id key derivation. In transit, they're auth-gated — only your authenticated devices can request them. On mobile, keys are stored in the OS keychain (Keychain on iOS, Keystore on Android). On the CLI, they're stored in an encrypted file under ~/.yaver/. Nothing ever touches our servers."
-            />
-            <FAQItem
-              question="What are the Cloud Dev Machines?"
-              answer="Dedicated Linux dev environments provisioned just for you — not shared with anyone. CPU machines come with 8 vCPU, 16 GB RAM, 160 GB NVMe. GPU machines add a dedicated NVIDIA RTX 4000 with 20 GB VRAM, Ollama + Qwen 2.5 Coder 32B, and PersonaPlex 7B for voice AI. All tiers include Node.js, Python, Go, Rust, Docker, Expo CLI, EAS CLI. Coming soon."
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* ── Related Work ── */}
-      <section className="border-t border-surface-800/60 px-6 py-20">
-        <div className="mx-auto max-w-6xl">
-          <h2 className="mb-2 text-xl font-bold text-surface-50 md:text-2xl">Related Work</h2>
-          <p className="mb-3 text-sm text-surface-400">
-            Projects and tools in the same problem space. Yaver is compatible with most of these and can be used alongside them.
-          </p>
-          <p className="mb-10 text-xs text-surface-500">
-            <span className="inline-flex items-center gap-1"><span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-400">OSS</span> = open-source software</span>
-          </p>
-
-          <div className="grid gap-10 md:grid-cols-2 lg:grid-cols-3">
-            {/* AI Coding Agents */}
-            <div>
-              <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-surface-500">AI Coding Agents</p>
-              <ul className="space-y-2.5 text-sm">
-                <li>
-                  <a href="https://docs.anthropic.com/en/docs/claude-code" target="_blank" rel="noopener noreferrer" className="font-medium text-surface-300 hover:text-surface-50">Claude Code</a>
-                  <span className="text-surface-500"> &mdash; Anthropic&apos;s agentic coding tool</span>
-                </li>
-                <li>
-                  <a href="https://ollama.com" target="_blank" rel="noopener noreferrer" className="font-medium text-surface-300 hover:text-surface-50">Ollama</a>
-                  <span className="ml-1.5 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-400">OSS</span>
-                  <span className="text-surface-500"> &mdash; run LLMs locally</span>
-                </li>
-                <li>
-                  <a href="https://aider.chat" target="_blank" rel="noopener noreferrer" className="font-medium text-surface-300 hover:text-surface-50">Aider</a>
-                  <span className="ml-1.5 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-400">OSS</span>
-                  <span className="text-surface-500"> &mdash; AI pair programming in the terminal</span>
-                </li>
-                <li>
-                  <a href="https://github.com/openai/codex" target="_blank" rel="noopener noreferrer" className="font-medium text-surface-300 hover:text-surface-50">OpenAI Codex CLI</a>
-                  <span className="ml-1.5 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-400">OSS</span>
-                  <span className="text-surface-500"> &mdash; OpenAI&apos;s coding agent</span>
-                </li>
-                <li>
-                  <a href="https://block.github.io/goose/" target="_blank" rel="noopener noreferrer" className="font-medium text-surface-300 hover:text-surface-50">Goose</a>
-                  <span className="ml-1.5 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-400">OSS</span>
-                  <span className="text-surface-500"> &mdash; Block&apos;s autonomous coding agent</span>
-                </li>
-                <li>
-                  <a href="https://ampcode.com" target="_blank" rel="noopener noreferrer" className="font-medium text-surface-300 hover:text-surface-50">Amp</a>
-                  <span className="text-surface-500"> &mdash; Sourcegraph&apos;s agentic IDE</span>
-                </li>
-              </ul>
-            </div>
-
-            {/* Mobile Bug Reporting & Observability */}
-            <div>
-              <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-surface-500">Mobile Bug Reporting &amp; Observability</p>
-              <ul className="space-y-2.5 text-sm">
-                <li>
-                  <a href="https://instabug.com" target="_blank" rel="noopener noreferrer" className="font-medium text-surface-300 hover:text-surface-50">Instabug</a>
-                  <span className="text-surface-500"> &mdash; in-app bug reporting &amp; crash analytics</span>
-                </li>
-                <li>
-                  <a href="https://luciq.ai" target="_blank" rel="noopener noreferrer" className="font-medium text-surface-300 hover:text-surface-50">Luciq</a>
-                  <span className="text-surface-500"> &mdash; agentic observability platform for mobile</span>
-                </li>
-                <li>
-                  <a href="https://sentry.io" target="_blank" rel="noopener noreferrer" className="font-medium text-surface-300 hover:text-surface-50">Sentry</a>
-                  <span className="ml-1.5 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-400">OSS</span>
-                  <span className="text-surface-500"> &mdash; error tracking &amp; performance monitoring</span>
-                </li>
-                <li>
-                  <a href="https://www.bugsnag.com" target="_blank" rel="noopener noreferrer" className="font-medium text-surface-300 hover:text-surface-50">BugSnag</a>
-                  <span className="text-surface-500"> &mdash; application stability management</span>
-                </li>
-                <li>
-                  <a href="https://www.shakebugs.com" target="_blank" rel="noopener noreferrer" className="font-medium text-surface-300 hover:text-surface-50">Shake</a>
-                  <span className="text-surface-500"> &mdash; shake-to-report bug SDK</span>
-                </li>
-                <li>
-                  <a href="https://firebase.google.com/products/crashlytics" target="_blank" rel="noopener noreferrer" className="font-medium text-surface-300 hover:text-surface-50">Firebase Crashlytics</a>
-                  <span className="text-surface-500"> &mdash; Google&apos;s crash reporting</span>
-                </li>
-              </ul>
-            </div>
-
-            {/* Remote Dev & Connectivity */}
-            <div>
-              <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-surface-500">Remote Dev &amp; Connectivity</p>
-              <ul className="space-y-2.5 text-sm">
-                <li>
-                  <a href="https://tailscale.com" target="_blank" rel="noopener noreferrer" className="font-medium text-surface-300 hover:text-surface-50">Tailscale</a>
-                  <span className="text-surface-500"> &mdash; WireGuard mesh VPN</span>
-                </li>
-                <li>
-                  <a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/" target="_blank" rel="noopener noreferrer" className="font-medium text-surface-300 hover:text-surface-50">Cloudflare Tunnel</a>
-                  <span className="text-surface-500"> &mdash; HTTPS tunnel to localhost</span>
-                </li>
-                <li>
-                  <a href="https://ngrok.com" target="_blank" rel="noopener noreferrer" className="font-medium text-surface-300 hover:text-surface-50">ngrok</a>
-                  <span className="text-surface-500"> &mdash; expose local servers publicly</span>
-                </li>
-                <li>
-                  <a href="https://code.visualstudio.com/docs/remote/remote-overview" target="_blank" rel="noopener noreferrer" className="font-medium text-surface-300 hover:text-surface-50">VS Code Remote</a>
-                  <span className="text-surface-500"> &mdash; remote development via SSH</span>
-                </li>
-                <li>
-                  <a href="https://www.wireguard.com" target="_blank" rel="noopener noreferrer" className="font-medium text-surface-300 hover:text-surface-50">WireGuard</a>
-                  <span className="ml-1.5 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-400">OSS</span>
-                  <span className="text-surface-500"> &mdash; modern VPN protocol</span>
-                </li>
-              </ul>
-            </div>
           </div>
         </div>
       </section>
@@ -2679,13 +1383,13 @@ await for (final chunk in c.streamOutput(task.id)) {
               <a href="mailto:kivanc.cakmak@simkab.com" className="hover:text-surface-300">kivanc.cakmak@simkab.com</a>
             </p>
             <div className="flex flex-wrap items-center gap-4 text-xs text-surface-500">
-              <a href="#features" className="hover:text-surface-300">Features</a>
+              <a href="#get-started" className="hover:text-surface-300">Get Started</a>
               <a href="#faq" className="hover:text-surface-300">FAQ</a>
               <a href="/docs" className="hover:text-surface-300">Docs</a>
-              <a href="/docs/developers" className="hover:text-surface-300">Developers</a>
               <Link href="/download" className="hover:text-surface-300">Download</Link>
-              <a href="#features" className="hover:text-surface-300">Pricing</a>
-              <a href="#integrations" className="hover:text-surface-300">Integrations</a>
+              <a href="https://github.com/kivanccakmak/yaver.io" target="_blank" rel="noopener noreferrer" className="hover:text-surface-300">GitHub</a>
+              <a href="/privacy" className="hover:text-surface-300">Privacy</a>
+              <a href="/terms" className="hover:text-surface-300">Terms</a>
             </div>
           </div>
           <p className="mt-6 text-center text-xs text-surface-600">
@@ -2695,5 +1399,162 @@ await for (final chunk in c.streamOutput(task.id)) {
         </div>
       </footer>
     </>
+  );
+}
+
+// ── ProjectWizardPreview ──
+function ProjectWizardPreview() {
+  return (
+    <div className="rounded-2xl border border-surface-800 bg-surface-950/70 p-5 shadow-xl shadow-black/20">
+      <div className="mb-4 flex items-center justify-between">
+        <p className="text-sm font-semibold text-surface-100">+ New Project</p>
+        <span className="rounded bg-[#6366f1]/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#a5b4fc]">Wizard</span>
+      </div>
+      <div className="space-y-2 text-xs">
+        {[
+          ["Name", "invoicehero"],
+          ["Machine", "MacBook Pro"],
+          ["Template", "SaaS Starter"],
+          ["Backend", "Convex (local)"],
+          ["Auth", "Better Auth"],
+          ["Services", "Email, HTTPS"],
+        ].map(([k, v]) => (
+          <div key={k} className="flex items-center justify-between rounded-lg bg-surface-900/60 px-3 py-2">
+            <span className="text-surface-500">{k}</span>
+            <span className="font-mono text-surface-200">{v}</span>
+          </div>
+        ))}
+      </div>
+      <button className="mt-4 w-full rounded-lg bg-[#6366f1] px-4 py-2.5 text-xs font-semibold text-white shadow-lg shadow-indigo-500/20 hover:bg-[#5558e6]">
+        {"\uD83D\uDE80 Create Project"}
+      </button>
+      <div className="mt-4 space-y-1.5 rounded-lg border border-surface-800 bg-surface-950 p-3 font-mono text-[11px]">
+        {[
+          ["\u2705", "Scaffolded Next.js"],
+          ["\u2705", "Installed 47 deps"],
+          ["\u2705", "Convex local running"],
+          ["\u2705", "Mailpit running"],
+          ["\uD83D\uDFE2", "Ready at localhost:3000"],
+          ["\uD83D\uDCF1", "Phone: invoicehero.yaver.dev"],
+        ].map(([icon, text]) => (
+          <div key={text} className="flex items-center gap-2 text-surface-300">
+            <span>{icon}</span>
+            <span>{text}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── DashboardComparison ──
+function DashboardComparison() {
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      {/* Without Yaver */}
+      <div className="rounded-2xl border border-surface-800 bg-surface-950/50 p-5 opacity-75">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-surface-500">Without Yaver</p>
+        <div className="mb-4 space-y-1.5 font-mono text-xs text-surface-400">
+          <div>Convex Dashboard &rarr; <span className="line-through">localhost:6791</span></div>
+          <div>Supabase Studio &nbsp;&rarr; <span className="line-through">localhost:54323</span></div>
+        </div>
+        <ul className="space-y-1.5 text-xs text-surface-500">
+          <li>{"\uD83D\uDDA5\uFE0F  Only accessible from your desk"}</li>
+          <li className="text-red-400/70">{"\u2717  Can\u2019t see from phone"}</li>
+          <li className="text-red-400/70">{"\u2717  Can\u2019t access remotely"}</li>
+          <li className="text-red-400/70">{"\u2717  Safari/Brave block localhost"}</li>
+        </ul>
+      </div>
+
+      {/* With Yaver */}
+      <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-5">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-emerald-400">With Yaver</p>
+        <div className="mb-4 space-y-1.5 font-mono text-xs text-surface-200">
+          <div>Convex Dashboard &rarr; <span className="text-emerald-400">yaver.io/db/invoicehero</span></div>
+          <div>Supabase Studio &nbsp;&rarr; <span className="text-emerald-400">yaver.io/db/mobile-app</span></div>
+        </div>
+        <ul className="space-y-1.5 text-xs text-surface-300">
+          <li>{"\uD83D\uDCF1  Accessible from your phone"}</li>
+          <li>{"\uD83C\uDF10  Accessible from any browser"}</li>
+          <li>{"\uD83D\uDD12  P2P encrypted through relay"}</li>
+          <li className="text-emerald-400">{"\u2713  Works everywhere"}</li>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+// ── EnvironmentStepper ──
+function EnvironmentStepper() {
+  return (
+    <div className="grid gap-4 md:grid-cols-[1fr_auto_1fr] md:items-stretch">
+      {/* Local */}
+      <div className="rounded-2xl border border-surface-800 bg-surface-900/50 p-5">
+        <div className="mb-3 flex items-center gap-2">
+          <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+          <p className="text-sm font-semibold text-surface-100">Local Dev</p>
+        </div>
+        <p className="mb-3 text-xs text-surface-400">Your machine</p>
+        <ul className="space-y-1.5 text-xs text-surface-300">
+          <li>Convex local (SQLite)</li>
+          <li>Mailpit (catches email)</li>
+          <li>Stripe test mode</li>
+          <li className="font-mono text-surface-400">localhost:3000</li>
+        </ul>
+        <p className="mt-4 text-sm font-mono text-emerald-400">Cost: $0</p>
+      </div>
+
+      {/* Arrow */}
+      <div className="hidden items-center justify-center md:flex">
+        <span className="text-3xl text-surface-600">&rarr;</span>
+      </div>
+
+      {/* Production */}
+      <div className="rounded-2xl border border-surface-800 bg-surface-900/50 p-5">
+        <div className="mb-3 flex items-center gap-2">
+          <span>{"\uD83D\uDE80"}</span>
+          <p className="text-sm font-semibold text-surface-100">Production</p>
+        </div>
+        <p className="mb-3 text-xs text-surface-400">Your VPS / Vercel / Cloudflare / Fly.io</p>
+        <ul className="space-y-1.5 text-xs text-surface-300">
+          <li>Real SMTP</li>
+          <li>Stripe live mode</li>
+          <li className="font-mono text-surface-400">yourapp.com</li>
+        </ul>
+        <p className="mt-4 text-sm font-mono text-surface-200">Cost: free tiers or $5/mo VPS</p>
+      </div>
+    </div>
+  );
+}
+
+// ── PreDeployCheck ──
+function PreDeployCheck() {
+  return (
+    <div className="terminal">
+      <div className="terminal-header">
+        <div className="terminal-dot bg-[#ff5f57]" />
+        <div className="terminal-dot bg-[#febc2e]" />
+        <div className="terminal-dot bg-[#28c840]" />
+        <span className="ml-3 text-xs text-surface-500">yaver check</span>
+      </div>
+      <div className="terminal-body space-y-1 text-[12px]">
+        <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver check</span></div>
+        {[
+          ["TypeScript", "no errors"],
+          ["ESLint", "clean"],
+          ["Tests", "23/23 passed"],
+          ["Build", "success (4.2s)"],
+          ["Security audit", "no vulnerabilities"],
+          ["Git", "clean, up to date"],
+        ].map(([k, v]) => (
+          <div key={k} className="flex items-center gap-2 text-[12px]">
+            <span className="text-green-400">{"\u2705"}</span>
+            <span className="text-surface-300">{k}</span>
+            <span className="text-surface-500">&mdash; {v}</span>
+          </div>
+        ))}
+        <div className="mt-2 font-semibold text-emerald-400">{"\u2705 READY TO DEPLOY"}</div>
+      </div>
+    </div>
   );
 }
