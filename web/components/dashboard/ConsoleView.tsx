@@ -2,15 +2,16 @@
 
 import { useEffect, useRef, useState } from "react";
 import { agentClient } from "@/lib/agent-client";
+import TerminalView from "./TerminalView";
 
-type Tab = "overview" | "containers" | "catalog" | "images";
+type Tab = "overview" | "machines" | "containers" | "terminal" | "catalog" | "images";
 
 export default function ConsoleView() {
   const [tab, setTab] = useState<Tab>("overview");
   return (
     <div className="space-y-4">
       <div className="flex gap-1 border-b border-surface-800">
-        {(["overview", "containers", "catalog", "images"] as Tab[]).map((t) => (
+        {(["overview", "machines", "containers", "terminal", "catalog", "images"] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)}
             className={`px-3 py-2 text-xs uppercase font-semibold ${tab === t ? "text-indigo-400 border-b-2 border-indigo-400" : "text-surface-500 hover:text-surface-300"}`}>
             {t}
@@ -18,7 +19,9 @@ export default function ConsoleView() {
         ))}
       </div>
       {tab === "overview" && <Overview />}
+      {tab === "machines" && <Machines />}
       {tab === "containers" && <Containers />}
+      {tab === "terminal" && <TerminalView />}
       {tab === "catalog" && <Catalog />}
       {tab === "images" && <Images />}
     </div>
@@ -278,6 +281,77 @@ function Images() {
           <span className="text-surface-600 font-mono">{i.id.slice(7, 19)}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+function Machines() {
+  const [list, setList] = useState<any[]>([]);
+  const [error, setError] = useState("");
+
+  useEffect(() => { refresh(); const i = setInterval(refresh, 10000); return () => clearInterval(i); }, []);
+
+  async function refresh() {
+    try {
+      const r = await agentClient.consoleMachines();
+      setList(r.machines || []);
+    } catch (e: any) { setError(e.message); }
+  }
+
+  const providerIcon = (p: string) => {
+    switch (p) {
+      case "hetzner": return "🖥️";
+      case "aws": return "☁️";
+      case "gcp": return "🌩️";
+      case "local-mac": return "🍎";
+      case "yaver-cloud": return "⚡";
+      default: return "💻";
+    }
+  };
+  const providerColor = (p: string) => {
+    switch (p) {
+      case "hetzner": return "bg-red-500/20 text-red-300";
+      case "aws": return "bg-amber-500/20 text-amber-300";
+      case "gcp": return "bg-blue-500/20 text-blue-300";
+      case "local-mac":
+      case "local": return "bg-emerald-500/20 text-emerald-300";
+      case "yaver-cloud": return "bg-indigo-500/20 text-indigo-300";
+      default: return "bg-surface-800 text-surface-400";
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      {error && <div className="text-xs text-red-400">{error}</div>}
+      <div className="text-xs text-surface-500">
+        Hybrid view: own hardware + cloud VPSes managed through one UI. Pick a machine in the device bar to re-target Containers/Terminal/etc.
+      </div>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {list.map((m) => (
+          <div key={m.deviceId} className={`bg-surface-900/50 border rounded-lg p-3 space-y-2 ${m.isLocal ? "border-indigo-500/40" : "border-surface-800"}`}>
+            <div className="flex items-center gap-2">
+              <span className="text-xl">{providerIcon(m.provider)}</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold text-surface-200 truncate">{m.name}</div>
+                <div className="text-[10px] font-mono text-surface-500 truncate">{m.platform}</div>
+              </div>
+              <span className={`w-2 h-2 rounded-full ${m.isOnline ? "bg-emerald-400" : "bg-red-400"}`} />
+            </div>
+            <div className="flex flex-wrap gap-1 text-[10px]">
+              <span className={`px-1.5 py-0.5 rounded uppercase ${providerColor(m.provider || "unknown")}`}>{m.provider || "unknown"}</span>
+              {m.isLocal && <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300">this machine</span>}
+              {m.arch && <span className="px-1.5 py-0.5 rounded bg-surface-800 text-surface-400">{m.arch}</span>}
+              {m.cost && <span className="px-1.5 py-0.5 rounded bg-surface-800 text-surface-400">{m.cost}</span>}
+            </div>
+            {m.uptime > 0 && (
+              <div className="text-[10px] text-surface-500">uptime: {Math.floor(m.uptime / 86400)}d {Math.floor((m.uptime % 86400) / 3600)}h</div>
+            )}
+            {m.quicHost && (
+              <div className="text-[10px] text-surface-600 font-mono truncate">{m.quicHost}:{m.quicPort}</div>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

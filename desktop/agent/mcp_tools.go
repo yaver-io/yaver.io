@@ -1200,6 +1200,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		{"name": "backend_schema", "description": "Show schema (tables + columns + mermaid ERD) for the project's backend.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string"}}}},
 		{"name": "storage_list", "description": "List files across Convex Storage / Supabase Storage / local uploads/.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string"}, "bucket": map[string]interface{}{"type": "string"}}}},
 		{"name": "cron_list", "description": "List scheduled/cron jobs across backends (Convex scheduled functions, pg_cron).", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string"}}}},
+		{"name": "console_machines", "description": "List every machine running a Yaver agent (local Mac/Linux/Windows + Hetzner, AWS, GCP VPSes). Hybrid view across own-hardware and cloud.", "inputSchema": map[string]interface{}{"type": "object"}},
 		// Cloudflare
 		{"name": "cf_workers", "description": "List Cloudflare Worker deployments.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string"}}}},
 		{"name": "cf_deploy", "description": "Deploy Cloudflare Worker.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string"}}}},
@@ -1576,7 +1577,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		}}},
 
 		// Job queue
-		{"name": "cron_list", "description": "List pending queue + dead-letter jobs.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "jobs_list", "description": "List pending queue + dead-letter jobs.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
 		{"name": "jobs_enqueue", "description": "Enqueue a new background job. Handlers are registered at agent boot; common ones: newsletter.send, form.notify, pdf.render.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"handler"}, "properties": map[string]interface{}{
 			"handler":     map[string]interface{}{"type": "string"},
 			"payload":     map[string]interface{}{"type": "object"},

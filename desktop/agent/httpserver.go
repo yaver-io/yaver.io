@@ -580,6 +580,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/ws/metrics", s.auth(s.handleMetricsStream))
 	mux.HandleFunc("/ws/logs", s.auth(s.handleContainerLogsStream))
 	mux.HandleFunc("/ws/terminal", s.auth(s.handleTerminalWS))
+	mux.HandleFunc("/console/machines", s.auth(s.handleConsoleMachines))
 
 	// Guest access management (host invites guests to use their agent)
 	mux.HandleFunc("/guests", s.auth(s.handleGuestList))
@@ -5810,6 +5811,8 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 		var a struct { Dir string `json:"directory"`; Bucket string `json:"bucket"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpStorageList(a.Dir, a.Bucket))
 	case "cron_list":
 		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpJobsList(a.Dir))
+	case "console_machines":
+		return mcpToolJSON(mcpConsoleMachines())
 	// --- Cloudflare ---
 	case "cf_workers":
 		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCFWorkers(a.Dir))
