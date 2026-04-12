@@ -529,15 +529,35 @@ func startBootstrapBeacon(ctx context.Context, httpPort int, hostname, passkey s
 	if os.Getenv("YAVER_BOOTSTRAP_NO_BEACON_PK") == "1" {
 		broadcastPasskey = ""
 	}
+	// Include the device's current public key so the phone can
+	// verify it against Convex before encrypting. Safe to broadcast
+	// — it's a PUBLIC key, knowing it doesn't help an attacker.
+	var devicePubKey string
+	if dk, err := LoadOrGenerateKeys(); err == nil {
+		devicePubKey = dk.PublicKeyBase64()
+	}
+
+	// Use the REAL deviceId from config (if available) so the phone
+	// can match it against its Convex device list for the public key
+	// lookup. Fall back to ephemeral boot-ID if no config exists.
+	realDeviceID := shortID
+	if cfg, cfgErr := LoadConfig(); cfgErr == nil && cfg != nil && cfg.DeviceID != "" {
+		realDeviceID = cfg.DeviceID
+		if len(realDeviceID) > 8 {
+			realDeviceID = realDeviceID[:8]
+		}
+	}
+
 	payload := beaconPayload{
 		Version:          beaconVersion,
-		DeviceID:         shortID,
+		DeviceID:         realDeviceID,
 		Port:             httpPort,
 		Name:             hostname,
 		TokenFingerprint: "",
 		HardwareID:       HardwareID(),
 		NeedsAuth:        true,
 		BootstrapPasskey: broadcastPasskey,
+		DevicePublicKey:  devicePubKey,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

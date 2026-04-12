@@ -582,13 +582,22 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         autoPairedRef.current.add(dev.deviceId);
         const targetUrl = `http://${dev.ip}:${dev.port}`;
         try {
-          // Try encrypted path first: match beacon deviceId or hwid
-          // against our known device list to find the public key.
+          // Try encrypted path: find the device's public key from Convex.
+          // If the beacon also broadcasts a public key (dpk), verify it
+          // matches Convex — a mismatch means the device was reinstalled
+          // and we should fall back to passkey.
           const knownDevice = devices.find(
             (d) => d.id.startsWith(dev.deviceId) || (dev.hwid && d.hwid === dev.hwid)
           );
-          if (knownDevice?.publicKey) {
-            const res = await submitEncryptedPair(targetUrl, token, knownDevice.publicKey);
+          let pubKey = knownDevice?.publicKey;
+          if (pubKey && dev.devicePublicKey && pubKey !== dev.devicePublicKey) {
+            // Key mismatch: device was reinstalled with new keys but
+            // Convex still has the old key. Skip encrypted path — the
+            // next `yaver auth` will re-sync. Fall through to passkey.
+            pubKey = undefined;
+          }
+          if (pubKey) {
+            const res = await submitEncryptedPair(targetUrl, token, pubKey);
             if (res.ok) {
               appLog("info", `Encrypted auto-pair: ${dev.name || dev.deviceId} at ${dev.ip}`);
               setTimeout(() => refreshDevices(), 3000);
@@ -614,6 +623,46 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         }
       }
     }, 3000);
+    return () => clearInterval(iv);
+  }, [token, user?.id, devices, refreshDevices]);
+
+  // Relay auto-pair: probe known OFFLINE devices via relay to check
+  // if they're in bootstrap mode. The bootstrap agent connects to the
+  // relay with a placeholder token, so HTTP requests via the relay
+  // still reach it. This covers the most common case: phone on 4G,
+  // Mac at home with a wiped token.
+  useEffect(() => {
+    if (!token || !user?.id) return;
+    const relays = quicClient.getRelayServers();
+    if (relays.length === 0) return;
+
+    const probed = new Set<string>();
+    const iv = setInterval(async () => {
+      const offlineDevices = devices.filter(
+        (d) => !d.online && !d.isGuest && d.publicKey && !probed.has(d.id) && !autoPairedRef.current.has(d.id)
+      );
+      for (const dev of offlineDevices) {
+        probed.add(dev.id);
+        const relayUrl = `${relays[0].httpUrl}/d/${dev.id}`;
+        try {
+          const infoRes = await fetch(`${relayUrl}/info`, { signal: AbortSignal.timeout(5000) });
+          if (!infoRes.ok) continue;
+          const info = await infoRes.json();
+          if (!info.needsAuth) continue;
+
+          autoPairedRef.current.add(dev.id);
+          const res = await submitEncryptedPair(relayUrl, token, dev.publicKey!);
+          if (res.ok) {
+            appLog("info", `Relay encrypted auto-pair: ${dev.name} via ${relays[0].httpUrl}`);
+            setTimeout(() => refreshDevices(), 3000);
+          } else {
+            autoPairedRef.current.delete(dev.id);
+          }
+        } catch {
+          // Device not reachable via relay — normal for truly offline devices
+        }
+      }
+    }, 15000);
     return () => clearInterval(iv);
   }, [token, user?.id, devices, refreshDevices]);
 
