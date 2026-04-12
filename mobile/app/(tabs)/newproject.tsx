@@ -13,6 +13,7 @@ import { useRouter } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
+import { useAuth } from "../../src/context/AuthContext";
 import type {
   WizardQuestion,
   WizardSession,
@@ -31,8 +32,9 @@ export default function NewProjectScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { connectionStatus } = useDevice();
+  const { connectionStatus, devices, selectDevice } = useDevice();
   const connected = connectionStatus === "connected";
+  const connecting = connectionStatus === "connecting";
 
   const [session, setSession] = useState<WizardSession | null>(null);
   const [question, setQuestion] = useState<WizardQuestion | null>(null);
@@ -56,9 +58,10 @@ export default function NewProjectScreen() {
     setInput(res.question?.default ?? "");
   }, []);
 
+  // Auto-start wizard when connected (or when reconnecting after tapping a device)
   useEffect(() => {
-    if (connected && !session) start();
-  }, [connected, session, start]);
+    if (connected && !session && !result) start();
+  }, [connected, session, result, start]);
 
   const submit = useCallback(async () => {
     if (!session || !question) return;
@@ -103,9 +106,48 @@ export default function NewProjectScreen() {
       </View>
 
       {!connected ? (
-        <View style={styles.center}>
-          <Text style={{ color: c.textMuted }}>Not connected to an agent.</Text>
-        </View>
+        <ScrollView contentContainerStyle={{ padding: 20 }}>
+          <Text style={{ color: c.textPrimary, fontSize: 16, fontWeight: "700", marginBottom: 8 }}>
+            No remote device active
+          </Text>
+          <Text style={{ color: c.textMuted, fontSize: 13, marginBottom: 16 }}>
+            {connecting ? "Connecting..." : "Connect to a device to create a new project."}
+          </Text>
+          {connecting && <ActivityIndicator style={{ marginBottom: 16 }} />}
+          {devices.length === 0 ? (
+            <Text style={{ color: c.textMuted, fontSize: 13 }}>
+              No devices registered yet. Run `brew install yaver && yaver auth && yaver serve` on your Mac.
+            </Text>
+          ) : (
+            <View style={{ gap: 8 }}>
+              <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                Your devices
+              </Text>
+              {devices.map((d) => (
+                <Pressable
+                  key={d.id}
+                  onPress={() => selectDevice(d)}
+                  disabled={connecting}
+                  style={{
+                    flexDirection: "row", alignItems: "center", gap: 10,
+                    padding: 12, borderRadius: 10, borderWidth: 1,
+                    borderColor: c.border, backgroundColor: c.bgCard,
+                    opacity: connecting ? 0.5 : 1,
+                  }}
+                >
+                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: d.online ? "#22c55e" : c.textMuted }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600" }}>{d.name}</Text>
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                      {d.os} {d.online ? "" : " (offline)"}
+                    </Text>
+                  </View>
+                  <Text style={{ color: c.accent, fontSize: 12, fontWeight: "600" }}>Connect</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+        </ScrollView>
       ) : result ? (
         <ScrollView contentContainerStyle={{ padding: 20 }}>
           <Text style={[styles.bigTitle, { color: c.textPrimary }]}>
@@ -138,10 +180,21 @@ export default function NewProjectScreen() {
             <Text style={styles.buttonText}>Generate another</Text>
           </Pressable>
         </ScrollView>
-      ) : !question || loading ? (
+      ) : loading ? (
         <View style={styles.center}>
           <ActivityIndicator />
+          <Text style={{ color: c.textMuted, marginTop: 12 }}>Starting wizard...</Text>
         </View>
+      ) : !question ? (
+        <ScrollView contentContainerStyle={{ padding: 20 }}>
+          {error ? <Text style={{ color: c.error, marginBottom: 12 }}>{error}</Text> : null}
+          <Text style={{ color: c.textMuted, marginBottom: 16 }}>
+            Could not start the project wizard. The agent may not support this feature.
+          </Text>
+          <Pressable onPress={start} style={[styles.button, { backgroundColor: c.accent }]}>
+            <Text style={styles.buttonText}>Retry</Text>
+          </Pressable>
+        </ScrollView>
       ) : (
         <ScrollView contentContainerStyle={{ padding: 20 }} keyboardShouldPersistTaps="handled">
           {error ? <Text style={{ color: c.error, marginBottom: 12 }}>{error}</Text> : null}
