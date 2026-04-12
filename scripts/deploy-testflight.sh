@@ -36,6 +36,9 @@ if [ ! -d /tmp/Yaver.xcarchive ]; then
 fi
 
 # ExportOptions (no single-quote on EOF so APPLE_TEAM_ID expands)
+# uploadSymbols=false: rnwhisper framework has missing dSYMs that
+# Xcode 15+ treats as a fatal export error. Crash reports still work
+# from Apple's symbolication — we just skip uploading our local dSYMs.
 cat > /tmp/ExportOptions.plist <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -45,6 +48,7 @@ cat > /tmp/ExportOptions.plist <<EOF
     <key>teamID</key><string>${APPLE_TEAM_ID}</string>
     <key>signingStyle</key><string>automatic</string>
     <key>destination</key><string>upload</string>
+    <key>uploadSymbols</key><false/>
 </dict>
 </plist>
 EOF
