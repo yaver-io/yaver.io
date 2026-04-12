@@ -1156,6 +1156,89 @@ class AgentClient {
     return res.json();
   }
 
+  // ── CI runner / alerts / metrics history / provider rotation / studio ──
+
+  async ciRun(directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/ci/run${q}`, { method: "POST", headers: this.authHeaders });
+    return res.json();
+  }
+  async ciList(directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/ci/list${q}`, { headers: this.authHeaders });
+    return res.json();
+  }
+  async ciConfigGet(directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/ci/config${q}`, { headers: this.authHeaders });
+    return res.json();
+  }
+  async ciConfigSet(cfg: any, directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/ci/config${q}`, { method: "POST", headers: { ...this.authHeaders, "Content-Type": "application/json" }, body: JSON.stringify(cfg) });
+    return res.json();
+  }
+
+  async alertList(): Promise<{ alerts: any[] }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/alerts/list`, { headers: this.authHeaders });
+    return res.json();
+  }
+  async alertAdd(alert: any): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/alerts/add`, { method: "POST", headers: { ...this.authHeaders, "Content-Type": "application/json" }, body: JSON.stringify(alert) });
+    return res.json();
+  }
+  async alertRemove(id: string): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/alerts/remove`, { method: "POST", headers: { ...this.authHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+    return res.json();
+  }
+
+  async metricsHistory(window = "1h"): Promise<{ samples: any[]; window: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/console/metrics/history?window=${encodeURIComponent(window)}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async backupEncryptionGet(directory?: string): Promise<{ enabled: boolean }> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/backups/encryption${q}`, { headers: this.authHeaders });
+    return res.json();
+  }
+  async backupEncryptionSet(enabled: boolean, directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/backups/encryption${q}`, { method: "POST", headers: { ...this.authHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) });
+    return res.json();
+  }
+
+  async providerRotate(provider: string, opts: Record<string, string>): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/provider/rotate`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ provider, action: "rotate", opts }),
+    });
+    return res.json();
+  }
+
+  async studioList(): Promise<{ studios: any[] }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/studios`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  /** URL that proxies a local studio through the agent (iframe-safe, same-origin to the agent). */
+  studioProxyUrl(id: string): string {
+    return `${this.baseUrl}/proxy/${encodeURIComponent(id)}/?token=${encodeURIComponent(this.authHeaders.Authorization?.replace("Bearer ", "") || "")}`;
+  }
+
   // ── Environment switcher + Overview summary ──────────────────────
 
   async overviewSummary(): Promise<any> {

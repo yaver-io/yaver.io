@@ -214,6 +214,7 @@ func finishDeploy(rec *DeployRecord, status, _ string) *DeployRecord {
 	rec.Duration = rec.FinishedAt.Sub(rec.StartedAt).Round(time.Second).String()
 	persistDeploy(rec)
 	AuditLog("", "deploy", rec.ProjectDir, rec.Commit, status, rec.Logs[len(rec.Logs)-1], "")
+	RecordDeployToConvex(rec)
 	return rec
 }
 
