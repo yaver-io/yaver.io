@@ -87,15 +87,17 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Test CLI agent
         if: needs.changes.outputs.cli == 'true'
-        run: cd desktop/agent && go test -v ./...
+        run: cd desktop/agent && go test -v -count=1 ./...
       - name: Test relay
         if: needs.changes.outputs.relay == 'true'
-        run: cd relay && go test -v ./... 2>/dev/null || echo "No relay tests"
+        run: cd relay && go test -v -count=1 ./... 2>/dev/null || echo "No relay tests"
       - name: Test MCP server
         if: needs.changes.outputs.mcp == 'true'
-        run: cd mcp && go test -v ./...
+        run: cd mcp && go test -v -count=1 ./...
 
   go-build:
     needs: changes
