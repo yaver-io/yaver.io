@@ -114,9 +114,27 @@ export default function ProjectDetailScreen() {
           </View>
         )}
 
+        {/* Primary project actions: Chat + Dashboard side-by-side (these are */}
+        {/* the two a user hits most, per Video 1 storyboard), then Deploy / */}
+        {/* Snapshot / Data on the secondary row.                             */}
         <View style={{ flexDirection: "row", gap: 8 }}>
-          <Pressable onPress={deploy} style={[actionBtn(c), { backgroundColor: c.accent, flex: 1 }]}>
-            <Text style={{ color: "#fff", fontWeight: "700" }}>🚀 Deploy</Text>
+          <Pressable
+            onPress={() => router.navigate({ pathname: "/(tabs)/tasks", params: { dir } } as any)}
+            style={[actionBtn(c), { backgroundColor: c.accent, flex: 1 }]}
+          >
+            <Text style={{ color: "#fff", fontWeight: "700" }}>💬 Chat</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => router.navigate({ pathname: "/dashboard-view", params: { dir, kind: status?.kind || "convex" } } as any)}
+            style={[actionBtn(c), { backgroundColor: c.accent, flex: 1 }]}
+          >
+            <Text style={{ color: "#fff", fontWeight: "700" }}>🗄️ Dashboard</Text>
+          </Pressable>
+        </View>
+
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <Pressable onPress={deploy} style={[actionBtn(c), { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, flex: 1 }]}>
+            <Text style={{ color: c.textPrimary, fontWeight: "700" }}>🚀 Deploy</Text>
           </Pressable>
           <Pressable onPress={snapshot} style={[actionBtn(c), { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, flex: 1 }]}>
             <Text style={{ color: c.textPrimary, fontWeight: "700" }}>📸 Snapshot</Text>
