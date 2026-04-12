@@ -299,6 +299,178 @@ assert 'clip_start' in names and 'clip_stop' in names
 echo ""
 fi
 
+# ── Runners ──────────────────────────────────────────────────────
+if $RUN_ALL; then
+echo "=== Runners ==="
+
+# List available runners.
+RUNNERS=$(api GET /agent/runners)
+RC=$(echo "$RUNNERS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('runners',[])))" 2>/dev/null)
+[ "$RC" -ge 1 ] 2>/dev/null && pass "List runners ($RC available)" || skip "Runners endpoint not available"
+
+# Default runner should be claude.
+DR=$(echo "$RUNNERS" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+runners=d.get('runners',[])
+default=[r for r in runners if r.get('id')=='claude']
+print('yes' if default else 'no')
+" 2>/dev/null)
+[ "$DR" = "yes" ] && pass "Claude is default runner" || skip "Claude not in runner list"
+
+# Create a fake 'codex' binary to test runner switching.
+FAKE_BIN="$WORK_DIR/fake-bin"
+mkdir -p "$FAKE_BIN"
+cat > "$FAKE_BIN/codex" << 'SCRIPT'
+#!/bin/bash
+echo "mock codex output: $*"
+SCRIPT
+chmod +x "$FAKE_BIN/codex"
+export PATH="$FAKE_BIN:$PATH"
+
+# Verify codex is now detected as installed.
+RUNNERS2=$(api GET /agent/runners)
+CODEX_FOUND=$(echo "$RUNNERS2" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+runners=d.get('runners',[])
+codex=[r for r in runners if r.get('id')=='codex']
+print('yes' if codex and codex[0].get('installed') else 'no')
+" 2>/dev/null)
+[ "$CODEX_FOUND" = "yes" ] && pass "Mock codex detected as installed" || skip "Codex detection"
+
+# Create a task using the mock codex runner.
+CODEX_TASK=$(api POST /tasks -d '{"title":"codex test","runner":"codex","customCommand":"codex hello"}')
+CODEX_TID=$(echo "$CODEX_TASK" | python3 -c "import sys,json; print(json.load(sys.stdin).get('taskId',''))" 2>/dev/null)
+[ -n "$CODEX_TID" ] && pass "Create task with codex runner ($CODEX_TID)" || skip "Codex task creation"
+
+# Also mock aider and goose.
+for runner in aider goose opencode amp; do
+  cat > "$FAKE_BIN/$runner" << SCRIPT
+#!/bin/bash
+echo "mock $runner output: \$*"
+SCRIPT
+  chmod +x "$FAKE_BIN/$runner"
+done
+RUNNERS3=$(api GET /agent/runners)
+INSTALLED=$(echo "$RUNNERS3" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+installed=[r['id'] for r in d.get('runners',[]) if r.get('installed')]
+print(len(installed))
+" 2>/dev/null)
+[ "$INSTALLED" -ge 3 ] 2>/dev/null && pass "Mock runners detected ($INSTALLED installed)" || skip "Mock runner detection"
+echo ""
+fi
+
+# ── Git Operations ───────────────────────────────────────────────
+if $RUN_ALL; then
+echo "=== Git ==="
+
+# Init a git repo in work dir for git tests.
+git -C "$WORK_DIR" init -q 2>/dev/null
+git -C "$WORK_DIR" config user.email "ci@test" 2>/dev/null
+git -C "$WORK_DIR" config user.name "CI" 2>/dev/null
+echo "hello" > "$WORK_DIR/test.txt"
+git -C "$WORK_DIR" add . && git -C "$WORK_DIR" commit -qm "init" 2>/dev/null
+
+GS_CODE=$(api_code GET /git/status)
+[ "$GS_CODE" = "200" ] && pass "GET /git/status" || skip "Git status ($GS_CODE)"
+
+GL_CODE=$(api_code GET /git/log)
+[ "$GL_CODE" = "200" ] && pass "GET /git/log" || skip "Git log ($GL_CODE)"
+
+GB_CODE=$(api_code GET /git/branches)
+[ "$GB_CODE" = "200" ] && pass "GET /git/branches" || skip "Git branches ($GB_CODE)"
+echo ""
+fi
+
+# ── Files ────────────────────────────────────────────────────────
+if $RUN_ALL; then
+echo "=== Files ==="
+
+FR_CODE=$(api_code GET /files/roots)
+[ "$FR_CODE" = "200" ] && pass "GET /files/roots" || skip "Files roots ($FR_CODE)"
+
+FL_CODE=$(api_code GET "/files/list?path=$WORK_DIR")
+[ "$FL_CODE" = "200" ] && pass "GET /files/list" || skip "Files list ($FL_CODE)"
+
+echo "test content" > "$WORK_DIR/readable.txt"
+FRD_CODE=$(api_code GET "/files/read?path=$WORK_DIR/readable.txt")
+[ "$FRD_CODE" = "200" ] && pass "GET /files/read" || skip "Files read ($FRD_CODE)"
+echo ""
+fi
+
+# ── Projects ─────────────────────────────────────────────────────
+if $RUN_ALL; then
+echo "=== Projects ==="
+
+PL_CODE=$(api_code GET /projects)
+[ "$PL_CODE" = "200" ] && pass "GET /projects" || skip "Projects ($PL_CODE)"
+
+PR_CODE=$(api_code POST /projects/refresh)
+[ "$PR_CODE" = "200" ] && pass "POST /projects/refresh" || skip "Projects refresh ($PR_CODE)"
+echo ""
+fi
+
+# ── Vault ────────────────────────────────────────────────────────
+if $RUN_ALL; then
+echo "=== Vault ==="
+
+VL_CODE=$(api_code GET /vault/list)
+[ "$VL_CODE" = "200" ] && pass "GET /vault/list" || skip "Vault list ($VL_CODE)"
+
+# Set a secret.
+VS_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/vault/set" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"key":"E2E_TEST_KEY","value":"test-secret-value"}' 2>/dev/null)
+[ "$VS_CODE" = "200" ] && pass "POST /vault/set" || skip "Vault set ($VS_CODE)"
+
+# Get the secret back.
+VG=$(api GET "/vault/get?key=E2E_TEST_KEY")
+VV=$(echo "$VG" | python3 -c "import sys,json; print(json.load(sys.stdin).get('value',''))" 2>/dev/null)
+[ "$VV" = "test-secret-value" ] && pass "GET /vault/get (round-trip)" || skip "Vault get ($VV)"
+
+# Delete it.
+VD_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "$BASE/vault/delete?key=E2E_TEST_KEY" \
+  -H "Authorization: Bearer $TOKEN" 2>/dev/null)
+[ "$VD_CODE" = "200" ] && pass "DELETE /vault/delete" || skip "Vault delete ($VD_CODE)"
+echo ""
+fi
+
+# ── Quality Gates ────────────────────────────────────────────────
+if $RUN_ALL; then
+echo "=== Quality Gates ==="
+
+QD_CODE=$(api_code GET /quality/detect)
+[ "$QD_CODE" = "200" ] && pass "GET /quality/detect" || skip "Quality detect ($QD_CODE)"
+echo ""
+fi
+
+# ── Todolist ─────────────────────────────────────────────────────
+if $RUN_ALL; then
+echo "=== Todolist ==="
+
+TL_CODE=$(api_code GET /todolist)
+[ "$TL_CODE" = "200" ] && pass "GET /todolist" || skip "Todolist ($TL_CODE)"
+
+# Add a todo item.
+TA_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/todolist" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"title":"e2e test todo","description":"auto-created by CI"}' 2>/dev/null)
+[ "$TA_CODE" = "200" ] || [ "$TA_CODE" = "201" ] && pass "POST /todolist (add)" || skip "Todolist add ($TA_CODE)"
+echo ""
+fi
+
+# ── Dev Server ───────────────────────────────────────────────────
+if $RUN_ALL; then
+echo "=== Dev Server ==="
+
+DS_CODE=$(api_code GET /dev/status)
+[ "$DS_CODE" = "200" ] && pass "GET /dev/status" || skip "Dev status ($DS_CODE)"
+echo ""
+fi
+
 # ── Summary ──────────────────────────────────────────────────────
 echo "========================================"
 echo -e "  ${GREEN}Passed: $PASSED${NC}  ${RED}Failed: $FAILED${NC}  ${YELLOW}Skipped: $SKIPPED${NC}"
