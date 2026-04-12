@@ -68,6 +68,8 @@ export async function saveUser(user: User): Promise<void> {
 
 export async function validateToken(token: string): Promise<User | null> {
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5_000);
     const response = await fetch(
       `${getConvexSiteUrl()}/auth/validate`,
       {
@@ -75,8 +77,10 @@ export async function validateToken(token: string): Promise<User | null> {
         headers: {
           Authorization: `Bearer ${token}`,
         },
+        signal: controller.signal,
       }
     );
+    clearTimeout(timeout);
     if (!response.ok) return null;
     const data = await response.json();
     const u = data.user;
@@ -99,10 +103,14 @@ export async function validateToken(token: string): Promise<User | null> {
  */
 export async function refreshToken(token: string): Promise<boolean> {
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5_000);
     const response = await fetch(`${getConvexSiteUrl()}/auth/refresh`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
     return response.ok;
   } catch {
     // Network error — assume token is still valid
@@ -302,16 +310,24 @@ export async function submitSurvey(
 export async function getSurveyStatus(
   token: string
 ): Promise<{ completed: boolean }> {
-  const response = await fetch(`${getConvexSiteUrl()}/survey`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
-  if (!response.ok) {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5_000);
+    const response = await fetch(`${getConvexSiteUrl()}/survey`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!response.ok) {
+      return { completed: false };
+    }
+    return response.json();
+  } catch {
     return { completed: false };
   }
-  return response.json();
 }
 
 export type KeyStorage = "local" | "cloud";
