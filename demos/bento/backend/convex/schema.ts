@@ -42,4 +42,20 @@ export default defineSchema({
       }),
     ),
   }).index("by_category", ["category"]),
+
+  favorites: defineTable({
+    userId: v.id("users"),
+    recipeId: v.id("recipes"),
+    createdAt: v.number(),
+  }).index("by_user", ["userId"]),
+
+  groceryItems: defineTable({
+    userId: v.id("users"),
+    recipeId: v.id("recipes"),
+    ingredientName: v.string(),
+    amount: v.string(),
+    price: v.optional(v.number()),
+    checked: v.boolean(),
+    createdAt: v.number(),
+  }).index("by_user", ["userId"]),
 });
