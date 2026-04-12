@@ -590,61 +590,30 @@ function DebugConsolePreview() {
 
 const DEMO_TABS = [
   {
-    id: "remote",
+    id: "full-loop",
     label: "Full Loop",
-    icon: "\u{1F4F1}",
-    desc: "Phone \u2192 create project \u2192 code \u2192 test \u2192 deploy. All from one device.",
-    video: "/demo.mp4",
+    icon: "\uD83D\uDD04",
+    desc: "Create a project, browse your database, vibe code a feature \u2014 all from your phone.",
+    header: "Yaver Mobile App + Terminal \u2014 creating Bento from scratch",
   },
   {
-    id: "feedback",
-    label: "Bug Fix",
-    icon: "\uD83D\uDC1B",
-    desc: "Shake \u2192 screenshot \u2192 AI fixes \u2192 hot reload. Under 60 seconds.",
-    video: "/demo-feedback.mp4",
+    id: "push-fix",
+    label: "Push & Fix",
+    icon: "\uD83D\uDCF1",
+    desc: "Push Bento to your phone in 4s. Shake to report a crash. AI fixes it. Hot reload.",
+    header: "Bento running on device + Yaver Debug Console",
   },
   {
-    id: "autotest",
-    label: "Task Queue",
-    icon: "\u25B6",
-    desc: "Queue tasks from phone \u2192 machine runs them \u2192 review results when ready.",
-    video: "/demo-autotest.mp4",
+    id: "auto-test",
+    label: "Auto Test",
+    icon: "\uD83E\uDD16",
+    desc: "Agent navigates every screen, finds 2 crashes, fixes both, produces a report.",
+    header: "Agent autonomously navigating Bento \u2014 phone + terminal",
   },
 ];
 
-function DemoVideo({ src }: { src: string }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [paused, setPaused] = useState(false);
-  const toggle = () => {
-    const v = videoRef.current;
-    if (!v) return;
-    if (v.paused) { v.play(); setPaused(false); }
-    else { v.pause(); setPaused(true); }
-  };
-  return (
-    <div className="group relative cursor-pointer" onClick={toggle}>
-      <video
-        ref={videoRef}
-        className="w-full bg-[#050508]"
-        autoPlay
-        muted
-        loop
-        playsInline
-        src={src}
-      />
-      {paused && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white/20 backdrop-blur-sm">
-            <svg className="ml-1 h-6 w-6 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function DemoSection() {
-  const [activeDemo, setActiveDemo] = useState("feedback");
+  const [activeDemo, setActiveDemo] = useState("full-loop");
   const demo = DEMO_TABS.find((d) => d.id === activeDemo)!;
 
   return (
@@ -680,26 +649,21 @@ function DemoSection() {
               <div className="h-3 w-3 rounded-full bg-[#febc2e]" />
               <div className="h-3 w-3 rounded-full bg-[#28c840]" />
             </div>
-            <span className="flex-1 text-center text-xs text-surface-500">
-              {demo.id === "remote" && "Phone + Terminal — split screen"}
-              {demo.id === "feedback" && "Running app + Feedback SDK + Terminal"}
-              {demo.id === "autotest" && "Agent driving app autonomously"}
-            </span>
+            <span className="flex-1 text-center text-xs text-surface-500">{demo.header}</span>
           </div>
 
           {/* Video */}
-          {demo.id === "remote" ? (
-            <DemoVideo src="/demo.mp4" />
-          ) : (
-            <div className="flex aspect-video items-center justify-center bg-[#050508]">
-              <div className="text-center">
-                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full border border-surface-700 bg-surface-900">
-                  <svg className="h-7 w-7 text-surface-400" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                </div>
-                <p className="mb-1 text-sm font-medium text-surface-300">Coming soon</p>
+          <div className="flex aspect-video items-center justify-center bg-[#050508]">
+            <div className="px-6 text-center">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full border border-surface-700 bg-surface-900">
+                <svg className="ml-1 h-7 w-7 text-surface-400" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
               </div>
+              <p className="mb-1 text-sm font-medium text-surface-300">Coming soon</p>
+              <p className="mx-auto max-w-xs text-xs text-surface-500">
+                &ldquo;Bento&rdquo; &mdash; a meal prep app created, tested, and deployed entirely from a phone.
+              </p>
             </div>
-          )}
+          </div>
         </div>
 
       </div>
