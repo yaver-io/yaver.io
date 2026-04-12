@@ -44,7 +44,7 @@ import { useAuth } from "../../src/context/AuthContext";
 import { getUserSettings, getLocalSecret, LOCAL_KEYS, type SpeechProvider } from "../../src/lib/auth";
 import { transcribe, initWhisper, isWhisperReady, startRealtimeTranscribe, SPEECH_PROVIDERS } from "../../src/lib/speech";
 import { shareIntentEmitter } from "../../src/lib/shareIntent";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { DevPreview } from "../../src/components/DevPreview";
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -323,6 +323,12 @@ function buildChatMessages(task: Task): { role: string; content: string }[] {
 export default function TasksScreen() {
   const c = useColors();
   const taskRouter = useRouter();
+  // Optional `?dir=/abs/path` scopes chat/tasks to a project directory.
+  // When present, we pass it as workDir on new tasks so the runner executes
+  // inside the project instead of the agent's global cwd. Used by the
+  // unified project screen's [Chat] button.
+  const taskParams = useLocalSearchParams<{ dir?: string }>();
+  const projectDir = typeof taskParams.dir === "string" ? taskParams.dir : "";
   const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, selectDevice, disconnect, isLoadingDevices, refreshDevices } = useDevice();
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>(getLogEntries());
@@ -907,6 +913,7 @@ export default function TasksScreen() {
         selectedRunner === "custom" ? customCommand.trim() || undefined : undefined,
         speechCtx,
         attachedImages.length > 0 ? attachedImages : undefined,
+        projectDir || undefined,
       );
       setNewTaskText("");
       setAttachedImages([]);
