@@ -223,6 +223,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/files/roots", s.auth(s.handleFilesRoots))
 	mux.HandleFunc("/files/list", s.auth(s.handleFilesList))
 	mux.HandleFunc("/files/read", s.auth(s.handleFilesRead))
+	mux.HandleFunc("/files/raw", s.auth(s.handleFilesRaw))
 	// Project wizard (fullstack generator) — drives the same
 	// state machine as `yaver new` over HTTP so the mobile app,
 	// the web dashboard and MCP clients all share it.
