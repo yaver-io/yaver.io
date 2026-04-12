@@ -24,9 +24,11 @@ export default function GroceryTotal({
 
 
 
-  // INTENTIONAL: i.price can be null — fixed live in shake-to-report video
+  // INTENTIONAL: non-null assert keeps tsc happy; runtime blows up on
+  // null price (chili flakes / honey / olive oil). The shake-to-report
+  // video replaces this with `i.price?.toFixed(2) ?? '0.00'`.
   const total = ingredients.reduce(
-    (sum, i) => sum + Number(i.price.toFixed(2)),
+    (sum, i) => sum + Number(i.price!.toFixed(2)),
     0,
   );
 

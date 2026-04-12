@@ -64,9 +64,11 @@ export default function RecipeDetail() {
   return (
     <SafeAreaView className="flex-1 bg-white" edges={["top"]}>
       <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
-        {/* INTENTIONAL: no fallback — fixed live in Video demos/bento imageUrl bug */}
+        {/* INTENTIONAL: no fallback — compiles via cast, warns at runtime
+            when imageUrl is null (Overnight Oats). The Video 1 demo
+            replaces this with a placehold.co fallback. */}
         <Image
-          source={{ uri: recipe.imageUrl }}
+          source={{ uri: recipe.imageUrl as string }}
           style={{ width: "100%", height: 240 }}
         />
 
