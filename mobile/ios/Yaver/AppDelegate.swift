@@ -237,103 +237,128 @@ public class AppDelegate: ExpoAppDelegate {
   func handleShakeGesture() {
     guard isGuestAppRunning, let window = self.window else { return }
 
-    // If overlay is already visible, treat shake as "go back now"
+    // If overlay is already visible, dismiss it
     if backOverlay != nil {
-      handleBackOverlayTap()
+      dismissOverlay()
       return
     }
 
-    showBackToYaverOverlay(in: window)
+    showShakeOverlay(in: window)
   }
 
-  private func showBackToYaverOverlay(in window: UIWindow) {
+  private func showShakeOverlay(in window: UIWindow) {
     backOverlay?.removeFromSuperview()
     overlayDismissTimer?.invalidate()
 
-    let pill = UIView()
-    pill.backgroundColor = UIColor(red: 0.05, green: 0.05, blue: 0.08, alpha: 0.92)
-    pill.layer.cornerRadius = 22
-    pill.layer.borderWidth = 1.5
-    pill.layer.borderColor = UIColor(red: 0.5, green: 0.55, blue: 0.97, alpha: 0.8).cgColor
-    pill.translatesAutoresizingMaskIntoConstraints = false
+    let accentColor = UIColor(red: 0.5, green: 0.55, blue: 0.97, alpha: 1.0)
+    let greenColor = UIColor(red: 0.13, green: 0.77, blue: 0.37, alpha: 1.0)
 
-    // Add subtle shadow
-    pill.layer.shadowColor = UIColor.black.cgColor
-    pill.layer.shadowOffset = CGSize(width: 0, height: 4)
-    pill.layer.shadowRadius = 12
-    pill.layer.shadowOpacity = 0.5
+    // Container card
+    let card = UIView()
+    card.backgroundColor = UIColor(red: 0.05, green: 0.05, blue: 0.08, alpha: 0.95)
+    card.layer.cornerRadius = 16
+    card.layer.borderWidth = 1
+    card.layer.borderColor = UIColor(white: 0.2, alpha: 1.0).cgColor
+    card.layer.shadowColor = UIColor.black.cgColor
+    card.layer.shadowOffset = CGSize(width: 0, height: 6)
+    card.layer.shadowRadius = 16
+    card.layer.shadowOpacity = 0.6
+    card.translatesAutoresizingMaskIntoConstraints = false
 
-    let icon = UILabel()
-    icon.text = "\u{25C0}"
-    icon.font = .systemFont(ofSize: 14)
-    icon.textColor = UIColor(red: 0.5, green: 0.55, blue: 0.97, alpha: 1.0)
-    icon.translatesAutoresizingMaskIntoConstraints = false
+    // Button helper
+    func makeButton(title: String, icon: String, color: UIColor, action: Selector) -> UIButton {
+      let btn = UIButton(type: .system)
+      let config = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+      btn.setImage(UIImage(systemName: icon, withConfiguration: config), for: .normal)
+      btn.setTitle("  \(title)", for: .normal)
+      btn.titleLabel?.font = .boldSystemFont(ofSize: 15)
+      btn.tintColor = color
+      btn.setTitleColor(color, for: .normal)
+      btn.backgroundColor = color.withAlphaComponent(0.12)
+      btn.layer.cornerRadius = 12
+      btn.contentEdgeInsets = UIEdgeInsets(top: 12, left: 18, bottom: 12, right: 18)
+      btn.addTarget(self, action: action, for: .touchUpInside)
+      btn.translatesAutoresizingMaskIntoConstraints = false
+      btn.heightAnchor.constraint(equalToConstant: 46).isActive = true
+      return btn
+    }
 
-    let label = UILabel()
-    label.text = "Back to Yaver"
-    label.font = .boldSystemFont(ofSize: 15)
-    label.textColor = .white
-    label.translatesAutoresizingMaskIntoConstraints = false
+    let reloadBtn = makeButton(title: "Reload App", icon: "arrow.clockwise", color: greenColor,
+                               action: #selector(handleReloadTap))
+    let backBtn = makeButton(title: "Back to Yaver", icon: "chevron.left", color: accentColor,
+                             action: #selector(handleBackTap))
 
-    pill.addSubview(icon)
-    pill.addSubview(label)
+    let stack = UIStackView(arrangedSubviews: [reloadBtn, backBtn])
+    stack.axis = .horizontal
+    stack.spacing = 10
+    stack.distribution = .fillEqually
+    stack.translatesAutoresizingMaskIntoConstraints = false
 
+    card.addSubview(stack)
     NSLayoutConstraint.activate([
-      icon.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 16),
-      icon.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
-      label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
-      label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -18),
-      label.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
-      pill.heightAnchor.constraint(equalToConstant: 44),
+      stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 12),
+      stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
+      stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
+      stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12),
     ])
 
-    let tap = UITapGestureRecognizer(target: self, action: #selector(handleBackOverlayTap))
-    pill.addGestureRecognizer(tap)
-    pill.isUserInteractionEnabled = true
+    window.addSubview(card)
 
-    window.addSubview(pill)
-
-    // Center horizontally, near top
     let topOffset: CGFloat = (window.safeAreaInsets.top > 0) ? window.safeAreaInsets.top + 8 : 32
     NSLayoutConstraint.activate([
-      pill.centerXAnchor.constraint(equalTo: window.centerXAnchor),
-      pill.topAnchor.constraint(equalTo: window.topAnchor, constant: topOffset),
+      card.leadingAnchor.constraint(equalTo: window.leadingAnchor, constant: 16),
+      card.trailingAnchor.constraint(equalTo: window.trailingAnchor, constant: -16),
+      card.topAnchor.constraint(equalTo: window.topAnchor, constant: topOffset),
     ])
 
-    backOverlay = pill
+    backOverlay = card
 
     // Slide down + fade in
-    pill.alpha = 0
-    pill.transform = CGAffineTransform(translationX: 0, y: -20)
-    UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.8,
+    card.alpha = 0
+    card.transform = CGAffineTransform(translationX: 0, y: -30)
+    UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: 0.75,
                    initialSpringVelocity: 0.5) {
-      pill.alpha = 1.0
-      pill.transform = .identity
+      card.alpha = 1.0
+      card.transform = .identity
     }
 
-    // Haptic feedback
-    let impact = UIImpactFeedbackGenerator(style: .medium)
-    impact.impactOccurred()
+    // Haptic
+    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
 
-    // Auto-hide after 4 seconds
-    overlayDismissTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: false) { [weak self] _ in
-      guard let overlay = self?.backOverlay else { return }
-      UIView.animate(withDuration: 0.3, animations: {
-        overlay.alpha = 0
-        overlay.transform = CGAffineTransform(translationX: 0, y: -20)
-      }) { _ in
-        overlay.removeFromSuperview()
-        self?.backOverlay = nil
-      }
+    // Auto-hide after 5 seconds
+    overlayDismissTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
+      self?.dismissOverlay()
     }
   }
 
-  @objc private func handleBackOverlayTap() {
-    NSLog("[AppDelegate] Back to Yaver tapped")
+  private func dismissOverlay() {
     overlayDismissTimer?.invalidate()
     overlayDismissTimer = nil
-    backOverlay?.removeFromSuperview()
-    backOverlay = nil
+    guard let overlay = backOverlay else { return }
+    UIView.animate(withDuration: 0.25, animations: {
+      overlay.alpha = 0
+      overlay.transform = CGAffineTransform(translationX: 0, y: -20)
+    }) { _ in
+      overlay.removeFromSuperview()
+      self.backOverlay = nil
+    }
+  }
+
+  @objc private func handleReloadTap() {
+    NSLog("[AppDelegate] Reload App tapped — rebuilding Hermes bundle")
+    dismissOverlay()
+
+    // Re-trigger the Hermes build+push flow by reloading from the saved bundle URL
+    // The guest bridge will reload with the latest JS
+    if let rootView = window?.rootViewController?.view as? RCTRootView {
+      rootView.bridge.reload()
+      NSLog("[AppDelegate] Guest bridge reloaded")
+    }
+  }
+
+  @objc private func handleBackTap() {
+    NSLog("[AppDelegate] Back to Yaver tapped")
+    dismissOverlay()
     isGuestAppRunning = false
     NotificationCenter.default.post(name: Notification.Name("YaverBundleLoaderRestore"), object: nil)
   }
