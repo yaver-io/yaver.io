@@ -376,14 +376,29 @@ func (bs *bootstrapHTTPServer) handleHealth(w http.ResponseWriter, r *http.Reque
 // display something in the Pair Device modal.
 func (bs *bootstrapHTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 	hostname, _ := os.Hostname()
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	// Include the passkey + public key so the mobile app can pair
+	// over a direct HTTP connection without needing to receive the
+	// UDP beacon. iOS Release builds don't always deliver beacons
+	// (multicast entitlement), and Convex-known devices are marked
+	// online if /info responds — so the relay bootstrap-probe path
+	// skips them. Returning the passkey here is the fallback.
+	resp := map[string]interface{}{
 		"ok":        true,
 		"mode":      "bootstrap",
 		"needsAuth": true,
 		"hostname":  hostname,
 		"version":   version,
-	})
+	}
+	// Current passkey (if one is live and not suppressed)
+	if sess := activePairingSnapshot(); sess != nil && os.Getenv("YAVER_BOOTSTRAP_NO_BEACON_PK") != "1" {
+		resp["bootstrapPasskey"] = sess.Code
+	}
+	// Device's public key so mobile can do NaCl box encryption
+	if dk, err := LoadOrGenerateKeys(); err == nil {
+		resp["devicePublicKey"] = dk.PublicKeyBase64()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (bs *bootstrapHTTPServer) handlePairInfo(w http.ResponseWriter, r *http.Request) {
