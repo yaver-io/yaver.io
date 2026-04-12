@@ -52,9 +52,8 @@ export default function MonitorScreen() {
   const [section, setSection] = useState<Section>("errors");
 
   return (
-    <SafeAreaView style={[styles.root, { backgroundColor: c.bg }]} edges={["top"]}>
+    <SafeAreaView style={[styles.root, { backgroundColor: c.bg }]} edges={[]}>
       <View style={[styles.header, { borderBottomColor: c.border }]}>
-        <Text style={[styles.title, { color: c.textPrimary }]}>Monitor</Text>
         <Text style={[styles.subtitle, { color: c.textSecondary }]}>
           Errors · Releases · Uptime · Events · Flags
         </Text>

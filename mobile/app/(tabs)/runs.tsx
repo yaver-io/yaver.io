@@ -70,11 +70,16 @@ export default function RunsScreen() {
   const [retries, setRetries] = useState(0);
   const [acOnly, setAcOnly] = useState(true);
 
+  // Projects detected by the agent on the dev machine — drives the UI
+  // so the user picks from real projects instead of typing a path.
+  const [projects, setProjects] = useState<{ name: string; path: string; framework?: string; branch?: string }[]>([]);
+  const [selectedProject, setSelectedProject] = useState<string | null>(null);
+
   const refresh = useCallback(async () => {
     if (!isConnected) return;
     setRefreshing(true);
     try {
-      const [s, st, h, f, a, m, d, i, af] = await Promise.all([
+      const [s, st, h, f, a, m, d, i, af, p] = await Promise.all([
         quicClient.testkitListSpecs(),
         quicClient.testkitRunStatus(),
         quicClient.testkitHistory(),
@@ -84,6 +89,7 @@ export default function RunsScreen() {
         quicClient.testkitDevices(),
         quicClient.testkitIntegrations(),
         quicClient.testkitAutoFix(),
+        quicClient.listProjects().catch(() => []),
       ]);
       setSpecs(s);
       setStatus(st);
@@ -94,6 +100,7 @@ export default function RunsScreen() {
       setDevices(d);
       setIntegrations(i);
       setAutofixes(af);
+      setProjects(p);
     } finally {
       setRefreshing(false);
     }
@@ -200,6 +207,49 @@ export default function RunsScreen() {
         />
       </View>
 
+      {/* Project picker — sourced from agent's detected projects */}
+      {tab === "specs" && projects.length > 0 && (
+        <View style={{ borderBottomWidth: 1, borderBottomColor: c.border, paddingVertical: 10 }}>
+          <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "600", paddingHorizontal: 12, marginBottom: 6, textTransform: "uppercase" }}>
+            Project
+          </Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}>
+            <Pressable
+              onPress={() => setSelectedProject(null)}
+              style={{
+                paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16,
+                backgroundColor: selectedProject === null ? c.accent : c.bgCard,
+                borderWidth: 1, borderColor: c.border,
+              }}
+            >
+              <Text style={{ color: selectedProject === null ? "#fff" : c.textPrimary, fontSize: 13, fontWeight: "600" }}>All</Text>
+            </Pressable>
+            {projects.map((p) => {
+              const active = selectedProject === p.path;
+              return (
+                <Pressable
+                  key={p.path}
+                  onPress={() => setSelectedProject(p.path)}
+                  style={{
+                    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16,
+                    backgroundColor: active ? c.accent : c.bgCard,
+                    borderWidth: 1, borderColor: c.border,
+                    flexDirection: "row", alignItems: "center", gap: 6,
+                  }}
+                >
+                  <Text style={{ color: active ? "#fff" : c.textPrimary, fontSize: 13, fontWeight: "600" }}>{p.name}</Text>
+                  {p.framework && (
+                    <Text style={{ color: active ? "rgba(255,255,255,0.7)" : c.textMuted, fontSize: 11 }}>
+                      {p.framework}
+                    </Text>
+                  )}
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+
       {/* Run controls */}
       {tab === "specs" && (
         <View style={[styles.controls, { borderColor: c.border, backgroundColor: c.bgCard }]}>
@@ -251,7 +301,7 @@ export default function RunsScreen() {
       {/* Body */}
       {tab === "specs" && (
         <FlatList
-          data={specs}
+          data={selectedProject ? specs.filter(sp => sp.path.startsWith(selectedProject)) : specs}
           keyExtractor={(it) => it.path}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.textPrimary} />}
           contentContainerStyle={{ padding: 12 }}
