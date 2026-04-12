@@ -690,6 +690,12 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Overview home summary
 	mux.HandleFunc("/overview/summary", s.auth(s.handleOverviewSummary))
 
+	// Per-project dashboard manager (Convex/Supabase/Drizzle/PocketBase per project)
+	mux.HandleFunc("/dashboard/start", s.auth(s.handleDashboardStart))
+	mux.HandleFunc("/dashboard/stop", s.auth(s.handleDashboardStop))
+	mux.HandleFunc("/dashboard/list", s.auth(s.handleDashboardList))
+	mux.HandleFunc("/dashboard/", s.auth(s.handleDashboardProxy))
+
 	// Guest access management (host invites guests to use their agent)
 	mux.HandleFunc("/guests", s.auth(s.handleGuestList))
 	mux.HandleFunc("/guests/invite", s.auth(s.handleGuestInvite))
