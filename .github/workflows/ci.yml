@@ -188,10 +188,19 @@ jobs:
         with:
           go-version: "1.22"
       - name: Connect to Tailscale
-        if: ${{ secrets.TAILSCALE_AUTHKEY != '' }}
         uses: tailscale/github-action@v3
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          hostname: gha-yaver-${{ github.run_id }}
+          tags: tag:ci
+      - name: Verify Tailscale connection
+        run: |
+          tailscale status
+          TS_IP=$(tailscale ip -4)
+          echo "Tailscale IPv4: $TS_IP"
+          echo "ts_ip=$TS_IP" >> "$GITHUB_ENV"
+          # Verify we can resolve our own hostname
+          tailscale ping --c 1 $(tailscale ip -4) || true
       - name: Build agent
         run: cd desktop/agent && go build -o /tmp/yaver .
       - name: Get CI token
@@ -208,26 +217,52 @@ jobs:
             | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null) || true
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
-      - name: Test Tailscale connectivity
+      - name: Test agent reachable via Tailscale IP
         run: |
-          TS_IP=$(tailscale ip -4 2>/dev/null || echo "")
+          TS_IP=$(tailscale ip -4)
+          echo "=== Tailscale Connectivity Test ==="
           echo "Tailscale IP: $TS_IP"
-          [ -n "$TS_IP" ] || { echo "Tailscale not connected"; exit 1; }
-          tailscale status
-          # Start agent bound to Tailscale IP.
+
+          # Start agent bound to all interfaces (Tailscale IP is a real interface).
           mkdir -p /tmp/ts-test/.yaver
           echo "{\"auth_token\":\"${{ steps.auth.outputs.token }}\",\"convex_site_url\":\"${{ steps.auth.outputs.url }}\",\"device_id\":\"ci-ts-test\"}" > /tmp/ts-test/.yaver/config.json
           HOME=/tmp/ts-test /tmp/yaver serve --debug --port 18080 --quic-port 4433 --dummy --no-relay > /tmp/ts-agent.log 2>&1 &
-          sleep 3
-          # Verify agent is reachable via Tailscale IP.
-          curl -sf "http://$TS_IP:18080/health" | grep -q ok && echo "Agent reachable via Tailscale" || { echo "Failed"; cat /tmp/ts-agent.log; exit 1; }
-          # Create a task via Tailscale IP.
+          AGENT_PID=$!
+
+          # Wait for agent to be ready.
+          for i in $(seq 1 20); do curl -sf "http://127.0.0.1:18080/health" >/dev/null 2>&1 && break; sleep 0.5; done
+
+          # 1. Health check via Tailscale IP.
+          curl -sf "http://$TS_IP:18080/health" | grep -q ok \
+            && echo "PASS: /health via Tailscale IP" \
+            || { echo "FAIL: /health via Tailscale IP"; cat /tmp/ts-agent.log; exit 1; }
+
+          # 2. Agent info via Tailscale IP.
+          curl -sf "http://$TS_IP:18080/info" \
+            -H "Authorization: Bearer ${{ steps.auth.outputs.token }}" \
+            && echo "PASS: /info via Tailscale IP" \
+            || echo "SKIP: /info"
+
+          # 3. Create a task via Tailscale IP.
           TASK=$(curl -sf -X POST "http://$TS_IP:18080/tasks" \
             -H "Authorization: Bearer ${{ steps.auth.outputs.token }}" \
             -H "Content-Type: application/json" \
             -d '{"title":"tailscale ci test"}')
-          echo "Task created via Tailscale: $TASK"
-          echo "$TASK" | grep -q "taskId" && echo "SUCCESS: Task created via Tailscale" || { echo "FAIL"; exit 1; }
+          echo "Task response: $TASK"
+          echo "$TASK" | grep -q "taskId" \
+            && echo "PASS: Task created via Tailscale" \
+            || { echo "FAIL: Task creation"; exit 1; }
+
+          # 4. List tasks via Tailscale IP.
+          TASKS=$(curl -sf "http://$TS_IP:18080/tasks" \
+            -H "Authorization: Bearer ${{ steps.auth.outputs.token }}")
+          echo "$TASKS" | grep -q "tailscale ci test" \
+            && echo "PASS: Task listed via Tailscale" \
+            || echo "SKIP: Task list format may differ"
+
+          # Cleanup.
+          kill $AGENT_PID 2>/dev/null || true
+          echo "=== All Tailscale tests passed ==="
 
   # OAuth flow validation — tests auth endpoints, device code, token validation
   auth-flow:

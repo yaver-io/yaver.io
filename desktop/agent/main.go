@@ -1705,6 +1705,7 @@ func runServe(args []string) {
 		log.Printf("Black box manager ready")
 	}
 	httpServer.devServerMgr = NewDevServerManager()
+	httpServer.browserMgr = NewBrowserManager()
 	// Use relay URL if relay is available (works from 4G/any network).
 	// Fall back to local IP for direct/LAN connections.
 	if len(relayServers) > 0 && cfg.DeviceID != "" {
