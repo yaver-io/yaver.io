@@ -1,0 +1,16 @@
+{
+  "name": "@bento/mobile",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "prebuild": "expo prebuild",
+    "start": "expo start",
+    "ios": "cd ios && xcodebuild -workspace *.xcworkspace -scheme Bento -configuration Debug",
+    "android": "cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "expo": "~52.0.0",
+    "react": "18.3.1",
+    "react-native": "0.76.3"
+  }
+}
