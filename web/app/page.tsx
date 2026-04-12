@@ -16,13 +16,13 @@ function DebugConsolePreview() {
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [selectedProduct, setSelectedProduct] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
-  const [cartItems, setCartItems] = useState<string[]>(["Leather Bag", "Smart Watch"]);
+  const [cartItems, setCartItems] = useState<string[]>(["Salmon Bento", "Chicken Bento"]);
   const [input, setInput] = useState("");
   const outputRef = useRef<HTMLDivElement>(null);
   const allProducts = [
-    { name: "Running Shoe", price: "$129", color: "from-indigo-500/20 to-blue-500/20", cat: "Shoes", crashed: true },
-    { name: "Leather Bag", price: "$89", color: "from-rose-500/20 to-pink-500/20", cat: "Bags", crashed: false },
-    { name: "Smart Watch", price: "$249", color: "from-emerald-500/20 to-teal-500/20", cat: "Watches", crashed: false },
+    { name: "Veggie Bento", price: "$129", color: "from-indigo-500/20 to-blue-500/20", cat: "Veggie", crashed: true },
+    { name: "Salmon Bento", price: "$89", color: "from-rose-500/20 to-pink-500/20", cat: "Fish", crashed: false },
+    { name: "Chicken Bento", price: "$249", color: "from-emerald-500/20 to-teal-500/20", cat: "Meat", crashed: false },
     { name: "Sunglasses", price: "$65", color: "from-amber-500/20 to-orange-500/20", cat: "Accessories", crashed: false },
   ];
   const filteredProducts = selectedCategory === "All" ? allProducts : allProducts.filter(p => p.cat === selectedCategory);
@@ -30,7 +30,7 @@ function DebugConsolePreview() {
     { from: "agent", text: "\u26A0 error caught by SDK:" },
     { from: "agent", text: 'TypeError: Cannot read "price"' },
     { from: "agent", text: "at ProductCard (ProductList.tsx:34)" },
-    { from: "agent", text: "screen: Home > Running Shoe" },
+    { from: "agent", text: "screen: Home > Veggie Bento" },
     { from: "user", text: "> fix this crash" },
     { from: "agent", text: "task f82c started..." },
     { from: "agent", text: "reading ProductList.tsx..." },
@@ -157,7 +157,7 @@ function DebugConsolePreview() {
                 <>
                   {/* App nav */}
                   <div className="mb-3 flex items-center justify-between">
-                    <h4 className="text-base font-bold text-gray-900">Acme Store</h4>
+                    <h4 className="text-base font-bold text-gray-900">BentoApp</h4>
                     <div className="flex items-center gap-2.5">
                       <button className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100" onClick={() => setActiveTab("Search")}>
                         <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
@@ -167,7 +167,7 @@ function DebugConsolePreview() {
                   </div>
                   {/* Category pills */}
                   <div className="mb-3 flex gap-1.5">
-                    {["All", "Shoes", "Bags", "Watches"].map((c) => (
+                    {["All", "Veggie", "Fish", "Meat", "Dessert"].map((c) => (
                       <button key={c} onClick={() => setSelectedCategory(c)} className={`rounded-full px-3 py-1.5 text-[11px] font-medium transition-colors ${selectedCategory === c ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`}>{c}</button>
                     ))}
                   </div>
@@ -520,9 +520,9 @@ function DebugConsolePreview() {
                           // Home tab
                           { from: "agent", text: "[Home] navigating...", delay: 600, action: () => setActiveTab("Home") },
                           { from: "agent", text: "[Home] scrolling products...", delay: 600 },
-                          { from: "agent", text: "[Home] tap Leather Bag...", delay: 500, action: () => setSelectedProduct("Leather Bag") },
+                          { from: "agent", text: "[Home] tap Salmon Bento...", delay: 500, action: () => setSelectedProduct("Salmon Bento") },
                           { from: "agent", text: "[Home] detail loaded. back.", delay: 700, action: () => setSelectedProduct(null) },
-                          { from: "agent", text: "[Home] tap Running Shoe...", delay: 500 },
+                          { from: "agent", text: "[Home] tap Veggie Bento...", delay: 500 },
                           { from: "agent", text: "\u26A0 TypeError: price is null", delay: 800 },
                           { from: "agent", text: "fix: ProductCard.tsx:34", delay: 600 },
                           { from: "agent", text: "  price?.toFixed(2) ?? 'N/A'", delay: 400 },
@@ -532,14 +532,14 @@ function DebugConsolePreview() {
                           { from: "agent", text: "[Search] typing 'shoes'...", delay: 500, action: () => setSearchText("shoes") },
                           { from: "agent", text: "[Search] 1 result found. ok", delay: 700 },
                           { from: "agent", text: "[Search] clear. typing 'bag'...", delay: 500, action: () => setSearchText("bag") },
-                          { from: "agent", text: "[Search] 1 result. tapping...", delay: 600, action: () => { setSearchText(""); setActiveTab("Home"); setSelectedProduct("Leather Bag"); } },
+                          { from: "agent", text: "[Search] 1 result. tapping...", delay: 600, action: () => { setSearchText(""); setActiveTab("Home"); setSelectedProduct("Salmon Bento"); } },
                           { from: "agent", text: "[Search] detail ok. back.", delay: 600, action: () => { setSelectedProduct(null); setActiveTab("Search"); setSearchText(""); } },
                           // Cart tab
                           { from: "agent", text: "[Cart] navigating...", delay: 500, action: () => setActiveTab("Cart") },
                           { from: "agent", text: "[Cart] 2 items. total $338.", delay: 600 },
-                          { from: "agent", text: "[Cart] removing item...", delay: 500, action: () => setCartItems(["Smart Watch"]) },
+                          { from: "agent", text: "[Cart] removing item...", delay: 500, action: () => setCartItems(["Chicken Bento"]) },
                           { from: "agent", text: "[Cart] 1 item. total $249.", delay: 600 },
-                          { from: "agent", text: "[Cart] tap checkout... ok", delay: 500, action: () => setCartItems(["Leather Bag", "Smart Watch"]) },
+                          { from: "agent", text: "[Cart] tap checkout... ok", delay: 500, action: () => setCartItems(["Salmon Bento", "Chicken Bento"]) },
                           // Profile tab
                           { from: "agent", text: "[Profile] navigating...", delay: 500, action: () => setActiveTab("Profile") },
                           { from: "agent", text: "[Profile] user info ok", delay: 500 },
@@ -565,7 +565,7 @@ function DebugConsolePreview() {
                           setSelectedProduct(null);
                           setSelectedCategory("All");
                           setSearchText("");
-                          setCartItems(["Leather Bag", "Smart Watch"]);
+                          setCartItems(["Salmon Bento", "Chicken Bento"]);
                           setPanelOpen(true);
                         }}
                         className="flex flex-col items-center gap-0.5 rounded-lg border border-surface-800 bg-[#111] py-1.5 transition-colors hover:bg-surface-800"
