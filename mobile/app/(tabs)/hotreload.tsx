@@ -299,7 +299,7 @@ export default function HotReloadScreen() {
                   {isStarting ? (
                     <ActivityIndicator size="small" color={c.accent} />
                   ) : (
-                    <Text style={{ color: c.accent, fontSize: 12, fontWeight: "600" }}>Start</Text>
+                    <Text style={{ color: c.textMuted, fontSize: 18, fontWeight: "300" }}>{"\u203A"}</Text>
                   )}
                 </View>
               </Pressable>
