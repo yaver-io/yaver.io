@@ -25,6 +25,8 @@ export interface DiscoveredDevice {
   needsAuth?: boolean;
   /** 6-char pairing passkey from the bootstrap beacon (may be empty if suppressed) */
   bootstrapPasskey?: string;
+  /** X25519 public key (base64) broadcast in bootstrap beacon for encrypted pairing */
+  devicePublicKey?: string;
 }
 
 interface BeaconPayload {
@@ -36,6 +38,7 @@ interface BeaconPayload {
   hw?: string; // stable hardware ID (P2P only)
   na?: boolean; // needs-auth flag (bootstrap mode)
   pk?: string;  // bootstrap pairing passkey
+  dpk?: string; // device public key (X25519 base64) for encrypted pairing
 }
 
 type DiscoveryCallback = (device: DiscoveredDevice) => void;
@@ -201,6 +204,7 @@ class BeaconListener {
         hwid: payload.hw,
         needsAuth: isBootstrap,
         bootstrapPasskey: payload.pk,
+        devicePublicKey: payload.dpk,
       };
 
       this.devices.set(payload.id, device);

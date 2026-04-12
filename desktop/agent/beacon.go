@@ -31,6 +31,7 @@ type beaconPayload struct {
 	// `yaver serve` with no auth token.
 	NeedsAuth        bool   `json:"na,omitempty"`  // true = waiting for a token via /auth/pair/submit
 	BootstrapPasskey string `json:"pk,omitempty"`  // 6-char pairing passkey (LAN-trust model; empty if suppressed)
+	DevicePublicKey  string `json:"dpk,omitempty"` // X25519 public key (base64) for encrypted pairing
 }
 
 // tokenFingerprint returns the first 8 hex chars of SHA256(userId).
