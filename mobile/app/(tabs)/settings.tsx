@@ -36,7 +36,7 @@ const BUILD_NUMBER =
   "1";
 
 export default function SettingsScreen() {
-  const { user, token, logout, surveyCompleted, refreshUser } = useAuth();
+  const { user, token, logout, refreshUser } = useAuth();
   const { activeDevice, connectionStatus, disconnect, selectDevice } = useDevice();
   const { isDark, toggleTheme } = useTheme();
   const c = useColors();
@@ -706,25 +706,7 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* Developer Profile — only show if survey not completed */}
-        {!surveyCompleted && (
-          <View style={styles.section}>
-            <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Developer Profile</Text>
-            <Pressable
-              style={({ pressed }) => [
-                styles.actionRow,
-                { backgroundColor: c.bgCard, borderColor: c.border },
-                pressed && styles.actionRowPressed,
-              ]}
-              onPress={() => router.push("/survey")}
-            >
-              <Text style={[styles.actionRowLabel, { color: c.textPrimary }]}>
-                Complete Developer Survey
-              </Text>
-              <Text style={[styles.actionRowChevron, { color: c.textMuted }]}>&rsaquo;</Text>
-            </Pressable>
-          </View>
-        )}
+        {/* Developer Profile section removed — survey no longer required */}
 
         {/* Connected device */}
         <View style={styles.section}>
