@@ -1776,11 +1776,25 @@ func runServe(args []string) {
 		if task.StartedAt != nil && task.FinishedAt != nil {
 			dur = int(task.FinishedAt.Sub(*task.StartedAt).Seconds())
 		}
+
+		// Auto-retry: if task failed and has retries left, retry before notifying
+		if task.Status == TaskStatusFailed && task.AutoRetry {
+			if taskMgr.autoRetryTask(task) {
+				log.Printf("[retry] Task %s auto-retrying — skipping notifications", task.ID)
+				return
+			}
+		}
+
 		httpServer.notifyMgr.NotifyTaskCompleted(task.ID, task.Title, string(task.Status), task.CostUSD, dur)
 
 		// Record guest usage
 		if task.GuestUserID != "" && dur > 0 && httpServer.guestConfigMgr != nil {
 			httpServer.guestConfigMgr.RecordUsage(task.GuestUserID, float64(dur))
+		}
+
+		// Chain advancement: start next task in chain
+		if task.ChainID != "" {
+			taskMgr.advanceChain(task)
 		}
 
 		// Autopilot: drive the next todo item
@@ -1795,6 +1809,30 @@ func runServe(args []string) {
 		}
 		httpServer.notifyMgr.NotifyExecCompleted(command, status, exitCode)
 	}
+
+	// Morning summary: send a daily digest at 9am local time
+	go func() {
+		for {
+			now := time.Now()
+			next := time.Date(now.Year(), now.Month(), now.Day(), 9, 0, 0, 0, now.Location())
+			if now.After(next) {
+				next = next.Add(24 * time.Hour)
+			}
+			timer := time.NewTimer(time.Until(next))
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+				since := time.Now().Add(-24 * time.Hour)
+				text := taskMgr.GenerateSummaryText(since)
+				if text != "" && text != "No tasks in the last 24 hours." {
+					httpServer.notifyMgr.NotifyMorningSummary(text)
+					log.Printf("[summary] Morning summary sent: %d chars", len(text))
+				}
+			}
+		}
+	}()
 
 	chatBot := NewChatBot(taskMgr, httpServer.execMgr, httpServer.notifyMgr, cfg.Notifications)
 	chatBot.Start(ctx)

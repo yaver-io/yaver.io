@@ -54,6 +54,16 @@ export interface Task {
   tmuxSession?: string;
   /** True if this task was adopted from an existing tmux session. */
   isAdopted?: boolean;
+  /** Chain ID if this task is part of a sequential chain. */
+  chainId?: string;
+  /** 0-based position in the chain. */
+  chainOrder?: number;
+  /** Whether auto-retry is enabled for this task. */
+  autoRetry?: boolean;
+  /** Number of auto-retries so far. */
+  autoRetryCount?: number;
+  /** Max auto-retries allowed. */
+  autoRetryMax?: number;
 }
 
 export interface TmuxSession {
@@ -484,6 +494,11 @@ export class QuicClient {
         turns: t.turns || undefined,
         tmuxSession: t.tmuxSession || undefined,
         isAdopted: t.isAdopted || false,
+        chainId: t.chainId || undefined,
+        chainOrder: t.chainOrder ?? undefined,
+        autoRetry: t.autoRetry || false,
+        autoRetryCount: t.autoRetryCount || 0,
+        autoRetryMax: t.autoRetryMax || 0,
       }));
       // Filter out tasks the user previously deleted
       const deletedIds = await getDeletedTaskIds();
@@ -580,6 +595,128 @@ export class QuicClient {
     if (!res.ok) throw new Error(`Failed to stop all: ${res.status}`);
     const data = await res.json();
     return data.stopped || 0;
+  }
+
+  // ── Chained Tasks ─────────────────────────────────────────────────
+
+  /** Create a chain of tasks that execute sequentially. */
+  async createChain(tasks: { title: string; description?: string }[], options?: { model?: string; runner?: string; autoRetry?: boolean }): Promise<{ chainId: string; tasks: string[]; count: number }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/chain`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tasks,
+        source: "mobile",
+        ...(options?.model ? { model: options.model } : {}),
+        ...(options?.runner ? { runner: options.runner } : {}),
+        ...(options?.autoRetry ? { autoRetry: true } : {}),
+      }),
+    });
+    if (!res.ok) {
+      let msg = `Failed to create chain: ${res.status}`;
+      try { const e = await res.json(); if (e.error) msg = e.error; } catch {}
+      throw new Error(msg);
+    }
+    return res.json();
+  }
+
+  /** Get the status of a task chain. */
+  async getChainStatus(chainId: string): Promise<{ chainId: string; status: string; tasks: any[] }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/chain/${chainId}`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to get chain: ${res.status}`);
+    return res.json();
+  }
+
+  // ── Deploy (Ship It) ────────────────────────────────────────────
+
+  /** Get available deploy targets for the current project. */
+  async getDeployTargets(): Promise<{ targets: { id: string; name: string; command: string }[]; workDir: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/deploy`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to get deploy targets: ${res.status}`);
+    return res.json();
+  }
+
+  /** Trigger a deploy. Pass target ID or omit for auto-detect. */
+  async deploy(target?: string): Promise<{ taskId: string; target: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/deploy`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(target ? { target } : {}),
+    });
+    if (!res.ok) {
+      let msg = `Deploy failed: ${res.status}`;
+      try { const e = await res.json(); if (e.error) msg = e.error; } catch {}
+      throw new Error(msg);
+    }
+    return res.json();
+  }
+
+  // ── Summary ──────────────────────────────────────────────────────
+
+  /** Get a summary of task activity for the last N hours (default 24). */
+  async getSummary(hours?: number): Promise<{ summary: any; text: string }> {
+    this.assertConnected();
+    const q = hours ? `?hours=${hours}` : "";
+    const res = await fetch(`${this.baseUrl}/summary${q}`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to get summary: ${res.status}`);
+    return res.json();
+  }
+
+  // ── SSE Task Stream ──────────────────────────────────────────────
+
+  /** Stream task output via SSE. Returns an abort function. */
+  streamTaskOutput(taskId: string, onData: (text: string) => void, onDone?: (status: string) => void): () => void {
+    const controller = new AbortController();
+    const url = `${this.baseUrl}/tasks/${taskId}/output`;
+
+    (async () => {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: this.authHeaders,
+          signal: controller.signal,
+        });
+        if (!res.ok || !res.body) return;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const evt = JSON.parse(line.slice(6));
+              if (evt.type === "output" && evt.text) {
+                onData(evt.text);
+              } else if (evt.type === "done" && onDone) {
+                onDone(evt.status);
+              }
+            } catch {}
+          }
+        }
+      } catch {
+        // Aborted or network error
+      }
+    })();
+
+    return () => controller.abort();
   }
 
   // ── Projects (discovery + switching) ────────────────────────────

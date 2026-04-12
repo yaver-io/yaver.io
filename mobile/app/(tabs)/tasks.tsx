@@ -254,6 +254,16 @@ function TaskCard({
             <Text style={[s.statusText, { color: "#f59e0b" }]}>{item.runnerId}</Text>
           </View>
         )}
+        {item.chainId && (
+          <View style={[s.statusBadge, { backgroundColor: "#06b6d422" }]}>
+            <Text style={[s.statusText, { color: "#06b6d4" }]}>{`chain ${(item.chainOrder ?? 0) + 1}`}</Text>
+          </View>
+        )}
+        {item.autoRetry && item.autoRetryCount != null && item.autoRetryCount > 0 && (
+          <View style={[s.statusBadge, { backgroundColor: "#f9731622" }]}>
+            <Text style={[s.statusText, { color: "#f97316" }]}>{`retry ${item.autoRetryCount}/${item.autoRetryMax}`}</Text>
+          </View>
+        )}
         {item.status === "running" && <ActivityIndicator size="small" color="#6366f1" />}
       </View>
       <Text style={[s.taskTitle, { color: c.textPrimary }]} numberOfLines={2}>{item.title}</Text>
@@ -537,28 +547,63 @@ export default function TasksScreen() {
   const outputBufferRef = useRef<Record<string, string[]>>({});
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // SSE stream for the selected running task (full live terminal stream)
+  const sseAbortRef = useRef<(() => void) | null>(null);
   useEffect(() => {
-    const flushOutputBuffer = () => {
-      const buffer = outputBufferRef.current;
-      outputBufferRef.current = {};
-      flushTimerRef.current = null;
+    // Cleanup previous SSE
+    if (sseAbortRef.current) {
+      sseAbortRef.current();
+      sseAbortRef.current = null;
+    }
+    if (!selectedTask || (selectedTask.status !== "running" && selectedTask.status !== "queued")) return;
+    if (!quicClient.isConnected) return;
 
-      const taskIds = Object.keys(buffer);
-      if (taskIds.length === 0) return;
+    const abort = quicClient.streamTaskOutput(
+      selectedTask.id,
+      (text) => {
+        // Push SSE output into the same buffer system
+        const lines = text.split("\n").filter(l => l);
+        for (const line of lines) {
+          if (!outputBufferRef.current[selectedTask.id]) {
+            outputBufferRef.current[selectedTask.id] = [];
+          }
+          outputBufferRef.current[selectedTask.id].push(line);
+        }
+        if (!flushTimerRef.current) {
+          flushTimerRef.current = setTimeout(flushOutputBuffer, 150);
+        }
+      },
+      (status) => {
+        // Task finished via SSE — refresh to get final state
+        fetchTasks();
+      }
+    );
+    sseAbortRef.current = abort;
+    return () => abort();
+  }, [selectedTask?.id, selectedTask?.status]);
 
-      setTasks((prev) =>
-        prev.map((t) => {
-          const newLines = buffer[t.id];
-          if (!newLines) return t;
-          return { ...t, output: [...t.output, ...newLines] };
-        })
-      );
-      setSelectedTask((prev) => {
-        if (!prev || !buffer[prev.id]) return prev;
-        return { ...prev, output: [...prev.output, ...buffer[prev.id]] };
-      });
-    };
+  const flushOutputBuffer = () => {
+    const buffer = outputBufferRef.current;
+    outputBufferRef.current = {};
+    flushTimerRef.current = null;
 
+    const taskIds = Object.keys(buffer);
+    if (taskIds.length === 0) return;
+
+    setTasks((prev) =>
+      prev.map((t) => {
+        const newLines = buffer[t.id];
+        if (!newLines) return t;
+        return { ...t, output: [...t.output, ...newLines] };
+      })
+    );
+    setSelectedTask((prev) => {
+      if (!prev || !buffer[prev.id]) return prev;
+      return { ...prev, output: [...prev.output, ...buffer[prev.id]] };
+    });
+  };
+
+  useEffect(() => {
     const unsub = quicClient.on("output", (taskId, line) => {
       // Check for Yaver control signals (auto-route)
       if (line.includes('"yaver_control"')) {
@@ -975,6 +1020,63 @@ export default function TasksScreen() {
     try { await quicClient.deleteAllTasks(); setTasks([]); await fetchTasks(); } catch {}
   };
 
+  // Ship It — one-tap deploy
+  const handleShipIt = async () => {
+    try {
+      const { targets } = await quicClient.getDeployTargets();
+      if (targets.length === 0) {
+        Alert.alert("No Deploy Targets", "Could not detect any deploy targets for this project.");
+        return;
+      }
+      if (targets.length === 1) {
+        // Single target — deploy directly
+        Alert.alert(
+          "Ship It",
+          `Deploy to ${targets[0].name}?`,
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Ship It", onPress: async () => {
+              try {
+                const result = await quicClient.deploy(targets[0].id);
+                Alert.alert("Deploying", `Deploying to ${result.target}...`);
+                await fetchTasks();
+              } catch (e) {
+                Alert.alert("Deploy Failed", e instanceof Error ? e.message : String(e));
+              }
+            }},
+          ]
+        );
+      } else {
+        // Multiple targets — let user pick
+        const buttons: { text: string; onPress?: () => void; style?: "cancel" | "destructive" | "default" }[] = targets.map(t => ({
+          text: t.name,
+          onPress: () => {
+            quicClient.deploy(t.id).then((result) => {
+              Alert.alert("Deploying", `Deploying to ${result.target}...`);
+              fetchTasks();
+            }).catch((e) => {
+              Alert.alert("Deploy Failed", e instanceof Error ? e.message : String(e));
+            });
+          },
+        }));
+        buttons.push({ text: "Cancel", style: "cancel" });
+        Alert.alert("Pick Deploy Target", "Where do you want to ship?", buttons);
+      }
+    } catch (e) {
+      Alert.alert("Error", e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  // Summary — show morning digest
+  const handleShowSummary = async () => {
+    try {
+      const { text } = await quicClient.getSummary(24);
+      Alert.alert("Summary (24h)", text || "No activity in the last 24 hours.");
+    } catch (e) {
+      Alert.alert("Error", e instanceof Error ? e.message : String(e));
+    }
+  };
+
   // Tmux session management
   const handleOpenTmuxSessions = async () => {
     setShowTmuxSessions(true);
@@ -1262,6 +1364,12 @@ export default function TasksScreen() {
               )}
               <Pressable style={[s.actionButton, { backgroundColor: "#8b5cf618" }]} onPress={handleOpenTmuxSessions}>
                 <Text style={[s.actionButtonText, { color: "#8b5cf6" }]}>Tmux</Text>
+              </Pressable>
+              <Pressable style={[s.actionButton, { backgroundColor: "#f9731618" }]} onPress={handleShipIt}>
+                <Text style={[s.actionButtonText, { color: "#f97316" }]}>Ship It</Text>
+              </Pressable>
+              <Pressable style={[s.actionButton, { backgroundColor: "#06b6d418" }]} onPress={handleShowSummary}>
+                <Text style={[s.actionButtonText, { color: "#06b6d4" }]}>Summary</Text>
               </Pressable>
             </ScrollView>
           </View>
