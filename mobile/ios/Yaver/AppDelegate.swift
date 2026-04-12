@@ -58,7 +58,7 @@ public class AppDelegate: ExpoAppDelegate {
     YaverHTTPServer.shared.start()
 
 #if os(iOS) || os(tvOS)
-    window = UIWindow(frame: UIScreen.main.bounds)
+    window = ShakeDetectingWindow(frame: UIScreen.main.bounds)
     factory.startReactNative(
       withModuleName: "main",
       in: window,
@@ -223,88 +223,119 @@ public class AppDelegate: ExpoAppDelegate {
     isReloading = false
     NSLog("[AppDelegate] guest app loaded (New Arch): module=%@", moduleName)
 
-    // Add floating "Back to Yaver" overlay pill
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-      self?.addBackToYaverOverlay(to: window)
-    }
+    // Guest app is running. Shake phone to reveal "Back to Yaver" overlay.
+    isGuestAppRunning = true
   }
 
+  private var isGuestAppRunning = false
   private var backOverlay: UIView?
+  private var overlayDismissTimer: Timer?
 
-  private func addBackToYaverOverlay(to window: UIWindow) {
+  // MARK: - Shake to reveal Back to Yaver
+
+  /// Called by ShakeDetectingWindow when device is shaken while guest app is running.
+  func handleShakeGesture() {
+    guard isGuestAppRunning, let window = self.window else { return }
+
+    // If overlay is already visible, treat shake as "go back now"
+    if backOverlay != nil {
+      handleBackOverlayTap()
+      return
+    }
+
+    showBackToYaverOverlay(in: window)
+  }
+
+  private func showBackToYaverOverlay(in window: UIWindow) {
     backOverlay?.removeFromSuperview()
+    overlayDismissTimer?.invalidate()
 
     let pill = UIView()
-    pill.backgroundColor = UIColor(red: 0.05, green: 0.05, blue: 0.08, alpha: 0.85)
-    pill.layer.cornerRadius = 18
-    pill.layer.borderWidth = 1
-    pill.layer.borderColor = UIColor(red: 0.5, green: 0.55, blue: 0.97, alpha: 0.6).cgColor
+    pill.backgroundColor = UIColor(red: 0.05, green: 0.05, blue: 0.08, alpha: 0.92)
+    pill.layer.cornerRadius = 22
+    pill.layer.borderWidth = 1.5
+    pill.layer.borderColor = UIColor(red: 0.5, green: 0.55, blue: 0.97, alpha: 0.8).cgColor
     pill.translatesAutoresizingMaskIntoConstraints = false
+
+    // Add subtle shadow
+    pill.layer.shadowColor = UIColor.black.cgColor
+    pill.layer.shadowOffset = CGSize(width: 0, height: 4)
+    pill.layer.shadowRadius = 12
+    pill.layer.shadowOpacity = 0.5
 
     let icon = UILabel()
     icon.text = "\u{25C0}"
-    icon.font = .systemFont(ofSize: 12)
+    icon.font = .systemFont(ofSize: 14)
     icon.textColor = UIColor(red: 0.5, green: 0.55, blue: 0.97, alpha: 1.0)
     icon.translatesAutoresizingMaskIntoConstraints = false
 
     let label = UILabel()
-    label.text = "Yaver"
-    label.font = .boldSystemFont(ofSize: 13)
-    label.textColor = UIColor(red: 0.5, green: 0.55, blue: 0.97, alpha: 1.0)
+    label.text = "Back to Yaver"
+    label.font = .boldSystemFont(ofSize: 15)
+    label.textColor = .white
     label.translatesAutoresizingMaskIntoConstraints = false
 
     pill.addSubview(icon)
     pill.addSubview(label)
 
     NSLayoutConstraint.activate([
-      icon.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 12),
+      icon.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 16),
       icon.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
-      label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 4),
-      label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -14),
+      label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
+      label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -18),
       label.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
-      pill.heightAnchor.constraint(equalToConstant: 36),
+      pill.heightAnchor.constraint(equalToConstant: 44),
     ])
 
     let tap = UITapGestureRecognizer(target: self, action: #selector(handleBackOverlayTap))
     pill.addGestureRecognizer(tap)
     pill.isUserInteractionEnabled = true
 
-    // Make draggable
-    let pan = UIPanGestureRecognizer(target: self, action: #selector(handleOverlayDrag(_:)))
-    pill.addGestureRecognizer(pan)
-
     window.addSubview(pill)
-    let topOffset: CGFloat = (window.safeAreaInsets.top > 0) ? window.safeAreaInsets.top + 4 : 28
 
+    // Center horizontally, near top
+    let topOffset: CGFloat = (window.safeAreaInsets.top > 0) ? window.safeAreaInsets.top + 8 : 32
     NSLayoutConstraint.activate([
-      pill.leadingAnchor.constraint(equalTo: window.leadingAnchor, constant: 12),
+      pill.centerXAnchor.constraint(equalTo: window.centerXAnchor),
       pill.topAnchor.constraint(equalTo: window.topAnchor, constant: topOffset),
     ])
 
     backOverlay = pill
 
-    // Fade in
+    // Slide down + fade in
     pill.alpha = 0
-    UIView.animate(withDuration: 0.3) { pill.alpha = 1.0 }
+    pill.transform = CGAffineTransform(translationX: 0, y: -20)
+    UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.8,
+                   initialSpringVelocity: 0.5) {
+      pill.alpha = 1.0
+      pill.transform = .identity
+    }
 
-    // After 3 seconds, shrink to just the arrow icon
-    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak label] in
-      UIView.animate(withDuration: 0.3) { label?.isHidden = true }
+    // Haptic feedback
+    let impact = UIImpactFeedbackGenerator(style: .medium)
+    impact.impactOccurred()
+
+    // Auto-hide after 4 seconds
+    overlayDismissTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: false) { [weak self] _ in
+      guard let overlay = self?.backOverlay else { return }
+      UIView.animate(withDuration: 0.3, animations: {
+        overlay.alpha = 0
+        overlay.transform = CGAffineTransform(translationX: 0, y: -20)
+      }) { _ in
+        overlay.removeFromSuperview()
+        self?.backOverlay = nil
+      }
     }
   }
 
   @objc private func handleBackOverlayTap() {
-    NSLog("[AppDelegate] Back to Yaver overlay tapped")
+    NSLog("[AppDelegate] Back to Yaver tapped")
+    overlayDismissTimer?.invalidate()
+    overlayDismissTimer = nil
     backOverlay?.removeFromSuperview()
     backOverlay = nil
+    isGuestAppRunning = false
     NotificationCenter.default.post(name: Notification.Name("YaverBundleLoaderRestore"), object: nil)
-  }
-
-  @objc private func handleOverlayDrag(_ gesture: UIPanGestureRecognizer) {
-    guard let pill = gesture.view else { return }
-    let translation = gesture.translation(in: pill.superview)
-    pill.center = CGPoint(x: pill.center.x + translation.x, y: pill.center.y + translation.y)
-    gesture.setTranslation(.zero, in: pill.superview)
   }
 
   /// Shows an error screen instead of a white screen when the guest app fails to load.
@@ -367,6 +398,9 @@ public class AppDelegate: ExpoAppDelegate {
 
   @objc func handleBundleRestore(_ notification: Notification) {
     NSLog("[AppDelegate] Restoring original Yaver bundle...")
+    isGuestAppRunning = false
+    overlayDismissTimer?.invalidate()
+    overlayDismissTimer = nil
     backOverlay?.removeFromSuperview()
     backOverlay = nil
 
@@ -418,6 +452,20 @@ public class AppDelegate: ExpoAppDelegate {
   ) -> Bool {
     let result = RCTLinkingManager.application(application, continue: userActivity, restorationHandler: restorationHandler)
     return super.application(application, continue: userActivity, restorationHandler: restorationHandler) || result
+  }
+}
+
+// MARK: - Shake-detecting window
+// Intercepts device shake at the UIWindow level (before any responder chain).
+// Works even when a guest RN bridge is running — the guest can't block this.
+class ShakeDetectingWindow: UIWindow {
+  override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
+    super.motionEnded(motion, with: event)
+    if motion == .motionShake {
+      if let appDelegate = UIApplication.shared.delegate as? AppDelegate {
+        appDelegate.handleShakeGesture()
+      }
+    }
   }
 }
 
