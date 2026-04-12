@@ -421,7 +421,7 @@ export class QuicClient {
   // ── Task API ───────────────────────────────────────────────────────
 
   /** Send a new task to the desktop agent. */
-  async sendTask(title: string, description: string, model?: string, runner?: string, customCommand?: string, speechContext?: { inputFromSpeech?: boolean; sttProvider?: string; ttsEnabled?: boolean; ttsProvider?: string; verbosity?: number }, images?: ImageAttachment[]): Promise<Task> {
+  async sendTask(title: string, description: string, model?: string, runner?: string, customCommand?: string, speechContext?: { inputFromSpeech?: boolean; sttProvider?: string; ttsEnabled?: boolean; ttsProvider?: string; verbosity?: number }, images?: ImageAttachment[], workDir?: string): Promise<Task> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/tasks`, {
       method: "POST",
@@ -435,6 +435,7 @@ export class QuicClient {
         ...(customCommand ? { customCommand } : {}),
         ...(speechContext ? { speechContext } : {}),
         ...(images?.length ? { images } : {}),
+        ...(workDir ? { workDir } : {}),
       }),
     });
     if (!res.ok) {
