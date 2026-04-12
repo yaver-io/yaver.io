@@ -1,0 +1,12 @@
+node_modules/
+.next/
+.open-next/
+dist/
+build/
+.env
+.env.local
+ios/Pods/
+android/.gradle/
+android/app/build/
+*.xcworkspace/xcuserdata
+.DS_Store

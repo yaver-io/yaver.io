@@ -1,0 +1,17 @@
+{
+  "expo": {
+    "name": "Bento",
+    "slug": "bento",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "bundleIdentifier": "io.yaver.bento",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "io.yaver.bento"
+    },
+    "newArchEnabled": true
+  }
+}

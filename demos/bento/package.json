@@ -1,0 +1,11 @@
+{
+  "name": "bento",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Meal prep and recipe app. Browse recipes, save favourites, build a grocery list, cook along with step timers. Built as a demo for the Yaver product videos — real working app with intentional bugs that the auto-fix loop repairs on camera.",
+  "workspaces": ["apps/mobile", "packages/*", "backend"],
+  "scripts": {
+    "dev": "./scripts/dev.sh",
+    "deploy": "./scripts/deploy.sh"
+  }
+}
