@@ -38,12 +38,13 @@ type RegisterResp struct {
 // TunnelRequest is sent from relay to agent over a QUIC stream.
 // It represents an HTTP request from a mobile client.
 type TunnelRequest struct {
-	ID      string            `json:"id"`      // unique request ID
-	Method  string            `json:"method"`  // HTTP method
-	Path    string            `json:"path"`    // URL path (e.g. /tasks)
-	Query   string            `json:"query"`   // URL query string
-	Headers map[string]string `json:"headers"` // HTTP headers
-	Body    []byte            `json:"body"`    // request body
+	ID         string            `json:"id"`                   // unique request ID
+	Method     string            `json:"method"`               // HTTP method
+	Path       string            `json:"path"`                 // URL path (e.g. /tasks)
+	Query      string            `json:"query"`                // URL query string
+	Headers    map[string]string `json:"headers"`              // HTTP headers
+	Body       []byte            `json:"body"`                 // request body
+	TargetPort int               `json:"targetPort,omitempty"` // non-zero = forward to this port instead of agent HTTP
 }
 
 // TunnelResponse is sent from agent back to relay over the same QUIC stream.
@@ -60,4 +61,27 @@ type PeerInfo struct {
 	PeerAddr   string `json:"peerAddr"`   // observed public IP:port of the other peer
 	PeerID     string `json:"peerId"`     // device ID of the other peer
 	DirectPort int    `json:"directPort"` // port the peer is listening on for direct connections
+}
+
+// ExposeRegisterMsg is sent by the agent over a control stream to register a public subdomain.
+type ExposeRegisterMsg struct {
+	Type      string `json:"type"`      // "expose_register"
+	DeviceID  string `json:"deviceId"`
+	Subdomain string `json:"subdomain"` // e.g. "myapp" → myapp.yaver.io
+	Port      int    `json:"port"`      // local port to forward to (e.g. 3000)
+}
+
+// ExposeRegisterResp is the relay's reply.
+type ExposeRegisterResp struct {
+	Type      string `json:"type"`                // "expose_registered" or "error"
+	OK        bool   `json:"ok"`
+	PublicURL string `json:"publicUrl,omitempty"` // https://myapp.yaver.io
+	Message   string `json:"message,omitempty"`
+}
+
+// ExposeUnregisterMsg removes a subdomain binding.
+type ExposeUnregisterMsg struct {
+	Type      string `json:"type"`      // "expose_unregister"
+	DeviceID  string `json:"deviceId"`
+	Subdomain string `json:"subdomain"`
 }

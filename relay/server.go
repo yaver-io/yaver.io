@@ -49,6 +49,17 @@ type RelayServer struct {
 
 	// Bandwidth management
 	bandwidth *BandwidthManager
+
+	// Subdomain expose routing
+	exposeMu     sync.RWMutex
+	exposeRoutes map[string]*exposeRoute // subdomain -> route
+	exposeDomain string                  // base domain (e.g. "yaver.io")
+}
+
+type exposeRoute struct {
+	deviceID  string
+	port      int
+	createdAt time.Time
 }
 
 type agentTunnel struct {
@@ -58,15 +69,17 @@ type agentTunnel struct {
 	connAt   time.Time
 }
 
-func NewRelayServer(quicPort, httpPort int, password, convexURL string) *RelayServer {
+func NewRelayServer(quicPort, httpPort int, password, convexURL, exposeDomain string) *RelayServer {
 	s := &RelayServer{
-		quicPort:    quicPort,
-		httpPort:    httpPort,
-		password:    password,
-		convexURL:   convexURL,
-		validatedPw: make(map[string]time.Time),
-		startedAt:   time.Now(),
-		tunnels:     make(map[string]*agentTunnel),
+		quicPort:     quicPort,
+		httpPort:     httpPort,
+		password:     password,
+		convexURL:    convexURL,
+		validatedPw:  make(map[string]time.Time),
+		startedAt:    time.Now(),
+		tunnels:      make(map[string]*agentTunnel),
+		exposeRoutes: make(map[string]*exposeRoute),
+		exposeDomain: exposeDomain,
 	}
 	// Initialize bandwidth manager
 	dataDir := os.Getenv("RELAY_DATA_DIR")
@@ -299,6 +312,9 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 
 	log.Printf("[RELAY] Device %s registered from %s", reg.DeviceID[:8], remoteAddr)
 
+	// Accept control streams (expose register/unregister) from agent
+	go s.handleAgentControlStreams(conn, reg.DeviceID)
+
 	// Keep connection alive — block until it dies
 	<-conn.Context().Done()
 
@@ -307,6 +323,16 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 		delete(s.tunnels, reg.DeviceID)
 	}
 	s.mu.Unlock()
+
+	// Clean up expose routes for this device
+	s.exposeMu.Lock()
+	for sub, route := range s.exposeRoutes {
+		if route.deviceID == reg.DeviceID {
+			delete(s.exposeRoutes, sub)
+			log.Printf("[EXPOSE] Removed %s.%s (device disconnected)", sub, s.exposeDomain)
+		}
+	}
+	s.exposeMu.Unlock()
 
 	log.Printf("[RELAY] Device %s disconnected (%s)", reg.DeviceID[:8], remoteAddr)
 }
@@ -323,8 +349,15 @@ func (s *RelayServer) runHTTPProxy(ctx context.Context) error {
 	mux.HandleFunc("/d/", s.handleProxy) // /d/{deviceId}/...
 
 	srv := &http.Server{
-		Addr:    fmt.Sprintf("0.0.0.0:%d", s.httpPort),
-		Handler: withRelayCORS(mux),
+		Addr: fmt.Sprintf("0.0.0.0:%d", s.httpPort),
+		Handler: withRelayCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Check for subdomain-based expose routing first
+			if s.exposeDomain != "" && s.tryExposeProxy(w, r) {
+				return
+			}
+			// Fall through to normal mux routing
+			mux.ServeHTTP(w, r)
+		})),
 	}
 
 	go func() {
@@ -347,15 +380,20 @@ func (s *RelayServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	count := len(s.tunnels)
 	s.mu.RUnlock()
 
+	s.exposeMu.RLock()
+	exposeCount := len(s.exposeRoutes)
+	s.exposeMu.RUnlock()
+
 	bwStats := s.bandwidth.GetStats()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"ok":              true,
-		"tunnels":         count,
-		"version":         version,
-		"activeDevices":   bwStats.ActiveDevices,
-		"loadPercent":     bwStats.LoadPercent,
-		"limitsRelaxed":   bwStats.LimitsRelaxed,
+		"ok":                  true,
+		"tunnels":             count,
+		"exposeRoutes":        exposeCount,
+		"version":             version,
+		"activeDevices":       bwStats.ActiveDevices,
+		"loadPercent":         bwStats.LoadPercent,
+		"limitsRelaxed":       bwStats.LimitsRelaxed,
 		"bandwidthMultiplier": bwStats.CurrentMultiplier,
 	})
 }
@@ -377,10 +415,32 @@ func (s *RelayServer) handleListTunnels(w http.ResponseWriter, r *http.Request) 
 	}
 	s.mu.RUnlock()
 
+	s.exposeMu.RLock()
+	exposeList := make([]map[string]interface{}, 0, len(s.exposeRoutes))
+	for sub, route := range s.exposeRoutes {
+		deviceID := route.deviceID
+		if len(deviceID) > 8 {
+			deviceID = deviceID[:8] + "..."
+		}
+		publicURL := ""
+		if s.exposeDomain != "" {
+			publicURL = fmt.Sprintf("https://%s.%s", sub, s.exposeDomain)
+		}
+		exposeList = append(exposeList, map[string]interface{}{
+			"subdomain":   sub,
+			"deviceId":    deviceID,
+			"port":        route.port,
+			"publicUrl":   publicURL,
+			"createdAt":   route.createdAt.Format(time.RFC3339),
+		})
+	}
+	s.exposeMu.RUnlock()
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"ok":      true,
-		"tunnels": list,
+		"ok":           true,
+		"tunnels":      list,
+		"exposeRoutes": exposeList,
 	})
 }
 
@@ -691,6 +751,271 @@ func (s *RelayServer) proxyWebSocket(w http.ResponseWriter, r *http.Request, str
 	go func() { io.Copy(clientConn, stream); done <- struct{}{} }()
 	go func() { io.Copy(stream, clientConn); done <- struct{}{} }()
 	<-done
+}
+
+// --- Expose (subdomain routing) ---
+
+func (s *RelayServer) handleAgentControlStreams(conn quic.Connection, deviceID string) {
+	for {
+		stream, err := conn.AcceptStream(conn.Context())
+		if err != nil {
+			return // connection closed
+		}
+		go s.handleControlMsg(stream, deviceID)
+	}
+}
+
+func (s *RelayServer) handleControlMsg(stream quic.Stream, deviceID string) {
+	defer stream.Close()
+	data, err := io.ReadAll(io.LimitReader(stream, 1<<16))
+	if err != nil {
+		return
+	}
+
+	var peek struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &peek); err != nil {
+		return
+	}
+
+	switch peek.Type {
+	case "expose_register":
+		var msg ExposeRegisterMsg
+		if err := json.Unmarshal(data, &msg); err != nil {
+			resp, _ := json.Marshal(ExposeRegisterResp{Type: "error", Message: "invalid message"})
+			stream.Write(resp)
+			return
+		}
+		s.handleExposeRegister(stream, msg, deviceID)
+	case "expose_unregister":
+		var msg ExposeUnregisterMsg
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return
+		}
+		s.handleExposeUnregister(msg, deviceID)
+	}
+}
+
+func (s *RelayServer) handleExposeRegister(stream quic.Stream, msg ExposeRegisterMsg, deviceID string) {
+	subdomain := strings.ToLower(msg.Subdomain)
+
+	// Validate subdomain format
+	if len(subdomain) < 3 || len(subdomain) > 32 {
+		resp, _ := json.Marshal(ExposeRegisterResp{Type: "error", Message: "subdomain must be 3-32 characters"})
+		stream.Write(resp)
+		return
+	}
+	for _, c := range subdomain {
+		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') {
+			resp, _ := json.Marshal(ExposeRegisterResp{Type: "error", Message: "subdomain must be alphanumeric and hyphens only"})
+			stream.Write(resp)
+			return
+		}
+	}
+	if subdomain[0] == '-' || subdomain[len(subdomain)-1] == '-' {
+		resp, _ := json.Marshal(ExposeRegisterResp{Type: "error", Message: "subdomain cannot start or end with hyphen"})
+		stream.Write(resp)
+		return
+	}
+
+	// Block reserved subdomains
+	reserved := map[string]bool{"www": true, "api": true, "relay": true, "public": true, "admin": true, "mail": true, "app": true}
+	if reserved[subdomain] {
+		resp, _ := json.Marshal(ExposeRegisterResp{Type: "error", Message: "subdomain is reserved"})
+		stream.Write(resp)
+		return
+	}
+
+	if msg.Port <= 0 || msg.Port > 65535 {
+		resp, _ := json.Marshal(ExposeRegisterResp{Type: "error", Message: "invalid port"})
+		stream.Write(resp)
+		return
+	}
+
+	s.exposeMu.Lock()
+	// Check if subdomain taken by another device
+	if existing, ok := s.exposeRoutes[subdomain]; ok && existing.deviceID != deviceID {
+		s.exposeMu.Unlock()
+		resp, _ := json.Marshal(ExposeRegisterResp{Type: "error", Message: "subdomain already taken"})
+		stream.Write(resp)
+		return
+	}
+	// Enforce max 3 per device
+	count := 0
+	for _, r := range s.exposeRoutes {
+		if r.deviceID == deviceID {
+			count++
+		}
+	}
+	if count >= 3 {
+		// Check if this is an update (same subdomain)
+		if _, isUpdate := s.exposeRoutes[subdomain]; !isUpdate {
+			s.exposeMu.Unlock()
+			resp, _ := json.Marshal(ExposeRegisterResp{Type: "error", Message: "max 3 subdomains per device"})
+			stream.Write(resp)
+			return
+		}
+	}
+	s.exposeRoutes[subdomain] = &exposeRoute{
+		deviceID:  deviceID,
+		port:      msg.Port,
+		createdAt: time.Now(),
+	}
+	s.exposeMu.Unlock()
+
+	publicURL := fmt.Sprintf("https://%s.%s", subdomain, s.exposeDomain)
+	log.Printf("[EXPOSE] %s.%s → device %s port %d", subdomain, s.exposeDomain, deviceID[:8], msg.Port)
+
+	resp, _ := json.Marshal(ExposeRegisterResp{
+		Type:      "expose_registered",
+		OK:        true,
+		PublicURL: publicURL,
+	})
+	stream.Write(resp)
+}
+
+func (s *RelayServer) handleExposeUnregister(msg ExposeUnregisterMsg, deviceID string) {
+	subdomain := strings.ToLower(msg.Subdomain)
+	s.exposeMu.Lock()
+	if route, ok := s.exposeRoutes[subdomain]; ok && route.deviceID == deviceID {
+		delete(s.exposeRoutes, subdomain)
+		log.Printf("[EXPOSE] Removed %s.%s", subdomain, s.exposeDomain)
+	}
+	s.exposeMu.Unlock()
+}
+
+// tryExposeProxy checks if the request is for a registered subdomain.
+// Returns true if handled, false to fall through to normal routing.
+func (s *RelayServer) tryExposeProxy(w http.ResponseWriter, r *http.Request) bool {
+	host := r.Host
+	// Check X-Forwarded-Host (when behind nginx/Caddy)
+	if fh := r.Header.Get("X-Forwarded-Host"); fh != "" {
+		host = fh
+	}
+	// Strip port
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+
+	suffix := "." + s.exposeDomain
+	if !strings.HasSuffix(host, suffix) {
+		return false
+	}
+	subdomain := strings.TrimSuffix(host, suffix)
+	if subdomain == "" {
+		return false
+	}
+
+	s.exposeMu.RLock()
+	route, ok := s.exposeRoutes[subdomain]
+	s.exposeMu.RUnlock()
+	if !ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": fmt.Sprintf("subdomain '%s' not registered", subdomain),
+		})
+		return true
+	}
+
+	// Find tunnel
+	s.mu.RLock()
+	tunnel, tunnelOK := s.tunnels[route.deviceID]
+	s.mu.RUnlock()
+	if !tunnelOK {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "device not connected",
+		})
+		return true
+	}
+
+	// Proxy the request through QUIC tunnel with TargetPort set
+	s.proxyExposeRequest(w, r, tunnel, route)
+	return true
+}
+
+func (s *RelayServer) proxyExposeRequest(w http.ResponseWriter, r *http.Request, tunnel *agentTunnel, route *exposeRoute) {
+	// Read request body
+	var body []byte
+	if r.Body != nil {
+		body, _ = io.ReadAll(io.LimitReader(r.Body, 200<<20)) // 200MB for expose (dev assets)
+	}
+
+	// Build headers
+	headers := make(map[string]string)
+	for k, v := range r.Header {
+		if len(v) > 0 {
+			headers[k] = v[0]
+		}
+	}
+
+	tunnelReq := TunnelRequest{
+		ID:         fmt.Sprintf("%d", time.Now().UnixNano()),
+		Method:     r.Method,
+		Path:       r.URL.Path,
+		Query:      r.URL.RawQuery,
+		Headers:    headers,
+		Body:       body,
+		TargetPort: route.port,
+	}
+
+	streamCtx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+
+	stream, err := tunnel.conn.OpenStreamSync(streamCtx)
+	if err != nil {
+		log.Printf("[EXPOSE] open stream to %s failed: %v", tunnel.deviceID[:8], err)
+		http.Error(w, "device tunnel broken", http.StatusBadGateway)
+		return
+	}
+
+	// Check for SSE or WebSocket
+	isWebSocket := strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+	isSSE := r.Method == "GET" && strings.Contains(r.Header.Get("Accept"), "text/event-stream")
+
+	reqData, _ := json.Marshal(tunnelReq)
+	if _, err := stream.Write(reqData); err != nil {
+		stream.Close()
+		http.Error(w, "tunnel write error", http.StatusBadGateway)
+		return
+	}
+
+	if isWebSocket {
+		s.proxyWebSocket(w, r, stream, tunnel.deviceID)
+		return
+	}
+
+	stream.Close() // signal done writing
+
+	if isSSE {
+		s.proxySSE(w, r, stream, tunnel.deviceID)
+		return
+	}
+
+	// Read response
+	respData, err := io.ReadAll(io.LimitReader(stream, 200<<20))
+	if err != nil {
+		http.Error(w, "tunnel read error", http.StatusBadGateway)
+		return
+	}
+
+	var tunnelResp TunnelResponse
+	if err := json.Unmarshal(respData, &tunnelResp); err != nil {
+		http.Error(w, "tunnel response parse error", http.StatusBadGateway)
+		return
+	}
+
+	for k, v := range tunnelResp.Headers {
+		w.Header().Set(k, v)
+	}
+	w.WriteHeader(tunnelResp.StatusCode)
+	w.Write(tunnelResp.Body)
+
+	// Record bandwidth
+	s.bandwidth.RecordBytes(tunnel.deviceID, int64(len(reqData)), int64(len(tunnelResp.Body)), false)
 }
 
 func (s *RelayServer) logTunnels(ctx context.Context) {

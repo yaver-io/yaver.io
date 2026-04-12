@@ -178,6 +178,8 @@ func main() {
 		runMail(os.Args[2:])
 	case "copilot":
 		runCopilot(os.Args[2:])
+	case "expose":
+		runExposeCmd(os.Args[2:])
 	case "completion":
 		runCompletion(os.Args[2:])
 	case "help", "--help", "-h":
@@ -286,6 +288,9 @@ Usage:
   yaver guests invite <email>  Invite someone to use your machine (max 5 guests)
   yaver guests list            List your guests and their status
   yaver guests remove <email>  Revoke guest access
+  yaver expose --port <N> [--subdomain <name>]  Expose a local port via yaver.io subdomain
+  yaver expose list            List active expose entries
+  yaver expose stop [subdomain]  Stop exposing a subdomain (or all)
   yaver clean       Remove old tasks, images, and logs (default: older than 30 days)
   yaver purge       Factory reset — remove all local data (auth, sessions, tasks, logs)
   yaver reset       Alias for purge
@@ -1848,6 +1853,8 @@ func runServe(args []string) {
 	if userSettings != nil && userSettings.RelayUrl != "" {
 		relayMgr.lastSettingsRelay = userSettings.RelayUrl
 	}
+	// Share the relay expose manager with the HTTP server so /expose/relay/* endpoints work.
+	httpServer.relayExposeMgr = relayMgr.relayExposeMgr
 	relayMgr.applyRelayServers(relayServers, relayPasswords)
 	if !*noRelay {
 		go relayMgr.watchConfig(ctx)
@@ -4764,12 +4771,13 @@ type relayRegisterResp struct {
 }
 
 type relayTunnelRequest struct {
-	ID      string            `json:"id"`
-	Method  string            `json:"method"`
-	Path    string            `json:"path"`
-	Query   string            `json:"query"`
-	Headers map[string]string `json:"headers"`
-	Body    []byte            `json:"body"`
+	ID         string            `json:"id"`
+	Method     string            `json:"method"`
+	Path       string            `json:"path"`
+	Query      string            `json:"query"`
+	Headers    map[string]string `json:"headers"`
+	Body       []byte            `json:"body"`
+	TargetPort int               `json:"targetPort,omitempty"`
 }
 
 type relayTunnelResponse struct {
@@ -4801,15 +4809,16 @@ func relayHealthFile() string {
 
 // relayManager manages relay tunnel goroutines and hot-reloads config changes.
 type relayManager struct {
-	parentCtx       context.Context
-	deviceID        string
-	authToken       string
-	agentAddr       string
-	globalPassword  string
-	convexSiteURL   string
-	activeTunnels   map[string]context.CancelFunc // keyed by QuicAddr
-	healthStatus    map[string]*RelayHealthStatus  // keyed by httpUrl
-	lastSettingsRelay string // last relayUrl from user settings (for change detection)
+	parentCtx         context.Context
+	deviceID          string
+	authToken         string
+	agentAddr         string
+	globalPassword    string
+	convexSiteURL     string
+	activeTunnels     map[string]context.CancelFunc // keyed by QuicAddr
+	healthStatus      map[string]*RelayHealthStatus  // keyed by httpUrl
+	lastSettingsRelay string                         // last relayUrl from user settings (for change detection)
+	relayExposeMgr    *RelayExposeManager
 }
 
 func newRelayManager(ctx context.Context, deviceID, authToken, agentAddr, globalPassword, convexSiteURL string) *relayManager {
@@ -4822,6 +4831,7 @@ func newRelayManager(ctx context.Context, deviceID, authToken, agentAddr, global
 		convexSiteURL:  convexSiteURL,
 		activeTunnels:  make(map[string]context.CancelFunc),
 		healthStatus:   make(map[string]*RelayHealthStatus),
+		relayExposeMgr: NewRelayExposeManager(),
 	}
 }
 
@@ -4854,7 +4864,7 @@ func (rm *relayManager) applyRelayServers(servers []RelayServerInfo, passwords m
 		tunnelCtx, tunnelCancel := context.WithCancel(rm.parentCtx)
 		rm.activeTunnels[addr] = tunnelCancel
 		log.Printf("[RELAY] Starting tunnel to %s...", addr)
-		go runRelayTunnel(tunnelCtx, addr, rm.agentAddr, rm.deviceID, rm.authToken, pw)
+		go runRelayTunnel(tunnelCtx, addr, rm.agentAddr, rm.deviceID, rm.authToken, pw, rm.relayExposeMgr)
 	}
 }
 
@@ -5052,7 +5062,7 @@ func loadRelayHealth() []RelayHealthStatus {
 
 // runRelayTunnel connects to the relay and handles incoming proxied requests.
 // It reconnects automatically with exponential backoff.
-func runRelayTunnel(ctx context.Context, relayAddr, agentAddr, deviceID, token, password string) {
+func runRelayTunnel(ctx context.Context, relayAddr, agentAddr, deviceID, token, password string, exposeMgr *RelayExposeManager) {
 	backoff := time.Second
 
 	for {
@@ -5063,7 +5073,7 @@ func runRelayTunnel(ctx context.Context, relayAddr, agentAddr, deviceID, token, 
 		}
 
 		log.Printf("[RELAY] Connecting to relay %s...", relayAddr)
-		err := relayConnectAndServe(ctx, relayAddr, agentAddr, deviceID, token, password)
+		err := relayConnectAndServe(ctx, relayAddr, agentAddr, deviceID, token, password, exposeMgr)
 		if err != nil {
 			log.Printf("[RELAY] Connection lost: %v", err)
 		}
@@ -5086,7 +5096,7 @@ func runRelayTunnel(ctx context.Context, relayAddr, agentAddr, deviceID, token, 
 	}
 }
 
-func relayConnectAndServe(ctx context.Context, relayAddr, agentAddr, deviceID, token, password string) error {
+func relayConnectAndServe(ctx context.Context, relayAddr, agentAddr, deviceID, token, password string, exposeMgr *RelayExposeManager) error {
 	tlsCfg := &tls.Config{
 		InsecureSkipVerify: true,
 		NextProtos:         []string{"yaver-relay"},
@@ -5127,6 +5137,11 @@ func relayConnectAndServe(ctx context.Context, relayAddr, agentAddr, deviceID, t
 
 	log.Printf("[RELAY] Registered with relay as device %s", deviceID[:8])
 
+	// Re-register any active expose entries on the new connection
+	if exposeMgr != nil {
+		exposeMgr.SetConn(conn, deviceID)
+	}
+
 	// Handle incoming proxied requests
 	localClient := &http.Client{Timeout: 60 * time.Second}
 
@@ -5158,7 +5173,11 @@ func relayHandleProxiedRequest(stream quic.Stream, agentAddr string, client *htt
 	}
 
 	// Build local HTTP request
-	url := fmt.Sprintf("http://%s%s", agentAddr, req.Path)
+	target := agentAddr
+	if req.TargetPort > 0 {
+		target = fmt.Sprintf("127.0.0.1:%d", req.TargetPort)
+	}
+	url := fmt.Sprintf("http://%s%s", target, req.Path)
 	if req.Query != "" {
 		url += "?" + req.Query
 	}
@@ -5178,7 +5197,7 @@ func relayHandleProxiedRequest(stream quic.Stream, agentAddr string, client *htt
 	isWebSocket := strings.EqualFold(req.Headers["Upgrade"], "websocket")
 	if isWebSocket {
 		// Open raw TCP to the local agent HTTP server and bidirectionally proxy
-		backendConn, err := net.Dial("tcp", agentAddr)
+		backendConn, err := net.Dial("tcp", target)
 		if err != nil {
 			relaySendError(stream, req.ID, 502, fmt.Sprintf("agent unavailable: %v", err))
 			return
