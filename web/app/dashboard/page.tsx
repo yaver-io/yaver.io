@@ -20,6 +20,7 @@ import ObservabilityView from "@/components/dashboard/ObservabilityView";
 import OpsView from "@/components/dashboard/OpsView";
 import OverviewView from "@/components/dashboard/OverviewView";
 import ExtrasView from "@/components/dashboard/ExtrasView";
+import ShareView from "@/components/dashboard/ShareView";
 import PreviewPane from "@/components/dashboard/PreviewPane";
 
 function statusColor(s: string) {
@@ -44,7 +45,7 @@ export default function DashboardPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [guestCode, setGuestCode] = useState("");
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras">("home");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share">("home");
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [relayReady, setRelayReady] = useState(false);
@@ -174,6 +175,7 @@ export default function DashboardPage() {
     { id: "observ", label: "Observ", icon: "\uD83D\uDCCA" },
     { id: "ops", label: "Ops", icon: "\uD83D\uDE80" },
     { id: "extras", label: "Extras", icon: "\u2699\uFE0F" },
+    { id: "share", label: "Share", icon: "\uD83D\uDCE3" },
     { id: "convex", label: "Convex", icon: "\u26A1" },
   ];
 
@@ -369,6 +371,8 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><OpsView /></div>
           ) : activeTab === "extras" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><ExtrasView /></div>
+          ) : activeTab === "share" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><ShareView /></div>
           ) : activeTab === "convex" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full"><ConvexView /></div>
           ) : (

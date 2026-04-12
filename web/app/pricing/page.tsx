@@ -239,14 +239,33 @@ function PricingContent() {
   return (
     <div className="px-6 py-20">
       <div className="mx-auto max-w-6xl">
+        {/* ── Free forever banner ──────────────────────────────── */}
+        <div className="mb-10 mx-auto max-w-3xl rounded-2xl border border-indigo-500/30 bg-gradient-to-br from-indigo-500/10 via-transparent to-transparent p-6 text-center">
+          <div className="text-[11px] uppercase tracking-widest text-indigo-400 font-semibold mb-2">Yaver is free for solo builders</div>
+          <h2 className="text-2xl md:text-3xl font-bold text-surface-50 mb-3">
+            Your machine is your cloud. Ship for free.
+          </h2>
+          <p className="text-sm text-surface-400 leading-relaxed max-w-xl mx-auto">
+            The CLI, the mobile app, the web dashboard, the relay, the SDK — all free and open-source.
+            Run it on your MacBook, your Mac Mini, your $5 Hetzner VPS. No seats, no credits, no limits.
+          </p>
+          <div className="mt-5 flex flex-wrap justify-center gap-2 text-xs">
+            <span className="px-3 py-1 rounded-full bg-surface-900 text-surface-300 border border-surface-800">✓ 0 users / seats</span>
+            <span className="px-3 py-1 rounded-full bg-surface-900 text-surface-300 border border-surface-800">✓ unlimited projects</span>
+            <span className="px-3 py-1 rounded-full bg-surface-900 text-surface-300 border border-surface-800">✓ unlimited machines</span>
+            <span className="px-3 py-1 rounded-full bg-surface-900 text-surface-300 border border-surface-800">✓ unlimited deploys</span>
+            <span className="px-3 py-1 rounded-full bg-surface-900 text-surface-300 border border-surface-800">✓ MIT license</span>
+          </div>
+        </div>
+
         {/* ── Header ───────────────────────────────────────────── */}
         <div className="mb-16 text-center">
           <h1 className="mb-4 text-3xl font-bold text-surface-50 md:text-4xl">
-            Simple, honest pricing.
+            Optional managed tier
           </h1>
           <p className="mx-auto max-w-xl text-sm leading-relaxed text-surface-500">
-            Your code stays on your machine. We handle the infrastructure.
-            Self-host everything for free, or let us run it for you.
+            Everything above runs on your own hardware for $0. If you want us to run the server
+            instead (Yaver Cloud), there's a single managed tier below.
           </p>
         </div>
 

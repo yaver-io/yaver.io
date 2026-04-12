@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { agentClient } from "@/lib/agent-client";
 import EnvironmentSwitcher from "./EnvironmentSwitcher";
+import ProjectDetailView from "./ProjectDetailView";
 
 interface Project {
   name: string;
@@ -35,6 +36,7 @@ function getCategory(framework?: string): "mobile" | "web" | "other" {
 
 export default function ProjectsView({ onTaskCreated }: { onTaskCreated?: (taskId: string) => void }) {
   const [envProject, setEnvProject] = useState<string | null>(null);
+  const [detailPath, setDetailPath] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [devStatus, setDevStatus] = useState<{ running: boolean; framework?: string; workDir?: string } | null>(null);
@@ -123,6 +125,10 @@ export default function ProjectsView({ onTaskCreated }: { onTaskCreated?: (taskI
     ...(categories.other > 0 ? [{ id: "other" as Category, label: "Other", count: categories.other }] : []),
   ];
 
+  if (detailPath) {
+    return <ProjectDetailView directory={detailPath} onClose={() => setDetailPath(null)} />;
+  }
+
   return (
     <div className="space-y-3">
       {devStatus?.running && (
@@ -173,7 +179,7 @@ export default function ProjectsView({ onTaskCreated }: { onTaskCreated?: (taskI
             const cat = getCategory(p.framework);
             const icon = FRAMEWORK_ICONS[p.framework || ""] || (cat === "mobile" ? "\uD83D\uDCF1" : cat === "web" ? "\uD83C\uDF10" : "\uD83D\uDCC1");
             return (
-              <div key={p.path} className="rounded-lg border border-surface-800 bg-surface-900/50 p-3 flex items-center gap-3 hover:border-surface-700 transition-colors">
+              <div key={p.path} onClick={(e) => { if ((e.target as HTMLElement).tagName !== "BUTTON") setDetailPath(p.path); }} className="rounded-lg border border-surface-800 bg-surface-900/50 p-3 flex items-center gap-3 hover:border-indigo-500/40 transition-colors cursor-pointer">
                 <span className="text-lg">{icon}</span>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium truncate">{p.name}</div>

@@ -417,6 +417,22 @@ func (sm *ServicesManager) Start(names ...string) (string, error) {
 		}
 	}
 
+	// If any of the started services back a known dashboard (Convex, Supabase,
+	// PocketBase, Drizzle, etc.), auto-spin up the per-project tunnel so
+	// users don't have to manually POST /dashboard/start.
+	go func() {
+		needsDashboard := false
+		for _, n := range dockerNames {
+			switch n {
+			case "convex", "pocketbase", "supabase":
+				needsDashboard = true
+			}
+		}
+		if needsDashboard {
+			_, _ = StartDashboard(sm.workDir)
+		}
+	}()
+
 	return "Services started:\n" + strings.Join(lines, "\n"), nil
 }
 

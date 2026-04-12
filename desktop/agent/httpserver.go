@@ -690,6 +690,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 
 	// Overview home summary
 	mux.HandleFunc("/overview/summary", s.auth(s.handleOverviewSummary))
+	mux.HandleFunc("/sync/status", s.auth(s.handleSyncStatus))
 
 	// Per-project dashboard manager (Convex/Supabase/Drizzle/PocketBase per project)
 	mux.HandleFunc("/dashboard/start", s.auth(s.handleDashboardStart))
