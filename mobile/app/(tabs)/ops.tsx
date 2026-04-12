@@ -70,6 +70,25 @@ function DeployTab({ c, dir }: { c: any; dir: string }) {
   const q = dir ? `?directory=${encodeURIComponent(dir)}` : "";
   async function refresh() { try { const r = await callAgent(`/deploy/list${q}`); setList(r.deploys || []); } catch {} }
   useEffect(() => { refresh(); }, [dir]);
+  async function openPreview() {
+    const p = await callAgent(`/deploy/preview${q}`);
+    const warnings = (p.warnings || []).join("\n");
+    const summary = [
+      `Branch: ${p.branch || "(not a git repo)"}`,
+      p.lastCommit ? `Commit: ${p.lastCommit} ${p.lastMessage}` : null,
+      `Ahead/behind: ${p.ahead || 0}/${p.behind || 0}`,
+      p.dirty ? `⚠ ${p.dirtyFiles?.length} uncommitted file(s)` : null,
+      `Env: ${p.activeEnv}`,
+      p.ciConfigured ? `CI: ${p.ciSteps} step(s) · onFail=${p.ciOnFail}` : "CI: not configured",
+      p.migrator ? `Migrations: ${p.migrator}` : "Migrations: none",
+      p.healthcheck ? `Healthcheck: ${p.healthcheck}${p.healthInferred ? " (inferred)" : ""}` : "Healthcheck: none",
+    ].filter(Boolean).join("\n");
+    const full = warnings ? `⚠ WARNINGS\n${warnings}\n\n${summary}` : summary;
+    Alert.alert("Pre-deploy check", full, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Deploy", style: warnings ? "destructive" : "default", onPress: deploy },
+    ]);
+  }
   async function deploy() {
     setRunning(true);
     const r = await callAgent(`/deploy/run${q}`, { method: "POST" });
@@ -84,7 +103,7 @@ function DeployTab({ c, dir }: { c: any; dir: string }) {
   }
   return (
     <View style={{ gap: 10 }}>
-      <Pressable onPress={deploy} style={[actionBtn(c), { backgroundColor: c.accent }]} disabled={running}>
+      <Pressable onPress={openPreview} style={[actionBtn(c), { backgroundColor: c.accent }]} disabled={running}>
         {running ? <ActivityIndicator color="#fff" /> : <Text style={{ color: "#fff", fontWeight: "700" }}>🚀 Deploy now</Text>}
       </Pressable>
       {list.map((d) => (

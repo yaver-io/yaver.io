@@ -39,13 +39,19 @@ function Deploy({ directory }: { directory: string }) {
   const [list, setList] = useState<any[]>([]);
   const [running, setRunning] = useState(false);
   const [cfg, setCfg] = useState<any>({ branch: "main", autoDeploy: false });
+  const [preview, setPreview] = useState<any>(null);
 
   useEffect(() => { refresh(); (async () => setCfg(await agentClient.deployConfigGet(directory || undefined)))(); }, [directory]);
   async function refresh() {
     const r = await agentClient.deployList(directory || undefined);
     setList(r.deploys || []);
   }
-  async function run() {
+  async function openPreview() {
+    const p = await agentClient.deployPreview(directory || undefined);
+    setPreview(p);
+  }
+  async function confirmRun() {
+    setPreview(null);
     setRunning(true);
     await agentClient.deployRun(directory || undefined);
     setRunning(false);
@@ -75,9 +81,10 @@ function Deploy({ directory }: { directory: string }) {
         <div className="text-[10px] text-surface-500">Webhook URL: <code>/deploy/webhook?project={encodeURIComponent(directory || "<dir>")}</code></div>
       </div>
       <div className="flex gap-2">
-        <button onClick={run} disabled={running} className="px-4 py-2 text-sm rounded-lg bg-indigo-500 text-white hover:bg-indigo-400 disabled:opacity-50">{running ? "Deploying…" : "🚀 Deploy now"}</button>
+        <button onClick={openPreview} disabled={running} className="px-4 py-2 text-sm rounded-lg bg-indigo-500 text-white hover:bg-indigo-400 disabled:opacity-50">{running ? "Deploying…" : "🚀 Deploy now"}</button>
         <button onClick={refresh} className="px-3 py-2 text-sm rounded-lg bg-surface-800 text-surface-200 hover:bg-surface-700">Refresh</button>
       </div>
+      {preview && <PreviewModal preview={preview} onConfirm={confirmRun} onClose={() => setPreview(null)} />}
       <div className="space-y-1">
         {list.map((d) => (
           <div key={d.id} className="bg-surface-900/50 border border-surface-800 rounded-lg p-3 text-sm">
@@ -91,6 +98,66 @@ function Deploy({ directory }: { directory: string }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function PreviewModal({ preview, onConfirm, onClose }: { preview: any; onConfirm: () => void; onClose: () => void }) {
+  const p = preview;
+  const hasBlockers = p.warnings?.length > 0 && p.warnings.some((w: string) =>
+    w.includes("PRODUCTION") || w.includes("uncommitted"));
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-surface-950 border border-surface-700 rounded-xl p-5 max-w-2xl w-full space-y-3 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-semibold">Pre-deploy check</h3>
+          <button onClick={onClose} className="text-xs text-surface-500 hover:text-surface-300">close</button>
+        </div>
+
+        {p.warnings?.length > 0 && (
+          <div className={`rounded-lg border p-3 text-xs space-y-1 ${hasBlockers ? "border-amber-500/40 bg-amber-500/10 text-amber-200" : "border-surface-700 bg-surface-900 text-surface-300"}`}>
+            {p.warnings.map((w: string, i: number) => <div key={i}>⚠️ {w}</div>)}
+          </div>
+        )}
+
+        <div className="space-y-2 text-sm">
+          <Row label="Branch" value={p.branch || "(not a git repo)"} />
+          {p.lastCommit && <Row label="Last commit" value={<span><code className="text-indigo-300">{p.lastCommit}</code> {p.lastMessage}</span>} />}
+          <Row label="Ahead / behind" value={`${p.ahead || 0} ahead · ${p.behind || 0} behind`} />
+          <Row label="Uncommitted" value={p.dirty ? `${p.dirtyFiles.length} file(s) — will NOT deploy` : "clean"} />
+          <Row label="Active env" value={<span className={p.activeEnv === "production" ? "text-red-300" : ""}>{p.activeEnv}</span>} />
+          <Row label="CI gate" value={p.ciConfigured ? `${p.ciSteps} step(s) · onFail=${p.ciOnFail}` : "not configured"} />
+          <Row label="DB migrations" value={p.migrator ? `${p.migrator} (${p.migratorCmd})` : "none detected"} />
+          <Row label="Healthcheck" value={p.healthcheck ? `${p.healthcheck}${p.healthInferred ? " (auto-inferred)" : ""}` : "none"} />
+          {p.lastDeploy && (
+            <Row label="Last deploy" value={<span><span className={p.lastDeploy.status === "success" ? "text-emerald-400" : "text-red-400"}>{p.lastDeploy.status}</span> · {p.lastDeploy.commit?.slice(0, 8)} · {p.lastDeploy.duration}</span>} />
+          )}
+        </div>
+
+        {p.dirtyFiles?.length > 0 && (
+          <details className="rounded bg-surface-900/50 border border-surface-800 p-2">
+            <summary className="text-xs text-surface-400 cursor-pointer">Uncommitted files ({p.dirtyFiles.length})</summary>
+            <pre className="mt-1 text-[10px] text-surface-500 font-mono max-h-32 overflow-auto">{p.dirtyFiles.join("\n")}</pre>
+          </details>
+        )}
+
+        <div className="flex gap-2 pt-2">
+          <button onClick={onConfirm}
+            className={`flex-1 px-4 py-2 text-sm rounded-lg font-semibold ${hasBlockers ? "bg-amber-500 hover:bg-amber-400" : "bg-indigo-500 hover:bg-indigo-400"} text-white`}>
+            {hasBlockers ? "⚠️ Deploy anyway" : "🚀 Deploy"}
+          </button>
+          <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg bg-surface-800 text-surface-200">Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex gap-3 text-xs">
+      <span className="w-32 text-surface-500">{label}</span>
+      <span className="flex-1 text-surface-200 font-mono">{value}</span>
     </div>
   );
 }

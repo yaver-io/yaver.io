@@ -590,6 +590,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/deploy/rollback", s.auth(s.handleDeployRollback))
 	mux.HandleFunc("/deploy/config", s.auth(s.handleDeployConfig))
 	mux.HandleFunc("/deploy/webhook", s.handleDeployWebhook)
+	mux.HandleFunc("/deploy/preview", s.auth(s.handleDeployPreview))
 
 	// Backups
 	mux.HandleFunc("/backups/create", s.auth(s.handleBackupCreate))

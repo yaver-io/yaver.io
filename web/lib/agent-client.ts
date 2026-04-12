@@ -1012,6 +1012,13 @@ class AgentClient {
 
   // ── Ops: deploy / backups / domains / logs / errors / cron / uptime / clone ──
 
+  async deployPreview(directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/deploy/preview${q}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
   async deployRun(directory?: string): Promise<any> {
     this.assertConnected();
     const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
