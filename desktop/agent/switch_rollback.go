@@ -87,6 +87,15 @@ func (e *SwitchEngine) Rollback(projectDir, switchID string) (*SwitchState, erro
 }
 
 func restoreFromSnapshot(projectDir string, backend BackendKind, snapshotPath string) string {
+	// Auto-decrypt if the snapshot is an encrypted blob.
+	if strings.HasSuffix(snapshotPath, ".enc") {
+		plain, err := DecryptBackupFile(snapshotPath)
+		if err != nil {
+			return "decrypt failed: " + err.Error()
+		}
+		defer os.Remove(plain) // never leave plaintext on disk
+		snapshotPath = plain
+	}
 	switch backend {
 	case BackendPostgres, BackendSupabase:
 		dsn, _ := resolveDSN(projectDir, backend)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -126,6 +127,25 @@ func RunDeploy(projectDir string, trigger string) (*DeployRecord, error) {
 		if msg, err := sm.runDocker("compose", "-p", "yaver-services", "-f", sm.composePath(), "build"); err != nil {
 			rec.Logs = append(rec.Logs, "FAIL compose build: "+err.Error()+"\n"+msg)
 			return rollback(rec, "compose build failed")
+		}
+	}
+
+	// 2a. Run CI pipeline if .yaver/ci.yaml exists — block deploy on failure
+	// unless pipeline's onFail is "warn".
+	if p, _ := LoadCIPipeline(projectDir); p != nil {
+		rec.Logs = append(rec.Logs, fmt.Sprintf("CI pipeline detected (%d steps)", len(p.Steps)))
+		run, err := RunCI(context.Background(), projectDir, "pre-deploy")
+		if err != nil {
+			rec.Logs = append(rec.Logs, "CI failed: "+err.Error())
+			if p.OnFail != "warn" {
+				return rollback(rec, "CI failed: "+err.Error())
+			}
+		}
+		if run != nil {
+			rec.Logs = append(rec.Logs, fmt.Sprintf("CI %s (%d steps)", run.Status, len(run.Steps)))
+			if run.Status == "failed" && p.OnFail != "warn" {
+				return rollback(rec, "CI pipeline failed — blocked deploy")
+			}
 		}
 	}
 

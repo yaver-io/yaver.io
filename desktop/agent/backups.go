@@ -65,6 +65,12 @@ func CreateBackup(projectDir, kind string) (*ProjectBackup, error) {
 	if dumpErr != nil {
 		rec.Error = dumpErr.Error()
 	}
+	// Encrypt at rest if enabled for this project.
+	if path != "" && dumpErr == nil && IsBackupEncryptionEnabled(projectDir) {
+		if encPath, encErr := EncryptBackupFile(path); encErr == nil {
+			path = encPath
+		}
+	}
 	rec.Path = path
 	if info, err := os.Stat(path); err == nil {
 		rec.Size = info.Size()
