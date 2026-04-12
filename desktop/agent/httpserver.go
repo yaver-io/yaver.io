@@ -612,7 +612,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/errors/ingest", s.handleErrorIngest)
 	mux.HandleFunc("/errors/groups", s.auth(s.handleErrorGroups))
 	mux.HandleFunc("/errors/instances", s.auth(s.handleErrorInstances))
-	mux.HandleFunc("/errors/resolve", s.auth(s.handleErrorResolve))
+	// /errors/resolve registered at line 175 (handleErrorsResolve) — this duplicate removed
 
 	// Environment clone
 	mux.HandleFunc("/env/clone", s.auth(s.handleCloneEnvironment))
