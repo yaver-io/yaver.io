@@ -72,24 +72,30 @@ function DeviceCard({
     let paired = false;
     const check = async () => {
       if (paired || cancelled) return;
+      const targetUrl = `http://${device.host}:${device.port || 18080}`;
+      console.log(`[auto-pair] polling ${targetUrl}/info for ${device.name}`);
       try {
-        const url = `http://${device.host}:${device.port || 18080}/info`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
-        if (!res.ok || cancelled) return;
+        const res = await fetch(`${targetUrl}/info`, { signal: AbortSignal.timeout(3000) });
+        if (!res.ok) {
+          console.log(`[auto-pair] ${device.name}: /info returned ${res.status}`);
+          return;
+        }
+        if (cancelled) return;
         const info = await res.json();
         const inBootstrap = info.needsAuth === true || info.mode === "bootstrap";
+        console.log(`[auto-pair] ${device.name}: needsAuth=${info.needsAuth} mode=${info.mode} → inBootstrap=${inBootstrap}`);
         if (cancelled) return;
         setNeedsAuth(inBootstrap);
         if (!inBootstrap) return;
-        // Auto-pair: dynamic import to avoid circular deps on first load
         setAutoPairing(true);
         try {
           const { submitEncryptedPair } = await import("../../src/lib/encryptedPair");
           const { submitPair } = await import("../../src/lib/pairDevice");
-          const targetUrl = `http://${device.host}:${device.port || 18080}`;
           const pubKey = device.publicKey || info.devicePublicKey;
           if (pubKey) {
+            console.log(`[auto-pair] ${device.name}: trying encrypted pair with pubkey ${pubKey.slice(0,12)}...`);
             const r = await submitEncryptedPair(targetUrl, token, pubKey);
+            console.log(`[auto-pair] ${device.name}: encrypted pair result ok=${r.ok} error=${r.error}`);
             if (r.ok) {
               paired = true;
               setNeedsAuth(false);
@@ -98,17 +104,21 @@ function DeviceCard({
           }
           const passkey = info.bootstrapPasskey;
           if (passkey) {
+            console.log(`[auto-pair] ${device.name}: trying passkey pair ${passkey}`);
             const r = await submitPair({ code: passkey, targetUrl, token, userId: "" });
+            console.log(`[auto-pair] ${device.name}: passkey pair result ok=${r.ok} error=${r.error}`);
             if (r.ok) {
               paired = true;
               setNeedsAuth(false);
             }
+          } else {
+            console.log(`[auto-pair] ${device.name}: no passkey in /info — cannot fall back`);
           }
         } finally {
           if (!cancelled) setAutoPairing(false);
         }
-      } catch {
-        // network error — leave previous state, retry next tick
+      } catch (err: any) {
+        console.log(`[auto-pair] ${device.name}: error ${err?.message || err}`);
       }
     };
     check();

@@ -3,6 +3,7 @@
     "name": "Bento",
     "slug": "bento",
     "version": "0.1.0",
+    "scheme": "bento",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "ios": {
@@ -12,6 +13,7 @@
     "android": {
       "package": "io.yaver.bento"
     },
+    "plugins": ["expo-router"],
     "newArchEnabled": true
   }
 }
