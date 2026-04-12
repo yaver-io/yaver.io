@@ -109,6 +109,21 @@ class YaverBundleLoader: RCTEventEmitter {
         try localMeta.write(to: dir.appendingPathComponent("metadata.json"), options: .atomic)
 
         UserDefaults.standard.set(moduleName, forKey: "yaverLoadedModuleName")
+
+        // Store agent base URL + auth token so AppDelegate can call /dev/stop
+        // when user taps "Back to Yaver" from the shake overlay.
+        if let parsed = URL(string: urlString),
+           let scheme = parsed.scheme,
+           let host = parsed.host {
+          var baseURL = "\(scheme)://\(host)"
+          if let port = parsed.port { baseURL += ":\(port)" }
+          UserDefaults.standard.set(baseURL, forKey: "yaverAgentBaseURL")
+        }
+        if let headers = headers as? [String: String],
+           let auth = headers["Authorization"] ?? headers["authorization"] {
+          UserDefaults.standard.set(auth, forKey: "yaverAgentAuth")
+        }
+
         resolve(["loaded": true, "url": urlString, "size": data.count])
 
         NSLog("[YaverBundleLoader] posting reload notification: moduleName=%@", moduleName)
