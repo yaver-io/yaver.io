@@ -272,6 +272,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/clips/stop", s.auth(s.handleClipStop))
 	mux.HandleFunc("/clips/list", s.auth(s.handleClipList))
 	mux.HandleFunc("/clips/upload/", s.auth(s.handleClipUpload))
+	mux.HandleFunc("/clips/merge/", s.auth(s.handleClipMerge))
 	mux.HandleFunc("/clips/", s.handleClipDetail)
 
 	// Affiliate tracking (extends the shortener with commissions)

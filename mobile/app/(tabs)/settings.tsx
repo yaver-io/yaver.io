@@ -1217,6 +1217,7 @@ export default function SettingsScreen() {
             </Text>
             <Text style={[styles.actionRowChevron, { color: c.textMuted }]}>&rsaquo;</Text>
           </Pressable>
+          <View style={{ height: 8 }} />
           <Pressable
             style={({ pressed }) => [
               styles.actionRow,
@@ -1400,6 +1401,7 @@ export default function SettingsScreen() {
           </View>
 
           {/* Containerize Guests toggle */}
+          <View style={{ height: 8 }} />
           <View style={[styles.actionRow, { backgroundColor: c.bgCard, borderColor: c.border, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
             <View style={{ flex: 1 }}>
               <Text style={[styles.actionRowLabel, { color: c.textPrimary }]}>Containerize Guests</Text>
@@ -1422,6 +1424,7 @@ export default function SettingsScreen() {
           </View>
 
           {/* Containerize Host toggle */}
+          <View style={{ height: 8 }} />
           <View style={[styles.actionRow, { backgroundColor: c.bgCard, borderColor: c.border, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
             <View style={{ flex: 1 }}>
               <Text style={[styles.actionRowLabel, { color: c.textPrimary }]}>Containerize Host</Text>
@@ -1444,6 +1447,7 @@ export default function SettingsScreen() {
           </View>
 
           {/* Network Mode */}
+          <View style={{ height: 8 }} />
           <View style={[styles.actionRow, { backgroundColor: c.bgCard, borderColor: c.border }]}>
             <Text style={[styles.actionRowLabel, { color: c.textPrimary, marginBottom: 6 }]}>Network Mode</Text>
             <View style={{ flexDirection: "row", gap: 6 }}>
@@ -1476,6 +1480,7 @@ export default function SettingsScreen() {
           </View>
 
           {/* Read-only rootfs toggle */}
+          <View style={{ height: 8 }} />
           <View style={[styles.actionRow, { backgroundColor: c.bgCard, borderColor: c.border, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
             <View style={{ flex: 1 }}>
               <Text style={[styles.actionRowLabel, { color: c.textPrimary }]}>Read-only Root</Text>

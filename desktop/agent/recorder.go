@@ -48,9 +48,12 @@ type ClipSession struct {
 	StartedAt   time.Time `json:"startedAt"`
 	StoppedAt   time.Time `json:"stoppedAt,omitempty"`
 	DurationSec int       `json:"durationSec,omitempty"`
+	// Targets requested for this session (e.g. ["agent-screen","mobile-screen"]).
+	// Default is ["agent-screen"] when absent for backward compatibility.
+	Targets []string `json:"targets,omitempty"`
 	// Streams available in this session. Extendable so mobile
 	// can join with its own capture later without migrations.
-	Streams     []ClipStream `json:"streams"`
+	Streams []ClipStream `json:"streams"`
 }
 
 // ClipStream is one uploaded track. Agent-screen always exists;
@@ -222,10 +225,17 @@ func (s *HTTPServer) handleClipStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Title       string `json:"title,omitempty"`
-		Description string `json:"description,omitempty"`
+		Title       string   `json:"title,omitempty"`
+		Description string   `json:"description,omitempty"`
+		Targets     []string `json:"targets,omitempty"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	// Default to agent-screen only for backward compatibility.
+	targets := body.Targets
+	if len(targets) == 0 {
+		targets = []string{"agent-screen"}
+	}
 
 	clipMu.Lock()
 	if clipActive != nil {
@@ -235,21 +245,44 @@ func (s *HTTPServer) handleClipStart(w http.ResponseWriter, r *http.Request) {
 	}
 	clipMu.Unlock()
 
+	// Build initial streams list from targets.
+	var streams []ClipStream
+	wantAgent := false
+	for _, t := range targets {
+		switch t {
+		case "agent-screen":
+			streams = append(streams, ClipStream{Kind: "agent-screen", File: "agent-screen.mp4", Mime: "video/mp4"})
+			wantAgent = true
+		case "mobile-screen":
+			streams = append(streams, ClipStream{Kind: "mobile-screen", File: "mobile-screen.mp4", Mime: "video/mp4"})
+		}
+	}
+	if len(streams) == 0 {
+		streams = []ClipStream{{Kind: "agent-screen", File: "agent-screen.mp4", Mime: "video/mp4"}}
+		wantAgent = true
+	}
+
 	session := &ClipSession{
 		ID:          "clip-" + randomFormID(),
 		Title:       body.Title,
 		Description: body.Description,
 		StartedAt:   time.Now().UTC(),
-		Streams:     []ClipStream{{Kind: "agent-screen", File: "agent-screen.mp4", Mime: "video/mp4"}},
+		Targets:     targets,
+		Streams:     streams,
 	}
 	if err := saveClipSession(session); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	cmd, err := startAgentCapture(session)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, err.Error())
-		return
+
+	var cmd *exec.Cmd
+	if wantAgent {
+		var err error
+		cmd, err = startAgentCapture(session)
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	clipMu.Lock()
 	clipActive = &activeSession{session: session, cmd: cmd, stopCh: make(chan struct{})}
@@ -279,9 +312,11 @@ func (s *HTTPServer) handleClipStop(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusNotFound, "no active recording")
 		return
 	}
-	// Politely ask ffmpeg to finalise the moov atom.
-	_ = active.cmd.Process.Signal(os.Interrupt)
-	_ = active.cmd.Wait()
+	// Politely ask ffmpeg to finalise the moov atom (if agent capture was running).
+	if active.cmd != nil {
+		_ = active.cmd.Process.Signal(os.Interrupt)
+		_ = active.cmd.Wait()
+	}
 	active.session.StoppedAt = time.Now().UTC()
 	active.session.DurationSec = int(active.session.StoppedAt.Sub(active.session.StartedAt).Seconds())
 	// Walk the session dir and flip the agent-screen stream to
@@ -291,8 +326,8 @@ func (s *HTTPServer) handleClipStop(w http.ResponseWriter, r *http.Request) {
 			p, _ := sessionDir(active.session.ID)
 			if info, err := os.Stat(filepath.Join(p, active.session.Streams[i].File)); err == nil {
 				active.session.Streams[i].Bytes = info.Size()
+				active.session.Streams[i].Uploaded = true
 			}
-			active.session.Streams[i].Uploaded = true
 		}
 	}
 	_ = saveClipSession(active.session)
@@ -331,13 +366,27 @@ func (s *HTTPServer) handleClipDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 1 {
-		// Metadata view.
+		// Metadata view. Show merged video if available, otherwise agent-screen.
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprintf(w, `<!doctype html><html><body style='font-family:system-ui;max-width:720px;margin:32px auto'>
+		videoSrc := "agent-screen.mp4"
+		for _, st := range sess.Streams {
+			if st.Kind == "merged" && st.Uploaded {
+				videoSrc = "merged.mp4"
+				break
+			}
+		}
+		// Build stream badges.
+		var badges string
+		for _, st := range sess.Streams {
+			if st.Uploaded {
+				badges += fmt.Sprintf(` <span style="background:#334;padding:2px 8px;border-radius:4px;font-size:12px;color:#aaa">%s</span>`, st.Kind)
+			}
+		}
+		fmt.Fprintf(w, `<!doctype html><html><body style='font-family:system-ui;max-width:960px;margin:32px auto;background:#111;color:#eee'>
 <h1>%s</h1><p>%s</p>
-<video controls style="width:100%%;border-radius:8px" src="/clips/%s/agent-screen.mp4"></video>
-<p>Recorded %s · %d sec</p>
-</body></html>`, sess.Title, sess.Description, sess.ID, sess.StartedAt.Format(time.RFC1123), sess.DurationSec)
+<video controls style="width:100%%;border-radius:8px" src="/clips/%s/%s"></video>
+<p>Recorded %s · %d sec%s</p>
+</body></html>`, sess.Title, sess.Description, sess.ID, videoSrc, sess.StartedAt.Format(time.RFC1123), sess.DurationSec, badges)
 		return
 	}
 	// File streaming view.
@@ -408,6 +457,107 @@ func (s *HTTPServer) handleClipUpload(w http.ResponseWriter, r *http.Request) {
 			Kind: kind, File: filename, Bytes: n, Mime: "video/mp4", Uploaded: true,
 		})
 	}
+	_ = saveClipSession(sess)
+	jsonReply(w, http.StatusOK, map[string]interface{}{"ok": true, "session": sess})
+}
+
+// handleClipMerge composes multiple streams into a single
+// side-by-side video using ffmpeg's hstack filter. Typically
+// used to merge agent-screen (landscape) + mobile-screen
+// (portrait) for marketing / demo videos.
+//
+// POST /clips/merge/<id>
+func (s *HTTPServer) handleClipMerge(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 3 {
+		jsonError(w, http.StatusBadRequest, "expected /clips/merge/<id>")
+		return
+	}
+	id := parts[2]
+	sess, err := loadClipSession(id)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "session not found")
+		return
+	}
+
+	dir, _ := sessionDir(id)
+
+	// Find the streams that have been uploaded.
+	var inputs []string
+	for _, st := range sess.Streams {
+		if st.Uploaded && st.Kind != "merged" && st.Kind != "mic" {
+			p := filepath.Join(dir, st.File)
+			if _, err := os.Stat(p); err == nil {
+				inputs = append(inputs, p)
+			}
+		}
+	}
+	if len(inputs) < 2 {
+		jsonError(w, http.StatusConflict, "need at least 2 uploaded streams to merge")
+		return
+	}
+
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		jsonError(w, http.StatusInternalServerError, "ffmpeg not installed")
+		return
+	}
+
+	outPath := filepath.Join(dir, "merged.mp4")
+
+	// Build ffmpeg filter: scale each input to 720px height,
+	// then hstack them side-by-side. No audio for marketing
+	// videos (cleaner). Supports 2+ inputs.
+	var ffArgs []string
+	for _, inp := range inputs {
+		ffArgs = append(ffArgs, "-i", inp)
+	}
+	var filterParts []string
+	var stackInputs []string
+	for i := range inputs {
+		label := fmt.Sprintf("s%d", i)
+		filterParts = append(filterParts, fmt.Sprintf("[%d:v]scale=-2:720,setsar=1[%s]", i, label))
+		stackInputs = append(stackInputs, fmt.Sprintf("[%s]", label))
+	}
+	filter := strings.Join(filterParts, ";") + ";" +
+		strings.Join(stackInputs, "") + fmt.Sprintf("hstack=inputs=%d[v]", len(inputs))
+
+	ffArgs = append(ffArgs,
+		"-filter_complex", filter,
+		"-map", "[v]",
+		"-vcodec", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+		"-shortest", "-an",
+		"-y", outPath,
+	)
+
+	cmd := exec.Command("ffmpeg", ffArgs...)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("ffmpeg merge failed: %v", err))
+		return
+	}
+
+	// Record the merged stream in metadata.
+	info, _ := os.Stat(outPath)
+	var mergedBytes int64
+	if info != nil {
+		mergedBytes = info.Size()
+	}
+	// Remove any previous merged stream, then add the new one.
+	var kept []ClipStream
+	for _, st := range sess.Streams {
+		if st.Kind != "merged" {
+			kept = append(kept, st)
+		}
+	}
+	sess.Streams = append(kept, ClipStream{
+		Kind: "merged", File: "merged.mp4", Bytes: mergedBytes,
+		Mime: "video/mp4", Uploaded: true,
+	})
 	_ = saveClipSession(sess)
 	jsonReply(w, http.StatusOK, map[string]interface{}{"ok": true, "session": sess})
 }

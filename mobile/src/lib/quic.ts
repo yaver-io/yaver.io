@@ -2662,7 +2662,7 @@ export class QuicClient {
 
   // ---- Clips (screen recording) ----------------------------------------
 
-  async clipStart(body: { title?: string; description?: string }): Promise<any | null> {
+  async clipStart(body: { title?: string; description?: string; targets?: string[] }): Promise<any | null> {
     try {
       const res = await fetch(`${this.baseUrl}/clips/start`, {
         method: "POST",
@@ -2688,6 +2688,31 @@ export class QuicClient {
       if (!res.ok) return [];
       return (await res.json()).sessions || [];
     } catch { return []; }
+  }
+
+  async clipUploadMobileScreen(sessionId: string, fileUri: string): Promise<any | null> {
+    try {
+      const fileContent = await fetch(fileUri);
+      const blob = await fileContent.blob();
+      const res = await fetch(`${this.baseUrl}/clips/upload/${sessionId}?kind=mobile-screen`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "video/mp4" },
+        body: blob,
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  async clipMerge(sessionId: string): Promise<any | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/clips/merge/${sessionId}`, {
+        method: "POST",
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
   }
 
   // ---- Chat (live visitor widget) --------------------------------------
