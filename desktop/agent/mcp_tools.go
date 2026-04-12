@@ -2389,6 +2389,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		{"name": "lemonsqueezy_setup", "description": "Get Next.js integration code for Lemon Squeezy (webhook handler + checkout).", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
 	}
 	tools = append(tools, workspaceTools...)
+	tools = append(tools, getWorkspaceMCPTools()...)
 
 	return map[string]interface{}{
 		"tools": tools,
