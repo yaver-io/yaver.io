@@ -57,7 +57,29 @@ function DeviceCard({
   const c = useColors();
   const [pingState, setPingState] = useState<{ pinging: boolean; rttMs?: number; ok?: boolean }>({ pinging: false });
   const [killing, setKilling] = useState<string | null>(null);
+  const [needsAuth, setNeedsAuth] = useState<boolean>(false);
   const isOnline = device.online;
+
+  // Poll /info for bootstrap/auth state — shows a "needs auth" badge
+  // on the card when the remote agent has no valid token.
+  useEffect(() => {
+    if (!device.ip) return;
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const url = `http://${device.ip}:${device.httpPort || 18080}/info`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
+        if (!res.ok || cancelled) return;
+        const info = await res.json();
+        if (!cancelled) setNeedsAuth(info.needsAuth === true || info.mode === "bootstrap");
+      } catch {
+        // network error — leave previous state
+      }
+    };
+    check();
+    const iv = setInterval(check, 10000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [device.ip, device.httpPort]);
   const runners = device.runners || [];
   const activeRunners = runners.filter((r) => r.status === "running");
 
@@ -154,7 +176,25 @@ function DeviceCard({
     >
       <View style={styles.cardRow}>
         <View style={styles.cardInfo}>
-          <Text style={[styles.deviceName, { color: c.textPrimary }]}>{device.name}</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <Text style={[styles.deviceName, { color: c.textPrimary }]}>{device.name}</Text>
+            {needsAuth && (
+              <View style={{
+                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+                backgroundColor: "#eab30822", borderWidth: 1, borderColor: "#eab30866",
+              }}>
+                <Text style={{ color: "#eab308", fontSize: 10, fontWeight: "700" }}>NEEDS AUTH</Text>
+              </View>
+            )}
+            {!needsAuth && isOnline && (
+              <View style={{
+                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+                backgroundColor: "#22c55e22", borderWidth: 1, borderColor: "#22c55e66",
+              }}>
+                <Text style={{ color: "#22c55e", fontSize: 10, fontWeight: "700" }}>AUTHENTICATED</Text>
+              </View>
+            )}
+          </View>
           <Text style={[styles.deviceMeta, { color: c.textMuted }]}>
             {device.os} &middot; {device.host}:{device.port}
           </Text>
