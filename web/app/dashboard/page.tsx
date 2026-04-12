@@ -11,6 +11,8 @@ import TodosView from "@/components/dashboard/TodosView";
 import BuildsView from "@/components/dashboard/BuildsView";
 import HealthView from "@/components/dashboard/HealthView";
 import QualityView from "@/components/dashboard/QualityView";
+import ConvexView from "@/components/dashboard/ConvexView";
+import DataView from "@/components/dashboard/DataView";
 import PreviewPane from "@/components/dashboard/PreviewPane";
 
 function statusColor(s: string) {
@@ -35,7 +37,7 @@ export default function DashboardPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [guestCode, setGuestCode] = useState("");
-  const [activeTab, setActiveTab] = useState<"chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality">("chat");
+  const [activeTab, setActiveTab] = useState<"chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data">("chat");
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [relayReady, setRelayReady] = useState(false);
@@ -157,6 +159,8 @@ export default function DashboardPage() {
     { id: "preview", label: "Preview", icon: "\uD83C\uDFA8" },
     { id: "health", label: "Health", icon: "\uD83D\uDCCA" },
     { id: "quality", label: "Quality", icon: "\u2705" },
+    { id: "data", label: "Data", icon: "\uD83D\uDDC4\uFE0F" },
+    { id: "convex", label: "Convex", icon: "\u26A1" },
   ];
 
   return (
@@ -317,6 +321,10 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><HealthView /></div>
           ) : activeTab === "quality" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><QualityView /></div>
+          ) : activeTab === "data" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full"><DataView /></div>
+          ) : activeTab === "convex" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full"><ConvexView /></div>
           ) : (
             <>
               <div className="flex flex-1 min-h-0">

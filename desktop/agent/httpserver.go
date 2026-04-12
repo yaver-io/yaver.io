@@ -514,6 +514,32 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/sandbox/config", s.auth(s.handleSandboxConfig))
 	mux.HandleFunc("/sandbox/build", s.auth(s.handleSandboxBuild))
 
+	// Convex local backend — dashboard proxy endpoints
+	mux.HandleFunc("/convex/status", s.auth(s.handleConvexStatus))
+	mux.HandleFunc("/convex/tables", s.auth(s.handleConvexTables))
+	mux.HandleFunc("/convex/browse", s.auth(s.handleConvexBrowse))
+	mux.HandleFunc("/convex/query", s.auth(s.handleConvexQuery))
+	mux.HandleFunc("/convex/mutate", s.auth(s.handleConvexMutate))
+	mux.HandleFunc("/convex/action", s.auth(s.handleConvexAction))
+	mux.HandleFunc("/convex/schema", s.auth(s.handleConvexSchema))
+	mux.HandleFunc("/convex/export", s.auth(s.handleConvexExport))
+	mux.HandleFunc("/convex/install-helper", s.auth(s.handleConvexInstallHelper))
+
+	// Universal backend dashboard (Convex, Supabase, Postgres, PocketBase, Appwrite, SQLite)
+	mux.HandleFunc("/backend/status", s.auth(s.handleBackendStatus))
+	mux.HandleFunc("/backend/tables", s.auth(s.handleDBTables))
+	mux.HandleFunc("/backend/browse", s.auth(s.handleDBBrowse))
+	mux.HandleFunc("/backend/query", s.auth(s.handleDBQuery))
+	mux.HandleFunc("/backend/insert", s.auth(s.handleDBInsert))
+	mux.HandleFunc("/backend/update", s.auth(s.handleDBUpdate))
+	mux.HandleFunc("/backend/delete", s.auth(s.handleDBDelete))
+
+	// Cloud emulators (AWS/GCP/Azure local dev)
+	mux.HandleFunc("/cloud/emu/start", s.auth(s.handleCloudEmuStart))
+	mux.HandleFunc("/cloud/emu/stop", s.auth(s.handleCloudEmuStop))
+	mux.HandleFunc("/cloud/emu/status", s.auth(s.handleCloudEmuStatus))
+	mux.HandleFunc("/cloud/emu/config", s.auth(s.handleCloudEmuConfig))
+
 	// Guest access management (host invites guests to use their agent)
 	mux.HandleFunc("/guests", s.auth(s.handleGuestList))
 	mux.HandleFunc("/guests/invite", s.auth(s.handleGuestInvite))
@@ -5664,6 +5690,48 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexLogs(a.Dir))
 	case "convex_run":
 		var a struct { Dir string `json:"directory"`; Function string `json:"function"`; Args string `json:"args"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexRun(a.Dir, a.Function, a.Args))
+	case "convex_local_status":
+		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexLocalStatus(a.Dir))
+	case "convex_tables":
+		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexTables(a.Dir))
+	case "convex_browse":
+		var a struct { Dir string `json:"directory"`; Table string `json:"table"`; Cursor string `json:"cursor"`; Limit int `json:"limit"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexBrowse(a.Dir, a.Table, a.Cursor, a.Limit))
+	case "convex_query":
+		var a struct { Dir string `json:"directory"`; Function string `json:"function"`; Args string `json:"args"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexAdminQuery(a.Dir, a.Function, a.Args))
+	case "convex_mutate":
+		var a struct { Dir string `json:"directory"`; Function string `json:"function"`; Args string `json:"args"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexAdminMutate(a.Dir, a.Function, a.Args))
+	case "convex_action":
+		var a struct { Dir string `json:"directory"`; Function string `json:"function"`; Args string `json:"args"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexAdminAction(a.Dir, a.Function, a.Args))
+	case "convex_schema":
+		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexSchema(a.Dir))
+	case "convex_export":
+		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexExport(a.Dir))
+	case "convex_install_helper":
+		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexInstallHelper(a.Dir))
+	// --- Universal backend ---
+	case "backend_status":
+		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpBackendStatus(a.Dir))
+	case "data_tables":
+		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDataTables(a.Dir))
+	case "data_browse":
+		var a struct { Dir string `json:"directory"`; Table string `json:"table"`; Cursor string `json:"cursor"`; Limit int `json:"limit"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDataBrowse(a.Dir, a.Table, a.Cursor, a.Limit))
+	case "data_query":
+		var a struct { Dir string `json:"directory"`; Query string `json:"query"`; Args string `json:"args"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDataQuery(a.Dir, a.Query, a.Args))
+	case "data_insert":
+		var a struct { Dir string `json:"directory"`; Table string `json:"table"`; Doc string `json:"doc"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDataInsert(a.Dir, a.Table, a.Doc))
+	case "data_update":
+		var a struct { Dir string `json:"directory"`; Table string `json:"table"`; ID string `json:"id"`; Fields string `json:"fields"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDataUpdate(a.Dir, a.Table, a.ID, a.Fields))
+	case "data_delete":
+		var a struct { Dir string `json:"directory"`; Table string `json:"table"`; ID string `json:"id"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDataDelete(a.Dir, a.Table, a.ID))
+	// --- Cloud emulators ---
+	case "cloud_emu_start":
+		var a struct { Dir string `json:"directory"`; Provider string `json:"provider"`; Services string `json:"services"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCloudEmuStart(a.Dir, a.Provider, splitCSV(a.Services)))
+	case "cloud_emu_stop":
+		var a struct { Dir string `json:"directory"`; Provider string `json:"provider"`; Services string `json:"services"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCloudEmuStop(a.Dir, a.Provider, splitCSV(a.Services)))
+	case "cloud_emu_status":
+		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCloudEmuStatus(a.Dir))
+	case "cloud_emu_config":
+		var a struct { Provider string `json:"provider"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCloudEmuConfig(a.Provider))
 	// --- Cloudflare ---
 	case "cf_workers":
 		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCFWorkers(a.Dir))

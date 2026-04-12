@@ -490,6 +490,14 @@ func GenerateProject(id, parentDir string) (*ProjectGenerationResult, error) {
 	sess.GeneratedPath = dir
 	wizardMu.Unlock()
 
+	// Emit .yaver/config.yaml so the universal backend adapter + dashboard
+	// know which backend this project uses. Also add matching service
+	// presets to .yaver/services.yaml so `yaver services start` works.
+	if err := writeYaverProjectConfig(dir, a); err != nil {
+		// soft-fail: generation succeeded, config is a nicety
+		_ = err
+	}
+
 	res := &ProjectGenerationResult{
 		OK:        true,
 		Directory: dir,

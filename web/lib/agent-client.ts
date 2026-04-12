@@ -904,6 +904,171 @@ class AgentClient {
     return res.json();
   }
 
+  // ── Universal backend (any adapter) ──────────────────────────────
+
+  async backendStatus(directory?: string): Promise<{ kind: string; url: string; running: boolean; error?: string; hint?: string; version?: string }> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/backend/status${q}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async backendTables(directory?: string): Promise<{ backend?: string; tables?: { name: string; rowCount?: number; kind?: string }[]; error?: string }> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/backend/tables${q}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async backendBrowse(table: string, opts: { cursor?: string; limit?: number; directory?: string } = {}): Promise<{ rows: any[]; nextCursor?: string; error?: string }> {
+    this.assertConnected();
+    const p = new URLSearchParams({ table });
+    if (opts.cursor) p.set("cursor", opts.cursor);
+    if (opts.limit) p.set("limit", String(opts.limit));
+    if (opts.directory) p.set("directory", opts.directory);
+    const res = await fetch(`${this.baseUrl}/backend/browse?${p}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async backendQuery(query: string, args: Record<string, unknown> = {}, directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/backend/query${q}`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ query, args }),
+    });
+    return res.json();
+  }
+
+  async backendInsert(table: string, doc: Record<string, unknown>, directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/backend/insert${q}`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ table, doc }),
+    });
+    return res.json();
+  }
+
+  async backendUpdate(table: string, id: string, fields: Record<string, unknown>, directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/backend/update${q}`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ table, id, fields }),
+    });
+    return res.json();
+  }
+
+  async backendDelete(table: string, id: string, directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/backend/delete${q}`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ table, id }),
+    });
+    return res.json();
+  }
+
+  // ── Cloud emulators ──────────────────────────────────────────────
+
+  async cloudEmuStatus(directory?: string): Promise<{ emulators: { name: string; provider: string; running: boolean; port: number; health: string }[] }> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/cloud/emu/status${q}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async cloudEmuStart(provider: string, services: string[] = [], directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/cloud/emu/start${q}`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ provider, services }),
+    });
+    return res.json();
+  }
+
+  async cloudEmuStop(provider: string, services: string[] = [], directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/cloud/emu/stop${q}`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ provider, services }),
+    });
+    return res.json();
+  }
+
+  async cloudEmuConfig(provider: string): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/cloud/emu/config?provider=${encodeURIComponent(provider)}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  // ── Convex local backend ─────────────────────────────────────────
+
+  async convexStatus(directory?: string): Promise<{ url: string; running: boolean; error?: string; hint?: string }> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/convex/status${q}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async convexTables(directory?: string): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/convex/tables${q}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async convexBrowse(table: string, opts: { cursor?: string; limit?: number; directory?: string } = {}): Promise<any> {
+    this.assertConnected();
+    const p = new URLSearchParams({ table });
+    if (opts.cursor) p.set("cursor", opts.cursor);
+    if (opts.limit) p.set("limit", String(opts.limit));
+    if (opts.directory) p.set("directory", opts.directory);
+    const res = await fetch(`${this.baseUrl}/convex/browse?${p}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async convexCall(
+    kind: "query" | "mutate" | "action",
+    fn: string,
+    args: Record<string, unknown> = {},
+    directory?: string,
+  ): Promise<any> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/convex/${kind}${q}`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ function: fn, args }),
+    });
+    return res.json();
+  }
+
+  async convexSchema(directory?: string): Promise<{ path?: string; schema?: string; error?: string }> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/convex/schema${q}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async convexInstallHelper(directory: string): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/convex/install-helper?directory=${encodeURIComponent(directory)}`, {
+      method: "POST",
+      headers: this.authHeaders,
+    });
+    return res.json();
+  }
+
   // ── Health Monitoring ─────────────────────────────────────────────
 
   async listHealthTargets(): Promise<{ id: string; url: string; name?: string; status?: string; responseTime?: number }[]> {
