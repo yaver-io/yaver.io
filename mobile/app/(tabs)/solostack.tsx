@@ -213,31 +213,37 @@ export default function SoloStackScreen() {
         <View style={{ width: 50 }} />
       </View>
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={[s.tabs, { borderBottomColor: c.border }]}
-      >
-        {(["forms", "newsletter", "jobs", "shortener", "waitlist", "docs", "meetings", "pdf", "oauth"] as Pane[]).map((p) => (
-          <Pressable key={p} onPress={() => setPane(p)} style={[s.tab, pane === p && { borderBottomColor: c.accent }]}>
-            <Text style={{ color: pane === p ? c.accent : c.textMuted, fontWeight: "600", textTransform: "capitalize" }}>{p}</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
+      <View style={[s.chipRow, { borderBottomColor: c.border }]}>
+        {(["forms", "newsletter", "jobs", "shortener", "waitlist", "docs", "meetings", "pdf", "oauth"] as Pane[]).map((p) => {
+          const active = pane === p;
+          return (
+            <Pressable
+              key={p}
+              onPress={() => setPane(p)}
+              style={[s.chip, { borderColor: active ? c.accent : c.border, backgroundColor: active ? c.accent + "18" : "transparent" }]}
+            >
+              <Text style={{ color: active ? c.accent : c.textMuted, fontSize: 12, fontWeight: "600", textTransform: "capitalize" }}>{p}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
 
       {loading ? (
         <ActivityIndicator style={{ marginTop: 24 }} />
       ) : (
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
           {!connected ? (
-            <Text style={{ color: c.textMuted, textAlign: "center", marginTop: 40 }}>Not connected to an agent.</Text>
+            <Text style={{ color: c.textMuted, marginTop: 12 }}>Not connected to an agent.</Text>
           ) : pane === "forms" ? (
             <View>
-              <Pressable onPress={() => setShowNewForm(true)} style={[s.btn, { backgroundColor: c.accent }]}>
-                <Text style={s.btnText}>+ New form</Text>
-              </Pressable>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "700" }}>{forms.length} forms</Text>
+                <Pressable onPress={() => setShowNewForm(true)} style={[s.btnSmall, { backgroundColor: c.accent }]}>
+                  <Text style={s.btnText}>+ New</Text>
+                </Pressable>
+              </View>
               {forms.length === 0 ? (
-                <Text style={{ color: c.textMuted, marginTop: 16 }}>No forms yet. Create one and POST submissions to /forms/:id/submit.</Text>
+                <Text style={{ color: c.textMuted }}>No forms yet. POST submissions to /forms/:id/submit</Text>
               ) : forms.map((f) => (
                 <View key={f.id} style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
                   <Text style={[s.cardTitle, { color: c.textPrimary }]}>{f.name}</Text>
@@ -298,11 +304,14 @@ export default function SoloStackScreen() {
             </View>
           ) : pane === "shortener" ? (
             <View>
-              <Pressable onPress={() => setShowNewLink(true)} style={[s.btn, { backgroundColor: c.accent }]}>
-                <Text style={s.btnText}>+ New short link</Text>
-              </Pressable>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "700" }}>{shortLinks.length} links</Text>
+                <Pressable onPress={() => setShowNewLink(true)} style={[s.btnSmall, { backgroundColor: c.accent }]}>
+                  <Text style={s.btnText}>+ New</Text>
+                </Pressable>
+              </View>
               {shortLinks.length === 0 ? (
-                <Text style={{ color: c.textMuted, marginTop: 16 }}>No short links yet. Public URL pattern: /s/&lt;code&gt;</Text>
+                <Text style={{ color: c.textMuted }}>No short links yet. URL pattern: /s/&lt;code&gt;</Text>
               ) : shortLinks.map((l) => (
                 <View key={l.code} style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
                   <Text style={[s.cardTitle, { color: c.textPrimary }]}>/s/{l.code}</Text>
@@ -313,10 +322,8 @@ export default function SoloStackScreen() {
             </View>
           ) : pane === "waitlist" ? (
             <View>
-              <View style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
-                <Text style={[s.cardTitle, { color: c.textPrimary }]}>{waitlistCount} signed up</Text>
-                <Text style={[s.cardMeta, { color: c.textMuted }]}>Public join: POST /waitlist/join — add ?ref=CODE for referral credit</Text>
-              </View>
+              <Text style={{ color: c.textPrimary, fontSize: 22, fontWeight: "700" }}>{waitlistCount} <Text style={{ fontSize: 13, fontWeight: "500", color: c.textMuted }}>signed up</Text></Text>
+              <Text style={[s.cardMeta, { color: c.textMuted, marginTop: 4, marginBottom: 12 }]}>POST /waitlist/join · ?ref=CODE for referral</Text>
               {waitlist.slice(0, 30).map((e) => (
                 <View key={e.email} style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
                   <Text style={[s.cardTitle, { color: c.textPrimary }]}>#{e.slot} {e.email}</Text>
@@ -546,8 +553,8 @@ export default function SoloStackScreen() {
 const s = StyleSheet.create({
   container: { flex: 1 },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1 },
-  tabs: { flexDirection: "row", borderBottomWidth: 1 },
-  tab: { flex: 1, paddingVertical: 14, alignItems: "center", borderBottomWidth: 2, borderBottomColor: "transparent" },
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1 },
+  chip: { borderWidth: 1, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6 },
   section: { fontSize: 15, fontWeight: "700", marginBottom: 8 },
   card: { borderWidth: 1, borderRadius: 10, padding: 14, marginTop: 10 },
   cardTitle: { fontSize: 15, fontWeight: "600" },

@@ -2268,9 +2268,7 @@ export default function MoreScreen() {
           <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F511}"}</Text>
           <View style={{ flex: 1 }}>
             <Text style={[s.label, { color: c.textPrimary }]}>Pair a device</Text>
-            <Text style={[s.desc, { color: c.textMuted }]}>
-              Enter the passkey from `yaver auth pair` on a headless machine
-            </Text>
+            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Push auth to a headless machine via passkey</Text>
           </View>
           <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
         </Pressable>
