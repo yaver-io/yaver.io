@@ -162,6 +162,14 @@ func (s *HTTPServer) handleLogSearch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"error": err.Error()})
 		return
 	}
+	// Opportunistically start tailing this project's services so the first
+	// search after agent restart works without the user clicking "Start indexer".
+	go func() {
+		dir := s.dirParam(r)
+		if dir != "" {
+			_ = StartTailingAllLogs(dir)
+		}
+	}()
 	q := r.URL.Query()
 	query := q.Get("q")
 	if query == "" {

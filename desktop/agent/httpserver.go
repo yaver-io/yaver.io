@@ -626,6 +626,36 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/uptime/add", s.auth(s.handleUptimeAdd))
 	mux.HandleFunc("/uptime/remove", s.auth(s.handleUptimeRemove))
 
+	// Object storage (S3/MinIO/R2 compatible)
+	mux.HandleFunc("/objects/list", s.auth(s.handleObjectList))
+	mux.HandleFunc("/objects/upload", s.auth(s.handleObjectUpload))
+	mux.HandleFunc("/objects/delete", s.auth(s.handleObjectDelete))
+
+	// Staging environment creation
+	mux.HandleFunc("/staging/create", s.auth(s.handleStagingCreate))
+
+	// Queue inspector (ElasticMQ / SQS)
+	mux.HandleFunc("/queues/list", s.auth(s.handleQueueList))
+	mux.HandleFunc("/queues/purge", s.auth(s.handleQueuePurge))
+
+	// Secret rotation
+	mux.HandleFunc("/secrets/rotate", s.auth(s.handleSecretRotate))
+
+	// Declarative project manifest (`.yaver/project.yaml`)
+	mux.HandleFunc("/manifest/get", s.auth(s.handleManifestGet))
+	mux.HandleFunc("/manifest/set", s.auth(s.handleManifestSet))
+	mux.HandleFunc("/manifest/apply", s.auth(s.handleManifestApply))
+	mux.HandleFunc("/manifest/diff", s.auth(s.handleManifestDiff))
+
+	// Embedded SPA (when console_static is populated by the build)
+	s.mountConsoleEmbed(mux)
+
+	// Audit log + PITR + multi-region HA
+	mux.HandleFunc("/audit/list", s.auth(s.handleAuditList))
+	mux.HandleFunc("/pitr/setup", s.auth(s.handlePITRSetup))
+	mux.HandleFunc("/pitr/restore", s.auth(s.handlePITRRestore))
+	mux.HandleFunc("/multiregion/deploy", s.auth(s.handleMultiRegionDeploy))
+
 	// Guest access management (host invites guests to use their agent)
 	mux.HandleFunc("/guests", s.auth(s.handleGuestList))
 	mux.HandleFunc("/guests/invite", s.auth(s.handleGuestInvite))

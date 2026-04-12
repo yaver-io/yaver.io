@@ -129,6 +129,14 @@ func RunDeploy(projectDir string, trigger string) (*DeployRecord, error) {
 		}
 	}
 
+	// 2b. Run DB migrations if the project has Drizzle or Prisma configured.
+	if migrator, migCmd := detectMigrator(projectDir); migrator != "" {
+		rec.Logs = append(rec.Logs, "migrator detected: "+migrator)
+		if !step("migrate", "sh", "-c", migCmd) {
+			return rollback(rec, migrator+" migration failed")
+		}
+	}
+
 	// 3. Swap / restart services.
 	sm := NewServicesManager(projectDir)
 	if msg, err := sm.Start(); err != nil {
@@ -138,13 +146,25 @@ func RunDeploy(projectDir string, trigger string) (*DeployRecord, error) {
 		rec.Logs = append(rec.Logs, msg)
 	}
 
-	// 4. Health check.
-	if cfg.Healthcheck != "" {
-		if !checkHealth(cfg.Healthcheck) {
-			rec.Logs = append(rec.Logs, "healthcheck FAIL: "+cfg.Healthcheck)
+	// 4. Health check. Auto-infer if the user didn't configure one.
+	hc := cfg.Healthcheck
+	if hc == "" {
+		hc = autoInferDeployHealthcheck(projectDir)
+		if hc != "" {
+			rec.Logs = append(rec.Logs, "auto-inferred healthcheck: "+hc)
+		}
+	}
+	if hc != "" {
+		if !checkHealth(hc) {
+			rec.Logs = append(rec.Logs, "healthcheck FAIL: "+hc)
 			return rollback(rec, "health check failed")
 		}
-		rec.Logs = append(rec.Logs, "health check PASS: "+cfg.Healthcheck)
+		rec.Logs = append(rec.Logs, "health check PASS: "+hc)
+	}
+
+	// Fire deploy-completed notification to user's phone.
+	if globalNotifyManager != nil {
+		globalNotifyManager.NotifyAgentEvent("Deploy succeeded", fmt.Sprintf("%s @ %s", filepath.Base(projectDir), rec.Commit[:8]))
 	}
 
 	return finishDeploy(rec, "success", ""), nil
@@ -173,6 +193,7 @@ func finishDeploy(rec *DeployRecord, status, _ string) *DeployRecord {
 	rec.FinishedAt = time.Now()
 	rec.Duration = rec.FinishedAt.Sub(rec.StartedAt).Round(time.Second).String()
 	persistDeploy(rec)
+	AuditLog("", "deploy", rec.ProjectDir, rec.Commit, status, rec.Logs[len(rec.Logs)-1], "")
 	return rec
 }
 
