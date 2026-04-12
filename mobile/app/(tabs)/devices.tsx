@@ -58,28 +58,63 @@ function DeviceCard({
   const [pingState, setPingState] = useState<{ pinging: boolean; rttMs?: number; ok?: boolean }>({ pinging: false });
   const [killing, setKilling] = useState<string | null>(null);
   const [needsAuth, setNeedsAuth] = useState<boolean>(false);
+  const [autoPairing, setAutoPairing] = useState(false);
   const isOnline = device.online;
 
   // Poll /info for bootstrap/auth state — shows a "needs auth" badge
-  // on the card when the remote agent has no valid token.
+  // on the card AND auto-pairs when the remote agent is in bootstrap.
+  // This runs for every visible device card (not just the "active" one),
+  // so a Convex-offline device that's really in bootstrap gets paired
+  // without the user having to "activate" it first.
   useEffect(() => {
-    if (!device.ip) return;
+    if (!device.ip || !token) return;
     let cancelled = false;
+    let paired = false;
     const check = async () => {
+      if (paired || cancelled) return;
       try {
         const url = `http://${device.ip}:${device.httpPort || 18080}/info`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
+        const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
         if (!res.ok || cancelled) return;
         const info = await res.json();
-        if (!cancelled) setNeedsAuth(info.needsAuth === true || info.mode === "bootstrap");
+        const inBootstrap = info.needsAuth === true || info.mode === "bootstrap";
+        if (cancelled) return;
+        setNeedsAuth(inBootstrap);
+        if (!inBootstrap) return;
+        // Auto-pair: dynamic import to avoid circular deps on first load
+        setAutoPairing(true);
+        try {
+          const { submitEncryptedPair } = await import("../../src/lib/encryptedPair");
+          const { submitPair } = await import("../../src/lib/pairDevice");
+          const targetUrl = `http://${device.ip}:${device.httpPort || 18080}`;
+          const pubKey = device.publicKey || info.devicePublicKey;
+          if (pubKey) {
+            const r = await submitEncryptedPair(targetUrl, token, pubKey);
+            if (r.ok) {
+              paired = true;
+              setNeedsAuth(false);
+              return;
+            }
+          }
+          const passkey = info.bootstrapPasskey;
+          if (passkey) {
+            const r = await submitPair({ code: passkey, targetUrl, token, userId: "" });
+            if (r.ok) {
+              paired = true;
+              setNeedsAuth(false);
+            }
+          }
+        } finally {
+          if (!cancelled) setAutoPairing(false);
+        }
       } catch {
-        // network error — leave previous state
+        // network error — leave previous state, retry next tick
       }
     };
     check();
-    const iv = setInterval(check, 10000);
+    const iv = setInterval(check, 8000);
     return () => { cancelled = true; clearInterval(iv); };
-  }, [device.ip, device.httpPort]);
+  }, [device.ip, device.httpPort, device.publicKey, token]);
   const runners = device.runners || [];
   const activeRunners = runners.filter((r) => r.status === "running");
 
@@ -178,22 +213,28 @@ function DeviceCard({
         <View style={styles.cardInfo}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
             <Text style={[styles.deviceName, { color: c.textPrimary }]}>{device.name}</Text>
-            {needsAuth && (
+            {autoPairing ? (
+              <View style={{
+                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+                backgroundColor: "#818cf822", borderWidth: 1, borderColor: "#818cf866",
+              }}>
+                <Text style={{ color: "#818cf8", fontSize: 10, fontWeight: "700" }}>PAIRING…</Text>
+              </View>
+            ) : needsAuth ? (
               <View style={{
                 paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
                 backgroundColor: "#eab30822", borderWidth: 1, borderColor: "#eab30866",
               }}>
                 <Text style={{ color: "#eab308", fontSize: 10, fontWeight: "700" }}>NEEDS AUTH</Text>
               </View>
-            )}
-            {!needsAuth && isOnline && (
+            ) : isOnline ? (
               <View style={{
                 paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
                 backgroundColor: "#22c55e22", borderWidth: 1, borderColor: "#22c55e66",
               }}>
                 <Text style={{ color: "#22c55e", fontSize: 10, fontWeight: "700" }}>AUTHENTICATED</Text>
               </View>
-            )}
+            ) : null}
           </View>
           <Text style={[styles.deviceMeta, { color: c.textMuted }]}>
             {device.os} &middot; {device.host}:{device.port}
