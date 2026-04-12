@@ -127,7 +127,7 @@ var wizardQuestions = []WizardQuestion{
 	{ID: "cloudflare_zone", Kind: QText, Prompt: "Cloudflare zone for the domain (leave blank if not on CF yet)", Default: ""},
 
 	// Git remote — create + push the fresh monorepo.
-	{ID: "git_provider", Kind: QChoice, Prompt: "Push to which git host?", Choices: []string{"github", "gitlab", "none"}, Default: "github"},
+	{ID: "git_provider", Kind: QChoice, Prompt: "Push to which git host?", Choices: []string{"gitlab", "github", "none"}, Default: "gitlab"},
 	{ID: "git_visibility", Kind: QChoice, Prompt: "Repo visibility", Choices: []string{"private", "public"}, Default: "private"},
 	{ID: "git_org", Kind: QText, Prompt: "GitHub org / GitLab group (blank = your personal account)", Default: ""},
 	{ID: "git_repo_name", Kind: QText, Prompt: "Repo name", Help: "Defaults to the slug you picked above.", Default: ""},
