@@ -154,7 +154,7 @@ export default function DevelopersPage() {
         <section className="mb-20">
           <SectionHeading id="whats-new">{"What's New"}</SectionHeading>
           <Prose>
-            Latest features in Go Agent v1.72.0 and mobile v1.15.0.
+            Latest features in Go Agent v1.93.0 and mobile v1.17.5.
           </Prose>
           <div className="space-y-4">
             {[
