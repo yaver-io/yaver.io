@@ -135,7 +135,8 @@ export default function DevelopersPage() {
               ["guest-access", "Guest Access & Config"],
               ["sdk-token-security", "SDK Token Security"],
               ["sdk", "SDK — Embed Yaver"],
-              ["demo-app", "Demo App (BentoApp)"],
+              ["project-wizard", "Project Wizard & SaaS Starter"],
+              ["demo-app", "Demo App (Bento)"],
               ["contributing", "Contributing"],
             ].map(([id, label]) => (
               <a
@@ -348,10 +349,10 @@ export default function DevelopersPage() {
               </thead>
               <tbody className="divide-y divide-surface-800">
                 {[
-                  ["Direct (WiFi/LAN)", "iOS", "xcodebuild + xcrun devicectl (instant)"],
-                  ["Relay (4G/remote)", "iOS", "TestFlight or Hermes bytecode push"],
-                  ["Direct (WiFi/LAN)", "Android", "Gradle APK (existing)"],
-                  ["Relay (4G/remote)", "Android", "Play Store or APK download"],
+                  ["Direct (WiFi/LAN)", "iOS", "xcodebuild + xcrun devicectl (instant) OR Hermes bundle push into Yaver container"],
+                  ["Relay (4G/remote)", "iOS", "Hermes bytecode push (always) — bundled + loaded into the Yaver native container via yaver-cli push"],
+                  ["Direct (WiFi/LAN)", "Android", "Gradle APK OR Hermes bundle push into Yaver container"],
+                  ["Relay (4G/remote)", "Android", "Hermes bytecode push (always) — same Hermes bundle, same native bridge, same story"],
                 ].map((row) => (
                   <tr key={row.join()}>
                     <td className="px-4 py-2.5 text-surface-400">{row[0]}</td>
@@ -2670,60 +2671,189 @@ YaverFreeClient(client);`}</pre>
           </div>
         </section>
 
-        {/* ─── Demo App (BentoApp) ─── */}
+        {/* ─── Project Wizard & SaaS Starter ─── */}
         <section className="mb-20">
-          <SectionHeading id="demo-app">Demo App (BentoApp)</SectionHeading>
+          <SectionHeading id="project-wizard">Project Wizard &amp; SaaS Starter</SectionHeading>
           <Prose>
-            The <InlineCode>demo/BentoApp</InlineCode> directory contains a
-            minimal React Native bento meal-ordering app. It exists for one reason: to
-            showcase the Feedback SDK integration in a real, runnable app that
-            anyone can clone and try immediately.
+            <InlineCode>yaver new</InlineCode> is a one-shot scaffold generator
+            for full-stack side projects. Pick a template, answer a handful of
+            questions (or hand it a JSON file), and the agent materialises a
+            monorepo on disk &mdash; Next.js on Cloudflare, Expo for mobile,
+            Convex backend, Better Auth, Stripe, CI workflows. It then starts
+            the local backend services (Convex, Mailpit, MinIO) via Docker so
+            the project is live at <InlineCode>localhost:3000</InlineCode> the
+            moment generation finishes. No config, no boilerplate, no missing
+            pieces.
           </Prose>
 
-          <SubHeading>Why a demo app?</SubHeading>
+          <SubHeading>Interactive vs one-shot</SubHeading>
+          <div className="mb-6">
+            <Terminal title="terminal">
+              <Comment># Interactive (prompts for every answer)</Comment>
+              <Cmd>yaver new</Cmd>
+              <Comment># One-shot with a prefilled JSON (what the mobile app calls)</Comment>
+              <Cmd>yaver new --quick answers.json /path/to/parent</Cmd>
+              <Output>{`{
+  "ok": true,
+  "directory": "/path/to/parent/bento",
+  "files": ["package.json", "apps/mobile/App.tsx", ...],
+  "servicesStarted": true
+}`}</Output>
+            </Terminal>
+          </div>
+
+          <SubHeading>Templates</SubHeading>
+          <div className="mb-6 overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-surface-800">
+                  <th className="px-4 py-2.5 text-left font-medium text-surface-300">Template</th>
+                  <th className="px-4 py-2.5 text-left font-medium text-surface-300">What you get</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-800">
+                {[
+                  ["saas-complete", "Next.js + Expo + Convex + Better Auth + Stripe + landing page"],
+                  ["indie-hacker", "Next.js + Convex + Better Auth + Stripe (no mobile)"],
+                  ["api-first", "Convex backend only, no frontend"],
+                  ["content-site", "Next.js + MDX + Cloudflare Pages, no backend"],
+                ].map(([name, desc]) => (
+                  <tr key={name}>
+                    <td className="whitespace-nowrap px-4 py-2.5 font-medium text-surface-200">{name}</td>
+                    <td className="px-4 py-2.5 text-surface-400">{desc}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <SubHeading>Auto-started services</SubHeading>
           <Prose>
-            The Feedback SDK is designed to be dropped into any React Native
-            app during development. But reading docs about it is not the same
-            as seeing it work. BentoApp is a deliberately simple app (browse menu,
-            pick a bento, place an order) so the SDK integration stands out clearly
-            without the noise of a real production codebase.
+            The wizard writes <InlineCode>.yaver/services.yaml</InlineCode>{" "}
+            alongside the scaffold. When <InlineCode>backend=convex</InlineCode>
+            {" "}it pre-wires <InlineCode>convex-backend</InlineCode> (port
+            3210) plus <InlineCode>convex-dashboard</InlineCode> (port 6791),
+            and adds Mailpit (email), MinIO (S3), or Redis on request. After
+            generation, <InlineCode>ServicesManager.Start()</InlineCode> boots
+            the containers via Docker Compose. If Docker isn&apos;t running,
+            the response surfaces <InlineCode>servicesError</InlineCode> so the
+            mobile app can prompt the user to start it.
+          </Prose>
+
+          <SubHeading>HTTP surface (what the mobile wizard calls)</SubHeading>
+          <div className="mb-6 overflow-x-auto">
+            <table className="w-full text-xs">
+              <tbody className="divide-y divide-surface-800">
+                {[
+                  ["POST /project/wizard/start", "Begin a session, returns sessionId + first question"],
+                  ["POST /project/wizard/answer", "Submit an answer, returns next question or Done"],
+                  ["POST /project/wizard/generate", "Materialise the scaffold + start services"],
+                  ["GET /project/wizard/session", "Resume an in-flight session"],
+                ].map(([route, purpose]) => (
+                  <tr key={route}>
+                    <td className="whitespace-nowrap px-4 py-2.5 font-mono text-surface-200">{route}</td>
+                    <td className="px-4 py-2.5 text-surface-400">{purpose}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <SubHeading>Key files</SubHeading>
+          <div className="mb-6 overflow-x-auto">
+            <table className="w-full text-xs">
+              <tbody className="divide-y divide-surface-800">
+                {[
+                  ["desktop/agent/project_wizard.go", "Question catalog, session state machine, file generation"],
+                  ["desktop/agent/project_wizard_cmd.go", "yaver new + yaver new --quick CLI"],
+                  ["desktop/agent/project_wizard_http.go", "/project/wizard/* HTTP handlers"],
+                  ["desktop/agent/project_wizard_yaver.go", "Writes .yaver/config.yaml + services.yaml"],
+                  ["desktop/agent/template.go", "Template catalog (saas-complete / indie-hacker / api-first / content-site)"],
+                  ["mobile/app/(tabs)/newproject.tsx", "Mobile wizard UI that drives the HTTP surface"],
+                ].map(([file, purpose]) => (
+                  <tr key={file}>
+                    <td className="whitespace-nowrap px-4 py-2.5 font-medium text-surface-200">{file}</td>
+                    <td className="px-4 py-2.5 text-surface-400">{purpose}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {/* ─── Demo App (Bento) ─── */}
+        <section className="mb-20">
+          <SectionHeading id="demo-app">Demo App (Bento)</SectionHeading>
+          <Prose>
+            The <InlineCode>demos/bento</InlineCode> directory is the literal
+            output of <InlineCode>yaver new --quick</InlineCode> with the
+            answers file at{" "}
+            <InlineCode>demos/bento/.yaver-wizard-answers.json</InlineCode> &mdash;
+            a meal-prep / recipe app (Expo RN + Convex backend) we use to
+            shoot the landing-page videos and as the target for the
+            {" "}<InlineCode>TestBentoE2E_MobileFlow</InlineCode> integration
+            test. The scaffold is regenerable bit-for-bit; the committed copy
+            is the version with screens, navigation, and 3{" "}
+            <em>intentional</em> runtime bugs baked in.
+          </Prose>
+
+          <SubHeading>Why this particular app?</SubHeading>
+          <Prose>
+            Recipe apps are visually rich (food photos sell the demo), span
+            the full stack (database, auth, storage, timers), and give us
+            natural bug surfaces: null ingredient prices, null image URLs,
+            missing step durations. The 3 bugs are runtime-only (they pass{" "}
+            <InlineCode>tsc</InlineCode> because they&apos;re type-cast past
+            the checker) so Metro bundles cleanly and the crashes fire the
+            moment a user taps into the right screen &mdash; which is what
+            the Video 2 (shake-to-report) and Video 3 (auto-test) shoots
+            exercise live.
           </Prose>
 
           <SubHeading>What it demonstrates</SubHeading>
           <div className="mb-6 space-y-2 text-sm text-surface-400">
             <div className="flex items-start gap-2">
               <span className="mt-0.5 text-surface-500">1.</span>
-              <span><strong className="text-surface-200">Floating debug button</strong> &mdash; the SDK adds a draggable button to the app. Tap it to open the debug panel, send messages to the AI agent, trigger hot reload, or report bugs with auto-screenshots.</span>
+              <span><strong className="text-surface-200">Wizard end-to-end</strong> &mdash; the committed scaffold is reproducible via <InlineCode>yaver new --quick demos/bento/.yaver-wizard-answers.json</InlineCode>. If the wizard regresses, the diff shows it.</span>
             </div>
             <div className="flex items-start gap-2">
               <span className="mt-0.5 text-surface-500">2.</span>
-              <span><strong className="text-surface-200">Black box streaming</strong> &mdash; all logs, navigation events, errors, and crashes are streamed to the agent like a flight recorder. When a bug is reported, the agent already has full context.</span>
+              <span><strong className="text-surface-200">Hermes bytecode pipeline</strong> &mdash; <InlineCode>npx expo export --platform ios</InlineCode> produces a 3.76 MB <InlineCode>.hbc</InlineCode> bundle. That same bundle ships via <InlineCode>yaver-cli push</InlineCode> to the Yaver native container. No WebView anywhere in the guest-app path.</span>
             </div>
             <div className="flex items-start gap-2">
               <span className="mt-0.5 text-surface-500">3.</span>
-              <span><strong className="text-surface-200">Minimal integration code</strong> &mdash; the entire SDK setup is in <InlineCode>_layout.tsx</InlineCode>: init the SDK, start the black box, render the floating button. Three lines.</span>
+              <span><strong className="text-surface-200">3 intentional bugs</strong> &mdash; null-imageUrl (Overnight Oats hero), null-price (Honey / Olive Oil / Chili Flakes), missing step duration (&ldquo;Refrigerate overnight&rdquo;). All tagged <InlineCode>// INTENTIONAL</InlineCode> so nobody accidentally fixes them.</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="mt-0.5 text-surface-500">4.</span>
+              <span><strong className="text-surface-200">CI reproducibility</strong> &mdash; the <InlineCode>bento-e2e.yml</InlineCode> workflow rebuilds the scaffold from the answers file on every PR, asserts the 3 bug markers survive, and runs <InlineCode>TestBentoE2E_MobileFlow</InlineCode> against the agent HTTP API.</span>
             </div>
           </div>
 
           <SubHeading>Project structure</SubHeading>
           <div className="mb-6">
-            <Terminal title="demo/BentoApp">
+            <Terminal title="demos/bento">
               <pre className="text-surface-300">
-                {`demo/BentoApp/
-├── app/
-│   ├── _layout.tsx        # SDK init + FloatingButton
-│   ├── index.tsx           # Home / product list
-│   └── login.tsx           # Login screen
-├── src/
-│   ├── components/         # ProductCard, LoginForm
-│   ├── context/            # AuthContext, CartContext
-│   └── yaver-sdk/          # Vendored SDK source
-│       ├── YaverFeedback.ts
-│       ├── FloatingButton.tsx
-│       ├── BlackBox.ts
-│       ├── P2PClient.ts
-│       └── Discovery.ts
-└── app.json`}
+                {`demos/bento/
+├── .yaver/
+│   ├── config.yaml            # backend=convex, brand palette
+│   └── services.yaml           # convex-backend, convex-dashboard (auto-started)
+├── .yaver-wizard-answers.json  # Reproducible input to 'yaver new --quick'
+├── apps/mobile/
+│   ├── App.tsx                 # Expo Router root
+│   ├── app/(tabs)/
+│   │   ├── index.tsx           # Home: recipe grid
+│   │   └── grocery.tsx         # BUG: null i.price crash
+│   ├── app/recipe/[id].tsx      # BUG: null imageUrl
+│   ├── app/cook/[id].tsx
+│   └── app/components/
+│       ├── CookTimer.tsx        # BUG: step.duration undefined
+│       └── GroceryTotal.tsx     # BUG: i.price! non-null assert
+├── backend/convex/
+│   ├── schema.ts               # users, sessions, recipes, favorites, groceryItems
+│   └── seed.ts                 # 8 recipes, 3 with intentional null fields
+├── BENTO_BUILD_QUEUE.md        # 13-task backlog fed to the runner
+└── scripts/build-bento.sh      # Pipes the queue into yaver serve`}
               </pre>
             </Terminal>
           </div>
@@ -2731,19 +2861,23 @@ YaverFreeClient(client);`}</pre>
           <SubHeading>Running it</SubHeading>
           <div className="mb-6">
             <Terminal title="terminal">
-              <Cmd>cd demo/BentoApp</Cmd>
-              <Cmd>npm install</Cmd>
-              <Cmd>npx expo start</Cmd>
-              <Comment># Scan QR with Expo Go, or run on simulator:</Comment>
+              <Cmd>cd demos/bento/apps/mobile</Cmd>
+              <Cmd>npm install --legacy-peer-deps</Cmd>
               <Cmd>npx expo run:ios</Cmd>
+              <Comment># Or regenerate from scratch to verify the wizard hasn't regressed</Comment>
+              <Cmd>yaver new --quick demos/bento/.yaver-wizard-answers.json /tmp/fresh</Cmd>
+              <Output>{`{"ok":true, "directory":"/tmp/fresh/bento", "files":[...19 paths...], "servicesStarted":true}`}</Output>
             </Terminal>
           </div>
 
           <Prose>
-            The SDK connects to your local Yaver agent automatically via LAN
-            beacon discovery. Start <InlineCode>yaver serve</InlineCode> on
-            your machine, open BentoApp on your phone, and the debug button
-            turns green when connected.
+            The Feedback SDK integration happens via the same pipeline: drop
+            {" "}<InlineCode>yaver-feedback-react-native</InlineCode> into{" "}
+            <InlineCode>apps/mobile/app/_layout.tsx</InlineCode>,{" "}
+            <InlineCode>BlackBox.start()</InlineCode> on mount, and the
+            floating button appears in dev builds. See the shooting script at
+            {" "}<InlineCode>VIDEOS_REMAINED.md</InlineCode> for the full
+            beat-by-beat of how Bento drives the three landing-page videos.
           </Prose>
         </section>
 
