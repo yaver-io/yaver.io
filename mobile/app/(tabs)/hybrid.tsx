@@ -27,6 +27,7 @@ import {
   type HybridPlanResult,
   type HybridReport,
   type HybridRunRequest,
+  type HybridStepResult,
 } from "../../src/lib/quic";
 
 const DEFAULT: HybridRunRequest = {
@@ -47,6 +48,8 @@ export default function HybridScreen() {
   const [req, setReq] = useState<HybridRunRequest>(DEFAULT);
   const [plan, setPlan] = useState<HybridPlanResult | null>(null);
   const [report, setReport] = useState<HybridReport | null>(null);
+  const [liveResults, setLiveResults] = useState<HybridStepResult[]>([]);
+  const [currentStep, setCurrentStep] = useState<{index: number; total: number; title: string; retry: number} | null>(null);
   const [busy, setBusy] = useState<"idle" | "planning" | "running">("idle");
   const [err, setErr] = useState<string | null>(null);
 
@@ -69,13 +72,40 @@ export default function HybridScreen() {
   async function run_() {
     setErr(null);
     setReport(null);
+    setPlan(null);
+    setLiveResults([]);
+    setCurrentStep(null);
     setBusy("running");
     try {
-      setReport(await quicClient.hybridRun(req));
+      // SSE — drip events into the UI so the user sees work happening
+      // instead of a 5-min blank spinner.
+      const final = await quicClient.hybridStream(req, (ev) => {
+        if (ev.type === "plan_done" && ev.plan) {
+          setPlan({ spec: req, subtasks: ev.plan });
+        }
+        if (ev.type === "subtask_started" && ev.subtask) {
+          setCurrentStep({
+            index: ev.index ?? 0,
+            total: ev.total ?? 0,
+            title: ev.subtask.title,
+            retry: ev.retry ?? 0,
+          });
+        }
+        if (ev.type === "subtask_done" && ev.result) {
+          setLiveResults((xs) => [...xs, ev.result!]);
+          setCurrentStep(null);
+        }
+        if (ev.type === "replan_done" && ev.plan) {
+          setPlan({ spec: req, subtasks: ev.plan });
+        }
+        if (ev.type === "error") setErr(ev.message ?? "unknown error");
+      });
+      if (final) setReport(final);
     } catch (e: any) {
       setErr(e?.message ?? String(e));
     } finally {
       setBusy("idle");
+      setCurrentStep(null);
     }
   }
 
@@ -140,6 +170,24 @@ export default function HybridScreen() {
             <Text style={{ color: c.textMuted, marginTop: 8, fontSize: 12 }}>
               {busy === "running" ? "Qwen is writing code — this can take several minutes." : "Planner is thinking…"}
             </Text>
+          </View>
+        )}
+
+        {busy === "running" && (plan || currentStep) && !report && (
+          <View style={styles.section}>
+            <Text style={[styles.sectionH, { color: c.textPrimary }]}>Live progress</Text>
+            {currentStep && (
+              <Text style={{ color: c.accent, fontSize: 12 }}>
+                Step {currentStep.index}/{currentStep.total}: {currentStep.title}
+                {currentStep.retry > 0 ? `  (retry #${currentStep.retry})` : ""}
+              </Text>
+            )}
+            {liveResults.map((r, i) => (
+              <Text key={i} style={{ color: c.textMuted, fontSize: 11, marginTop: 2 }}>
+                <Text style={{ color: r.status === "ok" ? c.success : c.error }}>[{r.status}] </Text>
+                {r.subtask.title} ({(r.durationMs / 1000).toFixed(1)}s)
+              </Text>
+            ))}
           </View>
         )}
 

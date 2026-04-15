@@ -75,10 +75,33 @@ export interface HybridReport {
   results: HybridStepResult[];
   planOutput?: string;
   planError?: string;
+  replanned?: boolean;
+  retries?: number;
   startedAt: string;
   finishedAt: string;
   ok: boolean;
   failedSteps: number;
+}
+
+export interface HybridEvent {
+  type:
+    | "plan_started"
+    | "plan_done"
+    | "subtask_started"
+    | "subtask_done"
+    | "replan_started"
+    | "replan_done"
+    | "run_done"
+    | "error";
+  at?: string;
+  message?: string;
+  index?: number;
+  total?: number;
+  subtask?: HybridSubtask;
+  result?: HybridStepResult;
+  plan?: HybridSubtask[];
+  report?: HybridReport;
+  retry?: number;
 }
 
 export interface Task {
@@ -539,6 +562,62 @@ export class QuicClient {
       throw new Error(data?.error || `hybrid/run ${res.status}`);
     }
     return data;
+  }
+
+  /**
+   * SSE-streamed hybrid run. onEvent fires once per plan/subtask/run
+   * event so the UI can render progress live instead of blocking for
+   * minutes. Returns the final HybridReport when `run_done` fires.
+   *
+   * Hand-rolled SSE parser because React Native fetch streams work,
+   * but EventSource is a browser-only API and doesn't support POST
+   * or custom auth headers anyway.
+   */
+  async hybridStream(
+    req: HybridRunRequest,
+    onEvent: (ev: HybridEvent) => void,
+  ): Promise<HybridReport | undefined> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/hybrid/stream`, {
+      method: "POST",
+      headers: {
+        ...this.authHeaders,
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify(req),
+    });
+    if (!res.ok || !res.body) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`hybrid/stream ${res.status}: ${body}`);
+    }
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let final: HybridReport | undefined;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const dataLines = frame
+          .split("\n")
+          .filter((l) => l.startsWith("data:"))
+          .map((l) => l.slice(5).trimStart());
+        if (dataLines.length === 0) continue;
+        try {
+          const ev: HybridEvent = JSON.parse(dataLines.join("\n"));
+          onEvent(ev);
+          if (ev.type === "run_done") final = ev.report;
+        } catch {
+          // malformed frame — drop silently
+        }
+      }
+    }
+    return final;
   }
 
   /** List all tasks from the desktop agent, falling back to cache on failure. */

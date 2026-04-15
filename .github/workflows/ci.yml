@@ -75,6 +75,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm"
       - name: Check version bumps
         run: ./scripts/check-version-bump.sh origin/${{ github.base_ref }}
 
@@ -87,6 +88,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
+          cache: true
+          cache-dependency-path: |
+            desktop/agent/go.sum
+            relay/go.sum
+            mcp/go.sum
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Test CLI agent
@@ -108,6 +114,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
+          cache: true
+          cache-dependency-path: desktop/agent/go.sum
       - name: Build CLI
         run: cd desktop/agent && go build -o yaver .
 
@@ -120,6 +128,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+      # Cache Next.js build artefacts. First run is cold; subsequent
+      # runs on the same branch reuse the incremental build cache
+      # which is the real long-pole for `npm run build`.
+      - name: Cache Next.js build
+        uses: actions/cache@v4
+        with:
+          path: web/.next/cache
+          key: nextjs-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}-${{ hashFiles('web/app/**', 'web/components/**', 'web/lib/**') }}
+          restore-keys: |
+            nextjs-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}-
       - name: Build web
         run: cd web && npm ci && npm run build
 
@@ -132,6 +152,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm"
+          cache-dependency-path: mobile/package-lock.json
       - name: Typecheck mobile
         run: cd mobile && npm ci && npx tsc --noEmit
 
@@ -144,6 +166,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
       - name: Typecheck backend
         run: cd backend && npm ci && npx convex typecheck
 
@@ -156,6 +180,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm"
+          cache-dependency-path: sdk/feedback/react-native/package-lock.json
       - name: Test Feedback SDK (React Native)
         run: cd sdk/feedback/react-native && npm ci && npm test -- --passWithNoTests
 

@@ -35,8 +35,44 @@ permissions:
   contents: read
 
 jobs:
+  # Per-job path filtering so a change that only touches the Bento
+  # demo app does not re-run the agent Go test (and vice versa). GH
+  # Actions only supports `paths:` at the workflow trigger level, so
+  # we use dorny/paths-filter to produce per-component booleans.
+  # workflow_dispatch always runs everything (no base ref to diff).
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      agent: ${{ steps.resolve.outputs.agent }}
+      bento: ${{ steps.resolve.outputs.bento }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          filters: |
+            agent:
+              - 'desktop/agent/**'
+              - '.github/workflows/bento-e2e.yml'
+            bento:
+              - 'demos/bento/**'
+              - '.github/workflows/bento-e2e.yml'
+      - name: Resolve filters
+        id: resolve
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "agent=true" >> "$GITHUB_OUTPUT"
+            echo "bento=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "agent=${{ steps.filter.outputs.agent }}" >> "$GITHUB_OUTPUT"
+            echo "bento=${{ steps.filter.outputs.bento }}" >> "$GITHUB_OUTPUT"
+          fi
+
   agent-e2e:
     name: Agent — mobile-flow integration
+    needs: changes
+    if: needs.changes.outputs.agent == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -59,6 +95,8 @@ jobs:
 
   bento-build:
     name: Bento — wizard reproducibility + iOS bundle
+    needs: changes
+    if: needs.changes.outputs.bento == 'true'
     runs-on: macos-14
     timeout-minutes: 30
     steps:

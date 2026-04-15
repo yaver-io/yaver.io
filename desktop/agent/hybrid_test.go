@@ -261,6 +261,180 @@ func writeStub(t *testing.T, path, body string) {
 	}
 }
 
+// TestRunHybrid_RetryOnTransientFailure verifies that a subtask whose
+// first attempt fails gets retried with the corrective reminder, and
+// that the retry counter + attempt-level prompt prefix are observed
+// by the implementer. The stub implementer fails on attempt 0 and
+// succeeds on attempt 1.
+func TestRunHybrid_RetryOnTransientFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash stubs not portable")
+	}
+	stubDir := t.TempDir()
+	workDir := t.TempDir()
+
+	writeStub(t, filepath.Join(stubDir, "claude"), `#!/usr/bin/env bash
+cat <<'EOF'
+{"subtasks":[{"title":"flaky","files":["f.txt"],"prompt":"write something"}]}
+EOF
+`)
+	// Stub implementer counts invocations via a marker file. Fails
+	// on first call, succeeds on second — the retry path must kick.
+	writeStub(t, filepath.Join(stubDir, "aider"), `#!/usr/bin/env bash
+COUNT_FILE="`+workDir+`/aider_invocations"
+n=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)
+n=$((n+1))
+echo $n > "$COUNT_FILE"
+if [ "$n" -eq 1 ]; then
+  echo "first attempt fails on purpose" >&2
+  exit 1
+fi
+touch "$(dirname "$COUNT_FILE")/f.txt"
+echo "ok"
+`)
+	t.Setenv("PATH", stubDir+":"+os.Getenv("PATH"))
+
+	rep, err := RunHybrid(context.Background(), HybridSpec{
+		Planner: "claude", Implementer: "aider-ollama",
+		Model: "ollama_chat/x", BaseURL: "http://127.0.0.1:11434",
+		WorkDir: workDir, Prompt: "do it",
+		MaxRetries: 1, Timeout: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !rep.OK {
+		t.Fatalf("expected OK after retry, got failed=%d", rep.FailedSteps)
+	}
+	if rep.Retries != 1 {
+		t.Errorf("want Retries=1, got %d", rep.Retries)
+	}
+	invocations, _ := os.ReadFile(filepath.Join(workDir, "aider_invocations"))
+	if strings.TrimSpace(string(invocations)) != "2" {
+		t.Errorf("want implementer called twice, counter says %q", invocations)
+	}
+}
+
+// TestRunHybrid_ReplanKicksIn fires the planner once, makes every
+// subtask fail, and verifies the orchestrator asks the planner for a
+// replacement plan after MaxConsecutiveFailures. The second plan
+// contains a single-subtask that succeeds; the final report should
+// have Replanned=true.
+func TestRunHybrid_ReplanKicksIn(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash stubs not portable")
+	}
+	stubDir := t.TempDir()
+	workDir := t.TempDir()
+
+	// Planner stub: returns 2 bad subtasks on first call, 1 good
+	// subtask on the replan. "Good" means the subtask title signals
+	// the aider stub to succeed.
+	writeStub(t, filepath.Join(stubDir, "claude"), `#!/usr/bin/env bash
+COUNT_FILE="`+workDir+`/plan_invocations"
+n=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)
+n=$((n+1))
+echo $n > "$COUNT_FILE"
+if [ "$n" -eq 1 ]; then
+cat <<'EOF'
+{"subtasks":[
+  {"title":"bad-1","files":["a.txt"],"prompt":"fail"},
+  {"title":"bad-2","files":["b.txt"],"prompt":"fail"}
+]}
+EOF
+else
+cat <<'EOF'
+{"subtasks":[{"title":"good","files":["c.txt"],"prompt":"ok"}]}
+EOF
+fi
+`)
+	// Aider stub: fails when the subtask title starts with "bad",
+	// succeeds when it starts with "good". Argv parsing is primitive
+	// but sufficient for the test — we look at --message's next arg.
+	writeStub(t, filepath.Join(stubDir, "aider"), `#!/usr/bin/env bash
+msg=""
+next=0
+for a in "$@"; do
+  if [ $next -eq 1 ]; then msg="$a"; next=0; continue; fi
+  if [ "$a" = "--message" ]; then next=1; fi
+done
+case "$msg" in
+  *fail*) exit 1 ;;
+  *) touch "$(pwd)/c.txt"; exit 0 ;;
+esac
+`)
+	t.Setenv("PATH", stubDir+":"+os.Getenv("PATH"))
+
+	rep, err := RunHybrid(context.Background(), HybridSpec{
+		Planner: "claude", Implementer: "aider-ollama",
+		Model: "ollama_chat/x", BaseURL: "http://127.0.0.1:11434",
+		WorkDir: workDir, Prompt: "x",
+		MaxRetries: 0, // no per-step retry so replan threshold triggers cleanly
+		MaxConsecutiveFailures: 2,
+		Timeout:                30 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !rep.Replanned {
+		t.Fatalf("expected Replanned=true, got report: %+v", rep)
+	}
+	// 2 originals failed + 1 replacement succeeded = 3 results total.
+	if len(rep.Results) != 3 {
+		t.Fatalf("want 3 results, got %d", len(rep.Results))
+	}
+	if rep.Results[2].Status != "ok" {
+		t.Errorf("want replan subtask to succeed, got %+v", rep.Results[2])
+	}
+	planCalls, _ := os.ReadFile(filepath.Join(workDir, "plan_invocations"))
+	if strings.TrimSpace(string(planCalls)) != "2" {
+		t.Errorf("want planner called twice (initial + replan), got %q", planCalls)
+	}
+}
+
+// TestRunHybridWithProgress_EmitsEvents checks that the progress
+// callback fires with the expected event sequence for a trivial run.
+// This is the contract the SSE handler and both client UIs depend on.
+func TestRunHybridWithProgress_EmitsEvents(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash stubs not portable")
+	}
+	stubDir := t.TempDir()
+	workDir := t.TempDir()
+	writeStub(t, filepath.Join(stubDir, "claude"), `#!/usr/bin/env bash
+cat <<'EOF'
+{"subtasks":[{"title":"s","files":["x"],"prompt":"p"}]}
+EOF
+`)
+	writeStub(t, filepath.Join(stubDir, "aider"), `#!/usr/bin/env bash
+exit 0
+`)
+	t.Setenv("PATH", stubDir+":"+os.Getenv("PATH"))
+
+	var types []string
+	_, err := RunHybridWithProgress(context.Background(), HybridSpec{
+		Planner: "claude", Implementer: "aider-ollama",
+		Model: "ollama_chat/x", BaseURL: "http://127.0.0.1:11434",
+		WorkDir: workDir, Prompt: "x",
+		Timeout: 30 * time.Second,
+	}, func(ev HybridEvent) {
+		types = append(types, ev.Type)
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	// Minimum viable sequence: plan_started → plan_done → subtask_started
+	// → subtask_done → run_done. Extra events (replan, retries) only
+	// fire on the failing paths tested above.
+	want := []string{"plan_started", "plan_done", "subtask_started", "subtask_done", "run_done"}
+	joined := strings.Join(types, ",")
+	for _, w := range want {
+		if !strings.Contains(joined, w) {
+			t.Errorf("missing event %q in %s", w, joined)
+		}
+	}
+}
+
 // TestHybridPreflight_ReportsMissing checks that a nonsense base URL
 // leads to ollamaOk=false and a helpful hint. Aider presence depends
 // on the host; skip aider assertions if the test environment has it.
