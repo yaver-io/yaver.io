@@ -538,7 +538,10 @@ func TestOpenAIResponseFormat(t *testing.T) {
 	req, _ := http.NewRequest("POST", mock.URL, nil)
 	req.Header.Set("Authorization", "Bearer sk-test")
 	req.Header.Set("Content-Type", "multipart/form-data")
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
@@ -557,7 +560,10 @@ func TestDeepgramResponseFormat(t *testing.T) {
 
 	req, _ := http.NewRequest("POST", mock.URL, nil)
 	req.Header.Set("Authorization", "Token test")
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
 	defer resp.Body.Close()
 
 	var result map[string]interface{}
@@ -578,7 +584,10 @@ func TestAssemblyAIUploadResponseFormat(t *testing.T) {
 
 	req, _ := http.NewRequest("POST", mock.URL+"/v2/upload", nil)
 	req.Header.Set("Authorization", "test-key")
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
 	defer resp.Body.Close()
 
 	var result map[string]interface{}

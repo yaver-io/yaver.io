@@ -183,7 +183,7 @@ export default function GuestsScreen() {
                 {guestInvitations.map((inv) => (
                   <View key={inv._id} style={{ padding: 10, backgroundColor: c.accent + "15", borderRadius: 8, gap: 6 }}>
                     <Text style={{ color: c.textPrimary, fontSize: 13 }}>From <Text style={{ fontFamily: "Menlo" }}>{inv.hostEmail || inv.hostName}</Text></Text>
-                    <Pressable onPress={() => acceptPending(inv._id)} style={[actionBtn(c), { backgroundColor: c.accent, paddingVertical: 8 }]}>
+                    <Pressable onPress={() => inv._id && acceptPending(inv._id)} style={[actionBtn(c), { backgroundColor: c.accent, paddingVertical: 8 }]}>
                       <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>Accept</Text>
                     </Pressable>
                   </View>

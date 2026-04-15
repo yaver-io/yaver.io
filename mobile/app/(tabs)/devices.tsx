@@ -131,7 +131,7 @@ function DeviceCard({
     check();
     const iv = setInterval(check, 8000);
     return () => { cancelled = true; clearInterval(iv); };
-  }, [device.host, device.httpPort, device.publicKey, token]);
+  }, [device.host, device.port, device.publicKey, token]);
   const runners = device.runners || [];
   const activeRunners = runners.filter((r) => r.status === "running");
 
