@@ -1034,6 +1034,13 @@ func warnLoopDependencies(s *LoopSpec) {
 		check("codex", "`codex` CLI not on PATH")
 	case "aider":
 		check("aider", "`aider` CLI not on PATH — `pip install aider-chat`")
+	case "hybrid":
+		// Hybrid uses claude as planner and aider+ollama as
+		// implementer by default. Probe all three so the user gets
+		// one clear error instead of failing mid-kick.
+		check("claude", "hybrid: `claude` CLI not on PATH (planner) — install Claude Code")
+		check("aider", "hybrid: `aider` CLI not on PATH (implementer) — `pip install aider-chat`")
+		check("ollama", "hybrid: `ollama` CLI not on PATH (model host) — `yaver install ollama`")
 	default:
 		if strings.HasPrefix(strings.ToLower(s.Think.Runner), "ollama") {
 			check("ollama", "`ollama` CLI not on PATH")

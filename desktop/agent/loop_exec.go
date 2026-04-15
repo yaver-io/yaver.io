@@ -1252,6 +1252,8 @@ func phaseThink(ctx context.Context, l *LoopState, workDir string, report *Heuri
 		return spawnAider(ctx, l, workDir, report, reportPath, nudge)
 	case strings.HasPrefix(runner, "ollama"):
 		return spawnOllama(ctx, l, workDir, report, reportPath, nudge)
+	case runner == "hybrid":
+		return spawnHybrid(ctx, l, workDir, report, reportPath, nudge)
 	default:
 		return nil, fmt.Errorf("unknown runner %q", runner)
 	}
