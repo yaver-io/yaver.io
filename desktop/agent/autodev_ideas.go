@@ -25,6 +25,16 @@ import (
 
 const autodevRefillBatchSize = 5
 
+// ifFocus returns s if a non-empty focus prompt was provided, else "".
+// Tiny helper that keeps the refill prompt readable when the user
+// hasn't given a roof theme.
+func ifFocus(focus, s string) string {
+	if strings.TrimSpace(focus) == "" {
+		return ""
+	}
+	return s
+}
+
 // autodevRefillIdeas appends fresh checklist items to p.RemainedFile.
 // Best-effort: returns an error only when nothing usable was produced
 // — the caller decides whether to keep going or end the run.
@@ -34,24 +44,46 @@ func autodevRefillIdeas(p autodevPlan) error {
 	}
 
 	wd, _ := os.Getwd()
+
+	// If the user gave the run a focus prompt (--prompt), thread it
+	// into the refill so generated ideas stay within their roof
+	// theme ("focus on onboarding", "improve checkout flow",
+	// "polish settings UX"). Otherwise leave it open-ended.
+	focus := strings.TrimSpace(p.Prompt)
+	// applyAutodevDefaults synthesises a long instructional prompt
+	// from the remained.md template when the user hasn't given an
+	// explicit --prompt. That template is autodev plumbing, not a
+	// user-chosen roof theme — don't echo it back as a focus area.
+	if strings.Contains(focus, "remained.md") || strings.Contains(focus, "- [ ]") || strings.Contains(focus, "- [x]") {
+		focus = ""
+	}
+	focusBlock := ""
+	if focus != "" {
+		focusBlock = fmt.Sprintf("\nROOF THEME (every item must serve this goal):\n%s\n", focus)
+	}
+
 	prompt := fmt.Sprintf(`You are picking the next %d small features / improvements for an overnight autonomous coding loop.
 
 Project root: %s
 Existing checklist file (do NOT edit it directly): %s
-
-Read recent git log (git log --oneline -20), open TODO / FIXME / HACK comments, half-finished components, missing tests, broken UX, accessibility gaps, dead code, slow endpoints, and missing features visible in the code itself. Pick the %d best small items.
+%s
+Read recent git log (git log --oneline -20), open TODO / FIXME / HACK comments, half-finished components, missing tests, broken UX, accessibility gaps, dead code, slow endpoints, and missing features visible in the code itself. Pick the %d best small items%s.
 
 Each item must be:
 - single-PR-sized: implementable + testable in under one day
 - concrete and specific (file or feature mentioned)
-- non-trivial (no whitespace edits, no rename-only)
+- non-trivial (no whitespace edits, no rename-only)%s
 
 Output ONLY a JSON array of strings — one short imperative title per item, no other text, no code fences, no markdown. Example:
 
 ["Wire share button to Share.share() in DealCard.tsx","Translate hardcoded TR strings in PortfolioEmpty.tsx via i18n","Persist tweets to Convex (currently lost on reinstall)"]
 
 Do not write any file. Do not commit. Just print the JSON array and stop.`,
-		autodevRefillBatchSize, wd, p.RemainedFile, autodevRefillBatchSize)
+		autodevRefillBatchSize, wd, p.RemainedFile, focusBlock,
+		autodevRefillBatchSize,
+		ifFocus(focus, " that advance the ROOF THEME above"),
+		ifFocus(focus, "\n- aligned with the ROOF THEME (skip anything off-topic, even if it looks valuable)"),
+	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
