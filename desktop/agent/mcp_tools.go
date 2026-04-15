@@ -139,6 +139,19 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name":        "web_search",
+			"description": "Search the web. Use this for current information: competitor research, market gaps, library docs, error messages, news. Provider defaults to DuckDuckGo (free, no key); set provider=google or provider=bing to use paid backends if GOOGLE_CSE_KEY+GOOGLE_CSE_CX or BING_API_KEY are configured. Returns title/url/snippet for each hit.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"query"},
+				"properties": map[string]interface{}{
+					"query":    map[string]interface{}{"type": "string", "description": "The search query"},
+					"provider": map[string]interface{}{"type": "string", "description": "duckduckgo (default) | google | bing | auto", "default": "duckduckgo"},
+					"limit":    map[string]interface{}{"type": "integer", "description": "Max results (default 10, max 25)"},
+				},
+			},
+		},
+		{
 			"name":        "get_config",
 			"description": "Get agent configuration (sandbox, auto-start, relay, email, ACL peers).",
 			"inputSchema": map[string]interface{}{
