@@ -1328,35 +1328,74 @@ func spawnClaudeCode(ctx context.Context, l *LoopState, workDir string, report *
 	//   cannot show permission dialogs to a user who's asleep.
 	// --add-dir: grant explicit filesystem access to the project root
 	//   so tool calls don't trip over sandbox boundaries.
+	// --output-format stream-json --verbose: emit one JSON event per
+	// turn (assistant message, tool_use, tool_result, …) as soon as it
+	// happens. Each event is a small line that flushes immediately —
+	// no 4 KB libc buffering, no multi-minute silence. We translate
+	// each event into a one-line human-friendly progress note for the
+	// terminal/stream and keep the raw stream for parseClaudeStream
+	// to extract the final result.
 	cmd := exec.CommandContext(ctx, "claude",
 		"--print",
+		"--output-format", "stream-json",
+		"--verbose",
 		"--permission-mode", "acceptEdits",
 		"--add-dir", workDir,
 	)
 	cmd.Dir = workDir
 	cmd.Stdin = strings.NewReader(fullPrompt)
 	cmd.Stderr = os.Stderr
-
-	// Kill the subprocess via SIGTERM first, SIGKILL after a grace period.
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 10 * time.Second
 
 	fmt.Fprintf(os.Stderr, "[loop %s] spawning claude CLI (prompt=%d chars, report=%d findings)...\n",
 		l.Spec.Name, len(fullPrompt), len(report.Findings))
 
-	// Tee subprocess stdout to the user's terminal/log stream while we
-	// also capture it for parseAIResponse — gives live visibility into
-	// what Claude is doing instead of a multi-minute silent kick.
-	var buf bytes.Buffer
-	cmd.Stdout = io.MultiWriter(&buf, os.Stderr)
-	if err := cmd.Run(); err != nil {
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("claude CLI start: %w", err)
+	}
+
+	// Heartbeat: while Claude is working, print "still working … Ns"
+	// every 30 s so a tailing user always sees something happen
+	// within a vibe-friendly window. Cancelled when the subprocess
+	// exits.
+	hbCtx, hbCancel := context.WithCancel(ctx)
+	defer hbCancel()
+	go func() {
+		started := time.Now()
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-hbCtx.Done():
+				return
+			case <-t.C:
+				fmt.Fprintf(os.Stderr, "[claude] still working … %s elapsed\n",
+					time.Since(started).Round(time.Second))
+			}
+		}
+	}()
+
+	resp, parseErr := parseClaudeStream(stdout)
+	hbCancel()
+	if waitErr := cmd.Wait(); waitErr != nil {
 		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("claude subprocess cancelled: %w", ctx.Err())
 		}
-		return nil, fmt.Errorf("claude CLI returned error: %w", err)
+		// Don't bail if we already extracted a usable AIResponse —
+		// claude sometimes exits non-zero after a successful turn.
+		if resp == nil {
+			return nil, fmt.Errorf("claude CLI returned error: %w", waitErr)
+		}
 	}
-
-	return parseAIResponse(buf.String())
+	if parseErr != nil && resp == nil {
+		return nil, parseErr
+	}
+	return resp, nil
 }
 
 // spawnOllama talks to a local ollama daemon via its HTTP API
