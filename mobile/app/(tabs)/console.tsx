@@ -25,7 +25,7 @@ export default function ConsoleScreen() {
         <Text style={{ fontSize: 17, fontWeight: "700", color: c.textPrimary }}>Console</Text>
         <View style={{ width: 50 }} />
       </View>
-      <View style={[styles.tabbar, { backgroundColor: c.surface, borderBottomColor: c.border }]}>
+      <View style={[styles.tabbar, { backgroundColor: c.bgCard, borderBottomColor: c.border }]}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           {(["overview", "machines", "containers", "catalog", "mailpit", "s3"] as Tab[]).map((t) => (
             <Pressable key={t} onPress={() => setTab(t)} style={{ paddingHorizontal: 12, paddingVertical: 10 }}>
@@ -84,7 +84,7 @@ function OverviewTab({ c }: { c: any }) {
       <View style={{ flexDirection: "row", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
         {["15m", "1h", "6h", "24h", "7d"].map((w) => (
           <Pressable key={w} onPress={() => setWindow(w)}
-            style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: window === w ? c.accent + "30" : c.surface, borderWidth: 1, borderColor: window === w ? c.accent : c.border }}>
+            style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: window === w ? c.accent + "30" : c.bgCard, borderWidth: 1, borderColor: window === w ? c.accent : c.border }}>
             <Text style={{ color: window === w ? c.accent : c.textMuted, fontSize: 11, fontWeight: "600" }}>{w}</Text>
           </Pressable>
         ))}
@@ -194,7 +194,7 @@ function ContainersTab({ c }: { c: any }) {
   return (
     <View style={{ gap: 8 }}>
       <View style={{ flexDirection: "row", gap: 8 }}>
-        <Pressable onPress={() => setShowAll(!showAll)} style={[actionBtn(c), { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, flex: 1 }]}>
+        <Pressable onPress={() => setShowAll(!showAll)} style={[actionBtn(c), { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, flex: 1 }]}>
           <Text style={{ color: c.textPrimary, fontSize: 12 }}>{showAll ? "✓ " : ""}include stopped</Text>
         </Pressable>
         <Pressable onPress={prune} style={[actionBtn(c), { backgroundColor: "#f59e0b20", paddingHorizontal: 14 }]}>
@@ -216,7 +216,7 @@ function ContainersTab({ c }: { c: any }) {
           <View style={{ flexDirection: "row", gap: 6, marginTop: 8 }}>
             {ct.state === "running" ? (
               <>
-                <Pressable onPress={() => act(ct.id, "restart")} style={[actionBtn(c), { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, flex: 1 }]}>
+                <Pressable onPress={() => act(ct.id, "restart")} style={[actionBtn(c), { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, flex: 1 }]}>
                   <Text style={{ color: c.accent, fontSize: 12 }}>↻ Restart</Text>
                 </Pressable>
                 <Pressable onPress={() => act(ct.id, "stop")} style={[actionBtn(c), { backgroundColor: "#ef444420", flex: 1 }]}>
@@ -292,7 +292,7 @@ function MultiRegionForm({ c, onDone }: { c: any; onDone: () => void }) {
   }
 
   return (
-    <View style={{ padding: 12, backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 8, gap: 8 }}>
+    <View style={{ padding: 12, backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 8, gap: 8 }}>
       <TextInput value={name} onChangeText={setName} placeholder="deployment name" placeholderTextColor={c.textMuted} autoCapitalize="none" style={[inputStyle(c), { fontFamily: "Menlo", fontSize: 12 }]} />
       <TextInput value={regions} onChangeText={setRegions} placeholder="regions csv (nbg1,fsn1,hel1)" placeholderTextColor={c.textMuted} autoCapitalize="none" style={[inputStyle(c), { fontFamily: "Menlo", fontSize: 12 }]} />
       <TextInput value={domain} onChangeText={setDomain} placeholder="domain (optional)" placeholderTextColor={c.textMuted} autoCapitalize="none" style={[inputStyle(c), { fontFamily: "Menlo", fontSize: 12 }]} />
@@ -391,7 +391,7 @@ function S3Tab({ c }: { c: any }) {
   );
 }
 
-function inputStyle(c: any) { return { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10, color: c.textPrimary } as const; }
+function inputStyle(c: any) { return { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10, color: c.textPrimary } as const; }
 
 function Card({ c, label, value, sub }: { c: any; label: string; value: string; sub: string }) {
   return (
@@ -431,7 +431,7 @@ function fmtBytes(n: number): string {
   return n.toFixed(1) + " " + u[i];
 }
 function fmtBps(n: number): string { return fmtBytes(n) + "/s"; }
-function card(c: any) { return { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 12 } as const; }
+function card(c: any) { return { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 12 } as const; }
 function actionBtn(c: any) { return { paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8, alignItems: "center", justifyContent: "center" } as const; }
 
 const styles = StyleSheet.create({

@@ -44,7 +44,14 @@ AGENT_PID=""
 
 cleanup() {
   [ -n "$AGENT_PID" ] && kill "$AGENT_PID" 2>/dev/null; wait "$AGENT_PID" 2>/dev/null || true
-  rm -rf "$WORK_DIR"
+  # Go's automatic toolchain downloads (GOTOOLCHAIN=auto) land inside
+  # GOPATH/pkg/mod/golang.org/toolchain@.../ with files marked -r--r--r--.
+  # Plain `rm -rf` then fails with "Directory not empty" on CI because
+  # it cannot delete the read-only children. Make everything writable
+  # first, then drop the tree. Never let cleanup take down the whole
+  # job — CI runners are ephemeral anyway.
+  chmod -R u+w "$WORK_DIR" 2>/dev/null || true
+  rm -rf "$WORK_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
 

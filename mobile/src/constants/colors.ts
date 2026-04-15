@@ -25,10 +25,6 @@ export const DarkColors = {
   warnBorder: "#d97706",
   tabActive: "#ffffff",
   tabInactive: "#777777",
-  // Legacy aliases — kept so old screens that still say `c.surface` keep
-  // compiling without one mass rename. Prefer `bgCard` / `border` in new
-  // code. Do not remove without sweeping all app/(tabs)/*.tsx first.
-  surface: "#111111",
 };
 
 export const LightColors: ThemeColors = {
@@ -56,5 +52,4 @@ export const LightColors: ThemeColors = {
   warnBorder: "#fde68a",
   tabActive: "#000000",
   tabInactive: "#aaaaaa",
-  surface: "#f5f5f5",
 };

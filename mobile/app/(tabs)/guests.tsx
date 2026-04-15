@@ -143,7 +143,7 @@ export default function GuestsScreen() {
                 <Text style={{ color: c.accent, fontSize: 11, fontWeight: "700", textTransform: "uppercase" }}>New invite for {lastEmail}</Text>
                 <Text selectable style={{ color: c.textPrimary, fontFamily: "Menlo", fontSize: 26, letterSpacing: 4, fontWeight: "700", textAlign: "center" }}>{lastCode}</Text>
                 <View style={{ flexDirection: "row", gap: 8 }}>
-                  <Pressable onPress={() => copyCode(lastCode)} style={[actionBtn(c), { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, flex: 1 }]}>
+                  <Pressable onPress={() => copyCode(lastCode)} style={[actionBtn(c), { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, flex: 1 }]}>
                     <Text style={{ color: c.textPrimary, fontSize: 13 }}>Copy code</Text>
                   </Pressable>
                   <Pressable onPress={() => shareInvite(lastCode, lastEmail || undefined)} style={[actionBtn(c), { backgroundColor: c.accent, flex: 1 }]}>
@@ -214,13 +214,13 @@ export default function GuestsScreen() {
 
 function ModeBtn({ c, label, active, onPress }: { c: any; label: string; active: boolean; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} style={{ flex: 1, paddingVertical: 8, borderRadius: 8, backgroundColor: active ? c.accent + "20" : c.surface, borderWidth: 1, borderColor: active ? c.accent : c.border, alignItems: "center" }}>
+    <Pressable onPress={onPress} style={{ flex: 1, paddingVertical: 8, borderRadius: 8, backgroundColor: active ? c.accent + "20" : c.bgCard, borderWidth: 1, borderColor: active ? c.accent : c.border, alignItems: "center" }}>
       <Text style={{ color: active ? c.accent : c.textMuted, fontSize: 13, fontWeight: "700" }}>{label}</Text>
     </Pressable>
   );
 }
 
-function card(c: any) { return { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 10, padding: 12 } as const; }
+function card(c: any) { return { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 10, padding: 12 } as const; }
 function actionBtn(c: any) { return { paddingVertical: 10, borderRadius: 8, alignItems: "center", justifyContent: "center" } as const; }
 function inputStyle(c: any) { return { backgroundColor: c.bg, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10, color: c.textPrimary } as const; }
 

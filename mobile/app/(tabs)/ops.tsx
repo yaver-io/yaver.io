@@ -23,7 +23,7 @@ export default function OpsScreen() {
         <Text style={{ fontSize: 17, fontWeight: "700", color: c.textPrimary }}>Ops</Text>
         <View style={{ width: 50 }} />
       </View>
-      <View style={[styles.tabbar, { backgroundColor: c.surface, borderBottomColor: c.border }]}>
+      <View style={[styles.tabbar, { backgroundColor: c.bgCard, borderBottomColor: c.border }]}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12 }}>
           {(["deploy", "backups", "uptime", "domains", "rotate", "ci", "alerts", "errors"] as Tab[]).map((t) => (
             <Pressable key={t} onPress={() => setTab(t)} style={{ paddingHorizontal: 10, paddingVertical: 10 }}>
@@ -40,7 +40,7 @@ export default function OpsScreen() {
           <Text style={{ fontSize: 11, color: c.textMuted, marginBottom: 4, textTransform: "uppercase" }}>Project dir</Text>
           <TextInput value={directory} onChangeText={setDirectory} placeholder="blank = agent cwd"
             placeholderTextColor={c.textMuted}
-            style={{ backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10, color: c.textPrimary, fontFamily: "Menlo", fontSize: 12 }} />
+            style={{ backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10, color: c.textPrimary, fontFamily: "Menlo", fontSize: 12 }} />
         </View>
         <EnvSwitcher c={c} dir={directory} />
         {tab === "deploy" && <DeployTab c={c} dir={directory} />}
@@ -180,7 +180,7 @@ function UptimeTab({ c }: { c: any }) {
     <View style={{ gap: 10 }}>
       <TextInput value={url} onChangeText={setUrl} placeholder="https://myapp.com/health"
         placeholderTextColor={c.textMuted} autoCapitalize="none" keyboardType="url"
-        style={{ backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10, color: c.textPrimary, fontFamily: "Menlo", fontSize: 12 }} />
+        style={{ backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10, color: c.textPrimary, fontFamily: "Menlo", fontSize: 12 }} />
       <Pressable onPress={add} style={[actionBtn(c), { backgroundColor: c.accent }]}>
         <Text style={{ color: "#fff", fontWeight: "700" }}>+ Monitor</Text>
       </Pressable>
@@ -277,7 +277,7 @@ function EnvSwitcher({ c, dir }: { c: any; dir: string }) {
 
   const iconFor = (n: string) => n === "local" ? "🟢" : n === "staging" ? "☁️" : n === "production" ? "🚀" : "📦";
   const toneFor = (n: string, isActive: boolean) => {
-    if (!isActive) return { bg: c.surface, border: c.border, fg: c.textMuted };
+    if (!isActive) return { bg: c.bgCard, border: c.border, fg: c.textMuted };
     if (n === "local") return { bg: "#10b98120", border: "#10b981", fg: "#10b981" };
     if (n === "staging") return { bg: "#0ea5e920", border: "#0ea5e9", fg: "#0ea5e9" };
     if (n === "production") return { bg: "#ef444420", border: "#ef4444", fg: "#ef4444" };
@@ -285,7 +285,7 @@ function EnvSwitcher({ c, dir }: { c: any; dir: string }) {
   };
 
   return (
-    <View style={{ marginBottom: 14, padding: 10, backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 8 }}>
+    <View style={{ marginBottom: 14, padding: 10, backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 8 }}>
       <Text style={{ fontSize: 10, color: c.textMuted, textTransform: "uppercase", fontWeight: "700", marginBottom: 6 }}>Environment</Text>
       <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
         {envs.map((n) => {
@@ -424,13 +424,13 @@ function statusColor(s: string): string {
 }
 
 function card(c: any) {
-  return { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 12 } as const;
+  return { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 12 } as const;
 }
 function actionBtn(c: any) {
   return { paddingVertical: 12, borderRadius: 8, alignItems: "center", justifyContent: "center" } as const;
 }
 function inputStyle(c: any) {
-  return { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10, color: c.textPrimary, fontFamily: "Menlo", fontSize: 12 } as const;
+  return { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10, color: c.textPrimary, fontFamily: "Menlo", fontSize: 12 } as const;
 }
 
 const styles = StyleSheet.create({

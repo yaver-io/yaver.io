@@ -74,7 +74,7 @@ export default function TerminalScreen() {
 
   function keyBtn(label: string, raw: string) {
     return (
-      <Pressable key={label} onPress={() => send(raw)} style={[styles.keyBtn, { borderColor: c.border, backgroundColor: c.surface }]}>
+      <Pressable key={label} onPress={() => send(raw)} style={[styles.keyBtn, { borderColor: c.border, backgroundColor: c.bgCard }]}>
         <Text style={{ color: c.textPrimary, fontFamily: "Menlo", fontSize: 11 }}>{label}</Text>
       </Pressable>
     );
