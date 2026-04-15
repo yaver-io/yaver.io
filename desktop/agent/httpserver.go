@@ -153,6 +153,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/tasks/", s.auth(s.handleTaskByID))
 	mux.HandleFunc("/hybrid/run", s.auth(s.handleHybridRun))
 	mux.HandleFunc("/hybrid/plan", s.auth(s.handleHybridPlan))
+	mux.HandleFunc("/hybrid/stream", s.auth(s.handleHybridStream))
 	mux.HandleFunc("/chain", s.auth(s.handleChainCreate))
 	mux.HandleFunc("/chain/", s.auth(s.handleChainStatus))
 	mux.HandleFunc("/deploy", s.auth(s.handleDeploy))
@@ -2613,11 +2614,21 @@ func (s *HTTPServer) handleScheduleByID(w http.ResponseWriter, r *http.Request) 
 	switch action {
 	case "":
 		if r.Method == http.MethodDelete {
-			if err := s.scheduler.RemoveSchedule(id); err != nil {
-				jsonError(w, http.StatusNotFound, err.Error())
+			// Fast existence check is synchronous, but the actual
+			// remove + persist runs in a goroutine so the client
+			// never blocks on disk I/O or scheduler lock contention.
+			// `unscheduleLoopViaDaemon` on the CLI side is best-
+			// effort — it just wants a quick thumbs-up.
+			if _, ok := s.scheduler.GetSchedule(id); !ok {
+				jsonError(w, http.StatusNotFound, "schedule not found")
 				return
 			}
-			jsonReply(w, http.StatusOK, map[string]interface{}{"ok": true})
+			go func(id string) {
+				if err := s.scheduler.RemoveSchedule(id); err != nil {
+					log.Printf("[scheduler] async remove %s: %v", id, err)
+				}
+			}(id)
+			jsonReply(w, http.StatusAccepted, map[string]interface{}{"ok": true, "queued": true})
 		} else {
 			st, ok := s.scheduler.GetSchedule(id)
 			if !ok {
