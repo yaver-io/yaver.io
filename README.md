@@ -601,7 +601,7 @@ yaver handoff --message "finish the failing tests first" --max-kicks 50 --deadli
 | `--prompt "..."` | Explicit focus prompt (replaces the auto-resume prompt) |
 | `--target web\|ios-sim\|android-emu` | Loop target (default: auto-detect from workdir) |
 | `--branch <name>` / `--auto-branch` | Ship to named branch / `autodev/<loop>-<YYYYMMDD>` |
-| `--deploy testflight\|playstore\|both\|none` | Default `none` for handoff (won't ship without consent) |
+| `--deploy` | Default = ship to **all** configured platforms. Disable with `--deploy false`/`no`/`0`/`none`. Restrict to one platform with `testflight`/`playstore`/`web`. |
 | `--notify` | Mobile notification when the loop ends |
 | `--no-autotest` | Skip interleaved regression test pass |
 | `--auto-ideas N` | Cap on idea-refill batches when checklist runs dry |

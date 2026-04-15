@@ -142,7 +142,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"loop_target":         map[string]interface{}{"type": "string", "description": "web | ios-sim | android-emu (default: auto-detect from workdir). Separate from `target` (device routing hint)."},
 					"branch":              map[string]interface{}{"type": "string", "description": "Git branch the loop ships to (default: main)"},
 					"auto_branch":         map[string]interface{}{"type": "boolean", "description": "Use a dedicated autodev/<loop>-<YYYYMMDD> branch off main (overnight-safe)"},
-					"deploy":              map[string]interface{}{"type": "string", "description": "testflight | playstore | both | none (default: none for handoff)"},
+					"deploy":              map[string]interface{}{"type": "string", "description": "Deploy on done. Default = 'both' (ship to every configured platform). Disable with 'false'/'no'/'0'/'none'. Restrict with 'testflight'/'playstore'/'web'."},
 					"notify":              map[string]interface{}{"type": "boolean", "description": "Send a mobile notification when the loop ends"},
 					"no_autotest":         map[string]interface{}{"type": "boolean", "description": "Skip the interleaved autotest regression pass after each kick"},
 					"auto_ideas":          map[string]interface{}{"type": "integer", "description": "Max idea-refill batches when the checklist runs dry (0 = stop on empty, 999 = effectively unlimited)"},
