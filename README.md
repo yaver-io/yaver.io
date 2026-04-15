@@ -530,6 +530,52 @@ Trigger AI tasks from CI/CD:
 
 See [MCP Integration Guide](https://yaver.io/docs/mcp) for full documentation.
 
+## Pass Session to Yaver (Handoff)
+
+Hand off an in-progress AI session — Claude Code, Codex, Aider, anything — to Yaver, and let Yaver's autodev loop finish the remaining work autonomously. Works on the current machine, on a remote dev box, with hybrid (planner + cheap local implementer), or with a single arbitrary runner.
+
+```bash
+# Default: claude-code finishes the work locally
+yaver handoff
+
+# Cheap: planner + local implementer (Aider + Ollama/Qwen)
+yaver handoff --engine hybrid
+
+# Specific runner
+yaver handoff --engine runner --runner aider
+yaver handoff --engine runner --runner ollama:qwen2.5-coder:14b
+
+# Hand a specific Yaver task or session file
+yaver handoff --from <taskId>
+yaver handoff --from ~/.claude/sessions/<uuid>.jsonl
+
+# Hand off to a remote dev machine
+yaver handoff --to my-mac-mini --engine hybrid
+
+# Add focus, set caps
+yaver handoff --message "finish the failing tests first" --max-kicks 50 --deadline 3600
+```
+
+**From inside an AI agent.** Any agent connected to Yaver's MCP server can call the `session_handoff` tool — say "pass session to yaver" and the agent invokes it. The tool returns `exitNow: true` plus a sentinel file path, signalling the agent to terminate cleanly. Yaver writes `~/.yaver/handoff/<loopName>.json` (and a stable `latest.json`) so external agents that can't be force-killed can poll for the takeover and exit on their own.
+
+**What Yaver does on handoff:**
+
+1. Exports the source session to a `TransferBundle` (conversation turns + agent-specific state files).
+2. Imports it into the target machine's TaskManager.
+3. Optionally stops the source Yaver task.
+4. Builds a develop-mode autodev loop with the chosen engine/runner. The resume prompt is synthesised from the bundle context plus pending items in the todo list plus any `--message`.
+5. Writes the sentinel and kicks the loop immediately.
+
+**Engine choices:**
+
+| Engine | Runner | When to use |
+|--------|--------|-------------|
+| `claude` (default) | `claude-code` | Highest quality, frontier model end-to-end |
+| `hybrid` | planner=claude, implementer=aider+ollama | 80–95% cheaper on feature loops |
+| `runner` | any (`aider`, `codex`, `ollama:<model>`, …) | You know exactly which runner you want |
+
+**Surfaces:** CLI (`yaver handoff`), MCP tool (`session_handoff`), HTTP (`POST /session/handoff`). Same arguments across all three.
+
 ## Security Sandbox
 
 The command sandbox is enabled by default and blocks dangerous operations:
@@ -931,6 +977,7 @@ yaver doctor        System health check (auth, runners, relay, network)
 yaver devices       List registered devices
 yaver exec          Execute a command on a remote device
 yaver session       Transfer AI agent sessions between machines
+yaver handoff       Pass the current AI session to Yaver (autodev takes over)
 yaver build         Build apps (Flutter, Gradle, Xcode, React Native)
 yaver test          Run tests (auto-detect framework)
 yaver deploy        Deploy to phone, TestFlight, Play Store, or CI

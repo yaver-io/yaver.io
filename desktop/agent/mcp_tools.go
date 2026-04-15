@@ -134,6 +134,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"deadline_sec":        map[string]interface{}{"type": "integer", "description": "Wall-clock cap in seconds (0 = none)"},
 					"message":             map[string]interface{}{"type": "string", "description": "Extra prompt appended to the resume instructions"},
 					"stop_source":         map[string]interface{}{"type": "boolean", "description": "Stop the source Yaver task before kicking the new loop", "default": true},
+					"autodev":             map[string]interface{}{"type": "boolean", "description": "Autodev mode: also mine the session for new ideas, missing tests, and follow-ups; implement small/safe ones."},
 				},
 			},
 		},

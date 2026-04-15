@@ -96,6 +96,8 @@ func main() {
 		runExec(os.Args[2:])
 	case "session":
 		runSession(os.Args[2:])
+	case "handoff":
+		runHandoff(os.Args[2:])
 	case "vault":
 		runVault(os.Args[2:])
 	case "build":

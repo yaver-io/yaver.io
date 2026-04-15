@@ -3238,6 +3238,7 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 			DeadlineSec       int    `json:"deadline_sec"`
 			Message           string `json:"message"`
 			StopSource        *bool  `json:"stop_source"`
+			Autodev           bool   `json:"autodev"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		stopSource := true
@@ -3257,6 +3258,7 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 			DeadlineSec:       args.DeadlineSec,
 			ExtraPrompt:       args.Message,
 			StopSource:        stopSource,
+			Autodev:           args.Autodev,
 		}
 		res, err := RunHandoff(s, spec)
 		if err != nil {
