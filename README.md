@@ -588,6 +588,12 @@ yaver handoff --message "finish the failing tests first" --max-kicks 50 --deadli
 
 **Surfaces:** CLI (`yaver handoff`), MCP tool (`session_handoff`), HTTP (`POST /session/handoff`). Same arguments across all three.
 
+**Hard takeover (vs cooperative).** Yaver doesn't just write a sentinel — it actually terminates the calling AI process. Caller PID is resolved in this order: explicit `--caller-pid` / `caller_pid` arg → stdio MCP parent PID (auto-set when Claude Code/Desktop spawns `yaver mcp`) → HTTP MCP loopback peer port via `lsof`. After the response is sent, Yaver sends SIGTERM and SIGKILLs 5s later if the process is still alive. Non-loopback HTTP clients are never killed.
+
+**Load + duration knobs (mirror `yaver autodev`).** `--load lite` (default) stretches kicks to one every 5min and respects the dev's Claude/Codex 5-hour windows. `--load burst` runs every 30s up to 200 iterations/day. `--hours 8` caps each individual kick at 8h so a runaway prompt can't burn the whole budget.
+
+**Verify takeover:** `yaver handoff status` prints the most recent sentinel + the live loop's iteration count and last summary.
+
 ## Security Sandbox
 
 The command sandbox is enabled by default and blocks dangerous operations:
