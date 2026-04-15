@@ -95,7 +95,7 @@ func runAutodevOrTest(kind string, args []string) {
 	load := fs.String("load", autodevSleepLoad, "lite|high")
 	lite := fs.Bool("lite", false, "Shortcut for --load lite (respects session limits, default)")
 	heavy := fs.Bool("heavy", false, "Shortcut for --load high (burst mode)")
-	deploy := fs.String("deploy", "", "testflight|playstore|both|none (default: auto-detected)")
+	deploy := fs.String("deploy", "", "auto|testflight|playstore|convex|vercel|both|none (default: auto — runs every shippable surface the project supports)")
 	prompt := fs.String("prompt", "", "Focus prompt, e.g. \"focus on the purchase flow\"")
 	target := fs.String("target", "", "web|ios-sim|android-emu (auto-detected)")
 	runner := fs.String("runner", "", "Primary AI runner (default: claude-code)")
@@ -104,6 +104,7 @@ func runAutodevOrTest(kind string, args []string) {
 	autoIdeas := fs.Int("auto-ideas", 999, "Maximum number of times the loop is allowed to auto-generate a fresh batch of ideas when work runs out. Default 999 = effectively unlimited so an overnight run keeps producing + implementing features until the deadline. 0 = exit the moment the checklist empties (legacy).")
 	branch := fs.String("branch", "", "Git branch to ship to (default: main)")
 	autoBranch := fs.Bool("auto-branch", false, "Work on a dedicated 'autodev/<loop>-<YYYYMMDD>' branch instead of main. Creates it from main if it doesn't exist. Useful for overnight runs you want to PR-review before merging.")
+	harden := fs.String("harden", "", "Run a hardening-focused loop: security|memory|perf|quality|all. Use without --prompt to auto-fill a curated focus, or combine with --prompt to bias your own theme toward hardening.")
 	maxIter := fs.Int("max-iterations", 0, "Hard cap on total kicks (0 = no cap)")
 	notify := fs.Bool("notify", false, "Notify mobile when run ends")
 	showPlan := fs.Bool("plan", false, "Print plan and exit (dry-run)")
@@ -148,6 +149,20 @@ func runAutodevOrTest(kind string, args []string) {
 	}
 	if project == "" {
 		project = filepath.Base(wd)
+	}
+
+	// --harden resolves to a curated focus prompt for the chosen area.
+	// If --prompt is also given, the hardening guidance is prepended
+	// so the user's theme stays primary; otherwise hardening is the
+	// whole prompt. Unknown values fall through with a warning.
+	if hp := autodevHardenPrompt(*harden); hp != "" {
+		if strings.TrimSpace(*prompt) == "" {
+			*prompt = hp
+		} else {
+			*prompt = hp + "\n\n" + *prompt
+		}
+	} else if *harden != "" {
+		fmt.Fprintf(os.Stderr, "%s: unknown --harden %q (want security|memory|perf|quality|all)\n", kind, *harden)
 	}
 
 	// --auto-branch resolves to a deterministic per-day branch name
@@ -305,21 +320,14 @@ func applyAutodevDefaults(d autodevDefaults, kind, wd string) autodevDefaults {
 		}
 	}
 	if d.deploy == "" {
-		// Mobile repos default to testflight. Go CLI repos (yaver.io)
-		// detected via desktop/agent/main.go presence default to none.
-		hasTestFlight := fileExists(filepath.Join(wd, "scripts", "deploy-testflight.sh"))
-		hasMobileDir := fileExists(filepath.Join(wd, "mobile"))
-		isMobileRepo := hasTestFlight || hasMobileDir
-		if fileExists(filepath.Join(wd, "desktop", "agent", "main.go")) {
-			isMobileRepo = false
-		}
-		switch {
-		case kind == "autotest":
+		// "auto" lets runAutodevDeploy detect every shippable surface
+		// the project supports (testflight, playstore, convex, vercel)
+		// and run them all in sequence. Autotest runs never deploy —
+		// they're observation-only.
+		if kind == "autotest" {
 			d.deploy = "none"
-		case isMobileRepo:
-			d.deploy = "testflight"
-		default:
-			d.deploy = "none"
+		} else {
+			d.deploy = "auto"
 		}
 	}
 	if d.prompt == "" {
@@ -862,27 +870,116 @@ func runAutodevDeploy(p autodevPlan) {
 		fmt.Printf("%s: version %s → %s\n", p.Kind, dep.VersionBefore, dep.VersionAfter)
 	}
 
-	var err error
-	switch p.Deploy {
-	case "testflight":
-		fmt.Printf("%s: deploying to TestFlight…\n", p.Kind)
-		err = runShellAutodev("./scripts/deploy-testflight.sh")
-	case "playstore":
-		fmt.Printf("%s: deploying to Google Play internal…\n", p.Kind)
-		err = runShellAutodev("JAVA_HOME=$(/usr/libexec/java_home -v 17) ./scripts/deploy-playstore.sh && PLAY_STORE_KEY_FILE=keys/google-play-service-account.json python3 scripts/upload-playstore.py")
+	targets := resolveAutodevDeployTargets(p.Deploy)
+	if len(targets) == 0 {
+		fmt.Fprintf(os.Stderr, "%s: deploy target %q resolved to no shippable surface — skipping\n", p.Kind, p.Deploy)
+		dep.Error = "no shippable surface detected for deploy=" + p.Deploy
+		return
+	}
+
+	var firstErr error
+	successes := []string{}
+	failures := []string{}
+	for _, t := range targets {
+		fmt.Printf("%s: deploying → %s…\n", p.Kind, t)
+		var err error
+		switch t {
+		case "testflight":
+			err = runShellAutodev("./scripts/deploy-testflight.sh")
+		case "playstore":
+			err = runShellAutodev("JAVA_HOME=$(/usr/libexec/java_home -v 17) ./scripts/deploy-playstore.sh && PLAY_STORE_KEY_FILE=keys/google-play-service-account.json python3 scripts/upload-playstore.py")
+		case "convex":
+			// `npx convex deploy` ships the prod backend. --yes
+			// suppresses the "are you sure" prompt for unattended runs.
+			err = runShellAutodev("npx --yes convex deploy --yes")
+		case "vercel":
+			// `vercel --prod` deploys to the project's production
+			// alias. --yes accepts org/project link prompts on first
+			// run. Requires VERCEL_TOKEN env or prior `vercel login`.
+			err = runShellAutodev("npx --yes vercel deploy --prod --yes")
+		default:
+			err = fmt.Errorf("unknown deploy target: %s", t)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %s deploy failed: %v\n", p.Kind, t, err)
+			failures = append(failures, t)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		successes = append(successes, t)
+	}
+
+	if len(successes) > 0 {
+		dep.OK = true
+	}
+	if len(failures) > 0 {
+		dep.Error = fmt.Sprintf("failed: %s", strings.Join(failures, ", "))
+	}
+	fmt.Printf("%s: deploy summary — ok=%v failed=%v\n", p.Kind, successes, failures)
+	_ = firstErr
+}
+
+// resolveAutodevDeployTargets expands a high-level deploy spec into
+// the concrete surfaces to ship to. "auto" probes the project for
+// every supported flavour (mobile + web + backend) and returns
+// whichever exists; "both" preserves legacy testflight+playstore;
+// "none" / "" returns nothing (caller already short-circuits).
+func resolveAutodevDeployTargets(spec string) []string {
+	switch spec {
+	case "", "none":
+		return nil
 	case "both":
-		fmt.Printf("%s: deploying to TestFlight + Google Play internal…\n", p.Kind)
-		err = runShellAutodev("./scripts/deploy-testflight.sh && JAVA_HOME=$(/usr/libexec/java_home -v 17) ./scripts/deploy-playstore.sh && PLAY_STORE_KEY_FILE=keys/google-play-service-account.json python3 scripts/upload-playstore.py")
+		return []string{"testflight", "playstore"}
+	case "testflight", "playstore", "convex", "vercel":
+		return []string{spec}
+	case "auto":
+		var out []string
+		if fileExists("scripts/deploy-testflight.sh") {
+			out = append(out, "testflight")
+		}
+		if fileExists("scripts/deploy-playstore.sh") {
+			out = append(out, "playstore")
+		}
+		// Convex: convex/ dir OR `convex` in package.json deps
+		if fileExists("convex") || pkgJSONHasDep("convex") {
+			out = append(out, "convex")
+		}
+		// Vercel: vercel.json, .vercel dir, or a Next.js project
+		if fileExists("vercel.json") || fileExists(".vercel") || fileExists("next.config.js") || fileExists("next.config.mjs") || fileExists("next.config.ts") {
+			out = append(out, "vercel")
+		}
+		return out
 	default:
-		fmt.Fprintf(os.Stderr, "%s: unknown deploy target %q\n", p.Kind, p.Deploy)
-		dep.Error = "unknown deploy target: " + p.Deploy
-		return
+		// Unknown spec — pass through as a single target, log will
+		// surface the error from the run step.
+		return []string{spec}
 	}
+}
+
+// pkgJSONHasDep returns true if the cwd's package.json lists `name`
+// in dependencies or devDependencies. Best-effort; missing or
+// malformed package.json returns false.
+func pkgJSONHasDep(name string) bool {
+	data, err := os.ReadFile("package.json")
 	if err != nil {
-		dep.Error = err.Error()
-		return
+		return false
 	}
-	dep.OK = true
+	var pkg struct {
+		Dependencies    map[string]string `json:"dependencies"`
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return false
+	}
+	if _, ok := pkg.Dependencies[name]; ok {
+		return true
+	}
+	if _, ok := pkg.DevDependencies[name]; ok {
+		return true
+	}
+	return false
 }
 
 func runShellAutodev(cmd string) error {

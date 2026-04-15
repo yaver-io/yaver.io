@@ -3275,6 +3275,15 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			CallerPID         int    `json:"caller_pid"`
 			Hours             string `json:"hours"`
 			Load              string `json:"load"`
+			Prompt            string `json:"prompt"`
+			LoopTarget        string `json:"loop_target"`
+			Branch            string `json:"branch"`
+			AutoBranch        bool   `json:"auto_branch"`
+			Deploy            string `json:"deploy"`
+			Notify            bool   `json:"notify"`
+			NoAutotest        bool   `json:"no_autotest"`
+			AutoIdeas         int    `json:"auto_ideas"`
+			RemainedFile      string `json:"remained_file"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		stopSource := true
@@ -3298,6 +3307,15 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			Hours:             args.Hours,
 			Load:              args.Load,
 			CallerPID:         resolveCallerPID(args.CallerPID, clientAddr),
+			Prompt:            args.Prompt,
+			LoopTarget:        args.LoopTarget,
+			Branch:            args.Branch,
+			AutoBranch:        args.AutoBranch,
+			Deploy:            args.Deploy,
+			Notify:            args.Notify,
+			NoAutotest:        args.NoAutotest,
+			AutoIdeas:         args.AutoIdeas,
+			RemainedFile:      args.RemainedFile,
 		}
 		res, err := RunHandoff(s, spec)
 		if err != nil {
@@ -7861,6 +7879,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			Engine          string `json:"engine"`
 			AutoIdeas       *int   `json:"auto_ideas"`
 			AutoBranch      bool   `json:"auto_branch"`
+			Harden          string `json:"harden"`
 			Branch          string `json:"branch"`
 			Target          string `json:"target"`
 			RemainedPath    string `json:"remained_path"`

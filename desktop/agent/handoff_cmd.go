@@ -60,8 +60,24 @@ func runHandoff(args []string) {
 	autodev := fs.Bool("autodev", false, "Autodev mode: also mine the session for new ideas, write missing tests, propose follow-ups")
 	hours := fs.String("hours", "", "Wall-clock cap, e.g. '8' or 'inf' (default inf)")
 	load := fs.String("load", "lite", "lite (respects AI session windows) | burst (max throughput)")
+	lite := fs.Bool("lite", false, "Shortcut for --load lite (default)")
+	heavy := fs.Bool("heavy", false, "Shortcut for --load burst")
 	callerPID := fs.Int("caller-pid", 0, "PID of the calling AI agent — Yaver will SIGTERM/SIGKILL it after takeover (default: auto-detect)")
+	prompt := fs.String("prompt", "", "Focus prompt for the loop (replaces the auto-generated resume prompt)")
+	loopTarget := fs.String("target", "", "Loop target: web|ios-sim|android-emu (default: auto-detect from workdir)")
+	branch := fs.String("branch", "", "Git branch the loop ships to (default: main)")
+	autoBranch := fs.Bool("auto-branch", false, "Use a dedicated 'autodev/<loop>-<YYYYMMDD>' branch off main")
+	deploy := fs.String("deploy", "", "testflight|playstore|both|none (default: none for handoff)")
+	notify := fs.Bool("notify", false, "Mobile notification when the loop ends")
+	noAutotest := fs.Bool("no-autotest", false, "Skip the interleaved autotest regression pass")
+	autoIdeas := fs.Int("auto-ideas", 999, "Max idea-refill batches when checklist runs dry (0 = stop on empty, 999 = effectively unlimited)")
+	remained := fs.String("remained", "", "Path to a remained.md checklist file the loop pulls items from")
 	fs.Parse(args)
+	if *heavy {
+		*load = "burst"
+	} else if *lite {
+		*load = "lite"
+	}
 	if autodevSub {
 		*autodev = true
 	}
@@ -85,6 +101,15 @@ func runHandoff(args []string) {
 		"hours":        *hours,
 		"load":         *load,
 		"callerPid":    *callerPID,
+		"prompt":       *prompt,
+		"loopTarget":   *loopTarget,
+		"branch":       *branch,
+		"autoBranch":   *autoBranch,
+		"deploy":       *deploy,
+		"notify":       *notify,
+		"noAutotest":   *noAutotest,
+		"autoIdeas":    *autoIdeas,
+		"remainedFile": *remained,
 	}
 	if *from != "" {
 		// Heuristic: if --from points at a file we can stat, treat it as a
