@@ -196,13 +196,17 @@ func runAutodevOrTest(kind string, args []string) {
 
 	p := buildAutodevPlan(kind, d, wd)
 
-	// Tee stdout/stderr to a daemon-hosted log stream so the mobile
-	// app and web dashboard can watch this run live (same lines the
-	// terminal sees). Best-effort: if the daemon is unavailable the
-	// tee silently degrades to terminal-only output.
+	// Tee stdout/stderr to the daemon-hosted log stream — but ONLY
+	// in the detached child that actually owns the kick loop. The
+	// parent CLI must not tee, otherwise its tail of the same
+	// stream feeds its own prints back into the stream and we
+	// drown in a feedback loop. The parent's role is just spawn-
+	// and-tail; the child publishes.
 	streamName := fmt.Sprintf("autodev:%s", p.LoopName)
-	stopStream := teeStdoutToStream(streamName)
-	defer stopStream()
+	if autodevDetachActive() {
+		stopStream := teeStdoutToStream(streamName)
+		defer stopStream()
+	}
 
 	printAutodevPlan(p)
 	if *showPlan {
