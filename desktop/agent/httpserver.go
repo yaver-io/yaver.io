@@ -3117,7 +3117,7 @@ func (s *HTTPServer) handleMCP(w http.ResponseWriter, r *http.Request) {
 		resp.Result = s.getMCPToolsList()
 
 	case "tools/call":
-		resp.Result = s.handleMCPToolCall(req.Params)
+		resp.Result = s.handleMCPToolCallWithAddr(req.Params, r.RemoteAddr)
 
 	case "notifications/initialized":
 		// Client notification, no response needed but we return empty result
@@ -3133,6 +3133,14 @@ func (s *HTTPServer) handleMCP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
+	return s.handleMCPToolCallWithAddr(params, "")
+}
+
+// handleMCPToolCallWithAddr is the same as handleMCPToolCall but threads
+// the HTTP client's TCP peer address through to handlers that need it
+// (currently only session_handoff, which uses it to look up the calling
+// process's PID for cooperative termination).
+func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAddr string) interface{} {
 	var call struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
@@ -3264,6 +3272,9 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 			Message           string `json:"message"`
 			StopSource        *bool  `json:"stop_source"`
 			Autodev           bool   `json:"autodev"`
+			CallerPID         int    `json:"caller_pid"`
+			Hours             string `json:"hours"`
+			Load              string `json:"load"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		stopSource := true
@@ -3284,6 +3295,9 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 			ExtraPrompt:       args.Message,
 			StopSource:        stopSource,
 			Autodev:           args.Autodev,
+			Hours:             args.Hours,
+			Load:              args.Load,
+			CallerPID:         resolveCallerPID(args.CallerPID, clientAddr),
 		}
 		res, err := RunHandoff(s, spec)
 		if err != nil {
@@ -7846,6 +7860,7 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 			Runner          string `json:"runner"`
 			Engine          string `json:"engine"`
 			AutoIdeas       *int   `json:"auto_ideas"`
+			AutoBranch      bool   `json:"auto_branch"`
 			Branch          string `json:"branch"`
 			Target          string `json:"target"`
 			RemainedPath    string `json:"remained_path"`
@@ -7892,10 +7907,15 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 		if project == "" {
 			project = filepath.Base(args.WorkDir)
 		}
+		resolvedBranchMCP := args.Branch
+		if args.AutoBranch && resolvedBranchMCP == "" {
+			resolvedBranchMCP = "autodev/" + project + "-autodev-" + time.Now().Format("20060102")
+			ensureAutodevBranch(args.WorkDir, resolvedBranchMCP)
+		}
 		d := autodevDefaults{
 			hours: args.Hours, load: args.Load, deploy: args.Deploy,
 			prompt: args.Prompt, project: project, runner: args.Runner,
-			branch: args.Branch, target: args.Target,
+			branch: resolvedBranchMCP, target: args.Target,
 			maxIter: args.MaxIterations, noAutotest: args.NoAutotest,
 			remained:  remainedPath,
 			autoIdeas: autoIdeasMCP,

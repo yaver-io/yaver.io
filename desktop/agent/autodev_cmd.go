@@ -103,6 +103,7 @@ func runAutodevOrTest(kind string, args []string) {
 	hybrid := fs.Bool("hybrid", false, "Shortcut for --engine hybrid")
 	autoIdeas := fs.Int("auto-ideas", 999, "Maximum number of times the loop is allowed to auto-generate a fresh batch of ideas when work runs out. Default 999 = effectively unlimited so an overnight run keeps producing + implementing features until the deadline. 0 = exit the moment the checklist empties (legacy).")
 	branch := fs.String("branch", "", "Git branch to ship to (default: main)")
+	autoBranch := fs.Bool("auto-branch", false, "Work on a dedicated 'autodev/<loop>-<YYYYMMDD>' branch instead of main. Creates it from main if it doesn't exist. Useful for overnight runs you want to PR-review before merging.")
 	maxIter := fs.Int("max-iterations", 0, "Hard cap on total kicks (0 = no cap)")
 	notify := fs.Bool("notify", false, "Notify mobile when run ends")
 	showPlan := fs.Bool("plan", false, "Print plan and exit (dry-run)")
@@ -147,6 +148,18 @@ func runAutodevOrTest(kind string, args []string) {
 	}
 	if project == "" {
 		project = filepath.Base(wd)
+	}
+
+	// --auto-branch resolves to a deterministic per-day branch name
+	// like "autodev/<project>-autodev-20260416". If --branch wasn't
+	// also supplied, this becomes the ship branch. We pre-create it
+	// from origin/main if it doesn't exist so the loop's worktree
+	// has a base to detach from.
+	if *autoBranch && *branch == "" {
+		auto := fmt.Sprintf("autodev/%s-%s-%s",
+			project, kind, time.Now().Format("20060102"))
+		ensureAutodevBranch(wd, auto)
+		*branch = auto
 	}
 
 	d := autodevDefaults{
@@ -656,6 +669,30 @@ func indentAutodev(s, prefix string) string {
 // window so it cannot burn the user's entire monthly Claude /
 // Codex / API allotment in a single overnight run. Past the cap,
 // the loop sleeps an hour and re-checks.
+// ensureAutodevBranch creates the named branch off origin/main (or
+// HEAD if origin is unreachable) when it doesn't already exist. We
+// don't checkout — the loop's git worktree machinery handles that.
+// Best-effort: errors are reported but never abort the run.
+func ensureAutodevBranch(wd, name string) {
+	exists := func() bool {
+		cmd := osexec.Command("git", "-C", wd, "rev-parse", "--verify", "--quiet", "refs/heads/"+name)
+		return cmd.Run() == nil
+	}
+	if exists() {
+		fmt.Fprintf(os.Stderr, "[autodev] using existing branch %q\n", name)
+		return
+	}
+	// Try to base off origin/main, falling back to local main, then HEAD.
+	for _, base := range []string{"origin/main", "main", "HEAD"} {
+		cmd := osexec.Command("git", "-C", wd, "branch", name, base)
+		if cmd.Run() == nil {
+			fmt.Fprintf(os.Stderr, "[autodev] created branch %q from %s\n", name, base)
+			return
+		}
+	}
+	fmt.Fprintf(os.Stderr, "[autodev] WARNING: could not create branch %q — falling back to current\n", name)
+}
+
 // autodevForceResume clears any stop marker / paused-or-stopped
 // status on the given loop so the next kick can actually run. Best-
 // effort: missing loop or write errors are swallowed — we don't want

@@ -128,6 +128,20 @@ func teeStdoutToStream(streamName string) func() {
 
 	publisher := newStreamPublisher(streamName)
 
+	// Open a per-stream log file under /tmp/yaver/<stream>.log so
+	// the user (or another agent) can `tail -f` the run after the
+	// fact. Best-effort: a file-open failure does NOT degrade the
+	// terminal or daemon-stream output paths.
+	var logFile *os.File
+	if dir := "/tmp/yaver"; os.MkdirAll(dir, 0o755) == nil {
+		safeName := strings.ReplaceAll(streamName, ":", "_")
+		path := dir + "/" + safeName + ".log"
+		if f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+			logFile = f
+			fmt.Fprintf(os.Stderr, "[stream] tee -> %s\n", path)
+		}
+	}
+
 	// Announce the run so subscribers that connect mid-stream see
 	// when it started.
 	publisher.Publish(fmt.Sprintf("─── %s started %s ───",
@@ -150,6 +164,9 @@ func teeStdoutToStream(streamName string) func() {
 			if n > 0 {
 				chunk := buf[:n]
 				_, _ = dst.Write(chunk) // raw passthrough — instant
+				if logFile != nil {
+					_, _ = logFile.Write(chunk)
+				}
 				lineBuf.Write(chunk)
 				for {
 					data := lineBuf.Bytes()
@@ -189,5 +206,10 @@ func teeStdoutToStream(streamName string) func() {
 		publisher.Publish(fmt.Sprintf("─── %s ended %s ───",
 			streamName, time.Now().Format(time.RFC3339)))
 		publisher.Close()
+		if logFile != nil {
+			_, _ = logFile.WriteString(fmt.Sprintf("─── %s ended %s ───\n",
+				streamName, time.Now().Format(time.RFC3339)))
+			_ = logFile.Close()
+		}
 	}
 }
