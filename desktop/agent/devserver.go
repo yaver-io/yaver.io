@@ -1003,7 +1003,7 @@ func (f *FlutterDevServer) startNativeProcess(ctx context.Context, name string, 
 
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = workDir
-	cmd.Env = append(os.Environ())
+	cmd.Env = os.Environ()
 
 	// Create stdin pipe for hot reload ("r") and hot restart ("R")
 	pipe, err := cmd.StdinPipe()

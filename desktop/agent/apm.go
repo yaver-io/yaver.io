@@ -126,15 +126,31 @@ func (b *APMBucket) computeLocked() {
 	}
 }
 
+// APMBucketView is the mutex-free projection of APMBucket used for
+// snapshots and JSON responses. It exists because APMBucket embeds a
+// sync.Mutex and `go vet` flags any value-copy of a struct-with-lock;
+// Snapshot() returns these instead of bare APMBuckets so callers
+// (dashboard JSON, tests) can safely range and copy the result.
+type APMBucketView struct {
+	Route       string  `json:"route"`
+	StatusClass string  `json:"statusClass"`
+	Count       int     `json:"count"`
+	P50MS       float64 `json:"p50Ms"`
+	P95MS       float64 `json:"p95Ms"`
+	P99MS       float64 `json:"p99Ms"`
+	MaxMS       float64 `json:"maxMs"`
+	ErrorRate   float64 `json:"errorRate"`
+}
+
 // Snapshot returns a copy of every bucket, sorted by P95 desc
 // so the "slow endpoints first" view is the default.
-func (s *APMStore) Snapshot() []APMBucket {
+func (s *APMStore) Snapshot() []APMBucketView {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]APMBucket, 0, len(s.buckets))
+	out := make([]APMBucketView, 0, len(s.buckets))
 	for _, b := range s.buckets {
 		b.mu.Lock()
-		cp := APMBucket{
+		cp := APMBucketView{
 			Route:       b.Route,
 			StatusClass: b.StatusClass,
 			Count:       b.Count,

@@ -10,6 +10,9 @@ import { CONVEX_SITE_URL } from "./constants";
 // ── Types ────────────────────────────────────────────────────────────
 
 export interface GuestInvitation {
+  /** Convex row id — present on records fetched from the backend,
+   *  absent on invitations constructed client-side. */
+  _id?: string;
   hostUserId: string;
   hostName: string;
   hostEmail: string;
@@ -37,6 +40,10 @@ export interface GuestInfo {
   expiresAt?: number;
   acceptedAt?: number;
   revokedAt?: number;
+  /** Set when status === "accepted". Epoch ms of when the host granted access. */
+  grantedAt?: number;
+  /** Set when status === "pending". 6-char uppercase alphanumeric. */
+  inviteCode?: string;
 }
 
 export interface GuestConfigEntry {

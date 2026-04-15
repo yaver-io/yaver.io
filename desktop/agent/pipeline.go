@@ -1969,13 +1969,14 @@ func (r *PipelineRunner) ReportStatus(provider string, result *PipelineResult) e
 		// Use gh api to create a check run
 		payload := fmt.Sprintf(`{"name":"yaver-local-ci","head_sha":"%s","status":"completed","conclusion":"%s","output":{"title":"Local CI","summary":"Ran %d jobs in %s"}}`,
 			commitSHA, state, len(result.Jobs), result.Duration.Round(time.Second))
-		return osexec.Command("gh", "api",
+		cmd := osexec.Command("gh", "api",
 			"--method", "POST",
 			"/repos/{owner}/{repo}/check-runs",
 			"--input", "-",
 			"--silent",
-		).Run()
-		_ = payload // used as stdin in a real implementation
+		)
+		cmd.Stdin = strings.NewReader(payload)
+		return cmd.Run()
 	case "gitlab":
 		return osexec.Command("glab", "api",
 			"POST", "/projects/:id/statuses/"+commitSHA,

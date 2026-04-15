@@ -111,6 +111,8 @@ export interface Device {
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
 interface GuestInvitation {
+  /** Convex row id — present on records fetched from the backend. */
+  _id?: string;
   hostUserId: string;
   hostName: string;
   hostEmail: string;

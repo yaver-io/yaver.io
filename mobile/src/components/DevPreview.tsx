@@ -126,22 +126,11 @@ export function DevPreview() {
     return () => sub.remove();
   }, []);
 
-  const handleOpen = useCallback(() => {
-    if (isNativeMode) {
-      // Default: Hermes push (fast, ~10s) — load app inside Yaver's container
-      // The "Back to Yaver" overlay is shown natively by AppDelegate
-      handleRunInYaver();
-      return;
-    }
-    // Web mode: open in WebView
-    setShowPreview(true);
-    setLoading(true);
-    setWebViewKey(k => k + 1);
-  }, [isNativeMode, handleRunInYaver]);
-
   // Load the app inside Yaver via the secondary RCTBridge (super-host mode).
   // This gives full native module access (camera, BLE, GPS, etc.) without
   // needing a separate dev client app installed on the phone.
+  // Declared before handleOpen so the latter can close over it without
+  // tripping the TS "used before declaration" rule.
   const handleRunInYaver = useCallback(async () => {
     const baseUrl = (quicClient as any).baseUrl;
     if (!baseUrl) {
@@ -200,6 +189,19 @@ export function DevPreview() {
       Alert.alert("Load Failed", err?.message || "Could not load bundle in Yaver");
     }
   }, []);
+
+  const handleOpen = useCallback(() => {
+    if (isNativeMode) {
+      // Default: Hermes push (fast, ~10s) — load app inside Yaver's container
+      // The "Back to Yaver" overlay is shown natively by AppDelegate
+      handleRunInYaver();
+      return;
+    }
+    // Web mode: open in WebView
+    setShowPreview(true);
+    setLoading(true);
+    setWebViewKey(k => k + 1);
+  }, [isNativeMode, handleRunInYaver]);
 
   const handleReload = useCallback(async () => {
     setLoading(true);

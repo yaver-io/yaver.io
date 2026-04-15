@@ -1,9 +1,17 @@
 name: hybrid-local
 
 # End-to-end test for yaver's hybrid mode using ONLY free local tooling:
-# aider + ollama + qwen2.5-coder:1.5b. No API keys, no remote infra.
+# aider + ollama + qwen2.5-coder:7b. No API keys, no remote infra.
 #
-# Heavy enough (~3-5 min, ~2 GB model download) that we do NOT run it
+# Why 7b and not 1.5b: the 1.5b model reliably leaks markdown fences
+# into its "return EXACTLY these lines" output, so the test produced
+# a calc.py starting with a bare `python` token. 7b is below the
+# capability floor for autonomous code generation; bumping to 7b
+# gives real signal while still fitting the ubuntu-latest runner's
+# 14 GB disk. Cost: the model pull is ~4.7 GB and takes ~2 min on a
+# cold runner.
+#
+# Heavy enough (~5-7 min, ~5 GB model download) that we do NOT run it
 # on every push — that would burn CI minutes without meaningful signal,
 # since the hybrid Go unit tests (hybrid_test.go) already run on every
 # push and cover the orchestrator contract via stub planner/implementer.
@@ -25,7 +33,7 @@ on:
       model:
         description: "Ollama model to use for the implementer"
         required: false
-        default: "qwen2.5-coder:1.5b"
+        default: "qwen2.5-coder:7b"
   schedule:
     # 04:00 UTC daily — off-peak for most of the US + EU.
     - cron: "0 4 * * *"
@@ -95,7 +103,7 @@ jobs:
 
       - name: Pull Qwen (small) — slowest step
         run: |
-          MODEL="${{ github.event.inputs.model || 'qwen2.5-coder:1.5b' }}"
+          MODEL="${{ github.event.inputs.model || 'qwen2.5-coder:7b' }}"
           ollama pull "$MODEL"
           echo "MODEL=$MODEL" >> "$GITHUB_ENV"
 
