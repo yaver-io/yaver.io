@@ -365,8 +365,18 @@ jobs:
       - name: Install and start Ollama
         run: |
           curl -fsSL https://ollama.com/install.sh | sh
-          ollama serve &
-          sleep 3
+          # The installer sometimes starts its own systemd unit on
+          # ubuntu-latest, so a second `ollama serve &` would bind
+          # a second listener. Skip spawn if 11434 is already up.
+          if curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+            echo "ollama already running (installer auto-started)"
+          else
+            ollama serve > /tmp/ollama.log 2>&1 &
+          fi
+          for i in $(seq 1 20); do
+            curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && break
+            sleep 1
+          done
       - name: Pull small model
         run: ollama pull qwen2.5-coder:1.5b
       - name: Build agent
@@ -400,20 +410,23 @@ jobs:
           # shape {prompt,runner} was a leftover from a refactor and
           # always 400s — which is why this step has been chronically
           # red with curl exit 22.
+          # POST /tasks returns {id,status,...} at the top level.
           TASK=$(curl -sf -X POST http://127.0.0.1:18080/tasks \
             -H "Authorization: Bearer ${{ steps.auth.outputs.token }}" \
             -H "Content-Type: application/json" \
             -d '{"title":"hello world","description":"Write a Python hello world script. Just output the code, nothing else.","runner":"ollama"}')
           TASK_ID=$(echo "$TASK" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('id') or d.get('taskId'))")
           echo "Task: $TASK_ID"
-          # Poll until the task reaches a terminal state (completed /
-          # failed / stopped). The old "finished" literal never matches
-          # createTask's status vocabulary — see TaskStatus in tasks.go.
+          # GET /tasks/{id} returns {ok,task:{id,status,...}} — the
+          # status is NESTED under .task, not at the top level. The
+          # previous `.status` read always came back empty and the
+          # task was actually completing fine. Supports the flat
+          # shape too for future-proofing.
           STATUS=""
           for i in $(seq 1 60); do
             STATUS=$(curl -sf http://127.0.0.1:18080/tasks/$TASK_ID \
               -H "Authorization: Bearer ${{ steps.auth.outputs.token }}" \
-              | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null)
+              | python3 -c "import sys,json;d=json.load(sys.stdin);print((d.get('task') or d).get('status',''))" 2>/dev/null)
             case "$STATUS" in
               completed|failed|stopped) break ;;
             esac
