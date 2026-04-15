@@ -223,6 +223,25 @@ func runAutodevOrTest(kind string, args []string) {
 		// subsequent runs without a prompt still remember it.
 		loopPrompt([]string{"set", p.LoopName, d.prompt})
 	}
+
+	// "Set and forget" mode: the parent CLI fork-execs itself as a
+	// detached, session-leader child that owns the kick loop, then
+	// the parent attaches to the child's daemon-published log
+	// stream over SSE. Ctrl-C in the parent only detaches the tail
+	// — the loop survives terminal close, ssh disconnect, lid close.
+	// When YAVER_AUTODEV_DETACHED=1 we ARE the detached child and
+	// just run the loop directly.
+	if !autodevDetachActive() {
+		_, streamName := spawnDetachedAutodev(kind, args, p.LoopName)
+		if streamName != "" {
+			tailDetachedAutodev(streamName)
+			return
+		}
+		// Fork failed — fall through to the legacy in-process loop
+		// so the run still happens, just tied to this terminal.
+		fmt.Fprintln(os.Stderr, "[autodev] detach failed — running in foreground")
+	}
+
 	runAutodevLoop(p)
 	runAutodevDeploy(p)
 }
@@ -838,6 +857,10 @@ func runAutodevLoop(p autodevPlan) {
 			}
 		}
 
+		nextAt := time.Now().Add(time.Duration(p.TickSleepSec) * time.Second)
+		fmt.Printf("%s: next kick at %s (in %s)\n",
+			p.Kind, nextAt.Format("15:04:05"),
+			time.Duration(p.TickSleepSec)*time.Second)
 		time.Sleep(time.Duration(p.TickSleepSec) * time.Second)
 	}
 	loopStop([]string{p.LoopName})
