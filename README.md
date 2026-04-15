@@ -67,6 +67,7 @@ Yaver is built for solo developers and small teams who ship from anywhere. It ha
 - **Ship It Button** — One tap to deploy. Agent detects your project (Cloudflare, Vercel, TestFlight, Play Store, Fly.io, etc.) and ships.
 - **Morning Summary** — Daily digest at 9am: "3 tasks done, landing page live, 2 tests failing." Via Telegram, Discord, Slack, or email.
 - **Live Terminal Stream** — Watch Claude Code work in real-time from your phone via SSE. Full terminal output, not just status updates.
+- **Set-and-Forget Autodev** — `yaver autodev <project>` forks itself as a detached, session-leader child so the kick loop survives terminal close, ssh disconnect, or laptop lid. Kicks fire on a timer (5 min in lite, 30 s in burst), refill ideas when the checklist empties (`--auto-ideas`, default 999), optionally use a hardening preset (`--harden security|memory|perf|quality|all`), pin a roof theme (`--prompt`), work on a dedicated branch (`--auto-branch`), and ship to every shippable surface at the end (`--deploy auto` covers TestFlight, Play Store, Convex, Vercel). Re-attach the live tail any time with `yaver stream autodev:<loop>`.
 - **Always Native, Never WebView** — React Native apps always load via Hermes bytecode into a native bridge with TurboModules + Fabric. WebView is never used for app loading.
 - **Task Scheduling** — Cron-like scheduling.
 - **Notifications** — Telegram, Discord, Slack, Teams, PagerDuty, Opsgenie, Linear, Jira, email.
