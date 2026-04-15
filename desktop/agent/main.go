@@ -5440,6 +5440,10 @@ func runMCPStdio(taskMgr *TaskManager, aclMgr *ACLManager, emailMgr *EmailManage
 		aclMgr:   aclMgr,
 		emailMgr: emailMgr,
 	}
+	// Stdio MCP is spawned BY the AI agent (Claude Code, Claude Desktop,
+	// etc.), so our parent PID is the agent process. session_handoff
+	// uses this when the caller doesn't pass an explicit caller_pid.
+	setMCPStdioCallerPID(os.Getppid())
 
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)

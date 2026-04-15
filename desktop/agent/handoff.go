@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,6 +58,24 @@ type HandoffSpec struct {
 	// to also implement. This is the `yaver handoff autodev` mode — Yaver
 	// becomes a proactive successor, not just a continuation.
 	Autodev bool `json:"autodev,omitempty"`
+
+	// CallerPID is the PID of the AI agent that called us (Claude Code,
+	// Codex, Aider, …). When > 0, RunHandoff schedules SIGTERM/SIGKILL
+	// after the response is sent, turning the cooperative "exitNow"
+	// signal into an actual takeover. Set explicitly via the MCP
+	// `caller_pid` arg, or auto-detected from stdio MCP parent / HTTP
+	// loopback peer port (see handoff_pid.go).
+	CallerPID int `json:"callerPid,omitempty"`
+
+	// Hours / Load mirror `yaver autodev`'s knobs:
+	//   Hours:  "8" / "inf" — wall-clock cap for the resumed loop.
+	//   Load:   "lite" | "low" | "burst" — "lite" respects the dev's
+	//           Claude/Codex 5h windows and stretches kicks to one
+	//           every ~5 minutes; "burst" runs as fast as the runner
+	//           allows. Empty defaults to "lite" so the handoff can't
+	//           steal the dev's interactive AI session by accident.
+	Hours string `json:"hours,omitempty"`
+	Load  string `json:"load,omitempty"`
 }
 
 // HandoffResult is what the orchestrator returns to the caller (CLI/MCP/HTTP).
@@ -195,9 +214,30 @@ func RunHandoff(s *HTTPServer, spec HandoffSpec) (*HandoffResult, error) {
 
 	// 4. Build LoopSpec ------------------------------------------------------
 	loopName := fmt.Sprintf("handoff-%s", time.Now().UTC().Format("20060102-150405"))
+
+	// Schedule + kick caps mirror `yaver autodev`'s --load behavior:
+	// "lite"/"low" stretches kicks to ~5min and caps the day at 20;
+	// "burst" tightens to ~30s and lifts the cap to 200. Both honor
+	// an explicit MaxKicks if the caller pinned one.
+	tickEvery := "30s"
 	maxKicks := spec.MaxKicks
-	if maxKicks <= 0 {
-		maxKicks = 20
+	respectLimits := false
+	switch strings.ToLower(spec.Load) {
+	case "", "lite", "low":
+		tickEvery = "5m"
+		respectLimits = true
+		if maxKicks <= 0 {
+			maxKicks = 20
+		}
+	case "burst", "high":
+		tickEvery = "30s"
+		if maxKicks <= 0 {
+			maxKicks = 200
+		}
+	default:
+		if maxKicks <= 0 {
+			maxKicks = 20
+		}
 	}
 
 	prompt := buildHandoffPrompt(bundle, spec.ExtraPrompt, spec.Autodev, s)
@@ -206,20 +246,30 @@ func RunHandoff(s *HTTPServer, spec HandoffSpec) (*HandoffResult, error) {
 		loopWorkDir, _ = os.Getwd()
 	}
 
+	respectVal := respectLimits
 	lspec := LoopSpec{
 		Name:   loopName,
 		Mode:   LoopModeDevelop,
 		Target: detectAutodevTarget(loopWorkDir),
 		Schedule: LoopSchedule{
-			Every:         "5m",
+			Every:         tickEvery,
 			MaxIterations: maxKicks,
 		},
 		Think: LoopThink{
-			Runner:         runnerID,
-			MaxKicksPerRun: maxKicks,
-			PromptInline:   prompt,
+			Runner:               runnerID,
+			MaxKicksPerRun:       maxKicks,
+			PromptInline:         prompt,
+			RespectSessionLimits: &respectVal,
 		},
 		Ship: LoopShip{Branch: "main"},
+	}
+	// --hours becomes the loop's per-kick wall-clock cap so a runaway
+	// prompt can't burn the entire AI session window. "inf" / "" =
+	// unlimited.
+	if h := strings.TrimSpace(spec.Hours); h != "" && h != "inf" && h != "infinite" {
+		if n, err := strconv.Atoi(h); err == nil && n > 0 {
+			lspec.Schedule.Timeout = fmt.Sprintf("%dh", n)
+		}
 	}
 	applyLoopDefaults(&lspec)
 	if err := validateLoopSpec(&lspec); err != nil {
@@ -250,7 +300,15 @@ func RunHandoff(s *HTTPServer, spec HandoffSpec) (*HandoffResult, error) {
 		warnings = append(warnings, fmt.Sprintf("write sentinel: %v", sentinelErr))
 	}
 
-	// 7. Kick once (best-effort, async so the HTTP/CLI caller returns fast) -
+	// 7a. Schedule cooperative termination of the source AI agent. The
+	// goroutine waits ~5s before SIGTERM so the response (with sentinel
+	// info) reaches the agent first. If the agent is gone or PID=0,
+	// this is a no-op.
+	if spec.CallerPID > 0 {
+		scheduleCallerTermination(spec.CallerPID, 5, 10)
+	}
+
+	// 7b. Kick once (best-effort, async so the HTTP/CLI caller returns fast) -
 	if !spec.SkipInitialKick {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

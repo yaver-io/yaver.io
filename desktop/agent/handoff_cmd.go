@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -30,6 +31,12 @@ import (
 // Local handoff hits the local daemon's /session/handoff endpoint.
 // Remote handoff exports locally, then POSTs the bundle to the target.
 func runHandoff(args []string) {
+	// `yaver handoff status` — quick "did Yaver actually take over?" probe.
+	if len(args) > 0 && args[0] == "status" {
+		runHandoffStatus(args[1:])
+		return
+	}
+
 	// Sub-mode shorthand: `yaver handoff autodev [flags]` is sugar for
 	// `yaver handoff --autodev [flags]`. Keeps the user's invocation
 	// natural ("hand off and go autodev mode") without a new top-level
@@ -51,6 +58,9 @@ func runHandoff(args []string) {
 	message := fs.String("message", "", "Extra prompt appended to the resume instructions")
 	stopSource := fs.Bool("stop-source", true, "Stop the source Yaver task before kicking the new loop")
 	autodev := fs.Bool("autodev", false, "Autodev mode: also mine the session for new ideas, write missing tests, propose follow-ups")
+	hours := fs.String("hours", "", "Wall-clock cap, e.g. '8' or 'inf' (default inf)")
+	load := fs.String("load", "lite", "lite (respects AI session windows) | burst (max throughput)")
+	callerPID := fs.Int("caller-pid", 0, "PID of the calling AI agent — Yaver will SIGTERM/SIGKILL it after takeover (default: auto-detect)")
 	fs.Parse(args)
 	if autodevSub {
 		*autodev = true
@@ -72,6 +82,9 @@ func runHandoff(args []string) {
 		"extraPrompt":  *message,
 		"stopSource":   *stopSource,
 		"autodev":      *autodev,
+		"hours":        *hours,
+		"load":         *load,
+		"callerPid":    *callerPID,
 	}
 	if *from != "" {
 		// Heuristic: if --from points at a file we can stat, treat it as a
@@ -148,6 +161,55 @@ func runRemoteHandoff(body map[string]interface{}, deviceHint string) {
 	}
 	out["remoteDevice"] = deviceHint
 	printHandoffResult(out)
+}
+
+// runHandoffStatus prints the most recent handoff sentinel + the
+// associated loop's progress. Used to verify "did Yaver actually take
+// over and is it doing work?" without inspecting raw files.
+func runHandoffStatus(_ []string) {
+	dir, err := ConfigDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config dir: %v\n", err)
+		os.Exit(1)
+	}
+	latest := filepath.Join(dir, "handoff", "latest.json")
+	data, err := os.ReadFile(latest)
+	if err != nil {
+		fmt.Println("No handoff has happened on this machine yet.")
+		fmt.Printf("(Looked for %s)\n", latest)
+		return
+	}
+	var sentinel HandoffSentinel
+	if err := json.Unmarshal(data, &sentinel); err != nil {
+		fmt.Fprintf(os.Stderr, "parse sentinel: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("Last handoff:")
+	fmt.Printf("  Loop:     %s\n", sentinel.LoopName)
+	fmt.Printf("  Task:     %s\n", sentinel.LocalTaskID)
+	fmt.Printf("  Runner:   %s\n", sentinel.Runner)
+	fmt.Printf("  At:       %s\n", sentinel.WrittenAt)
+
+	// Best-effort: ask the daemon for the loop's current state.
+	resp, err := localAgentRequest("GET", "/autodev/loops", nil)
+	if err != nil {
+		fmt.Println("\n(daemon not reachable — can't show live loop progress)")
+		return
+	}
+	loops, _ := resp["loops"].([]interface{})
+	for _, l := range loops {
+		m, _ := l.(map[string]interface{})
+		spec, _ := m["spec"].(map[string]interface{})
+		if name, _ := spec["name"].(string); name == sentinel.LoopName {
+			fmt.Println("\nLoop progress:")
+			fmt.Printf("  Status:           %v\n", m["status"])
+			fmt.Printf("  Iterations:       %v\n", m["iterationCount"])
+			fmt.Printf("  Last summary:     %v\n", m["lastSummary"])
+			fmt.Printf("  Last iteration:   %v\n", m["lastIterationAt"])
+			return
+		}
+	}
+	fmt.Println("\n(loop not currently registered with the daemon)")
 }
 
 func printHandoffResult(resp map[string]interface{}) {

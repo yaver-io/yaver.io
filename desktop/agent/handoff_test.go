@@ -271,6 +271,102 @@ func TestRunHandoff_RejectsBadEngineRunnerCombo(t *testing.T) {
 	}
 }
 
+// TestResolveCallerPID_PriorityOrder locks the priority chain that
+// session_handoff relies on: explicit MCP arg > stdio parent PID >
+// HTTP loopback peer-port lookup > 0 (cooperative-only fallback).
+func TestResolveCallerPID_PriorityOrder(t *testing.T) {
+	// Reset between sub-cases.
+	defer setMCPStdioCallerPID(0)
+
+	// 1. Explicit wins over everything.
+	setMCPStdioCallerPID(9999)
+	if got := resolveCallerPID(12345, "127.0.0.1:65535"); got != 12345 {
+		t.Errorf("explicit should win: got %d", got)
+	}
+
+	// 2. Stdio parent PID is used when explicit is 0.
+	setMCPStdioCallerPID(7777)
+	if got := resolveCallerPID(0, ""); got != 7777 {
+		t.Errorf("stdio parent should be used: got %d", got)
+	}
+
+	// 3. With no explicit and no stdio, an empty addr falls through to 0.
+	setMCPStdioCallerPID(0)
+	if got := resolveCallerPID(0, ""); got != 0 {
+		t.Errorf("no source → want 0, got %d", got)
+	}
+
+	// 4. Non-loopback HTTP addr is rejected (security: never SIGKILL
+	// across machines).
+	if got := resolveCallerPID(0, "10.0.0.5:54321"); got != 0 {
+		t.Errorf("non-loopback should be rejected: got %d", got)
+	}
+}
+
+// TestRunHandoff_LiteAndBurstLoadShapeSchedule verifies the --load knob
+// produces the documented schedule defaults: lite stretches kicks to
+// 5min and respects session limits; burst tightens to 30s and lifts
+// the daily kick cap.
+func TestRunHandoff_LiteAndBurstLoadShapeSchedule(t *testing.T) {
+	cases := []struct {
+		load              string
+		wantEvery         string
+		wantMaxIter       int
+		wantRespectLimits bool
+	}{
+		{"lite", "5m", 20, true},
+		{"", "5m", 20, true}, // empty defaults to lite
+		{"burst", "30s", 200, false},
+	}
+	for _, c := range cases {
+		t.Run("load="+c.load, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			workDir := t.TempDir()
+			tm := NewTaskManager(workDir, nil, defaultTestRunner())
+			srv := &HTTPServer{taskMgr: tm}
+
+			res, err := RunHandoff(srv, HandoffSpec{
+				WorkDir: workDir, Load: c.load, SkipInitialKick: true,
+			})
+			if err != nil {
+				t.Fatalf("RunHandoff: %v", err)
+			}
+			loops, _ := loadLoops()
+			ls := loops[res.LoopName]
+			if ls.Spec.Schedule.Every != c.wantEvery {
+				t.Errorf("Schedule.Every: want %q got %q", c.wantEvery, ls.Spec.Schedule.Every)
+			}
+			if ls.Spec.Schedule.MaxIterations != c.wantMaxIter {
+				t.Errorf("MaxIterations: want %d got %d", c.wantMaxIter, ls.Spec.Schedule.MaxIterations)
+			}
+			if ls.Spec.Think.RespectSessionLimits == nil || *ls.Spec.Think.RespectSessionLimits != c.wantRespectLimits {
+				t.Errorf("RespectSessionLimits: want %v got %v", c.wantRespectLimits, ls.Spec.Think.RespectSessionLimits)
+			}
+		})
+	}
+}
+
+// TestRunHandoff_HoursBecomesPerKickTimeout — `--hours 8` must land as
+// the loop's Schedule.Timeout so a single kick can't burn the whole
+// 8-hour budget.
+func TestRunHandoff_HoursBecomesPerKickTimeout(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workDir := t.TempDir()
+	tm := NewTaskManager(workDir, nil, defaultTestRunner())
+	srv := &HTTPServer{taskMgr: tm}
+
+	res, err := RunHandoff(srv, HandoffSpec{
+		WorkDir: workDir, Hours: "8", SkipInitialKick: true,
+	})
+	if err != nil {
+		t.Fatalf("RunHandoff: %v", err)
+	}
+	loops, _ := loadLoops()
+	if got := loops[res.LoopName].Spec.Schedule.Timeout; got != "8h" {
+		t.Errorf("Schedule.Timeout: want 8h got %q", got)
+	}
+}
+
 func keys[V any](m map[string]V) []string {
 	ks := make([]string, 0, len(m))
 	for k := range m {
