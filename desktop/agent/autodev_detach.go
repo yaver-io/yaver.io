@@ -66,36 +66,32 @@ func spawnDetachedAutodev(kind string, args []string, loopName string) (int, str
 		return existing, streamName
 	}
 
-	logPath := fmt.Sprintf("/tmp/yaver/autodev-%s-%s.fork.log",
-		safeStreamName(streamName), time.Now().Format("20060102-150405"))
-	logF, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return 0, ""
-	}
-
 	// Re-exec ourselves with the same kind + args, marked detached.
+	// stdin/stdout/stderr deliberately left nil → child's FDs go to
+	// /dev/null at exec time. The child's own teeStdoutToStream then
+	// captures os.Stdout/Stderr via pipes and publishes everything
+	// to /tmp/yaver/<stream>-<ts>.log + the daemon SSE stream. NO
+	// fork-side log file — that caused a feedback loop where the
+	// child's stdout fed itself recursively.
 	childArgs := append([]string{kind}, args...)
 	cmd := osexec.Command(exe, childArgs...)
 	cmd.Env = append(os.Environ(), autodevDetachEnv+"=1")
 	cmd.Stdin = nil
-	cmd.Stdout = logF
-	cmd.Stderr = logF
+	cmd.Stdout = nil
+	cmd.Stderr = nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	if err := cmd.Start(); err != nil {
-		logF.Close()
 		return 0, ""
 	}
 	pid := cmd.Process.Pid
 	_ = os.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0o644)
-	// Don't Wait — the child outlives us. Release the *os.Process so
-	// the runtime stops tracking it; any Process.Release error is
-	// non-fatal.
+	// Don't Wait — the child outlives us.
 	_ = cmd.Process.Release()
-	logF.Close()
 
-	fmt.Fprintf(os.Stderr, "[autodev] loop running detached as pid %d (fork log: %s)\n", pid, logPath)
-	fmt.Fprintf(os.Stderr, "[autodev] tailing live stream — Ctrl-C to detach (loop keeps running)\n\n")
+	fmt.Fprintf(os.Stderr, "[autodev] loop running detached as pid %d\n", pid)
+	fmt.Fprintf(os.Stderr, "[autodev] live log: /tmp/yaver/autodev_%s-latest.log\n", safeStreamName(streamName))
+	fmt.Fprintf(os.Stderr, "[autodev] tailing stream — Ctrl-C to detach (loop keeps running)\n\n")
 	return pid, streamName
 }
 
