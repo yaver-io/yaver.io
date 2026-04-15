@@ -2256,6 +2256,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"auto_ideas":       map[string]interface{}{"type": "integer", "description": "When the remained.md checklist empties, ask the runner to generate that many fresh batches of ideas before exiting. Default 1; set 0 to exit immediately when the list empties."},
 					"branch":           map[string]interface{}{"type": "string", "description": "Git branch to ship to (default: main)"},
 					"auto_branch":      map[string]interface{}{"type": "boolean", "description": "Work on a dedicated 'autodev/<project>-autodev-<YYYYMMDD>' branch instead of main. Created from origin/main if missing. Useful when you want to PR-review the overnight run."},
+					"harden":           map[string]interface{}{"type": "string", "enum": []string{"", "security", "memory", "perf", "quality", "all"}, "description": "Run a hardening-focused loop on a specific area. Sets a curated focus prompt so the user doesn't have to write one. Combine with 'prompt' to layer the user theme on top."},
 					"remained_content": map[string]interface{}{"type": "string", "description": "Inline markdown checklist content; writes to remained_path before starting the loop"},
 					"remained_path":    map[string]interface{}{"type": "string", "description": "Path of the checklist file (default: remained.md)"},
 					"no_autotest":      map[string]interface{}{"type": "boolean", "description": "Skip the interleaved regression autotest pass (default: false — autotest is on)"},
