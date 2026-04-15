@@ -68,10 +68,35 @@ export interface HybridReport {
   results: HybridStepResult[];
   planOutput?: string;
   planError?: string;
+  replanned?: boolean;
+  retries?: number;
   startedAt: string;
   finishedAt: string;
   ok: boolean;
   failedSteps: number;
+}
+
+// HybridEvent mirrors HybridEvent in desktop/agent/hybrid.go. Consumed
+// by the SSE /hybrid/stream subscriber so the UI can render live.
+export interface HybridEvent {
+  type:
+    | "plan_started"
+    | "plan_done"
+    | "subtask_started"
+    | "subtask_done"
+    | "replan_started"
+    | "replan_done"
+    | "run_done"
+    | "error";
+  at?: string;
+  message?: string;
+  index?: number;
+  total?: number;
+  subtask?: HybridSubtask;
+  result?: HybridStepResult;
+  plan?: HybridSubtask[];
+  report?: HybridReport;
+  retry?: number;
 }
 
 export interface AgentInfo {
@@ -414,6 +439,68 @@ class AgentClient {
       throw new Error(data?.error || `hybrid/run ${res.status}`);
     }
     return data;
+  }
+
+  /**
+   * Stream a hybrid run over SSE. Resolves when the server emits
+   * `run_done` (or `error`); rejects on network failure. Use this
+   * instead of hybridRun when the UI needs live progress — the
+   * callback fires once per event (plan_started, subtask_started,
+   * subtask_done, etc).
+   *
+   * Implementation detail: EventSource does not support POST or
+   * custom headers, so we do the SSE parse by hand on a fetch stream.
+   * This is the same pattern Claude Code uses for its own
+   * `--output-format stream-json` parser.
+   */
+  async hybridStream(
+    req: HybridRunRequest,
+    onEvent: (ev: HybridEvent) => void,
+  ): Promise<HybridReport | undefined> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/hybrid/stream`, {
+      method: "POST",
+      headers: {
+        ...this.authHeaders,
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify(req),
+    });
+    if (!res.ok || !res.body) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`hybrid/stream ${res.status}: ${body}`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let final: HybridReport | undefined;
+    // Parser: SSE frames are separated by a blank line; each frame
+    // has one or more `data:`-prefixed lines (we only emit one) and
+    // optional `:`-prefixed heartbeat comment lines we ignore.
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const dataLines = frame
+          .split("\n")
+          .filter((l) => l.startsWith("data:"))
+          .map((l) => l.slice(5).trimStart());
+        if (dataLines.length === 0) continue;
+        try {
+          const ev: HybridEvent = JSON.parse(dataLines.join("\n"));
+          onEvent(ev);
+          if (ev.type === "run_done") final = ev.report;
+        } catch {
+          // malformed frame — drop silently; heartbeat/noise.
+        }
+      }
+    }
+    return final;
   }
 
   async stopAllTasks(): Promise<number> {

@@ -42,6 +42,31 @@ import (
 	"time"
 )
 
+// HybridEvent is one structured update the orchestrator emits as a
+// run progresses. The SSE handler streams these to clients so the
+// UI doesn't have to block for minutes on /hybrid/run. Events are
+// JSON-marshalled before being sent as the data of an SSE message.
+type HybridEvent struct {
+	// Type is one of: "plan_started", "plan_done", "subtask_started",
+	// "subtask_done", "replan_started", "replan_done", "run_done", "error".
+	Type      string             `json:"type"`
+	At        time.Time          `json:"at"`
+	Message   string             `json:"message,omitempty"`
+	Index     int                `json:"index,omitempty"`      // 1-based subtask index when applicable
+	Total     int                `json:"total,omitempty"`      // current subtask count
+	Subtask   *HybridSubtask     `json:"subtask,omitempty"`    // set on subtask_* events
+	Result    *HybridStepResult  `json:"result,omitempty"`     // set on subtask_done
+	Plan      []HybridSubtask    `json:"plan,omitempty"`       // set on plan_done / replan_done
+	Report    *HybridReport      `json:"report,omitempty"`     // set on run_done
+	Retry     int                `json:"retry,omitempty"`      // 0-based attempt number on subtask_started retries
+}
+
+// HybridProgress is the callback RunHybrid calls as it works. Pass nil
+// for a fully synchronous run (old behaviour preserved). Implementations
+// should be non-blocking — the SSE handler drops events on a slow
+// client rather than stalling the run.
+type HybridProgress func(HybridEvent)
+
 // HybridSpec describes a single hybrid run. Zero values fall back to
 // sensible defaults for a laptop with Ollama + qwen2.5-coder:14b.
 type HybridSpec struct {
@@ -67,6 +92,15 @@ type HybridSpec struct {
 	// emit. Defaults to 20 — protects the user from a runaway
 	// planner that slices a feature into 200 trivial edits.
 	MaxSubtasks int `json:"maxSubtasks,omitempty"`
+	// MaxRetries is how many times a failing subtask is re-attempted
+	// with a stricter "try again, be careful" reminder before being
+	// marked permanently failed. 0 = no retries (fail fast). Default 1.
+	MaxRetries int `json:"maxRetries,omitempty"`
+	// MaxConsecutiveFailures caps how many subtasks can fail in a
+	// row before the orchestrator stops trusting the current plan
+	// and asks the planner to replan. 0 = never replan. Default 3.
+	// Replan is capped to one attempt per run to prevent infinite loops.
+	MaxConsecutiveFailures int `json:"maxConsecutiveFailures,omitempty"`
 	// Timeout applies to the whole run. Defaults to 30 min.
 	Timeout time.Duration `json:"-"`
 }
@@ -96,10 +130,16 @@ type HybridReport struct {
 	Results     []HybridStepResult `json:"results"`
 	PlanOutput  string             `json:"planOutput,omitempty"`
 	PlanError   string             `json:"planError,omitempty"`
-	StartedAt   time.Time          `json:"startedAt"`
-	FinishedAt  time.Time          `json:"finishedAt"`
-	OK          bool               `json:"ok"`
-	FailedSteps int                `json:"failedSteps"`
+	// Replanned is true when the orchestrator gave up on the
+	// original plan mid-run and asked the planner for a new one.
+	Replanned bool `json:"replanned,omitempty"`
+	// Retries tallies how many subtask re-attempts happened across
+	// the run (across all subtasks).
+	Retries     int       `json:"retries,omitempty"`
+	StartedAt   time.Time `json:"startedAt"`
+	FinishedAt  time.Time `json:"finishedAt"`
+	OK          bool      `json:"ok"`
+	FailedSteps int       `json:"failedSteps"`
 }
 
 // applyHybridDefaults fills zero-valued fields with defaults chosen
@@ -128,6 +168,18 @@ func applyHybridDefaults(s *HybridSpec) error {
 	}
 	if s.MaxSubtasks == 0 {
 		s.MaxSubtasks = 20
+	}
+	if s.MaxRetries < 0 {
+		s.MaxRetries = 0
+	}
+	if s.MaxRetries == 0 {
+		// Most small-model failures (malformed output, missing
+		// terminator) flip on a single retry. Default to 1 so the
+		// orchestrator is forgiving without blowing timeouts.
+		s.MaxRetries = 1
+	}
+	if s.MaxConsecutiveFailures == 0 {
+		s.MaxConsecutiveFailures = 3
 	}
 	if s.Timeout == 0 {
 		s.Timeout = 30 * time.Minute
@@ -352,36 +404,62 @@ func runImplementer(ctx context.Context, spec HybridSpec, st HybridSubtask) Hybr
 	return result
 }
 
-// RunHybrid is the entry point called by the CLI and HTTP layers. It
-// plans, then implements each subtask sequentially. On the first hard
-// planner failure it returns early; subtask failures are recorded but
-// do not stop the loop (the caller decides what to do with partial
-// results).
+// RunHybrid is the blocking entry point. Equivalent to
+// RunHybridWithProgress with a nil callback — preserved for existing
+// CLI / MCP callers that just want the final report.
 func RunHybrid(ctx context.Context, spec HybridSpec) (*HybridReport, error) {
+	return RunHybridWithProgress(ctx, spec, nil)
+}
+
+// RunHybridWithProgress plans, then implements each subtask. On bad
+// output it retries up to spec.MaxRetries with a stricter reminder.
+// If spec.MaxConsecutiveFailures subtasks fail in a row it asks the
+// planner for a replacement plan (once per run, to bound the blast
+// radius of a misbehaving planner). progress is invoked with every
+// structured event for SSE clients; pass nil to run silently.
+func RunHybridWithProgress(ctx context.Context, spec HybridSpec, progress HybridProgress) (*HybridReport, error) {
 	if err := applyHybridDefaults(&spec); err != nil {
 		return nil, err
+	}
+	emit := func(ev HybridEvent) {
+		if progress == nil {
+			return
+		}
+		ev.At = time.Now()
+		progress(ev)
 	}
 	runCtx, cancel := context.WithTimeout(ctx, spec.Timeout)
 	defer cancel()
 
 	rep := &HybridReport{Spec: spec, StartedAt: time.Now()}
 
+	emit(HybridEvent{Type: "plan_started", Message: "planner reading the request"})
 	planOut, err := runPlanner(runCtx, spec)
 	rep.PlanOutput = planOut
 	if err != nil {
 		rep.PlanError = err.Error()
 		rep.FinishedAt = time.Now()
+		emit(HybridEvent{Type: "error", Message: "planner failed: " + err.Error(), Report: rep})
 		return rep, fmt.Errorf("hybrid: planner failed: %w", err)
 	}
 	subtasks, perr := parseHybridPlan(planOut, spec.MaxSubtasks)
 	if perr != nil {
 		rep.PlanError = perr.Error()
 		rep.FinishedAt = time.Now()
+		emit(HybridEvent{Type: "error", Message: perr.Error(), Report: rep})
 		return rep, fmt.Errorf("hybrid: %w", perr)
 	}
 	rep.Subtasks = subtasks
+	emit(HybridEvent{Type: "plan_done", Total: len(subtasks), Plan: subtasks})
 
-	for _, st := range subtasks {
+	// Use an index we can rewrite mid-loop so the replan escape hatch
+	// can substitute the tail of the plan without affecting already
+	// finished steps.
+	consecFails := 0
+	replanned := false
+	i := 0
+	for i < len(rep.Subtasks) {
+		st := rep.Subtasks[i]
 		if runCtx.Err() != nil {
 			rep.Results = append(rep.Results, HybridStepResult{
 				Subtask: st,
@@ -389,15 +467,120 @@ func RunHybrid(ctx context.Context, spec HybridSpec) (*HybridReport, error) {
 				Error:   runCtx.Err().Error(),
 			})
 			rep.FailedSteps++
+			i++
 			continue
 		}
-		r := runImplementer(runCtx, spec, st)
+
+		// Try the step up to MaxRetries+1 times; only the first attempt
+		// uses the planner's original prompt, subsequent attempts
+		// prepend a corrective reminder.
+		var r HybridStepResult
+		for attempt := 0; attempt <= spec.MaxRetries; attempt++ {
+			emit(HybridEvent{
+				Type: "subtask_started", Index: i + 1, Total: len(rep.Subtasks),
+				Subtask: &st, Retry: attempt,
+			})
+			st2 := st
+			if attempt > 0 {
+				st2.Prompt = retryReminder(attempt) + "\n\n" + st.Prompt
+				rep.Retries++
+			}
+			r = runImplementer(runCtx, spec, st2)
+			if r.Status == "ok" {
+				break
+			}
+			if runCtx.Err() != nil {
+				break
+			}
+		}
 		rep.Results = append(rep.Results, r)
+		emit(HybridEvent{
+			Type: "subtask_done", Index: i + 1, Total: len(rep.Subtasks),
+			Subtask: &st, Result: &r,
+		})
+
 		if r.Status != "ok" {
 			rep.FailedSteps++
+			consecFails++
+		} else {
+			consecFails = 0
 		}
+
+		// Replan escape hatch: if N in a row fail and we haven't
+		// already replanned on this run, ask the planner to look at
+		// the failure context and produce a fresh plan for the
+		// remaining work. Bounded to one replan per run.
+		if consecFails >= spec.MaxConsecutiveFailures && !replanned && spec.MaxConsecutiveFailures > 0 {
+			replanned = true
+			rep.Replanned = true
+			emit(HybridEvent{Type: "replan_started", Message: fmt.Sprintf("%d subtasks failed in a row; asking planner to replan", consecFails)})
+			newPlan, rerr := replan(runCtx, spec, rep.Results)
+			if rerr == nil && len(newPlan) > 0 {
+				// Keep everything we've already done; replace the tail.
+				rep.Subtasks = append(rep.Subtasks[:i+1], newPlan...)
+				emit(HybridEvent{Type: "replan_done", Total: len(rep.Subtasks), Plan: newPlan})
+				consecFails = 0
+			} else {
+				// If replan itself fails, log and keep marching through
+				// whatever subtasks remain — partial progress beats
+				// throwing away completed work.
+				msg := "replan failed"
+				if rerr != nil {
+					msg = "replan failed: " + rerr.Error()
+				}
+				emit(HybridEvent{Type: "error", Message: msg})
+			}
+		}
+
+		i++
 	}
 	rep.OK = rep.FailedSteps == 0
 	rep.FinishedAt = time.Now()
+	emit(HybridEvent{Type: "run_done", Report: rep})
 	return rep, nil
+}
+
+// retryReminder builds the stricter-than-before instruction prepended
+// to a subtask prompt when its first attempt produced non-working
+// output. Kept short — small models glaze over long preambles.
+func retryReminder(attempt int) string {
+	return fmt.Sprintf(`IMPORTANT — ATTEMPT %d.
+Your previous attempt produced output that did not achieve the goal.
+Before writing any code, re-read the instruction below in full.
+Output ONLY the final file contents as aider would. No markdown
+fences. No prose. No preamble. If the instruction says "exactly
+these lines", it means EXACTLY those lines with no additions.`, attempt+1)
+}
+
+// replan asks the planner to produce a replacement subtask list given
+// the failures so far. The planner prompt reminds it which files have
+// been touched and what's already working, so it doesn't regenerate
+// identical subtasks that will just fail again.
+func replan(ctx context.Context, spec HybridSpec, results []HybridStepResult) ([]HybridSubtask, error) {
+	// Summarise failures compactly — the planner doesn't need full
+	// aider stdout, just what was attempted and how it went.
+	var b strings.Builder
+	b.WriteString("PREVIOUS ATTEMPT FAILED. Results so far:\n")
+	for i, r := range results {
+		b.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, r.Status, r.Subtask.Title))
+		if r.Status != "ok" && r.Error != "" {
+			line := r.Error
+			if nl := strings.IndexByte(line, '\n'); nl > 0 {
+				line = line[:nl]
+			}
+			if len(line) > 200 {
+				line = line[:200] + "…"
+			}
+			b.WriteString("   error: " + line + "\n")
+		}
+	}
+	b.WriteString("\nRewrite the remaining plan. Change approach. Assume previous prompts were too ambiguous for the implementer. Make new subtasks even more explicit.\n\nOriginal user request:\n" + spec.Prompt)
+
+	replanSpec := spec
+	replanSpec.Prompt = b.String()
+	planOut, err := runPlanner(ctx, replanSpec)
+	if err != nil {
+		return nil, err
+	}
+	return parseHybridPlan(planOut, spec.MaxSubtasks)
 }

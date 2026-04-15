@@ -23,6 +23,7 @@ import {
   type HybridPlanResult,
   type HybridReport,
   type HybridRunRequest,
+  type HybridStepResult,
 } from "@/lib/agent-client";
 import { useAuth } from "@/lib/use-auth";
 import { useDevices } from "@/lib/use-devices";
@@ -46,6 +47,8 @@ export default function HybridPage() {
   });
   const [plan, setPlan] = useState<HybridPlanResult | null>(null);
   const [report, setReport] = useState<HybridReport | null>(null);
+  const [liveResults, setLiveResults] = useState<HybridStepResult[]>([]);
+  const [currentStep, setCurrentStep] = useState<{index: number; total: number; title: string; retry: number} | null>(null);
   const [busy, setBusy] = useState<"idle" | "planning" | "running">("idle");
   const [error, setError] = useState<string | null>(null);
 
@@ -114,14 +117,45 @@ export default function HybridPage() {
       return;
     }
     setError(null);
+    setReport(null);
+    setPlan(null);
+    setLiveResults([]);
+    setCurrentStep(null);
     setBusy("running");
     try {
-      const r = await agentClient.hybridRun(req);
-      setReport(r);
+      // Stream over SSE — progress events update the UI live so
+      // the user sees each subtask finishing instead of staring at
+      // a spinner for 5+ minutes.
+      const final = await agentClient.hybridStream(req, (ev) => {
+        if (ev.type === "plan_done" && ev.plan) {
+          setPlan({ spec: req, subtasks: ev.plan });
+        }
+        if (ev.type === "subtask_started" && ev.subtask) {
+          setCurrentStep({
+            index: ev.index ?? 0,
+            total: ev.total ?? 0,
+            title: ev.subtask.title,
+            retry: ev.retry ?? 0,
+          });
+        }
+        if (ev.type === "subtask_done" && ev.result) {
+          setLiveResults((xs) => [...xs, ev.result!]);
+          setCurrentStep(null);
+        }
+        if (ev.type === "replan_done" && ev.plan) {
+          // Replace the plan display with the new subtask list.
+          setPlan({ spec: req, subtasks: ev.plan });
+        }
+        if (ev.type === "error") {
+          setError(ev.message ?? "unknown error");
+        }
+      });
+      if (final) setReport(final);
     } catch (e: any) {
       setError(e?.message ?? String(e));
     } finally {
       setBusy("idle");
+      setCurrentStep(null);
     }
   }
 
@@ -209,7 +243,29 @@ export default function HybridPage() {
         )}
       </section>
 
-      {plan && !report && (
+      {busy === "running" && (plan || currentStep) && !report && (
+        <section className="mt-6 rounded-lg border border-blue-700 bg-blue-950/20 p-4">
+          <h2 className="mb-2 text-lg font-semibold">Live progress</h2>
+          {currentStep && (
+            <p className="text-sm text-blue-200">
+              Step {currentStep.index}/{currentStep.total}: {currentStep.title}
+              {currentStep.retry > 0 && <span className="ml-2 text-amber-300">(retry #{currentStep.retry})</span>}
+            </p>
+          )}
+          {liveResults.length > 0 && (
+            <ol className="mt-3 space-y-1">
+              {liveResults.map((r, i) => (
+                <li key={i} className="text-xs">
+                  <span className={r.status === "ok" ? "text-emerald-300" : "text-red-300"}>[{r.status}]</span>{" "}
+                  {r.subtask.title} <span className="text-surface-500">({(r.durationMs / 1000).toFixed(1)}s)</span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+      )}
+
+      {plan && !report && busy !== "running" && (
         <section className="mt-6 rounded-lg border border-surface-700 bg-surface-900 p-4">
           <h2 className="mb-2 text-lg font-semibold">Plan ({plan.subtasks.length} subtasks)</h2>
           <ol className="space-y-2">
