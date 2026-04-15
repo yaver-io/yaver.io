@@ -122,6 +122,10 @@ type HTTPServer struct {
 
 	// Health monitor (production URL pinging)
 	healthMon *HealthMonitor
+
+	// Named log streams for fan-out of long-running CLI ops
+	// (autodev, autotest, etc.) to mobile + web subscribers.
+	streams *LogStreamRegistry
 }
 
 // NewHTTPServer creates a new HTTP server bound to the given port.
@@ -133,6 +137,7 @@ func NewHTTPServer(port int, token, ownerUserID, convexURL, hostname string, tas
 		convexURL:   convexURL,
 		hostname:    hostname,
 		taskMgr:     taskMgr,
+		streams:     NewLogStreamRegistry(),
 	}
 }
 
@@ -163,6 +168,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/agent/tools", s.auth(s.handleTools))
 	mux.HandleFunc("/schedules", s.auth(s.handleSchedules))
 	mux.HandleFunc("/schedules/", s.auth(s.handleScheduleByID))
+	mux.HandleFunc("/streams", s.auth(s.handleStreams))
+	mux.HandleFunc("/streams/", s.auth(s.handleStreamByName))
 	mux.HandleFunc("/autodev/loops", s.auth(s.handleAutodevLoops))
 	mux.HandleFunc("/autodev/loops/", s.auth(s.handleAutodevLoopAction))
 	mux.HandleFunc("/autodev/reports", s.auth(s.handleAutodevReports))

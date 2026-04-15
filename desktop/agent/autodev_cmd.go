@@ -146,6 +146,15 @@ func runAutodevOrTest(kind string, args []string) {
 	d = applyAutodevDefaults(d, kind, wd)
 
 	p := buildAutodevPlan(kind, d, wd)
+
+	// Tee stdout/stderr to a daemon-hosted log stream so the mobile
+	// app and web dashboard can watch this run live (same lines the
+	// terminal sees). Best-effort: if the daemon is unavailable the
+	// tee silently degrades to terminal-only output.
+	streamName := fmt.Sprintf("autodev:%s", p.LoopName)
+	stopStream := teeStdoutToStream(streamName)
+	defer stopStream()
+
 	printAutodevPlan(p)
 	if *showPlan {
 		return
