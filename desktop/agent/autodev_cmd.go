@@ -67,6 +67,7 @@ type autodevDefaults struct {
 	notify     bool
 	noAutotest bool
 	remained   string
+	autoIdeas  int
 }
 
 // runAutodev is `yaver autodev <project> [flags]`.
@@ -100,6 +101,7 @@ func runAutodevOrTest(kind string, args []string) {
 	runner := fs.String("runner", "", "Primary AI runner (default: claude-code)")
 	engine := fs.String("engine", "", "claude|hybrid — high-level engine selector. 'claude' (default) uses Claude Code end-to-end. 'hybrid' uses Claude as a planner and a local Ollama model (via aider) as the implementer to cut API spend.")
 	hybrid := fs.Bool("hybrid", false, "Shortcut for --engine hybrid")
+	autoIdeas := fs.Int("auto-ideas", 1, "When the --remained checklist is empty, ask the runner to generate N more batches of ideas and keep going. 0 = exit immediately when the list empties (old behavior).")
 	branch := fs.String("branch", "", "Git branch to ship to (default: main)")
 	maxIter := fs.Int("max-iterations", 0, "Hard cap on total kicks (0 = no cap)")
 	notify := fs.Bool("notify", false, "Notify mobile when run ends")
@@ -160,6 +162,7 @@ func runAutodevOrTest(kind string, args []string) {
 		notify:     *notify,
 		noAutotest: *noAutotest,
 		remained:   *remained,
+		autoIdeas:  *autoIdeas,
 	}
 	d = applyAutodevDefaults(d, kind, wd)
 
@@ -388,6 +391,10 @@ type autodevPlan struct {
 	// Makes autodev usable as a "dump a TODO list and go to bed"
 	// primitive, callable from CLI, HTTP, MCP, or mobile.
 	RemainedFile string
+	// AutoIdeas caps how many times the loop is allowed to refill an
+	// emptied --remained checklist by asking the runner to generate
+	// fresh ideas. 0 = old behavior (exit when the list empties).
+	AutoIdeas int
 }
 
 func buildAutodevPlan(kind string, d autodevDefaults, wd string) autodevPlan {
@@ -466,6 +473,7 @@ func buildAutodevPlan(kind string, d autodevDefaults, wd string) autodevPlan {
 		TestLoopName:    testLoopName,
 		TestSpecPath:    testSpecPath,
 		RemainedFile:    remainedFile,
+		AutoIdeas:       d.autoIdeas,
 	}
 }
 
@@ -672,6 +680,7 @@ func runAutodevLoop(p autodevPlan) {
 	}
 
 	iter := 0
+	refills := 0
 	dayWindowStart := time.Now()
 	kicksToday := 0
 	for {
@@ -687,6 +696,20 @@ func runAutodevLoop(p autodevPlan) {
 		// unchecked items left, the job is done — don't keep
 		// kicking the runner on nothing.
 		if p.RemainedFile != "" && !remainedHasWork(p.RemainedFile) {
+			if p.AutoIdeas > 0 && refills < p.AutoIdeas {
+				refills++
+				fmt.Printf("%s: checklist empty — auto-generating new ideas (refill %d/%d)…\n",
+					p.Kind, refills, p.AutoIdeas)
+				if err := autodevRefillIdeas(p); err != nil {
+					fmt.Printf("%s: idea refill failed (%v) — done\n", p.Kind, err)
+					break
+				}
+				if !remainedHasWork(p.RemainedFile) {
+					fmt.Printf("%s: idea refill produced no items — done\n", p.Kind)
+					break
+				}
+				continue
+			}
 			fmt.Printf("%s: all items in %s are checked off — done\n", p.Kind, p.RemainedFile)
 			break
 		}

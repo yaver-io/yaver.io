@@ -750,8 +750,78 @@ HTTP surface (auth'd):
 | `desktop/agent/session_cmd.go` | `localAgentRequest` + `ensureDaemonAlive` |
 | `desktop/agent/logstream.go` | `LogStream`, `LogStreamRegistry`, SSE handlers |
 | `desktop/agent/autodev_stream.go` | `streamPublisher`, `teeStdoutToStream` |
-| `desktop/agent/autodev_cmd.go` | tee hook + `--engine` flag in `runAutodevOrTest` |
+| `desktop/agent/stream_cmd.go` | `yaver stream <name>` SSE tail |
+| `desktop/agent/autodev_cmd.go` | tee hook + `--engine` + `--auto-ideas` flags |
+| `desktop/agent/autodev_ideas.go` | `autodevRefillIdeas` (Claude-driven checklist refill) |
 | `desktop/agent/loop_exec_hybrid.go` | `spawnHybrid` adapter (planner+implementer per kick) |
+| `desktop/agent/autodev_options_http.go` | `GET /autodev/options` capability discovery |
+| `desktop/agent/autodev_reports_http.go` | `POST /autodev/start` accepts `engine` + `auto_ideas` |
+
+### Auto-ideas refill, live subprocess output, capability discovery
+Three follow-ons that round out the autodev UX:
+
+1. **`--auto-ideas N`** (default 1): when `remained.md` empties, autodev asks Claude to append 5 fresh `- [ ]` items and keeps going. `0` restores the old "exit when checklist empty" behaviour. Owned by `autodev_ideas.go`.
+2. **Live subprocess output**: `spawnClaudeCode` / `spawnCodex` / `spawnAider` tee subprocess stdout to `os.Stderr` (then on through the daemon stream) while still capturing it for `parseAIResponse`. The user sees Claude's work in real time instead of staring at a silent terminal for minutes.
+3. **`GET /autodev/options`**: mobile / web / MCP discover what the *remote* dev machine supports. Returns `engines[]` (`claude` + `hybrid` with `available` + `missing`), `runners[]`, and `defaults` (`engine=claude`, `hours=8`, `load=lite`, `auto_ideas=1`, `no_autotest=false`). MCP tool `autodev_options` returns the same payload. `autodev_start` (HTTP + MCP) accepts `engine` + `auto_ideas` so all three surfaces share one contract.
+
+## Pass Session to Yaver (Handoff)
+
+`yaver handoff` lets a user — or an AI agent itself, via the `session_handoff` MCP tool — hand an in-progress session over to Yaver's autodev loop. Yaver imports the session, stops the source task (if it's a Yaver task), spins up a develop-mode loop with the chosen engine/runner, and starts kicking. Works locally, against a remote dev box (`--to <device>`), with hybrid mode, or with any single runner.
+
+### Surfaces (all share the same args)
+
+| Surface | Invocation |
+|---------|------------|
+| CLI | `yaver handoff [--from X] [--to D] [--engine claude\|hybrid\|runner] [--runner R] [--workdir .] [--max-kicks N] [--deadline S] [--message ...] [--stop-source]` |
+| MCP | tool `session_handoff` with the same fields (snake_case) |
+| HTTP | `POST /session/handoff` with `HandoffSpec` JSON |
+
+All flags optional. `yaver handoff` with no args = "take over the current cwd with claude-code, kick it".
+
+### Engine selector
+
+| Engine | Resolved runner | Notes |
+|--------|----------------|-------|
+| `claude` (default) | `claude-code` | Frontier model end-to-end |
+| `hybrid` | `hybrid` (planner=claude, implementer=aider+ollama) | Routes through `loop_exec_hybrid.go::spawnHybrid` |
+| `runner` | value of `--runner` | Any runner id: `aider`, `codex`, `ollama:qwen2.5-coder:14b`, etc. |
+| anything else | passed through verbatim | Forward-compat for new runner ids |
+
+### Sentinel file (graceful source-agent exit)
+
+External AI agents (Claude Code CLI, etc.) can't be force-killed by Yaver. Instead, the orchestrator writes:
+
+- `~/.yaver/handoff/<loopName>.json` — `HandoffSentinel` JSON with `loopName`, `localTaskId`, `runner`, `writtenAt`, `message`
+- `~/.yaver/handoff/latest.json` — stable pointer to the most recent sentinel
+
+The MCP tool also returns `exitNow: true` in its response so an agent that reads its own MCP results can self-terminate immediately. Use the file as a fallback for agents that ignore the field.
+
+### Orchestrator flow (`desktop/agent/handoff.go::RunHandoff`)
+
+1. Resolve source → `TransferBundle` (export Yaver task / read session file / use pre-built `SourceBundle`).
+2. `ImportSession` into local `TaskManager`.
+3. If `StopSource` and source is a Yaver task → `tm.StopTask(sourceID)`.
+4. Build `LoopSpec{Mode: develop, Think.Runner: <resolved>, Think.PromptInline: <synthesised resume prompt>}`. Target auto-detected (`ios-sim` if `mobile/ios/` present, else `web`) — needed only because `validateLoopSpec` requires it.
+5. Persist via `saveLoops`.
+6. Write sentinel.
+7. Async `kickLoopOnce` so the first iteration starts immediately.
+
+The resume prompt is built from: bundle title + agent type + turn count + pending `TodoListManager` items (top 20) + caller `ExtraPrompt`. We never parse the chat transcript with regex — the new runner re-plans from imported context if needed.
+
+### Remote handoff
+
+`yaver handoff --to <device>` exports the source bundle on the local daemon (via `/session/export`), then POSTs the `HandoffSpec` (with `SourceBundle` populated) to the target's `/session/handoff`. The target re-enters `RunHandoff` with the bundle pre-supplied — no second export needed. Remote handoff is intentionally not exposed via MCP (the calling agent rarely has the right device context); use the CLI for cross-machine handoff.
+
+### Key files
+
+| File | Purpose |
+|------|---------|
+| `desktop/agent/handoff.go` | `HandoffSpec`, `HandoffResult`, `HandoffSentinel`, `RunHandoff`, prompt builder, sentinel writer |
+| `desktop/agent/handoff_cmd.go` | `yaver handoff` CLI; local + remote paths |
+| `desktop/agent/transfer.go` | `ImportOptions` extended with `Handoff*` fields (forward-compat) |
+| `desktop/agent/httpserver.go` | Route `/session/handoff` + `handleSessionHandoff` + MCP `session_handoff` case |
+| `desktop/agent/mcp_tools.go` | `session_handoff` tool schema |
+| `desktop/agent/main.go` | CLI dispatch case `handoff` |
 
 ## Container Sandbox (Optional Task Isolation)
 

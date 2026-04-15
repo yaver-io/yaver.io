@@ -41,10 +41,12 @@ package main
 //     phase boundary.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -1342,15 +1344,19 @@ func spawnClaudeCode(ctx context.Context, l *LoopState, workDir string, report *
 	fmt.Fprintf(os.Stderr, "[loop %s] spawning claude CLI (prompt=%d chars, report=%d findings)...\n",
 		l.Spec.Name, len(fullPrompt), len(report.Findings))
 
-	out, err := cmd.Output()
-	if err != nil {
+	// Tee subprocess stdout to the user's terminal/log stream while we
+	// also capture it for parseAIResponse — gives live visibility into
+	// what Claude is doing instead of a multi-minute silent kick.
+	var buf bytes.Buffer
+	cmd.Stdout = io.MultiWriter(&buf, os.Stderr)
+	if err := cmd.Run(); err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("claude subprocess cancelled: %w", ctx.Err())
 		}
 		return nil, fmt.Errorf("claude CLI returned error: %w", err)
 	}
 
-	return parseAIResponse(string(out))
+	return parseAIResponse(buf.String())
 }
 
 // spawnOllama talks to a local ollama daemon via its HTTP API
@@ -1506,14 +1512,15 @@ func spawnAider(ctx context.Context, l *LoopState, workDir string, report *Heuri
 	fmt.Fprintf(os.Stderr, "[loop %s] spawning aider CLI (prompt=%d chars, report=%d findings)...\n",
 		l.Spec.Name, len(fullPrompt), len(report.Findings))
 
-	out, err := cmd.Output()
-	if err != nil {
+	var buf bytes.Buffer
+	cmd.Stdout = io.MultiWriter(&buf, os.Stderr)
+	if err := cmd.Run(); err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("aider subprocess cancelled: %w", ctx.Err())
 		}
 		return nil, fmt.Errorf("aider CLI returned error: %w", err)
 	}
-	return parseAIResponse(string(out))
+	return parseAIResponse(buf.String())
 }
 
 // spawnCodex invokes the `codex` CLI in non-interactive mode with the
@@ -1544,14 +1551,15 @@ func spawnCodex(ctx context.Context, l *LoopState, workDir string, report *Heuri
 	fmt.Fprintf(os.Stderr, "[loop %s] spawning codex CLI (prompt=%d chars, report=%d findings)...\n",
 		l.Spec.Name, len(fullPrompt), len(report.Findings))
 
-	out, err := cmd.Output()
-	if err != nil {
+	var buf bytes.Buffer
+	cmd.Stdout = io.MultiWriter(&buf, os.Stderr)
+	if err := cmd.Run(); err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("codex subprocess cancelled: %w", ctx.Err())
 		}
 		return nil, fmt.Errorf("codex CLI returned error: %w", err)
 	}
-	return parseAIResponse(string(out))
+	return parseAIResponse(buf.String())
 }
 
 // parseAIResponse scans the AI's stdout for the last JSON block that

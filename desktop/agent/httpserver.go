@@ -176,6 +176,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/autodev/reports", s.auth(s.handleAutodevReports))
 	mux.HandleFunc("/autodev/reports/revert", s.auth(s.handleAutodevRevert))
 	mux.HandleFunc("/autodev/start", s.auth(s.handleAutodevStart))
+	mux.HandleFunc("/autodev/options", s.auth(s.handleAutodevOptions))
 	mux.HandleFunc("/releases/list", s.auth(s.handleReleaseList))
 	mux.HandleFunc("/releases/latest", s.auth(s.handleReleaseLatest))
 	mux.HandleFunc("/releases/bundle", s.auth(s.handleReleaseBundle))
@@ -369,6 +370,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/session/list", s.auth(s.handleSessionList))
 	mux.HandleFunc("/session/export", s.auth(s.handleSessionExport))
 	mux.HandleFunc("/session/import", s.auth(s.handleSessionImport))
+	mux.HandleFunc("/session/handoff", s.auth(s.handleSessionHandoff))
 	mux.HandleFunc("/tmux/sessions", s.auth(s.handleTmuxSessions))
 	mux.HandleFunc("/tmux/adopt", s.auth(s.handleTmuxAdopt))
 	mux.HandleFunc("/tmux/detach", s.auth(s.handleTmuxDetach))
@@ -2746,6 +2748,34 @@ func (s *HTTPServer) handleSessionImport(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+func (s *HTTPServer) handleSessionHandoff(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+	var spec HandoffSpec
+	if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	res, err := RunHandoff(s, spec)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":           res.OK,
+		"localTaskId":  res.LocalTaskID,
+		"loopName":     res.LoopName,
+		"engine":       res.Engine,
+		"runner":       res.Runner,
+		"sentinelFile": res.SentinelFile,
+		"warnings":     res.Warnings,
+		"message":      res.Message,
+		"exitNow":      res.ExitNow,
+	})
+}
+
 // ---------------------------------------------------------------------------
 // Notifications handlers
 // ---------------------------------------------------------------------------
@@ -3195,6 +3225,48 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 	case "get_info":
 		hostname, _ := os.Hostname()
 		return mcpToolResult(fmt.Sprintf("Hostname: %s\nVersion: %s\nWork Dir: %s", hostname, version, s.taskMgr.workDir))
+
+	case "session_handoff":
+		var args struct {
+			SourceTaskID      string `json:"source_task_id"`
+			SourceSessionFile string `json:"source_session_file"`
+			Target            string `json:"target"`
+			Engine            string `json:"engine"`
+			Runner            string `json:"runner"`
+			WorkDir           string `json:"workdir"`
+			MaxKicks          int    `json:"max_kicks"`
+			DeadlineSec       int    `json:"deadline_sec"`
+			Message           string `json:"message"`
+			StopSource        *bool  `json:"stop_source"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		stopSource := true
+		if args.StopSource != nil {
+			stopSource = *args.StopSource
+		}
+		if args.Target != "" {
+			return mcpToolError("remote handoff (target!=local) is not supported via MCP — use `yaver handoff --to <device>` from a CLI")
+		}
+		spec := HandoffSpec{
+			SourceTaskID:      args.SourceTaskID,
+			SourceSessionFile: args.SourceSessionFile,
+			Engine:            args.Engine,
+			Runner:            args.Runner,
+			WorkDir:           args.WorkDir,
+			MaxKicks:          args.MaxKicks,
+			DeadlineSec:       args.DeadlineSec,
+			ExtraPrompt:       args.Message,
+			StopSource:        stopSource,
+		}
+		res, err := RunHandoff(s, spec)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("handoff failed: %v", err))
+		}
+		log.Printf("[MCP] session handed off: loop=%s task=%s engine=%s runner=%s",
+			res.LoopName, res.LocalTaskID, res.Engine, res.Runner)
+		text := fmt.Sprintf("%s\n\nLoop: %s\nTask: %s\nEngine: %s\nRunner: %s\nSentinel: %s\nexitNow: true — please terminate this session; Yaver is taking over.",
+			res.Message, res.LoopName, res.LocalTaskID, res.Engine, res.Runner, res.SentinelFile)
+		return mcpToolResult(text)
 
 	// --- Runner Management ---
 	case "list_runners":
@@ -7728,6 +7800,9 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 	case "meeting_bookings":
 		return mcpToolJSON(map[string]interface{}{"bookings": loadBookings()})
 
+	case "autodev_options":
+		return mcpToolJSON(BuildAutodevOptions())
+
 	case "autodev_start":
 		// Same JSON shape as the POST /autodev/start HTTP endpoint.
 		// We reuse handleAutodevStart by synthesising a request — but
@@ -7742,6 +7817,8 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 			Prompt          string `json:"prompt"`
 			Deploy          string `json:"deploy"`
 			Runner          string `json:"runner"`
+			Engine          string `json:"engine"`
+			AutoIdeas       *int   `json:"auto_ideas"`
 			Branch          string `json:"branch"`
 			Target          string `json:"target"`
 			RemainedPath    string `json:"remained_path"`
@@ -7750,6 +7827,21 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 			MaxIterations   int    `json:"max_iterations"`
 		}
 		_ = json.Unmarshal(call.Arguments, &args)
+		switch strings.ToLower(strings.TrimSpace(args.Engine)) {
+		case "", "claude", "claude-code":
+			// keep args.Runner
+		case "hybrid":
+			args.Runner = "hybrid"
+		default:
+			return mcpToolError("unknown engine: " + args.Engine + " (want claude|hybrid)")
+		}
+		autoIdeasMCP := 1
+		if args.AutoIdeas != nil {
+			autoIdeasMCP = *args.AutoIdeas
+			if autoIdeasMCP < 0 {
+				autoIdeasMCP = 0
+			}
+		}
 		if args.WorkDir == "" {
 			return mcpToolError("work_dir required")
 		}
@@ -7778,7 +7870,8 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 			prompt: args.Prompt, project: project, runner: args.Runner,
 			branch: args.Branch, target: args.Target,
 			maxIter: args.MaxIterations, noAutotest: args.NoAutotest,
-			remained: remainedPath,
+			remained:  remainedPath,
+			autoIdeas: autoIdeasMCP,
 		}
 		if d.hours == "" {
 			d.hours = autodevSleepHours
