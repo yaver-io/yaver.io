@@ -1380,7 +1380,7 @@ func spawnClaudeCode(ctx context.Context, l *LoopState, workDir string, report *
 		}
 	}()
 
-	resp, parseErr := parseClaudeStream(stdout)
+	resp, _, parseErr := parseClaudeStream(stdout)
 	hbCancel()
 	if waitErr := cmd.Wait(); waitErr != nil {
 		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
