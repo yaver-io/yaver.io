@@ -21,12 +21,14 @@ import (
 
 // parseClaudeStream reads stream-json events from r, prints a live
 // progress line per event to os.Stderr, and returns the AIResponse
-// extracted from the final "result" event (if any).
-func parseClaudeStream(r io.Reader) (*AIResponse, error) {
+// extracted from the final "result" event (if any), plus the
+// session_id Claude assigned to this turn so the next kick can
+// resume the same conversation via `claude --resume <id>`.
+func parseClaudeStream(r io.Reader) (*AIResponse, string, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 
-	var lastResultText string
+	var lastResultText, sessionID string
 	for scanner.Scan() {
 		raw := strings.TrimSpace(scanner.Text())
 		if raw == "" {
@@ -35,34 +37,42 @@ func parseClaudeStream(r io.Reader) (*AIResponse, error) {
 
 		var ev map[string]interface{}
 		if err := json.Unmarshal([]byte(raw), &ev); err != nil {
-			// Not JSON — just echo it through so the user sees
-			// stdout as Claude emitted it (banners, dividers, etc.).
 			fmt.Fprintln(os.Stderr, raw)
 			continue
 		}
 
 		printClaudeEvent(ev)
 
-		// The "result" event ends the turn. Newer Claude Code
-		// schemas put the assistant's final text under .result;
-		// older ones put it under .text or a content block. We
-		// stash whatever scalar we can find and let parseAIResponse
-		// hunt for the contract JSON inside it.
+		// system/init carries the session_id we resume against next time.
+		if ev["type"] == "system" {
+			if sub, _ := ev["subtype"].(string); sub == "init" {
+				if sid, ok := ev["session_id"].(string); ok && sid != "" {
+					sessionID = sid
+				}
+			}
+		}
+
+		// The "result" event ends the turn.
 		if ev["type"] == "result" {
 			if r, ok := ev["result"].(string); ok && r != "" {
 				lastResultText = r
 			} else if t, ok := ev["text"].(string); ok && t != "" {
 				lastResultText = t
 			}
+			// Some schemas echo session_id on the result event too.
+			if sid, ok := ev["session_id"].(string); ok && sid != "" && sessionID == "" {
+				sessionID = sid
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read claude stream: %w", err)
+		return nil, sessionID, fmt.Errorf("read claude stream: %w", err)
 	}
 	if lastResultText == "" {
-		return nil, fmt.Errorf("claude stream ended with no result event")
+		return nil, sessionID, fmt.Errorf("claude stream ended with no result event")
 	}
-	return parseAIResponse(lastResultText)
+	resp, err := parseAIResponse(lastResultText)
+	return resp, sessionID, err
 }
 
 // printClaudeEvent renders a single event as a one-line progress
