@@ -656,6 +656,29 @@ func indentAutodev(s, prefix string) string {
 // window so it cannot burn the user's entire monthly Claude /
 // Codex / API allotment in a single overnight run. Past the cap,
 // the loop sleeps an hour and re-checks.
+// autodevForceResume clears any stop marker / paused-or-stopped
+// status on the given loop so the next kick can actually run. Best-
+// effort: missing loop or write errors are swallowed — we don't want
+// an autodev invocation to abort over scheduler housekeeping.
+func autodevForceResume(name string) {
+	loops, err := loadLoops()
+	if err != nil {
+		return
+	}
+	l, ok := loops[name]
+	if !ok {
+		return
+	}
+	if killPath, err := loopKillFilePath(name); err == nil {
+		_ = os.Remove(killPath)
+	}
+	if l.Status == LoopStatusStopped || l.Status == LoopStatusPaused {
+		l.Status = LoopStatusIdle
+		_ = saveLoops(loops)
+		fmt.Printf("autodev: resumed loop %q (was %s)\n", name, l.Status)
+	}
+}
+
 func runAutodevLoop(p autodevPlan) {
 	report := newAutodevReport(p)
 	defer func() {
@@ -663,6 +686,17 @@ func runAutodevLoop(p autodevPlan) {
 		report.save()
 	}()
 	report.save()
+
+	// A previous run may have left the loop's persisted status as
+	// "stopped" / "paused" (or a stale STOP file lying around).
+	// `kickLoopOnce` refuses to run in either case, so the autodev
+	// command would silently no-op forever. Auto-resume both the
+	// dev loop and (if applicable) the autotest companion so the
+	// user's "yaver autodev sfmg" always means "make this go".
+	autodevForceResume(p.LoopName)
+	if p.IncludeAutotest && p.TestLoopName != "" {
+		autodevForceResume(p.TestLoopName)
+	}
 
 	kickOne := func(iter int, name string, label string) (before, after string) {
 		fmt.Printf("%s: %s kick #%d at %s\n", p.Kind, label, iter, time.Now().Format("15:04:05"))
