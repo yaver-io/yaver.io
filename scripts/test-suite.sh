@@ -1558,23 +1558,50 @@ run_voice_tests() {
         fail "Voice unit tests"
     fi
 
-    # Start agent in dummy mode and test voice HTTP endpoints
+    # Start agent in dummy mode and test voice HTTP endpoints.
+    # `yaver serve` reads its auth token from ~/.yaver/config.json
+    # (see LoadConfig in main.go) — it does NOT honour an AUTH_TOKEN
+    # env var, so the old pattern silently fell through to bootstrap
+    # mode and the /voice/status probe hit the pairing page instead
+    # of an authed voice handler. Write a config.json pointed at a
+    # temp HOME so this agent instance has its own isolated token
+    # without touching the developer's real ~/.yaver/.
     info "Starting agent for voice HTTP tests..."
     local http_port
     http_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
     local token="voice-test-token-$$"
     local work_dir
     work_dir=$(mktemp -d)
+    local voice_home
+    voice_home=$(mktemp -d)
+    mkdir -p "$voice_home/.yaver"
+    cat > "$voice_home/.yaver/config.json" <<JSON
+{"auth_token":"$token","convex_site_url":"${CONVEX_SITE_URL:-https://example.invalid}","device_id":"voice-test-$$"}
+JSON
 
     cd "$ROOT_DIR/desktop/agent"
     go build -o "$TEST_DIR/yaver-voice" . 2>/dev/null || { fail "Voice: build failed"; return; }
 
-    AUTH_TOKEN="$token" \
-    CONVEX_SITE_URL="$CONVEX_SITE_URL" \
-    "$TEST_DIR/yaver-voice" serve --debug --port "$http_port" --dummy --no-relay --work-dir "$work_dir" &
+    HOME="$voice_home" \
+    "$TEST_DIR/yaver-voice" serve --debug --port "$http_port" --dummy --no-relay --work-dir "$work_dir" > "$TEST_DIR/voice-agent.log" 2>&1 &
     local agent_pid=$!
     PIDS_TO_KILL+=("$agent_pid")
-    sleep 2
+
+    # Wait for /health to answer — spinning immediately after fork
+    # races the HTTP server's bind. 5 s is enough on CI; fails the
+    # section fast if the agent never came up.
+    local voice_up=0
+    for _ in $(seq 1 25); do
+        if curl -sf "http://127.0.0.1:${http_port}/health" >/dev/null 2>&1; then
+            voice_up=1
+            break
+        fi
+        sleep 0.2
+    done
+    if [ "$voice_up" != "1" ]; then
+        fail "Voice: agent /health never answered — see $TEST_DIR/voice-agent.log"
+        return
+    fi
 
     if ! kill -0 "$agent_pid" 2>/dev/null; then
         fail "Voice: agent failed to start"
