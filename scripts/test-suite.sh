@@ -1493,14 +1493,23 @@ run_expo_tests() {
         fail "yaver expo --help missing expected output"
     fi
 
-    # Test 3: Setup detects non-Expo project
+    # Test 3: Setup detects non-Expo project.
+    # `yaver expo setup` *intentionally* exits 1 with "Not an Expo
+    # project" on stderr for a non-Expo dir. When this script runs
+    # under `set -eo pipefail`, the `| grep` condition above sees
+    # the agent's non-zero exit and considers the whole pipeline a
+    # failure — even though grep matched. We capture output into a
+    # variable so the success criterion is the phrase, not the exit
+    # code (which is deliberately non-zero here).
     local non_expo_dir="$TEST_DIR/not-expo"
     mkdir -p "$non_expo_dir"
     echo '{"dependencies":{"react":"18.3.1"}}' > "$non_expo_dir/package.json"
-    if "$agent_bin" expo setup --dir "$non_expo_dir" 2>&1 | grep -q "Not an Expo project"; then
+    local non_expo_out
+    non_expo_out=$("$agent_bin" expo setup --dir "$non_expo_dir" 2>&1 || true)
+    if echo "$non_expo_out" | grep -q "Not an Expo project"; then
         pass "Setup rejects non-Expo project"
     else
-        fail "Setup should reject non-Expo project"
+        fail "Setup should reject non-Expo project (got: ${non_expo_out:0:80})"
     fi
 
     # Test 4: Setup with agent for start/build (requires running agent)
