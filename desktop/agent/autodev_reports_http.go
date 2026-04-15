@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func (s *HTTPServer) handleAutodevReports(w http.ResponseWriter, r *http.Request) {
@@ -139,8 +140,9 @@ func (s *HTTPServer) handleAutodevStart(w http.ResponseWriter, r *http.Request) 
 		RemainedContent string `json:"remained_content"`
 		NoAutotest      bool   `json:"no_autotest"`
 		MaxIterations   int    `json:"max_iterations"`
-		Engine          string `json:"engine"`     // "" | "claude" | "hybrid"
-		AutoIdeas       *int   `json:"auto_ideas"` // nil = default (1); 0 disables; N caps refills
+		Engine          string `json:"engine"`      // "" | "claude" | "hybrid"
+		AutoIdeas       *int   `json:"auto_ideas"`  // nil = default (999); 0 disables; N caps refills
+		AutoBranch      bool   `json:"auto_branch"` // true = work on autodev/<project>-autodev-<YYYYMMDD>
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
@@ -199,6 +201,12 @@ func (s *HTTPServer) handleAutodevStart(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	resolvedBranch := body.Branch
+	if body.AutoBranch && resolvedBranch == "" {
+		resolvedBranch = "autodev/" + project + "-autodev-" + time.Now().Format("20060102")
+		ensureAutodevBranch(body.WorkDir, resolvedBranch)
+	}
+
 	d := autodevDefaults{
 		hours:      body.Hours,
 		load:       body.Load,
@@ -206,7 +214,7 @@ func (s *HTTPServer) handleAutodevStart(w http.ResponseWriter, r *http.Request) 
 		prompt:     body.Prompt,
 		project:    project,
 		runner:     runnerOverride,
-		branch:     body.Branch,
+		branch:     resolvedBranch,
 		target:     body.Target,
 		maxIter:    body.MaxIterations,
 		noAutotest: body.NoAutotest,

@@ -42,7 +42,8 @@ type autodevOptionDefaults struct {
 	Hours      string `json:"hours"`       // "8"
 	Load       string `json:"load"`        // "lite"
 	NoAutotest bool   `json:"no_autotest"` // false → autotest on
-	AutoIdeas  int    `json:"auto_ideas"`  // 1
+	AutoIdeas  int    `json:"auto_ideas"`  // 999
+	AutoBranch bool   `json:"auto_branch"` // false → work on main
 	Branch     string `json:"branch"`      // "main"
 }
 
