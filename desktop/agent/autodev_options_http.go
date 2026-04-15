@@ -110,7 +110,7 @@ func BuildAutodevOptions() autodevOptions {
 			Hours:      autodevSleepHours,
 			Load:       autodevSleepLoad,
 			NoAutotest: false,
-			AutoIdeas:  1,
+			AutoIdeas:  999,
 			Branch:     "main",
 		},
 	}

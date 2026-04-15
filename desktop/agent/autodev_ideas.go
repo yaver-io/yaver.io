@@ -5,9 +5,16 @@ package main
 // reads recent commits + open TODOs in the repo and appends a fresh
 // batch of small unchecked items so the loop keeps going overnight
 // instead of exiting early.
+//
+// We DON'T trust Claude to write the markdown checklist directly —
+// it loves to drift into bold-numbered-list style or add commentary.
+// Instead we ask for a strict JSON array of titles and write the
+// "- [ ] {title}" lines ourselves. Robust regardless of model mood.
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -16,28 +23,35 @@ import (
 	"time"
 )
 
-// autodevRefillIdeas appends fresh checklist items to p.RemainedFile
-// by asking Claude to propose 5 small concrete improvements based on
-// the current repo state. Best-effort: if claude isn't installed the
-// caller falls back to ending the run.
+const autodevRefillBatchSize = 5
+
+// autodevRefillIdeas appends fresh checklist items to p.RemainedFile.
+// Best-effort: returns an error only when nothing usable was produced
+// — the caller decides whether to keep going or end the run.
 func autodevRefillIdeas(p autodevPlan) error {
 	if _, err := exec.LookPath("claude"); err != nil {
 		return fmt.Errorf("`claude` CLI not on PATH")
 	}
 
 	wd, _ := os.Getwd()
-	prompt := fmt.Sprintf(`The autodev loop has finished every item in this checklist:
+	prompt := fmt.Sprintf(`You are picking the next %d small features / improvements for an overnight autonomous coding loop.
 
-    %s
+Project root: %s
+Existing checklist file (do NOT edit it directly): %s
 
-Read the project at %s — recent git log, open TODO/FIXME comments, half-finished code, obvious UX gaps — and append 5 NEW unchecked checklist items to that same file (preserve everything already there).
+Read recent git log (git log --oneline -20), open TODO / FIXME / HACK comments, half-finished components, missing tests, broken UX, accessibility gaps, dead code, slow endpoints, and missing features visible in the code itself. Pick the %d best small items.
 
-Format strictly:
-- One item per line, starting with "- [ ] " (markdown task syntax).
-- Each item: a small, concrete, single-PR-sized improvement (≤1 day of work).
-- No headings, no commentary, no code fences, no preamble. Append the lines and stop.
+Each item must be:
+- single-PR-sized: implementable + testable in under one day
+- concrete and specific (file or feature mentioned)
+- non-trivial (no whitespace edits, no rename-only)
 
-Do not edit any other file. Do not commit.`, p.RemainedFile, wd)
+Output ONLY a JSON array of strings — one short imperative title per item, no other text, no code fences, no markdown. Example:
+
+["Wire share button to Share.share() in DealCard.tsx","Translate hardcoded TR strings in PortfolioEmpty.tsx via i18n","Persist tweets to Convex (currently lost on reinstall)"]
+
+Do not write any file. Do not commit. Just print the JSON array and stop.`,
+		autodevRefillBatchSize, wd, p.RemainedFile, autodevRefillBatchSize)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -50,13 +64,82 @@ Do not edit any other file. Do not commit.`, p.RemainedFile, wd)
 	cmd.Dir = wd
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Stderr = os.Stderr
-	// Tee stdout to the user's terminal so the refill is visible in
-	// the live stream just like a normal kick.
-	cmd.Stdout = io.MultiWriter(os.Stderr) // discard captured copy; we re-read the file
+	// Tee subprocess stdout to the user's terminal AND capture it for
+	// JSON parsing. Live UX + we still get the bytes.
+	var captured bytes.Buffer
+	cmd.Stdout = io.MultiWriter(&captured, os.Stderr)
 
 	fmt.Fprintf(os.Stderr, "[autodev] refilling %s via claude…\n", p.RemainedFile)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("claude refill: %w", err)
 	}
+
+	titles, err := extractRefillTitles(captured.String())
+	if err != nil {
+		return err
+	}
+	if len(titles) == 0 {
+		return fmt.Errorf("no items extracted from claude output")
+	}
+
+	// Append "- [ ] {title}" lines to the checklist. Add a leading
+	// blank line if the existing file doesn't end with one, so the
+	// new block doesn't merge into the previous text.
+	var prefix string
+	if existing, err := os.ReadFile(p.RemainedFile); err == nil && len(existing) > 0 && !bytes.HasSuffix(existing, []byte("\n\n")) {
+		if !bytes.HasSuffix(existing, []byte("\n")) {
+			prefix = "\n\n"
+		} else {
+			prefix = "\n"
+		}
+	}
+	var sb strings.Builder
+	sb.WriteString(prefix)
+	for _, t := range titles {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		sb.WriteString("- [ ] ")
+		sb.WriteString(t)
+		sb.WriteByte('\n')
+	}
+
+	f, err := os.OpenFile(p.RemainedFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("open remained.md for append: %w", err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(sb.String()); err != nil {
+		return fmt.Errorf("write remained.md: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "[autodev] appended %d new checklist items\n", len(titles))
 	return nil
+}
+
+// extractRefillTitles finds the last JSON string-array in Claude's
+// stdout. We scan from the end so any prose preamble is ignored.
+func extractRefillTitles(out string) ([]string, error) {
+	// Strip common code-fence wrappers Claude sometimes adds despite
+	// being told not to.
+	out = strings.ReplaceAll(out, "```json", "```")
+	for {
+		idx := strings.LastIndex(out, "[")
+		if idx < 0 {
+			return nil, fmt.Errorf("no JSON array in output")
+		}
+		// Try increasingly larger candidates ending after each ']'.
+		end := strings.Index(out[idx:], "]")
+		if end < 0 {
+			out = out[:idx]
+			continue
+		}
+		candidate := out[idx : idx+end+1]
+		var arr []string
+		if err := json.Unmarshal([]byte(candidate), &arr); err == nil && len(arr) > 0 {
+			return arr, nil
+		}
+		// Couldn't parse this one — strip it and look further back.
+		out = out[:idx]
+	}
 }

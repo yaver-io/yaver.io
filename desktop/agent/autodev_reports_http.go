@@ -191,7 +191,7 @@ func (s *HTTPServer) handleAutodevStart(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, http.StatusBadRequest, "unknown engine: "+body.Engine+" (want claude|hybrid)")
 		return
 	}
-	autoIdeas := 1
+	autoIdeas := 999
 	if body.AutoIdeas != nil {
 		autoIdeas = *body.AutoIdeas
 		if autoIdeas < 0 {
