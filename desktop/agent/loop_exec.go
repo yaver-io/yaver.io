@@ -1242,7 +1242,13 @@ func phaseThink(ctx context.Context, l *LoopState, workDir string, report *Heuri
 		return spawnClaudeCode(ctx, l, workDir, report, reportPath, nudge)
 	case runner == "codex":
 		return spawnCodex(ctx, l, workDir, report, reportPath, nudge)
-	case runner == "aider":
+	case runner == "aider" || runner == "aider-ollama":
+		// aider-ollama is aider with a preset model + base URL
+		// applied in spawnAider — same code path, different Model.
+		if runner == "aider-ollama" && strings.TrimSpace(l.Spec.Think.Model) == "" {
+			l.Spec.Think.Model = "ollama_chat/qwen2.5-coder:14b"
+			l.Spec.Think.BaseURL = "http://127.0.0.1:11434"
+		}
 		return spawnAider(ctx, l, workDir, report, reportPath, nudge)
 	case strings.HasPrefix(runner, "ollama"):
 		return spawnOllama(ctx, l, workDir, report, reportPath, nudge)
@@ -1469,15 +1475,29 @@ func spawnAider(ctx context.Context, l *LoopState, workDir string, report *Heuri
 	//   --no-git          don't auto-commit; phaseCommit does that
 	//   --no-pretty       plain output — easier to parse
 	//   --no-stream       complete response before returning
-	cmd := exec.CommandContext(ctx, "aider",
+	//
+	// Model/BaseURL come from the loop spec's Think.Model /
+	// Think.BaseURL fields. When Model starts with "ollama" / "ollama_chat"
+	// we also export OLLAMA_API_BASE so aider's litellm client points at
+	// the right daemon (remote dev box, shared GPU host, etc.).
+	argv := []string{
 		"--yes-always",
 		"--no-git",
 		"--no-pretty",
 		"--no-stream",
-		"--message", fullPrompt,
-	)
+	}
+	model := strings.TrimSpace(l.Spec.Think.Model)
+	if model != "" {
+		argv = append(argv, "--model", model)
+	}
+	argv = append(argv, "--message", fullPrompt)
+	cmd := exec.CommandContext(ctx, "aider", argv...)
 	cmd.Dir = workDir
 	cmd.Stderr = os.Stderr
+	cmd.Env = os.Environ()
+	if base := strings.TrimSpace(l.Spec.Think.BaseURL); base != "" && strings.HasPrefix(strings.ToLower(model), "ollama") {
+		cmd.Env = append(cmd.Env, "OLLAMA_API_BASE="+base)
+	}
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 10 * time.Second
 

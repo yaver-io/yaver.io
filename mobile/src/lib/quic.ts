@@ -35,6 +35,52 @@ export interface ConversationTurn {
   timestamp: string;
 }
 
+// Hybrid Mode — see desktop/agent/hybrid.go. The shapes are a 1:1
+// mirror of HybridSpec / HybridSubtask / HybridStepResult / HybridReport
+// so the mobile form maps cleanly onto the Go struct's JSON tags.
+export interface HybridRunRequest {
+  planner?: string;
+  implementer?: string;
+  model?: string;
+  baseUrl?: string;
+  workDir: string;
+  prompt: string;
+  maxSubtasks?: number;
+  timeoutSec?: number;
+}
+
+export interface HybridSubtask {
+  title: string;
+  files: string[];
+  prompt: string;
+}
+
+export interface HybridStepResult {
+  subtask: HybridSubtask;
+  status: "ok" | "error" | "skipped";
+  output?: string;
+  error?: string;
+  durationMs: number;
+}
+
+export interface HybridPlanResult {
+  spec: HybridRunRequest;
+  subtasks: HybridSubtask[];
+  planOutput?: string;
+}
+
+export interface HybridReport {
+  spec: HybridRunRequest;
+  subtasks: HybridSubtask[];
+  results: HybridStepResult[];
+  planOutput?: string;
+  planError?: string;
+  startedAt: string;
+  finishedAt: string;
+  ok: boolean;
+  failedSteps: number;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -458,6 +504,41 @@ export class QuicClient {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
+  }
+
+  // ── Hybrid Mode API ──────────────────────────────────────────────
+  // Planner + local-implementer orchestration. Endpoints live in
+  // desktop/agent/hybrid_http.go. See CLAUDE.md "Hybrid Mode" for
+  // why (cost) and how (aider + ollama). We intentionally keep these
+  // as ad-hoc methods rather than the Task subsystem — hybrid runs
+  // block for minutes and return a structured report, not a stream.
+
+  async hybridPlan(req: HybridRunRequest): Promise<HybridPlanResult> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/hybrid/plan`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`hybrid/plan ${res.status}: ${body}`);
+    }
+    return res.json();
+  }
+
+  async hybridRun(req: HybridRunRequest): Promise<HybridReport> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/hybrid/run`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok && !data?.subtasks) {
+      throw new Error(data?.error || `hybrid/run ${res.status}`);
+    }
+    return data;
   }
 
   /** List all tasks from the desktop agent, falling back to cache on failure. */

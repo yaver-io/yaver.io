@@ -120,7 +120,9 @@ func (p *LoopPlaytest) playtestEnabled(mode LoopMode) bool {
 }
 
 type LoopThink struct {
-	Runner       string   `yaml:"runner" json:"runner"`                                 // claude-code | codex | aider | ollama:<model>
+	Runner       string   `yaml:"runner" json:"runner"`                                 // claude-code | codex | aider | aider-ollama | ollama:<model>
+	Model        string   `yaml:"model,omitempty" json:"model,omitempty"`               // optional override, e.g. ollama_chat/qwen2.5-coder:14b for aider-ollama
+	BaseURL      string   `yaml:"base_url,omitempty" json:"base_url,omitempty"`         // for ollama-backed runs, sets OLLAMA_API_BASE at spawn time
 	Fallback     []string `yaml:"fallback,omitempty" json:"fallback,omitempty"`         // provider chain when primary is rate-limited
 	Prompt       string   `yaml:"prompt,omitempty" json:"prompt,omitempty"`             // path to prompt file
 	PromptInline string   `yaml:"prompt_inline,omitempty" json:"prompt_inline,omitempty"` // inline prompt embedded in the spec

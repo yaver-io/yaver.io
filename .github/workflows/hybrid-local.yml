@@ -1,0 +1,115 @@
+name: hybrid-local
+
+# End-to-end test for yaver's hybrid mode using ONLY free local tooling:
+# aider + ollama + qwen2.5-coder:1.5b. No API keys, no remote infra.
+#
+# Heavy enough (~3-5 min, ~2 GB model download) that we do NOT run it
+# on every push — that would burn CI minutes without meaningful signal,
+# since the hybrid Go unit tests (hybrid_test.go) already run on every
+# push and cover the orchestrator contract via stub planner/implementer.
+#
+# This workflow validates the *real integration* — that Qwen, routed
+# through Aider, can actually produce working code from a hyper-explicit
+# prompt (the "mechanical execution" guarantee the planner relies on).
+#
+# Triggers:
+#   - workflow_dispatch: manual run from the UI or `gh workflow run`
+#   - schedule: once daily so drift (new aider, new ollama, new Qwen
+#     release) surfaces before a user hits it.
+#   - push to main when hybrid code changes, so breaking changes to
+#     the orchestrator don't slip through.
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Ollama model to use for the implementer"
+        required: false
+        default: "qwen2.5-coder:1.5b"
+  schedule:
+    # 04:00 UTC daily — off-peak for most of the US + EU.
+    - cron: "0 4 * * *"
+  push:
+    branches: [main]
+    paths:
+      - "desktop/agent/hybrid*.go"
+      - "desktop/agent/loop_exec.go"
+      - "desktop/agent/tasks.go"
+      - "scripts/test-hybrid-local.sh"
+      - ".github/workflows/hybrid-local.yml"
+
+jobs:
+  hybrid-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Disk space snapshot
+        run: df -h /
+
+      # Free up space on the GH runner — the default ubuntu image ships
+      # with ~30 GB of pre-installed tooling (Android SDK, CodeQL, etc.)
+      # we don't need. We need ~5 GB headroom: 1 GB for Qwen 1.5B,
+      # plus ollama's own working set and aider's Python deps.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /usr/share/dotnet /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install aider
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install aider-chat
+          aider --version
+
+      - name: Install ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          # Start the daemon in the background; the test script also
+          # starts it if absent, but priming it here parallelises the
+          # build with the model pull.
+          ollama serve > "$RUNNER_TEMP/ollama.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:11434/api/tags >/dev/null; then
+              echo "ollama ready after ${i}s"; break
+            fi
+            sleep 1
+          done
+
+      - name: Build yaver binary
+        run: |
+          cd desktop/agent
+          go build -o "$RUNNER_TEMP/yaver" .
+          "$RUNNER_TEMP/yaver" --help >/dev/null || true
+
+      - name: Pull Qwen (small) — slowest step
+        run: |
+          MODEL="${{ github.event.inputs.model || 'qwen2.5-coder:1.5b' }}"
+          ollama pull "$MODEL"
+          echo "MODEL=$MODEL" >> "$GITHUB_ENV"
+
+      - name: Run hybrid local test (scripts/test-hybrid-local.sh)
+        env:
+          YAVER_BIN: ${{ runner.temp }}/yaver
+        run: |
+          MODEL="$MODEL" bash scripts/test-hybrid-local.sh
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hybrid-local-logs
+          path: |
+            ${{ runner.temp }}/ollama.log
+          if-no-files-found: ignore

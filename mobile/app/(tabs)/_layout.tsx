@@ -165,6 +165,10 @@ export default function TabLayout() {
         name="monitor"
         options={{ href: null, title: "Monitor", headerShown: true, headerLeft: backToMore }}
       />
+      <Tabs.Screen
+        name="hybrid"
+        options={{ href: null, title: "Hybrid", headerShown: true, headerLeft: backToMore }}
+      />
     </Tabs>
   );
 }

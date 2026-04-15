@@ -2129,6 +2129,57 @@ run_ollama_tests() {
     info "Ollama test cleanup complete"
 }
 
+# ── Hybrid Local Test — yaver hybrid drives aider+ollama to build a calculator ──
+# This exercises the END-TO-END planner+implementer loop using a canned
+# stub planner (no API keys) and a real local Qwen implementer. The test
+# passes iff the produced calc.py module passes behavioural checks.
+# See scripts/test-hybrid-local.sh for the actual implementation — we
+# just shell out to it and surface pass/fail into the suite counters.
+run_hybrid_local_test() {
+    header "Hybrid Local — Aider + Ollama + Qwen → Calculator"
+
+    if ! command -v aider &>/dev/null; then
+        info "Installing aider..."
+        pip3 install --user --quiet aider-chat 2>/dev/null \
+            || pipx install aider-chat 2>/dev/null \
+            || { skip "Cannot install aider (no pip3/pipx)"; return; }
+        export PATH="$HOME/.local/bin:$HOME/Library/Python/3.9/bin:$PATH"
+    fi
+    if ! command -v ollama &>/dev/null; then
+        info "Installing ollama..."
+        curl -fsSL https://ollama.com/install.sh | sh 2>/dev/null \
+            || { skip "Cannot install ollama"; return; }
+    fi
+
+    # Pull the small model if not present. This is the slow step on a
+    # cold CI runner; locally it's a no-op.
+    if ! curl -sf http://localhost:11434/api/tags &>/dev/null; then
+        info "Starting ollama daemon..."
+        ollama serve > "$TEST_DIR/hybrid-ollama.log" 2>&1 &
+        local ollama_pid=$!
+        for _ in {1..20}; do
+            if curl -sf http://localhost:11434/api/tags &>/dev/null; then break; fi
+            sleep 1
+        done
+        trap "kill $ollama_pid 2>/dev/null || true" EXIT
+    fi
+
+    local MODEL="${HYBRID_MODEL:-qwen2.5-coder:1.5b}"
+    if ! curl -sf http://localhost:11434/api/tags | grep -q "\"$MODEL\""; then
+        info "Pulling $MODEL..."
+        ollama pull "$MODEL" > "$TEST_DIR/hybrid-pull.log" 2>&1 \
+            || { fail "Could not pull $MODEL"; return; }
+    fi
+
+    info "Running hybrid end-to-end test (model=$MODEL)..."
+    if MODEL="$MODEL" bash "$SCRIPT_DIR/test-hybrid-local.sh" > "$TEST_DIR/hybrid-local.log" 2>&1; then
+        pass "Hybrid mode produced a working calculator (planner stub + aider + $MODEL)"
+    else
+        fail "Hybrid local test failed — see $TEST_DIR/hybrid-local.log"
+        tail -40 "$TEST_DIR/hybrid-local.log" || true
+    fi
+}
+
 # ── Ollama CI Test — Install ollama on CI runner, run integration test ──
 # Designed for GitHub Actions ubuntu-latest runners (7GB RAM, 14GB disk free).
 # Installs ollama, pulls qwen2.5-coder:1.5b (~1GB), runs agent + task.
@@ -2268,6 +2319,7 @@ run_ollama_ci_test() {
     local run_docker=false
     local run_ollama=false
     local run_ollama_ci=false
+    local run_hybrid_local=false
 
     for arg in "$@"; do
         case "$arg" in
@@ -2288,6 +2340,7 @@ run_ollama_ci_test() {
             --docker)         run_docker=true; run_all=false ;;
             --ollama)         run_ollama=true; run_all=false ;;
             --ollama-ci)      run_ollama_ci=true; run_all=false ;;
+            --hybrid-local)   run_hybrid_local=true; run_all=false ;;
             --help|-h)
                 cat << 'HELP'
 Usage: ./scripts/test-suite.sh [FLAGS]
@@ -2312,6 +2365,7 @@ Flags:
   --docker          Docker container sandbox tests (requires Docker daemon)
   --ollama          Ollama integration test — local (requires ollama + qwen2.5-coder:1.5b)
   --ollama-ci       Ollama CI test — installs ollama + model, runs on any Linux runner
+  --hybrid-local    Hybrid mode end-to-end: aider+ollama+qwen builds a calculator, assert it works
 
 Environment:
   Credentials loaded from: env vars > .env.test > ../talos/.env.test
@@ -2393,6 +2447,10 @@ HELP
 
     if $run_ollama_ci; then
         run_ollama_ci_test
+    fi
+
+    if $run_hybrid_local; then
+        run_hybrid_local_test
     fi
 
     # Summary
