@@ -1069,6 +1069,46 @@ npm run report                                # open last HTML report
 
 **CI:** `.github/workflows/e2e.yml` runs on PRs and pushes to `main` that touch `web/` or `e2e/`. It boots the Next.js dev server inside the job, runs Playwright against it, and uploads the HTML report + failure traces as artifacts.
 
+### Running the Entire GitHub CI Suite Locally
+
+`scripts/run-ci-local.sh` is the single entry point that reproduces every
+`.github/workflows/*.yml` test job on your laptop using the exact same
+commands the YAML runs. Use it before every PR to catch regressions without
+burning GH Actions minutes.
+
+```bash
+./scripts/run-ci-local.sh              # run all five test workflows
+./scripts/run-ci-local.sh --list       # enumerate the sections
+./scripts/run-ci-local.sh ci           # only the ci.yml matrix
+./scripts/run-ci-local.sh ci e2e       # several sections
+SKIP_HEAVY=1 ./scripts/run-ci-local.sh # skip slow sections (Playwright,
+                                       # Bento iOS bundle, hybrid-local)
+VERBOSE=1 ./scripts/run-ci-local.sh    # tee every step to the terminal
+```
+
+| Section | GH workflow | Local command equivalent | What it checks | Heavy? |
+|---|---|---|---|---|
+| `ci` | `ci.yml` | `go test ./...`, `go build`, `npm run build`, `tsc --noEmit`, `convex typecheck`, RN Feedback SDK jest | Per-component build + test matrix (gated by `paths-filter` on GH; runs all jobs locally) | 1-2 min |
+| `e2e` | `e2e.yml` | `cd e2e && npx playwright test` (installs Chromium first) | Playwright browser tests against the landing page (login flow, hero rendering, etc.) | 3-5 min |
+| `bento-e2e` | `bento-e2e.yml` | `go test -run TestBentoE2E_MobileFlow`, then Bento npm install + `tsc --noEmit` + `expo export --platform ios` | Mobile-flow agent integration + scaffolded Bento app compiles and bundles on iOS | 8-15 min |
+| `test-suite` | `test-suite.yml` | `./scripts/test-suite.sh --unit --lan --relay` | Go unit tests + LAN direct connect + local relay server task flow | 2-4 min |
+| `hybrid-local` | `hybrid-local.yml` | `./scripts/test-hybrid-local.sh` | Canned planner → Aider + Ollama + Qwen writes a calculator → Python asserts add/sub/mul/div work | 3-8 min (+pull time) |
+
+Logs for each step land in `$TMPDIR/yaver-ci-local-$$/`; on a failing step,
+the last 30 lines are printed inline and the full log path is echoed.
+
+**What's left out**: release workflows (`release-cli.yml`, `release-web.yml`,
+etc.) and cron maintenance (`tailscale-key-rotation.yml`) are not reproduced —
+they require signing keys, TestFlight credentials, or write access to
+external services. Run those on GitHub only.
+
+**Dependencies per section** (install via `yaver install <name>` where applicable):
+- `ci` — go, npm
+- `e2e` — npm + Chromium (Playwright installs it)
+- `bento-e2e` — go, npm, Xcode toolchain (for `expo export`)
+- `test-suite` — go (`--unit`), go + TCP loopback (`--lan`), go + docker (`--relay`)
+- `hybrid-local` — `yaver install hybrid` (ollama + aider + qwen2.5-coder:1.5b or larger)
+
 ### Running GitHub CI Tests from the Terminal
 Use `./scripts/run-gh-ci.sh` to trigger one or all GitHub Actions workflows on the current branch, wait for them to finish, and dump the failing logs inline. Intended as the single entry point when the user says "run tests" / "run CI".
 
