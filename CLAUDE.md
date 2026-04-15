@@ -715,6 +715,36 @@ yaver install ollama
 ### Cost intuition
 Planner output is ~1 % of total tokens in a hybrid run; the bulk goes to the implementer which is free. Against pure Claude Code, expect 80-95 % API-cost reduction on feature loops where the planner's decomposition survives without mid-run replanning. See the session notes for worked numbers.
 
+## Autodev / Loop — Self-Heal & Live Streaming
+
+`yaver autodev` and `yaver loop` are CLI front-ends that talk to the local daemon over `http://127.0.0.1:18080`. Two robustness layers wrap that conversation:
+
+### Self-healing daemon calls
+`localAgentRequest` (`desktop/agent/session_cmd.go`) detects transport-level failures (daemon not running, connection refused, deadline exceeded) and transparently:
+1. Spawns `yaver serve` in the background (detached, logs to `~/.yaver/agent.log`).
+2. Polls `/health` for up to 10 s.
+3. Retries the original request once.
+
+So the user never has to manually `yaver serve` after a daemon crash, machine reboot before launchd kicked in, or upgrade. Auth-missing errors are surfaced as-is — re-pairing requires the mobile flow, which can't be automated.
+
+### Live log streams (`/streams/{name}`)
+`desktop/agent/logstream.go` adds a daemon-hosted, named log-channel registry. Each stream is a small in-memory ring buffer (last 500 lines) plus a non-blocking subscriber fan-out — slow consumers drop, the producer never stalls.
+
+HTTP surface (auth'd):
+- `GET /streams` — list active stream names.
+- `GET /streams/{name}` — SSE subscribe. Server replays the history snapshot first, then streams live `{"type":"line","text":"..."}` events with a 20 s keepalive ping.
+- `POST /streams/{name}/append` — `{"line":"..."}` or `{"lines":["..."]}`.
+
+`yaver autodev` / `yaver autotest` automatically tee `os.Stdout` and `os.Stderr` through `teeStdoutToStream` (`desktop/agent/autodev_stream.go`) so every line — including subprocess output from the AI runner — appears both in the terminal and on `streams/autodev:<loop-name>`. The mobile app and web dashboard subscribe via `EventSource` to watch the run live, exactly like the user sees it. If the daemon is unreachable the tee silently degrades to terminal-only output; the autodev loop is never blocked by streaming.
+
+### Key files
+| File | Purpose |
+|------|---------|
+| `desktop/agent/session_cmd.go` | `localAgentRequest` + `ensureDaemonAlive` |
+| `desktop/agent/logstream.go` | `LogStream`, `LogStreamRegistry`, SSE handlers |
+| `desktop/agent/autodev_stream.go` | `streamPublisher`, `teeStdoutToStream` |
+| `desktop/agent/autodev_cmd.go` | tee hook in `runAutodevOrTest` |
+
 ## Container Sandbox (Optional Task Isolation)
 
 Run AI agent tasks inside Docker containers for filesystem isolation. **Optional and disabled by default** — the default mode runs tasks directly on the host (unchanged behavior).
