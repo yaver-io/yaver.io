@@ -80,7 +80,16 @@ type RunnerConfig struct {
 	ResumeSupported bool     `json:"resumeSupported"`
 	ResumeArgs      []string `json:"resumeArgs,omitempty"`
 	ExitCommand     string   `json:"exitCommand,omitempty"` // e.g. "/exit" for Claude, "/quit" for Aider
-	AutoDetected    bool     `json:"-"`                     // true if user never explicitly chose a runner
+	// Model is the LLM backing this runner when it supports a
+	// selectable backend (e.g. aider with --model ollama/qwen…).
+	// Empty = runner's default. Consumed by spawnAider and the
+	// hybrid orchestrator.
+	Model string `json:"model,omitempty"`
+	// BaseURL points the runner at a non-default LLM endpoint.
+	// For ollama-backed runs this is exported as OLLAMA_API_BASE
+	// (default http://127.0.0.1:11434).
+	BaseURL      string `json:"baseUrl,omitempty"`
+	AutoDetected bool   `json:"-"` // true if user never explicitly chose a runner
 }
 
 var defaultRunner = RunnerConfig{
@@ -104,11 +113,12 @@ var defaultRunner = RunnerConfig{
 
 // exitCommands maps runner IDs to their graceful exit commands.
 var exitCommands = map[string]string{
-	"claude":   "/exit",
-	"codex":    "exit",
-	"aider":    "/quit",
-	"goose":    "exit",
-	"opencode": "/quit",
+	"claude":       "/exit",
+	"codex":        "exit",
+	"aider":        "/quit",
+	"aider-ollama": "/quit",
+	"goose":        "exit",
+	"opencode":     "/quit",
 }
 
 // builtinRunners defines all known runner configurations.
@@ -165,6 +175,22 @@ var builtinRunners = map[string]RunnerConfig{
 		Args:        []string{"--message", "{prompt}"},
 		OutputMode:  "raw",
 		ExitCommand: "/quit",
+	},
+	// aider-ollama: Aider driven by a local Ollama model. File-editing
+	// stays with aider; the LLM is whatever qwen2.5-coder variant the
+	// user has pulled locally. Default model fits a 24 GB Apple
+	// Silicon machine; override with RunnerConfig.Model (e.g.
+	// "qwen2.5-coder:7b" on smaller boxes). spawnAider / hybrid.go
+	// prepend --model + export OLLAMA_API_BASE at invocation time.
+	"aider-ollama": {
+		RunnerID:    "aider-ollama",
+		Name:        "Aider + Qwen (local, free)",
+		Command:     "aider",
+		Args:        []string{"--yes-always", "--no-git", "--no-pretty", "--no-stream", "--message", "{prompt}"},
+		OutputMode:  "raw",
+		ExitCommand: "/quit",
+		Model:       "ollama_chat/qwen2.5-coder:14b",
+		BaseURL:     "http://127.0.0.1:11434",
 	},
 }
 

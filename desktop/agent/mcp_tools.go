@@ -1894,6 +1894,63 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, sandboxTools...)
 
+	// --- Hybrid Mode (planner + local implementer) ---
+	hybridTools := []map[string]interface{}{
+		{
+			"name":        "hybrid_check",
+			"description": "Preflight the hybrid runner chain — verifies aider is installed, the Ollama daemon responds, and the requested model is pulled. Returns an actionable hint if anything is missing.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"model": map[string]interface{}{
+						"type":        "string",
+						"description": "LLM identifier to verify (default: ollama_chat/qwen2.5-coder:14b)",
+					},
+					"baseUrl": map[string]interface{}{
+						"type":        "string",
+						"description": "Ollama base URL (default: http://127.0.0.1:11434)",
+					},
+				},
+			},
+		},
+		{
+			"name":        "hybrid_plan",
+			"description": "Ask the expensive planner (default: claude) to decompose a feature request into file-scoped subtasks for the cheap local implementer. Does NOT execute — returns the subtask list for preview/editing before calling hybrid_run.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"workDir", "prompt"},
+				"properties": map[string]interface{}{
+					"planner":     map[string]interface{}{"type": "string", "description": "Planner runner ID (default: claude)"},
+					"implementer": map[string]interface{}{"type": "string", "description": "Implementer runner ID (default: aider-ollama)"},
+					"model":       map[string]interface{}{"type": "string", "description": "Override implementer model"},
+					"baseUrl":     map[string]interface{}{"type": "string", "description": "Override implementer base URL"},
+					"workDir":     map[string]interface{}{"type": "string", "description": "Absolute path to the project root"},
+					"prompt":      map[string]interface{}{"type": "string", "description": "The feature request in plain English"},
+					"maxSubtasks": map[string]interface{}{"type": "integer", "description": "Cap on subtasks the planner emits (default: 20)"},
+				},
+			},
+		},
+		{
+			"name":        "hybrid_run",
+			"description": "Plan AND execute a hybrid run end-to-end. The planner emits subtasks; aider + a local Qwen model implements each one. Returns a report with per-step status, output, and duration. Can take many minutes — use hybrid_plan first if you want to review the plan before committing.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"workDir", "prompt"},
+				"properties": map[string]interface{}{
+					"planner":     map[string]interface{}{"type": "string"},
+					"implementer": map[string]interface{}{"type": "string"},
+					"model":       map[string]interface{}{"type": "string"},
+					"baseUrl":     map[string]interface{}{"type": "string"},
+					"workDir":     map[string]interface{}{"type": "string"},
+					"prompt":      map[string]interface{}{"type": "string"},
+					"maxSubtasks": map[string]interface{}{"type": "integer"},
+					"timeoutSec":  map[string]interface{}{"type": "integer", "description": "Overall run timeout in seconds (default: 1800)"},
+				},
+			},
+		},
+	}
+	tools = append(tools, hybridTools...)
+
 	// --- Password Management ---
 	passwordTools := []map[string]interface{}{
 		{

@@ -146,6 +146,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Authenticated
 	mux.HandleFunc("/tasks", s.auth(s.handleTasks))
 	mux.HandleFunc("/tasks/", s.auth(s.handleTaskByID))
+	mux.HandleFunc("/hybrid/run", s.auth(s.handleHybridRun))
+	mux.HandleFunc("/hybrid/plan", s.auth(s.handleHybridPlan))
 	mux.HandleFunc("/chain", s.auth(s.handleChainCreate))
 	mux.HandleFunc("/chain/", s.auth(s.handleChainStatus))
 	mux.HandleFunc("/deploy", s.auth(s.handleDeploy))
@@ -6648,6 +6650,56 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 				u.GuestEmail, u.GuestName, u.SecondsUsed, u.Date))
 		}
 		return mcpToolResult(sb.String())
+
+	case "hybrid_check":
+		var args struct {
+			Model   string `json:"model"`
+			BaseURL string `json:"baseUrl"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.Model == "" {
+			args.Model = "ollama_chat/qwen2.5-coder:14b"
+		}
+		if args.BaseURL == "" {
+			args.BaseURL = "http://127.0.0.1:11434"
+		}
+		return mcpToolJSON(checkHybrid("aider-ollama", args.Model, args.BaseURL))
+
+	case "hybrid_plan":
+		var req hybridRunRequest
+		if err := json.Unmarshal(call.Arguments, &req); err != nil {
+			return mcpToolError("invalid arguments: " + err.Error())
+		}
+		spec := req.toSpec()
+		if err := applyHybridDefaults(&spec); err != nil {
+			return mcpToolError(err.Error())
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), spec.Timeout)
+		defer cancel()
+		planOut, err := runPlanner(ctx, spec)
+		if err != nil {
+			return mcpToolError("planner failed: " + err.Error())
+		}
+		subtasks, perr := parseHybridPlan(planOut, spec.MaxSubtasks)
+		if perr != nil {
+			return mcpToolError(perr.Error())
+		}
+		return mcpToolJSON(map[string]any{"spec": spec, "subtasks": subtasks})
+
+	case "hybrid_run":
+		var req hybridRunRequest
+		if err := json.Unmarshal(call.Arguments, &req); err != nil {
+			return mcpToolError("invalid arguments: " + err.Error())
+		}
+		spec := req.toSpec()
+		rep, err := RunHybrid(context.Background(), spec)
+		if err != nil {
+			if rep != nil {
+				return mcpToolJSON(map[string]any{"error": err.Error(), "report": rep})
+			}
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(rep)
 
 	case "forgot_password":
 		var args struct {

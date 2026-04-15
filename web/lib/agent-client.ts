@@ -30,6 +30,50 @@ export interface Task {
   deviceName?: string;
 }
 
+// Hybrid Mode — mirror of Go structs in desktop/agent/hybrid.go.
+export interface HybridRunRequest {
+  planner?: string;
+  implementer?: string;
+  model?: string;
+  baseUrl?: string;
+  workDir: string;
+  prompt: string;
+  maxSubtasks?: number;
+  timeoutSec?: number;
+}
+
+export interface HybridSubtask {
+  title: string;
+  files: string[];
+  prompt: string;
+}
+
+export interface HybridStepResult {
+  subtask: HybridSubtask;
+  status: "ok" | "error" | "skipped";
+  output?: string;
+  error?: string;
+  durationMs: number;
+}
+
+export interface HybridPlanResult {
+  spec: HybridRunRequest;
+  subtasks: HybridSubtask[];
+  planOutput?: string;
+}
+
+export interface HybridReport {
+  spec: HybridRunRequest;
+  subtasks: HybridSubtask[];
+  results: HybridStepResult[];
+  planOutput?: string;
+  planError?: string;
+  startedAt: string;
+  finishedAt: string;
+  ok: boolean;
+  failedSteps: number;
+}
+
 export interface AgentInfo {
   hostname: string;
   version: string;
@@ -335,6 +379,41 @@ class AgentClient {
       headers: this.authHeaders,
     });
     if (!res.ok) throw new Error(`Failed to delete task: ${res.status}`);
+  }
+
+  // ── Hybrid Mode API ─────────────────────────────────────────────────
+  // Pair an expensive planner (Claude/Codex) with a cheap local
+  // implementer (aider + Ollama/Qwen) to cut API cost ~20x on feature
+  // work. Endpoints defined in desktop/agent/hybrid_http.go.
+
+  async hybridPlan(req: HybridRunRequest): Promise<HybridPlanResult> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/hybrid/plan`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`hybrid/plan ${res.status}: ${body}`);
+    }
+    return res.json();
+  }
+
+  async hybridRun(req: HybridRunRequest): Promise<HybridReport> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/hybrid/run`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    });
+    // hybrid/run always returns a JSON body; keep it even on 4xx/5xx
+    // so the UI can render the partial report.
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok && !data?.subtasks) {
+      throw new Error(data?.error || `hybrid/run ${res.status}`);
+    }
+    return data;
   }
 
   async stopAllTasks(): Promise<number> {

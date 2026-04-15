@@ -142,6 +142,8 @@ func main() {
 		runPipeline(os.Args[2:])
 	case "loop":
 		runLoop(os.Args[2:])
+	case "hybrid":
+		runHybrid(os.Args[2:])
 	case "feedback":
 		runFeedback(os.Args[2:])
 	case "voice":

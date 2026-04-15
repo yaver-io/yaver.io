@@ -668,6 +668,53 @@ yaver guests usage 2026-04-06                 # Show usage for date
 | `desktop/agent/mcp_tools.go` | MCP tools: `guest_config`, `guest_usage` |
 | `mobile/src/lib/guests.ts` | Mobile API: `fetchGuestConfigs`, `updateGuestConfig`, `fetchGuestUsage` |
 
+## Hybrid Mode (Planner + Local Implementer)
+
+Pair an expensive frontier model as the **planner** with a cheap local model as the **implementer** to cut API spend on a feature-building loop by one to two orders of magnitude. The planner (Claude Code / Codex / OpenCode) decomposes the user goal into narrow, file-scoped subtasks; each subtask is executed by Aider driving a local Ollama model (default `qwen2.5-coder:14b`, fits 24 GB RAM).
+
+### How it works
+1. `yaver hybrid "<feature>"` (or `POST /hybrid/run`) builds a `plannerPrompt` that explicitly tells the planner the implementer is a small local model with no reasoning and a tiny context, and demands hyper-explicit per-file subtasks with acceptance criteria.
+2. Planner returns `{"subtasks":[{title, files, prompt}, ...]}`.
+3. Orchestrator loops through subtasks, invoking Aider with `--model ollama_chat/qwen2.5-coder:14b` and `OLLAMA_API_BASE=http://127.0.0.1:11434`. Files named by the planner become aider's editable set.
+4. Subtask failures are recorded but do not abort the run — caller decides whether to retry, re-plan, or accept partial output.
+
+### CLI
+```bash
+yaver hybrid --check                                    # preflight: aider + ollama + model
+yaver hybrid --planner claude --implementer aider-ollama \
+  --model ollama_chat/qwen2.5-coder:14b "<feature prompt>"
+yaver hybrid --json "<feature prompt>" > report.json    # full HybridReport
+```
+
+### HTTP
+- `POST /hybrid/plan` — plan only (preview subtasks, no edits)
+- `POST /hybrid/run` — plan + execute, returns `HybridReport`
+
+Both are behind the normal owner-auth middleware; guests are blocked (planners see the whole repo).
+
+### Key files
+| File | Purpose |
+|------|---------|
+| `desktop/agent/hybrid.go` | HybridSpec, RunHybrid, planner prompt, plan parser, implementer invocation |
+| `desktop/agent/hybrid_cmd.go` | `yaver hybrid` CLI |
+| `desktop/agent/hybrid_http.go` | `/hybrid/run`, `/hybrid/plan` |
+| `desktop/agent/hybrid_preflight.go` | aider/ollama/model dependency probe |
+| `desktop/agent/tasks.go` | `RunnerConfig.Model` + `BaseURL`; `aider-ollama` builtin |
+| `desktop/agent/loop_exec.go` | `spawnAider` threads `--model` + `OLLAMA_API_BASE` |
+| `desktop/agent/install_cmd.go` | `yaver install aider\|opencode\|hybrid` |
+
+### Installing dependencies
+```bash
+yaver install hybrid    # ollama + aider + pull qwen2.5-coder:14b (meta-target)
+# or individually:
+yaver install aider
+yaver install opencode
+yaver install ollama
+```
+
+### Cost intuition
+Planner output is ~1 % of total tokens in a hybrid run; the bulk goes to the implementer which is free. Against pure Claude Code, expect 80-95 % API-cost reduction on feature loops where the planner's decomposition survives without mid-run replanning. See the session notes for worked numbers.
+
 ## Container Sandbox (Optional Task Isolation)
 
 Run AI agent tasks inside Docker containers for filesystem isolation. **Optional and disabled by default** — the default mode runs tasks directly on the host (unchanged behavior).

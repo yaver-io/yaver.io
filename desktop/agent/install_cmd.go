@@ -107,6 +107,38 @@ var integrations = []installPlan{
 		},
 	},
 	{
+		name:        "aider",
+		description: "Aider — file-editing AI CLI; pairs with Ollama/Qwen for the hybrid mode implementer",
+		macOS:       []string{"python3 -m pip install --user --upgrade aider-chat"},
+		linux: []linuxStep{
+			{"pip3", "pip3 install --user --upgrade aider-chat"},
+			{"pipx", "pipx install aider-chat"},
+		},
+	},
+	{
+		name:        "opencode",
+		description: "OpenCode — alternative terminal AI coding agent; usable as a hybrid planner or implementer",
+		macOS:       []string{"brew install opencode"},
+		linux: []linuxStep{
+			{"npm", "npm install -g opencode-ai"},
+			{"curl", "curl -fsSL https://opencode.ai/install | bash"},
+		},
+	},
+	{
+		name:        "hybrid",
+		description: "Everything needed for `yaver hybrid` (aider + ollama + qwen2.5-coder:14b pulled). Meta-target.",
+		macOS: []string{
+			"brew install ollama",
+			"python3 -m pip install --user --upgrade aider-chat",
+			// Model pull is heavy (~9 GB); run it last so an early
+			// failure doesn't leave a half-downloaded blob behind.
+			"ollama serve >/dev/null 2>&1 & sleep 2; ollama pull qwen2.5-coder:14b",
+		},
+		linux: []linuxStep{
+			{"curl", "curl -fsSL https://ollama.com/install.sh | sh && pip3 install --user --upgrade aider-chat && (ollama serve >/dev/null 2>&1 & sleep 2; ollama pull qwen2.5-coder:14b)"},
+		},
+	},
+	{
 		name:        "tmux",
 		description: "tmux — required for the agent's task runner (probably already installed)",
 		macOS:       []string{"brew install tmux"},
@@ -196,6 +228,9 @@ func checkInstalled(name string) string {
 		"appium":      {"appium"},
 		"node":        {"node"},
 		"ollama":      {"ollama"},
+		"aider":       {"aider"},
+		"opencode":    {"opencode"},
+		"hybrid":      {"aider"}, // presence of aider is our cheapest proxy
 		"tmux":        {"tmux"},
 	}
 	candidates := probe[name]
