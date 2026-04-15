@@ -139,6 +139,8 @@ func (s *HTTPServer) handleAutodevStart(w http.ResponseWriter, r *http.Request) 
 		RemainedContent string `json:"remained_content"`
 		NoAutotest      bool   `json:"no_autotest"`
 		MaxIterations   int    `json:"max_iterations"`
+		Engine          string `json:"engine"`     // "" | "claude" | "hybrid"
+		AutoIdeas       *int   `json:"auto_ideas"` // nil = default (1); 0 disables; N caps refills
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
@@ -176,18 +178,40 @@ func (s *HTTPServer) handleAutodevStart(w http.ResponseWriter, r *http.Request) 
 		project = filepath.Base(body.WorkDir)
 	}
 
+	// Engine resolution: "hybrid" overrides Runner so phaseThink picks
+	// the planner+implementer adapter. "" / "claude" / "claude-code"
+	// is a no-op and leaves Runner alone.
+	runnerOverride := body.Runner
+	switch strings.ToLower(strings.TrimSpace(body.Engine)) {
+	case "", "claude", "claude-code":
+		// keep runner as supplied (or empty -> default)
+	case "hybrid":
+		runnerOverride = "hybrid"
+	default:
+		jsonError(w, http.StatusBadRequest, "unknown engine: "+body.Engine+" (want claude|hybrid)")
+		return
+	}
+	autoIdeas := 1
+	if body.AutoIdeas != nil {
+		autoIdeas = *body.AutoIdeas
+		if autoIdeas < 0 {
+			autoIdeas = 0
+		}
+	}
+
 	d := autodevDefaults{
 		hours:      body.Hours,
 		load:       body.Load,
 		deploy:     body.Deploy,
 		prompt:     body.Prompt,
 		project:    project,
-		runner:     body.Runner,
+		runner:     runnerOverride,
 		branch:     body.Branch,
 		target:     body.Target,
 		maxIter:    body.MaxIterations,
 		noAutotest: body.NoAutotest,
 		remained:   remainedPath,
+		autoIdeas:  autoIdeas,
 	}
 	if d.hours == "" {
 		d.hours = autodevSleepHours

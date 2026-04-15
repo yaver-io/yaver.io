@@ -119,6 +119,25 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name":        "session_handoff",
+			"description": "Pass the current AI session to Yaver. Yaver imports the session, optionally stops the source agent, and starts an autodev multi-kick loop to finish remaining work. Returns exitNow=true so the calling agent can terminate. Watch the sentinel file (~/.yaver/handoff/<loopName>.json) to confirm Yaver has taken over. Engine controls how Yaver continues: 'claude' (frontier model end-to-end), 'hybrid' (planner + cheap local implementer), 'runner' (single arbitrary runner via runner field). Works on the local machine or a remote dev machine via target.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"source_task_id":      map[string]interface{}{"type": "string", "description": "Yaver task id to hand off (optional)"},
+					"source_session_file": map[string]interface{}{"type": "string", "description": "Path to a session file (e.g. ~/.claude/sessions/*.jsonl) — optional"},
+					"target":              map[string]interface{}{"type": "string", "description": "Remote device id/hostname; empty = local"},
+					"engine":              map[string]interface{}{"type": "string", "description": "claude | hybrid | runner", "default": "claude"},
+					"runner":              map[string]interface{}{"type": "string", "description": "Runner id when engine=runner (aider, codex, ollama:qwen2.5-coder:14b, ...)"},
+					"workdir":             map[string]interface{}{"type": "string", "description": "Working directory for the resumed loop"},
+					"max_kicks":           map[string]interface{}{"type": "integer", "description": "Max autodev kicks (default 20)"},
+					"deadline_sec":        map[string]interface{}{"type": "integer", "description": "Wall-clock cap in seconds (0 = none)"},
+					"message":             map[string]interface{}{"type": "string", "description": "Extra prompt appended to the resume instructions"},
+					"stop_source":         map[string]interface{}{"type": "boolean", "description": "Stop the source Yaver task before kicking the new loop", "default": true},
+				},
+			},
+		},
+		{
 			"name":        "get_config",
 			"description": "Get agent configuration (sandbox, auto-start, relay, email, ACL peers).",
 			"inputSchema": map[string]interface{}{
@@ -2206,13 +2225,23 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"load":             map[string]interface{}{"type": "string", "enum": []string{"lite", "high"}, "description": "lite respects AI session limits (default), high burns through them"},
 					"prompt":           map[string]interface{}{"type": "string", "description": "Focus prompt for this run (optional)"},
 					"deploy":           map[string]interface{}{"type": "string", "enum": []string{"testflight", "playstore", "both", "none"}, "description": "Deploy target at end of run (default: auto-detected)"},
-					"runner":           map[string]interface{}{"type": "string", "description": "Primary AI runner (default: claude-code)"},
+					"runner":           map[string]interface{}{"type": "string", "description": "Primary AI runner (default: claude-code). Direct runner override; usually leave this empty and use 'engine' instead."},
+					"engine":           map[string]interface{}{"type": "string", "enum": []string{"claude", "hybrid"}, "description": "High-level engine. 'claude' (default) uses Claude Code end-to-end. 'hybrid' uses Claude as a planner and a local Aider+Ollama implementer to cut API spend ~80-95%."},
+					"auto_ideas":       map[string]interface{}{"type": "integer", "description": "When the remained.md checklist empties, ask the runner to generate that many fresh batches of ideas before exiting. Default 1; set 0 to exit immediately when the list empties."},
 					"branch":           map[string]interface{}{"type": "string", "description": "Git branch to ship to (default: main)"},
 					"remained_content": map[string]interface{}{"type": "string", "description": "Inline markdown checklist content; writes to remained_path before starting the loop"},
 					"remained_path":    map[string]interface{}{"type": "string", "description": "Path of the checklist file (default: remained.md)"},
-					"no_autotest":      map[string]interface{}{"type": "boolean", "description": "Skip the interleaved regression autotest pass"},
+					"no_autotest":      map[string]interface{}{"type": "boolean", "description": "Skip the interleaved regression autotest pass (default: false — autotest is on)"},
 					"max_iterations":   map[string]interface{}{"type": "integer", "description": "Hard cap on total kicks (0 = no cap)"},
 				},
+			},
+		},
+		{
+			"name":        "autodev_options",
+			"description": "Discover what autodev settings the remote dev machine supports — which engines (claude / hybrid) are usable, which underlying runners are installed, and the defaults the UI should pre-fill (engine=claude, hours=8, load=lite, auto_ideas=1, autotest=on). Mobile/web/MCP clients should call this before showing an autodev start form so they only offer what's actually available.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
 			},
 		},
 		{
