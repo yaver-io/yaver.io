@@ -101,7 +101,7 @@ func runAutodevOrTest(kind string, args []string) {
 	runner := fs.String("runner", "", "Primary AI runner (default: claude-code)")
 	engine := fs.String("engine", "", "claude|hybrid — high-level engine selector. 'claude' (default) uses Claude Code end-to-end. 'hybrid' uses Claude as a planner and a local Ollama model (via aider) as the implementer to cut API spend.")
 	hybrid := fs.Bool("hybrid", false, "Shortcut for --engine hybrid")
-	autoIdeas := fs.Int("auto-ideas", 1, "When the --remained checklist is empty, ask the runner to generate N more batches of ideas and keep going. 0 = exit immediately when the list empties (old behavior).")
+	autoIdeas := fs.Int("auto-ideas", 999, "Maximum number of times the loop is allowed to auto-generate a fresh batch of ideas when work runs out. Default 999 = effectively unlimited so an overnight run keeps producing + implementing features until the deadline. 0 = exit the moment the checklist empties (legacy).")
 	branch := fs.String("branch", "", "Git branch to ship to (default: main)")
 	maxIter := fs.Int("max-iterations", 0, "Hard cap on total kicks (0 = no cap)")
 	notify := fs.Bool("notify", false, "Notify mobile when run ends")
@@ -726,26 +726,31 @@ func runAutodevLoop(p autodevPlan) {
 			fmt.Printf("%s: hard cap of %d kicks reached\n", p.Kind, p.MaxIterHardCap)
 			break
 		}
-		// --remained early exit: if the checklist has no
-		// unchecked items left, the job is done — don't keep
-		// kicking the runner on nothing.
+		// Aggressive overnight mode: when the --remained checklist
+		// empties, refill it with fresh AI-picked items. Refill or
+		// generation failures NEVER end the run — we drop the
+		// checklist requirement for this kick and let the open-ended
+		// kick prompt do its job. The whole point of autodev is
+		// "wake up to commits", so the loop has to survive transient
+		// hiccups (rate limits, JSON parsing, model mood) without
+		// quitting at 2am.
 		if p.RemainedFile != "" && !remainedHasWork(p.RemainedFile) {
 			if p.AutoIdeas > 0 && refills < p.AutoIdeas {
 				refills++
 				fmt.Printf("%s: checklist empty — auto-generating new ideas (refill %d/%d)…\n",
 					p.Kind, refills, p.AutoIdeas)
 				if err := autodevRefillIdeas(p); err != nil {
-					fmt.Printf("%s: idea refill failed (%v) — done\n", p.Kind, err)
-					break
+					fmt.Printf("%s: idea refill failed (%v) — falling back to open-ended kick\n", p.Kind, err)
+					// Fall through to a normal kick. Don't break.
+				} else if !remainedHasWork(p.RemainedFile) {
+					fmt.Printf("%s: refill produced no parseable items — falling back to open-ended kick\n", p.Kind)
 				}
-				if !remainedHasWork(p.RemainedFile) {
-					fmt.Printf("%s: idea refill produced no items — done\n", p.Kind)
-					break
-				}
-				continue
+			} else if p.AutoIdeas == 0 {
+				fmt.Printf("%s: all items in %s are checked off — done\n", p.Kind, p.RemainedFile)
+				break
+			} else {
+				fmt.Printf("%s: refill budget exhausted (%d) — falling back to open-ended kicks until deadline\n", p.Kind, p.AutoIdeas)
 			}
-			fmt.Printf("%s: all items in %s are checked off — done\n", p.Kind, p.RemainedFile)
-			break
 		}
 		// Rolling 24h window for the daily-budget cap. Past the
 		// cap, sleep until the window rolls instead of exiting —

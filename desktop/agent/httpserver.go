@@ -7862,7 +7862,7 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 		default:
 			return mcpToolError("unknown engine: " + args.Engine + " (want claude|hybrid)")
 		}
-		autoIdeasMCP := 1
+		autoIdeasMCP := 999
 		if args.AutoIdeas != nil {
 			autoIdeasMCP = *args.AutoIdeas
 			if autoIdeasMCP < 0 {
