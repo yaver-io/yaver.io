@@ -530,6 +530,18 @@ Trigger AI tasks from CI/CD:
 
 See [MCP Integration Guide](https://yaver.io/docs/mcp) for full documentation.
 
+## Web Search MCP Tool
+
+Yaver ships a built-in `web_search` MCP tool so any connected AI agent (Claude Code, Codex, Aider, ...) can ground its output in current information — competitor research, library docs, error messages, news — without each agent needing its own search integration.
+
+| Provider | Cost | Setup |
+|----------|------|-------|
+| **DuckDuckGo** (default) | Free, no key | Works out of the box |
+| **Google** | Paid (free tier 100 q/day) | `export GOOGLE_CSE_KEY=… GOOGLE_CSE_CX=…` (Programmable Search Engine) |
+| **Bing** | Paid | `export BING_API_KEY=…` (Azure Bing Search v7) |
+
+Set `provider: "auto"` and Yaver picks the best available backend (Google → Bing → DuckDuckGo). Used directly by `yaver handoff autodev` for market-gap research during proactive-mode handoffs.
+
 ## Pass Session to Yaver (Handoff)
 
 Hand off an in-progress AI session — Claude Code, Codex, Aider, anything — to Yaver, and let Yaver's autodev loop finish the remaining work autonomously. Works on the current machine, on a remote dev box, with hybrid (planner + cheap local implementer), or with a single arbitrary runner.

@@ -3226,6 +3226,31 @@ func (s *HTTPServer) handleMCPToolCall(params json.RawMessage) interface{} {
 		hostname, _ := os.Hostname()
 		return mcpToolResult(fmt.Sprintf("Hostname: %s\nVersion: %s\nWork Dir: %s", hostname, version, s.taskMgr.workDir))
 
+	case "web_search":
+		var args struct {
+			Query    string `json:"query"`
+			Provider string `json:"provider"`
+			Limit    int    `json:"limit"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.Query == "" {
+			return mcpToolError("query is required")
+		}
+		resp, err := RunWebSearch(args.Query, args.Provider, args.Limit)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("web_search: %v", err))
+		}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("Web search via %s for %q (%d results):\n\n", resp.Provider, resp.Query, len(resp.Results)))
+		for i, r := range resp.Results {
+			sb.WriteString(fmt.Sprintf("%d. %s\n   %s\n", i+1, r.Title, r.URL))
+			if r.Snippet != "" {
+				sb.WriteString(fmt.Sprintf("   %s\n", r.Snippet))
+			}
+			sb.WriteString("\n")
+		}
+		return mcpToolResult(sb.String())
+
 	case "session_handoff":
 		var args struct {
 			SourceTaskID      string `json:"source_task_id"`

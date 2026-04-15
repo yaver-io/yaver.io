@@ -337,9 +337,11 @@ AUTODEV MODE — be proactive, not just reactive:
 3. For every change, add or update tests covering the behavior. Do not
    ship a feature without tests; do not ship a fix without a regression
    test.
-4. Research the market around the session's subject. Use web search to
-   find competing products, read their docs / changelogs / pricing /
-   user reviews, and identify gaps the market does not yet serve well.
+4. Research the market around the session's subject. Call Yaver's
+   'web_search' MCP tool (DuckDuckGo by default; Google or Bing if
+   the host has API keys configured) to find competing products, read
+   their docs / changelogs / pricing / user reviews, and identify gaps
+   the market does not yet serve well.
    Bias toward smart differentiation: don't copy the leader, find the
    angle they ignore. Capture findings briefly in a commit message or
    a short note alongside the change so the next iteration can build
