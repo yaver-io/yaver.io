@@ -737,13 +737,21 @@ HTTP surface (auth'd):
 
 `yaver autodev` / `yaver autotest` automatically tee `os.Stdout` and `os.Stderr` through `teeStdoutToStream` (`desktop/agent/autodev_stream.go`) so every line — including subprocess output from the AI runner — appears both in the terminal and on `streams/autodev:<loop-name>`. The mobile app and web dashboard subscribe via `EventSource` to watch the run live, exactly like the user sees it. If the daemon is unreachable the tee silently degrades to terminal-only output; the autodev loop is never blocked by streaming.
 
+### Engine selector (`--engine claude|hybrid`)
+`yaver autodev` exposes a high-level engine knob so you don't have to think about runner names:
+- `--engine claude` (default, also `--engine claude-code`) — uses `claude-code` end-to-end. Frontier model writes the code directly. Highest quality, highest cost.
+- `--engine hybrid` (or `--hybrid` shortcut) — sets `runner=hybrid`. Each kick: Claude plans (≤5 file-scoped subtasks), local Aider+Ollama (`qwen2.5-coder:14b` by default) implements. ~80–95 % cheaper on feature loops; quality varies with the local model.
+
+`runner=hybrid` is implemented in `desktop/agent/loop_exec_hybrid.go` (`spawnHybrid` → `RunHybrid` → `AIResponse`), with preflight checks for `claude` + `aider` + `ollama` in `loop_cmd.go`. Existing `--runner` overrides still work for direct selection of any single runner (`claude-code`, `codex`, `aider`, `aider-ollama`, `ollama:<model>`).
+
 ### Key files
 | File | Purpose |
 |------|---------|
 | `desktop/agent/session_cmd.go` | `localAgentRequest` + `ensureDaemonAlive` |
 | `desktop/agent/logstream.go` | `LogStream`, `LogStreamRegistry`, SSE handlers |
 | `desktop/agent/autodev_stream.go` | `streamPublisher`, `teeStdoutToStream` |
-| `desktop/agent/autodev_cmd.go` | tee hook in `runAutodevOrTest` |
+| `desktop/agent/autodev_cmd.go` | tee hook + `--engine` flag in `runAutodevOrTest` |
+| `desktop/agent/loop_exec_hybrid.go` | `spawnHybrid` adapter (planner+implementer per kick) |
 
 ## Container Sandbox (Optional Task Isolation)
 

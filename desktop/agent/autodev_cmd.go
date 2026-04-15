@@ -98,6 +98,8 @@ func runAutodevOrTest(kind string, args []string) {
 	prompt := fs.String("prompt", "", "Focus prompt, e.g. \"focus on the purchase flow\"")
 	target := fs.String("target", "", "web|ios-sim|android-emu (auto-detected)")
 	runner := fs.String("runner", "", "Primary AI runner (default: claude-code)")
+	engine := fs.String("engine", "", "claude|hybrid — high-level engine selector. 'claude' (default) uses Claude Code end-to-end. 'hybrid' uses Claude as a planner and a local Ollama model (via aider) as the implementer to cut API spend.")
+	hybrid := fs.Bool("hybrid", false, "Shortcut for --engine hybrid")
 	branch := fs.String("branch", "", "Git branch to ship to (default: main)")
 	maxIter := fs.Int("max-iterations", 0, "Hard cap on total kicks (0 = no cap)")
 	notify := fs.Bool("notify", false, "Notify mobile when run ends")
@@ -118,6 +120,22 @@ func runAutodevOrTest(kind string, args []string) {
 	}
 	if *infinite {
 		*hours = "infinite"
+	}
+	// Engine resolution: --hybrid is a shortcut for --engine hybrid;
+	// --engine hybrid forces runner = "hybrid" so phaseThink picks the
+	// planner+implementer adapter. Default ('' or 'claude') is a no-op
+	// and leaves --runner alone (claude-code default).
+	if *hybrid {
+		*engine = "hybrid"
+	}
+	switch strings.ToLower(strings.TrimSpace(*engine)) {
+	case "", "claude", "claude-code":
+		// keep --runner default
+	case "hybrid":
+		*runner = "hybrid"
+	default:
+		fmt.Fprintf(os.Stderr, "%s: unknown --engine %q (want claude|hybrid)\n", kind, *engine)
+		os.Exit(2)
 	}
 
 	wd, _ := os.Getwd()
