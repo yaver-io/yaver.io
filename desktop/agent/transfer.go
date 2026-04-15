@@ -69,6 +69,15 @@ type ImportOptions struct {
 	WorkDir       string `json:"workDir,omitempty"`       // override work directory
 	ResumeOnImport bool  `json:"resumeOnImport"`
 	GitClone      bool   `json:"gitClone"`                // clone from git remote if available
+
+	// HandoffEngine, when non-empty, makes ImportSession's caller hand the
+	// imported task to a fresh autodev loop. Values: "claude" (default,
+	// claude-code end-to-end), "hybrid" (planner+local implementer),
+	// "runner" (single arbitrary runner via HandoffRunner).
+	HandoffEngine  string `json:"handoffEngine,omitempty"`
+	HandoffRunner  string `json:"handoffRunner,omitempty"`  // when HandoffEngine="runner"
+	HandoffMaxKicks int   `json:"handoffMaxKicks,omitempty"`
+	HandoffDeadlineSec int `json:"handoffDeadlineSec,omitempty"`
 }
 
 // TransferableSession describes a session that can be exported.
