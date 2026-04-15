@@ -28,12 +28,19 @@ type autodevRunnerOption struct {
 }
 
 type autodevOptions struct {
-	OK      bool                 `json:"ok"`
-	Engines []autodevEngineOption `json:"engines"`
-	Runners []autodevRunnerOption `json:"runners"`
+	OK       bool                  `json:"ok"`
+	Engines  []autodevEngineOption `json:"engines"`
+	Runners  []autodevRunnerOption `json:"runners"`
+	Hardens  []autodevHardenOption `json:"hardens"`
 	// Defaults the UI should pre-select. Match the CLI defaults so
 	// "click Start with no changes" behaves like `yaver autodev`.
 	Defaults autodevOptionDefaults `json:"defaults"`
+}
+
+type autodevHardenOption struct {
+	Value       string `json:"value"`       // "" | "security" | ...
+	Label       string `json:"label"`       // human-readable
+	Description string `json:"description"` // tooltip
 }
 
 type autodevOptionDefaults struct {
@@ -101,10 +108,20 @@ func BuildAutodevOptions() autodevOptions {
 		{Value: "hybrid", Label: "Hybrid (planner+implementer)", Available: hasClaude && hasAider && hasOllama, Missing: firstMissing(hasClaude, "claude", hasAider && hasOllama, "aider+ollama")},
 	}
 
+	hardens := []autodevHardenOption{
+		{Value: "", Label: "(none)", Description: "Open-ended autodev — no hardening focus"},
+		{Value: "security", Label: "Security", Description: "Audit auth, input validation, secrets, deps, CSRF/CORS, rate limiting"},
+		{Value: "memory", Label: "Memory", Description: "Find leaks, unbounded caches, retain cycles, oversized assets"},
+		{Value: "perf", Label: "Performance", Description: "Cold-start, bundle size, render passes, query batching, slow endpoints"},
+		{Value: "quality", Label: "Code Quality", Description: "Dead code, duplication, missing types/tests, brittle mocks"},
+		{Value: "all", Label: "All Areas", Description: "Round-robin across security + memory + perf + quality"},
+	}
+
 	return autodevOptions{
 		OK:      true,
 		Engines: engines,
 		Runners: runners,
+		Hardens: hardens,
 		Defaults: autodevOptionDefaults{
 			Engine:     "claude",
 			Runner:     "claude-code",
