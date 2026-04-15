@@ -36,7 +36,7 @@ export default function DataScreen() {
         <View style={{ width: 50 }} />
       </View>
 
-      <View style={[styles.tabbar, { backgroundColor: c.surface, borderBottomColor: c.border }]}>
+      <View style={[styles.tabbar, { backgroundColor: c.bgCard, borderBottomColor: c.border }]}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           {(["tables", "browse", "query", "schema", "storage", "jobs"] as Tab[]).map((t) => (
             <Pressable key={t} onPress={() => setTab(t)} style={{ paddingHorizontal: 12, paddingVertical: 10 }}>
@@ -79,7 +79,7 @@ function StatusBanner({ c, status }: { c: any; status: any }) {
   if (!status) return <Text style={{ color: c.textMuted, fontSize: 11, marginBottom: 10 }}>Checking…</Text>;
   const running = !!status.running;
   return (
-    <View style={[{ backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10, marginBottom: 12 }]}>
+    <View style={[{ backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10, marginBottom: 12 }]}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
         <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: running ? "#10b981" : "#ef4444" }} />
         <Text style={{ color: c.accent, fontSize: 11, fontWeight: "700", textTransform: "uppercase" }}>{status.kind || "unknown"}</Text>
@@ -151,7 +151,7 @@ function BrowseTab({ c, dir, table }: { c: any; dir: string; table: string | nul
         </View>
       ))}
       {cursor && (
-        <Pressable onPress={() => load()} disabled={loading} style={[actionBtn(c), { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1 }]}>
+        <Pressable onPress={() => load()} disabled={loading} style={[actionBtn(c), { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1 }]}>
           <Text style={{ color: c.textPrimary, fontSize: 13 }}>{loading ? "Loading…" : "Load more"}</Text>
         </Pressable>
       )}
@@ -276,9 +276,9 @@ function fmtBytes(n: number): string {
   while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
   return `${n.toFixed(1)} ${units[i]}`;
 }
-function card(c: any) { return { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 12 } as const; }
+function card(c: any) { return { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 12 } as const; }
 function actionBtn(c: any) { return { paddingVertical: 12, borderRadius: 8, alignItems: "center", justifyContent: "center" } as const; }
-function inputStyle(c: any) { return { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10, color: c.textPrimary } as const; }
+function inputStyle(c: any) { return { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10, color: c.textPrimary } as const; }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },

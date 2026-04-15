@@ -124,7 +124,7 @@ export default function HomeScreen() {
 function Card({ c, label, value, sub, tone }: { c: any; label: string; value: string; sub: string; tone: "ok" | "warn" | "info" }) {
   const border = tone === "ok" ? "#10b98144" : tone === "warn" ? "#f59e0b66" : c.border;
   return (
-    <View style={{ flex: 1, backgroundColor: c.surface, borderColor: border, borderWidth: 1, borderRadius: 10, padding: 12 }}>
+    <View style={{ flex: 1, backgroundColor: c.bgCard, borderColor: border, borderWidth: 1, borderRadius: 10, padding: 12 }}>
       <Text style={{ color: c.textMuted, fontSize: 9, fontWeight: "700", textTransform: "uppercase" }}>{label}</Text>
       <Text style={{ color: c.textPrimary, fontSize: 22, fontWeight: "700", marginTop: 4 }}>{value}</Text>
       <Text style={{ color: c.textMuted, fontSize: 10 }} numberOfLines={1}>{sub}</Text>
@@ -140,7 +140,7 @@ function QuickBtn({ c, label, onPress }: { c: any; label: string; onPress: () =>
   );
 }
 
-function card(c: any) { return { backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 10, padding: 12 } as const; }
+function card(c: any) { return { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 10, padding: 12 } as const; }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
