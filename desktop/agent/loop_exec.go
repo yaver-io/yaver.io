@@ -434,7 +434,7 @@ func runIdeasKick(ctx context.Context, l *LoopState) *IterationResult {
 
 	cmd := exec.CommandContext(watchCtx, "claude",
 		"--print",
-		"--permission-mode", "acceptEdits",
+		"--permission-mode", "bypassPermissions",
 		"--add-dir", workDir,
 	)
 	cmd.Dir = workDir
@@ -1339,7 +1339,7 @@ func spawnClaudeCode(ctx context.Context, l *LoopState, workDir string, report *
 		"--print",
 		"--output-format", "stream-json",
 		"--verbose",
-		"--permission-mode", "acceptEdits",
+		"--permission-mode", "bypassPermissions",
 		"--add-dir", workDir,
 	)
 	cmd.Dir = workDir
