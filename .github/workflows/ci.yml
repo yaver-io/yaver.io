@@ -395,22 +395,36 @@ jobs:
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:18080/health >/dev/null 2>&1 && break; sleep 0.5; done
       - name: Run hello-world task via Ollama
         run: |
+          # POST /tasks requires {title,description[,runner]} per
+          # desktop/agent/httpserver.go createTask. The older request
+          # shape {prompt,runner} was a leftover from a refactor and
+          # always 400s — which is why this step has been chronically
+          # red with curl exit 22.
           TASK=$(curl -sf -X POST http://127.0.0.1:18080/tasks \
             -H "Authorization: Bearer ${{ steps.auth.outputs.token }}" \
             -H "Content-Type: application/json" \
-            -d '{"prompt":"Write a Python hello world script. Just output the code, nothing else.","runner":"ollama"}')
-          TASK_ID=$(echo "$TASK" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+            -d '{"title":"hello world","description":"Write a Python hello world script. Just output the code, nothing else.","runner":"ollama"}')
+          TASK_ID=$(echo "$TASK" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('id') or d.get('taskId'))")
           echo "Task: $TASK_ID"
-          # Poll until finished (max 120s).
+          # Poll until the task reaches a terminal state (completed /
+          # failed / stopped). The old "finished" literal never matches
+          # createTask's status vocabulary — see TaskStatus in tasks.go.
+          STATUS=""
           for i in $(seq 1 60); do
             STATUS=$(curl -sf http://127.0.0.1:18080/tasks/$TASK_ID \
               -H "Authorization: Bearer ${{ steps.auth.outputs.token }}" \
               | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null)
-            [ "$STATUS" = "finished" ] && break
+            case "$STATUS" in
+              completed|failed|stopped) break ;;
+            esac
             sleep 2
           done
           echo "Final status: $STATUS"
-          OUTPUT=$(curl -sf http://127.0.0.1:18080/tasks/$TASK_ID/output \
+          OUTPUT=$(curl -sf http://127.0.0.1:18080/tasks/$TASK_ID \
             -H "Authorization: Bearer ${{ steps.auth.outputs.token }}" 2>/dev/null)
           echo "Output: $OUTPUT"
-          [ "$STATUS" = "finished" ] || { echo "Task did not finish"; cat /tmp/agent.log | tail -30; exit 1; }
+          if [ "$STATUS" != "completed" ]; then
+            echo "Task did not complete (status=$STATUS)"
+            tail -60 /tmp/agent.log || true
+            exit 1
+          fi

@@ -158,7 +158,14 @@ var builtinRunners = map[string]RunnerConfig{
 		RunnerID:   "ollama",
 		Name:       "Ollama",
 		Command:    "ollama",
-		Args:       []string{"run", "llama3", "{prompt}"},
+		// {model} is substituted from task.Model via buildRunnerArgs.
+		// Falls back to a reasonable small default when the caller
+		// doesn't specify one so `runner=ollama` without a model
+		// still works. The previous hardcoded "llama3" silently
+		// broke CI because ubuntu-latest runners only pulled
+		// qwen2.5-coder:1.5b and ollama does not auto-download.
+		Args:       []string{"run", "{model}", "{prompt}"},
+		Model:      "qwen2.5-coder:1.5b",
 		OutputMode: "raw",
 	},
 	"amp": {
@@ -1089,10 +1096,20 @@ func (tm *TaskManager) runDummyTask(task *Task) {
 }
 
 // buildArgs replaces placeholders in the runner's arg template with actual values.
+// Supported placeholders:
+//   {prompt} — always required
+//   {model}  — substituted from the runner config's Model field (used
+//              by the ollama runner so `yaver tasks --runner ollama
+//              --model qwen2.5-coder:7b` lands on the right model
+//              instead of the previous hardcoded "llama3").
 func buildRunnerArgs(runner RunnerConfig, prompt string) []string {
 	args := make([]string, len(runner.Args))
 	for i, a := range runner.Args {
-		args[i] = strings.ReplaceAll(a, "{prompt}", prompt)
+		a = strings.ReplaceAll(a, "{prompt}", prompt)
+		if runner.Model != "" {
+			a = strings.ReplaceAll(a, "{model}", runner.Model)
+		}
+		args[i] = a
 	}
 	return args
 }
@@ -1262,6 +1279,13 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	task.cancel = cancel
 
 	runner := task.runner
+	// Per-task model override flows into {model} substitution for
+	// runners that template it (currently the ollama runner). Must
+	// happen before buildRunnerArgs or the placeholder lands in the
+	// argv literally.
+	if task.Model != "" {
+		runner.Model = task.Model
+	}
 	args := buildRunnerArgs(runner, prompt)
 
 	// Use warm session if available (resume = same rate-limit bucket).
