@@ -67,7 +67,7 @@ func runHandoff(args []string) {
 	loopTarget := fs.String("target", "", "Loop target: web|ios-sim|android-emu (default: auto-detect from workdir)")
 	branch := fs.String("branch", "", "Git branch the loop ships to (default: main)")
 	autoBranch := fs.Bool("auto-branch", false, "Use a dedicated 'autodev/<loop>-<YYYYMMDD>' branch off main")
-	deploy := fs.String("deploy", "", "testflight|playstore|both|none (default: none for handoff)")
+	deploy := fs.String("deploy", "", "Deploy on done: '' = all/both (default), false|no|0|none = disable, testflight|playstore|web for one platform")
 	notify := fs.Bool("notify", false, "Mobile notification when the loop ends")
 	noAutotest := fs.Bool("no-autotest", false, "Skip the interleaved autotest regression pass")
 	autoIdeas := fs.Int("auto-ideas", 999, "Max idea-refill batches when checklist runs dry (0 = stop on empty, 999 = effectively unlimited)")

@@ -97,14 +97,13 @@ type HandoffSpec struct {
 	Branch     string `json:"branch,omitempty"`
 	AutoBranch bool   `json:"autoBranch,omitempty"`
 
-	// Deploy maps to LoopSpec.Ship.Deploy:
-	//   "" / "auto"  — autodev's auto-detection
-	//   "testflight" — iOS only
-	//   "playstore"  — Android only
-	//   "both"       — testflight && playstore
-	//   "none"       — never deploy (default for handoff: never push
-	//                  to TestFlight/Play during a handed-off loop
-	//                  unless the user explicitly opts in)
+	// Deploy maps to LoopSpec.Ship.Deploy via normalizeDeploy.
+	// Default is "both" — handoff loops ship to every configured
+	// platform unless the user explicitly turns deploy off.
+	//   "" / "all" / "yes" / "true" / "1"  → "both" (default)
+	//   "no" / "false" / "0" / "none"      → never deploy
+	//   "testflight" / "playstore"         → that platform only
+	//   "web"                              → web/cloudflare only
 	Deploy string `json:"deploy,omitempty"`
 
 	// Notify sends a mobile notification when the loop ends.
@@ -325,12 +324,7 @@ func RunHandoff(s *HTTPServer, spec HandoffSpec) (*HandoffResult, error) {
 	if spec.AutoBranch {
 		branch = fmt.Sprintf("autodev/%s-%s", loopName, time.Now().UTC().Format("20060102"))
 	}
-	deploy := strings.ToLower(strings.TrimSpace(spec.Deploy))
-	if deploy == "" || deploy == "auto" {
-		// Default for handoff: never deploy. The user explicitly opts
-		// in by passing --deploy testflight|playstore|both.
-		deploy = "none"
-	}
+	deploy := normalizeDeploy(spec.Deploy)
 
 	respectVal := respectLimits
 	lspec := LoopSpec{
@@ -544,6 +538,32 @@ func operatingDirectives(spec HandoffSpec) string {
 		return ""
 	}
 	return "\n\nOPERATING DIRECTIVES (handoff-specific):\n" + strings.Join(lines, "\n") + "\n"
+}
+
+// normalizeDeploy turns the user-facing --deploy value (which accepts
+// truthy/falsy aliases as well as platform names) into one of the four
+// LoopSpec.Ship.Deploy values the loop runner understands. Default is
+// "both" — handoff loops ship to every configured platform unless the
+// user explicitly disables it.
+//
+//	""          → "both"   (default: deploy everywhere)
+//	"all"       → "both"
+//	"yes/true/1/on/auto" → "both"
+//	"no/false/0/off/none" → "none"
+//	"testflight" / "playstore" / "both" / "web" → passed through
+//	anything else → "both"  (forward-compat: unknown means "do it")
+func normalizeDeploy(in string) string {
+	v := strings.ToLower(strings.TrimSpace(in))
+	switch v {
+	case "", "all", "yes", "true", "1", "on", "auto":
+		return "both"
+	case "no", "false", "0", "off", "none", "skip", "disable", "disabled":
+		return "none"
+	case "testflight", "playstore", "both", "web":
+		return v
+	default:
+		return "both"
+	}
 }
 
 // detectAutodevTarget mirrors autodev_cmd.go's heuristic: ios-sim if a

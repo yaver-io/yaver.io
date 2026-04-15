@@ -465,11 +465,46 @@ func TestOperatingDirectives_RendersWhenAnySet(t *testing.T) {
 	}
 }
 
-// TestRunHandoff_DeployDefaultsToNone — handoff loops must NOT
-// auto-deploy. If a future change accidentally enables auto-deploy
-// for handoff loops, an overnight handoff could ship to TestFlight
-// without the user knowing. Lock the default.
-func TestRunHandoff_DeployDefaultsToNone(t *testing.T) {
+// TestNormalizeDeploy_AcceptsTruthyAndFalsyAliases is the contract
+// table for the --deploy knob. Truthy / empty / "all" → "both" (ship
+// everywhere); falsy / "none" → "none"; named platforms pass through.
+func TestNormalizeDeploy_AcceptsTruthyAndFalsyAliases(t *testing.T) {
+	cases := map[string]string{
+		"":           "both",
+		"all":        "both",
+		"yes":        "both",
+		"true":       "both",
+		"1":          "both",
+		"on":         "both",
+		"auto":       "both",
+		"YES":        "both", // case-insensitive
+		" all ":      "both", // trim-whitespace
+		"no":         "none",
+		"false":      "none",
+		"0":          "none",
+		"off":        "none",
+		"none":       "none",
+		"disable":    "none",
+		"testflight": "testflight",
+		"playstore":  "playstore",
+		"both":       "both",
+		"web":        "web",
+		"garbage":    "both", // forward-compat: unknown → ship
+	}
+	for in, want := range cases {
+		if got := normalizeDeploy(in); got != want {
+			t.Errorf("normalizeDeploy(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestRunHandoff_DeployDefaultsToBoth — handoff loops ship by default
+// to every configured platform. Users opt OUT explicitly with
+// --deploy false / no / 0 / none. This is the inverse of the previous
+// "default-none" rule: handoff is meant to be a takeover, and a
+// takeover that doesn't ship would surprise users more than one that
+// does.
+func TestRunHandoff_DeployDefaultsToBoth(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	workDir := t.TempDir()
 	tm := NewTaskManager(workDir, nil, defaultTestRunner())
@@ -480,8 +515,34 @@ func TestRunHandoff_DeployDefaultsToNone(t *testing.T) {
 		t.Fatalf("RunHandoff: %v", err)
 	}
 	loops, _ := loadLoops()
-	if got := loops[res.LoopName].Spec.Ship.Deploy; got != "none" {
-		t.Errorf("Deploy must default to 'none' for handoff, got %q", got)
+	if got := loops[res.LoopName].Spec.Ship.Deploy; got != "both" {
+		t.Errorf("Deploy must default to 'both' for handoff, got %q", got)
+	}
+}
+
+// TestRunHandoff_DeployDisableAliases — every documented falsy value
+// must produce Spec.Ship.Deploy="none" so the loop's deploy phase is
+// a no-op. If this regresses, `--deploy false` would silently still
+// ship and surprise the user.
+func TestRunHandoff_DeployDisableAliases(t *testing.T) {
+	for _, in := range []string{"false", "no", "0", "none", "off", "disable"} {
+		t.Run(in, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			workDir := t.TempDir()
+			tm := NewTaskManager(workDir, nil, defaultTestRunner())
+			srv := &HTTPServer{taskMgr: tm}
+
+			res, err := RunHandoff(srv, HandoffSpec{
+				WorkDir: workDir, Deploy: in, SkipInitialKick: true,
+			})
+			if err != nil {
+				t.Fatalf("RunHandoff: %v", err)
+			}
+			loops, _ := loadLoops()
+			if got := loops[res.LoopName].Spec.Ship.Deploy; got != "none" {
+				t.Errorf("Deploy=%q should disable, got Spec.Ship.Deploy=%q", in, got)
+			}
+		})
 	}
 }
 
