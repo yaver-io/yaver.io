@@ -143,6 +143,7 @@ func (s *HTTPServer) handleAutodevStart(w http.ResponseWriter, r *http.Request) 
 		Engine          string `json:"engine"`      // "" | "claude" | "hybrid"
 		AutoIdeas       *int   `json:"auto_ideas"`  // nil = default (999); 0 disables; N caps refills
 		AutoBranch      bool   `json:"auto_branch"` // true = work on autodev/<project>-autodev-<YYYYMMDD>
+		Harden          string `json:"harden"`      // ""|security|memory|perf|quality|all
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
@@ -201,6 +202,15 @@ func (s *HTTPServer) handleAutodevStart(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	resolvedPrompt := body.Prompt
+	if hp := autodevHardenPrompt(body.Harden); hp != "" {
+		if strings.TrimSpace(resolvedPrompt) == "" {
+			resolvedPrompt = hp
+		} else {
+			resolvedPrompt = hp + "\n\n" + resolvedPrompt
+		}
+	}
+
 	resolvedBranch := body.Branch
 	if body.AutoBranch && resolvedBranch == "" {
 		resolvedBranch = "autodev/" + project + "-autodev-" + time.Now().Format("20060102")
@@ -211,7 +221,7 @@ func (s *HTTPServer) handleAutodevStart(w http.ResponseWriter, r *http.Request) 
 		hours:      body.Hours,
 		load:       body.Load,
 		deploy:     body.Deploy,
-		prompt:     body.Prompt,
+		prompt:     resolvedPrompt,
 		project:    project,
 		runner:     runnerOverride,
 		branch:     resolvedBranch,

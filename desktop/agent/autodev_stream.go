@@ -128,17 +128,25 @@ func teeStdoutToStream(streamName string) func() {
 
 	publisher := newStreamPublisher(streamName)
 
-	// Open a per-stream log file under /tmp/yaver/<stream>.log so
+	// Open a per-run log file under /tmp/yaver/<stream>-<ts>.log so
 	// the user (or another agent) can `tail -f` the run after the
-	// fact. Best-effort: a file-open failure does NOT degrade the
-	// terminal or daemon-stream output paths.
+	// fact. Each invocation gets its own timestamped file — no
+	// append-merge confusion across runs. Best-effort: a file-open
+	// failure does NOT degrade the terminal or daemon-stream paths.
 	var logFile *os.File
 	if dir := "/tmp/yaver"; os.MkdirAll(dir, 0o755) == nil {
 		safeName := strings.ReplaceAll(streamName, ":", "_")
-		path := dir + "/" + safeName + ".log"
+		ts := time.Now().Format("20060102-150405")
+		path := dir + "/" + safeName + "-" + ts + ".log"
 		if f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
 			logFile = f
-			fmt.Fprintf(os.Stderr, "[stream] tee -> %s\n", path)
+			// Also drop a stable "latest" symlink so people can
+			// always tail the most recent run without knowing the
+			// timestamp. Best-effort.
+			latest := dir + "/" + safeName + "-latest.log"
+			_ = os.Remove(latest)
+			_ = os.Symlink(path, latest)
+			fmt.Fprintf(os.Stderr, "\n[stream] live log: %s\n[stream] (also: tail -f %s)\n\n", path, latest)
 		}
 	}
 

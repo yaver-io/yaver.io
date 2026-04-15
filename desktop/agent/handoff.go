@@ -76,6 +76,55 @@ type HandoffSpec struct {
 	//           steal the dev's interactive AI session by accident.
 	Hours string `json:"hours,omitempty"`
 	Load  string `json:"load,omitempty"`
+
+	// --- autodev parity knobs (mirror `yaver autodev` flags) ----------------
+
+	// Prompt is the FOCUS prompt for the loop ("focus on the purchase
+	// flow"). Distinct from ExtraPrompt: Prompt replaces the loop's
+	// inline prompt; ExtraPrompt is appended after the auto-generated
+	// resume context. Set Prompt when you want full control over what
+	// the runner sees.
+	Prompt string `json:"prompt,omitempty"`
+
+	// LoopTarget overrides the auto-detected loop target
+	// (web|ios-sim|android-emu). Distinct from the top-level Target
+	// field which is the remote-handoff device hint. Empty = auto.
+	LoopTarget string `json:"loopTarget,omitempty"`
+
+	// Branch / AutoBranch follow autodev's --branch / --auto-branch.
+	// AutoBranch=true creates "autodev/<loop>-<YYYYMMDD>" off main so
+	// overnight runs can be PR-reviewed before merging.
+	Branch     string `json:"branch,omitempty"`
+	AutoBranch bool   `json:"autoBranch,omitempty"`
+
+	// Deploy maps to LoopSpec.Ship.Deploy:
+	//   "" / "auto"  — autodev's auto-detection
+	//   "testflight" — iOS only
+	//   "playstore"  — Android only
+	//   "both"       — testflight && playstore
+	//   "none"       — never deploy (default for handoff: never push
+	//                  to TestFlight/Play during a handed-off loop
+	//                  unless the user explicitly opts in)
+	Deploy string `json:"deploy,omitempty"`
+
+	// Notify sends a mobile notification when the loop ends.
+	Notify bool `json:"notify,omitempty"`
+
+	// NoAutotest skips the interleaved autotest pass that normally
+	// runs after each successful develop kick. Default false (= keep
+	// regression checking on, matching `yaver autodev` defaults).
+	NoAutotest bool `json:"noAutotest,omitempty"`
+
+	// AutoIdeas caps the number of times the loop is allowed to auto-
+	// generate a fresh batch of ideas when the checklist runs dry.
+	// Default 999 (effectively unlimited, like autodev). Set 0 to
+	// quit the moment the queue is empty.
+	AutoIdeas int `json:"autoIdeas,omitempty"`
+
+	// RemainedFile is an optional path to a `remained.md` checklist
+	// the loop pulls work items from (one per kick). Relative paths
+	// are resolved against WorkDir.
+	RemainedFile string `json:"remainedFile,omitempty"`
 }
 
 // HandoffResult is what the orchestrator returns to the caller (CLI/MCP/HTTP).
@@ -240,17 +289,54 @@ func RunHandoff(s *HTTPServer, spec HandoffSpec) (*HandoffResult, error) {
 		}
 	}
 
-	prompt := buildHandoffPrompt(bundle, spec.ExtraPrompt, spec.Autodev, s)
 	loopWorkDir := spec.WorkDir
 	if loopWorkDir == "" {
 		loopWorkDir, _ = os.Getwd()
+	}
+
+	// Prompt: if the caller supplied an explicit Prompt, use it
+	// verbatim and treat ExtraPrompt (if any) as additional context
+	// pinned at the bottom. Otherwise build the auto-resume prompt
+	// (autodev block + todos + ExtraPrompt as today).
+	var prompt string
+	if spec.Prompt != "" {
+		prompt = spec.Prompt
+		if spec.ExtraPrompt != "" {
+			prompt += "\n\nAdditional context:\n" + spec.ExtraPrompt
+		}
+		if spec.Autodev {
+			prompt += autodevPromptBlock()
+		}
+	} else {
+		prompt = buildHandoffPrompt(bundle, spec.ExtraPrompt, spec.Autodev, s)
+	}
+	if dir := operatingDirectives(spec); dir != "" {
+		prompt += dir
+	}
+
+	target := spec.LoopTarget
+	if target == "" {
+		target = detectAutodevTarget(loopWorkDir)
+	}
+	branch := spec.Branch
+	if branch == "" {
+		branch = "main"
+	}
+	if spec.AutoBranch {
+		branch = fmt.Sprintf("autodev/%s-%s", loopName, time.Now().UTC().Format("20060102"))
+	}
+	deploy := strings.ToLower(strings.TrimSpace(spec.Deploy))
+	if deploy == "" || deploy == "auto" {
+		// Default for handoff: never deploy. The user explicitly opts
+		// in by passing --deploy testflight|playstore|both.
+		deploy = "none"
 	}
 
 	respectVal := respectLimits
 	lspec := LoopSpec{
 		Name:   loopName,
 		Mode:   LoopModeDevelop,
-		Target: detectAutodevTarget(loopWorkDir),
+		Target: target,
 		Schedule: LoopSchedule{
 			Every:         tickEvery,
 			MaxIterations: maxKicks,
@@ -261,7 +347,7 @@ func RunHandoff(s *HTTPServer, spec HandoffSpec) (*HandoffResult, error) {
 			PromptInline:         prompt,
 			RespectSessionLimits: &respectVal,
 		},
-		Ship: LoopShip{Branch: "main"},
+		Ship: LoopShip{Branch: branch, Deploy: deploy},
 	}
 	// --hours becomes the loop's per-kick wall-clock cap so a runaway
 	// prompt can't burn the entire AI session window. "inf" / "" =
@@ -383,7 +469,18 @@ func buildHandoffPrompt(bundle *TransferBundle, extra string, autodev bool, s *H
 	}
 
 	if autodev {
-		sb.WriteString(`
+		sb.WriteString(autodevPromptBlock())
+	}
+
+	sb.WriteString("\nWork iteratively. After each meaningful change, commit and continue with the next item.")
+	return sb.String()
+}
+
+// autodevPromptBlock returns the proactive-mode instructions appended
+// to the resume prompt when Autodev=true. Extracted so callers that
+// supply an explicit Prompt can still opt into autodev semantics.
+func autodevPromptBlock() string {
+	return `
 AUTODEV MODE — be proactive, not just reactive:
 
 1. First, finish every uncompleted item the previous agent left open
@@ -411,11 +508,42 @@ AUTODEV MODE — be proactive, not just reactive:
 6. Stop when there is genuinely nothing useful left to add — do not
    invent unrelated work.
 
-`)
-	}
+`
+}
 
-	sb.WriteString("\nWork iteratively. After each meaningful change, commit and continue with the next item.")
-	return sb.String()
+// operatingDirectives renders the autodev-style flags (notify,
+// no-autotest, auto-ideas, remained-file) that don't have a native
+// LoopSpec home into a short prompt block the runner can act on.
+// Returns "" when none of the relevant fields are set so the prompt
+// stays clean for the simple cases.
+func operatingDirectives(spec HandoffSpec) string {
+	var lines []string
+	if spec.NoAutotest {
+		lines = append(lines, "- Do NOT run the autotest regression pass after each kick (--no-autotest equivalent).")
+	}
+	if spec.AutoIdeas > 0 && spec.AutoIdeas != 999 {
+		lines = append(lines,
+			fmt.Sprintf("- When the explicit checklist runs out, you may auto-generate up to %d fresh batches of ideas before stopping.", spec.AutoIdeas))
+	}
+	// AutoIdeas == 0 is treated as "use default (unlimited)" rather
+	// than "stop on empty" — the int zero-value would otherwise leak
+	// stop-on-empty semantics into every spec where the field is
+	// just unspecified. Users wanting stop-on-empty pass a literal
+	// -1 below, which we translate into the explicit directive.
+	if spec.AutoIdeas < 0 {
+		lines = append(lines, "- Stop the moment the explicit checklist is empty. Do not auto-generate new ideas.")
+	}
+	if spec.RemainedFile != "" {
+		lines = append(lines,
+			fmt.Sprintf("- Pull the next work item from %s. After finishing it, mark it complete in that file and commit.", spec.RemainedFile))
+	}
+	if spec.Notify {
+		lines = append(lines, "- When the run ends, send a mobile notification via Yaver so the dev knows.")
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "\n\nOPERATING DIRECTIVES (handoff-specific):\n" + strings.Join(lines, "\n") + "\n"
 }
 
 // detectAutodevTarget mirrors autodev_cmd.go's heuristic: ios-sim if a

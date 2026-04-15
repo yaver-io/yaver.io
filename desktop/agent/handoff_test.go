@@ -367,6 +367,124 @@ func TestRunHandoff_HoursBecomesPerKickTimeout(t *testing.T) {
 	}
 }
 
+// TestRunHandoff_AutodevParityKnobs locks in the wiring of the autodev-
+// parity flags into the persisted LoopSpec. Each of these would silently
+// no-op if the spec→loop translation regresses, so we assert the field
+// landed on disk where the daemon's scheduler and runner read it from.
+func TestRunHandoff_AutodevParityKnobs(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workDir := t.TempDir()
+	tm := NewTaskManager(workDir, nil, defaultTestRunner())
+	srv := &HTTPServer{taskMgr: tm}
+
+	res, err := RunHandoff(srv, HandoffSpec{
+		WorkDir:         workDir,
+		LoopTarget:      "android-emu",
+		Branch:          "feature-x",
+		Deploy:          "testflight",
+		Engine:          "hybrid",
+		Prompt:          "ship the import wizard",
+		ExtraPrompt:     "respect the existing zod schemas",
+		SkipInitialKick: true,
+	})
+	if err != nil {
+		t.Fatalf("RunHandoff: %v", err)
+	}
+	loops, _ := loadLoops()
+	ls := loops[res.LoopName]
+	if ls.Spec.Target != "android-emu" {
+		t.Errorf("LoopTarget not applied: got %q", ls.Spec.Target)
+	}
+	if ls.Spec.Ship.Branch != "feature-x" {
+		t.Errorf("Branch not applied: got %q", ls.Spec.Ship.Branch)
+	}
+	if ls.Spec.Ship.Deploy != "testflight" {
+		t.Errorf("Deploy not applied: got %q", ls.Spec.Ship.Deploy)
+	}
+	// Explicit Prompt replaces the auto-resume prompt; the focus
+	// string + extra-context block must both be present.
+	if !strings.Contains(ls.PromptInline, "ship the import wizard") {
+		t.Errorf("explicit Prompt missing from LoopState.PromptInline: %q", ls.PromptInline)
+	}
+	if !strings.Contains(ls.PromptInline, "respect the existing zod schemas") {
+		t.Errorf("ExtraPrompt missing as additional context: %q", ls.PromptInline)
+	}
+}
+
+// TestRunHandoff_AutoBranchSetsDatedBranch confirms --auto-branch turns
+// into "autodev/<loop>-<YYYYMMDD>" so overnight runs get a PR-reviewable
+// branch out of the box.
+func TestRunHandoff_AutoBranchSetsDatedBranch(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workDir := t.TempDir()
+	tm := NewTaskManager(workDir, nil, defaultTestRunner())
+	srv := &HTTPServer{taskMgr: tm}
+
+	res, err := RunHandoff(srv, HandoffSpec{
+		WorkDir: workDir, AutoBranch: true, SkipInitialKick: true,
+	})
+	if err != nil {
+		t.Fatalf("RunHandoff: %v", err)
+	}
+	loops, _ := loadLoops()
+	br := loops[res.LoopName].Spec.Ship.Branch
+	if !strings.HasPrefix(br, "autodev/handoff-") {
+		t.Errorf("AutoBranch should produce an autodev/handoff-* branch, got %q", br)
+	}
+}
+
+// TestOperatingDirectives_RendersWhenAnySet — flag fan-in test. Nothing
+// set → empty block; any one set → the corresponding line appears so
+// the runner sees its instruction.
+func TestOperatingDirectives_RendersWhenAnySet(t *testing.T) {
+	if got := operatingDirectives(HandoffSpec{}); got != "" {
+		t.Errorf("empty spec should render no directives, got %q", got)
+	}
+
+	s := HandoffSpec{
+		NoAutotest:   true,
+		AutoIdeas:    3,
+		RemainedFile: "/tmp/remained.md",
+		Notify:       true,
+	}
+	got := operatingDirectives(s)
+	for _, want := range []string{
+		"Do NOT run the autotest",
+		"up to 3 fresh batches of ideas",
+		"/tmp/remained.md",
+		"mobile notification",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("directives missing %q\n---\n%s", want, got)
+		}
+	}
+
+	// AutoIdeas=-1 is the explicit "stop on empty" sentinel.
+	if got := operatingDirectives(HandoffSpec{AutoIdeas: -1}); !strings.Contains(got, "Do not auto-generate") {
+		t.Errorf("AutoIdeas=-1 should render stop-on-empty directive, got %q", got)
+	}
+}
+
+// TestRunHandoff_DeployDefaultsToNone — handoff loops must NOT
+// auto-deploy. If a future change accidentally enables auto-deploy
+// for handoff loops, an overnight handoff could ship to TestFlight
+// without the user knowing. Lock the default.
+func TestRunHandoff_DeployDefaultsToNone(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workDir := t.TempDir()
+	tm := NewTaskManager(workDir, nil, defaultTestRunner())
+	srv := &HTTPServer{taskMgr: tm}
+
+	res, err := RunHandoff(srv, HandoffSpec{WorkDir: workDir, SkipInitialKick: true})
+	if err != nil {
+		t.Fatalf("RunHandoff: %v", err)
+	}
+	loops, _ := loadLoops()
+	if got := loops[res.LoopName].Spec.Ship.Deploy; got != "none" {
+		t.Errorf("Deploy must default to 'none' for handoff, got %q", got)
+	}
+}
+
 func keys[V any](m map[string]V) []string {
 	ks := make([]string, 0, len(m))
 	for k := range m {
