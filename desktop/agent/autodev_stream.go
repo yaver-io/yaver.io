@@ -6,7 +6,6 @@ package main
 // terminal still sees everything as before.
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -137,21 +136,45 @@ func teeStdoutToStream(streamName string) func() {
 	os.Stdout, os.Stderr = wOut, wErr
 
 	var pumpWG sync.WaitGroup
-	pump := func(r *os.File, dst io.Writer, label string) {
+	// pump copies bytes through immediately (so the terminal sees
+	// every chunk the subprocess emits, including partial-line tokens
+	// from Claude's streaming output) while accumulating lines on the
+	// side for daemon-stream publishing. No bufio.Scanner — that
+	// would hold writes until the next \n and ruin live UX.
+	pump := func(r *os.File, dst io.Writer) {
 		defer pumpWG.Done()
-		scanner := bufio.NewScanner(r)
-		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-		for scanner.Scan() {
-			line := scanner.Text()
-			fmt.Fprintln(dst, line)
-			// Strip trailing CR (Windows-style) so the stream is clean.
-			publisher.Publish(strings.TrimRight(line, "\r"))
-			_ = label
+		buf := make([]byte, 4096)
+		var lineBuf bytes.Buffer
+		for {
+			n, err := r.Read(buf)
+			if n > 0 {
+				chunk := buf[:n]
+				_, _ = dst.Write(chunk) // raw passthrough — instant
+				lineBuf.Write(chunk)
+				for {
+					data := lineBuf.Bytes()
+					idx := bytes.IndexByte(data, '\n')
+					if idx < 0 {
+						break
+					}
+					line := strings.TrimRight(string(data[:idx]), "\r")
+					publisher.Publish(line)
+					lineBuf.Next(idx + 1)
+				}
+			}
+			if err != nil {
+				// Flush any trailing partial line so subscribers see
+				// it before the stream closes.
+				if rest := strings.TrimRight(lineBuf.String(), "\r\n"); rest != "" {
+					publisher.Publish(rest)
+				}
+				return
+			}
 		}
 	}
 	pumpWG.Add(2)
-	go pump(rOut, origOut, "stdout")
-	go pump(rErr, origErr, "stderr")
+	go pump(rOut, origOut)
+	go pump(rErr, origErr)
 
 	return func() {
 		// Restore first so any further writes from this process
