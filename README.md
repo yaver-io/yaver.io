@@ -594,6 +594,21 @@ yaver handoff --message "finish the failing tests first" --max-kicks 50 --deadli
 
 **Verify takeover:** `yaver handoff status` prints the most recent sentinel + the live loop's iteration count and last summary.
 
+**Full autodev parity.** Everything `yaver autodev` exposes is also a handoff flag, so a session takeover can be configured exactly like a from-scratch autodev run:
+
+| Flag | Effect |
+|------|--------|
+| `--prompt "..."` | Explicit focus prompt (replaces the auto-resume prompt) |
+| `--target web\|ios-sim\|android-emu` | Loop target (default: auto-detect from workdir) |
+| `--branch <name>` / `--auto-branch` | Ship to named branch / `autodev/<loop>-<YYYYMMDD>` |
+| `--deploy testflight\|playstore\|both\|none` | Default `none` for handoff (won't ship without consent) |
+| `--notify` | Mobile notification when the loop ends |
+| `--no-autotest` | Skip interleaved regression test pass |
+| `--auto-ideas N` | Cap on idea-refill batches when checklist runs dry |
+| `--remained <path>` | Pull next item from a `remained.md` checklist |
+| `--lite` / `--heavy` | Shortcuts for `--load lite/burst` |
+| `--engine hybrid` / `--hybrid` | Cheap planner+local-implementer mode |
+
 ## Security Sandbox
 
 The command sandbox is enabled by default and blocks dangerous operations:

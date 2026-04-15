@@ -7926,6 +7926,16 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if project == "" {
 			project = filepath.Base(args.WorkDir)
 		}
+		resolvedPromptMCP := args.Prompt
+		if hp := autodevHardenPrompt(args.Harden); hp != "" {
+			if strings.TrimSpace(resolvedPromptMCP) == "" {
+				resolvedPromptMCP = hp
+			} else {
+				resolvedPromptMCP = hp + "\n\n" + resolvedPromptMCP
+			}
+		}
+		args.Prompt = resolvedPromptMCP
+
 		resolvedBranchMCP := args.Branch
 		if args.AutoBranch && resolvedBranchMCP == "" {
 			resolvedBranchMCP = "autodev/" + project + "-autodev-" + time.Now().Format("20060102")
