@@ -176,6 +176,8 @@ func main() {
 		runAutodev(os.Args[2:])
 	case "autotest":
 		runAutotest(os.Args[2:])
+	case "stream":
+		runStream(os.Args[2:])
 	case "mail":
 		runMail(os.Args[2:])
 	case "copilot":
