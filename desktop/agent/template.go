@@ -13,12 +13,12 @@ import (
 
 // ProjectTemplate describes a full-stack SaaS project template.
 type ProjectTemplate struct {
-	Name                string
-	Description         string
-	Stack               string
-	Features            []string
-	Includes            []string
-	EstimatedSetupTime  string
+	Name               string
+	Description        string
+	Stack              string
+	Features           []string
+	Includes           []string
+	EstimatedSetupTime string
 }
 
 // TemplateFile is a single generated file with its relative path and content.
@@ -140,6 +140,28 @@ func (tm *TemplateManager) List() ([]ProjectTemplate, error) {
 			},
 			EstimatedSetupTime: "2-3 minutes",
 		},
+		{
+			Name:        "survey-app",
+			Description: "Survey product starter on the Yaver stack: Next.js + Convex + simple analytics/admin flow",
+			Stack:       "Next.js 15, React 19, Convex, Tailwind CSS, Yaver local services",
+			Features: []string{
+				"Public survey landing page with live response count",
+				"Convex-backed survey definitions, submissions, and summaries",
+				"Lightweight admin dashboard for survey results",
+				"Single-command local Yaver stack via convex + convex-dashboard",
+				"Mesh-friendly repo shape for distributed coding sessions",
+			},
+			Includes: []string{
+				"package.json with Next.js + Convex scripts",
+				"src/app/page.tsx public survey entry",
+				"src/app/admin/page.tsx survey analytics dashboard",
+				"src/components/survey-form.tsx reusable client form",
+				"convex/schema.ts and convex/surveys.ts backend functions",
+				".yaver/services.yaml for convex + convex-dashboard",
+				".env.local.example",
+			},
+			EstimatedSetupTime: "2-4 minutes",
+		},
 	}, nil
 }
 
@@ -188,6 +210,8 @@ func (tm *TemplateManager) generateTemplate(name, projectName string) ([]Templat
 		return apiFirstTemplate(projectName), nil
 	case "content-site":
 		return contentSiteTemplate(projectName), nil
+	case "survey-app":
+		return surveyAppTemplate(projectName), nil
 	default:
 		return nil, fmt.Errorf("unknown template %q — run 'yaver templates list' to see available templates", name)
 	}
@@ -254,8 +278,775 @@ func buildSummary(templateName, projectName, projectDir string, files []Template
 		sb.WriteString("  1. Start dev server: npm run dev\n")
 		sb.WriteString("  2. Open Keystatic admin: http://localhost:4321/keystatic\n")
 		sb.WriteString("  3. Build for production: npm run build\n")
+	case "survey-app":
+		sb.WriteString("  1. Copy .env.local.example to .env.local\n")
+		sb.WriteString("  2. Start local Yaver services: yaver services start\n")
+		sb.WriteString("  3. Push Convex functions: npm run convex:dev\n")
+		sb.WriteString("  4. Start the web app: npm run dev\n")
 	}
 	return sb.String()
+}
+
+// ─── survey-app ───────────────────────────────────────────────────────────────
+
+func surveyAppTemplate(projectName string) []TemplateFile {
+	return []TemplateFile{
+		{
+			Path: "package.json",
+			Content: fmt.Sprintf(`{
+  "name": "%s",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "convex:dev": "cd backend && npx convex dev",
+    "convex:codegen": "cd backend && npx convex codegen"
+  },
+  "dependencies": {
+    "convex": "^1.32.0",
+    "next": "^15.3.1",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "clsx": "^2.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "@types/react": "^19.1.3",
+    "@types/react-dom": "^19.1.3",
+    "typescript": "^5.8.3",
+    "tailwindcss": "^4.1.5",
+    "@tailwindcss/postcss": "^4.1.5",
+    "postcss": "^8.5.3"
+  }
+}
+`, projectName),
+		},
+		{
+			Path: "tsconfig.json",
+			Content: `{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [{ "name": "next" }],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}
+`,
+		},
+		{
+			Path: "next.config.ts",
+			Content: `import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {};
+
+export default nextConfig;
+`,
+		},
+		{
+			Path: "postcss.config.mjs",
+			Content: `export default {
+  plugins: {
+    "@tailwindcss/postcss": {},
+  },
+};
+`,
+		},
+		{
+			Path: ".env.local.example",
+			Content: `NEXT_PUBLIC_CONVEX_URL=http://127.0.0.1:3211
+`,
+		},
+		{
+			Path: ".gitignore",
+			Content: `node_modules
+.next
+.env.local
+backend/.convex
+`,
+		},
+		{
+			Path: ".yaver/services.yaml",
+			Content: `services:
+  convex:
+    image: ghcr.io/get-convex/convex-backend:latest
+    ports:
+      - "3210:3210"
+      - "3211:3211"
+    environment:
+      CONVEX_CLOUD_ORIGIN: http://127.0.0.1:3210
+      CONVEX_SITE_ORIGIN: http://127.0.0.1:3211
+
+  convex-dashboard:
+    image: ghcr.io/get-convex/convex-dashboard:latest
+    ports:
+      - "6791:6791"
+    environment:
+      NEXT_PUBLIC_DEPLOYMENT_URL: http://127.0.0.1:3211
+`,
+		},
+		{
+			Path: "src/app/layout.tsx",
+			Content: `import "./globals.css";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Yaver Survey Stack",
+  description: "A local-first survey starter on the Yaver stack with Convex running on your own hardware.",
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>{children}</body>
+    </html>
+  );
+}
+`,
+		},
+		{
+			Path: "src/app/globals.css",
+			Content: `@import "tailwindcss";
+
+:root {
+  --bg: #f6f1e8;
+  --card: #fffdf7;
+  --ink: #1a1a16;
+  --muted: #6e675d;
+  --accent: #0d6c63;
+  --accent-2: #f3b54a;
+}
+
+body {
+  background:
+    radial-gradient(circle at top left, rgba(243, 181, 74, 0.18), transparent 28rem),
+    linear-gradient(180deg, #faf6ef 0%%, var(--bg) 100%%);
+  color: var(--ink);
+}
+`,
+		},
+		{
+			Path: "src/lib/convex.ts",
+			Content: `export const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL || "";
+
+export async function convexFetch(path: string, init?: RequestInit) {
+  if (!convexUrl) {
+    throw new Error("NEXT_PUBLIC_CONVEX_URL is not configured");
+  }
+  const res = await fetch(convexUrl + path, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers || {}),
+    },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || ("Convex request failed: " + res.status));
+  }
+  return res.json();
+}
+`,
+		},
+		{
+			Path: "src/components/survey-form.tsx",
+			Content: `"use client";
+
+import { useState } from "react";
+import { convexFetch } from "@/lib/convex";
+
+type SurveyQuestion = {
+  id: string;
+  label: string;
+  kind: "text" | "textarea" | "rating";
+  required?: boolean;
+};
+
+export function SurveyForm({
+  surveyId,
+  title,
+  description,
+  questions,
+}: {
+  surveyId: string;
+  title: string;
+  description: string;
+  questions: SurveyQuestion[];
+}) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [state, setState] = useState<"idle" | "saving" | "done" | "error">("idle");
+  const [message, setMessage] = useState("");
+
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setState("saving");
+    setMessage("");
+    try {
+      await convexFetch("/survey/submit-public", {
+        method: "POST",
+        body: JSON.stringify({
+          surveySlug: surveyId,
+          answers: questions.map((question) => ({
+            questionId: question.id,
+            value: values[question.id] || "",
+          })),
+        }),
+      });
+      setState("done");
+      setMessage("Thanks. Your response was recorded.");
+      setValues({});
+    } catch (err) {
+      setState("error");
+      setMessage(err instanceof Error ? err.message : "Submission failed");
+    }
+  }
+
+  return (
+    <form onSubmit={onSubmit} className="rounded-[2rem] border border-black/5 bg-[var(--card)] p-8 shadow-[0_24px_80px_rgba(0,0,0,0.06)]">
+      <div className="mb-8">
+        <p className="text-xs uppercase tracking-[0.3em] text-[var(--accent)]">Live survey</p>
+        <h2 className="mt-2 text-3xl font-semibold">{title}</h2>
+        <p className="mt-3 max-w-2xl text-sm text-[var(--muted)]">{description}</p>
+      </div>
+      <div className="space-y-6">
+        {questions.map((question) => (
+          <label key={question.id} className="block">
+            <span className="mb-2 block text-sm font-medium">{question.label}</span>
+            {question.kind === "textarea" ? (
+              <textarea
+                className="min-h-28 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 outline-none transition focus:border-[var(--accent)]"
+                value={values[question.id] || ""}
+                required={question.required}
+                onChange={(e) => setValues((current) => ({ ...current, [question.id]: e.target.value }))}
+              />
+            ) : question.kind === "rating" ? (
+              <div className="flex gap-2">
+                {["1", "2", "3", "4", "5"].map((rating) => (
+                  <button
+                    key={rating}
+                    type="button"
+                    className={
+                      "h-11 w-11 rounded-full border text-sm transition " +
+                      ((values[question.id] || "") === rating
+                        ? "border-[var(--accent)] bg-[var(--accent)] text-white"
+                        : "border-black/10 bg-white hover:border-[var(--accent)]")
+                    }
+                    onClick={() => setValues((current) => ({ ...current, [question.id]: rating }))}
+                  >
+                    {rating}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <input
+                className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3 outline-none transition focus:border-[var(--accent)]"
+                value={values[question.id] || ""}
+                required={question.required}
+                onChange={(e) => setValues((current) => ({ ...current, [question.id]: e.target.value }))}
+              />
+            )}
+          </label>
+        ))}
+      </div>
+      <div className="mt-8 flex items-center gap-4">
+        <button
+          type="submit"
+          disabled={state === "saving"}
+          className="rounded-full bg-[var(--accent)] px-6 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60"
+        >
+          {state === "saving" ? "Sending..." : "Submit survey"}
+        </button>
+        {message ? <p className="text-sm text-[var(--muted)]">{message}</p> : null}
+      </div>
+    </form>
+  );
+}
+`,
+		},
+		{
+			Path: "src/app/page.tsx",
+			Content: `import { SurveyForm } from "@/components/survey-form";
+import { convexFetch } from "@/lib/convex";
+
+async function getSurvey() {
+  try {
+    return await convexFetch("/survey/public?slug=product-research");
+  } catch {
+    return {
+      survey: {
+        slug: "product-research",
+        title: "Product Research Survey",
+        description: "Use this survey to learn what your next users actually need before you ship.",
+        questionCount: 3,
+        responseCount: 0,
+        questions: [
+          { id: "role", label: "What best describes your role?", kind: "text", required: true },
+          { id: "pain", label: "What is your biggest workflow pain right now?", kind: "textarea", required: true },
+          { id: "urgency", label: "How urgent is this problem?", kind: "rating", required: true }
+        ]
+      }
+    };
+  }
+}
+
+export default async function HomePage() {
+  const data = await getSurvey();
+  const survey = data.survey;
+
+  return (
+    <main className="mx-auto max-w-6xl px-6 py-12">
+      <section className="grid gap-10 lg:grid-cols-[1.1fr_0.9fr] lg:items-start">
+        <div className="pt-8">
+          <p className="text-xs uppercase tracking-[0.32em] text-[var(--accent)]">Yaver local stack</p>
+          <h1 className="mt-5 max-w-3xl text-6xl font-semibold leading-[0.96] tracking-[-0.04em]">
+            Build feedback loops before you build the product.
+          </h1>
+          <p className="mt-6 max-w-2xl text-lg text-[var(--muted)]">
+            This starter keeps the stack intentionally small: Next.js for the public flow, local Convex for
+            realtime data and ops, and Yaver for local services plus mesh-aware development.
+          </p>
+          <div className="mt-10 grid gap-4 sm:grid-cols-3">
+            <div className="rounded-[1.6rem] bg-[var(--card)] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.05)]">
+              <div className="text-3xl font-semibold">{survey.responseCount}</div>
+              <div className="mt-2 text-sm text-[var(--muted)]">Responses recorded</div>
+            </div>
+            <div className="rounded-[1.6rem] bg-[var(--card)] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.05)]">
+              <div className="text-3xl font-semibold">{survey.questionCount}</div>
+              <div className="mt-2 text-sm text-[var(--muted)]">Questions in the active form</div>
+            </div>
+            <div className="rounded-[1.6rem] bg-[var(--card)] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.05)]">
+              <div className="text-3xl font-semibold">Local Convex</div>
+              <div className="mt-2 text-sm text-[var(--muted)]">Realtime backend ready for analytics on your own hardware</div>
+            </div>
+          </div>
+          <div className="mt-8 rounded-[2rem] border border-black/5 bg-[var(--card)] p-6 shadow-[0_18px_60px_rgba(0,0,0,0.05)]">
+            <p className="text-xs uppercase tracking-[0.28em] text-[var(--accent)]">Why Yaver</p>
+            <p className="mt-3 max-w-3xl text-sm leading-7 text-[var(--muted)]">
+              Yaver aims to be a one-stop developer tool that still stays on the developer&apos;s hardware. Your repo,
+              your Convex backend, your mesh workers, and your coding workflow stay under your control while still being shareable with strict policy.
+            </p>
+            <p className="mt-3 max-w-3xl text-sm leading-7 text-[var(--muted)]">
+              Use Yaver directly as the agent, or expose the same mesh capabilities over MCP so Codex, Claude Code,
+              OpenCode, or other tools can target the same local-first stack.
+            </p>
+          </div>
+        </div>
+        <SurveyForm
+          surveyId={survey.slug}
+          title={survey.title}
+          description={survey.description}
+          questions={survey.questions}
+        />
+      </section>
+    </main>
+  );
+}
+`,
+		},
+		{
+			Path: "src/app/admin/page.tsx",
+			Content: `import { convexFetch } from "@/lib/convex";
+
+async function getSummary() {
+  try {
+    return await convexFetch("/survey/summary?slug=product-research");
+  } catch {
+    return {
+      summary: {
+        surveyTitle: "Product Research Survey",
+        totalResponses: 0,
+        recentResponses: [],
+      }
+    };
+  }
+}
+
+export default async function AdminPage() {
+  const data = await getSummary();
+  const summary = data.summary;
+
+  return (
+    <main className="mx-auto max-w-5xl px-6 py-12">
+      <div className="flex items-end justify-between gap-6">
+        <div>
+          <p className="text-xs uppercase tracking-[0.32em] text-[var(--accent)]">Admin</p>
+          <h1 className="mt-3 text-4xl font-semibold">{summary.surveyTitle}</h1>
+          <p className="mt-3 text-sm text-[var(--muted)]">
+            Use this view as the base for tagging answers, exporting data, or clustering themes with mesh workers on your own infrastructure.
+          </p>
+        </div>
+        <div className="rounded-[1.6rem] bg-[var(--card)] px-6 py-5 text-right shadow-[0_18px_60px_rgba(0,0,0,0.05)]">
+          <div className="text-3xl font-semibold">{summary.totalResponses}</div>
+          <div className="mt-2 text-sm text-[var(--muted)]">Total responses</div>
+        </div>
+      </div>
+      <div className="mt-8 rounded-[2rem] border border-black/5 bg-[var(--card)] p-6 text-sm leading-7 text-[var(--muted)] shadow-[0_18px_60px_rgba(0,0,0,0.05)]">
+        Keep orchestration local, share only selected infra, and expose the same mesh capabilities through MCP when you want external coding tools to drive Yaver.
+      </div>
+
+      <section className="mt-10 rounded-[2rem] border border-black/5 bg-[var(--card)] p-8 shadow-[0_24px_80px_rgba(0,0,0,0.06)]">
+        <h2 className="text-xl font-semibold">Recent responses</h2>
+        <div className="mt-6 space-y-4">
+          {summary.recentResponses.length === 0 ? (
+            <p className="text-sm text-[var(--muted)]">No responses yet. Submit the public survey to populate this feed.</p>
+          ) : (
+            summary.recentResponses.map((response: any) => (
+              <article key={response.id} className="rounded-[1.2rem] border border-black/5 bg-white p-5">
+                <div className="text-xs uppercase tracking-[0.18em] text-[var(--accent)]">{response.createdAt}</div>
+                <ul className="mt-3 space-y-2 text-sm">
+                  {response.answers.map((answer: any) => (
+                    <li key={answer.questionId}>
+                      <span className="font-medium">{answer.questionLabel}: </span>
+                      <span className="text-[var(--muted)]">{answer.value}</span>
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            ))
+          )}
+        </div>
+      </section>
+    </main>
+  );
+}
+`,
+		},
+		{
+			Path: "backend/package.json",
+			Content: `{
+  "name": "survey-app-backend",
+  "private": true,
+  "scripts": {
+    "dev": "npx convex dev",
+    "codegen": "npx convex codegen"
+  },
+  "dependencies": {
+    "convex": "^1.32.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
+`,
+		},
+		{
+			Path: "backend/convex/tsconfig.json",
+			Content: `{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ES2021", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "allowJs": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true
+  },
+  "include": ["./**/*"]
+}
+`,
+		},
+		{
+			Path: "backend/convex/schema.ts",
+			Content: `import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+
+export default defineSchema({
+  surveys: defineTable({
+    slug: v.string(),
+    title: v.string(),
+    description: v.string(),
+    isPublished: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_slug", ["slug"]),
+
+  surveyQuestions: defineTable({
+    surveyId: v.id("surveys"),
+    questionId: v.string(),
+    label: v.string(),
+    kind: v.union(v.literal("text"), v.literal("textarea"), v.literal("rating")),
+    required: v.optional(v.boolean()),
+    sortOrder: v.number(),
+  }).index("by_survey", ["surveyId", "sortOrder"]),
+
+  surveyResponses: defineTable({
+    surveyId: v.id("surveys"),
+    createdAt: v.number(),
+  }).index("by_survey", ["surveyId", "createdAt"]),
+
+  surveyAnswers: defineTable({
+    responseId: v.id("surveyResponses"),
+    surveyId: v.id("surveys"),
+    questionId: v.string(),
+    questionLabel: v.string(),
+    value: v.string(),
+  }).index("by_response", ["responseId"]),
+});
+`,
+		},
+		{
+			Path: "backend/convex/surveys.ts",
+			Content: `import { query, mutation } from "./_generated/server";
+import { v } from "convex/values";
+
+const defaultSurvey = {
+  slug: "product-research",
+  title: "Product Research Survey",
+  description: "Capture role, pain, and urgency before building your next feature.",
+  isPublished: true,
+};
+
+const defaultQuestions = [
+  { questionId: "role", label: "What best describes your role?", kind: "text", required: true, sortOrder: 1 },
+  { questionId: "pain", label: "What is your biggest workflow pain right now?", kind: "textarea", required: true, sortOrder: 2 },
+  { questionId: "urgency", label: "How urgent is this problem?", kind: "rating", required: true, sortOrder: 3 },
+];
+
+async function findSurveyBySlug(ctx: any, slug: string) {
+  return ctx.db.query("surveys").withIndex("by_slug", (q: any) => q.eq("slug", slug)).first();
+}
+
+export const seedDefaultSurvey = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const existing = await findSurveyBySlug(ctx, defaultSurvey.slug);
+    if (existing) {
+      return { ok: true, surveyId: existing._id, seeded: false };
+    }
+    const now = Date.now();
+    const surveyId = await ctx.db.insert("surveys", {
+      ...defaultSurvey,
+      createdAt: now,
+      updatedAt: now,
+    });
+    for (const question of defaultQuestions) {
+      await ctx.db.insert("surveyQuestions", { surveyId, ...question });
+    }
+    return { ok: true, surveyId, seeded: true };
+  },
+});
+
+async function ensureSeededSurvey(ctx: any, slug: string) {
+  let survey = await findSurveyBySlug(ctx, slug);
+  if (!survey && slug === defaultSurvey.slug) {
+    const result = await seedDefaultSurvey.handler(ctx, {});
+    survey = await ctx.db.get(result.surveyId);
+  }
+  return survey;
+}
+
+export const getPublicSurvey = query({
+  args: { slug: v.string() },
+  handler: async (ctx, args) => {
+    const survey = await findSurveyBySlug(ctx, args.slug);
+    if (!survey || !survey.isPublished) {
+      return {
+        survey: {
+          slug: defaultSurvey.slug,
+          title: defaultSurvey.title,
+          description: defaultSurvey.description,
+          questionCount: defaultQuestions.length,
+          responseCount: 0,
+          questions: defaultQuestions.map((question) => ({
+            id: question.questionId,
+            label: question.label,
+            kind: question.kind,
+            required: question.required ?? false,
+          })),
+        },
+      };
+    }
+    const questions = await ctx.db.query("surveyQuestions").withIndex("by_survey", (q) => q.eq("surveyId", survey._id)).collect();
+    const responses = await ctx.db.query("surveyResponses").withIndex("by_survey", (q) => q.eq("surveyId", survey._id)).collect();
+    return {
+      survey: {
+        slug: survey.slug,
+        title: survey.title,
+        description: survey.description,
+        questionCount: questions.length,
+        responseCount: responses.length,
+        questions: questions.map((question) => ({
+          id: question.questionId,
+          label: question.label,
+          kind: question.kind,
+          required: question.required ?? false,
+        })),
+      },
+    };
+  },
+});
+
+export const submitPublicSurvey = mutation({
+  args: {
+    surveySlug: v.string(),
+    answers: v.array(v.object({
+      questionId: v.string(),
+      value: v.string(),
+    })),
+  },
+  handler: async (ctx, args) => {
+    const survey = await ensureSeededSurvey(ctx, args.surveySlug);
+    if (!survey || !survey.isPublished) {
+      throw new Error("Survey not found");
+    }
+    const questions = await ctx.db.query("surveyQuestions").withIndex("by_survey", (q) => q.eq("surveyId", survey._id)).collect();
+    const questionByID = new Map(questions.map((question) => [question.questionId, question]));
+    const responseId = await ctx.db.insert("surveyResponses", {
+      surveyId: survey._id,
+      createdAt: Date.now(),
+    });
+    for (const answer of args.answers) {
+      const question = questionByID.get(answer.questionId);
+      if (!question) continue;
+      await ctx.db.insert("surveyAnswers", {
+        responseId,
+        surveyId: survey._id,
+        questionId: question.questionId,
+        questionLabel: question.label,
+        value: answer.value,
+      });
+    }
+    return { ok: true, responseId };
+  },
+});
+
+export const getSurveySummary = query({
+  args: { slug: v.string() },
+  handler: async (ctx, args) => {
+    const survey = await findSurveyBySlug(ctx, args.slug);
+    if (!survey) {
+      return {
+        summary: {
+          surveyTitle: defaultSurvey.title,
+          totalResponses: 0,
+          recentResponses: [],
+        },
+      };
+    }
+    const responses = await ctx.db.query("surveyResponses").withIndex("by_survey", (q) => q.eq("surveyId", survey._id)).collect();
+    const recent = responses
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 10);
+    const recentResponses = [];
+    for (const response of recent) {
+      const answers = await ctx.db.query("surveyAnswers").withIndex("by_response", (q) => q.eq("responseId", response._id)).collect();
+      recentResponses.push({
+        id: response._id,
+        createdAt: new Date(response.createdAt).toISOString(),
+        answers: answers.map((answer) => ({
+          questionId: answer.questionId,
+          questionLabel: answer.questionLabel,
+          value: answer.value,
+        })),
+      });
+    }
+    return {
+      summary: {
+        surveyTitle: survey.title,
+        totalResponses: responses.length,
+        recentResponses,
+      },
+    };
+  },
+});
+`,
+		},
+		{
+			Path: "backend/convex/http.ts",
+			Content: `import { httpRouter } from "convex/server";
+import { httpAction } from "./_generated/server";
+import { api } from "./_generated/api";
+
+const http = httpRouter();
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+http.route({
+  path: "/survey/public",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const slug = new URL(request.url).searchParams.get("slug") || "product-research";
+    return json(await ctx.runQuery(api.surveys.getPublicSurvey, { slug }));
+  }),
+});
+
+http.route({
+  path: "/survey/summary",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const slug = new URL(request.url).searchParams.get("slug") || "product-research";
+    return json(await ctx.runQuery(api.surveys.getSurveySummary, { slug }));
+  }),
+});
+
+http.route({
+  path: "/survey/submit-public",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.json();
+    return json(await ctx.runMutation(api.surveys.submitPublicSurvey, {
+      surveySlug: body.surveySlug,
+      answers: body.answers || [],
+    }));
+  }),
+});
+
+export default http;
+`,
+		},
+		{
+			Path: "README.md",
+			Content: `# Survey App
+
+Survey app starter generated by Yaver.
+
+## Stack
+
+- Web: Next.js
+- Backend: local Convex
+- Local services: Yaver services for Convex + dashboard
+- Mesh development: local orchestrator can stay on Codex while remote nodes use cheaper runners like Ollama or OpenCode
+
+## Run
+
+` + "```bash\n" +
+				"yaver services start\n" +
+				"cd backend && npx convex dev\n" +
+				"# in another shell\n" +
+				"npm install\n" +
+				"npm run dev\n" +
+				"```\n\n" +
+				"## Mesh note\n\n" +
+				"Use `yaver code --mesh --allowed-runners ollama,opencode,codex` to keep remote nodes on cheaper runners while preserving a richer local orchestrator.\n" +
+				"The app is intentionally local-first: Convex runs on your machine, the dashboard stays local, and Yaver can expose the same infra over MCP or act as the coding agent directly.\n" +
+				"Optionally run `cd backend && npx convex run surveys:seedDefaultSurvey` once to persist the default survey in Convex.\n",
+		},
+	}
 }
 
 // ─── saas-complete ────────────────────────────────────────────────────────────

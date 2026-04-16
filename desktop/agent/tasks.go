@@ -211,6 +211,7 @@ var builtinRunners = map[string]RunnerConfig{
 // GetRunnerConfig returns the RunnerConfig for a given runner ID.
 // Falls back to defaultRunner if not found.
 func GetRunnerConfig(runnerID string) RunnerConfig {
+	runnerID = normalizeRunnerID(runnerID)
 	if r, ok := builtinRunners[runnerID]; ok {
 		return r
 	}
@@ -513,6 +514,36 @@ type ImageAttachment struct {
 	Filename string `json:"filename"`
 }
 
+// TaskSliceContract describes the repo/workdir isolation policy for one task slice.
+// It is metadata only and must never contain raw secrets such as API keys.
+type TaskSliceContract struct {
+	RunID            string `json:"runId,omitempty"`
+	NodeID           string `json:"nodeId,omitempty"`
+	DeviceID         string `json:"deviceId,omitempty"`
+	DeviceName       string `json:"deviceName,omitempty"`
+	SourceWorkDir    string `json:"sourceWorkDir,omitempty"`
+	EffectiveWorkDir string `json:"effectiveWorkDir,omitempty"`
+	GitRemote        string `json:"gitRemote,omitempty"`
+	GitBranch        string `json:"gitBranch,omitempty"`
+	GitCommit        string `json:"gitCommit,omitempty"`
+	IsolationMode    string `json:"isolationMode,omitempty"`
+}
+
+type TaskCreateOptions struct {
+	WorkDir       string
+	SliceContract *TaskSliceContract
+
+	// Guest policy fields are applied before startProcess runs so per-task
+	// guards (e.g. autoSwitchProject skip) can see GuestUserID atomically.
+	// Setting these after CreateTaskWithOptions returns is a race.
+	GuestUserID                 string
+	GuestUseHostAPIKeys         bool
+	GuestAllowGuestProvidedKeys bool
+	GuestRequireIsolation       bool
+	GuestCPULimitPercent        *int
+	GuestRAMLimitMB             *int
+}
+
 type Task struct {
 	ID          string             `json:"id"`
 	Title       string             `json:"title"`
@@ -550,6 +581,8 @@ type Task struct {
 	// Image paths saved to disk for this task (not persisted in tasks.json)
 	ImagePaths []string `json:"-"`
 
+	SliceContract *TaskSliceContract `json:"sliceContract,omitempty"`
+
 	// Guest execution policy snapshot resolved at task creation time.
 	GuestUseHostAPIKeys         bool `json:"-"`
 	GuestAllowGuestProvidedKeys bool `json:"-"`
@@ -564,6 +597,40 @@ type Task struct {
 	outputCh   chan string
 	doneCh     chan struct{}
 	retryCount int // Number of auto-restart attempts so far
+}
+
+func formatTaskSliceContract(contract *TaskSliceContract) string {
+	if contract == nil {
+		return ""
+	}
+	var lines []string
+	lines = append(lines, "\n\n[Task Slice Contract]")
+	if contract.RunID != "" || contract.NodeID != "" {
+		lines = append(lines, fmt.Sprintf("Graph run: %s  Node: %s", firstNonEmpty(contract.RunID, "n/a"), firstNonEmpty(contract.NodeID, "n/a")))
+	}
+	if contract.DeviceID != "" || contract.DeviceName != "" {
+		lines = append(lines, fmt.Sprintf("Assigned machine: %s (%s)", firstNonEmpty(contract.DeviceName, contract.DeviceID, "unknown"), firstNonEmpty(contract.DeviceID, "unknown")))
+	}
+	if contract.SourceWorkDir != "" {
+		lines = append(lines, "Source work dir: "+contract.SourceWorkDir)
+	}
+	if contract.EffectiveWorkDir != "" {
+		lines = append(lines, "Effective work dir: "+contract.EffectiveWorkDir)
+	}
+	if contract.GitBranch != "" || contract.GitCommit != "" {
+		lines = append(lines, fmt.Sprintf("Git branch: %s  Commit: %s", firstNonEmpty(contract.GitBranch, "unknown"), firstNonEmpty(contract.GitCommit, "unknown")))
+	}
+	if contract.GitRemote != "" {
+		lines = append(lines, "Git remote: "+contract.GitRemote)
+	}
+	if contract.IsolationMode != "" {
+		lines = append(lines, "Isolation mode: "+contract.IsolationMode)
+	}
+	lines = append(lines,
+		"Operate only inside the effective work dir for this slice.",
+		"Do not assume write access to sibling slices or the developer's main worktree.",
+		"Prefer producing coherent commits or diffs within this slice so the orchestrator can merge safely.")
+	return strings.Join(lines, "\n")
 }
 
 // TaskInfo is the JSON-safe subset returned in listings.
@@ -892,6 +959,10 @@ func (tm *TaskManager) CheckRunner() error {
 // source indicates where the task originated: "mobile", "mcp", or "cli" — defaults to "mobile".
 // customCommand, if non-empty, runs an arbitrary command via sh -c (ignores runnerID).
 func (tm *TaskManager) CreateTask(title, description, model, source, runnerID, customCommand string, images []ImageAttachment, speechCtx ...*SpeechContext) (*Task, error) {
+	return tm.CreateTaskWithOptions(title, description, model, source, runnerID, customCommand, images, TaskCreateOptions{}, speechCtx...)
+}
+
+func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, runnerID, customCommand string, images []ImageAttachment, opts TaskCreateOptions, speechCtx ...*SpeechContext) (*Task, error) {
 	var taskRunner RunnerConfig
 
 	if customCommand != "" {
@@ -910,10 +981,12 @@ func (tm *TaskManager) CreateTask(title, description, model, source, runnerID, c
 	} else {
 		// Resolve which runner to use for this task
 		taskRunner = tm.runner // default (could be custom)
-		if runnerID != "" && runnerID != tm.runner.RunnerID {
-			if r, ok := builtinRunners[runnerID]; ok {
+		normalizedRunnerID := normalizeRunnerID(runnerID)
+		currentRunnerID := normalizeRunnerID(tm.runner.RunnerID)
+		if normalizedRunnerID != "" && normalizedRunnerID != currentRunnerID {
+			if r, ok := builtinRunners[normalizedRunnerID]; ok {
 				taskRunner = r
-			} else if runnerID == "custom" || runnerID == tm.runner.RunnerID {
+			} else if normalizedRunnerID == "custom" || normalizedRunnerID == currentRunnerID {
 				taskRunner = tm.runner
 			} else {
 				return nil, fmt.Errorf("unknown runner: %s", runnerID)
@@ -935,17 +1008,25 @@ func (tm *TaskManager) CreateTask(title, description, model, source, runnerID, c
 
 	now := time.Now()
 	task := &Task{
-		ID:          id,
-		Title:       title,
-		Description: description,
-		Status:      TaskStatusQueued,
-		Source:      source,
-		Model:       model,
-		RunnerID:    taskRunner.RunnerID,
-		runner:      taskRunner,
-		CreatedAt:   now,
-		outputCh:    make(chan string, 512),
-		doneCh:      make(chan struct{}),
+		ID:                          id,
+		Title:                       title,
+		Description:                 description,
+		Status:                      TaskStatusQueued,
+		Source:                      source,
+		Model:                       model,
+		RunnerID:                    taskRunner.RunnerID,
+		runner:                      taskRunner,
+		CreatedAt:                   now,
+		outputCh:                    make(chan string, 512),
+		doneCh:                      make(chan struct{}),
+		WorkDir:                     strings.TrimSpace(opts.WorkDir),
+		SliceContract:               opts.SliceContract,
+		GuestUserID:                 opts.GuestUserID,
+		GuestUseHostAPIKeys:         opts.GuestUseHostAPIKeys,
+		GuestAllowGuestProvidedKeys: opts.GuestAllowGuestProvidedKeys,
+		GuestRequireIsolation:       opts.GuestRequireIsolation,
+		GuestCPULimitPercent:        opts.GuestCPULimitPercent,
+		GuestRAMLimitMB:             opts.GuestRAMLimitMB,
 		Turns: []ConversationTurn{
 			{Role: "user", Content: title, Timestamp: now},
 		},
@@ -1083,13 +1164,22 @@ func CheckRunnerBinary(command string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, path, "--version")
+	args := []string{"--version"}
+	switch filepath.Base(path) {
+	case "sh", "bash", "zsh", "dash":
+		args = []string{"-c", "exit 0"}
+	}
+	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Env = append(os.Environ(), "PATH="+expandedPath())
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s found but not working: %v (output: %s)", command, err, strings.TrimSpace(string(out)))
 	}
-	log.Printf("[runner-check] %s at %s — %s", command, path, strings.TrimSpace(string(out)))
+	if strings.TrimSpace(string(out)) == "" {
+		log.Printf("[runner-check] %s at %s — ok", command, path)
+	} else {
+		log.Printf("[runner-check] %s at %s — %s", command, path, strings.TrimSpace(string(out)))
+	}
 	return nil
 }
 
@@ -1269,7 +1359,14 @@ func (tm *TaskManager) startProcess(task *Task) error {
 
 	// Auto-detect project from task text and switch workDir if needed.
 	// This enables "start BentoApp" from Yaver mobile when serving from ~.
-	tm.autoSwitchProject(task, prompt)
+	//
+	// Security: never auto-switch for guest tasks — the guest prompt prefix
+	// pins the task to the host's workdir, and allowing prompt keywords to
+	// redirect the task cwd into a neighboring project would let a guest
+	// traverse host projects they were not granted.
+	if task.GuestUserID == "" {
+		tm.autoSwitchProject(task, prompt)
+	}
 
 	// System prompt: behave as a remote terminal agent, tailored to the task source.
 	switch task.Source {
@@ -1289,6 +1386,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	if task.WorkDir != "" {
 		contextDir = task.WorkDir
 	}
+	prompt += formatTaskSliceContract(task.SliceContract)
 	prompt += yaverDevServerContext(contextDir)
 
 	// Append speech context if the user sent this task via voice

@@ -21,7 +21,9 @@ import OpsView from "@/components/dashboard/OpsView";
 import OverviewView from "@/components/dashboard/OverviewView";
 import ExtrasView from "@/components/dashboard/ExtrasView";
 import ShareView from "@/components/dashboard/ShareView";
+import InfraView from "@/components/dashboard/InfraView";
 import PreviewPane from "@/components/dashboard/PreviewPane";
+import TwoFactorView from "@/components/dashboard/TwoFactorView";
 
 function statusColor(s: string) {
   if (s === "running") return "text-amber-400";
@@ -45,7 +47,7 @@ export default function DashboardPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [guestCode, setGuestCode] = useState("");
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share">("home");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "infra" | "security">("home");
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [relayReady, setRelayReady] = useState(false);
@@ -172,11 +174,13 @@ export default function DashboardPage() {
     { id: "switch", label: "Switch", icon: "\uD83D\uDD04" },
     { id: "accounts", label: "Accounts", icon: "\uD83D\uDD11" },
     { id: "console", label: "Console", icon: "\uD83D\uDCBB" },
+    { id: "infra", label: "Infra", icon: "\uD83D\uDEE0\uFE0F" },
     { id: "observ", label: "Observ", icon: "\uD83D\uDCCA" },
     { id: "ops", label: "Ops", icon: "\uD83D\uDE80" },
     { id: "extras", label: "Extras", icon: "\u2699\uFE0F" },
     { id: "share", label: "Share", icon: "\uD83D\uDCE3" },
     { id: "convex", label: "Convex", icon: "\u26A1" },
+    { id: "security", label: "Security", icon: "\uD83D\uDD10" },
   ];
 
   return (
@@ -238,8 +242,24 @@ export default function DashboardPage() {
             ) : (
               <div className="space-y-1">
                 {devices.filter(d => d.online).map(d => (
-                  <button key={d.id} onClick={() => connectToDevice(d)} className="w-full flex items-center gap-2 rounded-md border border-surface-800 px-2 py-1.5 text-left hover:border-emerald-500/30 text-xs text-surface-300">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />{d.name}
+                  <button
+                    key={d.id}
+                    onClick={() => connectToDevice(d)}
+                    className="w-full flex items-center gap-2 rounded-md border border-surface-800 px-2 py-1.5 text-left hover:border-emerald-500/30 text-xs text-surface-300"
+                    title={d.isGuest && d.hostName ? `shared from ${d.hostName}${d.priorityMode ? ` · ${d.priorityMode}` : ""}` : undefined}
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                    <span className="truncate">{d.name}</span>
+                    {d.isGuest ? (
+                      <span className="ml-auto rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-[1px] text-[9px] font-semibold uppercase tracking-wider text-sky-300">
+                        shared
+                      </span>
+                    ) : null}
+                    {d.isGuest && d.priorityMode === "spare-capacity" ? (
+                      <span className="rounded border border-violet-500/40 bg-violet-500/10 px-1.5 py-[1px] text-[9px] font-semibold uppercase tracking-wider text-violet-300">
+                        spare
+                      </span>
+                    ) : null}
                   </button>
                 ))}
                 {devices.filter(d => d.online).length === 0 && <p className="text-[10px] text-surface-600">No devices online</p>}
@@ -333,8 +353,24 @@ export default function DashboardPage() {
                     <p className="mb-6 text-sm text-surface-500">Connect to a device running <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-300">yaver serve</code></p>
                     <div className="space-y-2">
                       {devices.filter(d => d.online).map(d => (
-                        <button key={d.id} onClick={() => connectToDevice(d)} className="mx-auto flex items-center gap-3 rounded-lg border border-surface-700 bg-surface-900 px-5 py-3 hover:border-emerald-500/30 transition-colors">
-                          <span className="h-2 w-2 rounded-full bg-emerald-400" /><span className="text-sm font-medium text-surface-200">{d.name}</span>
+                        <button
+                          key={d.id}
+                          onClick={() => connectToDevice(d)}
+                          className="mx-auto flex items-center gap-3 rounded-lg border border-surface-700 bg-surface-900 px-5 py-3 hover:border-emerald-500/30 transition-colors"
+                          title={d.isGuest && d.hostName ? `shared from ${d.hostName}${d.priorityMode ? ` · ${d.priorityMode}` : ""}` : undefined}
+                        >
+                          <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                          <span className="text-sm font-medium text-surface-200">{d.name}</span>
+                          {d.isGuest ? (
+                            <span className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-[2px] text-[10px] font-semibold uppercase tracking-wider text-sky-300">
+                              shared{d.hostName ? ` · ${d.hostName}` : ""}
+                            </span>
+                          ) : null}
+                          {d.isGuest && d.priorityMode === "spare-capacity" ? (
+                            <span className="rounded border border-violet-500/40 bg-violet-500/10 px-2 py-[2px] text-[10px] font-semibold uppercase tracking-wider text-violet-300">
+                              spare
+                            </span>
+                          ) : null}
                         </button>
                       ))}
                     </div>
@@ -365,6 +401,8 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full"><AccountsView /></div>
           ) : activeTab === "console" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><ConsoleView /></div>
+          ) : activeTab === "infra" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><InfraView /></div>
           ) : activeTab === "observ" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><ObservabilityView /></div>
           ) : activeTab === "ops" ? (
@@ -375,6 +413,8 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><ShareView /></div>
           ) : activeTab === "convex" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full"><ConvexView /></div>
+          ) : activeTab === "security" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><TwoFactorView token={token} /></div>
           ) : (
             <>
               <div className="flex flex-1 min-h-0">

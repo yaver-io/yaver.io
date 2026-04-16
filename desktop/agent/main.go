@@ -34,6 +34,66 @@ const version = "1.93.0"
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
 
+func augmentAgentPATH() {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return
+	}
+	current := strings.TrimSpace(os.Getenv("PATH"))
+	seen := map[string]struct{}{}
+	for _, part := range strings.Split(current, ":") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			seen[part] = struct{}{}
+		}
+	}
+
+	candidates := []string{
+		filepath.Join(home, ".local", "bin"),
+		filepath.Join(home, ".npm-global", "bin"),
+		"/opt/homebrew/bin",
+		"/usr/local/bin",
+		"/usr/bin",
+		"/bin",
+	}
+	if pyDirs, _ := filepath.Glob(filepath.Join(home, "Library", "Python", "*", "bin")); len(pyDirs) > 0 {
+		candidates = append(candidates, pyDirs...)
+	}
+
+	var prepend []string
+	for _, dir := range candidates {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
+		if _, ok := seen[dir]; ok {
+			continue
+		}
+		if info, statErr := os.Stat(dir); statErr == nil && info.IsDir() {
+			prepend = append(prepend, dir)
+			seen[dir] = struct{}{}
+		}
+	}
+	if len(prepend) == 0 {
+		return
+	}
+	parts := append(prepend, strings.Split(current, ":")...)
+	var cleaned []string
+	seen = map[string]struct{}{}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if _, ok := seen[part]; ok {
+			continue
+		}
+		seen[part] = struct{}{}
+		cleaned = append(cleaned, part)
+	}
+	_ = os.Setenv("PATH", strings.Join(cleaned, ":"))
+}
+
 func relayInfosFromConfig(servers []RelayServerConfig) ([]RelayServerInfo, map[string]string) {
 	var relayServers []RelayServerInfo
 	passwords := make(map[string]string)
@@ -90,6 +150,8 @@ func cacheResolvedRelayConfig(cfg *Config, servers []RelayServerInfo, globalPass
 }
 
 func main() {
+	augmentAgentPATH()
+
 	if len(os.Args) < 2 {
 		printUsage()
 		os.Exit(0)
@@ -215,6 +277,8 @@ func main() {
 		runCloud(os.Args[2:])
 	case "guests":
 		runGuests(os.Args[2:])
+	case "2fa", "totp":
+		runTwoFactor(os.Args[2:])
 	case "sandbox":
 		runSandbox(os.Args[2:])
 	case "sdk-token":
@@ -359,6 +423,9 @@ Usage:
   yaver guests invite <email>  Invite someone to use your machine (max 5 guests)
   yaver guests list            List your guests and their status
   yaver guests remove <email>  Revoke guest access
+  yaver 2fa status             Show whether two-factor auth is enabled
+  yaver 2fa enable             Enroll a TOTP authenticator app (optional)
+  yaver 2fa disable            Remove two-factor auth from your account
   yaver expose --port <N> [--subdomain <name>]  Expose a local port via yaver.io subdomain
   yaver expose list            List active expose entries
   yaver expose stop [subdomain]  Stop exposing a subdomain (or all)
@@ -4692,12 +4759,19 @@ func mustLoadAuthConfig() *Config {
 }
 
 type DeviceInfo struct {
-	DeviceID string `json:"deviceId"`
-	Name     string `json:"name"`
-	Platform string `json:"platform"`
-	QuicHost string `json:"quicHost"`
-	QuicPort int    `json:"quicPort"`
-	IsOnline bool   `json:"isOnline"`
+	DeviceID                  string `json:"deviceId"`
+	Name                      string `json:"name"`
+	Platform                  string `json:"platform"`
+	QuicHost                  string `json:"quicHost"`
+	QuicPort                  int    `json:"quicPort"`
+	IsOnline                  bool   `json:"isOnline"`
+	IsGuest                   bool   `json:"isGuest,omitempty"`
+	HostName                  string `json:"hostName,omitempty"`
+	HostEmail                 string `json:"hostEmail,omitempty"`
+	AccessScope               string `json:"accessScope,omitempty"`
+	PriorityMode              string `json:"priorityMode,omitempty"`
+	UseHostAPIKeys            bool   `json:"useHostApiKeys,omitempty"`
+	AllowGuestProvidedAPIKeys bool   `json:"allowGuestProvidedApiKeys,omitempty"`
 }
 
 func listDevices(baseURL, token string) ([]DeviceInfo, error) {

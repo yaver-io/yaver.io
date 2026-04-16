@@ -173,6 +173,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/agent/runner/restart", s.auth(s.handleRunnerRestart))
 	mux.HandleFunc("/agent/runner/switch", s.auth(s.handleRunnerSwitch))
 	mux.HandleFunc("/agent/shutdown", s.auth(s.handleShutdown))
+	mux.HandleFunc("/infra/summary", s.auth(s.handleInfraSummary))
+	mux.HandleFunc("/infra/services/action", s.auth(s.handleInfraServiceAction))
+	mux.HandleFunc("/infra/power", s.auth(s.handleInfraPower))
 	mux.HandleFunc("/agent/clean", s.auth(s.handleClean))
 	mux.HandleFunc("/agent/doctor", s.auth(s.handleDoctor))
 	mux.HandleFunc("/agent/tools", s.auth(s.handleTools))
@@ -2017,14 +2020,16 @@ func (s *HTTPServer) listTasks(w http.ResponseWriter, r *http.Request) {
 
 func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Title         string            `json:"title"`
-		Description   string            `json:"description"`
-		Model         string            `json:"model"`
-		Runner        string            `json:"runner"`        // runner ID: "claude", "codex", "aider" — empty uses default
-		CustomCommand string            `json:"customCommand"` // arbitrary command — runs via sh -c
-		Source        string            `json:"source"`        // client type: "mobile", "desktop-app", "web", "cli"
-		SpeechContext *SpeechContext    `json:"speechContext"` // voice input/output preferences
-		Images        []ImageAttachment `json:"images,omitempty"`
+		Title         string             `json:"title"`
+		Description   string             `json:"description"`
+		Model         string             `json:"model"`
+		Runner        string             `json:"runner"`        // runner ID: "claude", "codex", "aider" — empty uses default
+		CustomCommand string             `json:"customCommand"` // arbitrary command — runs via sh -c
+		Source        string             `json:"source"`        // client type: "mobile", "desktop-app", "web", "cli"
+		SpeechContext *SpeechContext     `json:"speechContext"` // voice input/output preferences
+		Images        []ImageAttachment  `json:"images,omitempty"`
+		WorkDir       string             `json:"workDir,omitempty"`
+		SliceContract *TaskSliceContract `json:"sliceContract,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
@@ -2076,22 +2081,37 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		title = guestPromptPrefix(s.taskMgr.workDir, guestCfg) + title
 	}
 
-	task, err := s.taskMgr.CreateTask(title, body.Description, body.Model, source, body.Runner, body.CustomCommand, body.Images, body.SpeechContext)
+	// Guests must not be able to redirect the task cwd or inject their own
+	// slice contract — those fields are owner-only mesh orchestration hints
+	// and could otherwise override the guest prompt prefix that keeps the
+	// AI agent inside the host's workdir.
+	taskOpts := TaskCreateOptions{
+		WorkDir:       body.WorkDir,
+		SliceContract: body.SliceContract,
+	}
+	if guestUID != "" {
+		// Strip owner-only fields.
+		taskOpts.WorkDir = ""
+		taskOpts.SliceContract = nil
+		// Snapshot guest policy into the task BEFORE it starts, so runtime
+		// guards (autoSwitchProject, container gating, API-key filtering)
+		// see GuestUserID atomically. Setting these after the call is a
+		// race: startProcess runs synchronously and could pre-observe the
+		// task as owner-authenticated.
+		taskOpts.GuestUserID = guestUID
+		taskOpts.GuestUseHostAPIKeys = guestUseHostAPIKeys(guestCfg)
+		taskOpts.GuestRequireIsolation = guestRequireIsolation(guestCfg)
+		taskOpts.GuestAllowGuestProvidedKeys = guestCfg == nil || guestCfg.AllowGuestProvidedAPIKeys == nil || *guestCfg.AllowGuestProvidedAPIKeys
+		if guestCfg != nil {
+			taskOpts.GuestCPULimitPercent = guestCfg.CPULimitPercent
+			taskOpts.GuestRAMLimitMB = guestCfg.RAMLimitMB
+		}
+	}
+
+	task, err := s.taskMgr.CreateTaskWithOptions(title, body.Description, body.Model, source, body.Runner, body.CustomCommand, body.Images, taskOpts, body.SpeechContext)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create task: %v", err))
 		return
-	}
-
-	// Tag task with guest userId if created by a guest
-	if guestUID != "" {
-		task.GuestUserID = guestUID
-		task.GuestUseHostAPIKeys = guestUseHostAPIKeys(guestCfg)
-		task.GuestRequireIsolation = guestRequireIsolation(guestCfg)
-		task.GuestAllowGuestProvidedKeys = guestCfg == nil || guestCfg.AllowGuestProvidedAPIKeys == nil || *guestCfg.AllowGuestProvidedAPIKeys
-		if guestCfg != nil {
-			task.GuestCPULimitPercent = guestCfg.CPULimitPercent
-			task.GuestRAMLimitMB = guestCfg.RAMLimitMB
-		}
 	}
 
 	log.Printf("[HTTP] Task created: %s — %s (status: %s, model: %s, runner: %s)", task.ID, task.Title, task.Status, body.Model, task.RunnerID)
@@ -3497,7 +3517,25 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			if m.IsLocal {
 				scope = "local"
 			}
+			if m.IsShared {
+				scope = "shared"
+			}
 			sb.WriteString(fmt.Sprintf("- %s (%s) [%s, %s]", m.Name, m.DeviceID, scope, status))
+			if m.IsShared {
+				hostLabel := firstNonEmpty(m.HostName, m.HostEmail, "unknown host")
+				sb.WriteString(fmt.Sprintf(" shared_from=%s", hostLabel))
+				if strings.TrimSpace(m.PriorityMode) != "" {
+					sb.WriteString(fmt.Sprintf(" priority=%s", m.PriorityMode))
+				}
+				if m.UseHostAPIKeys {
+					sb.WriteString(" host_api_keys=yes")
+				} else {
+					sb.WriteString(" host_api_keys=no")
+				}
+				if strings.TrimSpace(m.AccessScope) != "" {
+					sb.WriteString(fmt.Sprintf(" access=%s", m.AccessScope))
+				}
+			}
 			if m.Provider != "" {
 				sb.WriteString(fmt.Sprintf(" provider=%s", m.Provider))
 			}
@@ -3542,6 +3580,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			MaxParallel     int      `json:"max_parallel"`
 			PreferredDevice string   `json:"preferred_device"`
 			AllowedDevices  []string `json:"allowed_devices"`
+			AllowedRunners  []string `json:"allowed_runners"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		if strings.TrimSpace(args.Prompt) == "" {
@@ -3659,6 +3698,147 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolError(err.Error())
 		}
 		return mcpToolResult("Stopped agent graph: " + args.GraphID)
+
+	case "code_mesh_start":
+		if s.agentGraphMgr == nil {
+			return mcpToolError("agent graphs unavailable")
+		}
+		var args struct {
+			Name           string   `json:"name"`
+			WorkDir        string   `json:"work_dir"`
+			Prompt         string   `json:"prompt"`
+			MaxParallel    int      `json:"max_parallel"`
+			AllowedDevices []string `json:"allowed_devices"`
+			AllowedRunners []string `json:"allowed_runners"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.Prompt) == "" {
+			return mcpToolError("prompt is required")
+		}
+		workDir := strings.TrimSpace(args.WorkDir)
+		if workDir == "" {
+			workDir = s.taskMgr.workDir
+		}
+		maxParallel := args.MaxParallel
+		if maxParallel <= 0 {
+			maxParallel = 2
+		}
+		req := AgentGraphCreateRequest{
+			Name:           args.Name,
+			WorkDir:        workDir,
+			Prompt:         args.Prompt,
+			Template:       "full",
+			MaxParallel:    maxParallel,
+			AllowedDevices: args.AllowedDevices,
+			AllowedRunners: args.AllowedRunners,
+		}
+		run, err := s.agentGraphMgr.CreateRun(req)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("start yaver code: %v", err))
+		}
+		pool := "auto"
+		if len(args.AllowedDevices) > 0 {
+			pool = strings.Join(args.AllowedDevices, ", ")
+		}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("yaver code (mesh) started — graph %s\n", run.ID))
+		sb.WriteString(fmt.Sprintf("Name: %s   Machine pool: %s   Parallel: %d\n", run.Name, pool, run.MaxParallel))
+		sb.WriteString("Nodes:\n")
+		for _, node := range run.Nodes {
+			placement := "auto"
+			if node.Placement != nil {
+				placement = node.Placement.DeviceNameOrID()
+				if node.Placement.Runner != "" {
+					placement = placement + " / " + node.Placement.Runner
+				}
+			}
+			sb.WriteString(fmt.Sprintf("  • %s [%s] @ %s\n", node.Spec.Title, node.Status, placement))
+		}
+		sb.WriteString("\nUse agent_graph_show with graph_id=" + run.ID + " to follow progress.")
+		return mcpToolResult(strings.TrimSpace(sb.String()))
+
+	// --- Two-Factor Authentication (optional) ---
+	case "totp_status":
+		cfg, err := LoadConfig()
+		if err != nil || cfg == nil || strings.TrimSpace(cfg.AuthToken) == "" || strings.TrimSpace(cfg.ConvexSiteURL) == "" {
+			return mcpToolError("not signed in — run `yaver auth` first")
+		}
+		var out struct {
+			Enabled                bool `json:"enabled"`
+			RecoveryCodesRemaining int  `json:"recoveryCodesRemaining"`
+		}
+		if err := twoFactorConvexCall(cfg, http.MethodGet, "/auth/totp/status", nil, &out); err != nil {
+			return mcpToolError(err.Error())
+		}
+		if out.Enabled {
+			return mcpToolResult(fmt.Sprintf("2FA: enabled (%d recovery codes remaining)", out.RecoveryCodesRemaining))
+		}
+		return mcpToolResult("2FA: not enabled")
+
+	case "totp_enable_begin":
+		cfg, err := LoadConfig()
+		if err != nil || cfg == nil || strings.TrimSpace(cfg.AuthToken) == "" || strings.TrimSpace(cfg.ConvexSiteURL) == "" {
+			return mcpToolError("not signed in — run `yaver auth` first")
+		}
+		var setup struct {
+			Secret     string `json:"secret"`
+			OtpAuthURL string `json:"otpAuthUrl"`
+		}
+		if err := twoFactorConvexCall(cfg, http.MethodPost, "/auth/totp/setup", nil, &setup); err != nil {
+			return mcpToolError(err.Error())
+		}
+		body := map[string]interface{}{
+			"secret":     setup.Secret,
+			"secretReadable": groupTwoFactorSecret(setup.Secret),
+			"otpauthUrl": setup.OtpAuthURL,
+			"instructions": "Scan the otpauth:// URL with Microsoft Authenticator, Google Authenticator, 1Password, or any TOTP app. Then call totp_enable_confirm with a 6-digit code to finish enrollment.",
+		}
+		return mcpToolJSON(body)
+
+	case "totp_enable_confirm":
+		cfg, err := LoadConfig()
+		if err != nil || cfg == nil || strings.TrimSpace(cfg.AuthToken) == "" || strings.TrimSpace(cfg.ConvexSiteURL) == "" {
+			return mcpToolError("not signed in — run `yaver auth` first")
+		}
+		var args struct {
+			Code string `json:"code"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.Code) == "" {
+			return mcpToolError("code is required")
+		}
+		var out struct {
+			RecoveryCodes []string `json:"recoveryCodes"`
+		}
+		if err := twoFactorConvexCall(cfg, http.MethodPost, "/auth/totp/enable", map[string]string{"code": strings.TrimSpace(args.Code)}, &out); err != nil {
+			return mcpToolError(err.Error())
+		}
+		body := map[string]interface{}{
+			"ok":            true,
+			"recoveryCodes": out.RecoveryCodes,
+			"instructions":  "2FA is now enabled. Show these recovery codes to the user ONCE and ask them to save them somewhere safe — each works once if they lose access to their authenticator.",
+		}
+		return mcpToolJSON(body)
+
+	case "totp_disable":
+		cfg, err := LoadConfig()
+		if err != nil || cfg == nil || strings.TrimSpace(cfg.AuthToken) == "" || strings.TrimSpace(cfg.ConvexSiteURL) == "" {
+			return mcpToolError("not signed in — run `yaver auth` first")
+		}
+		var args struct {
+			Code string `json:"code"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.Code) == "" {
+			return mcpToolError("code is required")
+		}
+		var out struct {
+			OK bool `json:"ok"`
+		}
+		if err := twoFactorConvexCall(cfg, http.MethodPost, "/auth/totp/disable", map[string]string{"code": strings.TrimSpace(args.Code)}, &out); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult("2FA disabled")
 
 	// --- System & Config ---
 	case "get_system_info":
@@ -4394,6 +4574,97 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			}
 		}()
 		return mcpToolResult("Agent shutdown initiated. All running tasks will be stopped.")
+
+	case "infra_summary":
+		return mcpToolJSON(s.infraSummary(context.Background()))
+
+	case "infra_service_action":
+		var args struct {
+			Scope  string `json:"scope"`
+			Name   string `json:"name"`
+			Action string `json:"action"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		switch strings.TrimSpace(args.Scope) {
+		case "dev":
+			workDir := "."
+			if s.taskMgr != nil && strings.TrimSpace(s.taskMgr.workDir) != "" {
+				workDir = s.taskMgr.workDir
+			}
+			sm := NewServicesManager(workDir)
+			switch strings.TrimSpace(args.Action) {
+			case "start":
+				msg, err := sm.Start(args.Name)
+				if err != nil {
+					return mcpToolError(err.Error())
+				}
+				return mcpToolJSON(map[string]interface{}{"ok": true, "output": msg})
+			case "stop":
+				msg, err := sm.Stop(args.Name)
+				if err != nil {
+					return mcpToolError(err.Error())
+				}
+				return mcpToolJSON(map[string]interface{}{"ok": true, "output": msg})
+			case "restart":
+				if _, err := sm.Stop(args.Name); err != nil {
+					return mcpToolError(err.Error())
+				}
+				msg, err := sm.Start(args.Name)
+				if err != nil {
+					return mcpToolError(err.Error())
+				}
+				return mcpToolJSON(map[string]interface{}{"ok": true, "output": msg})
+			case "status":
+				statuses, err := sm.Status()
+				if err != nil {
+					return mcpToolError(err.Error())
+				}
+				for _, status := range statuses {
+					if status.Name == args.Name {
+						return mcpToolJSON(status)
+					}
+				}
+				return mcpToolError("service not found")
+			default:
+				return mcpToolError("unsupported dev service action")
+			}
+		case "system":
+			if strings.TrimSpace(args.Action) == "status" {
+				return mcpToolJSON(mcpServiceStatus(args.Name))
+			}
+			return mcpToolJSON(mcpServiceAction(args.Name, args.Action))
+		default:
+			return mcpToolError("scope must be dev or system")
+		}
+
+	case "infra_power":
+		var args struct {
+			Action  string `json:"action"`
+			Confirm bool   `json:"confirm"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if !args.Confirm {
+			return mcpToolError("confirm must be true")
+		}
+		switch strings.TrimSpace(args.Action) {
+		case "agent_shutdown":
+			log.Printf("[MCP] Infra shutdown requested")
+			go func() {
+				time.Sleep(500 * time.Millisecond)
+				if s.onShutdown != nil {
+					s.onShutdown()
+				}
+			}()
+			return mcpToolJSON(map[string]interface{}{"ok": true, "action": args.Action})
+		case "host_reboot":
+			command, err := infraHostReboot()
+			if err != nil {
+				return mcpToolError(err.Error())
+			}
+			return mcpToolJSON(map[string]interface{}{"ok": true, "action": args.Action, "command": command})
+		default:
+			return mcpToolError("unsupported power action")
+		}
 
 	// --- Config Management ---
 	case "config_set":

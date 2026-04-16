@@ -216,10 +216,25 @@ export async function signupWithEmail(
   return response.json();
 }
 
+/**
+ * Result of a login attempt.
+ *  - `session`: the user had no 2FA enabled → immediate session token.
+ *  - `2fa`:    the user has 2FA enabled; caller must prompt for a 6-digit
+ *              code and complete the flow via `verifyTotpChallenge()`.
+ *
+ * 2FA is strictly optional. Accounts without it enrolled always see the
+ * `session` path. Recovery codes issued at enrollment are also accepted
+ * by `verifyTotpChallenge`, so a user who loses their authenticator can
+ * still sign in with a recovery code — we never kill recovery auth.
+ */
+export type LoginResult =
+  | { kind: "session"; token: string; userId: string }
+  | { kind: "2fa"; pendingToken: string };
+
 export async function loginWithEmail(
   email: string,
   password: string
-): Promise<{ token: string; userId: string }> {
+): Promise<LoginResult> {
   const response = await fetch(`${getConvexSiteUrl()}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -229,7 +244,100 @@ export async function loginWithEmail(
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error ?? "Login failed");
   }
+  const data = await response.json();
+  if (data?.requires2fa && typeof data.pendingToken === "string") {
+    return { kind: "2fa", pendingToken: data.pendingToken };
+  }
+  return { kind: "session", token: data.token, userId: data.userId };
+}
+
+/**
+ * Exchange a 2FA pending token + current TOTP code (or a recovery code)
+ * for a session token. Accepts both forms — the backend falls through to
+ * recovery-code matching if the 6-digit code fails.
+ */
+export async function verifyTotpChallenge(
+  pendingToken: string,
+  code: string
+): Promise<{ token: string; userId: string }> {
+  const response = await fetch(`${getConvexSiteUrl()}/auth/verify-totp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pendingToken, code: code.trim() }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error ?? "Two-factor verification failed");
+  }
   return response.json();
+}
+
+/** Status of 2FA enrollment for the signed-in user. */
+export async function fetchTotpStatus(
+  token: string
+): Promise<{ enabled: boolean; recoveryCodesRemaining: number }> {
+  const response = await fetch(`${getConvexSiteUrl()}/auth/totp/status`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    return { enabled: false, recoveryCodesRemaining: 0 };
+  }
+  const data = await response.json();
+  return {
+    enabled: Boolean(data?.enabled),
+    recoveryCodesRemaining: Number(data?.recoveryCodesRemaining ?? 0),
+  };
+}
+
+/** Start TOTP enrollment. Returns a fresh secret + otpauth URL for the
+ *  authenticator app to scan. Enrollment does NOT enable 2FA yet — that
+ *  requires confirming with a code via `confirmTotpEnrollment`. */
+export async function beginTotpEnrollment(
+  token: string
+): Promise<{ secret: string; otpAuthUrl: string }> {
+  const response = await fetch(`${getConvexSiteUrl()}/auth/totp/setup`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error ?? "Failed to start 2FA enrollment");
+  }
+  return response.json();
+}
+
+export async function confirmTotpEnrollment(
+  token: string,
+  code: string
+): Promise<{ recoveryCodes: string[] }> {
+  const response = await fetch(`${getConvexSiteUrl()}/auth/totp/enable`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ code: code.trim() }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error ?? "Two-factor enrollment failed");
+  }
+  return response.json();
+}
+
+export async function disableTotp(token: string, code: string): Promise<void> {
+  const response = await fetch(`${getConvexSiteUrl()}/auth/totp/disable`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ code: code.trim() }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error ?? "Failed to disable 2FA");
+  }
 }
 
 export async function changePassword(
@@ -357,6 +465,7 @@ export const LOCAL_KEYS = {
   relayPassword: `${LOCAL_KEY_PREFIX}relay_password`,
   relayUrl: `${LOCAL_KEY_PREFIX}relay_url`,
   tunnelUrl: `${LOCAL_KEY_PREFIX}tunnel_url`,
+  bootstrapSecret: `${LOCAL_KEY_PREFIX}bootstrap_secret`,
 } as const;
 
 export async function getLocalSecret(key: string): Promise<string | null> {

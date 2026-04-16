@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -71,34 +72,55 @@ func remoteAgentBaseAndToken(deviceHint string) (string, string, error) {
 	return fmt.Sprintf("http://%s:18080", target.QuicHost), cfg.AuthToken, nil
 }
 
-func relayPasswordForBase(baseURL string) string {
+func isLoopbackHost(host string) bool {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func relayPasswordForBase(baseURL string) (string, error) {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" || !strings.Contains(baseURL, "/d/") {
-		return ""
+		return "", nil
 	}
 	cfg, err := LoadConfig()
 	if err != nil || cfg == nil {
-		return ""
-	}
-	if cfg.RelayPassword != "" {
-		return cfg.RelayPassword
-	}
-	if cfg.CachedRelayPassword != "" {
-		return cfg.CachedRelayPassword
+		return "", fmt.Errorf("load config: %w", err)
 	}
 	u, err := url.Parse(baseURL)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("parse relay url: %w", err)
+	}
+	if !strings.EqualFold(u.Scheme, "https") && !isLoopbackHost(u.Hostname()) {
+		return "", fmt.Errorf("refusing insecure relay url %q", baseURL)
 	}
 	origin := strings.TrimRight(u.Scheme+"://"+u.Host, "/")
 	for _, relay := range cfg.RelayServers {
-		if strings.TrimRight(relay.HttpURL, "/") == origin && relay.Password != "" {
-			return relay.Password
+		if strings.TrimRight(relay.HttpURL, "/") == origin {
+			if relay.Password != "" {
+				return relay.Password, nil
+			}
+			if cfg.RelayPassword != "" {
+				return cfg.RelayPassword, nil
+			}
+			return "", fmt.Errorf("missing relay password for %s", origin)
 		}
 	}
 	for _, relay := range cfg.CachedRelayServers {
-		if strings.TrimRight(relay.HttpURL, "/") == origin && relay.Password != "" {
-			return relay.Password
+		if strings.TrimRight(relay.HttpURL, "/") == origin {
+			if relay.Password != "" {
+				return relay.Password, nil
+			}
+			if cfg.CachedRelayPassword != "" {
+				return cfg.CachedRelayPassword, nil
+			}
+			return "", fmt.Errorf("missing relay password for %s", origin)
 		}
 	}
 	if cfg.ConvexSiteURL != "" {
@@ -106,16 +128,17 @@ func relayPasswordForBase(baseURL string) string {
 			for _, relay := range relays {
 				if strings.TrimRight(relay.HttpURL, "/") == origin {
 					if cfg.CachedRelayPassword != "" {
-						return cfg.CachedRelayPassword
+						return cfg.CachedRelayPassword, nil
 					}
 					if cfg.RelayPassword != "" {
-						return cfg.RelayPassword
+						return cfg.RelayPassword, nil
 					}
+					return "", fmt.Errorf("missing relay password for %s", origin)
 				}
 			}
 		}
 	}
-	return ""
+	return "", fmt.Errorf("relay origin %s is not trusted", origin)
 }
 
 func remoteAgentJSON(ctx context.Context, baseURL, token, method, path string, body any, out any) error {
@@ -134,7 +157,11 @@ func remoteAgentJSON(ctx context.Context, baseURL, token, method, path string, b
 	if strings.TrimSpace(token) != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	if relayPassword := relayPasswordForBase(baseURL); relayPassword != "" {
+	relayPassword, err := relayPasswordForBase(baseURL)
+	if err != nil {
+		return err
+	}
+	if relayPassword != "" {
 		req.Header.Set("X-Relay-Password", relayPassword)
 	}
 	if body != nil {

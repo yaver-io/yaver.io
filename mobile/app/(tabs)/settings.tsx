@@ -708,6 +708,22 @@ export default function SettingsScreen() {
 
         {/* Developer Profile section removed — survey no longer required */}
 
+        {/* Security — optional two-factor authentication */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Security</Text>
+          <Pressable
+            style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, padding: 14 }]}
+            onPress={() => router.push("/two-factor-setup")}
+          >
+            <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "600" }}>
+              Two-factor authentication
+            </Text>
+            <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 4 }}>
+              Optional. Adds a 6-digit code at sign-in. Works with Microsoft Authenticator, Google Authenticator, 1Password, Authy…
+            </Text>
+          </Pressable>
+        </View>
+
         {/* Connected device */}
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Connected Device</Text>
