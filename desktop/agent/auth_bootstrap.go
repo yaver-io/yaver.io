@@ -72,6 +72,33 @@ import (
 	"github.com/google/uuid"
 )
 
+var tailscaleCGNAT = mustCIDR("100.64.0.0/10")
+
+func mustCIDR(raw string) *net.IPNet {
+	_, cidr, err := net.ParseCIDR(raw)
+	if err != nil {
+		panic(err)
+	}
+	return cidr
+}
+
+func bootstrapPasskeyVisible(r *http.Request) bool {
+	if os.Getenv("YAVER_BOOTSTRAP_NO_BEACON_PK") == "1" {
+		return false
+	}
+	if r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("X-Relay-Password") != "" {
+		return false
+	}
+	ip := net.ParseIP(clientIP(r))
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+		return true
+	}
+	return tailscaleCGNAT.Contains(ip)
+}
+
 // bootstrapPairingTTL is how long a bootstrap pairing window
 // stays open before the passkey expires and we regenerate.
 const bootstrapPairingTTL = 10 * time.Minute
@@ -397,7 +424,7 @@ func (bs *bootstrapHTTPServer) handleInfo(w http.ResponseWriter, r *http.Request
 		"version":   version,
 	}
 	// Current passkey (only on direct requests, and only if not suppressed).
-	if sess := activePairingSnapshot(); sess != nil && os.Getenv("YAVER_BOOTSTRAP_NO_BEACON_PK") != "1" && r.Header.Get("X-Forwarded-For") == "" {
+	if sess := activePairingSnapshot(); sess != nil && bootstrapPasskeyVisible(r) {
 		resp["bootstrapPasskey"] = sess.Code
 	}
 	// Device's public key so mobile can do NaCl box encryption
