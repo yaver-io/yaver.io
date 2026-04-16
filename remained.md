@@ -195,13 +195,13 @@ existing tasks chat in mobile.
 
 ## Autodev follow-ons (Apr 2026 wave)
 
-- [ ] Optional Claude --resume across kicks (warm cache, big cost
+- [x] Optional Claude --resume across kicks (warm cache, big cost
       savings on long runs). Persist session_id per loop in
       ~/.yaver/loops/<name>/claude_session.id; spawnClaudeCode
       passes --resume <id> on subsequent kicks. Already wired in
       parseClaudeStream return tuple, just needs the read/write +
       flag plumbing in spawnClaudeCode.
-- [ ] Same for Codex (--resume) and Aider (--restore-chat-history).
+- [x] Same for Codex (--resume) and Aider (--restore-chat-history).
 - [x] Replace `time.Sleep` between kicks with a context-cancellable
       ticker so `yaver loop stop` interrupts mid-sleep instead of
       waiting up to 5 min for the current sleep to finish.
