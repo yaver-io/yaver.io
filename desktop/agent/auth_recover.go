@@ -201,6 +201,10 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusMethodNotAllowed, "use POST")
 		return
 	}
+	if s != nil && strings.TrimSpace(s.token) != "" && !s.authExpired.Load() {
+		jsonError(w, http.StatusConflict, "agent auth is healthy; recovery is not allowed")
+		return
+	}
 	ip := clientIP(r)
 	if !recoveryLimiter.allow(ip) {
 		jsonError(w, http.StatusTooManyRequests, "too many recovery attempts — wait 5 seconds")
