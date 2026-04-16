@@ -31,6 +31,7 @@ func startTestServer(t *testing.T, token string, taskMgr *TaskManager) (string, 
 
 	srv := NewHTTPServer(port, token, "test-user-id", "", "test-host", taskMgr)
 	srv.execMgr = NewExecManager(taskMgr.workDir, nil)
+	srv.agentGraphMgr = NewAgentGraphManager(taskMgr)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
@@ -456,7 +457,7 @@ func TestMCPInitializeAndToolsList(t *testing.T) {
 		tm, _ := tool.(map[string]interface{})
 		toolNames[tm["name"].(string)] = true
 	}
-	for _, expected := range []string{"create_task", "list_tasks", "get_task", "stop_task"} {
+	for _, expected := range []string{"create_task", "list_tasks", "get_task", "stop_task", "agent_machine_inventory", "agent_graph_start", "agent_graph_list", "agent_graph_show", "agent_graph_stop"} {
 		if !toolNames[expected] {
 			t.Fatalf("expected MCP tool %q not found", expected)
 		}

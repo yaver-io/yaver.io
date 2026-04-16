@@ -804,7 +804,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			"name":        "list_schedules",
 			"description": "List all scheduled and recurring tasks with their status, next run time, and history.",
 			"inputSchema": map[string]interface{}{
-				"type": "object",
+				"type":       "object",
 				"properties": map[string]interface{}{},
 			},
 		},
@@ -1553,28 +1553,28 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				"type":     "object",
 				"required": []string{"name", "slug", "description"},
 				"properties": map[string]interface{}{
-					"name":            map[string]interface{}{"type": "string", "description": "Brand name (shown in README, landing page, metadata)"},
-					"slug":            map[string]interface{}{"type": "string", "description": "URL-safe slug used for folder + package names"},
-					"description":     map[string]interface{}{"type": "string", "description": "One-paragraph description — goes into README, landing hero, AI context"},
-					"tagline":         map[string]interface{}{"type": "string"},
-					"domain":          map[string]interface{}{"type": "string"},
-					"primaryColor":    map[string]interface{}{"type": "string", "description": "Hex e.g. #4F46E5"},
-					"accentColor":     map[string]interface{}{"type": "string"},
-					"includeWeb":      map[string]interface{}{"type": "boolean", "description": "Default true"},
-					"includeLanding":  map[string]interface{}{"type": "boolean", "description": "Default true"},
-					"includeMobile":   map[string]interface{}{"type": "boolean", "description": "Default true"},
-					"includeBackend":  map[string]interface{}{"type": "boolean", "description": "Default true"},
-					"webHost":         map[string]interface{}{"type": "string", "enum": []string{"cloudflare", "vercel", "netlify", "self-host"}},
-					"backend":         map[string]interface{}{"type": "string", "enum": []string{"convex", "supabase", "firebase", "yaver-oauth", "none"}},
-					"oauthApple":      map[string]interface{}{"type": "boolean"},
-					"oauthGoogle":     map[string]interface{}{"type": "boolean"},
-					"oauthMicrosoft":  map[string]interface{}{"type": "boolean"},
-					"iosBundleId":     map[string]interface{}{"type": "string"},
-					"androidPackage":  map[string]interface{}{"type": "string"},
-					"gitProvider":     map[string]interface{}{"type": "string", "enum": []string{"github", "gitlab", "none"}},
-					"gitVisibility":   map[string]interface{}{"type": "string", "enum": []string{"private", "public"}},
-					"gitOrg":          map[string]interface{}{"type": "string"},
-					"parentDir":       map[string]interface{}{"type": "string", "description": "Default: agent working dir"},
+					"name":           map[string]interface{}{"type": "string", "description": "Brand name (shown in README, landing page, metadata)"},
+					"slug":           map[string]interface{}{"type": "string", "description": "URL-safe slug used for folder + package names"},
+					"description":    map[string]interface{}{"type": "string", "description": "One-paragraph description — goes into README, landing hero, AI context"},
+					"tagline":        map[string]interface{}{"type": "string"},
+					"domain":         map[string]interface{}{"type": "string"},
+					"primaryColor":   map[string]interface{}{"type": "string", "description": "Hex e.g. #4F46E5"},
+					"accentColor":    map[string]interface{}{"type": "string"},
+					"includeWeb":     map[string]interface{}{"type": "boolean", "description": "Default true"},
+					"includeLanding": map[string]interface{}{"type": "boolean", "description": "Default true"},
+					"includeMobile":  map[string]interface{}{"type": "boolean", "description": "Default true"},
+					"includeBackend": map[string]interface{}{"type": "boolean", "description": "Default true"},
+					"webHost":        map[string]interface{}{"type": "string", "enum": []string{"cloudflare", "vercel", "netlify", "self-host"}},
+					"backend":        map[string]interface{}{"type": "string", "enum": []string{"convex", "supabase", "firebase", "yaver-oauth", "none"}},
+					"oauthApple":     map[string]interface{}{"type": "boolean"},
+					"oauthGoogle":    map[string]interface{}{"type": "boolean"},
+					"oauthMicrosoft": map[string]interface{}{"type": "boolean"},
+					"iosBundleId":    map[string]interface{}{"type": "string"},
+					"androidPackage": map[string]interface{}{"type": "string"},
+					"gitProvider":    map[string]interface{}{"type": "string", "enum": []string{"github", "gitlab", "none"}},
+					"gitVisibility":  map[string]interface{}{"type": "string", "enum": []string{"private", "public"}},
+					"gitOrg":         map[string]interface{}{"type": "string"},
+					"parentDir":      map[string]interface{}{"type": "string", "description": "Default: agent working dir"},
 				},
 			},
 		},
@@ -1803,12 +1803,12 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 
 		// Copilot-lite (local Ollama)
 		{"name": "copilot_complete", "description": "Generate a code completion via the dev's local Ollama model. Supports fill-in-the-middle via prefix+suffix for Qwen2.5-Coder / StarCoder / DeepSeek. Replaces GitHub Copilot / Cursor for solo devs running Ollama.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"prefix"}, "properties": map[string]interface{}{
-			"prefix":     map[string]interface{}{"type": "string", "description": "Text before the cursor"},
-			"suffix":     map[string]interface{}{"type": "string", "description": "Text after the cursor for FIM"},
-			"language":   map[string]interface{}{"type": "string"},
-			"file":       map[string]interface{}{"type": "string"},
-			"maxTokens":  map[string]interface{}{"type": "integer"},
-			"model":      map[string]interface{}{"type": "string", "description": "Ollama tag, default qwen2.5-coder:7b"},
+			"prefix":      map[string]interface{}{"type": "string", "description": "Text before the cursor"},
+			"suffix":      map[string]interface{}{"type": "string", "description": "Text after the cursor for FIM"},
+			"language":    map[string]interface{}{"type": "string"},
+			"file":        map[string]interface{}{"type": "string"},
+			"maxTokens":   map[string]interface{}{"type": "integer"},
+			"model":       map[string]interface{}{"type": "string", "description": "Ollama tag, default qwen2.5-coder:7b"},
 			"temperature": map[string]interface{}{"type": "number"},
 		}}},
 		{"name": "copilot_models", "description": "List the Ollama models the dev has pulled locally. Handy before calling copilot_complete.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
@@ -2113,7 +2113,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			"name":        "error_list",
 			"description": "List cross-device error records aggregated from every SDK session. Each record has a fingerprint, message, count, device list, and recent samples.",
 			"inputSchema": map[string]interface{}{
-				"type":       "object",
+				"type": "object",
 				"properties": map[string]interface{}{
 					"include_resolved": map[string]interface{}{"type": "boolean", "description": "Include resolved errors in the list"},
 				},
@@ -2143,12 +2143,12 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				"type":     "object",
 				"required": []string{"key"},
 				"properties": map[string]interface{}{
-					"key":             map[string]interface{}{"type": "string"},
-					"type":            map[string]interface{}{"type": "string", "enum": []string{"bool", "string"}},
-					"defaultBool":     map[string]interface{}{"type": "boolean"},
-					"defaultString":   map[string]interface{}{"type": "string"},
-					"rolloutPercent":  map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 100},
-					"description":     map[string]interface{}{"type": "string"},
+					"key":            map[string]interface{}{"type": "string"},
+					"type":           map[string]interface{}{"type": "string", "enum": []string{"bool", "string"}},
+					"defaultBool":    map[string]interface{}{"type": "boolean"},
+					"defaultString":  map[string]interface{}{"type": "string"},
+					"rolloutPercent": map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 100},
+					"description":    map[string]interface{}{"type": "string"},
 				},
 			},
 		},
@@ -2167,7 +2167,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			"name":        "release_list",
 			"description": "List releases in a self-hosted OTA channel (default: production). Shows latest pointer, rollout percent, and every historical bundle.",
 			"inputSchema": map[string]interface{}{
-				"type":       "object",
+				"type": "object",
 				"properties": map[string]interface{}{
 					"channel": map[string]interface{}{"type": "string", "description": "Channel name, default production"},
 				},
@@ -2231,7 +2231,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			"name":        "analytics_events",
 			"description": "Read recent business-event records from the analytics ledger (BlackBox track() channel). Returns the tail since a unix-ms timestamp.",
 			"inputSchema": map[string]interface{}{
-				"type":       "object",
+				"type": "object",
 				"properties": map[string]interface{}{
 					"since": map[string]interface{}{"type": "integer", "description": "Unix ms filter — only return events newer than this"},
 					"limit": map[string]interface{}{"type": "integer", "description": "Max events to return, default 100"},
@@ -2243,7 +2243,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 
 	autodevTools := []map[string]interface{}{
 		{
-			"name": "autodev_start",
+			"name":        "autodev_start",
 			"description": "Start a yaver autodev run against a local project. Scaffolds a develop-mode AI loop that kicks the runner until a deadline, interleaving a smart-regression autotest pass after each successful dev kick. Optionally accepts a remained.md checklist — each kick picks the next unchecked item, does it, checks it off, commits. Progress is visible via autodev_status and autodev_reports.",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
@@ -2299,7 +2299,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
-			"name": "autoideas_start",
+			"name":        "autoideas_start",
 			"description": "Start a yaver autoideas run on a local project. Long-lived loop that asks the AI for fresh single-PR-sized ideas every tick and appends them as `- [ ] <title>` lines to ideas.md (or --output). Mobile/web renders them as checkboxes; the user picks ones to implement and triggers autoideas_select which materialises a curated checklist and starts an autodev run with --remained pointed at it. Generation continues in parallel with implementation.",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
@@ -2369,7 +2369,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			"name":        "autodev_reports",
 			"description": "List all autodev per-run reports saved to ~/.yaver/autodev-reports. Each report contains the plan, per-kick git SHAs, commit subjects, and deploy outcome. Pass name to get one report in full.",
 			"inputSchema": map[string]interface{}{
-				"type":     "object",
+				"type": "object",
 				"properties": map[string]interface{}{
 					"name": map[string]interface{}{"type": "string", "description": "Loop name (optional — omit to list all)"},
 				},
@@ -2389,6 +2389,71 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 	}
 	tools = append(tools, autodevTools...)
+
+	agentTools := []map[string]interface{}{
+		{
+			"name":        "agent_machine_inventory",
+			"description": "List Yaver mesh machines with online state, hardware slots, runner readiness, and machine profile signatures so an MCP client can choose a machine pool.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "agent_graph_start",
+			"description": "Start a dependency-aware agent graph. Pass allowed_devices to let Yaver load-balance across multiple machines while respecting runner concurrency policy.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"prompt"},
+				"properties": map[string]interface{}{
+					"name":             map[string]interface{}{"type": "string", "description": "Optional graph name"},
+					"work_dir":         map[string]interface{}{"type": "string", "description": "Absolute work directory. Defaults to the current agent work dir."},
+					"prompt":           map[string]interface{}{"type": "string", "description": "Goal for the graph."},
+					"template":         map[string]interface{}{"type": "string", "description": "Graph template: full or ship"},
+					"runner":           map[string]interface{}{"type": "string", "description": "Optional forced runner"},
+					"model":            map[string]interface{}{"type": "string", "description": "Optional forced model"},
+					"max_parallel":     map[string]interface{}{"type": "integer", "description": "Maximum concurrently running nodes"},
+					"preferred_device": map[string]interface{}{"type": "string", "description": "Optional preferred machine id or name"},
+					"allowed_devices": map[string]interface{}{
+						"type":        "array",
+						"description": "Optional machine ids or names to form the execution pool",
+						"items":       map[string]interface{}{"type": "string"},
+					},
+				},
+			},
+		},
+		{
+			"name":        "agent_graph_list",
+			"description": "List agent graphs with node status, placement, and summaries.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "agent_graph_show",
+			"description": "Show one agent graph with node placements and placement reasons.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"graph_id"},
+				"properties": map[string]interface{}{
+					"graph_id": map[string]interface{}{"type": "string", "description": "Agent graph id"},
+				},
+			},
+		},
+		{
+			"name":        "agent_graph_stop",
+			"description": "Stop a running agent graph.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"graph_id"},
+				"properties": map[string]interface{}{
+					"graph_id": map[string]interface{}{"type": "string", "description": "Agent graph id"},
+				},
+			},
+		},
+	}
+	tools = append(tools, agentTools...)
 
 	// Browser automation tools — AI-driven browser control on the dev machine.
 	browserTools := []map[string]interface{}{

@@ -15,21 +15,21 @@ import (
 // MachineInfo is the universal descriptor for anything that runs a Yaver agent.
 // Spans: local Mac Mini, home Linux box, Hetzner VPS, Yaver Cloud instance, etc.
 type MachineInfo struct {
-	DeviceID      string               `json:"deviceId"`
-	Name          string               `json:"name"`
-	Platform      string               `json:"platform"`
-	OS            string               `json:"os"`
-	Arch          string               `json:"arch"`
-	IsLocal       bool                 `json:"isLocal"`
-	IsOnline      bool                 `json:"isOnline"`
-	Provider      string               `json:"provider,omitempty"` // hetzner, digitalocean, local, yaver-cloud
-	Cost          string               `json:"cost,omitempty"`     // best-effort monthly cost label
-	Uptime        uint64               `json:"uptime,omitempty"`
-	Hostname      string               `json:"hostname,omitempty"`
-	QuicHost      string               `json:"quicHost,omitempty"`
-	QuicPort      int                  `json:"quicPort,omitempty"`
-	CurrentWorkDir string              `json:"currentWorkDir,omitempty"`
-	Capabilities  *MachineCapabilities `json:"capabilities,omitempty"`
+	DeviceID       string               `json:"deviceId"`
+	Name           string               `json:"name"`
+	Platform       string               `json:"platform"`
+	OS             string               `json:"os"`
+	Arch           string               `json:"arch"`
+	IsLocal        bool                 `json:"isLocal"`
+	IsOnline       bool                 `json:"isOnline"`
+	Provider       string               `json:"provider,omitempty"` // hetzner, digitalocean, local, yaver-cloud
+	Cost           string               `json:"cost,omitempty"`     // best-effort monthly cost label
+	Uptime         uint64               `json:"uptime,omitempty"`
+	Hostname       string               `json:"hostname,omitempty"`
+	QuicHost       string               `json:"quicHost,omitempty"`
+	QuicPort       int                  `json:"quicPort,omitempty"`
+	CurrentWorkDir string               `json:"currentWorkDir,omitempty"`
+	Capabilities   *MachineCapabilities `json:"capabilities,omitempty"`
 }
 
 type MachineRunnerCapability struct {
@@ -44,15 +44,17 @@ type MachineRunnerCapability struct {
 }
 
 type MachineCapabilities struct {
-	Hardware           HardwareProfile          `json:"hardware"`
+	Hardware           HardwareProfile           `json:"hardware"`
 	Runners            []MachineRunnerCapability `json:"runners"`
-	SupportsIOS        bool                     `json:"supportsIos"`
-	SupportsAndroid    bool                     `json:"supportsAndroid"`
-	SupportsDocker     bool                     `json:"supportsDocker"`
-	SupportsLocalLLM   bool                     `json:"supportsLocalLlm"`
-	SupportsTestFlight bool                  `json:"supportsTestFlight"`
-	SupportsPlayStore bool                     `json:"supportsPlayStore"`
-	LowPower          bool                     `json:"lowPower"`
+	SupportsIOS        bool                      `json:"supportsIos"`
+	SupportsAndroid    bool                      `json:"supportsAndroid"`
+	SupportsDocker     bool                      `json:"supportsDocker"`
+	SupportsLocalLLM   bool                      `json:"supportsLocalLlm"`
+	SupportsTestFlight bool                      `json:"supportsTestFlight"`
+	SupportsPlayStore  bool                      `json:"supportsPlayStore"`
+	LowPower           bool                      `json:"lowPower"`
+	MaxTaskSlots       int                       `json:"maxTaskSlots"`
+	Profile            *MachineProfile           `json:"profile,omitempty"`
 }
 
 // listAllMachines returns every Yaver-managed machine this user owns — the
@@ -175,6 +177,7 @@ func providerFromHint(platform, quicHost string) string {
 func detectMachineCapabilities(workDir string) *MachineCapabilities {
 	caps := &MachineCapabilities{
 		Hardware: DetectHardware(),
+		Profile:  loadMachineProfile(workDir),
 	}
 	for _, id := range []string{"claude", "codex", "aider", "aider-ollama", "ollama", "opencode"} {
 		cfg := GetRunnerConfig(id)
@@ -201,7 +204,59 @@ func detectMachineCapabilities(workDir string) *MachineCapabilities {
 	caps.SupportsPlayStore = toolLooksInstalled("java") || toolLooksInstalled("javac") || toolLooksInstalled("gradle")
 	caps.SupportsAndroid = caps.SupportsPlayStore || toolLooksInstalled("adb")
 	caps.LowPower = caps.Hardware.CPUCores <= 4 || strings.Contains(strings.ToLower(caps.Hardware.Arch), "arm")
+	if caps.Profile != nil {
+		if profileHasAny(caps.Profile, "testflight", "xcode", "ios") {
+			caps.SupportsIOS = true
+			caps.SupportsTestFlight = true
+		}
+		if profileHasAny(caps.Profile, "android", "playstore", "gradle") {
+			caps.SupportsAndroid = true
+			caps.SupportsPlayStore = true
+		}
+		if profileHasAny(caps.Profile, "ollama", "local-llm") {
+			caps.SupportsLocalLLM = true
+		}
+	}
+	caps.MaxTaskSlots = machineTaskCapacity(caps)
 	return caps
+}
+
+func machineTaskCapacity(caps *MachineCapabilities) int {
+	if caps == nil {
+		return 1
+	}
+	if caps.LowPower {
+		return 1
+	}
+	base := caps.Hardware.MaxParallel
+	switch {
+	case base >= 8:
+		return 3
+	case base >= 4:
+		return 2
+	default:
+		return 1
+	}
+}
+
+func profileHasAny(profile *MachineProfile, values ...string) bool {
+	if profile == nil {
+		return false
+	}
+	haystack := append([]string{}, profile.Tags...)
+	haystack = append(haystack, profile.Signatures...)
+	haystack = append(haystack, profile.PreferredFor...)
+	joined := strings.Join(haystack, " ")
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		if strings.Contains(joined, value) {
+			return true
+		}
+	}
+	return false
 }
 
 func machineHasReadyRunner(runners []MachineRunnerCapability, id string) bool {

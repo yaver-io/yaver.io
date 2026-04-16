@@ -50,24 +50,24 @@ const (
 )
 
 type AgentGraphNodeSpec struct {
-	ID            string        `json:"id"`
-	Title         string        `json:"title"`
-	Kind          AgentNodeKind `json:"kind"`
-	Prompt        string        `json:"prompt,omitempty"`
-	DependsOn     []string      `json:"dependsOn,omitempty"`
-	Runner        string        `json:"runner,omitempty"`
-	Model         string        `json:"model,omitempty"`
-	Engine        string        `json:"engine,omitempty"`
-	WorkDir       string        `json:"workDir,omitempty"`
-	Project       string        `json:"project,omitempty"`
-	Target        string        `json:"target,omitempty"`
-	Load          string        `json:"load,omitempty"`
-	Hours         string        `json:"hours,omitempty"`
-	MaxIterations int           `json:"maxIterations,omitempty"`
-	NoAutotest    bool          `json:"noAutotest,omitempty"`
-	PreferredDevice string      `json:"preferredDevice,omitempty"`
-	AllowedDevices  []string    `json:"allowedDevices,omitempty"`
-	AllowedRunners  []string    `json:"allowedRunners,omitempty"`
+	ID              string        `json:"id"`
+	Title           string        `json:"title"`
+	Kind            AgentNodeKind `json:"kind"`
+	Prompt          string        `json:"prompt,omitempty"`
+	DependsOn       []string      `json:"dependsOn,omitempty"`
+	Runner          string        `json:"runner,omitempty"`
+	Model           string        `json:"model,omitempty"`
+	Engine          string        `json:"engine,omitempty"`
+	WorkDir         string        `json:"workDir,omitempty"`
+	Project         string        `json:"project,omitempty"`
+	Target          string        `json:"target,omitempty"`
+	Load            string        `json:"load,omitempty"`
+	Hours           string        `json:"hours,omitempty"`
+	MaxIterations   int           `json:"maxIterations,omitempty"`
+	NoAutotest      bool          `json:"noAutotest,omitempty"`
+	PreferredDevice string        `json:"preferredDevice,omitempty"`
+	AllowedDevices  []string      `json:"allowedDevices,omitempty"`
+	AllowedRunners  []string      `json:"allowedRunners,omitempty"`
 }
 
 type AgentGraphNodeState struct {
@@ -99,15 +99,16 @@ type AgentGraphRun struct {
 }
 
 type AgentGraphCreateRequest struct {
-	Name        string               `json:"name"`
-	WorkDir     string               `json:"workDir"`
-	Prompt      string               `json:"prompt,omitempty"`
-	Template    string               `json:"template,omitempty"`
-	Runner      string               `json:"runner,omitempty"`
-	Model       string               `json:"model,omitempty"`
-	MaxParallel int                  `json:"maxParallel,omitempty"`
-	PreferredDevice string           `json:"preferredDevice,omitempty"`
-	Nodes       []AgentGraphNodeSpec `json:"nodes,omitempty"`
+	Name            string               `json:"name"`
+	WorkDir         string               `json:"workDir"`
+	Prompt          string               `json:"prompt,omitempty"`
+	Template        string               `json:"template,omitempty"`
+	Runner          string               `json:"runner,omitempty"`
+	Model           string               `json:"model,omitempty"`
+	MaxParallel     int                  `json:"maxParallel,omitempty"`
+	PreferredDevice string               `json:"preferredDevice,omitempty"`
+	AllowedDevices  []string             `json:"allowedDevices,omitempty"`
+	Nodes           []AgentGraphNodeSpec `json:"nodes,omitempty"`
 }
 
 type AgentGraphManager struct {
@@ -598,14 +599,19 @@ func (gm *AgentGraphManager) tick(id string, ctx context.Context) bool {
 	}
 	startIDs := []string{}
 	if slots > 0 {
+		policyState := buildMeshPolicyState(run, nodeIndex)
 		for _, nodeID := range ready {
 			if slots == 0 {
 				break
 			}
 			node := nodeIndex[nodeID]
+			if !policyState.CanStart(node) {
+				continue
+			}
 			node.Status = AgentNodeRunning
 			node.StartedAt = time.Now().UTC().Format(time.RFC3339)
 			startIDs = append(startIDs, nodeID)
+			policyState.Reserve(node)
 			slots--
 		}
 	}
