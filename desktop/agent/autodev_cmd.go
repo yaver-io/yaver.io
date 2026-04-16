@@ -841,6 +841,11 @@ func runAutodevLoop(p autodevPlan) {
 		if beforeSHA != afterSHA && afterSHA != "" {
 			report.addKick(iter, beforeSHA, afterSHA)
 			report.save()
+			// Append a one-line entry to init.md's history so the
+			// next session knows what this kick produced.
+			wd, _ := os.Getwd()
+			autoinitAppendHistory(wd, fmt.Sprintf("[%s kick #%d] %s",
+				p.Kind, iter, autodevGitSubject(afterSHA)))
 		}
 
 		// --- interleaved regression autotest kick ---

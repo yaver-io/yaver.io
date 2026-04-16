@@ -2265,6 +2265,33 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name":        "autoinit_start",
+			"description": "Bootstrap a project init.md (cached project context for autonomous yaver runs). Drastically cuts the per-kick token + wall-clock cost of autodev / autoideas / autotest because runners read init.md instead of re-grepping the project on every kick. Idempotent — re-runs replace only the AI-generated section, preserving any human-edited prose between markers.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"work_dir"},
+				"properties": map[string]interface{}{
+					"project":  map[string]interface{}{"type": "string"},
+					"work_dir": map[string]interface{}{"type": "string"},
+					"prompt":   map[string]interface{}{"type": "string", "description": "extra context to bias the description"},
+					"engine":   map[string]interface{}{"type": "string", "enum": []string{"claude", "hybrid"}},
+					"output":   map[string]interface{}{"type": "string", "description": "default init.md"},
+					"force":    map[string]interface{}{"type": "boolean", "description": "regenerate even if init.md already has a generated section"},
+				},
+			},
+		},
+		{
+			"name":        "autoinit_status",
+			"description": "Quick `is init done?` check for a project. Returns {done, path, bytes, updated_at, has_generated_section, has_history_section}. Mobile / web call this to show a green check or a 'Run autoinit' button.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"work_dir"},
+				"properties": map[string]interface{}{
+					"work_dir": map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+		{
 			"name": "autoideas_start",
 			"description": "Start a yaver autoideas run on a local project. Long-lived loop that asks the AI for fresh single-PR-sized ideas every tick and appends them as `- [ ] <title>` lines to ideas.md (or --output). Mobile/web renders them as checkboxes; the user picks ones to implement and triggers autoideas_select which materialises a curated checklist and starts an autodev run with --remained pointed at it. Generation continues in parallel with implementation.",
 			"inputSchema": map[string]interface{}{

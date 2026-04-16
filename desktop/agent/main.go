@@ -180,6 +180,8 @@ func main() {
 		runAutotest(os.Args[2:])
 	case "autoideas":
 		runAutoIdeas(os.Args[2:])
+	case "autoinit":
+		runAutoInit(os.Args[2:])
 	case "stream":
 		runStream(os.Args[2:])
 	case "mail":

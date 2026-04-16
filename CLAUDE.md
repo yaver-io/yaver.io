@@ -823,6 +823,20 @@ The resume prompt is built from: bundle title + agent type + turn count + pendin
 | `desktop/agent/mcp_tools.go` | `session_handoff` tool schema |
 | `desktop/agent/main.go` | CLI dispatch case `handoff` |
 
+## Project context files for autonomous yaver sessions
+
+When `yaver autodev` / `yaver autoideas` / `yaver autotest` runs, the runner's prompt is prepended with cached context drawn from three files at the project root (best-effort — missing files just contribute nothing):
+
+| File | Purpose | How it gets there |
+|------|---------|-------------------|
+| `init.md` | Auto-generated project description: stack, layout, conventions, build/test/deploy commands, recent direction, plus an auto-appended history of what each yaver run shipped. | `yaver autoinit <project>` (CLI / `POST /autoinit/start` / MCP `autoinit_start`). Status: `yaver autoinit status` / `GET /autoinit/status` / MCP `autoinit_status`. |
+| `CLAUDE.md` | Hand-written project conventions, terminology rules, deploy notes, copyright/legal rules. The repo's source of truth for "how a coding agent should behave here". | Manual (you write it). |
+| `remained.md` | Markdown checklist (`- [ ] item`) of what's left to build. autodev's default driver — each kick picks the next unchecked item, implements it, checks it off, commits. autoideas appends to it. | Optional. autodev auto-detects `remained.md` / `REMAINED.md` / `TODO.md` if present. |
+
+The runner prompt opens with these three sections under a `--- CACHED PROJECT CONTEXT ---` banner so it doesn't have to re-grep / re-read the project on every kick. Each file is capped at 8 KB inside the prompt to protect the context window.
+
+**Run `yaver autoinit` once when adopting a new project** — the wall-clock + token cost of every subsequent autodev / autoideas / autotest kick drops sharply because Claude reads cached context instead of grepping the codebase from scratch.
+
 ## Container Sandbox (Optional Task Isolation)
 
 Run AI agent tasks inside Docker containers for filesystem isolation. **Optional and disabled by default** — the default mode runs tasks directly on the host (unchanged behavior).
