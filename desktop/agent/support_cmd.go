@@ -279,8 +279,12 @@ func runSupportConnect(args []string) {
 }
 
 func probeSupportInfo(baseURL string) error {
+	req, err := supportRequest(http.MethodGet, baseURL+"/support/info", "", nil)
+	if err != nil {
+		return err
+	}
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(baseURL + "/support/info")
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -300,7 +304,7 @@ func probeSupportInfo(baseURL string) error {
 
 func redeemSupportCode(baseURL, code string) (string, map[string]interface{}, error) {
 	body, _ := json.Marshal(map[string]string{"code": code})
-	req, err := http.NewRequest("POST", baseURL+"/support/redeem", bytes.NewReader(body))
+	req, err := supportRequest(http.MethodPost, baseURL+"/support/redeem", "", bytes.NewReader(body))
 	if err != nil {
 		return "", nil, err
 	}
@@ -333,9 +337,12 @@ func runRemoteExec(baseURL, bearer, command string) int {
 		"command": command,
 		"timeout": 3600,
 	})
-	req, _ := http.NewRequest("POST", baseURL+"/exec", bytes.NewReader(body))
+	req, err := supportRequest(http.MethodPost, baseURL+"/exec", bearer, bytes.NewReader(body))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "exec: %v\n", err)
+		return 1
+	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+bearer)
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -367,8 +374,11 @@ func pollRemoteExec(baseURL, bearer, execID string) int {
 	seenOut := 0
 	seenErr := 0
 	for {
-		req, _ := http.NewRequest("GET", baseURL+"/exec/"+execID, nil)
-		req.Header.Set("Authorization", "Bearer "+bearer)
+		req, err := supportRequest(http.MethodGet, baseURL+"/exec/"+execID, bearer, nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "poll: %v\n", err)
+			return 1
+		}
 		resp, err := client.Do(req)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "poll: %v\n", err)
@@ -401,6 +411,26 @@ func pollRemoteExec(baseURL, bearer, execID string) int {
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
+}
+
+func supportRequest(method, url, bearer string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(bearer) != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	base := strings.TrimSpace(url)
+	if idx := strings.Index(base, "/support/"); idx >= 0 {
+		base = base[:idx]
+	} else if idx := strings.Index(base, "/exec"); idx >= 0 {
+		base = base[:idx]
+	}
+	if relayPassword, err := relayPasswordForBase(base); err == nil && relayPassword != "" {
+		req.Header.Set("X-Relay-Password", relayPassword)
+	}
+	return req, nil
 }
 
 // runRemoteShell is an interactive REPL — read a line, run it remotely,
