@@ -1,3 +1,5 @@
+//go:build !windows
+
 package main
 
 // autodev_detach.go — turns `yaver autodev sfmg` into a "set and
