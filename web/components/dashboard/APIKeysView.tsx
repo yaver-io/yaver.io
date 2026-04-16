@@ -126,9 +126,10 @@ export default function APIKeysView() {
         <div className="mt-2 grid gap-2 md:grid-cols-2">
           <input
             className="rounded border border-surface-700 bg-surface-900 px-2 py-1.5 text-sm"
-            placeholder="label (e.g. BentoApp prod)"
+            placeholder="label (e.g. BentoApp prod) — no secrets"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
+            maxLength={80}
           />
           <input
             className="rounded border border-surface-700 bg-surface-900 px-2 py-1.5 text-sm"

@@ -60,18 +60,18 @@ type DevServerOpts struct {
 
 // DevServerStatus is the JSON-serializable status of a dev server.
 type DevServerStatus struct {
-	Framework  string `json:"framework"`
-	Running    bool   `json:"running"`
-	Building   bool   `json:"building,omitempty"`   // true during native compilation (expo run:ios, etc.)
-	Port       int    `json:"port"`
-	BundleURL  string `json:"bundleUrl"`
-	DeepLink   string `json:"deepLink,omitempty"`
-	DevMode    string `json:"devMode,omitempty"`    // "dev-client", "web", "expo-go", "" (for non-Expo)
-	StartedAt  string `json:"startedAt,omitempty"`
-	Error      string `json:"error,omitempty"`
-	PID        int    `json:"pid,omitempty"`
-	WorkDir    string `json:"workDir,omitempty"`
-	HotReload  bool   `json:"hotReload"`
+	Framework         string `json:"framework"`
+	Running           bool   `json:"running"`
+	Building          bool   `json:"building,omitempty"` // true during native compilation (expo run:ios, etc.)
+	Port              int    `json:"port"`
+	BundleURL         string `json:"bundleUrl"`
+	DeepLink          string `json:"deepLink,omitempty"`
+	DevMode           string `json:"devMode,omitempty"` // "dev-client", "web", "expo-go", "" (for non-Expo)
+	StartedAt         string `json:"startedAt,omitempty"`
+	Error             string `json:"error,omitempty"`
+	PID               int    `json:"pid,omitempty"`
+	WorkDir           string `json:"workDir,omitempty"`
+	HotReload         bool   `json:"hotReload"`
 	TargetDeviceID    string `json:"targetDeviceId,omitempty"`
 	TargetDeviceName  string `json:"targetDeviceName,omitempty"`
 	TargetDeviceClass string `json:"targetDeviceClass,omitempty"`
@@ -79,12 +79,12 @@ type DevServerStatus struct {
 
 // DevServerEvent is pushed via SSE on /dev/events.
 type DevServerEvent struct {
-	Type      string `json:"type"`                // "ready", "reload", "error", "stopped", "file_changed", "log"
+	Type      string `json:"type"` // "ready", "reload", "error", "stopped", "file_changed", "log"
 	Framework string `json:"framework"`
 	BundleURL string `json:"bundleUrl,omitempty"`
 	DeepLink  string `json:"deepLink,omitempty"`
 	Message   string `json:"message,omitempty"`
-	LogLine   string `json:"logLine,omitempty"`   // single build output line (type="log")
+	LogLine   string `json:"logLine,omitempty"` // single build output line (type="log")
 	Timestamp string `json:"timestamp"`
 }
 
@@ -137,10 +137,11 @@ func init() {
 
 // DevServerManager manages the active dev server session and event subscribers.
 type DevServerManager struct {
-	mu      sync.RWMutex
-	active  *devServerSession
-	subs    []chan DevServerEvent
-	subsMu  sync.Mutex
+	mu     sync.RWMutex
+	active *devServerSession
+	subs   []chan DevServerEvent
+	subsMu sync.Mutex
+	target DevServerTarget
 
 	// Agent's externally reachable URL (for Metro proxy URL).
 	// Set by the HTTP server after relay connection is established.
@@ -153,11 +154,11 @@ type DevServerManager struct {
 }
 
 type devServerSession struct {
-	server  DevServer
-	proxy   *httputil.ReverseProxy
-	ctx     context.Context
-	cancel  context.CancelFunc
-	target  DevServerTarget
+	server DevServer
+	proxy  *httputil.ReverseProxy
+	ctx    context.Context
+	cancel context.CancelFunc
+	target DevServerTarget
 }
 
 type DevServerTarget struct {
@@ -183,6 +184,12 @@ func (m *DevServerManager) Start(framework, workDir, platform string, port int, 
 		m.active.server.Stop()
 		m.active.cancel()
 		m.active = nil
+	}
+
+	if isEmptyDevServerTarget(target) {
+		target = m.target
+	} else {
+		m.target = target
 	}
 
 	var ds DevServer
@@ -387,6 +394,32 @@ func (m *DevServerManager) Status() *DevServerStatus {
 	return &s
 }
 
+// PreferredTarget returns the persisted dev preview target.
+func (m *DevServerManager) PreferredTarget() DevServerTarget {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.active != nil && !isEmptyDevServerTarget(m.active.target) {
+		return m.active.target
+	}
+	return m.target
+}
+
+// SetPreferredTarget updates the persisted dev preview target.
+func (m *DevServerManager) SetPreferredTarget(target DevServerTarget) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.target = target
+	if m.active != nil {
+		m.active.target = target
+	}
+}
+
+func isEmptyDevServerTarget(target DevServerTarget) bool {
+	return target.DeviceID == "" && target.DeviceName == "" && target.DeviceClass == ""
+}
+
 // IsRunning returns true if a dev server is active.
 func (m *DevServerManager) IsRunning() bool {
 	m.mu.RLock()
@@ -486,8 +519,8 @@ type baseDevServer struct {
 	emitFn    func(DevServerEvent) // set by DevServerManager to stream log lines via SSE
 }
 
-func (b *baseDevServer) Name() string                    { return b.name }
-func (b *baseDevServer) Port() int                       { return b.port }
+func (b *baseDevServer) Name() string                      { return b.name }
+func (b *baseDevServer) Port() int                         { return b.port }
 func (b *baseDevServer) SetEmitFn(fn func(DevServerEvent)) { b.emitFn = fn }
 
 // PreStart sets the name, port, and workDir before the async Start goroutine.
@@ -1149,8 +1182,8 @@ func (v *ViteDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 }
 
 func (v *ViteDevServer) BundleURL(platform string) string { return "/dev/" }
-func (v *ViteDevServer) SupportsHotReload() bool           { return true }
-func (v *ViteDevServer) Reload() error                     { return nil } // Vite auto-reloads
+func (v *ViteDevServer) SupportsHotReload() bool          { return true }
+func (v *ViteDevServer) Reload() error                    { return nil } // Vite auto-reloads
 
 // ─── Next.js Dev Server ────────────────────────────────────────────────
 
@@ -1184,5 +1217,5 @@ func (n *NextDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 }
 
 func (n *NextDevServer) BundleURL(platform string) string { return "/dev/" }
-func (n *NextDevServer) SupportsHotReload() bool           { return true }
-func (n *NextDevServer) Reload() error                     { return nil } // Next.js auto-reloads
+func (n *NextDevServer) SupportsHotReload() bool          { return true }
+func (n *NextDevServer) Reload() error                    { return nil } // Next.js auto-reloads

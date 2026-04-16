@@ -108,6 +108,28 @@ export interface AgentInfo {
   sttProvider?: string;
 }
 
+export interface DevTargetPreference {
+  targetDeviceId?: string;
+  targetDeviceName?: string;
+  targetDeviceClass?: string;
+}
+
+export interface MobileWorkerPreviewSession {
+  hasTarget: boolean;
+  targetDeviceId?: string;
+  targetDeviceName?: string;
+  targetDeviceClass?: string;
+  workerOnline: boolean;
+  workerPlatform?: string;
+  workerAppName?: string;
+  workerStartedAt?: string;
+  workerEventCount?: number;
+  devServerRunning: boolean;
+  framework?: string;
+  workDir?: string;
+  targetCommandScope?: string;
+}
+
 // Vault entries — mirrors VaultEntry / VaultEntrySummary in vault.go.
 export type VaultCategory = "api-key" | "signing-key" | "ssh-key" | "git-credential" | "custom";
 
@@ -145,6 +167,27 @@ export interface ExecSnapshot {
   finishedAt?: string;
   exitCode?: number;
   pid?: number;
+}
+
+// Matches desktop/agent/scheduler.go::ScheduledTask.
+export interface ScheduledTask {
+  id: string;
+  title: string;
+  description?: string;
+  model?: string;
+  runner?: string;
+  customCommand?: string;
+  runAt?: string;
+  cron?: string;
+  repeatInterval?: number;
+  status: "scheduled" | "running" | "completed" | "failed" | "paused";
+  lastRunAt?: string;
+  lastTaskId?: string;
+  nextRunAt?: string;
+  runCount: number;
+  maxRuns?: number;
+  createdAt: string;
+  history?: { taskId: string; status: string; startedAt: string; durationMs: number; costUsd?: number }[];
 }
 
 export interface VoiceStatus {
@@ -1585,6 +1628,49 @@ class AgentClient {
     } catch { return null; }
   }
 
+  async getDevServerTarget(): Promise<DevTargetPreference | null> {
+    this.assertConnected();
+    try {
+      const res = await fetch(`${this.baseUrl}/dev/target`, { headers: this.authHeaders });
+      if (!res.ok) return null;
+      return res.json();
+    } catch { return null; }
+  }
+
+  async setDevServerTarget(target: DevTargetPreference): Promise<DevTargetPreference | null> {
+    this.assertConnected();
+    try {
+      const res = await fetch(`${this.baseUrl}/dev/target`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(target),
+      });
+      if (!res.ok) return null;
+      return res.json();
+    } catch { return null; }
+  }
+
+  async getMobileWorkerPreviewSession(): Promise<MobileWorkerPreviewSession | null> {
+    this.assertConnected();
+    try {
+      const res = await fetch(`${this.baseUrl}/mobile-workers/preview-session`, { headers: this.authHeaders });
+      if (!res.ok) return null;
+      return res.json();
+    } catch { return null; }
+  }
+
+  async sendMobileWorkerPreviewCommand(command: string, data?: Record<string, unknown>): Promise<boolean> {
+    this.assertConnected();
+    try {
+      const res = await fetch(`${this.baseUrl}/mobile-workers/preview-session/command`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ command, data }),
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
   async startDevServer(opts: {
     framework: string;
     workDir: string;
@@ -2283,6 +2369,70 @@ class AgentClient {
     if (!res.ok) throw new Error(`exec input: HTTP ${res.status}`);
   }
 
+  // ── Schedules (one-shot + cron + repeat interval) ───────────────
+
+  async listSchedules(): Promise<ScheduledTask[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/schedules`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`schedules list: HTTP ${res.status}`);
+    const data = await res.json();
+    return Array.isArray(data?.schedules) ? data.schedules : [];
+  }
+
+  // Pass a partial ScheduledTask — server fills in id/createdAt/status.
+  async createSchedule(
+    spec: Omit<Partial<ScheduledTask>, "id" | "createdAt" | "status" | "runCount"> & { title: string },
+  ): Promise<ScheduledTask> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/schedules`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(spec),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || `schedule create: HTTP ${res.status}`);
+    return data.schedule;
+  }
+
+  async getSchedule(id: string): Promise<ScheduledTask | null> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/schedules/${encodeURIComponent(id)}`,
+      { headers: this.authHeaders },
+    );
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`schedule get: HTTP ${res.status}`);
+    const data = await res.json();
+    return data?.schedule ?? null;
+  }
+
+  async deleteSchedule(id: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/schedules/${encodeURIComponent(id)}`,
+      { method: "DELETE", headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`schedule delete: HTTP ${res.status}`);
+  }
+
+  async pauseSchedule(id: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/schedules/${encodeURIComponent(id)}/pause`,
+      { method: "POST", headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`schedule pause: HTTP ${res.status}`);
+  }
+
+  async resumeSchedule(id: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/schedules/${encodeURIComponent(id)}/resume`,
+      { method: "POST", headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`schedule resume: HTTP ${res.status}`);
+  }
+
   async signalExec(execId: string, signal: string): Promise<void> {
     this.assertConnected();
     const res = await fetch(
@@ -2322,6 +2472,27 @@ class AgentClient {
       { method: "DELETE", headers: this.authHeaders },
     );
     if (!res.ok) throw new Error(`blob delete: HTTP ${res.status}`);
+  }
+
+  // PUT a File straight into a bucket. The agent persists it to
+  // ~/.yaver/blobs/<bucket>/<key> and returns metadata. Bytes never
+  // transit Convex.
+  async blobsUpload(bucket: string, key: string, file: File): Promise<{ key: string; size?: number; contentType?: string }> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/blobs/${encodeURIComponent(bucket)}/${encodeURIComponent(key)}`,
+      {
+        method: "PUT",
+        headers: {
+          ...this.authHeaders,
+          "Content-Type": file.type || "application/octet-stream",
+        },
+        body: file,
+      },
+    );
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || `blob upload: HTTP ${res.status}`);
+    return data.blob;
   }
 
   // ── Files (read-only project browser) ─────────────────────────────

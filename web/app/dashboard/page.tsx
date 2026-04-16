@@ -28,6 +28,8 @@ import MorningView from "@/components/dashboard/MorningView";
 import VaultView from "@/components/dashboard/VaultView";
 import APIKeysView from "@/components/dashboard/APIKeysView";
 import StorageView from "@/components/dashboard/StorageView";
+import SchedulesView from "@/components/dashboard/SchedulesView";
+import ExecView from "@/components/dashboard/ExecView";
 
 function statusColor(s: string) {
   if (s === "running") return "text-amber-400";
@@ -51,7 +53,7 @@ export default function DashboardPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [guestCode, setGuestCode] = useState("");
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "infra" | "security" | "morning" | "storage" | "vault" | "apikeys">("home");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "infra" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec">("home");
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [relayReady, setRelayReady] = useState(false);
@@ -106,6 +108,18 @@ export default function DashboardPage() {
     if (previewTargetId) window.localStorage.setItem("yaver.previewTargetId", previewTargetId);
     else window.localStorage.removeItem("yaver.previewTargetId");
   }, [previewTargetId]);
+
+  useEffect(() => {
+    if (!isConnected) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const target = await agentClient.getDevServerTarget();
+        if (!cancelled) setPreviewTargetId(target?.targetDeviceId || null);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [isConnected, connectedDevice?.id]);
 
   useEffect(() => { const u = agentClient.on("connectionState", setConnState); return u; }, []);
 
@@ -163,6 +177,17 @@ export default function DashboardPage() {
 
   const selectTask = (t: Task) => { setActiveTask(t); setOutputLines(t.output || []); setActiveTab("chat"); };
   const onTaskCreated = () => { setActiveTab("chat"); agentClient.listTasks().then(setTasks).catch(() => {}); };
+  const handleSelectPreviewTarget = async (deviceId: string | null) => {
+    const target = deviceId ? devices.find((d) => d.id === deviceId) || null : null;
+    setPreviewTargetId(deviceId);
+    try {
+      await agentClient.setDevServerTarget({
+        targetDeviceId: target?.id,
+        targetDeviceName: target?.name,
+        targetDeviceClass: target?.deviceClass,
+      });
+    } catch {}
+  };
 
   // ── Conditional renders (NO hooks below this point) ─────────────
 
@@ -202,6 +227,8 @@ export default function DashboardPage() {
     { id: "storage", label: "Storage", icon: "\uD83D\uDCC2" },
     { id: "vault", label: "Vault", icon: "\uD83D\uDD12" },
     { id: "apikeys", label: "API Keys", icon: "\uD83D\uDD11" },
+    { id: "schedules", label: "Schedules", icon: "\u23F0" },
+    { id: "exec", label: "Exec", icon: "\u2699\uFE0F" },
     { id: "security", label: "Security", icon: "\uD83D\uDD10" },
     { id: "morning", label: "Morning", icon: "\u2600\uFE0F" },
   ];
@@ -405,13 +432,13 @@ export default function DashboardPage() {
           ) : activeTab === "home" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><OverviewView user={user ?? undefined} /></div>
           ) : activeTab === "projects" ? (
-            <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><ProjectsView onTaskCreated={onTaskCreated} mobileWorkers={mobileWorkers} selectedPreviewTarget={selectedPreviewTarget} onSelectPreviewTarget={setPreviewTargetId} /></div>
+            <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><ProjectsView onTaskCreated={onTaskCreated} mobileWorkers={mobileWorkers} selectedPreviewTarget={selectedPreviewTarget} onSelectPreviewTarget={handleSelectPreviewTarget} /></div>
           ) : activeTab === "todos" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><TodosView onTaskCreated={onTaskCreated} /></div>
           ) : activeTab === "builds" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><BuildsView onTaskCreated={onTaskCreated} /></div>
           ) : activeTab === "preview" ? (
-            <div className="flex-1 min-h-0"><PreviewPane selectedPreviewTarget={selectedPreviewTarget} onSelectPreviewTarget={setPreviewTargetId} mobileWorkers={mobileWorkers} /></div>
+            <div className="flex-1 min-h-0"><PreviewPane selectedPreviewTarget={selectedPreviewTarget} onSelectPreviewTarget={handleSelectPreviewTarget} mobileWorkers={mobileWorkers} /></div>
           ) : activeTab === "health" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><HealthView /></div>
           ) : activeTab === "quality" ? (
@@ -446,6 +473,10 @@ export default function DashboardPage() {
             <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto"><VaultView /></div>
           ) : activeTab === "apikeys" ? (
             <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto"><APIKeysView /></div>
+          ) : activeTab === "schedules" ? (
+            <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto"><SchedulesView /></div>
+          ) : activeTab === "exec" ? (
+            <div className="flex-1 min-h-0 w-full"><ExecView /></div>
           ) : (
             <>
               <div className="flex flex-1 min-h-0">

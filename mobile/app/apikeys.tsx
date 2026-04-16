@@ -222,12 +222,13 @@ export default function APIKeysScreen() {
           style={{ maxHeight: 320 }}
           contentContainerStyle={[s.form, { backgroundColor: c.bgCard, borderColor: c.border }]}
         >
-          <Text style={{ color: c.textMuted, fontSize: 11 }}>Label</Text>
+          <Text style={{ color: c.textMuted, fontSize: 11 }}>Label (no secrets)</Text>
           <TextInput
             value={label}
-            onChangeText={setLabel}
+            onChangeText={(v) => setLabel(v.slice(0, 80))}
             placeholder="BentoApp prod"
             placeholderTextColor={c.textMuted}
+            maxLength={80}
             style={[s.input, { color: c.textPrimary, borderColor: c.border }]}
           />
           <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 8 }}>Scopes</Text>

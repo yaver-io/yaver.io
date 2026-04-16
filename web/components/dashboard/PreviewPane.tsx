@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { agentClient } from "@/lib/agent-client";
+import { agentClient, type MobileWorkerPreviewSession } from "@/lib/agent-client";
 
 interface PreviewTarget {
   id: string;
@@ -23,12 +23,20 @@ export default function PreviewPane({
     workDir?: string;
     targetDeviceName?: string;
   } | null>(null);
+  const [workerSession, setWorkerSession] = useState<MobileWorkerPreviewSession | null>(null);
   const [iframeKey, setIframeKey] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
     const poll = async () => {
-      try { setDevStatus(await agentClient.getDevServerStatus()); } catch {}
+      try {
+        const [status, session] = await Promise.all([
+          agentClient.getDevServerStatus(),
+          agentClient.getMobileWorkerPreviewSession(),
+        ]);
+        setDevStatus(status);
+        setWorkerSession(session);
+      } catch {}
     };
     poll();
     const interval = setInterval(poll, 3000);
@@ -84,6 +92,12 @@ export default function PreviewPane({
     setDevStatus(null);
   }
 
+  async function handleRequestScreenshot() {
+    await agentClient.sendMobileWorkerPreviewCommand("capture_screenshot", {
+      reason: "preview-control-plane",
+    });
+  }
+
   if (!devStatus?.running || !previewUrl) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-surface-500 gap-3">
@@ -104,6 +118,14 @@ export default function PreviewPane({
         <span className="text-[10px] text-sky-300">
           {devStatus.targetDeviceName || selectedPreviewTarget?.name || "current device"}
         </span>
+        {workerSession?.hasTarget ? (
+          <span className={`text-[10px] ${workerSession.workerOnline ? "text-emerald-400" : "text-amber-400"}`}>
+            {workerSession.workerOnline ? "worker online" : "worker offline"}
+          </span>
+        ) : null}
+        {workerSession?.hasTarget && workerSession.workerOnline ? (
+          <button onClick={handleRequestScreenshot} className="text-surface-400 hover:text-surface-200 text-xs" title="Request screenshot from selected worker">Shot</button>
+        ) : null}
         <button onClick={handleReload} className="text-surface-400 hover:text-surface-200 text-sm" title="Reload">&#x21BB;</button>
         <button onClick={handleStop} className="text-red-400 hover:text-red-300 text-sm" title="Stop">&#x25A0;</button>
       </div>

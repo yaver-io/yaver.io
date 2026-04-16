@@ -12,7 +12,10 @@ export const upsertProject = mutation({
   args: {
     deviceId: v.string(),
     slug: v.string(),
-    path: v.string(),
+    // path was removed — absolute paths contain the user's home-dir
+    // username; the privacy contract keeps them on the agent. Legacy
+    // agents that still send it are tolerated via v.optional below.
+    path: v.optional(v.string()),
     name: v.string(),
     stack: v.optional(v.string()),
     backend: v.optional(v.string()),
@@ -35,7 +38,11 @@ export const upsertProject = mutation({
       .query("userProjects")
       .withIndex("by_user_slug", (q) => q.eq("userId", userId).eq("slug", args.slug))
       .first();
-    const patch = { ...args, userId, updatedAt: Date.now() };
+    // Never store the absolute path. A legacy agent that still sends
+    // one gets silently stripped at the mutation boundary.
+    const { path: _ignored, ...rest } = args;
+    void _ignored;
+    const patch = { ...rest, userId, updatedAt: Date.now() };
     if (existing) {
       await ctx.db.patch(existing._id, patch);
       return existing._id;

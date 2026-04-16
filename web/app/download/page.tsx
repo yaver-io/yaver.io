@@ -13,52 +13,32 @@ const APT_REPO = "https://raw.githubusercontent.com/kivanccakmak/apt-yaver/main"
 
 const linuxArtifacts = [
   {
-    title: "Linux AppImage",
-    description: "Portable desktop app. No package manager required.",
-    slug: "linux-appimage-amd64" as const,
-    fallbackLabel: "amd64",
-    installHint: "chmod +x Yaver-amd64.AppImage && ./Yaver-amd64.AppImage",
-  },
-  {
-    title: "Linux .deb",
-    description: "Native Debian and Ubuntu package for direct install.",
-    slug: "linux-deb-amd64" as const,
-    fallbackLabel: "amd64",
-    installHint: "sudo apt install ./yaver-amd64.deb",
+    title: "Linux ARM64 AppImage",
+    description: "Portable desktop app for ARM64 Linux. No package manager required.",
+    slug: "linux-appimage-arm64" as const,
+    fallbackLabel: "arm64",
+    installHint: "chmod +x Yaver-arm64.AppImage && ./Yaver-arm64.AppImage",
   },
   {
     title: "Linux ARM64 .deb",
-    description: "Debian and Ubuntu package for ARM64 Linux machines.",
+    description: "Native Debian and Ubuntu package for ARM64 Linux machines.",
     slug: "linux-deb-arm64" as const,
     fallbackLabel: "arm64",
     installHint: "sudo apt install ./yaver-arm64.deb",
   },
-];
-
-const commandBlocks = [
   {
-    label: "apt (Debian / Ubuntu)",
-    commands: [
-      "curl -fsSL https://raw.githubusercontent.com/kivanccakmak/apt-yaver/main/KEY.gpg | sudo gpg --dearmor -o /usr/share/keyrings/yaver.gpg",
-      'echo "deb [signed-by=/usr/share/keyrings/yaver.gpg] https://raw.githubusercontent.com/kivanccakmak/apt-yaver/main ./ stable main" | sudo tee /etc/apt/sources.list.d/yaver.list',
-      "sudo apt update && sudo apt install yaver",
-    ],
+    title: "Linux x64 AppImage",
+    description: "Portable desktop app. No package manager required.",
+    slug: "linux-appimage-amd64" as const,
+    fallbackLabel: "x64 fallback",
+    installHint: "chmod +x Yaver-amd64.AppImage && ./Yaver-amd64.AppImage",
   },
   {
-    label: "AppImage quick start",
-    commands: [
-      "curl -L https://yaver.io/download/linux-appimage-amd64 -o Yaver-amd64.AppImage",
-      "chmod +x Yaver-amd64.AppImage",
-      "./Yaver-amd64.AppImage",
-    ],
-  },
-  {
-    label: "CLI on Linux",
-    commands: [
-      "brew install kivanccakmak/yaver/yaver",
-      "yaver auth",
-      "yaver serve",
-    ],
+    title: "Linux x64 .deb",
+    description: "Native Debian and Ubuntu package for direct install.",
+    slug: "linux-deb-amd64" as const,
+    fallbackLabel: "x64 fallback",
+    installHint: "sudo apt install ./yaver-amd64.deb",
   },
 ];
 
@@ -108,6 +88,40 @@ export default async function DownloadPage() {
   const downloads = downloadsResult.status === "fulfilled" ? downloadsResult.value : [];
   const config = configResult.status === "fulfilled" ? configResult.value : {};
   const cliVersion = config.cliVersion;
+  const armAppImage = findDownload(downloads, DOWNLOAD_SLUGS["linux-appimage-arm64"]);
+  const x64AppImage = findDownload(downloads, DOWNLOAD_SLUGS["linux-appimage-amd64"]);
+  const armDeb = findDownload(downloads, DOWNLOAD_SLUGS["linux-deb-arm64"]);
+  const x64Deb = findDownload(downloads, DOWNLOAD_SLUGS["linux-deb-amd64"]);
+  const appImageSlug = armAppImage ? "linux-appimage-arm64" : "linux-appimage-amd64";
+  const appImageName = armAppImage ? "Yaver-arm64.AppImage" : "Yaver-amd64.AppImage";
+  const debSlug = armDeb ? "linux-deb-arm64" : "linux-deb-amd64";
+  const debName = armDeb ? "yaver-arm64.deb" : "yaver-amd64.deb";
+  const commandBlocks = [
+    {
+      label: "apt (Debian / Ubuntu)",
+      commands: [
+        "curl -fsSL https://raw.githubusercontent.com/kivanccakmak/apt-yaver/main/KEY.gpg | sudo gpg --dearmor -o /usr/share/keyrings/yaver.gpg",
+        'echo "deb [signed-by=/usr/share/keyrings/yaver.gpg] https://raw.githubusercontent.com/kivanccakmak/apt-yaver/main ./ stable main" | sudo tee /etc/apt/sources.list.d/yaver.list',
+        "sudo apt update && sudo apt install yaver",
+      ],
+    },
+    {
+      label: "AppImage quick start",
+      commands: [
+        `curl -L https://yaver.io/download/${appImageSlug} -o ${appImageName}`,
+        `chmod +x ${appImageName}`,
+        `./${appImageName}`,
+      ],
+    },
+    {
+      label: "CLI on Linux",
+      commands: [
+        "brew install kivanccakmak/yaver/yaver",
+        "yaver auth",
+        "yaver serve",
+      ],
+    },
+  ];
 
   return (
     <div className="px-6 py-16 md:py-20">
@@ -136,11 +150,15 @@ export default async function DownloadPage() {
                 The direct buttons below resolve to storage-backed artifacts first,
                 with GitHub releases as fallback.
               </p>
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-surface-500">
+                Current direct artifacts are published for ARM64 Linux and ARM64 macOS.
+                x64 links stay available but fall back to the release page until those installers are published.
+              </p>
               <div className="mt-6 flex flex-wrap gap-3">
-                <DownloadButton href="/download/linux-appimage-amd64" primary>
+                <DownloadButton href={`/download/${appImageSlug}`} primary>
                   Download AppImage
                 </DownloadButton>
-                <DownloadButton href="/download/linux-deb-amd64">
+                <DownloadButton href={`/download/${debSlug}`}>
                   Download .deb
                 </DownloadButton>
                 <DownloadButton href={GITHUB_RELEASE}>
@@ -236,6 +254,11 @@ export default async function DownloadPage() {
               This path is for Debian and Ubuntu machines where you want `sudo apt install yaver`
               and normal package upgrades later.
             </p>
+            {armDeb || x64Deb ? null : (
+              <p className="mt-3 text-sm leading-6 text-amber-300">
+                Direct `.deb` downloads are not published right now, so the button above falls back to the release page.
+              </p>
+            )}
             <div className="mt-6 space-y-4">
               {commandBlocks.slice(0, 2).map((block) => (
                 <CommandCard key={block.label} label={block.label} commands={block.commands} />

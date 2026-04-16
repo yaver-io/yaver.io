@@ -522,7 +522,11 @@ export default defineSchema({
     userId: v.id("users"),
     deviceId: v.string(),         // Yaver device id where this project lives
     slug: v.string(),              // filesystem basename
-    path: v.string(),              // absolute path on the device
+    // path deliberately omitted — absolute paths contain the user's
+    // home-dir username; privacy contract keeps them on the agent.
+    // The field remains optional for back-compat with rows written
+    // before the cutoff; new rows are never given one.
+    path: v.optional(v.string()),
     name: v.string(),
     stack: v.optional(v.string()), // nextjs, vite, expo, hono, etc.
     backend: v.optional(v.string()),

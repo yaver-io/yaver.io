@@ -90,10 +90,13 @@ func (s *convexSyncer) syncProjects(ctx context.Context) {
 		if out, err := runIn(dir, "git", "rev-parse", "HEAD"); err == nil {
 			gitCommit = trimNewline(out)
 		}
+		// Privacy contract: never send absolute filesystem paths to
+		// Convex — they contain the user's home-dir username and leak
+		// on-disk topology. Clients fetch the real path from this
+		// agent's own /projects endpoint (P2P) keyed by slug+deviceId.
 		s.callMutation("agentSync:upsertProject", map[string]interface{}{
 			"deviceId":   s.deviceID,
 			"slug":       filepath.Base(dir),
-			"path":       dir,
 			"name":       filepath.Base(dir),
 			"stack":      cfg.Stack,
 			"backend":    string(cfg.Backend),
@@ -171,9 +174,22 @@ func (s *convexSyncer) syncRecentActivity(ctx context.Context) {
 	}
 }
 
+// convexMutationRecorder, if non-nil, is called with every (path,
+// args) pair *instead of* making the HTTP request. Tests use this to
+// assert nothing confidential leaves the agent. Must only ever be set
+// from _test.go.
+var convexMutationRecorder func(path string, args map[string]interface{})
+
 // callMutation invokes a Convex mutation via the HTTP action endpoint. Silent
 // on failure — sync is best-effort.
 func (s *convexSyncer) callMutation(path string, args map[string]interface{}) {
+	if convexMutationRecorder != nil {
+		convexMutationRecorder(path, args)
+		s.mu.Lock()
+		s.successCount++
+		s.mu.Unlock()
+		return
+	}
 	body, _ := json.Marshal(map[string]interface{}{
 		"path":   path,
 		"args":   args,

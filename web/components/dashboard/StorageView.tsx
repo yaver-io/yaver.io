@@ -12,7 +12,7 @@
 // give the owner a quick "what's on my box?" surface to confirm
 // the agent is healthy and the profiles are mounted correctly.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { agentClient } from "@/lib/agent-client";
 
 type Tab = "files" | "shared" | "blobs";
@@ -355,30 +355,60 @@ function BlobsTab() {
   const [active, setActive] = useState<string | null>(null);
   const [keys, setKeys] = useState<{ key: string; size?: number; contentType?: string; updatedAt?: string }[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [newBucket, setNewBucket] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const loadBuckets = useCallback(async () => {
+    try {
+      const data = await agentClient.blobsListBuckets();
+      setBuckets(data.buckets || []);
+      if ((data.buckets || []).length > 0 && !active) setActive(data.buckets[0]);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }, [active]);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const data = await agentClient.blobsListBuckets();
-        setBuckets(data.buckets || []);
-        if ((data.buckets || []).length > 0) setActive(data.buckets[0]);
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : String(e));
-      }
-    })();
+    void loadBuckets();
+  }, [loadBuckets]);
+
+  const loadKeys = useCallback(async (bucket: string) => {
+    try {
+      const data = await agentClient.blobsListKeys(bucket);
+      setKeys(data.keys || []);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
   }, []);
 
   useEffect(() => {
     if (!active) return;
-    (async () => {
-      try {
-        const data = await agentClient.blobsListKeys(active);
-        setKeys(data.keys || []);
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : String(e));
+    void loadKeys(active);
+  }, [active, loadKeys]);
+
+  async function onUpload(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    const bucket = active ?? newBucket.trim();
+    if (!bucket) {
+      setErr("pick a bucket or type a new one before uploading");
+      return;
+    }
+    setUploading(true);
+    try {
+      for (const file of Array.from(files)) {
+        await agentClient.blobsUpload(bucket, file.name, file);
       }
-    })();
-  }, [active]);
+      await loadBuckets();
+      setActive(bucket);
+      await loadKeys(bucket);
+      if (fileRef.current) fileRef.current.value = "";
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUploading(false);
+    }
+  }
 
   async function remove(k: string) {
     if (!active) return;
@@ -395,10 +425,21 @@ function BlobsTab() {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
       {err && <div className="rounded border border-red-500/40 bg-red-950/30 px-3 py-2 text-sm text-red-200">{err}</div>}
-      {buckets.length === 0 && !err && (
+      <div className="flex flex-wrap items-center gap-2 rounded border border-surface-700 bg-surface-950/30 p-2 text-xs">
+        <input
+          type="text"
+          placeholder="new bucket name (optional)"
+          className="rounded border border-surface-700 bg-surface-900 px-2 py-1 text-sm"
+          value={newBucket}
+          onChange={(e) => setNewBucket(e.target.value)}
+        />
+        <input ref={fileRef} type="file" multiple onChange={(e) => void onUpload(e.target.files)} className="text-surface-300" />
+        {uploading && <span className="text-surface-400">uploading…</span>}
+        <span className="ml-auto text-surface-500">files land in <code className="rounded bg-surface-900 px-1">~/.yaver/blobs/&lt;bucket&gt;/</code> on your machine</span>
+      </div>
+      {buckets.length === 0 && !err && !uploading && (
         <div className="rounded border border-surface-700 bg-surface-950/30 p-3 text-sm text-surface-400">
-          No buckets yet. Create one by PUT-ing a first object via the blobs API or{" "}
-          <code className="rounded bg-surface-900 px-1">yaver blob put</code>.
+          No buckets yet. Type a bucket name above and pick a file to create one.
         </div>
       )}
       {buckets.length > 0 && (

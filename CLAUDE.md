@@ -291,6 +291,47 @@ Signing out on one surface does not affect others. The Desktop Electron app neve
 - `web/` — Next.js web app (landing page + dashboard), deployed on Vercel at yaver.io
 - `keys/` — Private keys, signing scripts (gitignored, not in repo — see `keys/CLAUDE.md` for details)
 
+## Privacy Contract — what lives in Convex vs. on your machine
+
+Yaver's core promise: Convex is used **only** for identity, peer discovery, and session bookkeeping. Every piece of data that's sensitive, personal, or derived from the user's own work stays on the user's own devices and flows peer-to-peer.
+
+### Allowed in Convex
+
+| Table / data | Why it's there |
+|---|---|
+| `users` | OAuth identity (Apple / Google / Microsoft / email) — needed for sign-in |
+| `sessions` | Long-lived bearer tokens, stored **as hashes** (`tokenHash`), never raw |
+| `sdkTokens` | Labeled API keys — stored as `tokenHash` only; raw token is returned once on create and never re-surfaced |
+| `devices` | Device registry: `deviceId`, `hostname`, `platform`, `lastHeartbeat`, quic host/port — needed for peer discovery |
+| `relayServers` / `platformConfig` | Which relays are currently available and at what URL |
+| `guestInvitations`, `guestAccess` | Email + 6-char invite code + grant status — needed so guests can accept from any OAuth provider |
+| `teams`, `teamMembers` | Team membership for shared-machine mode |
+| `userProjects` | Slug + deviceId + stack/backend/auth flags + gitBranch + lastCommit — **no absolute path** |
+| Activity audit summaries | `action`, `target`, `outcome`, `timestamp` — no payloads |
+
+### Forbidden in Convex (enforced)
+
+| Data | Where it lives instead |
+|---|---|
+| Vault values (`VaultEntry.Value`) | `~/.yaver/vault.enc` on the host (AES-GCM + Argon2id) |
+| Raw SDK tokens / API key plaintext | Held only in the agent process + returned once to the creator |
+| Task input prompts + output (stdout/stderr) | Agent's `~/.yaver/tasks/` + streamed P2P to clients |
+| File / blob / shared-storage contents | Never leave the agent's machine |
+| Exec session output | Same — agent-only, streamed P2P |
+| Absolute filesystem paths | Never sent — they contain the user's home-dir username. Clients fetch real paths P2P from the agent's `/projects` endpoint |
+| Internal LAN IPs of customers' downstream infra | Agent metadata only holds the device's own LAN IP for beacon discovery |
+
+### How the contract is enforced
+
+- All Convex-bound calls on the agent go through `convexSyncer.callMutation` (`desktop/agent/convex_state_sync.go`). A test-only recorder hook (`convexMutationRecorder`) lets tests capture every payload.
+- `desktop/agent/convex_privacy_test.go` exercises `syncProjects` / `syncServices` / `recordActivity` and asserts:
+  - Payload maps contain none of the forbidden keys (`path`, `workDir`, `token`, `stdout`, `output`, `logs`, `secret`, `vaultValue`, `privateKey`, `fileContent`, …).
+  - No string value contains `/Users/`, `/home/`, `/root/`, or `C:\Users\` — i.e. no absolute path leaks via a surprise field.
+  - A marker in a test-fixture home directory never appears in any value — i.e. username leaks are impossible to miss.
+- The Convex-side mutation (`backend/convex/agentSync.ts::upsertProject`) also strips `path` at the boundary so a legacy agent that still sends one gets silently redacted before insert.
+
+If you need to add a new sync path, append the new forbidden keys to `fieldsWeForbidInAnyConvexPayload` in `convex_privacy_test.go` and add a test for your payload. Adding data through a new code path that bypasses `callMutation` is not allowed without an explicit privacy review.
+
 ## Tech Stack
 - **Networking**: Application-layer QUIC relay (direct-first, relay-fallback). No TUN/TAP, no VPN rights — won't conflict with user's VPN.
 - **Relay Server**: Go with `quic-go`, self-hostable via Docker. Password-protected. Agents connect outbound via QUIC tunnels; mobile makes short-lived HTTP requests.
