@@ -12,13 +12,6 @@ on:
           - all
           - reauth
           - mesh
-  push:
-    branches: [main]
-    paths:
-      - "desktop/agent/**"
-      - "backend/convex/**"
-      - "scripts/test-remote-infra-ci.sh"
-      - ".github/workflows/remote-infra.yml"
 
 permissions:
   contents: read
@@ -28,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: testing
-    if: github.event_name == 'push' || github.event.inputs.suite == 'all' || github.event.inputs.suite == 'reauth'
+    if: github.event.inputs.suite == 'all' || github.event.inputs.suite == 'reauth'
     steps:
       - uses: actions/checkout@v4
 
