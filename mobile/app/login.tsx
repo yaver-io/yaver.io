@@ -149,11 +149,22 @@ export default function LoginScreen() {
 
     setIsLoading(true);
     try {
-      let result: { token: string };
       if (isSignUp) {
-        result = await signupWithEmail(fullName.trim(), email.trim(), password);
-      } else {
-        result = await loginWithEmail(email.trim(), password);
+        const result = await signupWithEmail(fullName.trim(), email.trim(), password);
+        await login(result.token);
+        router.replace("/");
+        return;
+      }
+      const result = await loginWithEmail(email.trim(), password);
+      if (result.kind === "2fa") {
+        // 2FA is strictly optional; most users never see this branch. When
+        // enabled, complete the challenge on a dedicated screen and return
+        // once the pending token is exchanged for a session.
+        router.replace({
+          pathname: "/two-factor-challenge",
+          params: { pendingToken: result.pendingToken },
+        });
+        return;
       }
       await login(result.token);
       router.replace("/");

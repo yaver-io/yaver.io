@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestChooseNodePlacementPrefersPinnedMachine(t *testing.T) {
 	req := AgentGraphCreateRequest{PreferredDevice: "mac-mini"}
@@ -172,6 +175,140 @@ func TestPlanGraphPlacementsBalancesAcrossAllowedMachines(t *testing.T) {
 	second := chooseNodePlacement(req, AgentGraphNodeSpec{ID: "n2", Kind: AgentNodeAutodev, Prompt: "Implement billing flow"}, machines, state)
 	if first.DeviceID == second.DeviceID {
 		t.Fatalf("expected balanced placement across machines, got both on %q", first.DeviceID)
+	}
+}
+
+func TestChooseNodePlacementPrefersOwnOverSharedSpareCapacity(t *testing.T) {
+	node := AgentGraphNodeSpec{
+		ID:     "local-dev",
+		Kind:   AgentNodeAutodev,
+		Prompt: "Use ollama to do a local LLM coding pass",
+	}
+	machines := []MachineInfo{
+		{
+			DeviceID: "my-linux",
+			Name:     "my-linux",
+			IsOnline: true,
+			Capabilities: &MachineCapabilities{
+				Runners:          []MachineRunnerCapability{{ID: "ollama", Ready: true}},
+				SupportsLocalLLM: true,
+			},
+		},
+		{
+			DeviceID:     "friends-mac",
+			Name:         "friends-mac",
+			IsOnline:     true,
+			IsShared:     true,
+			HostName:     "Alex",
+			PriorityMode: "spare-capacity",
+			Capabilities: &MachineCapabilities{
+				Runners:          []MachineRunnerCapability{{ID: "ollama", Ready: true}},
+				SupportsLocalLLM: true,
+			},
+		},
+	}
+
+	placement := chooseNodePlacement(AgentGraphCreateRequest{}, node, machines, &meshPlannerState{})
+	if placement.DeviceID != "my-linux" {
+		t.Fatalf("expected own machine to win over spare-capacity shared machine, got %q (%s)", placement.DeviceID, placement.Reason)
+	}
+}
+
+func TestChooseNodePlacementFallsThroughToSharedWhenOwnSaturated(t *testing.T) {
+	req := AgentGraphCreateRequest{}
+	node1 := AgentGraphNodeSpec{ID: "n1", Kind: AgentNodeAutodev, Prompt: "Implement local LLM pass A"}
+	node2 := AgentGraphNodeSpec{ID: "n2", Kind: AgentNodeAutodev, Prompt: "Implement local LLM pass B"}
+	machines := []MachineInfo{
+		{
+			DeviceID: "my-linux",
+			Name:     "my-linux",
+			IsOnline: true,
+			Capabilities: &MachineCapabilities{
+				Hardware:         HardwareProfile{MaxParallel: 1},
+				MaxTaskSlots:     1,
+				Runners:          []MachineRunnerCapability{{ID: "ollama", Ready: true}},
+				SupportsLocalLLM: true,
+				LowPower:         true,
+			},
+		},
+		{
+			DeviceID:     "friends-mac",
+			Name:         "friends-mac",
+			IsOnline:     true,
+			IsShared:     true,
+			HostName:     "Alex",
+			PriorityMode: "spare-capacity",
+			Capabilities: &MachineCapabilities{
+				Hardware:         HardwareProfile{MaxParallel: 8, RAM: 64 * 1024 * 1024 * 1024},
+				MaxTaskSlots:     4,
+				Runners:          []MachineRunnerCapability{{ID: "ollama", Ready: true}},
+				SupportsLocalLLM: true,
+			},
+		},
+	}
+
+	state := &meshPlannerState{
+		machines:           map[string]MachineInfo{"my-linux": machines[0], "friends-mac": machines[1]},
+		machineAssignments: map[string]int{},
+		runnerAssignments:  map[string]int{},
+	}
+
+	first := chooseNodePlacement(req, node1, machines, state)
+	state.reserve(first)
+	if first.DeviceID != "my-linux" {
+		t.Fatalf("expected first placement on own machine, got %q", first.DeviceID)
+	}
+	second := chooseNodePlacement(req, node2, machines, state)
+	if second.DeviceID != "friends-mac" {
+		t.Fatalf("expected fall-through to shared machine, got %q (%s)", second.DeviceID, second.Reason)
+	}
+}
+
+func TestChooseNodePlacementBlocksSharedWhenNoAPIKeyAccess(t *testing.T) {
+	node := AgentGraphNodeSpec{
+		ID:      "chat",
+		Kind:    AgentNodeChat,
+		Prompt:  "Plan a refactor",
+		Runner:  "claude-code",
+		Model:   "claude-sonnet-4-6",
+		WorkDir: "/tmp/any",
+	}
+	machines := []MachineInfo{
+		{
+			DeviceID:                  "friends-mac",
+			Name:                      "friends-mac",
+			IsOnline:                  true,
+			IsShared:                  true,
+			HostName:                  "Alex",
+			UseHostAPIKeys:            false,
+			AllowGuestProvidedAPIKeys: false,
+			Capabilities: &MachineCapabilities{
+				Runners: []MachineRunnerCapability{{ID: "claude", Ready: true}},
+			},
+		},
+	}
+
+	placement := chooseNodePlacement(AgentGraphCreateRequest{}, node, machines, &meshPlannerState{})
+	if !strings.Contains(placement.Reason, "blocks runner API keys") {
+		t.Fatalf("expected API-key block in reason, got %q", placement.Reason)
+	}
+}
+
+func TestRunnerNeedsHostedAPIKey(t *testing.T) {
+	cases := map[string]bool{
+		"claude-code":  true,
+		"claude":       true,
+		"codex":        true,
+		"opencode":     true,
+		"aider":        true,
+		"ollama":       false,
+		"aider-ollama": false,
+		"":             false,
+	}
+	for runner, want := range cases {
+		if got := runnerNeedsHostedAPIKey(runner); got != want {
+			t.Errorf("runnerNeedsHostedAPIKey(%q) = %v, want %v", runner, got, want)
+		}
 	}
 }
 

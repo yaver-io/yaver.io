@@ -108,6 +108,7 @@ type AgentGraphCreateRequest struct {
 	MaxParallel     int                  `json:"maxParallel,omitempty"`
 	PreferredDevice string               `json:"preferredDevice,omitempty"`
 	AllowedDevices  []string             `json:"allowedDevices,omitempty"`
+	AllowedRunners  []string             `json:"allowedRunners,omitempty"`
 	Nodes           []AgentGraphNodeSpec `json:"nodes,omitempty"`
 }
 
@@ -244,7 +245,7 @@ func (gm *AgentGraphManager) CreateRun(req AgentGraphCreateRequest) (*AgentGraph
 	if req.MaxParallel > 6 {
 		req.MaxParallel = 6
 	}
-	normalized, err := normalizeAgentNodes(req.WorkDir, req.Runner, req.Model, nodes)
+	normalized, err := normalizeAgentNodes(req.WorkDir, req.Runner, req.Model, req.AllowedRunners, nodes)
 	if err != nil {
 		return nil, err
 	}
@@ -302,10 +303,32 @@ func buildAgentGraphTemplate(req AgentGraphCreateRequest) []AgentGraphNodeSpec {
 	switch template {
 	case "full", "agent", "default":
 		return []AgentGraphNodeSpec{
-			{ID: "chat", Title: "Chat Plan", Kind: AgentNodeChat, Prompt: prompt, WorkDir: workDir, Project: project},
-			{ID: "ideas", Title: "Generate Ideas", Kind: AgentNodeAutoIdeas, Prompt: prompt, WorkDir: workDir, Project: project},
-			{ID: "dev", Title: "Auto Dev", Kind: AgentNodeAutodev, Prompt: prompt, WorkDir: workDir, Project: project, DependsOn: []string{"chat", "ideas"}, MaxIterations: 2},
-			{ID: "test", Title: "Auto Test", Kind: AgentNodeAutotest, Prompt: "Run a focused regression pass for the changes produced by this graph and fix any breakage before reporting done.", WorkDir: workDir, Project: project, DependsOn: []string{"dev"}, MaxIterations: 1},
+			{
+				ID:      "plan",
+				Title:   "Plan Slice",
+				Kind:    AgentNodeChat,
+				Prompt:  "Analyze the repo and task, then produce a concise implementation plan with likely files, risks, and a recommended slice boundary.\n\nTask:\n" + prompt,
+				WorkDir: workDir,
+				Project: project,
+			},
+			{
+				ID:        "implement",
+				Title:     "Implement",
+				Kind:      AgentNodeChat,
+				Prompt:    prompt,
+				WorkDir:   workDir,
+				Project:   project,
+				DependsOn: []string{"plan"},
+			},
+			{
+				ID:        "verify",
+				Title:     "Verify And Synthesize",
+				Kind:      AgentNodeChat,
+				Prompt:    "Inspect the repo state after implementation, run or describe the most relevant validation available in this workspace, and summarize any remaining risks or follow-up work needed before shipping.",
+				WorkDir:   workDir,
+				Project:   project,
+				DependsOn: []string{"implement"},
+			},
 		}
 	case "ship":
 		return []AgentGraphNodeSpec{
@@ -317,13 +340,16 @@ func buildAgentGraphTemplate(req AgentGraphCreateRequest) []AgentGraphNodeSpec {
 	}
 }
 
-func normalizeAgentNodes(defaultWorkDir, defaultRunner, defaultModel string, nodes []AgentGraphNodeSpec) ([]AgentGraphNodeSpec, error) {
+func normalizeAgentNodes(defaultWorkDir, defaultRunner, defaultModel string, defaultAllowedRunners []string, nodes []AgentGraphNodeSpec) ([]AgentGraphNodeSpec, error) {
 	out := make([]AgentGraphNodeSpec, 0, len(nodes))
 	seen := map[string]bool{}
 	for i, node := range nodes {
 		node.ID = strings.TrimSpace(node.ID)
 		if node.ID == "" {
 			node.ID = fmt.Sprintf("node-%d", i+1)
+		}
+		if !isSafeGraphNodeID(node.ID) {
+			return nil, fmt.Errorf("invalid node id %q: only letters, digits, '-', '_', '.' allowed (max 64 chars)", node.ID)
 		}
 		if seen[node.ID] {
 			return nil, fmt.Errorf("duplicate node id: %s", node.ID)
@@ -341,6 +367,9 @@ func normalizeAgentNodes(defaultWorkDir, defaultRunner, defaultModel string, nod
 		if node.Model == "" && defaultModel != "" {
 			node.Model = defaultModel
 		}
+		if len(node.AllowedRunners) == 0 && len(defaultAllowedRunners) > 0 {
+			node.AllowedRunners = append([]string{}, defaultAllowedRunners...)
+		}
 		if node.Title == "" {
 			node.Title = strings.Title(string(node.Kind))
 		}
@@ -350,29 +379,98 @@ func normalizeAgentNodes(defaultWorkDir, defaultRunner, defaultModel string, nod
 	return out, nil
 }
 
+// isSafeGraphNodeID blocks path-traversal sequences before the node ID is
+// interpolated into on-disk slice worktree paths by graphNodeWorktreePath.
+// Only bytes that are safe as a single filesystem path segment are accepted.
+func isSafeGraphNodeID(id string) bool {
+	if id == "" || len(id) > 64 {
+		return false
+	}
+	if id == "." || id == ".." {
+		return false
+	}
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-' || r == '_' || r == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func applyAgentNodeExecutionPolicy(node AgentGraphNodeSpec) AgentGraphNodeSpec {
 	if strings.TrimSpace(node.Runner) != "" {
 		return node
 	}
 
+	var candidates [][2]string
+	fallbackRunner := "claude-code"
+	fallbackModel := ""
 	switch node.Kind {
 	case AgentNodeChat:
-		node.Runner, node.Model = chooseReadyRunner(node.WorkDir,
-			[][2]string{{"claude", "claude-opus-4-6"}, {"codex", ""}, {"opencode", ""}, {"goose", ""}, {"aider", ""}, {"ollama", "qwen2.5-coder:14b"}},
-			"claude-code", "claude-opus-4-6")
+		candidates = [][2]string{{"claude", "claude-opus-4-6"}, {"codex", ""}, {"opencode", ""}, {"goose", ""}, {"aider", ""}, {"ollama", "qwen2.5-coder:14b"}}
+		fallbackModel = "claude-opus-4-6"
 	case AgentNodeAutoIdeas:
-		node.Runner, node.Model = chooseReadyRunner(node.WorkDir,
-			[][2]string{{"claude", "claude-sonnet-4-6"}, {"codex", ""}, {"opencode", ""}, {"goose", ""}, {"aider", ""}, {"ollama", "qwen2.5-coder:14b"}},
-			"claude-code", "claude-sonnet-4-6")
+		candidates = [][2]string{{"claude", "claude-sonnet-4-6"}, {"codex", ""}, {"opencode", ""}, {"goose", ""}, {"aider", ""}, {"ollama", "qwen2.5-coder:14b"}}
+		fallbackModel = "claude-sonnet-4-6"
 	case AgentNodeAutodev, AgentNodeAutotest:
-		node.Runner, node.Model = chooseReadyRunner(node.WorkDir,
-			[][2]string{{"codex", ""}, {"claude", "claude-sonnet-4-6"}, {"aider-ollama", "ollama_chat/qwen2.5-coder:14b"}, {"aider", ""}, {"ollama", "qwen2.5-coder:14b"}, {"opencode", ""}},
-			"claude-code", "claude-sonnet-4-6")
+		candidates = [][2]string{{"codex", ""}, {"claude", "claude-sonnet-4-6"}, {"aider-ollama", "ollama_chat/qwen2.5-coder:14b"}, {"aider", ""}, {"ollama", "qwen2.5-coder:14b"}, {"opencode", ""}}
+		fallbackModel = "claude-sonnet-4-6"
 	}
+
+	if len(node.AllowedRunners) > 0 {
+		candidates, fallbackRunner, fallbackModel = restrictRunnerCandidatesToAllowed(candidates, node.AllowedRunners)
+	}
+
+	node.Runner, node.Model = chooseReadyRunner(node.WorkDir, candidates, fallbackRunner, fallbackModel)
 	if node.Runner == "claude" {
 		node.Runner = "claude-code"
 	}
 	return node
+}
+
+// restrictRunnerCandidatesToAllowed filters the candidate runner list to
+// only those in allowed, preserving the original priority order. If the
+// intersection is empty, the first allowed runner becomes the fallback so
+// the node never silently escapes the allowlist into a runner the user
+// explicitly forbade (e.g. --allowed-runners ollama must never pick
+// claude-code).
+func restrictRunnerCandidatesToAllowed(candidates [][2]string, allowed []string) ([][2]string, string, string) {
+	allow := map[string]bool{}
+	normalizedAllowed := make([]string, 0, len(allowed))
+	for _, a := range allowed {
+		n := normalizeRunnerID(a)
+		if n == "" {
+			continue
+		}
+		if !allow[n] {
+			normalizedAllowed = append(normalizedAllowed, n)
+		}
+		allow[n] = true
+	}
+	filtered := make([][2]string, 0, len(candidates))
+	for _, c := range candidates {
+		if allow[normalizeRunnerID(c[0])] {
+			filtered = append(filtered, c)
+		}
+	}
+	fallbackRunner := "claude-code"
+	fallbackModel := ""
+	if len(normalizedAllowed) > 0 {
+		if normalizedAllowed[0] == "claude" {
+			fallbackRunner = "claude-code"
+		} else {
+			fallbackRunner = normalizedAllowed[0]
+		}
+	}
+	if len(filtered) > 0 {
+		fallbackModel = filtered[0][1]
+	}
+	return filtered, fallbackRunner, fallbackModel
 }
 
 func chooseReadyRunner(workDir string, candidates [][2]string, fallbackRunner, fallbackModel string) (string, string) {
@@ -644,7 +742,7 @@ func (gm *AgentGraphManager) executeNode(ctx context.Context, runID, nodeID stri
 	var err error
 	switch node.Spec.Kind {
 	case AgentNodeChat:
-		summary, err = gm.executeChatNode(ctx, node)
+		summary, err = gm.executeChatNode(ctx, runID, node)
 	case AgentNodeAutodev, AgentNodeAutoIdeas, AgentNodeAutotest:
 		summary, err = gm.executeLoopNode(ctx, runID, node)
 	default:
@@ -677,19 +775,30 @@ func (gm *AgentGraphManager) executeNode(ctx context.Context, runID, nodeID stri
 	_ = gm.saveLocked()
 }
 
-func (gm *AgentGraphManager) executeChatNode(ctx context.Context, node *AgentGraphNodeState) (string, error) {
+func (gm *AgentGraphManager) executeChatNode(ctx context.Context, runID string, node *AgentGraphNodeState) (string, error) {
 	if node.Placement != nil && node.Placement.DeviceID != "" && node.Placement.DeviceID != "local" {
-		return gm.executeRemoteChatNode(ctx, node)
+		return gm.executeRemoteChatNode(ctx, runID, node)
+	}
+	workDir, contract, err := prepareGraphNodeSlice(ctx, runID, node.Spec, node.Placement)
+	if err != nil {
+		return "", err
 	}
 	prompt := strings.TrimSpace(node.Spec.Prompt)
-	title := prompt
+	title := strings.TrimSpace(node.Spec.Title)
 	if title == "" {
-		title = strings.TrimSpace(node.Spec.Title)
+		title = prompt
 	}
 	if title == "" {
 		title = "Agent Chat"
 	}
-	task, err := gm.taskMgr.CreateTask(title, node.Spec.Title, node.Spec.Model, "agent-graph", node.Spec.Runner, "", nil, nil)
+	description := prompt
+	if description == "" || description == title {
+		description = node.Spec.Title
+	}
+	task, err := gm.taskMgr.CreateTaskWithOptions(title, description, node.Spec.Model, "agent-graph", node.Spec.Runner, "", nil, TaskCreateOptions{
+		WorkDir:       workDir,
+		SliceContract: contract,
+	}, nil)
 	if err != nil {
 		return "", err
 	}
@@ -743,7 +852,11 @@ func (gm *AgentGraphManager) executeLoopNode(ctx context.Context, runID string, 
 	if node.Placement != nil && node.Placement.DeviceID != "" && node.Placement.DeviceID != "local" {
 		return gm.executeRemoteLoopNode(ctx, runID, node)
 	}
-	loopState, err := buildGraphLoopState(runID, node.Spec)
+	workDir, contract, err := prepareGraphNodeSlice(ctx, runID, node.Spec, node.Placement)
+	if err != nil {
+		return "", err
+	}
+	loopState, err := buildGraphLoopState(runID, node.Spec, workDir, contract)
 	if err != nil {
 		return "", err
 	}
@@ -768,24 +881,31 @@ func (gm *AgentGraphManager) executeLoopNode(ctx context.Context, runID string, 
 	}
 }
 
-func (gm *AgentGraphManager) executeRemoteChatNode(ctx context.Context, node *AgentGraphNodeState) (string, error) {
+func (gm *AgentGraphManager) executeRemoteChatNode(ctx context.Context, runID string, node *AgentGraphNodeState) (string, error) {
 	base, token, err := remoteAgentBaseAndToken(node.Placement.DeviceID)
 	if err != nil {
 		return "", err
 	}
-	title := strings.TrimSpace(node.Spec.Prompt)
+	workDir, contract, err := prepareGraphNodeSlice(ctx, runID, node.Spec, node.Placement)
+	if err != nil {
+		return "", err
+	}
+	title := strings.TrimSpace(node.Spec.Title)
 	if title == "" {
-		title = strings.TrimSpace(node.Spec.Title)
+		title = strings.TrimSpace(node.Spec.Prompt)
 	}
 	var createResp struct {
 		OK     bool   `json:"ok"`
 		TaskID string `json:"taskId"`
 	}
 	err = remoteAgentJSON(ctx, base, token, http.MethodPost, "/tasks", map[string]interface{}{
-		"title":  title,
-		"model":  firstGraphNonEmpty(node.Placement.Model, node.Spec.Model),
-		"runner": firstGraphNonEmpty(node.Placement.Runner, node.Spec.Runner),
-		"source": "agent-graph",
+		"title":         title,
+		"description":   firstGraphNonEmpty(strings.TrimSpace(node.Spec.Prompt), node.Spec.Title),
+		"model":         firstGraphNonEmpty(node.Placement.Model, node.Spec.Model),
+		"runner":        firstGraphNonEmpty(node.Placement.Runner, node.Spec.Runner),
+		"source":        "agent-graph",
+		"workDir":       workDir,
+		"sliceContract": contract,
 	}, &createResp)
 	if err != nil {
 		return "", err
@@ -833,14 +953,18 @@ func (gm *AgentGraphManager) executeRemoteLoopNode(ctx context.Context, runID st
 	if err != nil {
 		return "", err
 	}
+	workDir, contract, err := prepareGraphNodeSlice(ctx, runID, node.Spec, node.Placement)
+	if err != nil {
+		return "", err
+	}
 	kind := "autodev"
 	path := "/autodev/start"
 	body := map[string]interface{}{
 		"project":        graphRemoteProjectName(runID, node.Spec),
-		"work_dir":       node.Spec.WorkDir,
+		"work_dir":       workDir,
 		"hours":          firstGraphNonEmpty(node.Spec.Hours, "1"),
 		"load":           firstGraphNonEmpty(node.Spec.Load, "lite"),
-		"prompt":         node.Spec.Prompt,
+		"prompt":         firstGraphNonEmpty(strings.TrimSpace(node.Spec.Prompt), node.Spec.Title) + formatTaskSliceContract(contract),
 		"runner":         firstGraphNonEmpty(node.Placement.Runner, node.Spec.Runner),
 		"model":          firstGraphNonEmpty(node.Placement.Model, node.Spec.Model),
 		"target":         node.Spec.Target,
@@ -852,10 +976,10 @@ func (gm *AgentGraphManager) executeRemoteLoopNode(ctx context.Context, runID st
 		path = "/autoideas/start"
 		body = map[string]interface{}{
 			"project":     graphRemoteProjectName(runID, node.Spec),
-			"work_dir":    node.Spec.WorkDir,
+			"work_dir":    workDir,
 			"hours":       firstGraphNonEmpty(node.Spec.Hours, "1"),
 			"load":        firstGraphNonEmpty(node.Spec.Load, "lite"),
-			"prompt":      node.Spec.Prompt,
+			"prompt":      firstGraphNonEmpty(strings.TrimSpace(node.Spec.Prompt), node.Spec.Title) + formatTaskSliceContract(contract),
 			"engine":      graphAutoIdeasEngine(firstGraphNonEmpty(node.Placement.Runner, node.Spec.Runner)),
 			"max_batches": max(1, node.Spec.MaxIterations),
 		}
@@ -947,8 +1071,7 @@ func firstGraphNonEmpty(values ...string) string {
 	return ""
 }
 
-func buildGraphLoopState(runID string, spec AgentGraphNodeSpec) (*LoopState, error) {
-	workDir := spec.WorkDir
+func buildGraphLoopState(runID string, spec AgentGraphNodeSpec, workDir string, contract *TaskSliceContract) (*LoopState, error) {
 	if workDir == "" {
 		return nil, errors.New("node workDir required")
 	}
@@ -993,7 +1116,7 @@ func buildGraphLoopState(runID string, spec AgentGraphNodeSpec) (*LoopState, err
 		Think: LoopThink{
 			Runner:         runner,
 			Model:          spec.Model,
-			PromptInline:   spec.Prompt,
+			PromptInline:   firstGraphNonEmpty(strings.TrimSpace(spec.Prompt), spec.Title) + formatTaskSliceContract(contract),
 			MaxEdits:       1,
 			MaxKicksPerRun: max(1, spec.MaxIterations),
 			RequireGreen:   []string{"typecheck"},

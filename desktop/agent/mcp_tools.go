@@ -567,6 +567,39 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				"required": []string{"confirm"},
 			},
 		},
+		{
+			"name":        "infra_summary",
+			"description": "Return the managed infra summary for this device: machine profile, services, relays, networking, sharing posture, and control capabilities.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "infra_service_action",
+			"description": "Start, stop, restart, or inspect a managed service. Scope can be dev (.yaver/services.yaml) or system (systemd/brew services).",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"scope", "name", "action"},
+				"properties": map[string]interface{}{
+					"scope":  map[string]interface{}{"type": "string", "description": "dev or system"},
+					"name":   map[string]interface{}{"type": "string", "description": "Service name"},
+					"action": map[string]interface{}{"type": "string", "description": "start, stop, restart, or status"},
+				},
+			},
+		},
+		{
+			"name":        "infra_power",
+			"description": "Run a managed power action. Supports agent_shutdown and host_reboot. Requires confirm=true.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"action", "confirm"},
+				"properties": map[string]interface{}{
+					"action":  map[string]interface{}{"type": "string", "description": "agent_shutdown or host_reboot"},
+					"confirm": map[string]interface{}{"type": "boolean", "description": "Must be true to confirm the power action"},
+				},
+			},
+		},
 	}
 	tools = append(tools, diagnosticTools...)
 
@@ -2496,6 +2529,60 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				"required": []string{"graph_id"},
 				"properties": map[string]interface{}{
 					"graph_id": map[string]interface{}{"type": "string", "description": "Agent graph id"},
+				},
+			},
+		},
+		{
+			"name":        "totp_status",
+			"description": "Show whether two-factor authentication is enabled for the signed-in Yaver user. 2FA is optional and gates only session issuance — in-flight QUIC/relay traffic is never affected.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "totp_enable_begin",
+			"description": "Start two-factor enrollment. Returns a base32 secret and an otpauth:// URL the user can scan into Microsoft Authenticator, Google Authenticator, 1Password, or any RFC 6238 TOTP app. After scanning, the user must confirm by running totp_enable_confirm with a 6-digit code from the app.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "totp_enable_confirm",
+			"description": "Confirm two-factor enrollment with a 6-digit code from the authenticator app, enabling 2FA for the account. Returns 8 one-time recovery codes — show them to the user once and instruct them to save somewhere safe.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"code"},
+				"properties": map[string]interface{}{
+					"code": map[string]interface{}{"type": "string", "description": "Current 6-digit TOTP code from the authenticator"},
+				},
+			},
+		},
+		{
+			"name":        "totp_disable",
+			"description": "Disable two-factor authentication. Requires a current 6-digit code from the authenticator (recovery codes are intentionally NOT accepted for disable, to stop an attacker with only leaked recovery codes from turning 2FA off).",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"code"},
+				"properties": map[string]interface{}{
+					"code": map[string]interface{}{"type": "string", "description": "Current 6-digit TOTP code from the authenticator"},
+				},
+			},
+		},
+		{
+			"name":        "code_mesh_start",
+			"description": "Start a `yaver code --mesh` run: plan → implement → verify chat chain across the available machine pool. Thin wrapper over agent_graph_start with defaults matching the yaver code CLI (template=full, max_parallel=2). Shared-infra machines borrowed from other hosts are automatically considered by the placement planner; use allowed_runners when a shared machine only permits local runners like ollama.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"prompt"},
+				"properties": map[string]interface{}{
+					"prompt":          map[string]interface{}{"type": "string", "description": "What you want built."},
+					"name":            map[string]interface{}{"type": "string", "description": "Optional session name"},
+					"work_dir":        map[string]interface{}{"type": "string", "description": "Absolute work directory. Defaults to the current agent work dir."},
+					"max_parallel":    map[string]interface{}{"type": "integer", "description": "Maximum concurrently running nodes (default 2)"},
+					"allowed_devices": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional machine ids or names to form the execution pool"},
+					"allowed_runners": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional runner IDs to allow (e.g. ollama,opencode,codex)"},
 				},
 			},
 		},

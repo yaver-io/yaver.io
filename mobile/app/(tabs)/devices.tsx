@@ -230,6 +230,22 @@ function DeviceCard({
         <View style={styles.cardInfo}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
             <Text style={[styles.deviceName, { color: c.textPrimary }]}>{device.name}</Text>
+            {device.isGuest ? (
+              <View style={{
+                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+                backgroundColor: "#60a5fa22", borderWidth: 1, borderColor: "#60a5fa66",
+              }}>
+                <Text style={{ color: "#60a5fa", fontSize: 10, fontWeight: "700" }}>SHARED</Text>
+              </View>
+            ) : null}
+            {device.isGuest && device.priorityMode === "spare-capacity" ? (
+              <View style={{
+                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+                backgroundColor: "#a78bfa22", borderWidth: 1, borderColor: "#a78bfa66",
+              }}>
+                <Text style={{ color: "#a78bfa", fontSize: 10, fontWeight: "700" }}>SPARE</Text>
+              </View>
+            ) : null}
             {autoPairing ? (
               <View style={{
                 paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
@@ -255,6 +271,7 @@ function DeviceCard({
           </View>
           <Text style={[styles.deviceMeta, { color: c.textMuted }]}>
             {device.os} &middot; {device.host}:{device.port}
+            {device.isGuest && device.hostName ? ` · shared from ${device.hostName}` : ""}
           </Text>
         </View>
         <View style={styles.cardRight}>

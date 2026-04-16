@@ -280,6 +280,30 @@ func scoreNodePlacement(req AgentGraphCreateRequest, node AgentGraphNodeSpec, m 
 		score += 40
 		reasons = append(reasons, "runner has effectively no session-window cap")
 	}
+
+	if m.IsShared {
+		hostLabel := firstNonEmpty(m.HostName, m.HostEmail, "a shared host")
+		if runnerNeedsHostedAPIKey(runner) && !m.UseHostAPIKeys && !m.AllowGuestProvidedAPIKeys {
+			score -= 1500
+			reasons = append(reasons, "shared machine from "+hostLabel+" blocks runner API keys")
+		} else if m.UseHostAPIKeys {
+			score += 10
+			reasons = append(reasons, "shared machine from "+hostLabel+" permits host API keys")
+		} else {
+			reasons = append(reasons, "shared from "+hostLabel)
+		}
+		switch strings.ToLower(strings.TrimSpace(m.PriorityMode)) {
+		case "spare-capacity":
+			score -= 400
+			reasons = append(reasons, "spare-capacity policy keeps shared machine as fallback")
+		case "scheduled":
+			score -= 60
+			reasons = append(reasons, "shared machine is scheduled-only")
+		default:
+			score -= 80
+			reasons = append(reasons, "shared infra courtesy deboost")
+		}
+	}
 	if state != nil {
 		score -= state.machineAssignments[m.DeviceID] * 55
 		score -= state.runnerAssignments[normalizedPlacementRunner(runner)] * 70
@@ -401,6 +425,19 @@ func machineSupportsIOS(caps *MachineCapabilities) bool {
 
 func machineSupportsAndroid(caps *MachineCapabilities) bool {
 	return caps != nil && (caps.SupportsAndroid || caps.SupportsPlayStore)
+}
+
+// runnerNeedsHostedAPIKey reports whether the runner calls an external
+// paid model API (Anthropic, OpenAI Codex, etc.) and therefore requires
+// either the host's API key or a guest-provided key to run on a shared
+// machine. Local-only runners (ollama, aider-ollama) return false.
+func runnerNeedsHostedAPIKey(runner string) bool {
+	switch normalizedPlacementRunner(runner) {
+	case "claude-code", "codex", "opencode", "aider":
+		return true
+	default:
+		return false
+	}
 }
 
 func machineRunnerGlobalLimit(runner string, caps *MachineCapabilities) int {
