@@ -1,0 +1,98 @@
+name: autodev-smoke
+
+# Smoke-test the autodev / autoideas / autoinit / autotest CLI
+# surface on every PR. Each command runs with --plan so no real
+# Claude / Codex / Aider call happens — we just exercise flag
+# parsing, plan generation, and exit codes. Catches regressions
+# in the dispatcher without burning AI credits in CI.
+#
+# A separate workflow (autodev-e2e.yml, optional / nightly) can
+# burn credits to drive a real --max-iterations 1 kick against
+# a fixture project.
+
+on:
+  pull_request:
+    paths:
+      - 'desktop/agent/**'
+      - '.github/workflows/autodev-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'desktop/agent/**'
+      - '.github/workflows/autodev-smoke.yml'
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: |
+            desktop/agent/go.sum
+            mcp/go.sum
+            relay/go.sum
+
+      - name: Build yaver agent
+        working-directory: desktop/agent
+        run: go build -o /tmp/yaver .
+
+      - name: Unit tests (autodev / autoinit / logstream / etc.)
+        working-directory: desktop/agent
+        run: |
+          go test -run 'TestAutodev|TestExtract|TestLogStream|TestSafe|TestResolve|TestAutoinit|TestReplaceBetween|TestComputeAutoInit' \
+                  -count=1 -timeout 2m -v .
+
+      - name: Make a tiny fixture project
+        run: |
+          mkdir -p /tmp/fixture
+          cd /tmp/fixture
+          git init -q
+          git config user.email autodev@example.com
+          git config user.name autodev
+          echo "# fixture" > README.md
+          echo '{"name":"fixture","version":"0.0.1"}' > package.json
+          echo "- [ ] item one" > remained.md
+          git add . && git commit -q -m "init"
+
+      - name: yaver autodev --plan
+        run: |
+          cd /tmp/fixture
+          /tmp/yaver autodev fixture --plan --hours 1 --no-autotest
+
+      - name: yaver autodev --engine hybrid --plan
+        run: |
+          cd /tmp/fixture
+          /tmp/yaver autodev fixture --plan --engine hybrid --no-autotest
+
+      - name: yaver autodev --harden security --plan
+        run: |
+          cd /tmp/fixture
+          /tmp/yaver autodev fixture --plan --harden security --no-autotest
+
+      - name: yaver autodev --auto-branch --plan
+        run: |
+          cd /tmp/fixture
+          /tmp/yaver autodev fixture --plan --auto-branch --no-autotest
+
+      - name: yaver autotest --plan
+        run: |
+          cd /tmp/fixture
+          /tmp/yaver autotest fixture --plan
+
+      - name: yaver autoideas --plan
+        run: |
+          cd /tmp/fixture
+          /tmp/yaver autoideas fixture --plan --hours 1
+
+      - name: yaver autoinit --plan
+        run: |
+          cd /tmp/fixture
+          /tmp/yaver autoinit fixture --plan
+
+      - name: yaver autoinit status (before generation)
+        run: |
+          cd /tmp/fixture
+          /tmp/yaver autoinit status
