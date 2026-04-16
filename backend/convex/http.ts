@@ -2414,6 +2414,15 @@ http.route({
         dailyTokenLimit: body.dailyTokenLimit,
         allowedRunners: body.allowedRunners,
         usageMode: body.usageMode,
+        shareAllDevices: body.shareAllDevices,
+        deviceIds: body.deviceIds,
+        shareAllMachines: body.shareAllMachines,
+        machineIds: body.machineIds,
+        useHostApiKeys: body.useHostApiKeys,
+        allowGuestProvidedApiKeys: body.allowGuestProvidedApiKeys,
+        cpuLimitPercent: body.cpuLimitPercent,
+        ramLimitMb: body.ramLimitMb,
+        priorityMode: body.priorityMode,
         schedule: body.schedule,
       });
       return jsonResponse({ ok: true });

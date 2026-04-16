@@ -4,6 +4,7 @@ import { validateSessionInternal } from "./auth";
 import { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { guestInviteHtml } from "./email";
+import { getActiveInfraGrant, guestCanReachHostDevice, listGrantedDeviceIdsForGrant, listGrantedMachineIdsForGrant, revokeInfraGrantsBetweenUsers } from "./access";
 
 const MAX_GUESTS_PER_HOST = 5;
 const INVITATION_TTL_MS = 2 * 24 * 60 * 60 * 1000; // 2 days
@@ -282,6 +283,7 @@ export const revoke = mutation({
       .first();
 
     if (guestUser) {
+      const now = Date.now();
       const accessRecords = await ctx.db
         .query("guestAccess")
         .withIndex("by_host_guest", (q) =>
@@ -291,8 +293,10 @@ export const revoke = mutation({
         .collect();
 
       for (const access of accessRecords) {
-        await ctx.db.patch(access._id, { revokedAt: Date.now() });
+        await ctx.db.patch(access._id, { revokedAt: now });
       }
+
+      await revokeInfraGrantsBetweenUsers(ctx, hostUserId, guestUser._id, now);
     }
 
     return { ok: true };
@@ -453,10 +457,10 @@ export const getGuestUserIds = query({
 
     const guestUserIds: string[] = [];
     for (const access of accessRecords) {
+      if (!(await guestCanReachHostDevice(ctx, hostUserId, access.guestUserId))) continue;
       const guest = await ctx.db.get(access.guestUserId);
-      if (guest) {
-        guestUserIds.push(guest.userId);
-      }
+      if (!guest) continue;
+      guestUserIds.push(guest.userId);
     }
 
     return guestUserIds;
@@ -494,21 +498,42 @@ export const getGuestConfig = query({
       allowedRunners?: string[];
       usageMode?: string;
       schedule?: { startHour: number; endHour: number; timezone?: string };
+      shareAllDevices?: boolean;
+      deviceIds?: string[];
+      shareAllMachines?: boolean;
+      machineIds?: Id<"cloudMachines">[];
+      useHostApiKeys?: boolean;
+      allowGuestProvidedApiKeys?: boolean;
+      cpuLimitPercent?: number;
+      ramLimitMb?: number;
+      priorityMode?: string;
     }> = [];
 
     for (const access of accessRecords) {
       const guest = await ctx.db.get(access.guestUserId);
       if (!guest) continue;
       if (args.guestEmail && guest.email.toLowerCase() !== args.guestEmail.toLowerCase()) continue;
+      const grant = await getActiveInfraGrant(ctx, hostUserId, access.guestUserId);
+      const deviceIds = grant ? await listGrantedDeviceIdsForGrant(ctx, grant._id) : [];
+      const machineIds = grant ? await listGrantedMachineIdsForGrant(ctx, grant._id) : [];
 
       configs.push({
         guestUserId: guest.userId,
         guestEmail: guest.email,
         guestName: guest.fullName,
         dailyTokenLimit: access.dailyTokenLimit,
-        allowedRunners: access.allowedRunners,
-        usageMode: access.usageMode,
-        schedule: access.schedule,
+        allowedRunners: grant?.allowedRunners ?? access.allowedRunners,
+        usageMode: grant?.usageMode ?? access.usageMode,
+        schedule: grant?.schedule ?? access.schedule,
+        shareAllDevices: grant?.shareAllDevices ?? true,
+        deviceIds,
+        shareAllMachines: grant?.shareAllMachines ?? false,
+        machineIds,
+        useHostApiKeys: grant?.useHostApiKeys ?? false,
+        allowGuestProvidedApiKeys: grant?.allowGuestProvidedApiKeys ?? true,
+        cpuLimitPercent: grant?.cpuLimitPercent,
+        ramLimitMb: grant?.ramLimitMb,
+        priorityMode: grant?.priorityMode,
       });
     }
 
@@ -527,6 +552,15 @@ export const updateGuestConfig = mutation({
     dailyTokenLimit: v.optional(v.number()),
     allowedRunners: v.optional(v.array(v.string())),
     usageMode: v.optional(v.string()),
+    shareAllDevices: v.optional(v.boolean()),
+    deviceIds: v.optional(v.array(v.string())),
+    shareAllMachines: v.optional(v.boolean()),
+    machineIds: v.optional(v.array(v.id("cloudMachines"))),
+    useHostApiKeys: v.optional(v.boolean()),
+    allowGuestProvidedApiKeys: v.optional(v.boolean()),
+    cpuLimitPercent: v.optional(v.number()),
+    ramLimitMb: v.optional(v.number()),
+    priorityMode: v.optional(v.string()),
     schedule: v.optional(v.object({
       startHour: v.number(),
       endHour: v.number(),
@@ -578,6 +612,24 @@ export const updateGuestConfig = mutation({
         throw new Error("Schedule hours must be between 0 and 23");
       }
     }
+    if (args.shareAllDevices && args.deviceIds && args.deviceIds.length > 0) {
+      throw new Error("Cannot set shareAllDevices and deviceIds together");
+    }
+    if (args.shareAllMachines && args.machineIds && args.machineIds.length > 0) {
+      throw new Error("Cannot set shareAllMachines and machineIds together");
+    }
+    if (args.cpuLimitPercent !== undefined && (args.cpuLimitPercent < 1 || args.cpuLimitPercent > 100)) {
+      throw new Error("cpuLimitPercent must be between 1 and 100");
+    }
+    if (args.ramLimitMb !== undefined && args.ramLimitMb < 128) {
+      throw new Error("ramLimitMb must be at least 128");
+    }
+    if (args.priorityMode !== undefined) {
+      const validPriorities = ["same-priority", "spare-capacity", "background"];
+      if (!validPriorities.includes(args.priorityMode)) {
+        throw new Error(`Invalid priorityMode: ${args.priorityMode}. Must be one of: ${validPriorities.join(", ")}`);
+      }
+    }
 
     // Build patch object — only include provided fields
     const patch: Record<string, unknown> = {};
@@ -587,6 +639,84 @@ export const updateGuestConfig = mutation({
     if (args.schedule !== undefined) patch.schedule = args.schedule;
 
     await ctx.db.patch(access._id, patch);
+
+    const now = Date.now();
+    let grant = await getActiveInfraGrant(ctx, hostUserId, guestUser._id);
+    if (!grant) {
+      const grantId = await ctx.db.insert("infraAccessGrants", {
+        hostUserId,
+        guestUserId: guestUser._id,
+        status: "active",
+        grantedAt: now,
+        updatedAt: now,
+      });
+      grant = await ctx.db.get(grantId);
+      if (!grant) throw new Error("Failed to create scoped grant");
+    }
+
+    const grantPatch: Record<string, unknown> = { updatedAt: now };
+    if (args.shareAllDevices !== undefined) grantPatch.shareAllDevices = args.shareAllDevices;
+    if (args.shareAllMachines !== undefined) grantPatch.shareAllMachines = args.shareAllMachines;
+    if (args.useHostApiKeys !== undefined) grantPatch.useHostApiKeys = args.useHostApiKeys;
+    if (args.allowGuestProvidedApiKeys !== undefined) {
+      grantPatch.allowGuestProvidedApiKeys = args.allowGuestProvidedApiKeys;
+    }
+    if (args.cpuLimitPercent !== undefined) grantPatch.cpuLimitPercent = args.cpuLimitPercent;
+    if (args.ramLimitMb !== undefined) grantPatch.ramLimitMb = args.ramLimitMb;
+    if (args.priorityMode !== undefined) grantPatch.priorityMode = args.priorityMode;
+    if (args.allowedRunners !== undefined) grantPatch.allowedRunners = args.allowedRunners;
+    if (args.usageMode !== undefined) grantPatch.usageMode = args.usageMode;
+    if (args.schedule !== undefined) grantPatch.schedule = args.schedule;
+    await ctx.db.patch(grant._id, grantPatch);
+
+    if (args.deviceIds !== undefined) {
+      const existingLinks = await ctx.db
+        .query("infraAccessGrantDevices")
+        .withIndex("by_grant", (q) => q.eq("grantId", grant._id))
+        .collect();
+      for (const link of existingLinks) {
+        await ctx.db.delete(link._id);
+      }
+      for (const deviceId of args.deviceIds) {
+        const device = await ctx.db
+          .query("devices")
+          .withIndex("by_deviceId", (q) => q.eq("deviceId", deviceId))
+          .unique();
+        if (!device || device.userId !== hostUserId) {
+          throw new Error(`Device not owned by host: ${deviceId}`);
+        }
+        await ctx.db.insert("infraAccessGrantDevices", {
+          grantId: grant._id,
+          hostUserId,
+          guestUserId: guestUser._id,
+          deviceId,
+          createdAt: now,
+        });
+      }
+    }
+
+    if (args.machineIds !== undefined) {
+      const existingLinks = await ctx.db
+        .query("infraAccessGrantMachines")
+        .withIndex("by_grant", (q) => q.eq("grantId", grant._id))
+        .collect();
+      for (const link of existingLinks) {
+        await ctx.db.delete(link._id);
+      }
+      for (const machineId of args.machineIds) {
+        const machine = await ctx.db.get(machineId);
+        if (!machine || machine.userId !== hostUserId) {
+          throw new Error("Machine not owned by host");
+        }
+        await ctx.db.insert("infraAccessGrantMachines", {
+          grantId: grant._id,
+          hostUserId,
+          guestUserId: guestUser._id,
+          machineId,
+          createdAt: now,
+        });
+      }
+    }
 
     return { ok: true };
   },

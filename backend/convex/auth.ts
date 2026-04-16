@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { mutation, query, internalQuery, QueryCtx, MutationCtx } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
+import { deleteInfraGrantArtifactsForUser } from "./access";
 import { welcomeHtml } from "./email";
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -463,6 +464,8 @@ export const deleteAccount = mutation({
     for (const device of devices) {
       await ctx.db.delete(device._id);
     }
+
+    await deleteInfraGrantArtifactsForUser(ctx, userId);
 
     // Delete the user
     await ctx.db.delete(userId);

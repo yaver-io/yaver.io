@@ -1,6 +1,8 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { Doc } from "./_generated/dataModel";
 import { validateSessionInternal } from "./auth";
+import { listActiveInfraGrantsForGuest, listGrantedDeviceIdsForGrant } from "./access";
 
 /**
  * Register or update a device for peer discovery.
@@ -172,9 +174,60 @@ export const listMyDevices = query({
       isGuest: false as boolean,
       hostName: undefined as string | undefined,
       hostEmail: undefined as string | undefined,
+      accessScope: "owner" as "owner" | "shared-scoped" | "shared-legacy",
+      priorityMode: undefined as string | undefined,
+      useHostApiKeys: undefined as boolean | undefined,
+      allowGuestProvidedApiKeys: undefined as boolean | undefined,
     }));
 
-    // Devices from hosts who granted guest access
+    const scopedGrants = await listActiveInfraGrantsForGuest(ctx, session.user._id);
+    const scopedHosts = new Set<string>();
+
+    for (const grant of scopedGrants) {
+      scopedHosts.add(grant.hostUserId.toString());
+      const host = await ctx.db.get(grant.hostUserId);
+      if (!host) continue;
+
+      const hostDevices = grant.shareAllDevices
+        ? await ctx.db
+            .query("devices")
+            .withIndex("by_userId", (q) => q.eq("userId", grant.hostUserId))
+            .collect()
+        : await Promise.all(
+            (await listGrantedDeviceIdsForGrant(ctx, grant._id)).map(async (deviceId) =>
+              await ctx.db
+                .query("devices")
+                .withIndex("by_deviceId", (q) => q.eq("deviceId", deviceId))
+                .unique(),
+            ),
+          ).then((devices) => devices.filter((device): device is Doc<"devices"> => device !== null));
+
+      for (const d of hostDevices) {
+        result.push({
+          deviceId: d.deviceId,
+          name: d.name,
+          platform: d.platform,
+          publicKey: d.publicKey,
+          quicHost: d.quicHost,
+          quicPort: d.quicPort,
+          isOnline: d.isOnline,
+          needsAuth: d.needsAuth ?? false,
+          runnerDown: d.runnerDown ?? false,
+          runners: d.runners ?? [],
+          lastHeartbeat: d.lastHeartbeat,
+          isGuest: true,
+          hostName: host.fullName,
+          hostEmail: host.email,
+          accessScope: "shared-scoped",
+          priorityMode: grant.priorityMode,
+          useHostApiKeys: grant.useHostApiKeys,
+          allowGuestProvidedApiKeys: grant.allowGuestProvidedApiKeys,
+        });
+      }
+    }
+
+    // Backward-compatibility: if a host has not been migrated to a scoped grant yet,
+    // preserve the older host-wide guest access behavior.
     const guestAccessRecords = await ctx.db
       .query("guestAccess")
       .withIndex("by_guestUserId", (q) => q.eq("guestUserId", session.user._id))
@@ -182,6 +235,7 @@ export const listMyDevices = query({
       .collect();
 
     for (const access of guestAccessRecords) {
+      if (scopedHosts.has(access.hostUserId.toString())) continue;
       const host = await ctx.db.get(access.hostUserId);
       if (!host) continue;
 
@@ -206,6 +260,10 @@ export const listMyDevices = query({
           isGuest: true,
           hostName: host.fullName,
           hostEmail: host.email,
+          accessScope: "shared-legacy",
+          priorityMode: access.usageMode === "idle-only" ? "spare-capacity" : undefined,
+          useHostApiKeys: undefined,
+          allowGuestProvidedApiKeys: true,
         });
       }
     }
