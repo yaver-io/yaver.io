@@ -352,6 +352,15 @@ func (s *HTTPServer) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 		if r.Body != nil {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 		}
+		// Cap label at 80 chars. The label reaches Convex (it's
+		// useful metadata on the sdkTokens row) so a user who pastes
+		// a secret into the label field would leak it. Short labels
+		// don't accommodate secrets; this is a defense against the
+		// foot-gun, not the adversary.
+		if len(body.Label) > 80 {
+			jsonError(w, http.StatusBadRequest, "label too long — 80 chars max (don't paste secrets into the label field)")
+			return
+		}
 		if body.Label == "" {
 			jsonError(w, http.StatusBadRequest, "label is required")
 			return

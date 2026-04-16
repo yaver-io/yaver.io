@@ -18,7 +18,7 @@ import { useRouter } from "expo-router";
 import { Platform } from "react-native";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
-import { quicClient, type DevServerStatus } from "../../src/lib/quic";
+import { quicClient, type DevServerStatus, type MobileWorkerPreviewSession } from "../../src/lib/quic";
 import { loadApp } from "../../src/lib/bundleLoader";
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -63,6 +63,7 @@ export default function AppsScreen() {
   const selectedTarget = mobileWorkers.find((d) => d.id === selectedTargetId) || null;
 
   const [devStatus, setDevStatus] = useState<DevServerStatus | null>(null);
+  const [workerSession, setWorkerSession] = useState<MobileWorkerPreviewSession | null>(null);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [startingProject, setStartingProject] = useState<string | null>(null);
@@ -100,10 +101,15 @@ export default function AppsScreen() {
 
     const pollStatus = async () => {
       try {
-        const status = await quicClient.getDevServerStatus();
+        const [status, session] = await Promise.all([
+          quicClient.getDevServerStatus(),
+          quicClient.getMobileWorkerPreviewSession(),
+        ]);
         if (mounted) setDevStatus(status?.running ? status : null);
+        if (mounted) setWorkerSession(session);
       } catch {
         if (mounted) setDevStatus(null);
+        if (mounted) setWorkerSession(null);
       }
     };
 
@@ -311,7 +317,19 @@ export default function AppsScreen() {
         if (value) setSelectedTargetId(value);
       })
       .catch(() => {});
-  }, [selectedTarget]);
+  }, []);
+
+  useEffect(() => {
+    if (!isConnected) return;
+    let mounted = true;
+    quicClient.getDevServerTarget()
+      .then((target) => {
+        if (!mounted) return;
+        setSelectedTargetId(target?.targetDeviceId || null);
+      })
+      .catch(() => {});
+    return () => { mounted = false; };
+  }, [isConnected, activeDevice?.id]);
 
   useEffect(() => {
     if (devStatus?.targetDeviceId) {
@@ -482,6 +500,12 @@ export default function AppsScreen() {
     setWebViewKey(k => k + 1);
   }, []);
 
+  const handleRequestScreenshot = useCallback(async () => {
+    await quicClient.sendMobileWorkerPreviewCommand("capture_screenshot", {
+      reason: "apps-control-plane",
+    });
+  }, []);
+
   const handleStop = useCallback(() => {
     Alert.alert("Stop Dev Server", "Stop the running dev server?", [
       { text: "Cancel", style: "cancel" },
@@ -530,6 +554,11 @@ export default function AppsScreen() {
                 <Text style={[s.cardMeta, { color: "#7dd3fc" }]}>
                   target · {devStatus.targetDeviceName || selectedTarget?.name || "this device"}
                 </Text>
+                {workerSession?.hasTarget && (
+                  <Text style={[s.cardMeta, { color: workerSession.workerOnline ? "#86efac" : "#fbbf24" }]}>
+                    worker · {workerSession.workerOnline ? "online" : "offline"}
+                  </Text>
+                )}
               </View>
             </View>
             <View style={s.cardActions}>
@@ -546,6 +575,11 @@ export default function AppsScreen() {
               <Pressable style={[s.actionBtn, s.reloadBtn]} onPress={handleReload}>
                 <Text style={s.reloadBtnText}>{"\u21BB"} Reload</Text>
               </Pressable>
+              {workerSession?.hasTarget && workerSession.workerOnline && (
+                <Pressable style={[s.actionBtn, s.reloadBtn]} onPress={handleRequestScreenshot}>
+                  <Text style={s.reloadBtnText}>Shot</Text>
+                </Pressable>
+              )}
               <Pressable style={[s.actionBtn, s.stopBtn]} onPress={handleStop}>
                 <Text style={s.stopBtnText}>Stop</Text>
               </Pressable>

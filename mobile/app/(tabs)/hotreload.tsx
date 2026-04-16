@@ -13,7 +13,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
-import { quicClient, type DevServerStatus } from "../../src/lib/quic";
+import { quicClient, type DevServerStatus, type MobileWorkerPreviewSession } from "../../src/lib/quic";
 import { loadApp } from "../../src/lib/bundleLoader";
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -47,6 +47,7 @@ export default function HotReloadScreen() {
   const isConnected = connectionStatus === "connected" && !!activeDevice;
 
   const [devStatus, setDevStatus] = useState<DevServerStatus | null>(null);
+  const [workerSession, setWorkerSession] = useState<MobileWorkerPreviewSession | null>(null);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [startingProject, setStartingProject] = useState<string | null>(null);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
@@ -60,6 +61,18 @@ export default function HotReloadScreen() {
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!isConnected) return;
+    let mounted = true;
+    quicClient.getDevServerTarget()
+      .then((target) => {
+        if (!mounted) return;
+        setSelectedTargetId(target?.targetDeviceId || null);
+      })
+      .catch(() => {});
+    return () => { mounted = false; };
+  }, [isConnected, activeDevice?.id]);
 
   useEffect(() => {
     if (selectedTargetId) {
@@ -86,10 +99,15 @@ export default function HotReloadScreen() {
 
     const poll = async () => {
       try {
-        const status = await quicClient.getDevServerStatus();
+        const [status, session] = await Promise.all([
+          quicClient.getDevServerStatus(),
+          quicClient.getMobileWorkerPreviewSession(),
+        ]);
         if (mounted) setDevStatus(status?.running || status?.framework ? status : null);
+        if (mounted) setWorkerSession(session);
       } catch {
         if (mounted) setDevStatus(null);
+        if (mounted) setWorkerSession(null);
       }
     };
 
@@ -204,6 +222,24 @@ export default function HotReloadScreen() {
     ]);
   }, []);
 
+  const handleSelectTarget = useCallback(async (deviceId: string | null) => {
+    const target = deviceId ? mobileWorkers.find((d) => d.id === deviceId) || null : null;
+    setSelectedTargetId(deviceId);
+    try {
+      await quicClient.setDevServerTarget({
+        targetDeviceId: target?.id,
+        targetDeviceName: target?.name,
+        targetDeviceClass: target?.deviceClass,
+      });
+    } catch {}
+  }, [mobileWorkers]);
+
+  const handleRequestScreenshot = useCallback(async () => {
+    await quicClient.sendMobileWorkerPreviewCommand("capture_screenshot", {
+      reason: "hotreload-control-plane",
+    });
+  }, []);
+
   // Tap project → start dev server directly using path + framework from scanner
   const handleStartProject = useCallback(async (project: ProjectItem) => {
     const isRunning = devStatus?.workDir === project.path;
@@ -268,7 +304,7 @@ export default function HotReloadScreen() {
               </Text>
               <View style={s.targetChipRow}>
                 <Pressable
-                  onPress={() => setSelectedTargetId(null)}
+                  onPress={() => { void handleSelectTarget(null); }}
                   style={[
                     s.targetChip,
                     {
@@ -284,7 +320,7 @@ export default function HotReloadScreen() {
                 {mobileWorkers.map((worker) => (
                   <Pressable
                     key={worker.id}
-                    onPress={() => setSelectedTargetId(worker.id)}
+                    onPress={() => { void handleSelectTarget(worker.id); }}
                     style={[
                       s.targetChip,
                       {
@@ -320,6 +356,11 @@ export default function HotReloadScreen() {
                     target · {devStatus.targetDeviceName || selectedTarget?.name}
                   </Text>
                 )}
+                {workerSession?.hasTarget && (
+                  <Text style={[s.cardMeta, { color: workerSession.workerOnline ? "#86efac" : "#fbbf24" }]}>
+                    worker · {workerSession.workerOnline ? "online" : "offline"}
+                  </Text>
+                )}
                 {!devStatus.targetDeviceName && !selectedTarget && (
                   <Text style={[s.cardMeta, { color: "#7dd3fc" }]}>
                     target · this device
@@ -344,6 +385,11 @@ export default function HotReloadScreen() {
                   <Pressable style={[s.actionBtn, s.reloadBtn]} onPress={handleReload}>
                     <Text style={s.reloadBtnText}>{"\u21BB"} Reload</Text>
                   </Pressable>
+                  {workerSession?.hasTarget && workerSession.workerOnline && (
+                    <Pressable style={[s.actionBtn, s.reloadBtn]} onPress={handleRequestScreenshot}>
+                      <Text style={s.reloadBtnText}>Shot</Text>
+                    </Pressable>
+                  )}
                 </>
               )}
               <Pressable style={[s.actionBtn, s.stopBtn]} onPress={handleStop}>

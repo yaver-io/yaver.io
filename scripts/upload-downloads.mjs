@@ -66,6 +66,22 @@ function inferArtifact(file) {
   return null;
 }
 
+function extractVersion(file) {
+  const match = file.match(/(\d+\.\d+\.\d+)/);
+  return match ? match[1] : "0.0.0";
+}
+
+function compareSemver(a, b) {
+  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const da = pa[i] || 0;
+    const db = pb[i] || 0;
+    if (da !== db) return da - db;
+  }
+  return 0;
+}
+
 function collectFiles() {
   if (!fs.existsSync(DIST)) {
     throw new Error(`Dist directory not found: ${DIST}`);
@@ -81,17 +97,23 @@ function collectFiles() {
 
     const key = `${inferred.platform}:${inferred.arch}:${inferred.format}`;
     if (seen.has(key)) {
-      throw new Error(`Duplicate artifact for ${key}: ${seen.get(key)} and ${file}`);
+      const prev = seen.get(key);
+      if (compareSemver(extractVersion(file), extractVersion(prev.file)) <= 0) {
+        continue;
+      }
+      const idx = entries.findIndex((entry) => `${entry.platform}:${entry.arch}:${entry.format}` === key);
+      if (idx >= 0) entries.splice(idx, 1);
     }
 
-    seen.set(key, file);
-    entries.push({
+    const entry = {
       file,
       platform: inferred.platform,
       arch: inferred.arch,
       format: inferred.format,
       filename: CANONICAL_FILENAMES[key] || file,
-    });
+    };
+    seen.set(key, entry);
+    entries.push(entry);
   }
 
   return entries;

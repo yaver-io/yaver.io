@@ -1,9 +1,11 @@
 import { Tabs, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import * as ExpoDevice from "expo-device";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
+import { loadApp } from "../../src/lib/bundleLoader";
 
 function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boolean; showGreenDot?: boolean }) {
   const c = useColors();
@@ -33,7 +35,7 @@ function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boo
 export default function TabLayout() {
   const c = useColors();
   const router = useRouter();
-  const { connectionStatus, activeDevice } = useDevice();
+  const { connectionStatus, activeDevice, devices } = useDevice();
   const isConnected = connectionStatus === "connected" && !!activeDevice;
   const [devServerRunning, setDevServerRunning] = useState(false);
   const wasRunning = useRef(false);
@@ -80,6 +82,79 @@ export default function TabLayout() {
     const interval = setInterval(poll, 3000);
     return () => { mounted = false; clearInterval(interval); };
   }, [isConnected, router]);
+
+  useEffect(() => {
+    if (!isConnected) return;
+
+    const platform = ExpoDevice.osName?.toLowerCase().includes("ios") ? "ios" : "android";
+    const nameCandidates = [
+      ExpoDevice.deviceName,
+      ExpoDevice.modelName,
+    ]
+      .map((value) => (value || "").trim().toLowerCase())
+      .filter(Boolean);
+
+    const edgeMobiles = devices.filter((device) => device.deviceClass === "edge-mobile");
+    const samePlatform = edgeMobiles.filter((device) => (device.os || "").toLowerCase().includes(platform));
+    const resolved =
+      samePlatform.find((device) => nameCandidates.some((name) => device.name.toLowerCase() === name)) ||
+      samePlatform.find((device) => nameCandidates.some((name) => device.name.toLowerCase().includes(name) || name.includes(device.name.toLowerCase()))) ||
+      (samePlatform.length === 1 ? samePlatform[0] : null);
+
+    if (!resolved?.id) return;
+
+    void quicClient.pushBlackBoxEvents(resolved.id, [{
+      type: "state",
+      level: "info",
+      message: "preview_worker_command_channel_connected",
+      timestamp: Date.now(),
+      metadata: { app: "yaver-mobile", platform },
+    }]);
+
+    const unsubscribe = quicClient.streamBlackBoxCommands(resolved.id, async (event) => {
+      const command = event.command?.command;
+      const data = event.command?.data || {};
+      if (!command) return;
+
+      if (command === "reload_bundle" || command === "reload") {
+        const bundlePath = typeof data.bundleUrl === "string"
+          ? data.bundleUrl
+          : "/dev/native-bundle";
+        const moduleName = typeof data.moduleName === "string" ? data.moduleName : "main";
+        try {
+          await loadApp(`${quicClient.baseUrl}${bundlePath}`, moduleName, quicClient.getAuthHeaders());
+          await quicClient.pushBlackBoxEvents(resolved.id, [{
+            type: "state",
+            level: "info",
+            message: "preview_worker_bundle_loaded",
+            timestamp: Date.now(),
+            metadata: { bundleUrl: bundlePath, moduleName },
+          }]);
+        } catch (error: any) {
+          await quicClient.pushBlackBoxEvents(resolved.id, [{
+            type: "error",
+            level: "error",
+            message: `preview_worker_bundle_load_failed: ${error?.message || "unknown error"}`,
+            timestamp: Date.now(),
+            metadata: { bundleUrl: bundlePath, moduleName },
+          }]);
+        }
+        return;
+      }
+
+      if (command === "capture_screenshot") {
+        await quicClient.pushBlackBoxEvents(resolved.id, [{
+          type: "state",
+          level: "info",
+          message: "preview_worker_capture_requested",
+          timestamp: Date.now(),
+          metadata: { supported: false, reason: "screenshot-capture-not-wired-yet" },
+        }]);
+      }
+    });
+
+    return unsubscribe;
+  }, [isConnected, devices]);
 
   return (
     <Tabs

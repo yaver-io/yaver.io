@@ -29,17 +29,17 @@ type BlackBoxEvent struct {
 
 // BlackBoxCommand represents a command pushed from the agent to a connected SDK device.
 type BlackBoxCommand struct {
-	Command string                 `json:"command"`           // "reload", "reload_bundle"
-	Data    map[string]interface{} `json:"data,omitempty"`    // e.g. {"bundleUrl": "/dev/native-bundle"}
+	Command string                 `json:"command"`        // "reload", "reload_bundle"
+	Data    map[string]interface{} `json:"data,omitempty"` // e.g. {"bundleUrl": "/dev/native-bundle"}
 }
 
 // BlackBoxSession represents a continuous streaming session from a device.
 type BlackBoxSession struct {
-	DeviceID  string           `json:"deviceId"`
-	Platform  string           `json:"platform"` // ios, android, web
-	AppName   string           `json:"appName,omitempty"`
-	StartedAt string           `json:"startedAt"`
-	Events    []BlackBoxEvent  `json:"events"`
+	DeviceID  string          `json:"deviceId"`
+	Platform  string          `json:"platform"` // ios, android, web
+	AppName   string          `json:"appName,omitempty"`
+	StartedAt string          `json:"startedAt"`
+	Events    []BlackBoxEvent `json:"events"`
 	mu        sync.RWMutex
 	maxEvents int
 	// SSE subscribers waiting for new events
@@ -260,6 +260,24 @@ func (m *BlackBoxManager) BroadcastCommand(cmd BlackBoxCommand) {
 	for _, s := range m.sessions {
 		s.SendCommand(cmd)
 	}
+}
+
+// SendCommandToDevice pushes a command to a specific connected SDK session.
+// Returns false when the device has no active blackbox session.
+func (m *BlackBoxManager) SendCommandToDevice(deviceID string, cmd BlackBoxCommand) bool {
+	if strings.TrimSpace(deviceID) == "" {
+		return false
+	}
+
+	m.mu.RLock()
+	session := m.sessions[deviceID]
+	m.mu.RUnlock()
+	if session == nil {
+		return false
+	}
+
+	session.SendCommand(cmd)
+	return true
 }
 
 // RecentEvents returns the last N events from the session.

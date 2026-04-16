@@ -35,6 +35,14 @@ The most important concrete experience is:
 
 The primary phone must also remain a valid Hermes/runtime target when the user wants the fastest direct loop on the same device they are holding.
 
+This document also tracks a second, later platform direction:
+
+- a `mini backend` embedded inside the Yaver mobile app
+- optimized for creating a new mobile app from a mobile app
+- portable later to user-owned infra like Raspberry Pi, Linux, Mac, VPS, Supabase, or Convex
+
+That mini-backend track is explicitly a future layer on top of Yaver's phone-first development workflow. It is not a requirement for the initial mobile-worker rollout.
+
 ## Summary
 
 Yaver should support a spare phone registering as a `mobile worker` with explicit capabilities, health state, and placement constraints.
@@ -56,6 +64,12 @@ It should not be treated as:
 - the main LLM runtime
 - a replacement for a Mac mini
 - a distributed tensor-shard node for large `Llama` inference
+
+Yaver should eventually also support a different mode:
+
+- `mobile-first project backend`
+
+This is not the same thing as using a spare phone as a worker. In this mode, the Yaver app itself hosts a constrained local backend runtime for rapid app creation, preview, and iteration from the phone.
 
 ## Why This Matters
 
@@ -117,6 +131,7 @@ This document is optimized for that setup.
 5. Scheduling should favor correctness and user trust over maximizing utilization.
 6. All worker behavior must be safe under intermittent connectivity.
 7. UI must make it obvious why Yaver used a phone or did not use a phone.
+8. Future mobile-first backend features must be portable to user-owned infra and not trap the user in a Yaver-only project format.
 
 ## Terminology
 
@@ -194,6 +209,213 @@ The decision of whether a task should run on:
 - `edge`
 - `infra`
 - `hybrid`
+
+## Parallel Product Track: Mini Backend Inside Yaver
+
+This is a future platform track for phone-first creation, not part of the initial spare-phone worker rollout.
+
+The goal is:
+
+- user creates a mobile app from the Yaver mobile app
+- Yaver provides a constrained local backend runtime inside the app
+- the project remains portable later to real infra
+
+This is the right answer to "how can I start building from my phone?" It is not "run full Convex locally on iPhone."
+
+### What It Is
+
+A `mini backend` embedded in the Yaver mobile app should provide:
+
+- local data storage
+- schema definitions
+- query and mutation primitives
+- local file/blob storage abstraction
+- local auth mock or profile abstraction
+- local event/sync layer
+- seed data and fixtures
+- export or promotion path to real backend providers later
+
+The runtime should be optimized for:
+
+- React
+- React Native
+- Expo
+- Hermes-first preview loops
+- vibe-driven CRUD and app-flow generation
+
+### What It Is Not
+
+It is not:
+
+- a full Convex replacement on the phone
+- a full Supabase clone on the phone
+- a general-purpose server runtime
+- a Node process manager
+- a place to host arbitrary production workloads
+
+The purpose is fast prototyping, iteration, and phone-first creation.
+
+### Why This Matters
+
+This gives Yaver a path for:
+
+- creating a new mobile app from the mobile app
+- letting a user vibe from the phone without first provisioning desktop infra
+- supporting weak-computer setups where the phone is the primary interface
+- keeping the project portable when the user later adopts Pi, Linux, Mac, or hosted backend infra
+
+### Phone-First Fullstack Creation Mode
+
+This future mode should explicitly support:
+
+- user enters `Codex`, `Claude`, or other model API keys into the Yaver mobile app
+- Yaver creates and edits the project directly on the primary phone
+- project source stays on the phone first
+- Yaver previews and runs the project inside a Yaver-owned host/runtime contract
+- user can later export or promote the project to desktop or cloud infra
+
+The first version of this mode should assume:
+
+- React / React Native / Expo-first workflows
+- constrained local backend runtime
+- Hermes-targeted hosted preview inside Yaver
+- portable project manifest and source layout
+
+It should not assume:
+
+- full native iOS build pipeline on the phone
+- arbitrary native module compilation on the phone
+- full desktop-equivalent server orchestration on the phone
+
+The product promise is:
+
+- phone-first creation
+- not phone-only forever
+
+Projects created this way must be promotable to:
+
+- Yaver backend
+- Raspberry Pi / Linux / Mac hosts
+- VPS
+- Supabase
+- Convex
+- standard React Native / Expo projects where possible
+
+### Git and Monorepo Expectations
+
+Phone-first projects should be git-native from the start.
+
+Default assumptions:
+
+- new projects are monorepos
+- app code, mini-backend code, config, and generated artifacts live in one repo shape
+- the project can be initialized entirely inside Yaver on the phone
+- the same project can later be exported to a local machine or cloud runner without format conversion drama
+
+The first version should support:
+
+- initialize git repo on-phone
+- branch creation and switching
+- commit history and diff view from mobile
+- remote setup for GitHub and GitLab
+- push / pull / sync flows
+- export repo bundle to Mac, Linux, Pi, or VPS
+
+The repo layout should be compatible with later promotion to:
+
+- GitHub-hosted repo
+- GitLab-hosted repo
+- self-hosted git remote
+
+The mini backend and mobile-worker features must not assume a single-repo-per-device toy model. They should assume a portable monorepo with multiple app/backend packages as the steady-state default.
+
+### Portability Contract
+
+The mini backend must be designed around a portability contract.
+
+That means each project should be representable as:
+
+- schema
+- collections or tables
+- queries
+- mutations or actions
+- auth rules
+- storage rules
+- seed data
+- environment bindings
+
+Yaver should later be able to promote that project to:
+
+- local Raspberry Pi or Linux box
+- Mac mini or MacBook
+- VPS
+- Supabase
+- Convex
+- custom backend scaffolds where needed
+
+The internal Yaver runtime must therefore stay intentionally constrained and declarative.
+
+### iPhone and Android Expectations
+
+For this mini-backend direction:
+
+- `iPhone` is viable if the runtime stays inside the app sandbox and uses app-owned storage/runtime primitives
+- `Android` is also viable and gives somewhat more flexibility
+
+For both platforms, the design should avoid assuming:
+
+- shell access
+- background subprocess orchestration
+- unrestricted local networking
+- arbitrary package/toolchain execution
+
+### Suggested Scope
+
+The first useful version should support:
+
+- local collections
+- CRUD queries and mutations
+- optimistic UI and local subscriptions
+- fixture data
+- local uploads/media references
+- simple auth personas
+- export to structured project manifest
+
+The first useful version should not try to support:
+
+- arbitrary server code
+- inbound webhooks
+- heavy background jobs
+- complex production auth providers
+- provider-specific advanced features
+
+### Relationship To Mobile Workers
+
+These are complementary product tracks:
+
+- `mobile worker`
+  uses spare phones as real-device execution, capture, and validation surfaces
+- `mini backend`
+  lets Yaver host a constrained app backend inside the mobile app for early-stage creation
+
+The likely end state is:
+
+- primary phone runs Yaver control plane
+- Yaver can create and edit a mobile app project directly on the phone
+- Yaver can preview on the primary phone or on spare-phone workers
+- project can later be promoted to Mac, Pi, Linux, VPS, Supabase, or Convex
+
+### Sequencing
+
+This should not block the current implementation plan.
+
+Execution order remains:
+
+1. real-device worker selection and target persistence
+2. remote preview session model
+3. screenshot/video evidence and live session control
+4. bounded mobile `agent-worker` loops
+5. only after that, the phone-native `mini backend` track
 
 ## What A Mobile Worker Is Good For
 

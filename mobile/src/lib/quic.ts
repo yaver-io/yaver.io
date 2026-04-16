@@ -49,6 +49,27 @@ export interface APIKeyRecord {
   scopes?: string[];
 }
 
+// Matches desktop/agent/scheduler.go::ScheduledTask.
+export interface ScheduledTask {
+  id: string;
+  title: string;
+  description?: string;
+  model?: string;
+  runner?: string;
+  customCommand?: string;
+  runAt?: string;
+  cron?: string;
+  repeatInterval?: number;
+  status: "scheduled" | "running" | "completed" | "failed" | "paused";
+  lastRunAt?: string;
+  lastTaskId?: string;
+  nextRunAt?: string;
+  runCount: number;
+  maxRuns?: number;
+  createdAt: string;
+  history?: { taskId: string; status: string; startedAt: string; durationMs: number; costUsd?: number }[];
+}
+
 export interface ImageAttachment {
   base64: string;       // base64 encoded image data (no data URI prefix)
   mimeType: string;     // "image/jpeg" or "image/png"
@@ -2019,6 +2040,86 @@ export class QuicClient {
     if (!res.ok) throw new Error(`apikey disable: HTTP ${res.status}`);
   }
 
+  // ── Schedules (cron / runAt / repeatInterval) ──────────────────────
+
+  async listSchedules(): Promise<ScheduledTask[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/schedules`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`schedules list: HTTP ${res.status}`);
+    const data = await res.json();
+    return Array.isArray(data?.schedules) ? data.schedules : [];
+  }
+
+  async createSchedule(spec: Partial<ScheduledTask> & { title: string }): Promise<ScheduledTask> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/schedules`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify(spec),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || `schedule create: HTTP ${res.status}`);
+    return data.schedule;
+  }
+
+  async deleteSchedule(id: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/schedules/${encodeURIComponent(id)}`,
+      { method: 'DELETE', headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`schedule delete: HTTP ${res.status}`);
+  }
+
+  async pauseSchedule(id: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/schedules/${encodeURIComponent(id)}/pause`,
+      { method: 'POST', headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`schedule pause: HTTP ${res.status}`);
+  }
+
+  async resumeSchedule(id: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/schedules/${encodeURIComponent(id)}/resume`,
+      { method: 'POST', headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`schedule resume: HTTP ${res.status}`);
+  }
+
+  // ── Accounts (cloud-provider credentials — stored on host only) ──
+
+  async accountsList(): Promise<{ accounts: any[]; providers: any[] }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/accounts`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`accounts list: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async accountConnect(provider: string, label: string, fields: Record<string, string>): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/accounts/connect`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, label, fields }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || `account connect: HTTP ${res.status}`);
+    return data;
+  }
+
+  async accountDisconnect(provider: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/accounts/disconnect`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+    });
+    if (!res.ok) throw new Error(`account disconnect: HTTP ${res.status}`);
+  }
+
   // ── Quality Gates ──────────────────────────────────────────────────
 
   /** Detect available quality checks for a project. */
@@ -2882,6 +2983,116 @@ export class QuicClient {
       if (!res.ok) return null;
       return await res.json();
     } catch { return null; }
+  }
+
+  /** Get the persisted dev preview target from the agent. */
+  async getDevServerTarget(): Promise<DevTargetPreference | null> {
+    if (!this.isConnected && !this.hasConnectionInfo) return null;
+    try {
+      const res = await fetch(`${this.baseUrl}/dev/target`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  /** Persist the dev preview target on the agent. */
+  async setDevServerTarget(target: DevTargetPreference): Promise<DevTargetPreference | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/dev/target`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(target),
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  /** Get the status of the selected mobile-worker preview session. */
+  async getMobileWorkerPreviewSession(): Promise<MobileWorkerPreviewSession | null> {
+    if (!this.isConnected && !this.hasConnectionInfo) return null;
+    try {
+      const res = await fetch(`${this.baseUrl}/mobile-workers/preview-session`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  /** Send a targeted command to the selected mobile preview worker. */
+  async sendMobileWorkerPreviewCommand(command: string, data?: Record<string, unknown>): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/mobile-workers/preview-session/command`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ command, data }),
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
+  /** Push a batch of blackbox events for a mobile worker session. */
+  async pushBlackBoxEvents(deviceId: string, events: Array<Record<string, unknown>>, appName = "Yaver"): Promise<boolean> {
+    if (!this.isConnected && !this.hasConnectionInfo) return false;
+    try {
+      const res = await fetch(`${this.baseUrl}/blackbox/events`, {
+        method: "POST",
+        headers: {
+          ...this.authHeaders,
+          "Content-Type": "application/json",
+          "X-Device-ID": deviceId,
+          "X-Platform": Platform.OS,
+          "X-App-Name": appName,
+        },
+        body: JSON.stringify(events),
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
+  /** Subscribe to commands for a mobile worker over the existing blackbox SSE path. */
+  streamBlackBoxCommands(
+    deviceId: string,
+    onCommand: (event: BlackBoxCommandEnvelope) => void,
+    appName = "Yaver",
+  ): () => void {
+    const controller = new AbortController();
+    const run = async () => {
+      try {
+        const res = await fetch(`${this.baseUrl}/blackbox/command-stream?device=${encodeURIComponent(deviceId)}`, {
+          headers: {
+            ...this.authHeaders,
+            Accept: "text/event-stream",
+            "X-Device-ID": deviceId,
+            "X-Platform": Platform.OS,
+            "X-App-Name": appName,
+          },
+          signal: controller.signal,
+        });
+        const reader = res.body?.getReader();
+        if (!reader) return;
+        const decoder = new TextDecoder();
+        let incomplete = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const text = incomplete + decoder.decode(value, { stream: true });
+          const lines = text.split("\n");
+          incomplete = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              onCommand(JSON.parse(line.slice(6)));
+            } catch {}
+          }
+        }
+      } catch {}
+    };
+    run();
+    return () => controller.abort();
   }
 
   /** Start a dev server on the agent. */
@@ -4858,6 +5069,37 @@ export interface DevServerStatus {
   targetDeviceId?: string;
   targetDeviceName?: string;
   targetDeviceClass?: string;
+}
+
+export interface DevTargetPreference {
+  targetDeviceId?: string;
+  targetDeviceName?: string;
+  targetDeviceClass?: string;
+}
+
+export interface MobileWorkerPreviewSession {
+  hasTarget: boolean;
+  targetDeviceId?: string;
+  targetDeviceName?: string;
+  targetDeviceClass?: string;
+  workerOnline: boolean;
+  workerPlatform?: string;
+  workerAppName?: string;
+  workerStartedAt?: string;
+  workerEventCount?: number;
+  devServerRunning: boolean;
+  framework?: string;
+  workDir?: string;
+  targetCommandScope?: string;
+}
+
+export interface BlackBoxCommandEnvelope {
+  type?: string;
+  command?: {
+    command?: string;
+    data?: Record<string, unknown>;
+  };
+  message?: string;
 }
 
 // ── Morning match-report types & helpers ──────────────────────────────

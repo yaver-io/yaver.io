@@ -494,6 +494,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 
 	// Dev server (reverse proxy to local Metro/Vite/Flutter dev server)
 	mux.HandleFunc("/dev/status", s.authSDK(s.handleDevServerStatus))
+	mux.HandleFunc("/dev/target", s.authSDK(s.handleDevServerTarget))
 	mux.HandleFunc("/dev/start", s.authOrLocalhost(s.handleDevServerStart))
 	mux.HandleFunc("/dev/stop", s.authOrLocalhost(s.handleDevServerStop))
 	mux.HandleFunc("/dev/reload", s.authSDK(s.handleDevServerReload))
@@ -505,6 +506,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/dev/native-bundle", s.handleServeNativeBundle) // No auth — serves compiled bundle
 	mux.HandleFunc("/dev/native-assets", s.handleServeNativeAssets) // No auth — serves compiled assets
 	mux.HandleFunc("/dev/", s.handleDevServerProxy)                 // No auth — serves app bundle in WebView (not sensitive)
+	mux.HandleFunc("/mobile-workers/preview-session", s.authSDK(s.handleMobileWorkerPreviewSession))
+	mux.HandleFunc("/mobile-workers/preview-session/command", s.authSDK(s.handleMobileWorkerPreviewCommand))
 
 	// Relay-based expose (subdomain routing via QUIC relay)
 	mux.HandleFunc("/expose/start", s.auth(s.handleRelayExposeStart))

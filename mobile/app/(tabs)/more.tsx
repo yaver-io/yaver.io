@@ -2568,6 +2568,36 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
+        {/* Schedules — cron / runAt / interval tasks on the agent */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/schedules" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u23F0"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Schedules</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Cron, one-shot, or interval tasks on this machine</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
+        {/* Accounts — cloud-provider credential vault on the host */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/accounts" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u2601"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Accounts</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Connect AWS / GCP / Stripe / LemonSqueezy — creds stay local</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
         {/* New Project — fullstack wizard (web + mobile + backend + DNS + OAuth) */}
         {connected && (
           <Pressable

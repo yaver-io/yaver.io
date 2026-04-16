@@ -23,15 +23,64 @@ func (s *HTTPServer) handleDevServerStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	target := s.devServerMgr.PreferredTarget()
 	status := s.devServerMgr.Status()
 	if status == nil {
 		jsonReply(w, http.StatusOK, map[string]interface{}{
-			"running": false,
+			"running":           false,
+			"targetDeviceId":    target.DeviceID,
+			"targetDeviceName":  target.DeviceName,
+			"targetDeviceClass": target.DeviceClass,
 		})
 		return
 	}
 
 	jsonReply(w, http.StatusOK, status)
+}
+
+// handleDevServerTarget gets or updates the preferred dev preview target.
+// GET /dev/target
+// POST /dev/target { "targetDeviceId": "...", "targetDeviceName": "...", "targetDeviceClass": "..." }
+func (s *HTTPServer) handleDevServerTarget(w http.ResponseWriter, r *http.Request) {
+	if s.devServerMgr == nil {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		target := s.devServerMgr.PreferredTarget()
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"targetDeviceId":    target.DeviceID,
+			"targetDeviceName":  target.DeviceName,
+			"targetDeviceClass": target.DeviceClass,
+		})
+	case http.MethodPost:
+		var req struct {
+			TargetDeviceID    string `json:"targetDeviceId"`
+			TargetDeviceName  string `json:"targetDeviceName"`
+			TargetDeviceClass string `json:"targetDeviceClass"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+			return
+		}
+
+		s.devServerMgr.SetPreferredTarget(DevServerTarget{
+			DeviceID:    req.TargetDeviceID,
+			DeviceName:  req.TargetDeviceName,
+			DeviceClass: req.TargetDeviceClass,
+		})
+
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"ok":                true,
+			"targetDeviceId":    req.TargetDeviceID,
+			"targetDeviceName":  req.TargetDeviceName,
+			"targetDeviceClass": req.TargetDeviceClass,
+		})
+	default:
+		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
 }
 
 // handleDevServerStart starts a dev server.
@@ -66,6 +115,14 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 		if s.taskMgr != nil {
 			req.WorkDir = s.taskMgr.workDir
 		}
+	}
+
+	if req.TargetDeviceID != "" || req.TargetDeviceName != "" || req.TargetDeviceClass != "" {
+		s.devServerMgr.SetPreferredTarget(DevServerTarget{
+			DeviceID:    req.TargetDeviceID,
+			DeviceName:  req.TargetDeviceName,
+			DeviceClass: req.TargetDeviceClass,
+		})
 	}
 
 	// Clear build marker if rebuild requested
@@ -136,10 +193,14 @@ func (s *HTTPServer) handleDevServerReload(w http.ResponseWriter, r *http.Reques
 
 	// Push reload command to all connected SDK devices (third-party apps with Feedback SDK)
 	if s.blackboxMgr != nil {
-		s.blackboxMgr.BroadcastCommand(BlackBoxCommand{
-			Command: "reload",
-		})
-		log.Printf("[dev] Broadcast reload command to connected SDK devices")
+		if sent := s.sendPreviewWorkerReloadCommand(); sent {
+			log.Printf("[dev] Sent targeted preview reload command to preview worker")
+		} else {
+			s.blackboxMgr.BroadcastCommand(BlackBoxCommand{
+				Command: "reload",
+			})
+			log.Printf("[dev] Broadcast reload command to connected SDK devices")
+		}
 	}
 
 	jsonReply(w, http.StatusOK, map[string]string{"ok": "true"})
@@ -176,10 +237,14 @@ func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
 		if s.devServerMgr != nil {
 			s.devServerMgr.Reload()
 		}
-		s.blackboxMgr.BroadcastCommand(BlackBoxCommand{
-			Command: "reload",
-		})
-		log.Printf("[dev] Reload-app (dev mode): broadcast reload to SDK devices")
+		if sent := s.sendPreviewWorkerReloadCommand(); sent {
+			log.Printf("[dev] Reload-app (dev mode): sent targeted preview reload to preview worker")
+		} else {
+			s.blackboxMgr.BroadcastCommand(BlackBoxCommand{
+				Command: "reload",
+			})
+			log.Printf("[dev] Reload-app (dev mode): broadcast reload to SDK devices")
+		}
 		jsonReply(w, http.StatusOK, map[string]string{"ok": "true", "mode": "dev"})
 
 	case "bundle":
@@ -188,19 +253,46 @@ func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
 		s.handleBuildNativeBundle(w, r)
 		// After build completes (handleBuildNativeBundle writes response),
 		// push reload_bundle command
-		s.blackboxMgr.BroadcastCommand(BlackBoxCommand{
+		cmd := BlackBoxCommand{
 			Command: "reload_bundle",
 			Data: map[string]interface{}{
 				"bundleUrl": "/dev/native-bundle",
 				"assetsUrl": "/dev/native-assets",
 			},
-		})
-		log.Printf("[dev] Reload-app (bundle mode): broadcast reload_bundle to SDK devices")
+		}
+		if sent := s.sendCommandToPreviewTarget(cmd); sent {
+			log.Printf("[dev] Reload-app (bundle mode): sent targeted reload_bundle to preview worker")
+		} else {
+			s.blackboxMgr.BroadcastCommand(cmd)
+			log.Printf("[dev] Reload-app (bundle mode): broadcast reload_bundle to SDK devices")
+		}
 		// Note: response already written by handleBuildNativeBundle
 
 	default:
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid mode, use 'dev' or 'bundle'"})
 	}
+}
+
+func (s *HTTPServer) sendCommandToPreviewTarget(cmd BlackBoxCommand) bool {
+	if s.blackboxMgr == nil || s.devServerMgr == nil {
+		return false
+	}
+	target := s.devServerMgr.PreferredTarget()
+	if target.DeviceID == "" {
+		return false
+	}
+	return s.blackboxMgr.SendCommandToDevice(target.DeviceID, cmd)
+}
+
+func (s *HTTPServer) sendPreviewWorkerReloadCommand() bool {
+	return s.sendCommandToPreviewTarget(BlackBoxCommand{
+		Command: "reload_bundle",
+		Data: map[string]interface{}{
+			"bundleUrl":  "/dev/native-bundle",
+			"assetsUrl":  "/dev/native-assets",
+			"moduleName": "main",
+		},
+	})
 }
 
 // handleDevServerEvents streams dev server events via SSE.
