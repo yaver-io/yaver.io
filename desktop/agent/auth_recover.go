@@ -270,10 +270,15 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 
 	switch body.Mode {
 	case "pair":
-		session, err := StartPairingSession(10 * time.Minute)
-		if err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
-			return
+		session := activePairingSnapshot()
+		reused := session != nil && strings.TrimSpace(session.ReceivedToken) == ""
+		if !reused {
+			var err error
+			session, err = StartPairingSession(10 * time.Minute)
+			if err != nil {
+				jsonError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
 		}
 		go completePairRecoveryInBackground(session, s)
 		resp := RecoveryResponse{
@@ -283,7 +288,11 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 			PairSubmitURL: fmt.Sprintf("/auth/pair/submit?code=%s", session.Code),
 			ExpiresAt:     session.ExpiresAt.UTC().Format(time.RFC3339),
 		}
-		reportRecoveryEventFn(s, "pair_started", map[string]interface{}{"ip": ip, "authMethod": authMethod})
+		reportRecoveryEventFn(s, "pair_started", map[string]interface{}{
+			"ip":         ip,
+			"authMethod": authMethod,
+			"reused":     reused,
+		})
 		jsonReply(w, http.StatusOK, resp)
 
 	case "device-code":

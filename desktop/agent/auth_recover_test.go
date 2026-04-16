@@ -110,6 +110,44 @@ func TestAuthRecoverPairWorksWithBootstrapSecret(t *testing.T) {
 	}
 }
 
+func TestAuthRecoverPairReusesExistingWindow(t *testing.T) {
+	recoveryLimiter.reset()
+	if err := SetBootstrapSecret("secret-reuse"); err != nil {
+		t.Fatalf("SetBootstrapSecret: %v", err)
+	}
+	defer func() {
+		_ = SetBootstrapSecret("")
+		EndPairingSession()
+	}()
+
+	first := httptest.NewRequest(http.MethodPost, "/auth/recover", strings.NewReader(`{"secret":"secret-reuse","mode":"pair"}`))
+	first.RemoteAddr = "192.168.1.30:40000"
+	firstRec := httptest.NewRecorder()
+	(&HTTPServer{}).handleAuthRecover(firstRec, first)
+	if firstRec.Code != http.StatusOK {
+		t.Fatalf("expected first request 200, got %d", firstRec.Code)
+	}
+	if activePairing == nil {
+		t.Fatalf("expected active pairing session")
+	}
+	code := activePairing.Code
+
+	recoveryLimiter.reset()
+	second := httptest.NewRequest(http.MethodPost, "/auth/recover", strings.NewReader(`{"secret":"secret-reuse","mode":"pair"}`))
+	second.RemoteAddr = "192.168.1.31:40000"
+	secondRec := httptest.NewRecorder()
+	(&HTTPServer{}).handleAuthRecover(secondRec, second)
+	if secondRec.Code != http.StatusOK {
+		t.Fatalf("expected second request 200, got %d", secondRec.Code)
+	}
+	if activePairing == nil || activePairing.Code != code {
+		t.Fatalf("expected recovery to reuse existing pair window")
+	}
+	if !strings.Contains(secondRec.Body.String(), code) {
+		t.Fatalf("expected reused code in second response, got %s", secondRec.Body.String())
+	}
+}
+
 func TestAuthRecoverPairAllowedWhenAuthExpired(t *testing.T) {
 	recoveryLimiter.reset()
 	if err := SetBootstrapSecret("expired-secret"); err != nil {
