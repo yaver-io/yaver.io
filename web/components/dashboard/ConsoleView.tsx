@@ -563,15 +563,20 @@ function Overview() {
 
   useEffect(() => {
     let ws: WebSocket | null = null;
-    try {
-      ws = new WebSocket(agentClient.metricsWsUrl());
-      ws.onmessage = (e) => {
-        const sample = JSON.parse(e.data);
-        setM(sample);
-        setHist((h) => [...h.slice(-59), sample.cpuPct || 0]);
-      };
-    } catch {}
-    return () => { ws?.close(); };
+    let cancelled = false;
+    void (async () => {
+      try {
+        const url = await agentClient.metricsWsUrl();
+        if (cancelled) return;
+        ws = new WebSocket(url);
+        ws.onmessage = (e) => {
+          const sample = JSON.parse(e.data);
+          setM(sample);
+          setHist((h) => [...h.slice(-59), sample.cpuPct || 0]);
+        };
+      } catch {}
+    })();
+    return () => { cancelled = true; ws?.close(); };
   }, []);
 
   if (!m) return <div className="text-sm text-surface-500">Connecting to metrics stream…</div>;
@@ -694,15 +699,20 @@ function LogPanel({ id, onClose }: { id: string; onClose: () => void }) {
   const ref = useRef<HTMLPreElement>(null);
   useEffect(() => {
     let ws: WebSocket | null = null;
-    try {
-      ws = new WebSocket(agentClient.containerLogsWsUrl(id));
-      ws.binaryType = "arraybuffer";
-      ws.onmessage = (e) => {
-        const text = typeof e.data === "string" ? e.data : new TextDecoder().decode(e.data);
-        setLines((ls) => [...ls.slice(-999), ...text.split("\n").filter(Boolean)]);
-      };
-    } catch {}
-    return () => { ws?.close(); };
+    let cancelled = false;
+    void (async () => {
+      try {
+        const url = await agentClient.containerLogsWsUrl(id);
+        if (cancelled) return;
+        ws = new WebSocket(url);
+        ws.binaryType = "arraybuffer";
+        ws.onmessage = (e) => {
+          const text = typeof e.data === "string" ? e.data : new TextDecoder().decode(e.data);
+          setLines((ls) => [...ls.slice(-999), ...text.split("\n").filter(Boolean)]);
+        };
+      } catch {}
+    })();
+    return () => { cancelled = true; ws?.close(); };
   }, [id]);
   useEffect(() => { ref.current?.scrollTo({ top: ref.current.scrollHeight }); }, [lines]);
   return (
