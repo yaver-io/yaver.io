@@ -1336,6 +1336,26 @@ func buildLoopPrompt(l *LoopState, workDir string, report *HeuristicReport, nudg
 	return strings.Join(parts, ""), nil
 }
 
+// resolveClaudeModelEnv expands the YAVER_CLAUDE_MODEL alias into
+// a concrete model id. Empty env returns "" so the CLI uses its
+// default. Aliases sonnet/opus/haiku map to the latest 4.6
+// generation per CLAUDE.md.
+func resolveClaudeModelEnv() string {
+	v := strings.TrimSpace(os.Getenv("YAVER_CLAUDE_MODEL"))
+	switch strings.ToLower(v) {
+	case "":
+		return ""
+	case "sonnet":
+		return "claude-sonnet-4-6"
+	case "opus":
+		return "claude-opus-4-6"
+	case "haiku":
+		return "claude-haiku-4-5"
+	default:
+		return v // assume the user passed a full model id
+	}
+}
+
 // spawnClaudeCode invokes the `claude` CLI in print mode with the
 // loop's effective prompt plus the heuristic report piped via stdin.
 // The expected contract: claude reads the prompt, makes at most one
@@ -1367,13 +1387,20 @@ func spawnClaudeCode(ctx context.Context, l *LoopState, workDir string, report *
 	// each event into a one-line human-friendly progress note for the
 	// terminal/stream and keep the raw stream for parseClaudeStream
 	// to extract the final result.
-	cmd := exec.CommandContext(ctx, "claude",
+	args := []string{
 		"--print",
 		"--output-format", "stream-json",
 		"--verbose",
 		"--permission-mode", "bypassPermissions",
 		"--add-dir", workDir,
-	)
+	}
+	// --model: alias-or-id passed via YAVER_CLAUDE_MODEL by autodev's
+	// --model flag. Sonnet is the cheap-default the user should
+	// reach for; Opus burns the Max weekly bucket ~5× faster.
+	if mid := resolveClaudeModelEnv(); mid != "" {
+		args = append(args, "--model", mid)
+	}
+	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = workDir
 	cmd.Stdin = strings.NewReader(fullPrompt)
 	cmd.Stderr = os.Stderr
@@ -1414,6 +1441,14 @@ func spawnClaudeCode(ctx context.Context, l *LoopState, workDir string, report *
 
 	resp, _, parseErr := parseClaudeStream(stdout)
 	hbCancel()
+	// Cost transparency: parseClaudeStream already prints
+	// "[claude] result: success (Xs, $0.0Y)" per kick. Bump a
+	// process-level counter so the autodev loop can summarise
+	// "spent so far: $0.45 in 12 kicks" at the end of the run.
+	if claudeKickCostUSD > 0 {
+		// already updated inside printClaudeEvent; nothing else to do
+		_ = claudeKickCostUSD
+	}
 	if waitErr := cmd.Wait(); waitErr != nil {
 		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("claude subprocess cancelled: %w", ctx.Err())

@@ -182,6 +182,20 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/autoideas/select", s.auth(s.handleAutoIdeasSelect))
 	mux.HandleFunc("/autoinit/start", s.auth(s.handleAutoInitStart))
 	mux.HandleFunc("/autoinit/status", s.auth(s.handleAutoInitStatus))
+	mux.HandleFunc("/autodev/cost", s.auth(func(w http.ResponseWriter, r *http.Request) {
+		usd, kicks := RunCostSnapshot()
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"ok":             true,
+			"total_usd":      usd,
+			"kicks":          kicks,
+			"avg_usd_per_kick": func() float64 {
+				if kicks == 0 {
+					return 0
+				}
+				return usd / float64(kicks)
+			}(),
+		})
+	}))
 	mux.HandleFunc("/releases/list", s.auth(s.handleReleaseList))
 	mux.HandleFunc("/releases/latest", s.auth(s.handleReleaseLatest))
 	mux.HandleFunc("/releases/bundle", s.auth(s.handleReleaseBundle))

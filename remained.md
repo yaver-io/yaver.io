@@ -298,6 +298,39 @@ flag set. Two follow-ons remain to bring it to full Claude parity:
       window: 41 % used" lines per kick, same way the planned
       Claude-window pacing work will work.
 
+## Claude opus+sonnet split inside hybrid mode (Apr 2026)
+
+The Apr 2026 user feedback: Claude Max 20x ($200/mo) burns its
+weekly bucket in 2-3 days when most work runs on Opus, but only
+12% of the user's bucket usage came from Sonnet — so the asymmetry
+is "default to Sonnet, escalate to Opus only when needed". Today
+yaver supports:
+
+- `--model sonnet|opus|haiku` flag — picks ONE model for the whole
+  autodev run via YAVER_CLAUDE_MODEL → claude --model <id>.
+- `--engine hybrid` — Claude planner + local Aider+Ollama
+  implementer (free implementations, but Ollama quality varies).
+
+What's still missing: a Claude-only hybrid where Opus PLANS and
+Sonnet IMPLEMENTS each kick, so the cheap-default user pays Opus
+prices only on the planner subtask and Sonnet prices on the
+implementation subtasks. Concrete plan:
+
+- [ ] Add `--engine claude-split` (also `--planner-model` /
+      `--implementer-model` flags). Behaves like `--engine hybrid`
+      structurally but the implementer is `claude --model
+      claude-sonnet-4-6` instead of aider+ollama.
+- [ ] Extend `HybridSpec` with an Implementer = "claude" branch
+      (today the implementer hardcodes aider). hybrid.go's per-
+      subtask spawn dispatches to `spawnClaudeCode`-with-
+      sonnet-model when Implementer is "claude".
+- [ ] /autodev/options reports the new engine + the model
+      breakdown so the mobile / web start form can render an
+      "Opus plans, Sonnet implements" preset.
+- [ ] /autodev/cost splits cumulative spend into planner vs
+      implementer columns when running in claude-split mode so the
+      user can see the 5x cost asymmetry directly.
+
 ## Notes for whoever runs this on another machine
 
 * Build: `cd desktop/agent && go build ./...`

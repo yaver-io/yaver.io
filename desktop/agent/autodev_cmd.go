@@ -102,6 +102,7 @@ func runAutodevOrTest(kind string, args []string) {
 	engine := fs.String("engine", "", "claude|codex|hybrid — high-level engine selector. 'claude' (default) uses Claude Code end-to-end. 'codex' uses OpenAI Codex CLI (often more headroom on Plus/Pro plans, ~4x fewer tokens). 'hybrid' uses Claude as a planner and a local Ollama model (via aider) as the implementer to cut API spend.")
 	hybrid := fs.Bool("hybrid", false, "Shortcut for --engine hybrid")
 	codex := fs.Bool("codex", false, "Shortcut for --engine codex")
+	model := fs.String("model", "", "Model alias for the runner (claude only): sonnet|opus|haiku, or a full model id like 'claude-opus-4-6'. Sonnet is the cheap default and burns the weekly bucket ~5x slower than Opus.")
 	autoIdeas := fs.Int("auto-ideas", 999, "Maximum number of times the loop is allowed to auto-generate a fresh batch of ideas when work runs out. Default 999 = effectively unlimited so an overnight run keeps producing + implementing features until the deadline. 0 = exit the moment the checklist empties (legacy).")
 	branch := fs.String("branch", "", "Git branch to ship to (default: main)")
 	autoBranch := fs.Bool("auto-branch", false, "Work on a dedicated 'autodev/<loop>-<YYYYMMDD>' branch instead of main. Creates it from main if it doesn't exist. Useful for overnight runs you want to PR-review before merging.")
@@ -232,6 +233,13 @@ func runAutodevOrTest(kind string, args []string) {
 		// loop_cmd's prompt setter persists in loops.json so
 		// subsequent runs without a prompt still remember it.
 		loopPrompt([]string{"set", p.LoopName, d.prompt})
+	}
+	// --model is a runtime hint passed to the runner via env var.
+	// spawnClaudeCode picks it up and adds --model <id> to the
+	// claude CLI invocation. Aliases (sonnet/opus/haiku) are
+	// expanded to the current generation's model id at spawn time.
+	if *model != "" {
+		os.Setenv("YAVER_CLAUDE_MODEL", *model)
 	}
 
 	// "Set and forget" mode: the parent CLI fork-execs itself as a
@@ -893,6 +901,10 @@ func runAutodevLoop(p autodevPlan) {
 		}
 	}
 endLoop:
+	if usd, kicks := RunCostSnapshot(); kicks > 0 {
+		fmt.Printf("\n%s: opex summary — $%.4f spent across %d kicks (avg $%.4f/kick)\n",
+			p.Kind, usd, kicks, usd/float64(kicks))
+	}
 	loopStop([]string{p.LoopName})
 	if p.TestLoopName != "" {
 		loopStop([]string{p.TestLoopName})
