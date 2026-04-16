@@ -38,6 +38,7 @@ export default function SchedulesScreen() {
   const [err, setErr] = useState<string | null>(null);
 
   const [showForm, setShowForm] = useState(false);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [mode, setMode] = useState<Mode>("cron");
@@ -192,6 +193,67 @@ export default function SchedulesScreen() {
           <Text style={{ color: "#fecaca" }}>Delete</Text>
         </Pressable>
       </View>
+      {item.history && item.history.length > 0 ? (
+        <>
+          <Pressable
+            onPress={() =>
+              setExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))
+            }
+            style={{ marginTop: 8 }}
+          >
+            <Text style={{ color: c.textMuted, fontSize: 11 }}>
+              {expanded[item.id] ? "Hide" : "Show"} history ({item.history.length})
+            </Text>
+          </Pressable>
+          {expanded[item.id] ? (
+            <View
+              style={{
+                marginTop: 6,
+                marginLeft: 6,
+                paddingLeft: 8,
+                borderLeftWidth: 1,
+                borderLeftColor: c.border,
+              }}
+            >
+              {[...item.history]
+                .reverse()
+                .slice(0, 10)
+                .map((h) => {
+                  const color =
+                    h.status === "completed" || h.status === "finished"
+                      ? "#6ee7b7"
+                      : h.status === "failed"
+                        ? "#fca5a5"
+                        : c.textMuted;
+                  const dur = h.durationMs
+                    ? h.durationMs > 1000
+                      ? `${(h.durationMs / 1000).toFixed(1)}s`
+                      : `${h.durationMs}ms`
+                    : "";
+                  return (
+                    <View
+                      key={`${item.id}-${h.taskId}`}
+                      style={{ flexDirection: "row", gap: 6, paddingVertical: 2 }}
+                    >
+                      <Text style={{ color, fontSize: 10 }}>●</Text>
+                      <Text style={{ color: c.textMuted, fontSize: 10, flexShrink: 1 }}>
+                        {h.startedAt}
+                      </Text>
+                      {dur ? (
+                        <Text style={{ color: c.textMuted, fontSize: 10 }}>{dur}</Text>
+                      ) : null}
+                      {typeof h.costUsd === "number" && h.costUsd > 0 ? (
+                        <Text style={{ color: c.textMuted, fontSize: 10 }}>
+                          ${h.costUsd.toFixed(3)}
+                        </Text>
+                      ) : null}
+                    </View>
+                  );
+                })}
+            </View>
+          ) : null}
+        </>
+      ) : null}
     </View>
   );
 

@@ -2465,14 +2465,31 @@ class AgentClient {
     return res.json();
   }
 
-  async blobsListKeys(bucket: string): Promise<{ keys: { key: string; size?: number; contentType?: string; updatedAt?: string }[] }> {
+  async blobsListKeys(
+    bucket: string,
+    opts: { limit?: number; after?: string } = {},
+  ): Promise<{
+    keys: { key: string; size?: number; contentType?: string; uploadedAt?: string }[];
+    nextCursor?: string;
+    total?: number;
+  }> {
     this.assertConnected();
+    const q = new URLSearchParams();
+    if (opts.limit) q.set("limit", String(opts.limit));
+    if (opts.after) q.set("after", opts.after);
+    const suffix = q.toString() ? `?${q.toString()}` : "";
     const res = await fetch(
-      `${this.baseUrl}/blobs/${encodeURIComponent(bucket)}`,
+      `${this.baseUrl}/blobs/${encodeURIComponent(bucket)}${suffix}`,
       { headers: this.authHeaders },
     );
     if (!res.ok) throw new Error(`blobs list: HTTP ${res.status}`);
-    return res.json();
+    const data = await res.json();
+    // Server returns both `keys` (preferred) and `items` (back-compat).
+    return {
+      keys: data.keys ?? data.items ?? [],
+      nextCursor: data.nextCursor || undefined,
+      total: data.total,
+    };
   }
 
   async blobsDelete(bucket: string, key: string): Promise<void> {

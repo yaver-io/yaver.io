@@ -33,6 +33,8 @@ export default function VaultView() {
   const [err, setErr] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [revealing, setRevealing] = useState<string | null>(null);
+  const [filter, setFilter] = useState<Set<VaultCategory>>(new Set(CATEGORIES));
+  const [q, setQ] = useState("");
 
   // Compose form
   const [draftName, setDraftName] = useState("");
@@ -186,13 +188,42 @@ export default function VaultView() {
       </section>
 
       <section className="rounded border border-surface-700">
-        <div className="flex items-center justify-between border-b border-surface-700 px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2 border-b border-surface-700 px-3 py-2">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-surface-400">
             Entries {entries.length > 0 && `(${entries.length})`}
           </h3>
+          <input
+            className="ml-2 rounded border border-surface-700 bg-surface-900 px-2 py-1 text-xs"
+            placeholder="filter by name…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+          <div className="flex flex-wrap gap-1">
+            {CATEGORIES.map((cat) => (
+              <button
+                key={cat}
+                type="button"
+                className={`rounded border px-2 py-0.5 text-[10px] ${
+                  filter.has(cat) ? categoryColor(cat) : "border-surface-800 bg-surface-900 text-surface-500"
+                }`}
+                onClick={() => {
+                  setFilter((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(cat)) next.delete(cat);
+                    else next.add(cat);
+                    if (next.size === 0) return new Set(CATEGORIES);
+                    return next;
+                  });
+                }}
+                title={filter.has(cat) ? `Hide ${cat}` : `Show ${cat}`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
           <button
             type="button"
-            className="text-xs text-surface-400 hover:text-surface-100"
+            className="ml-auto text-xs text-surface-400 hover:text-surface-100"
             onClick={() => void load()}
           >
             Refresh
@@ -203,7 +234,15 @@ export default function VaultView() {
           <p className="p-3 text-sm text-surface-500">No entries yet.</p>
         )}
         <ul className="divide-y divide-surface-800">
-          {entries.map((e) => {
+          {entries
+            .filter((e) => filter.has(e.category))
+            .filter((e) =>
+              q.trim() === ""
+                ? true
+                : e.name.toLowerCase().includes(q.trim().toLowerCase()) ||
+                  (e.notes ?? "").toLowerCase().includes(q.trim().toLowerCase()),
+            )
+            .map((e) => {
             const value = revealed[e.name];
             return (
               <li key={e.name} className="flex flex-col gap-1 px-3 py-2">

@@ -353,7 +353,10 @@ function SharedTab() {
 function BlobsTab() {
   const [buckets, setBuckets] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
-  const [keys, setKeys] = useState<{ key: string; size?: number; contentType?: string; updatedAt?: string }[]>([]);
+  const [keys, setKeys] = useState<{ key: string; size?: number; contentType?: string; uploadedAt?: string }[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
+  const [total, setTotal] = useState<number>(0);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadLabel, setUploadLabel] = useState("");
@@ -377,12 +380,28 @@ function BlobsTab() {
 
   const loadKeys = useCallback(async (bucket: string) => {
     try {
-      const data = await agentClient.blobsListKeys(bucket);
+      const data = await agentClient.blobsListKeys(bucket, { limit: 200 });
       setKeys(data.keys || []);
+      setNextCursor(data.nextCursor);
+      setTotal(data.total ?? (data.keys ?? []).length);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
   }, []);
+
+  async function loadMoreKeys() {
+    if (!active || !nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const data = await agentClient.blobsListKeys(active, { limit: 200, after: nextCursor });
+      setKeys((prev) => [...prev, ...(data.keys ?? [])]);
+      setNextCursor(data.nextCursor);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   useEffect(() => {
     if (!active) return;
@@ -484,7 +503,10 @@ function BlobsTab() {
                 </option>
               ))}
             </select>
-            <span className="text-surface-500">{keys.length} key(s)</span>
+            <span className="text-surface-500">
+              {keys.length}
+              {total > keys.length ? ` / ${total}` : ""} key(s)
+            </span>
           </div>
           <ul className="min-h-0 flex-1 overflow-auto rounded border border-surface-700 text-sm">
             {keys.map((k) => (
@@ -503,6 +525,18 @@ function BlobsTab() {
                 </span>
               </li>
             ))}
+            {nextCursor && (
+              <li className="flex justify-center py-2">
+                <button
+                  type="button"
+                  onClick={() => void loadMoreKeys()}
+                  disabled={loadingMore}
+                  className="rounded bg-indigo-900/40 px-3 py-1 text-xs text-indigo-200 hover:bg-indigo-900/60 disabled:opacity-40"
+                >
+                  {loadingMore ? "Loading…" : "Load more"}
+                </button>
+              </li>
+            )}
           </ul>
         </>
       )}

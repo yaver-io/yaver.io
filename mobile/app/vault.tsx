@@ -48,6 +48,7 @@ export default function VaultScreen() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [filter, setFilter] = useState<Set<VaultCategory>>(new Set(CATEGORIES));
 
   // Add form state
   const [draftName, setDraftName] = useState("");
@@ -278,11 +279,45 @@ export default function VaultScreen() {
         </ScrollView>
       ) : null}
 
+      {/* Category filter chips */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: 12, paddingTop: 4, gap: 6 }}
+      >
+        {CATEGORIES.map((cat) => (
+          <Pressable
+            key={cat}
+            onPress={() => {
+              setFilter((prev) => {
+                const next = new Set(prev);
+                if (next.has(cat)) next.delete(cat);
+                else next.add(cat);
+                if (next.size === 0) return new Set(CATEGORIES);
+                return next;
+              });
+            }}
+            style={{
+              borderWidth: 1,
+              borderColor: filter.has(cat) ? c.accent : c.border,
+              backgroundColor: filter.has(cat) ? `${c.accent}22` : "transparent",
+              paddingHorizontal: 8,
+              paddingVertical: 3,
+              borderRadius: 3,
+            }}
+          >
+            <Text style={{ color: filter.has(cat) ? c.accent : c.textMuted, fontSize: 10 }}>
+              {cat}
+            </Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+
       {loading ? (
         <ActivityIndicator style={{ marginTop: 24 }} color={c.accent} />
       ) : (
         <FlatList
-          data={entries}
+          data={entries.filter((e) => filter.has(e.category))}
           keyExtractor={(i) => i.name}
           renderItem={renderItem}
           contentContainerStyle={{ padding: 12, paddingBottom: insets.bottom + 24 }}
