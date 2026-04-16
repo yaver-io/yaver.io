@@ -1191,6 +1191,74 @@ yaver serve --allow-ips 192.168.1.0/24
 yaver serve --no-tls
 ```
 
+## Phone-First Mini Backend
+
+Phone-first projects let a user create a backend from the Yaver mobile app (or web dashboard) without provisioning any real infra first. Each project is a SQLite-backed Yaver project stored at `~/.yaver/phone-projects/<slug>/` with a portable, declarative manifest — promotable to any of the 19 switch-engine targets (Convex, Supabase, Postgres/Neon, Turso, etc.) with the existing 7-day rollback window. See `MOBILE_WORKER.md` §213-419 for the product spec.
+
+### Layout
+
+```
+~/.yaver/phone-projects/<slug>/
+  .yaver/
+    config.yaml    # backend: sqlite (picks up existing /backend/* routes)
+    project.yaml   # declarative ProjectManifest (yaver apply)
+    phone.yaml     # phone-specific metadata (name, template, timestamps)
+  schema.yaml      # portable schema DSL (tables/columns/indexes/relations)
+  auth.yaml        # persona list (mock-auth)
+  seed.json        # fixture rows keyed by table
+  local.db         # SQLite file (driver: modernc.org/sqlite, no CGO)
+  storage/         # local blob storage
+```
+
+### Portability contract (enforced by schema DSL)
+
+Column types are limited to the intersection of SQLite / Postgres / Convex: `text · int · bool · real · timestamp · json · uuid`. Defaults are `uuid · now · <literal>`. The export bundle includes `schema.sql` (SQLite) and `schema.postgres.sql` (Postgres) so a non-Yaver environment can also import the project.
+
+### Endpoints (all owner-auth, not guest-accessible)
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/phone/projects/list` | GET | List all phone projects |
+| `/phone/projects/templates` | GET | List built-in templates (blank/crud/todos/notes) |
+| `/phone/projects/create` | POST | `{name, slug?, template?, schema?, auth?, seed?}` — create + materialize |
+| `/phone/projects/get?slug=X` | GET | Full project (schema + auth + seed + live stats) |
+| `/phone/projects/delete` | POST | `{slug}` — rm -rf the project dir |
+| `/phone/projects/schema` | GET/POST | Read / additive-apply PhoneSchema |
+| `/phone/projects/auth` | POST | Write auth.yaml + mirror into users table if present |
+| `/phone/projects/seed` | POST | INSERT OR REPLACE seed rows |
+| `/phone/projects/tables` | GET | ListTables over the project's SQLite |
+| `/phone/projects/browse?slug=X&table=Y` | GET | Paginated rows |
+| `/phone/projects/insert` | POST | `{slug, table, doc}` |
+| `/phone/projects/update` | POST | `{slug, table, id, fields}` |
+| `/phone/projects/delete-row` | POST | `{slug, table, id}` |
+| `/phone/projects/query` | POST | Raw SQL (SELECT/UPDATE/etc.) |
+| `/phone/projects/export?slug=X` | GET | tgz bundle (.yaver/, schema.yaml, auth.yaml, seed.json, schema.sql, README.md) |
+| `/phone/projects/promote` | POST | `{slug, target, run?, dryRun?}` — wraps SwitchEngine.Plan/Run with 7-day snapshot |
+
+The existing `/backend/*`, `/manifest/*`, `/switch/*` endpoints also work against a phone project when passed `?directory=~/.yaver/phone-projects/<slug>` — the only difference is the Mac-Mini-hosted vs. project-root location of the SQLite file.
+
+### MCP tools (for AI agents)
+
+`phone_project_list · phone_project_templates · phone_project_create · phone_project_get · phone_project_delete · phone_project_schema · phone_project_seed · phone_project_export · phone_project_promote`. Registered in `desktop/agent/mcp_phone.go`.
+
+### Key files
+
+| File | Purpose |
+|------|---------|
+| `desktop/agent/phone_backend.go` | Core: CRUD of projects, schema DSL, auth personas, seed runtime, export tgz, templates |
+| `desktop/agent/phone_backend_http.go` | HTTP handlers (all paths above) |
+| `desktop/agent/phone_backend_test.go` | Unit tests (slugify, create, todos template end-to-end, additive schema, export tar, promote dry-run) |
+| `desktop/agent/mcp_phone.go` | MCP tool schemas + dispatcher |
+| `mobile/src/lib/phoneProjects.ts` | Mobile P2P client — types mirror the Go structs |
+| `mobile/app/phone-projects.tsx` | Mobile list + inline wizard |
+| `mobile/app/phone-project/[slug].tsx` | Mobile detail: tables browser, insert, export, promote |
+| `web/lib/agent-client.ts` | Web client methods + types |
+| `web/components/dashboard/PhoneProjectsView.tsx` | Web dashboard view (list + detail in one pane) |
+
+### How promotion works
+
+`POST /phone/projects/promote` calls `SwitchEngine.Plan(projectDir, targetID, dryRun)` where `projectDir` is the phone-project directory. Because each phone project has a valid `.yaver/config.yaml` (backend=sqlite), the switch engine sees it as a regular SQLite-backed Yaver project and plans the usual 7-layer migration (snapshot → provision → migrate-data → update-env → verify) with the right complexity tier. The 7-day rollback window applies.
+
 ## Networking Stack
 
 Yaver's networking has three layers that work together for instant, reliable connections:

@@ -2980,6 +2980,9 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	tools = append(tools, workspaceTools...)
 	tools = append(tools, getWorkspaceMCPTools()...)
 
+	// Phone-first mini backend — desktop/agent/phone_backend.go
+	tools = append(tools, phoneProjectMCPTools()...)
+
 	return map[string]interface{}{
 		"tools": tools,
 	}
