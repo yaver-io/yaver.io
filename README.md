@@ -237,6 +237,22 @@ irm https://yaver.io/install.ps1 | iex          # Quick install (Windows PowerSh
 
 # Sign in & start agent
 yaver auth
+
+# Adopt a project (one-time, ~3 min) — caches stack/layout/conventions into init.md
+cd ~/code/my-project
+yaver autoinit my-project
+
+# Generate ideas overnight (long-lived, detached, survives terminal close)
+yaver autoideas my-project --hours 8 --engine codex
+# Pick ideas later via mobile / web (checkboxes) → triggers autodev on the picks
+
+# Or go straight to autodev — picks the next remained.md item every kick
+yaver autodev my-project --hours 8 --model sonnet      # cheap default
+yaver autodev my-project --hours 1 --model opus --max-iterations 1  # high-stakes one-shot
+yaver autodev my-project --planner claude:opus --implementer codex  # hybrid: premium plan, cheap impl
+
+# Watch the live chat from any terminal (or the mobile Auto Dev tab)
+yaver stream autodev:my-project-autodev
 ```
 
 ### Headless machines (Mac mini upstairs, Hetzner VPS, Linux box over SSH)
