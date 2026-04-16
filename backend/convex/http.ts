@@ -26,6 +26,7 @@ async function authenticateRequest(
   ctx: { runQuery: (query: any, args: any) => Promise<any> },
   request: Request
 ): Promise<{
+  userDocId: string;
   userId: string;
   email: string;
   fullName: string;
@@ -38,7 +39,16 @@ async function authenticateRequest(
   const token = authHeader.slice(7);
   const tokenHash = await sha256Hex(token);
 
-  return await ctx.runQuery(api.auth.validateSession, { tokenHash });
+  const result = await ctx.runQuery(api.auth.validateSession, { tokenHash });
+  if (!result) return null;
+  return {
+    userDocId: String(result.userDocId),
+    userId: result.userId,
+    email: result.email,
+    fullName: result.fullName,
+    provider: result.provider,
+    avatarUrl: result.avatarUrl,
+  };
 }
 
 // ── Password Hashing Helpers (PBKDF2-SHA256) ────────────────────────
@@ -639,7 +649,7 @@ http.route({
     }
     return jsonResponse({
       ok: true,
-      isOwner: owner.ownerUserId === caller.userId,
+      isOwner: String(owner.ownerUserId) === caller.userDocId,
       deviceFound: true,
       deviceId: owner.deviceId,
       name: owner.name,
