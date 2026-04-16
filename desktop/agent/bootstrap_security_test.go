@@ -18,6 +18,7 @@ func TestBootstrapInfoHidesPasskeyBehindProxy(t *testing.T) {
 	bs := &bootstrapHTTPServer{}
 
 	directReq := httptest.NewRequest(http.MethodGet, "/info", nil)
+	directReq.RemoteAddr = "192.168.1.12:40000"
 	directRec := httptest.NewRecorder()
 	bs.handleInfo(directRec, directReq)
 	if !strings.Contains(directRec.Body.String(), session.Code) {
@@ -30,6 +31,23 @@ func TestBootstrapInfoHidesPasskeyBehindProxy(t *testing.T) {
 	bs.handleInfo(proxyRec, proxyReq)
 	if strings.Contains(proxyRec.Body.String(), session.Code) {
 		t.Fatalf("expected proxied bootstrap info to hide passkey")
+	}
+
+	relayReq := httptest.NewRequest(http.MethodGet, "/info", nil)
+	relayReq.RemoteAddr = "127.0.0.1:18080"
+	relayReq.Header.Set("X-Relay-Password", "secret")
+	relayRec := httptest.NewRecorder()
+	bs.handleInfo(relayRec, relayReq)
+	if strings.Contains(relayRec.Body.String(), session.Code) {
+		t.Fatalf("expected relay bootstrap info to hide passkey")
+	}
+
+	publicReq := httptest.NewRequest(http.MethodGet, "/info", nil)
+	publicReq.RemoteAddr = "203.0.113.20:50000"
+	publicRec := httptest.NewRecorder()
+	bs.handleInfo(publicRec, publicReq)
+	if strings.Contains(publicRec.Body.String(), session.Code) {
+		t.Fatalf("expected public bootstrap info to hide passkey")
 	}
 }
 

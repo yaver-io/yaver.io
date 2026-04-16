@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
+	urlpkg "net/url"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -83,8 +86,35 @@ func (s *HTTPServer) handleMetricsSnapshot(w http.ResponseWriter, r *http.Reques
 
 // ---- WebSocket ----
 
+func wsOriginAllowed(r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		// Non-browser clients such as the mobile app or CLI websocket helpers
+		// may not send Origin.
+		return true
+	}
+	u, err := urlpkg.Parse(origin)
+	if err != nil || u.Hostname() == "" {
+		return false
+	}
+	originHost := strings.ToLower(u.Hostname())
+	reqHost := strings.ToLower(r.Host)
+	if host, _, err := net.SplitHostPort(reqHost); err == nil {
+		reqHost = host
+	}
+	if originHost == reqHost {
+		return true
+	}
+	switch originHost {
+	case "yaver.io", "www.yaver.io", "localhost", "127.0.0.1":
+		return true
+	default:
+		return false
+	}
+}
+
 var wsUpgrader = websocket.Upgrader{
-	CheckOrigin:     func(r *http.Request) bool { return true },
+	CheckOrigin:     wsOriginAllowed,
 	ReadBufferSize:  1024,
 	WriteBufferSize: 4096,
 }
