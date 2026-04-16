@@ -381,6 +381,7 @@ export default defineSchema({
     shareAllMachines: v.optional(v.boolean()),
     useHostApiKeys: v.optional(v.boolean()),
     allowGuestProvidedApiKeys: v.optional(v.boolean()),
+    requireIsolation: v.optional(v.boolean()),
     cpuLimitPercent: v.optional(v.number()),
     ramLimitMb: v.optional(v.number()),
     priorityMode: v.optional(v.string()), // "same-priority" | "spare-capacity" | "background"

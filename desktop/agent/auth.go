@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	urlpkg "net/url"
+	"strings"
 	"time"
 )
 
@@ -249,9 +251,18 @@ func ReportSecurityEvent(baseURL, token, eventType string, details map[string]in
 }
 
 // FetchGuestUserIds fetches the list of approved guest userIds from Convex.
-// The agent calls this periodically to cache which guests are allowed.
-func FetchGuestUserIds(baseURL, token string) ([]string, error) {
-	req, err := newBearerRequest("GET", baseURL+"/guests/allowed", token, nil)
+// The agent scopes this to its concrete device ID so a guest granted to one
+// host device is not automatically trusted by every other device on the same account.
+func FetchGuestUserIds(baseURL, token string, deviceID ...string) ([]string, error) {
+	url := baseURL + "/guests/allowed"
+	scopedDeviceID := ""
+	if len(deviceID) > 0 {
+		scopedDeviceID = deviceID[0]
+	}
+	if v := strings.TrimSpace(scopedDeviceID); v != "" {
+		url += "?deviceId=" + urlpkg.QueryEscape(v)
+	}
+	req, err := newBearerRequest("GET", url, token, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create guest list request: %w", err)
 	}
@@ -378,13 +389,23 @@ func FetchGuestList(baseURL, token string) ([]GuestInfo, error) {
 
 // GuestConfig describes the config for a single guest from Convex.
 type GuestConfig struct {
-	GuestUserID    string   `json:"guestUserId"`
-	GuestEmail     string   `json:"guestEmail"`
-	GuestName      string   `json:"guestName"`
-	DailyTokenLimit *int    `json:"dailyTokenLimit,omitempty"`
-	AllowedRunners []string `json:"allowedRunners,omitempty"`
-	UsageMode      string   `json:"usageMode,omitempty"`
-	Schedule       *struct {
+	GuestUserID               string   `json:"guestUserId"`
+	GuestEmail                string   `json:"guestEmail"`
+	GuestName                 string   `json:"guestName"`
+	DailyTokenLimit           *int     `json:"dailyTokenLimit,omitempty"`
+	AllowedRunners            []string `json:"allowedRunners,omitempty"`
+	UsageMode                 string   `json:"usageMode,omitempty"`
+	ShareAllDevices           *bool    `json:"shareAllDevices,omitempty"`
+	DeviceIDs                 []string `json:"deviceIds,omitempty"`
+	ShareAllMachines          *bool    `json:"shareAllMachines,omitempty"`
+	MachineIDs                []string `json:"machineIds,omitempty"`
+	UseHostAPIKeys            *bool    `json:"useHostApiKeys,omitempty"`
+	AllowGuestProvidedAPIKeys *bool    `json:"allowGuestProvidedApiKeys,omitempty"`
+	RequireIsolation          *bool    `json:"requireIsolation,omitempty"`
+	CPULimitPercent           *int     `json:"cpuLimitPercent,omitempty"`
+	RAMLimitMB                *int     `json:"ramLimitMb,omitempty"`
+	PriorityMode              string   `json:"priorityMode,omitempty"`
+	Schedule                  *struct {
 		StartHour int    `json:"startHour"`
 		EndHour   int    `json:"endHour"`
 		Timezone  string `json:"timezone,omitempty"`

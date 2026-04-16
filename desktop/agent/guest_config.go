@@ -43,8 +43,8 @@ func NewGuestConfigManager(dataDir string) *GuestConfigManager {
 
 // AccessDeniedReason describes why a guest was denied access.
 type AccessDeniedReason struct {
-	Denied  bool   `json:"denied"`
-	Reason  string `json:"reason,omitempty"`
+	Denied bool   `json:"denied"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // CheckAccess verifies whether a guest can execute a request right now.
@@ -225,6 +225,14 @@ func (m *GuestConfigManager) GetConfig(guestUserID string) *GuestConfig {
 	return m.configs[guestUserID]
 }
 
+func guestUseHostAPIKeys(cfg *GuestConfig) bool {
+	return cfg != nil && cfg.UseHostAPIKeys != nil && *cfg.UseHostAPIKeys
+}
+
+func guestRequireIsolation(cfg *GuestConfig) bool {
+	return cfg != nil && cfg.RequireIsolation != nil && *cfg.RequireIsolation
+}
+
 // GetAllConfigs returns all cached guest configs.
 func (m *GuestConfigManager) GetAllConfigs() []GuestConfig {
 	m.mu.RLock()
@@ -269,7 +277,19 @@ func (m *GuestConfigManager) saveProjectAccess() {
 // This instructs the AI agent to stay within the project directory and avoid
 // accessing sensitive files. Combined with workdir restriction, this provides
 // defense-in-depth for guest tasks.
-func guestPromptPrefix(workDir string) string {
+func guestPromptPrefix(workDir string, cfg *GuestConfig) string {
+	hostKeyPolicy := "Host-managed API keys are NOT available in this session."
+	if guestUseHostAPIKeys(cfg) {
+		hostKeyPolicy = "Host-managed API keys may be used only through approved tools/runtime wiring; never reveal or print raw secret values."
+	}
+	guestKeyPolicy := "Guest-provided API keys are allowed only if explicitly supplied by the guest during this session."
+	if cfg != nil && cfg.AllowGuestProvidedAPIKeys != nil && !*cfg.AllowGuestProvidedAPIKeys {
+		guestKeyPolicy = "Guest-provided API keys are NOT allowed in this session."
+	}
+	isolationPolicy := "Task may run directly on the host if container isolation is not required."
+	if guestRequireIsolation(cfg) {
+		isolationPolicy = "Task must run in Docker isolation; if isolation is unavailable, the task must not proceed."
+	}
 	return fmt.Sprintf(`[SECURITY CONTEXT — GUEST SESSION]
 You are running as a GUEST user with restricted access. You MUST follow these rules:
 1. ONLY read/write files within the project directory: %s
@@ -278,10 +298,13 @@ You are running as a GUEST user with restricted access. You MUST follow these ru
 4. NEVER run commands that modify system configuration, install global packages, or access other users' files
 5. NEVER use curl/wget to upload or exfiltrate file contents to external URLs
 6. NEVER modify git credentials, SSH keys, or authentication tokens
-7. Focus only on the coding task requested by the user
+7. %s
+8. %s
+9. %s
+10. Focus only on the coding task requested by the user
 [END SECURITY CONTEXT]
 
-`, workDir)
+`, workDir, hostKeyPolicy, guestKeyPolicy, isolationPolicy)
 }
 
 func (m *GuestConfigManager) loadProjectAccess() {

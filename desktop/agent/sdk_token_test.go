@@ -18,7 +18,7 @@ func startTestServerWithSDK(t *testing.T, agentToken string, sdkToken string, sd
 	port := getFreePort(t)
 
 	tm := NewTaskManager(t.TempDir(), nil, defaultRunner)
-	srv := NewHTTPServer(port, agentToken, "test-user-id", "", "test-host", tm)
+	srv := NewHTTPServer(port, agentToken, "test-user-id", "test-device-id", "", "test-host", tm)
 	srv.execMgr = NewExecManager(tm.workDir, nil)
 
 	// Pre-populate SDK token in cache (simulates successful Convex validation)
@@ -209,7 +209,7 @@ func TestIPAllowlistEmpty(t *testing.T) {
 func TestIPAllowlistBlocks(t *testing.T) {
 	port := getFreePort(t)
 	tm := NewTaskManager(t.TempDir(), nil, defaultRunner)
-	srv := NewHTTPServer(port, "tok", "test-user-id", "", "test-host", tm)
+	srv := NewHTTPServer(port, "tok", "test-user-id", "test-device-id", "", "test-host", tm)
 	srv.execMgr = NewExecManager(tm.workDir, nil)
 
 	// Only allow 10.0.0.0/8 — localhost (127.0.0.1) NOT in range
@@ -241,7 +241,7 @@ func TestIPAllowlistBlocks(t *testing.T) {
 func TestIPAllowlistAllowsLocalhost(t *testing.T) {
 	port := getFreePort(t)
 	tm := NewTaskManager(t.TempDir(), nil, defaultRunner)
-	srv := NewHTTPServer(port, "tok", "test-user-id", "", "test-host", tm)
+	srv := NewHTTPServer(port, "tok", "test-user-id", "test-device-id", "", "test-host", tm)
 	srv.execMgr = NewExecManager(tm.workDir, nil)
 
 	// Allow localhost
@@ -395,7 +395,7 @@ func TestTLSCertGeneration(t *testing.T) {
 func TestTLSHealthIncludesFingerprint(t *testing.T) {
 	port := getFreePort(t)
 	tm := NewTaskManager(t.TempDir(), nil, defaultRunner)
-	srv := NewHTTPServer(port, "tok", "test-user-id", "", "test-host", tm)
+	srv := NewHTTPServer(port, "tok", "test-user-id", "test-device-id", "", "test-host", tm)
 	srv.execMgr = NewExecManager(tm.workDir, nil)
 	srv.tlsFingerprint = "abc123def456"
 	srv.tlsPort = 18443
@@ -439,7 +439,7 @@ func TestTLSServerStarts(t *testing.T) {
 	port := getFreePort(t)
 	tlsPort := getFreePort(t)
 	tm := NewTaskManager(t.TempDir(), nil, defaultRunner)
-	srv := NewHTTPServer(port, "tok", "test-user-id", "", "test-host", tm)
+	srv := NewHTTPServer(port, "tok", "test-user-id", "test-device-id", "", "test-host", tm)
 	srv.execMgr = NewExecManager(tm.workDir, nil)
 	srv.tlsCert = cert
 	srv.tlsFingerprint = fingerprint
@@ -504,9 +504,9 @@ func TestParseCIDRs(t *testing.T) {
 		{[]string{}, 0},
 		{[]string{"192.168.1.0/24"}, 1},
 		{[]string{"10.0.0.0/8", "172.16.0.0/12"}, 2},
-		{[]string{"192.168.1.100"}, 1},       // plain IP → /32
-		{[]string{"invalid"}, 0},               // invalid → skipped
-		{[]string{"192.168.1.0/24", ""}, 1},   // empty string → skipped
+		{[]string{"192.168.1.100"}, 1},      // plain IP → /32
+		{[]string{"invalid"}, 0},            // invalid → skipped
+		{[]string{"192.168.1.0/24", ""}, 1}, // empty string → skipped
 	}
 
 	for _, tt := range tests {
@@ -560,7 +560,7 @@ func TestPathAllowedByScopes(t *testing.T) {
 		{"/exec", []string{"feedback", "blackbox"}, false},
 		{"/vault/list", []string{"feedback", "voice"}, false},
 		{"/agent/shutdown", []string{"feedback", "blackbox", "voice", "builds"}, false},
-		{"/voice/status", []string{"feedback"}, false},  // no voice scope
+		{"/voice/status", []string{"feedback"}, false},    // no voice scope
 		{"/builds", []string{"feedback", "voice"}, false}, // no builds scope
 	}
 

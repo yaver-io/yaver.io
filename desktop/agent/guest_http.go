@@ -5,8 +5,19 @@ import (
 	"net/http"
 )
 
+func rejectGuestManagementCall(w http.ResponseWriter, r *http.Request) bool {
+	if r.Header.Get("X-Yaver-Guest") == "true" {
+		jsonError(w, http.StatusForbidden, "guests cannot manage host sharing settings")
+		return true
+	}
+	return false
+}
+
 // handleGuestList returns the host's guest list (GET /guests).
 func (s *HTTPServer) handleGuestList(w http.ResponseWriter, r *http.Request) {
+	if rejectGuestManagementCall(w, r) {
+		return
+	}
 	if r.Method != http.MethodGet {
 		jsonError(w, http.StatusMethodNotAllowed, "GET only")
 		return
@@ -26,6 +37,9 @@ func (s *HTTPServer) handleGuestList(w http.ResponseWriter, r *http.Request) {
 
 // handleGuestInvite invites a guest by email (POST /guests/invite).
 func (s *HTTPServer) handleGuestInvite(w http.ResponseWriter, r *http.Request) {
+	if rejectGuestManagementCall(w, r) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		jsonError(w, http.StatusMethodNotAllowed, "POST only")
 		return
@@ -46,7 +60,7 @@ func (s *HTTPServer) handleGuestInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Refresh guest list immediately
-	if ids, err := FetchGuestUserIds(s.convexURL, s.token); err == nil {
+	if ids, err := FetchGuestUserIds(s.convexURL, s.token, s.deviceID); err == nil {
 		s.guestUserIDsMu.Lock()
 		s.guestUserIDs = ids
 		s.guestUserIDsMu.Unlock()
@@ -62,6 +76,9 @@ func (s *HTTPServer) handleGuestInvite(w http.ResponseWriter, r *http.Request) {
 
 // handleGuestRevoke revokes guest access (POST /guests/revoke).
 func (s *HTTPServer) handleGuestRevoke(w http.ResponseWriter, r *http.Request) {
+	if rejectGuestManagementCall(w, r) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		jsonError(w, http.StatusMethodNotAllowed, "POST only")
 		return
@@ -81,7 +98,7 @@ func (s *HTTPServer) handleGuestRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Refresh guest list immediately
-	if ids, err := FetchGuestUserIds(s.convexURL, s.token); err == nil {
+	if ids, err := FetchGuestUserIds(s.convexURL, s.token, s.deviceID); err == nil {
 		s.guestUserIDsMu.Lock()
 		s.guestUserIDs = ids
 		s.guestUserIDsMu.Unlock()

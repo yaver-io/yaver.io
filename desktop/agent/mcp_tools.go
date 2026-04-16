@@ -1877,6 +1877,31 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 						"items":       map[string]interface{}{"type": "string"},
 						"description": "Runner IDs the guest can use (empty = all)",
 					},
+					"use_host_api_keys": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Let the guest consume host-managed API keys without revealing the raw key",
+					},
+					"allow_guest_api_keys": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Allow the guest to bring and use their own API keys on the shared infra",
+					},
+					"require_isolation": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Require this guest's tasks to run in Docker isolation when available",
+					},
+					"cpu_limit_percent": map[string]interface{}{
+						"type":        "integer",
+						"description": "Soft CPU share cap for the guest on this host (1-100)",
+					},
+					"ram_limit_mb": map[string]interface{}{
+						"type":        "integer",
+						"description": "RAM cap in MB for the guest on this host",
+					},
+					"priority_mode": map[string]interface{}{
+						"type":        "string",
+						"description": "Scheduling policy for guest tasks",
+						"enum":        []string{"same-priority", "spare-capacity", "background"},
+					},
 				},
 			},
 		},

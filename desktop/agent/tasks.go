@@ -550,6 +550,13 @@ type Task struct {
 	// Image paths saved to disk for this task (not persisted in tasks.json)
 	ImagePaths []string `json:"-"`
 
+	// Guest execution policy snapshot resolved at task creation time.
+	GuestUseHostAPIKeys         bool `json:"-"`
+	GuestAllowGuestProvidedKeys bool `json:"-"`
+	GuestRequireIsolation       bool `json:"-"`
+	GuestCPULimitPercent        *int `json:"-"`
+	GuestRAMLimitMB             *int `json:"-"`
+
 	runner     RunnerConfig // the runner config used for this task (not persisted)
 	cmd        *exec.Cmd
 	cancel     context.CancelFunc
@@ -976,6 +983,50 @@ func (tm *TaskManager) CreateTask(title, description, model, source, runnerID, c
 	return task, nil
 }
 
+func taskEnv(task *Task) []string {
+	env := append([]string{}, os.Environ()...)
+	env = append(env, "PATH="+expandedPath())
+	if task == nil || task.GuestUserID == "" || task.GuestUseHostAPIKeys {
+		return env
+	}
+	filtered := make([]string, 0, len(env))
+	for _, entry := range env {
+		name := entry
+		if i := strings.IndexByte(entry, '='); i >= 0 {
+			name = entry[:i]
+		}
+		blocked := false
+		for _, secret := range sharedSecretEnvVars {
+			if name == secret {
+				blocked = true
+				break
+			}
+		}
+		if !blocked {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
+}
+
+func guestContainerCPULimit(task *Task) string {
+	if task == nil || task.GuestCPULimitPercent == nil || *task.GuestCPULimitPercent <= 0 {
+		return ""
+	}
+	cpus := float64(runtime.NumCPU()) * float64(*task.GuestCPULimitPercent) / 100.0
+	if cpus < 0.1 {
+		cpus = 0.1
+	}
+	return fmt.Sprintf("%.2f", cpus)
+}
+
+func guestContainerMemoryLimit(task *Task) string {
+	if task == nil || task.GuestRAMLimitMB == nil || *task.GuestRAMLimitMB <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%dm", *task.GuestRAMLimitMB)
+}
+
 // commonExtraPaths returns platform-appropriate extra binary search paths.
 func commonExtraPaths() string {
 	home, _ := os.UserHomeDir()
@@ -1362,7 +1413,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	// If containerization is enabled for this task type, run inside Docker.
 	useContainer := false
 	if tm.ContainerRunner != nil && tm.ContainerRunner.IsAvailable() {
-		if task.GuestUserID != "" && tm.ContainerizeGuests {
+		if task.GuestUserID != "" && (tm.ContainerizeGuests || task.GuestRequireIsolation) {
 			useContainer = true
 		} else if task.GuestUserID == "" && tm.ContainerizeHost {
 			useContainer = true
@@ -1384,7 +1435,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 			TaskID:      task.ID,
 			ProjectDir:  taskDir,
 			Command:     containerCmd,
-			Env:         CollectAPIKeys(),
+			Env:         CollectAPIKeysForTask(task),
 			NetworkMode: tm.ContainerNetwork,
 			ReadOnly:    tm.ContainerReadOnly,
 		}
@@ -1393,6 +1444,20 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		}
 		if tm.ContainerMemory != "" {
 			opts.MemoryLimit = tm.ContainerMemory
+		}
+		if task.GuestUserID != "" {
+			if cpuLimit := guestContainerCPULimit(task); cpuLimit != "" {
+				opts.CPULimit = cpuLimit
+			}
+			if memoryLimit := guestContainerMemoryLimit(task); memoryLimit != "" {
+				opts.MemoryLimit = memoryLimit
+			}
+			if task.GuestRequireIsolation {
+				if opts.NetworkMode == "" || opts.NetworkMode == "host" {
+					opts.NetworkMode = "bridge"
+				}
+				opts.ReadOnly = true
+			}
 		}
 		// Check for project-specific Dockerfile.yaver first, then config override
 		if projectImage := tm.ContainerRunner.DetectProjectImage(ctx, taskDir); projectImage != "" {
@@ -1432,7 +1497,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		cmd.Dir = taskDir
 
 		// Ensure common tool paths are in PATH for background processes.
-		cmd.Env = append(os.Environ(), "PATH="+expandedPath())
+		cmd.Env = taskEnv(task)
 
 		log.Printf("[task %s] Launching: %s %v (dir=%s)", task.ID, runner.Command, args[:2], taskDir)
 

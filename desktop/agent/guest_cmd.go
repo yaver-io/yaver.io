@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -179,6 +180,15 @@ func runGuestsConfig(args []string) {
 			} else {
 				fmt.Printf("runners=all")
 			}
+			if c.UseHostAPIKeys != nil {
+				fmt.Printf("  host_keys=%v", *c.UseHostAPIKeys)
+			}
+			if c.AllowGuestProvidedAPIKeys != nil {
+				fmt.Printf("  guest_keys=%v", *c.AllowGuestProvidedAPIKeys)
+			}
+			if c.PriorityMode != "" {
+				fmt.Printf("  priority=%s", c.PriorityMode)
+			}
 			fmt.Println()
 		}
 		return
@@ -218,6 +228,33 @@ func runGuestsConfig(args []string) {
 					}
 					fmt.Printf("  Schedule:         %02d:00-%02d:00 %s\n", c.Schedule.StartHour, c.Schedule.EndHour, tz)
 				}
+				if c.UseHostAPIKeys != nil {
+					fmt.Printf("  Use host keys:    %v\n", *c.UseHostAPIKeys)
+				}
+				if c.AllowGuestProvidedAPIKeys != nil {
+					fmt.Printf("  Guest keys:       %v\n", *c.AllowGuestProvidedAPIKeys)
+				}
+				if c.RequireIsolation != nil {
+					fmt.Printf("  Docker isolation: %v\n", *c.RequireIsolation)
+				}
+				if c.CPULimitPercent != nil {
+					fmt.Printf("  CPU cap:          %d%%\n", *c.CPULimitPercent)
+				}
+				if c.RAMLimitMB != nil {
+					fmt.Printf("  RAM cap:          %d MB\n", *c.RAMLimitMB)
+				}
+				if c.PriorityMode != "" {
+					fmt.Printf("  Priority mode:    %s\n", c.PriorityMode)
+				}
+				if c.ShareAllDevices != nil {
+					fmt.Printf("  Share all devices:%v\n", *c.ShareAllDevices)
+				}
+				if len(c.DeviceIDs) > 0 {
+					fmt.Printf("  Device scope:     %s\n", strings.Join(c.DeviceIDs, ", "))
+				}
+				if c.ShareAllMachines != nil {
+					fmt.Printf("  Share all machines:%v\n", *c.ShareAllMachines)
+				}
 				return
 			}
 		}
@@ -225,7 +262,7 @@ func runGuestsConfig(args []string) {
 		return
 	}
 
-	// Set config: yaver guests config <email> limit=3600 mode=scheduled runners=claude,aider
+	// Set config: yaver guests config <email> limit=3600 mode=scheduled runners=claude,aider hostkeys=true
 	payload := map[string]interface{}{"email": email}
 	for _, kv := range args[1:] {
 		parts := splitKV(kv)
@@ -243,8 +280,40 @@ func runGuestsConfig(args []string) {
 		case "runners":
 			runners := splitComma(parts[1])
 			payload["allowedRunners"] = runners
+		case "hostkeys":
+			payload["useHostApiKeys"] = parseBoolish(parts[1])
+		case "guestkeys":
+			payload["allowGuestProvidedApiKeys"] = parseBoolish(parts[1])
+		case "isolation", "docker":
+			payload["requireIsolation"] = parseBoolish(parts[1])
+		case "cpu":
+			var v int
+			fmt.Sscanf(parts[1], "%d", &v)
+			payload["cpuLimitPercent"] = v
+		case "rammb":
+			var v int
+			fmt.Sscanf(parts[1], "%d", &v)
+			payload["ramLimitMb"] = v
+		case "priority":
+			payload["priorityMode"] = parts[1]
+		case "devices":
+			if parts[1] == "all" {
+				payload["shareAllDevices"] = true
+				payload["deviceIds"] = []string{}
+			} else {
+				payload["shareAllDevices"] = false
+				payload["deviceIds"] = splitComma(parts[1])
+			}
+		case "machines":
+			if parts[1] == "all" {
+				payload["shareAllMachines"] = true
+				payload["machineIds"] = []string{}
+			} else {
+				payload["shareAllMachines"] = false
+				payload["machineIds"] = splitComma(parts[1])
+			}
 		default:
-			fmt.Fprintf(os.Stderr, "Unknown config key: %s (use: limit, mode, runners)\n", parts[0])
+			fmt.Fprintf(os.Stderr, "Unknown config key: %s (use: limit, mode, runners, hostkeys, guestkeys, isolation, cpu, rammb, priority, devices, machines)\n", parts[0])
 			os.Exit(1)
 		}
 	}
@@ -254,6 +323,15 @@ func runGuestsConfig(args []string) {
 		os.Exit(1)
 	}
 	fmt.Printf("Config updated for %s\n", email)
+}
+
+func parseBoolish(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on", "allow", "enabled":
+		return true
+	default:
+		return false
+	}
 }
 
 func runGuestsUsage(args []string) {
@@ -324,11 +402,20 @@ Config keys:
   limit=<seconds>          Daily task-seconds limit (0 = unlimited)
   mode=<always|idle-only|scheduled>   When guests can use the machine
   runners=<r1,r2,...>      Allowed runners (empty = all)
+  hostkeys=<true|false>    Allow host-managed API keys for this guest
+  guestkeys=<true|false>   Allow guest-provided API keys on shared infra
+  isolation=<true|false>   Require Docker isolation for this guest's tasks
+  cpu=<1-100>              CPU share cap percent for guest tasks
+  rammb=<mb>               RAM cap in MB for guest tasks
+  priority=<mode>          same-priority | spare-capacity | background
+  devices=<all|id1,id2>    Shared device scope
+  machines=<all|id1,id2>   Shared cloud machine scope
 
 Examples:
   yaver guests invite cousin@gmail.com
   yaver guests config cousin@gmail.com limit=3600 mode=scheduled
   yaver guests config cousin@gmail.com runners=claude,aider
+  yaver guests config cousin@gmail.com hostkeys=false isolation=true cpu=50 rammb=4096
   yaver guests usage
   yaver guests usage 2026-04-06
   yaver guests list
