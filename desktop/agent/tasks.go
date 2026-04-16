@@ -124,10 +124,17 @@ var exitCommands = map[string]string{
 // builtinRunners defines all known runner configurations.
 var builtinRunners = map[string]RunnerConfig{
 	"claude": {
-		RunnerID:    "claude",
-		Name:        "Claude Code",
-		Command:     "claude",
-		Args:        []string{"-p", "{prompt}", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--model", "sonnet", "--tools", "Bash", "--dangerously-skip-permissions"},
+		RunnerID: "claude",
+		Name:     "Claude Code",
+		Command:  "claude",
+		// NOTE: --model is intentionally NOT in Args; runImplementer
+		// (hybrid.go) and any future yaver-managed spawn prepends it
+		// from RunnerConfig.Model / HybridSpec.Model so the user's
+		// chosen model wins. Hardcoding "sonnet" here would shadow
+		// --implementer claude:opus (sees --model twice, last one
+		// wins, depends on CLI parsing — flaky).
+		Args:        []string{"-p", "{prompt}", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--tools", "Bash", "--dangerously-skip-permissions"},
+		Model:       "claude-sonnet-4-6", // cheap default; HybridSpec / --implementer claude:X overrides
 		OutputMode:  "stream-json",
 		ExitCommand: "/exit",
 	},
