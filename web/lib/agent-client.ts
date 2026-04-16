@@ -241,6 +241,15 @@ export interface GuestConfigEntry {
   allowedRunners?: string[];
   usageMode?: string;
   schedule?: { startHour: number; endHour: number; timezone?: string };
+  shareAllDevices?: boolean;
+  deviceIds?: string[];
+  shareAllMachines?: boolean;
+  machineIds?: string[];
+  useHostApiKeys?: boolean;
+  allowGuestProvidedApiKeys?: boolean;
+  cpuLimitPercent?: number;
+  ramLimitMb?: number;
+  priorityMode?: string;
   allowedProjects?: string[];
 }
 
@@ -1080,6 +1089,17 @@ class AgentClient {
     dailyTokenLimit?: number;
     allowedRunners?: string[];
     usageMode?: string;
+    schedule?: { startHour: number; endHour: number; timezone?: string };
+    shareAllDevices?: boolean;
+    deviceIds?: string[];
+    shareAllMachines?: boolean;
+    machineIds?: string[];
+    useHostApiKeys?: boolean;
+    allowGuestProvidedApiKeys?: boolean;
+    cpuLimitPercent?: number;
+    ramLimitMb?: number;
+    priorityMode?: string;
+    allowedProjects?: string[];
   }): Promise<void> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/guests/config`, {

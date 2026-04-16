@@ -58,6 +58,15 @@ export interface GuestConfigEntry {
     endHour: number;
     timezone?: string;
   };
+  shareAllDevices?: boolean;
+  deviceIds?: string[];
+  shareAllMachines?: boolean;
+  machineIds?: string[];
+  useHostApiKeys?: boolean;
+  allowGuestProvidedApiKeys?: boolean;
+  cpuLimitPercent?: number;
+  ramLimitMb?: number;
+  priorityMode?: string;
   allowedProjects?: string[];
 }
 
@@ -78,6 +87,15 @@ export interface GuestConfigUpdate {
     endHour: number;
     timezone?: string;
   };
+  shareAllDevices?: boolean;
+  deviceIds?: string[];
+  shareAllMachines?: boolean;
+  machineIds?: string[];
+  useHostApiKeys?: boolean;
+  allowGuestProvidedApiKeys?: boolean;
+  cpuLimitPercent?: number;
+  ramLimitMb?: number;
+  priorityMode?: string;
   allowedProjects?: string[];
 }
 

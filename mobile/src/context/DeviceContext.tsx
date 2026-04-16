@@ -106,6 +106,24 @@ export interface Device {
   hostName?: string;
   /** host's email (only set when isGuest=true) */
   hostEmail?: string;
+  /** owner vs explicitly shared vs legacy broad sharing */
+  accessScope?: "owner" | "shared-scoped" | "shared-legacy";
+  /** host scheduling / priority hint for shared usage */
+  priorityMode?: string;
+  /** guest may use host-managed credentials without seeing raw secret */
+  useHostApiKeys?: boolean;
+  /** guest may bring their own credentials on top of host infra */
+  allowGuestProvidedApiKeys?: boolean;
+}
+
+function deviceIdentityKey(device: Pick<Device, "id" | "hwid" | "name" | "isGuest" | "hostEmail" | "hostName">): string {
+  if (device.hwid) return `hwid:${device.hwid}`;
+  if (device.isGuest) {
+    const hostScope = device.hostEmail || device.hostName || "guest";
+    return `guest:${hostScope}:${device.id || device.name}`;
+  }
+  if (device.id) return `id:${device.id}`;
+  return `name:${device.name}`;
 }
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
@@ -251,13 +269,18 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             isGuest: d.isGuest || false,
             hostName: d.hostName,
             hostEmail: d.hostEmail,
+            accessScope: d.accessScope,
+            priorityMode: d.priorityMode,
+            useHostApiKeys: d.useHostApiKeys,
+            allowGuestProvidedApiKeys: d.allowGuestProvidedApiKeys,
           };
         });
-        // Deduplicate by hardware ID (stable, survives IP/hostname changes)
-        // Fall back to name-based dedup if hwid not available
+        // Deduplicate by stable device identity. Guest devices must include
+        // host context so two different hosts with the same machine name
+        // cannot collapse into one visible entry.
         const seen = new Map<string, Device>();
         for (const d of mapped) {
-          const key = d.hwid || d.name; // prefer hwid, fall back to name
+          const key = deviceIdentityKey(d);
           const existing = seen.get(key);
           if (!existing || d.lastSeen > existing.lastSeen) {
             seen.set(key, d);
@@ -266,7 +289,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         // Filter out detached devices
         const detached = await getDetachedDevices();
         const finalDevices = [...seen.values()].filter(d => {
-          const key = d.hwid || d.name;
+          const key = deviceIdentityKey(d);
           return !detached.has(key);
         });
         setDevices(finalDevices);
@@ -359,7 +382,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const handleDetachDevice = useCallback(async (device: Device) => {
-    const key = device.hwid || device.name;
+    const key = deviceIdentityKey(device);
     await addDetachedDevice(key);
     // If detaching the active device, disconnect first
     if (activeDevice?.id === device.id) {
@@ -367,7 +390,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       setActiveDevice(null);
       setConnectionStatus("disconnected");
     }
-    setDevices((prev) => prev.filter((d) => (d.hwid || d.name) !== key));
+    setDevices((prev) => prev.filter((d) => deviceIdentityKey(d) !== key));
   }, [activeDevice]);
 
   // Sync DeviceContext state with QUIC client's internal state changes

@@ -11,6 +11,22 @@ export interface Device {
   port: number;
   lastSeen: string;
   online: boolean;
+  isGuest?: boolean;
+  hostName?: string;
+  hostEmail?: string;
+  accessScope?: "owner" | "shared-scoped" | "shared-legacy";
+  priorityMode?: string;
+  useHostApiKeys?: boolean;
+  allowGuestProvidedApiKeys?: boolean;
+}
+
+function deviceIdentityKey(device: Pick<Device, "id" | "name" | "isGuest" | "hostEmail" | "hostName">): string {
+  if (device.isGuest) {
+    const hostScope = device.hostEmail || device.hostName || "guest";
+    return `guest:${hostScope}:${device.id || device.name}`;
+  }
+  if (device.id) return `id:${device.id}`;
+  return `name:${device.name.toLowerCase().replace(/\.local$/, "")}`;
 }
 
 interface DevicesState {
@@ -41,12 +57,20 @@ export function useDevices(token: string | null): DevicesState {
         port: d.quicPort || d.port || 18080,
         lastSeen: d.lastHeartbeat ? new Date(d.lastHeartbeat).toISOString() : "",
         online: d.isOnline ?? d.online ?? false,
+        isGuest: d.isGuest ?? false,
+        hostName: d.hostName,
+        hostEmail: d.hostEmail,
+        accessScope: d.accessScope,
+        priorityMode: d.priorityMode,
+        useHostApiKeys: d.useHostApiKeys,
+        allowGuestProvidedApiKeys: d.allowGuestProvidedApiKeys,
       }));
 
-      // Deduplicate by hostname — keep the entry with latest heartbeat
+      // Deduplicate by stable device identity. Guest devices include host
+      // context so two shared devices with the same hostname remain distinct.
       const seen = new Map<string, Device>();
       for (const d of mapped) {
-        const key = d.name.toLowerCase().replace(/\.local$/, "");
+        const key = deviceIdentityKey(d);
         // Skip IP-only names if we already have a hostname for the same machine
         if (/^\d+\.\d+\.\d+\.\d+$/.test(d.name)) {
           // Only keep IP entry if no hostname entry exists
@@ -62,10 +86,10 @@ export function useDevices(token: string | null): DevicesState {
       // Remove IP entries that have a matching hostname entry
       const hostnames = new Set<string>();
       for (const d of seen.values()) {
-        if (!/^\d+\.\d+\.\d+\.\d+$/.test(d.name)) hostnames.add(d.name.toLowerCase());
+        if (!/^\d+\.\d+\.\d+\.\d+$/.test(d.name)) hostnames.add(deviceIdentityKey(d));
       }
       const deduped = Array.from(seen.values()).filter(d => {
-        if (/^\d+\.\d+\.\d+\.\d+$/.test(d.name) && hostnames.size > 0) return false;
+        if (/^\d+\.\d+\.\d+\.\d+$/.test(d.name) && hostnames.has(deviceIdentityKey(d))) return false;
         return true;
       });
 
