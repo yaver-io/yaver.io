@@ -1,0 +1,149 @@
+name: autodev-e2e
+
+# End-to-end test that runs ONE real kick of yaver autodev /
+# autoideas / autoinit against a tiny throwaway fixture project,
+# burning a small amount of Anthropic API credits.
+#
+# SECURITY (open-source repo notes):
+#   * The ANTHROPIC_API_KEY secret is only available to workflows
+#     triggered by `push` to main or by `workflow_dispatch` from a
+#     repo collaborator. GitHub deliberately does NOT send secrets
+#     to workflows triggered by `pull_request` from forks — that
+#     means a malicious fork PR cannot exfiltrate the key by
+#     editing this workflow. Do not switch to `pull_request_target`
+#     unless you fully understand the security implications.
+#   * The key is consumed by the `claude` subprocess via env var.
+#     We never `echo` it, never print it to logs, never write it
+#     to disk. The "Claude key present" check below is a sentinel
+#     that reads only the length of the secret, not the value.
+#   * The workflow is gated by an "anthropic-prod" GitHub
+#     Environment so the repo owner can require manual approval
+#     before each run (Settings → Environments → anthropic-prod →
+#     Required reviewers). Without that approval the secret never
+#     materialises on the runner.
+#
+# Setup once (repo settings):
+#   1. Settings → Secrets and variables → Actions → New repository
+#      secret: ANTHROPIC_API_KEY = sk-ant-…
+#   2. Settings → Environments → New environment: anthropic-prod
+#      → enable "Required reviewers" with the repo owner
+#   3. Move the secret into that environment so workflows have to
+#      go through the approval gate.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'desktop/agent/autodev_*.go'
+      - 'desktop/agent/autoideas_*.go'
+      - 'desktop/agent/autoinit_*.go'
+      - 'desktop/agent/ai_generator.go'
+      - 'desktop/agent/loop_exec*.go'
+      - '.github/workflows/autodev-e2e.yml'
+  workflow_dispatch:
+    inputs:
+      command:
+        description: 'Which to exercise: autoinit | autoideas | autodev'
+        required: true
+        default: autoinit
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Force the gated environment so the secret only flows when
+    # the protection rules are satisfied.
+    environment: anthropic-prod
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: desktop/agent/go.sum
+
+      - name: Build yaver agent
+        working-directory: desktop/agent
+        run: go build -o /tmp/yaver .
+
+      - name: Verify Anthropic key is present (length only — never the value)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY missing — set it in the anthropic-prod environment."
+            exit 1
+          fi
+          echo "ANTHROPIC_API_KEY present (length=${#ANTHROPIC_API_KEY})"
+
+      - name: Install Claude Code CLI
+        run: |
+          # Claude Code is published as @anthropic-ai/claude-code on npm.
+          npm install -g @anthropic-ai/claude-code || true
+          which claude || (echo "::error::claude CLI failed to install" && exit 1)
+          claude --version
+
+      - name: Build a tiny fixture project
+        run: |
+          mkdir -p /tmp/fixture
+          cd /tmp/fixture
+          git init -q
+          git config user.email autodev@example.com
+          git config user.name autodev
+          mkdir -p src
+          cat > src/index.js <<'JS'
+          // tiny demo file
+          export function greet(name) {
+            return `Hello, ${name}!`;
+          }
+          JS
+          cat > package.json <<'JSON'
+          {"name":"fixture","version":"0.0.1","main":"src/index.js"}
+          JSON
+          cat > README.md <<'MD'
+          # Fixture project for yaver autodev E2E
+          A throwaway repo. The CI burns ~$0.05 Claude credit to verify
+          that `yaver autoinit` produces a sensible init.md.
+          MD
+          git add . && git commit -q -m "init"
+
+      - name: yaver autoinit (1 real Claude call)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        working-directory: /tmp/fixture
+        run: |
+          /tmp/yaver autoinit fixture --plan
+          # Real generation — bounded by autoinit's own 10-minute
+          # timeout. We don't pass --hours; autoinit is one-shot.
+          /tmp/yaver autoinit fixture
+          test -f init.md || (echo "init.md not created" && exit 1)
+          echo "--- init.md ---"
+          head -60 init.md
+          grep -q "What is this" init.md || (echo "missing 'What is this' section" && exit 1)
+          grep -q "yaver:autoinit:generated:start" init.md
+          grep -q "yaver:autoinit:history:start" init.md
+
+      - name: yaver autoideas --max-batches 1 (real generation)
+        if: github.event.inputs.command != 'autoinit'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        working-directory: /tmp/fixture
+        run: |
+          # --max-batches 1 caps cost to one batch (~5 ideas).
+          /tmp/yaver autoideas fixture --max-batches 1 --tick 60
+          # Wait for the detached child to finish — the CLI returns
+          # immediately because of the autodev detach pattern.
+          for i in $(seq 1 24); do
+            if grep -q "- \[ \]" ideas.md 2>/dev/null; then
+              echo "ideas.md populated after ${i}x5s"
+              break
+            fi
+            sleep 5
+          done
+          cat ideas.md
+          grep -q "- \[ \]" ideas.md || (echo "no items in ideas.md" && exit 1)
+
+      - name: Cleanup — never persist the key past this job
+        if: always()
+        run: |
+          unset ANTHROPIC_API_KEY
+          rm -rf /tmp/fixture /tmp/yaver
