@@ -1565,6 +1565,7 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
   const [editMachineIds, setEditMachineIds] = useState<string[]>([]);
   const [editShareAllMachines, setEditShareAllMachines] = useState(true);
   const [editAllowedProjects, setEditAllowedProjects] = useState("");
+  const [editAllowedSharedStorage, setEditAllowedSharedStorage] = useState("");
   const [editPreset, setEditPreset] = useState("machine-only");
   const [editAllowGuestKeys, setEditAllowGuestKeys] = useState(true);
   const [editAllowTunnels, setEditAllowTunnels] = useState(false);
@@ -1687,6 +1688,7 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
     setEditMachineIds(scopedMachineIds);
     setEditShareAllMachines(shareAllMachines);
     setEditAllowedProjects(cfg.allowedProjects?.join(",") || "");
+    setEditAllowedSharedStorage(cfg.allowedSharedStorage?.join(",") || "");
     setEditPreset(cfg.resourcePreset || (cfg.useHostApiKeys ? "machine-with-host-keys" : "machine-only"));
     setEditAllowGuestKeys(cfg.allowGuestProvidedApiKeys !== false);
     setEditAllowTunnels(!!cfg.allowTunnelForward);
@@ -1708,6 +1710,7 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
         shareAllMachines: editShareAllMachines,
         machineIds: editShareAllMachines ? [] : editMachineIds,
         allowedProjects: editAllowedProjects ? editAllowedProjects.split(",").map(v => v.trim()).filter(Boolean) : [],
+        allowedSharedStorage: editAllowedSharedStorage ? editAllowedSharedStorage.split(",").map(v => v.trim()).filter(Boolean) : [],
         resourcePreset: editPreset,
         allowGuestProvidedApiKeys: editAllowGuestKeys,
         allowTunnelForward: editAllowTunnels,
@@ -1720,7 +1723,7 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
       Alert.alert("Error", e.message || "Failed to save config");
     }
     setSavingConfig(false);
-  }, [configEmail, editLimit, editMode, editRunners, editMachineIds, editShareAllMachines, editAllowedProjects, editPreset, editAllowGuestKeys, editAllowTunnels, editRequireIsolation, connected, loadConfigs]);
+  }, [configEmail, editLimit, editMode, editRunners, editMachineIds, editShareAllMachines, editAllowedProjects, editAllowedSharedStorage, editPreset, editAllowGuestKeys, editAllowTunnels, editRequireIsolation, connected, loadConfigs]);
 
   const updateGuestQuickAction = useCallback(async (email: string, patch: Record<string, any>, successMessage: string) => {
     if (!connected) return;
@@ -2054,6 +2057,19 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
               placeholderTextColor={c.textMuted}
               value={editAllowedProjects}
               onChangeText={setEditAllowedProjects}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", textTransform: "uppercase" }}>
+              Allowed Shared Storage IDs (comma-separated, empty = none)
+            </Text>
+            <TextInput
+              style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
+              placeholder="e.g. shared-123,storagebox-prod"
+              placeholderTextColor={c.textMuted}
+              value={editAllowedSharedStorage}
+              onChangeText={setEditAllowedSharedStorage}
               autoCapitalize="none"
               autoCorrect={false}
             />
@@ -2503,6 +2519,20 @@ export default function MoreScreen() {
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Files</Text>
               <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Browse project files (read-only)</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/shared-storage" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F5C4}"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Shared Storage</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Browse NAS, SMB, WebDAV, Storage Box</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>

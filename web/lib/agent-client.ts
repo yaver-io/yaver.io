@@ -296,6 +296,7 @@ export interface SandboxStatus {
   readOnly?: boolean;
   cpuLimit?: string;
   memoryLimit?: string;
+  extraMounts?: string[];
   recommendedMode?: "guests" | "host";
   recommendedReason?: string;
   quickstartAvailable?: boolean;
@@ -308,6 +309,7 @@ export interface SandboxConfig {
   memoryLimit?: string;
   networkMode?: "host" | "bridge" | "none";
   readOnly?: boolean;
+  extraMounts?: string[];
 }
 
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
@@ -344,6 +346,7 @@ export interface GuestConfigEntry {
   ramLimitMb?: number;
   priorityMode?: string;
   allowedProjects?: string[];
+  allowedSharedStorage?: string[];
 }
 
 export interface GuestUsageEntry {
@@ -1395,6 +1398,7 @@ class AgentClient {
     ramLimitMb?: number;
     priorityMode?: string;
     allowedProjects?: string[];
+    allowedSharedStorage?: string[];
   }): Promise<void> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/guests/config`, {

@@ -73,6 +73,7 @@ export interface GuestConfigEntry {
   ramLimitMb?: number;
   priorityMode?: string;
   allowedProjects?: string[];
+  allowedSharedStorage?: string[];
 }
 
 export interface GuestUsageEntry {
@@ -107,6 +108,7 @@ export interface GuestConfigUpdate {
   ramLimitMb?: number;
   priorityMode?: string;
   allowedProjects?: string[];
+  allowedSharedStorage?: string[];
 }
 
 // ── API ──────────────────────────────────────────────────────────────

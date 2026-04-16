@@ -67,19 +67,253 @@ function Schema({ directory }: { directory: string }) {
 
 function Storage({ directory }: { directory: string }) {
   const [data, setData] = useState<any>(null);
-  useEffect(() => { (async () => setData(await agentClient.storageList(undefined, directory || undefined)))(); }, [directory]);
+  const [profiles, setProfiles] = useState<any[]>([]);
+  const [selectedProfile, setSelectedProfile] = useState<string>("");
+  const [sharedPath, setSharedPath] = useState("");
+  const [sharedListing, setSharedListing] = useState<any>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchHits, setSearchHits] = useState<any[]>([]);
+  const [guestConfigs, setGuestConfigs] = useState<any[]>([]);
+  const [profileForm, setProfileForm] = useState<any>({ type: "local", name: "", path: "", mount_path: "", remote: "", endpoint: "", bucket: "", region: "", username: "", password: "", access_key: "", secret_key: "", notes: "", container_mount_mode: "none", container_path: "" });
+
+  async function refreshProjectStorage() {
+    setData(await agentClient.storageList(undefined, directory || undefined));
+  }
+
+  async function refreshProfiles() {
+    const res = await agentClient.sharedStorageProfiles();
+    const next = res.profiles || [];
+    setProfiles(next);
+    if (!selectedProfile && next[0]?.id) {
+      setSelectedProfile(next[0].id);
+    }
+  }
+
+  async function refreshGuestConfigs() {
+    try {
+      setGuestConfigs(await agentClient.getGuestConfigs());
+    } catch {
+      setGuestConfigs([]);
+    }
+  }
+
+  useEffect(() => { refreshProjectStorage(); }, [directory]);
+  useEffect(() => { refreshProfiles(); }, []);
+  useEffect(() => { refreshGuestConfigs(); }, []);
+  useEffect(() => {
+    if (!selectedProfile) {
+      setSharedListing(null);
+      return;
+    }
+    (async () => setSharedListing(await agentClient.sharedStorageList(selectedProfile, sharedPath)))();
+  }, [selectedProfile, sharedPath]);
+
+  async function saveProfile() {
+    const res = await agentClient.sharedStorageUpsert(profileForm);
+    if (!res.error) {
+      setProfileForm({ type: "local", name: "", path: "", mount_path: "", remote: "", endpoint: "", bucket: "", region: "", username: "", password: "", access_key: "", secret_key: "", notes: "", container_mount_mode: "none", container_path: "" });
+      await refreshProfiles();
+    } else {
+      alert(res.error);
+    }
+  }
+
+  async function removeProfile(id: string) {
+    if (!confirm("Delete this shared storage profile?")) return;
+    await agentClient.sharedStorageDelete(id);
+    if (selectedProfile === id) {
+      setSelectedProfile("");
+      setSharedPath("");
+      setSearchHits([]);
+    }
+    await refreshProfiles();
+  }
+
+  async function runSearch() {
+    if (!searchQuery.trim()) {
+      setSearchHits([]);
+      return;
+    }
+    const res = await agentClient.sharedStorageSearch(searchQuery, { id: selectedProfile || undefined, path: sharedPath || undefined, limit: 30 });
+    setSearchHits(res.hits || []);
+  }
+
+  async function toggleGuestStorage(email: string, profileId: string, checked: boolean) {
+    const cfg = guestConfigs.find((g: any) => g.guestEmail === email);
+    if (!cfg) return;
+    const current = new Set<string>(cfg.allowedSharedStorage || []);
+    if (checked) current.add(profileId);
+    else current.delete(profileId);
+    await agentClient.updateGuestConfig({
+      email,
+      allowedSharedStorage: Array.from(current),
+    });
+    await refreshGuestConfigs();
+  }
+
   if (!data) return <div className="text-sm text-surface-500">Loading…</div>;
   return (
-    <div className="space-y-2">
-      <div className="text-xs text-surface-500">Source: {data.source}</div>
-      {data.error && <div className="text-xs text-red-400">{data.error}</div>}
-      {(data.files || []).map((f: any) => (
-        <div key={f.id} className="flex items-center gap-3 bg-surface-900/50 border border-surface-800 rounded-lg p-2 text-xs">
-          <span className="font-mono flex-1 truncate">{f.name}</span>
-          <span className="text-surface-500 font-mono">{fmtBytes(f.size)}</span>
-          <span className="text-surface-600 text-[10px]">{f.createdAt?.slice(0, 10)}</span>
+    <div className="space-y-4">
+      <div className="rounded-lg border border-surface-800 bg-surface-900/40 p-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="text-xs uppercase text-surface-500">Project Storage</div>
+          <button onClick={refreshProjectStorage} className="px-2 py-1 text-[11px] rounded bg-surface-800 text-surface-200 hover:bg-surface-700">Refresh</button>
         </div>
-      ))}
+        <div className="text-xs text-surface-500">Source: {data.source}</div>
+        {data.error && <div className="text-xs text-red-400">{data.error}</div>}
+        {(data.files || []).map((f: any) => (
+          <div key={f.id} className="flex items-center gap-3 bg-surface-900/50 border border-surface-800 rounded-lg p-2 text-xs">
+            <span className="font-mono flex-1 truncate">{f.name}</span>
+            <span className="text-surface-500 font-mono">{fmtBytes(f.size)}</span>
+            <span className="text-surface-600 text-[10px]">{f.createdAt?.slice(0, 10)}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[320px,1fr]">
+        <div className="space-y-3">
+          <div className="rounded-lg border border-surface-800 bg-surface-900/40 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase text-surface-500">Shared Storage</div>
+              <button onClick={refreshProfiles} className="px-2 py-1 text-[11px] rounded bg-surface-800 text-surface-200 hover:bg-surface-700">Refresh</button>
+            </div>
+            {profiles.length === 0 && <div className="text-xs text-surface-500">No NAS/shared storage profiles yet.</div>}
+            {profiles.map((p: any) => (
+              <div key={p.id} className={`rounded-lg border p-2 ${selectedProfile === p.id ? "border-indigo-500/50 bg-indigo-500/10" : "border-surface-800 bg-surface-900/50"}`}>
+                <button onClick={() => { setSelectedProfile(p.id); setSharedPath(""); setSearchHits([]); }} className="w-full text-left">
+                  <div className="flex items-center gap-2">
+                    <span className={`h-2 w-2 rounded-full ${p.available ? "bg-emerald-400" : "bg-amber-400"}`} />
+                    <span className="flex-1 truncate text-sm text-surface-200">{p.name}</span>
+                    <span className="text-[10px] uppercase text-surface-500">{p.type}</span>
+                  </div>
+                  <div className="mt-1 text-[11px] text-surface-500 truncate">{p.resolvedLocation || p.endpoint || p.remote || p.path}</div>
+                  <div className="text-[10px] text-surface-600 truncate">{p.status}{p.containerMountMode && p.containerMountMode !== "none" ? ` · container:${p.containerMountMode}` : ""}</div>
+                </button>
+                <button onClick={() => removeProfile(p.id)} className="mt-2 text-[10px] text-red-400 hover:text-red-300">Delete</button>
+              </div>
+            ))}
+          </div>
+
+          <div className="rounded-lg border border-surface-800 bg-surface-900/40 p-3 space-y-2">
+            <div className="text-xs uppercase text-surface-500">Add Profile</div>
+            <select value={profileForm.type} onChange={(e) => setProfileForm((s: any) => ({ ...s, type: e.target.value }))} className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200">
+              <option value="local">Local folder</option>
+              <option value="smb">SMB / NAS</option>
+              <option value="webdav">WebDAV</option>
+              <option value="storagebox">Hetzner Storage Box</option>
+              <option value="s3">S3-compatible bucket</option>
+            </select>
+            <input value={profileForm.name} onChange={(e) => setProfileForm((s: any) => ({ ...s, name: e.target.value }))} placeholder="Friendly name" className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200" />
+            <input
+              value={profileForm.path}
+              onChange={(e) => setProfileForm((s: any) => ({ ...s, path: e.target.value }))}
+              placeholder={profileForm.type === "local" ? "Local path, e.g. /Volumes/NAS" : "Optional root path inside the remote share"}
+              className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-mono text-surface-200"
+            />
+            {profileForm.type === "local" && (
+              <input value={profileForm.mount_path} onChange={(e) => setProfileForm((s: any) => ({ ...s, mount_path: e.target.value }))} placeholder="Optional mount path override" className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-mono text-surface-200" />
+            )}
+            {(profileForm.type === "smb" || profileForm.type === "storagebox") && (
+              <>
+                <input value={profileForm.remote} onChange={(e) => setProfileForm((s: any) => ({ ...s, remote: e.target.value }))} placeholder="//host/share or smb://host/share" className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-mono text-surface-200" />
+                <input value={profileForm.username} onChange={(e) => setProfileForm((s: any) => ({ ...s, username: e.target.value }))} placeholder="SMB username" className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200" />
+                <input value={profileForm.password} onChange={(e) => setProfileForm((s: any) => ({ ...s, password: e.target.value }))} placeholder="SMB password" type="password" className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200" />
+              </>
+            )}
+            {profileForm.type === "webdav" && (
+              <>
+                <input value={profileForm.endpoint} onChange={(e) => setProfileForm((s: any) => ({ ...s, endpoint: e.target.value }))} placeholder="https://dav.example.com/remote.php/dav/files/user" className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-mono text-surface-200" />
+                <input value={profileForm.username} onChange={(e) => setProfileForm((s: any) => ({ ...s, username: e.target.value }))} placeholder="WebDAV username" className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200" />
+                <input value={profileForm.password} onChange={(e) => setProfileForm((s: any) => ({ ...s, password: e.target.value }))} placeholder="WebDAV password" type="password" className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200" />
+              </>
+            )}
+            {profileForm.type === "s3" && (
+              <>
+                <input value={profileForm.endpoint} onChange={(e) => setProfileForm((s: any) => ({ ...s, endpoint: e.target.value }))} placeholder="Endpoint" className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-mono text-surface-200" />
+                <input value={profileForm.bucket} onChange={(e) => setProfileForm((s: any) => ({ ...s, bucket: e.target.value }))} placeholder="Bucket" className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-mono text-surface-200" />
+                <input value={profileForm.region} onChange={(e) => setProfileForm((s: any) => ({ ...s, region: e.target.value }))} placeholder="Region (optional)" className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-mono text-surface-200" />
+                <input value={profileForm.access_key} onChange={(e) => setProfileForm((s: any) => ({ ...s, access_key: e.target.value }))} placeholder="Access key" className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-mono text-surface-200" />
+                <input value={profileForm.secret_key} onChange={(e) => setProfileForm((s: any) => ({ ...s, secret_key: e.target.value }))} placeholder="Secret key" className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-mono text-surface-200" />
+              </>
+            )}
+            <select value={profileForm.container_mount_mode} onChange={(e) => setProfileForm((s: any) => ({ ...s, container_mount_mode: e.target.value }))} className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200">
+              <option value="none">No container mount</option>
+              <option value="host">Host tasks only</option>
+              <option value="guests">Guest tasks only</option>
+              <option value="all">Host and guest tasks</option>
+            </select>
+            <input value={profileForm.container_path} onChange={(e) => setProfileForm((s: any) => ({ ...s, container_path: e.target.value }))} placeholder="Container path, e.g. /mnt/storagebox" className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-mono text-surface-200" />
+            <textarea value={profileForm.notes} onChange={(e) => setProfileForm((s: any) => ({ ...s, notes: e.target.value }))} placeholder="Notes: mount command, users, relay path, etc." rows={3} className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200" />
+            <button onClick={saveProfile} className="w-full px-3 py-2 text-sm rounded-lg bg-indigo-500 text-white hover:bg-indigo-400">Save profile</button>
+          </div>
+
+          <div className="rounded-lg border border-surface-800 bg-surface-900/40 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase text-surface-500">Guest ACL</div>
+              <button onClick={refreshGuestConfigs} className="px-2 py-1 text-[11px] rounded bg-surface-800 text-surface-200 hover:bg-surface-700">Refresh</button>
+            </div>
+            {guestConfigs.length === 0 && <div className="text-xs text-surface-500">No accepted guests with config yet.</div>}
+            {guestConfigs.map((cfg: any) => (
+              <div key={cfg.guestUserId} className="rounded-lg border border-surface-800 bg-surface-900/50 p-2 space-y-2">
+                <div className="text-sm text-surface-200">{cfg.guestEmail}</div>
+                <div className="space-y-1">
+                  {profiles.map((p: any) => {
+                    const checked = (cfg.allowedSharedStorage || []).includes(p.id);
+                    return (
+                      <label key={`${cfg.guestUserId}-${p.id}`} className="flex items-center gap-2 text-xs text-surface-300">
+                        <input type="checkbox" checked={checked} onChange={(e) => toggleGuestStorage(cfg.guestEmail, p.id, e.target.checked)} />
+                        <span className="truncate">{p.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <div className="rounded-lg border border-surface-800 bg-surface-900/40 p-3 space-y-2">
+            <div className="text-xs uppercase text-surface-500">Browse Shared Storage</div>
+            {!selectedProfile ? (
+              <div className="text-sm text-surface-500">Pick a profile on the left.</div>
+            ) : (
+              <>
+                <div className="flex gap-2">
+                  <input value={sharedPath} onChange={(e) => setSharedPath(e.target.value)} placeholder="path inside profile" className="flex-1 rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-mono text-surface-200" />
+                  <button onClick={() => setSharedPath(sharedPath.split("/").slice(0, -1).join("/"))} className="px-3 py-2 text-sm rounded-lg bg-surface-800 text-surface-200 hover:bg-surface-700">Up</button>
+                </div>
+                {(sharedListing?.entries || []).map((entry: any) => (
+                  <button key={entry.path} onClick={() => setSharedPath(entry.isDir ? entry.path : sharedPath)} className="w-full flex items-center gap-3 rounded-lg border border-surface-800 bg-surface-900/50 p-2 text-left text-xs">
+                    <span>{entry.isDir ? "DIR" : "FILE"}</span>
+                    <span className="flex-1 truncate font-mono">{entry.path}</span>
+                    <span className="text-surface-500">{fmtBytes(entry.size || 0)}</span>
+                  </button>
+                ))}
+              </>
+            )}
+          </div>
+
+          <div className="rounded-lg border border-surface-800 bg-surface-900/40 p-3 space-y-2">
+            <div className="text-xs uppercase text-surface-500">Document Search</div>
+            <div className="flex gap-2">
+              <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && runSearch()} placeholder="Search filenames and text documents" className="flex-1 rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200" />
+              <button onClick={runSearch} className="px-3 py-2 text-sm rounded-lg bg-indigo-500 text-white hover:bg-indigo-400">Search</button>
+            </div>
+            {searchHits.map((hit: any, i: number) => (
+              <div key={`${hit.profileId}-${hit.path}-${i}`} className="rounded-lg border border-surface-800 bg-surface-900/50 p-2 text-xs">
+                <div className="flex gap-2">
+                  <span className="text-indigo-300">{hit.profileName}</span>
+                  <span className="text-surface-500">{hit.matchType}</span>
+                  <span className="ml-auto text-surface-500">{fmtBytes(hit.size || 0)}</span>
+                </div>
+                <div className="mt-1 font-mono text-surface-200 break-all">{hit.path}</div>
+                {hit.snippet && <div className="mt-1 text-surface-500">{hit.snippet}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

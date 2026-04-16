@@ -60,14 +60,14 @@ type Config struct {
 	IOSInstallMethod    string   `json:"ios_install_method,omitempty"` // "auto" (default), "native", "bundle"
 
 	// Container isolation — run tasks inside Docker containers
-	ContainerizeGuests bool     `json:"containerize_guests,omitempty"` // run guest tasks in containers (default: false)
-	ContainerizeHost   bool     `json:"containerize_host,omitempty"`   // run host tasks in containers (default: false)
-	ContainerImage     string   `json:"container_image,omitempty"`     // custom image (default: yaver-sandbox)
-	ContainerCPU       string   `json:"container_cpu,omitempty"`       // CPU limit e.g. "2.0"
-	ContainerMemory    string   `json:"container_memory,omitempty"`    // Memory limit e.g. "4g"
-	ContainerNetwork   string   `json:"container_network,omitempty"`   // Network mode: "host" (default), "bridge", "none"
-	ContainerReadOnly  bool     `json:"container_read_only,omitempty"` // Read-only root filesystem (writes only to /workspace, /tmp)
-	ContainerMounts    []string `json:"container_mounts,omitempty"`    // Extra volume mounts e.g. ["/opt/android-sdk:/opt/android-sdk:ro"]
+	ContainerizeGuests bool                   `json:"containerize_guests,omitempty"` // run guest tasks in containers (default: false)
+	ContainerizeHost   bool                   `json:"containerize_host,omitempty"`   // run host tasks in containers (default: false)
+	ContainerImage     string                 `json:"container_image,omitempty"`     // custom image (default: yaver-sandbox)
+	ContainerCPU       string                 `json:"container_cpu,omitempty"`       // CPU limit e.g. "2.0"
+	ContainerMemory    string                 `json:"container_memory,omitempty"`    // Memory limit e.g. "4g"
+	ContainerNetwork   string                 `json:"container_network,omitempty"`   // Network mode: "host" (default), "bridge", "none"
+	ContainerReadOnly  bool                   `json:"container_read_only,omitempty"` // Read-only root filesystem (writes only to /workspace, /tmp)
+	ContainerMounts    []string               `json:"container_mounts,omitempty"`    // Extra volume mounts e.g. ["/opt/android-sdk:/opt/android-sdk:ro"]
 	SharedStorage      []SharedStorageProfile `json:"shared_storage,omitempty"`
 }
 
@@ -147,21 +147,23 @@ type CloudflareTunnelConfig struct {
 // SharedStorageProfile defines a machine-level shared storage target that any
 // authenticated Yaver client on this machine may browse.
 type SharedStorageProfile struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Type      string `json:"type"` // local, smb, webdav, storagebox, s3
-	Path      string `json:"path,omitempty"`
-	MountPath string `json:"mount_path,omitempty"`
-	Remote    string `json:"remote,omitempty"`
-	Endpoint  string `json:"endpoint,omitempty"`
-	Bucket    string `json:"bucket,omitempty"`
-	Region    string `json:"region,omitempty"`
-	Username  string `json:"username,omitempty"`
-	Password  string `json:"password,omitempty"`
-	AccessKey string `json:"access_key,omitempty"`
-	SecretKey string `json:"secret_key,omitempty"`
-	ReadOnly  bool   `json:"read_only,omitempty"`
-	Notes     string `json:"notes,omitempty"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	Type               string `json:"type"` // local, smb, webdav, storagebox, s3
+	Path               string `json:"path,omitempty"`
+	MountPath          string `json:"mount_path,omitempty"`
+	Remote             string `json:"remote,omitempty"`
+	Endpoint           string `json:"endpoint,omitempty"`
+	Bucket             string `json:"bucket,omitempty"`
+	Region             string `json:"region,omitempty"`
+	Username           string `json:"username,omitempty"`
+	Password           string `json:"password,omitempty"`
+	AccessKey          string `json:"access_key,omitempty"`
+	SecretKey          string `json:"secret_key,omitempty"`
+	ReadOnly           bool   `json:"read_only,omitempty"`
+	Notes              string `json:"notes,omitempty"`
+	ContainerMountMode string `json:"container_mount_mode,omitempty"` // none, host, guests, all
+	ContainerPath      string `json:"container_path,omitempty"`       // in-container mount path
 }
 
 // ConfigDir returns the path to ~/.yaver/, creating it if needed.
