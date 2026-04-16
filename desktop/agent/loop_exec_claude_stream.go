@@ -17,7 +17,36 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 )
+
+// Process-wide opex counter — every claude "result" event adds its
+// cost_usd here. autodev's loop reads RunCostSnapshot() per kick to
+// print "[opex] kick #N $0.012 — total $0.234 across N kicks". Mobile
+// / web read it via /autodev/options or a future /autodev/cost.
+var (
+	claudeOpexMu    sync.Mutex
+	claudeOpexUSD   float64
+	claudeOpexCount int
+	claudeKickCostUSD float64 // last kick's cost, for the spawnClaudeCode caller
+)
+
+// RunCostSnapshot returns cumulative USD + kick count tracked since
+// process start. Resets nowhere — the autodev parent process is the
+// natural lifetime boundary.
+func RunCostSnapshot() (usd float64, kicks int) {
+	claudeOpexMu.Lock()
+	defer claudeOpexMu.Unlock()
+	return claudeOpexUSD, claudeOpexCount
+}
+
+func bumpClaudeOpex(addUSD float64) {
+	claudeOpexMu.Lock()
+	claudeOpexUSD += addUSD
+	claudeOpexCount++
+	claudeKickCostUSD = addUSD
+	claudeOpexMu.Unlock()
+}
 
 // parseClaudeStream reads stream-json events from r, prints a live
 // progress line per event to os.Stderr, and returns the AIResponse
@@ -139,12 +168,15 @@ func printClaudeEvent(ev map[string]interface{}) {
 		}
 		return
 	case "result":
-		// Final summary line so the user sees the kick wrapped up.
 		st, _ := ev["subtype"].(string)
 		dur, _ := ev["duration_ms"].(float64)
 		cost, _ := ev["total_cost_usd"].(float64)
+		bumpClaudeOpex(cost)
+		totalUSD, kicks := RunCostSnapshot()
 		fmt.Fprintf(os.Stderr, "[claude] result: %s (%.1fs, $%.4f)\n",
 			st, dur/1000.0, cost)
+		fmt.Fprintf(os.Stderr, "[opex] kick this run: $%.4f — total: $%.4f across %d kicks\n",
+			cost, totalUSD, kicks)
 		return
 	}
 	// Unknown event — dump compact JSON so the user can see *something*.

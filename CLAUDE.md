@@ -851,6 +851,30 @@ A useful pattern (community consensus from Apr 2026): "Codex for keystrokes, Cla
 
 The mobile / web `Auto Dev` start form pulls `/autodev/options` to grey out engines whose CLIs aren't installed, so users never pick a runner the machine can't satisfy.
 
+## Opex transparency (`--model`, opex log lines, `/autodev/cost`)
+
+Claude Max plans share a weekly bucket across Opus + Sonnet, and Opus
+burns it ~5× faster. Default to Sonnet for routine autodev work and
+escalate to Opus only for planning / hard bugs.
+
+- **CLI flag:** `yaver autodev sfmg --model sonnet` (also `opus` /
+  `haiku`, or a full id like `claude-opus-4-6`).
+- **Mechanism:** sets `YAVER_CLAUDE_MODEL` env var; `spawnClaudeCode`
+  resolves the alias and passes `--model <id>` to Claude Code.
+- **Per-kick cost line:** every Claude `result` event prints
+  `[claude] result: success (12.3s, $0.0123)` followed by
+  `[opex] kick this run: $0.0123 — total: $0.456 across 12 kicks`.
+- **End-of-run summary:** autodev prints `opex summary — $X
+  spent across N kicks (avg $Y/kick)` before exit.
+- **HTTP `/autodev/cost`:** returns `{total_usd, kicks,
+  avg_usd_per_kick}` so mobile / web can show a live opex meter
+  during a run.
+
+Future work (in `remained.md`): true planner/implementer split
+within Claude (`opus` plans, `sonnet` implements per kick) for users
+who want the article's "Codex for keystrokes, Claude Code for
+commits" pattern but using only Anthropic.
+
 ## Container Sandbox (Optional Task Isolation)
 
 Run AI agent tasks inside Docker containers for filesystem isolation. **Optional and disabled by default** — the default mode runs tasks directly on the host (unchanged behavior).
