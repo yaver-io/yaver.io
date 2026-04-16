@@ -39,7 +39,8 @@ export function encryptTokenForDevice(
 export async function submitEncryptedPair(
   targetUrl: string,
   token: string,
-  devicePublicKeyBase64: string
+  devicePublicKeyBase64: string,
+  code?: string
 ): Promise<{ ok: boolean; host?: string; error?: string }> {
   const { encrypted, senderPublicKey } = encryptTokenForDevice(
     token,
@@ -49,7 +50,7 @@ export async function submitEncryptedPair(
     const res = await fetch(`${targetUrl}/auth/pair/encrypted`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ encrypted, senderPublicKey }),
+      body: JSON.stringify({ code, encrypted, senderPublicKey }),
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");

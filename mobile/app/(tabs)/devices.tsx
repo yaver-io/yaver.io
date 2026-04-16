@@ -101,7 +101,7 @@ function DeviceCard({
           const pubKey = device.publicKey || info.devicePublicKey;
           if (pubKey) {
             console.log(`[auto-pair] ${device.name}: trying encrypted pair with pubkey ${pubKey.slice(0,12)}...`);
-            const r = await submitEncryptedPair(targetUrl, token, pubKey);
+            const r = await submitEncryptedPair(targetUrl, token, pubKey, info.bootstrapPasskey);
             console.log(`[auto-pair] ${device.name}: encrypted pair result ok=${r.ok} error=${r.error}`);
             if (r.ok) {
               paired = true;

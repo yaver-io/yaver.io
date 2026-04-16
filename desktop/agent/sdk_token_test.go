@@ -579,13 +579,15 @@ func TestClientIPExtraction(t *testing.T) {
 		t.Errorf("clientIP() = %s, want 192.168.1.10", ip)
 	}
 
-	// With X-Forwarded-For
+	// Ignore caller-supplied X-Forwarded-For. The agent is often exposed
+	// directly, so trusting this header would let anyone spoof CIDR-bound
+	// SDK token origin checks.
 	r = &http.Request{
 		RemoteAddr: "10.0.0.1:12345",
 		Header:     http.Header{"X-Forwarded-For": {"203.0.113.50, 70.41.3.18"}},
 	}
-	if ip := clientIP(r); ip != "203.0.113.50" {
-		t.Errorf("clientIP() with XFF = %s, want 203.0.113.50", ip)
+	if ip := clientIP(r); ip != "10.0.0.1" {
+		t.Errorf("clientIP() with XFF = %s, want 10.0.0.1", ip)
 	}
 }
 

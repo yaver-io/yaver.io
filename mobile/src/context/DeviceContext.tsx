@@ -647,7 +647,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             pubKey = undefined;
           }
           if (pubKey) {
-            const res = await submitEncryptedPair(targetUrl, token, pubKey);
+            const res = await submitEncryptedPair(targetUrl, token, pubKey, dev.bootstrapPasskey);
             if (res.ok) {
               appLog("info", `Encrypted auto-pair: ${dev.name || dev.deviceId} at ${dev.ip}`);
               setTimeout(() => refreshDevices(), 3000);
@@ -703,9 +703,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           if (!infoRes.ok) continue;
           const info = await infoRes.json();
           if (!info.needsAuth) continue;
+          if (!info.bootstrapPasskey) continue;
 
           autoPairedRef.current.add(dev.id);
-          const res = await submitEncryptedPair(relayUrl, token, dev.publicKey!);
+          const res = await submitEncryptedPair(relayUrl, token, dev.publicKey!, info.bootstrapPasskey);
           if (res.ok) {
             appLog("info", `Relay encrypted auto-pair: ${dev.name} via ${relays[0].httpUrl}`);
             setTimeout(() => refreshDevices(), 3000);
@@ -743,7 +744,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         const targetUrl = `http://${activeDevice.host}:${activeDevice.port || 18080}`;
         // Try encrypted pair if we have this device's pubkey in Convex
         if (activeDevice.publicKey) {
-          const ok = await submitEncryptedPair(targetUrl, token, activeDevice.publicKey);
+          const ok = await submitEncryptedPair(targetUrl, token, activeDevice.publicKey, info.bootstrapPasskey || info.passkey);
           if (ok.ok) {
             appLog("info", `Direct encrypted auto-pair: ${activeDevice.name} at ${activeDevice.host}`);
             setTimeout(() => refreshDevices(), 3000);

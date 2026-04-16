@@ -866,11 +866,6 @@ func pathAllowedByScopes(path string, scopes []string) bool {
 
 // clientIP extracts the remote IP from the request (strips port).
 func clientIP(r *http.Request) string {
-	// Check X-Forwarded-For for proxy/relay
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		return strings.TrimSpace(parts[0])
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
