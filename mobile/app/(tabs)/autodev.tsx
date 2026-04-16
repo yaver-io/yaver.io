@@ -1,18 +1,3 @@
-// Auto Dev tab — M8 scaffolding (autonomous test → fix → deploy loops).
-//
-// See docs/roadmap_ci_solo_developer_lower_costs.md, section "Autonomous
-// loops: the agent as a second developer". This screen is read-only UI
-// for now; wiring to the agent's `yaver loop ...` subcommands goes over
-// the existing quicClient transport once the Go side exposes loop HTTP
-// endpoints. The layout matches the three-section shape from the doc:
-//
-//   1. Active loops — one row per registered loop, with status + stop
-//   2. Prompt library — CRUD for dev-authored feature prompts
-//   3. Ideas queue — multi-select from agent-proposed feature ideas
-//
-// Kill-switch is always reachable as a sticky header button, matching
-// the "stop from anywhere" rule in M8's safety rails.
-
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -30,36 +15,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
-import {
-  quicClient,
-  type AutoDevLoop,
-  type AutoDevIdeasPayload,
-  type RunnerInfo,
-} from "../../src/lib/quic";
+import { quicClient, type AutoDevLoop, type RunnerInfo } from "../../src/lib/quic";
 import { AutodevChat } from "../../src/components/AutodevChat";
 import { AutoIdeasPane } from "../../src/components/AutoIdeasPane";
 
 type LoopRow = AutoDevLoop;
 type LoopStatus = LoopRow["status"];
-
-type PromptRow = {
-  id: string;
-  name: string;
-  mode: LoopRow["mode"];
-  bodyPreview: string;
-  active: boolean;
-};
-
-type IdeaRow = {
-  id: string;
-  title: string;
-  description: string;
-  prompt: string;
-  effort?: "small" | "medium" | "large";
-  radicalness?: number;
-};
-
-type Section = "loops" | "prompts" | "ideas" | "chat" | "queue";
+type Section = "live" | "queue" | "setup";
 
 export default function AutoDevScreen() {
   const c = useColors();
@@ -67,10 +29,8 @@ export default function AutoDevScreen() {
   const isConnected = connectionStatus === "connected";
   const params = useLocalSearchParams<{ project?: string; path?: string }>();
 
-  const [section, setSection] = useState<Section>("loops");
+  const [section, setSection] = useState<Section>("live");
   const [loops, setLoops] = useState<LoopRow[]>([]);
-  const [prompts, setPrompts] = useState<PromptRow[]>([]);
-  const [ideas, setIdeas] = useState<IdeaRow[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
   // ── Start form state ──────────────────────────────────────────────
@@ -119,6 +79,18 @@ export default function AutoDevScreen() {
     if (!formInfinite && !/^\d+$/.test(formHours)) return false;
     return true;
   }, [formWorkDir, formInfinite, formHours]);
+  const activeLoop = useMemo(
+    () =>
+      loops.find((l) => l.status === "running") ??
+      loops.find((l) => l.status === "needs_human") ??
+      loops.find((l) => l.status === "stuck") ??
+      loops[0],
+    [loops],
+  );
+  const workingLoopCount = useMemo(
+    () => loops.filter((l) => l.status === "running" || l.status === "paused").length,
+    [loops],
+  );
 
   const handleStart = useCallback(async () => {
     if (!canStart || starting) return;
@@ -139,6 +111,7 @@ export default function AutoDevScreen() {
       } else {
         Alert.alert("Started", `Loop ${res.loopName} is running in the background.`);
         setShowStart(false);
+        setSection("live");
         refreshRef.current?.();
       }
     } finally {
@@ -154,43 +127,6 @@ export default function AutoDevScreen() {
     try {
       const list = await quicClient.autodevLoops();
       setLoops(list);
-
-      // Prompt library mirrors the inline prompts devs have stashed
-      // on each loop. When a loop has an active PromptInline we show
-      // it as an "active" row; if not, we drop a placeholder so the
-      // dev can tell the loop exists but isn't pinned to a prompt.
-      setPrompts(
-        list.map((l) => ({
-          id: l.id,
-          name: l.name,
-          mode: l.mode,
-          bodyPreview:
-            l.promptInline?.slice(0, 120) ?? "(no inline prompt set)",
-          active: !!l.promptInline,
-        })),
-      );
-
-      // Ideas are per-loop — pull the first ideas-mode loop we see.
-      const ideasLoop = list.find((l) => l.mode === "ideas");
-      if (ideasLoop) {
-        const payload = await quicClient.autodevIdeas(ideasLoop.name);
-        if (payload && payload.ideas) {
-          setIdeas(
-            payload.ideas.map((it) => ({
-              id: it.id,
-              title: it.title,
-              description: it.description ?? "",
-              prompt: it.prompt,
-              effort: it.effort,
-              radicalness: it.radicalness,
-            })),
-          );
-        } else {
-          setIdeas([]);
-        }
-      } else {
-        setIdeas([]);
-      }
     } finally {
       setRefreshing(false);
     }
@@ -212,7 +148,7 @@ export default function AutoDevScreen() {
         <View style={{ flex: 1 }}>
           <Text style={[styles.title, { color: c.textPrimary }]}>Auto Dev</Text>
           <Text style={[styles.subtitle, { color: c.textSecondary }]}>
-            Autonomous test → fix → deploy loops (M8)
+            Your remote machine planning, coding, testing, and shipping in the background.
           </Text>
         </View>
         <Pressable
@@ -225,7 +161,7 @@ export default function AutoDevScreen() {
       </View>
 
       <View style={[styles.tabs, { borderBottomColor: c.border }]}>
-        {(["loops", "chat", "queue", "prompts", "ideas"] as Section[]).map((s) => (
+        {(["live", "queue", "setup"] as Section[]).map((s) => (
           <Pressable key={s} onPress={() => setSection(s)} style={styles.tabBtn}>
             <Text
               style={[
@@ -236,93 +172,68 @@ export default function AutoDevScreen() {
                 },
               ]}
             >
-              {s === "loops"
-                ? "Loops"
-                : s === "chat"
-                ? "Chat"
-                : s === "queue"
-                ? "Ideas Queue"
-                : s === "prompts"
-                ? "Prompts"
-                : "Ideas"}
+              {s === "live" ? "Live" : s === "queue" ? "Ideas" : "Setup"}
             </Text>
           </Pressable>
         ))}
       </View>
 
-      {section === "loops" && (
+      {section === "live" && (
         <FlatList
           data={loops}
           keyExtractor={(it) => it.id}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
           ListHeaderComponent={
-            <StartForm
-              c={c}
-              open={showStart}
-              onToggle={() => setShowStart((v) => !v)}
-              project={formProject}
-              setProject={setFormProject}
-              workDir={formWorkDir}
-              setWorkDir={setFormWorkDir}
-              hours={formHours}
-              setHours={setFormHours}
-              infinite={formInfinite}
-              setInfinite={setFormInfinite}
-              load={formLoad}
-              setLoad={setFormLoad}
-              runner={formRunner}
-              setRunner={setFormRunner}
-              runners={runners}
-              runnersLoading={runnersLoading}
-              prompt={formPrompt}
-              setPrompt={setFormPrompt}
-              deploy={formDeploy}
-              setDeploy={setFormDeploy}
-              noAutotest={formNoAutotest}
-              setNoAutotest={setFormNoAutotest}
-              canStart={canStart}
-              starting={starting}
-              onStart={handleStart}
-            />
+            <View>
+              <LiveHero
+                loop={activeLoop}
+                workingLoopCount={workingLoopCount}
+                totalLoops={loops.length}
+                onOpenSetup={() => setSection("setup")}
+                onOpenIdeas={() => setSection("queue")}
+              />
+              {activeLoop ? (
+                <View style={styles.chatCard}>
+                  <Text style={[styles.chatTitle, { color: c.textPrimary }]}>
+                    Live session
+                  </Text>
+                  <Text style={[styles.chatSubtitle, { color: c.textSecondary }]}>
+                    Watch {activeLoop.name} as if you were attached to the machine.
+                  </Text>
+                  <View style={styles.chatFrame}>
+                    <AutodevChat streamName={`autodev:${activeLoop.name}`} />
+                  </View>
+                </View>
+              ) : null}
+              {loops.length > 0 ? (
+                <Text style={[styles.sectionLabel, { color: c.textSecondary }]}>
+                  All loops
+                </Text>
+              ) : null}
+            </View>
           }
           ListEmptyComponent={
             <View style={styles.empty}>
               <Text style={[styles.emptyTitle, { color: c.textPrimary }]}>
-                No loops registered
+                No active auto-dev session
               </Text>
               <Text style={[styles.emptyBody, { color: c.textSecondary }]}>
-                Tap <Text style={{ fontWeight: "700" }}>Start a new loop</Text> above, or register one from the Mac mini:{"\n\n"}
-                <Text style={{ fontFamily: "Courier" }}>
-                  yaver loop add ./sfmg-autofix.loop.yaml
-                </Text>
-                {"\n\n"}
-                Then pull-to-refresh here.
+                Start from Setup, or pick generated ideas first and let the machine begin from that queue.
               </Text>
             </View>
           }
-          renderItem={({ item }) => <LoopCard row={item} />}
+          renderItem={({ item }) => (
+            <LoopCard
+              row={item}
+              isActive={item.name === activeLoop?.name}
+              onWatch={() => setSection("live")}
+              onStop={async () => {
+                await quicClient.autodevStop(item.name);
+                refresh();
+              }}
+            />
+          )}
         />
-      )}
-
-      {section === "chat" && (
-        (() => {
-          // Pick the first running loop (or the most-recent if none).
-          const target =
-            loops.find((l) => l.status === "running") ?? loops[0];
-          if (!target) {
-            return (
-              <View style={styles.empty}>
-                <Text style={[styles.emptyTitle, { color: c.textPrimary }]}>
-                  No autodev loops yet.
-                </Text>
-                <Text style={[styles.emptyBody, { color: c.textSecondary }]}>
-                  Start one from the Loops tab — chat will stream here.
-                </Text>
-              </View>
-            );
-          }
-          return <AutodevChat streamName={`autodev:${target.name}`} />;
-        })()
       )}
 
       {section === "queue" && (
@@ -347,42 +258,121 @@ export default function AutoDevScreen() {
               </View>
             );
           }
-          return <AutoIdeasPane workDir={wd} project={proj} />;
+          return (
+            <AutoIdeasPane
+              workDir={wd}
+              project={proj}
+              onStarted={() => {
+                setSection("live");
+                refresh();
+              }}
+            />
+          );
         })()
       )}
 
-      {section === "prompts" && (
-        <ScrollView
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
-        >
+      {section === "setup" && (
+        <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}>
+          <StartForm
+            c={c}
+            open={showStart}
+            onToggle={() => setShowStart((v) => !v)}
+            project={formProject}
+            setProject={setFormProject}
+            workDir={formWorkDir}
+            setWorkDir={setFormWorkDir}
+            hours={formHours}
+            setHours={setFormHours}
+            infinite={formInfinite}
+            setInfinite={setFormInfinite}
+            load={formLoad}
+            setLoad={setFormLoad}
+            runner={formRunner}
+            setRunner={setFormRunner}
+            runners={runners}
+            runnersLoading={runnersLoading}
+            prompt={formPrompt}
+            setPrompt={setFormPrompt}
+            deploy={formDeploy}
+            setDeploy={setFormDeploy}
+            noAutotest={formNoAutotest}
+            setNoAutotest={setFormNoAutotest}
+            canStart={canStart}
+            starting={starting}
+            onStart={handleStart}
+          />
           <View style={styles.empty}>
             <Text style={[styles.emptyTitle, { color: c.textPrimary }]}>
-              Prompt library is empty
+              Starts like a paired coding session
             </Text>
             <Text style={[styles.emptyBody, { color: c.textSecondary }]}>
-              Prompts live under <Text style={{ fontFamily: "Courier" }}>.yaver/prompts/</Text> in
-              each project. The mobile CRUD editor wires up once the Go side exposes the
-              autodev HTTP endpoints.
-            </Text>
-          </View>
-        </ScrollView>
-      )}
-
-      {section === "ideas" && (
-        <ScrollView
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
-        >
-          <View style={styles.empty}>
-            <Text style={[styles.emptyTitle, { color: c.textPrimary }]}>No ideas yet</Text>
-            <Text style={[styles.emptyBody, { color: c.textSecondary }]}>
-              The Ideas loop runs daily at noon by default. Once it publishes its first list
-              you can tick the items you want and tap <Text style={{ fontWeight: "700" }}>Kick</Text>.
-              Each selection becomes a develop-mode loop queued for the next active window.
+              Pick the repo, runner, and goal. Once started, Live shows the machine thinking,
+              editing, testing, and reporting progress instead of raw JSON.
             </Text>
           </View>
         </ScrollView>
       )}
     </SafeAreaView>
+  );
+}
+
+function LiveHero(props: {
+  loop?: LoopRow;
+  workingLoopCount: number;
+  totalLoops: number;
+  onOpenSetup: () => void;
+  onOpenIdeas: () => void;
+}) {
+  const c = useColors();
+  const statusTone =
+    props.loop?.status === "running"
+      ? "#22c55e"
+      : props.loop?.status === "needs_human"
+        ? "#ef4444"
+        : "#eab308";
+  return (
+    <View style={[styles.heroCard, { borderColor: c.border, backgroundColor: c.bgCard }]}>
+      <Text style={[styles.heroEyebrow, { color: c.textSecondary }]}>
+        MACHINE STATUS
+      </Text>
+      <Text style={[styles.heroTitle, { color: c.textPrimary }]}>
+        {props.loop ? `${props.loop.name} is ${props.loop.status.replace("_", " ")}` : "Ready to start"}
+      </Text>
+      <Text style={[styles.heroBody, { color: c.textSecondary }]}>
+        {props.loop?.lastSummary ||
+          "Start a loop or promote generated ideas into implementation. The live transcript will appear here."}
+      </Text>
+      <View style={styles.heroStats}>
+        <View style={[styles.heroStat, { borderColor: c.border }]}>
+          <Text style={[styles.heroStatLabel, { color: c.textMuted }]}>Working</Text>
+          <Text style={[styles.heroStatValue, { color: statusTone }]}>{props.workingLoopCount}</Text>
+        </View>
+        <View style={[styles.heroStat, { borderColor: c.border }]}>
+          <Text style={[styles.heroStatLabel, { color: c.textMuted }]}>Total loops</Text>
+          <Text style={[styles.heroStatValue, { color: c.textPrimary }]}>{props.totalLoops}</Text>
+        </View>
+        <View style={[styles.heroStat, { borderColor: c.border }]}>
+          <Text style={[styles.heroStatLabel, { color: c.textMuted }]}>Runner</Text>
+          <Text style={[styles.heroStatValue, { color: c.textPrimary }]}>
+            {props.loop?.runner || "auto"}
+          </Text>
+        </View>
+      </View>
+      <View style={styles.heroActions}>
+        <Pressable
+          onPress={props.onOpenIdeas}
+          style={[styles.secondaryBtn, { borderColor: c.border, backgroundColor: c.bgCardElevated }]}
+        >
+          <Text style={[styles.secondaryBtnText, { color: c.textPrimary }]}>Open ideas</Text>
+        </Pressable>
+        <Pressable
+          onPress={props.onOpenSetup}
+          style={[styles.secondaryBtn, { borderColor: c.border, backgroundColor: c.bgCardElevated }]}
+        >
+          <Text style={[styles.secondaryBtnText, { color: c.textPrimary }]}>New loop</Text>
+        </Pressable>
+      </View>
+    </View>
   );
 }
 
@@ -603,7 +593,17 @@ function Segmented<T extends string>(props: {
   );
 }
 
-function LoopCard({ row }: { row: LoopRow }) {
+function LoopCard({
+  row,
+  isActive,
+  onWatch,
+  onStop,
+}: {
+  row: LoopRow;
+  isActive: boolean;
+  onWatch: () => void;
+  onStop: () => void;
+}) {
   const c = useColors();
   const statusColor: Record<LoopStatus, string> = {
     idle: c.textSecondary,
@@ -615,7 +615,12 @@ function LoopCard({ row }: { row: LoopRow }) {
     needs_human: "#ef4444",
   };
   return (
-    <View style={[styles.card, { borderColor: c.border }]}>
+    <View
+      style={[
+        styles.card,
+        { borderColor: isActive ? c.tabActive : c.border, backgroundColor: isActive ? c.bgCard : "transparent" },
+      ]}
+    >
       <View style={styles.cardHeader}>
         <Text style={[styles.cardName, { color: c.textPrimary }]}>{row.name}</Text>
         <Text style={[styles.cardStatus, { color: statusColor[row.status] }]}>
@@ -687,6 +692,21 @@ function LoopCard({ row }: { row: LoopRow }) {
             </Text>
           ))
         : null}
+
+      <View style={styles.cardActions}>
+        <Pressable
+          onPress={onWatch}
+          style={[styles.smallBtn, { borderColor: c.border, backgroundColor: c.bgCardElevated }]}
+        >
+          <Text style={[styles.smallBtnText, { color: c.textPrimary }]}>Watch live</Text>
+        </Pressable>
+        <Pressable
+          onPress={onStop}
+          style={[styles.smallBtn, { borderColor: "#ef4444", backgroundColor: "#ef444411" }]}
+        >
+          <Text style={[styles.smallBtnText, { color: "#ef4444" }]}>Stop</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -733,6 +753,78 @@ const styles = StyleSheet.create({
   empty: { padding: 24 },
   emptyTitle: { fontSize: 16, fontWeight: "700", marginBottom: 8 },
   emptyBody: { fontSize: 13, lineHeight: 20 },
+  heroCard: {
+    marginHorizontal: 16,
+    marginTop: 14,
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 10,
+  },
+  heroEyebrow: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.8,
+  },
+  heroTitle: { fontSize: 20, fontWeight: "800" },
+  heroBody: { fontSize: 13, lineHeight: 19 },
+  heroStats: {
+    flexDirection: "row",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  heroStat: {
+    minWidth: 96,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  heroStatLabel: {
+    fontSize: 10,
+    textTransform: "uppercase",
+    marginBottom: 4,
+  },
+  heroStatValue: {
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  heroActions: {
+    flexDirection: "row",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  secondaryBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  secondaryBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  chatCard: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    gap: 8,
+  },
+  chatTitle: { fontSize: 16, fontWeight: "700" },
+  chatSubtitle: { fontSize: 12 },
+  chatFrame: {
+    height: 320,
+    overflow: "hidden",
+    borderRadius: 14,
+  },
+  sectionLabel: {
+    marginHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 4,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.7,
+    textTransform: "uppercase",
+  },
   card: {
     marginHorizontal: 16,
     marginTop: 12,
@@ -745,6 +837,21 @@ const styles = StyleSheet.create({
   cardStatus: { fontSize: 12, fontWeight: "700", textTransform: "uppercase" },
   cardMeta: { fontSize: 12, marginTop: 6 },
   cardSummary: { fontSize: 12, marginTop: 6 },
+  cardActions: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+  },
+  smallBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 9,
+    borderWidth: 1,
+  },
+  smallBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
   formCard: {
     marginHorizontal: 16,
     marginTop: 14,
