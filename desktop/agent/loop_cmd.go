@@ -866,7 +866,7 @@ func scheduleLoopViaDaemon(state *LoopState) (string, error) {
 	if workDir == "" {
 		workDir, _ = os.Getwd()
 	}
-	customCmd := fmt.Sprintf("cd %q && yaver loop run %s", workDir, state.Spec.Name)
+	customCmd := scheduledLoopCommand(workDir, state.Spec.Name)
 
 	body := map[string]interface{}{
 		"title":         fmt.Sprintf("yaver-loop:%s", state.Spec.Name),
@@ -891,6 +891,14 @@ func scheduleLoopViaDaemon(state *LoopState) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("daemon returned no schedule ID")
+}
+
+func scheduledLoopCommand(workDir, loopName string) string {
+	exe := "yaver"
+	if execPath, err := os.Executable(); err == nil && strings.TrimSpace(execPath) != "" {
+		exe = execPath
+	}
+	return fmt.Sprintf("cd %q && %q loop run %q", workDir, exe, loopName)
 }
 
 // unscheduleLoopViaDaemon removes a loop's scheduled task from the

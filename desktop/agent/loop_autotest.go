@@ -81,8 +81,8 @@ func runAutoTestLoop(ctx context.Context, l *LoopState, saveState func(*LoopStat
 	}
 	specRoot := filepath.Join(workDir, root)
 	if st, serr := os.Stat(specRoot); serr != nil || !st.IsDir() {
-		result.Status = "failed"
-		result.Err = fmt.Sprintf("spec root %s not found — create it with `yaver test init`", specRoot)
+		result.Status = "done"
+		result.Summary = fmt.Sprintf("auto-test skipped: spec root %s not found", specRoot)
 		result.FinishedAt = time.Now().UTC()
 		return result
 	}

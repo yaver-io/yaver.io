@@ -964,6 +964,12 @@ func ensureWorktree(ctx context.Context, l *LoopState) (string, error) {
 			registered = true
 		}
 	}
+	if registered {
+		if _, statErr := os.Stat(wtPath); statErr != nil {
+			registered = false
+			_ = exec.CommandContext(ctx, "git", "-C", srcRepo, "worktree", "prune").Run()
+		}
+	}
 
 	if !registered {
 		// Stale dir from a previous run without the matching git
@@ -1692,11 +1698,10 @@ func spawnCodex(ctx context.Context, l *LoopState, workDir string, report *Heuri
 		return nil, err
 	}
 
-	// `codex --quiet --full-auto` suppresses chatter and auto-approves
-	// file writes — the same ergonomics `claude --print
-	// --permission-mode acceptEdits` gives us. Prompt goes on stdin
-	// via the `-` positional, which codex treats as "read from stdin".
-	cmd := exec.CommandContext(ctx, "codex", "--quiet", "--full-auto", "-")
+	// `codex exec --full-auto` is the current non-interactive Codex
+	// entrypoint. Prompt goes on stdin via the `-` positional, which
+	// codex treats as "read from stdin".
+	cmd := exec.CommandContext(ctx, "codex", "exec", "--full-auto", "-")
 	cmd.Dir = workDir
 	cmd.Stdin = strings.NewReader(fullPrompt)
 	cmd.Stderr = os.Stderr
