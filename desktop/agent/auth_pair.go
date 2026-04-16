@@ -68,8 +68,8 @@ type pairingSession struct {
 }
 
 var (
-	pairingMu      sync.Mutex
-	activePairing  *pairingSession
+	pairingMu       sync.Mutex
+	activePairing   *pairingSession
 	pairingAlphabet = []byte("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
 )
 
@@ -283,6 +283,13 @@ func (s *HTTPServer) handlePairSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	pairingMu.Unlock()
 
+	// If this pair flow is being used to recover a running daemon,
+	// clear the degraded auth-expired flag immediately instead of
+	// waiting for the next heartbeat tick.
+	if s != nil {
+		s.authExpired.Store(false)
+	}
+
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"ok":   true,
 		"host": session.Hostname,
@@ -296,16 +303,18 @@ func (s *HTTPServer) handlePairSubmit(w http.ResponseWriter, r *http.Request) {
 // expires. Called as `yaver auth pair`.
 //
 // Subcommands:
-//   list               — print every paired token (masked)
-//   revoke <id|label>  — remove a paired token
-//   (no subcommand)    — start a new pairing session
+//
+//	list               — print every paired token (masked)
+//	revoke <id|label>  — remove a paired token
+//	(no subcommand)    — start a new pairing session
 //
 // Flags on the default path:
-//   --replace   — overwrite cfg.AuthToken instead of appending
-//                 to the paired-tokens ledger. Legacy single-
-//                 user behavior.
-//   --label NAME — tag the incoming token for easy revoke.
-//   --ttl 10m    — pairing window.
+//
+//	--replace   — overwrite cfg.AuthToken instead of appending
+//	              to the paired-tokens ledger. Legacy single-
+//	              user behavior.
+//	--label NAME — tag the incoming token for easy revoke.
+//	--ttl 10m    — pairing window.
 func runAuthPair(args []string) {
 	// Sub-subcommands: list + revoke.
 	if len(args) > 0 {

@@ -65,16 +65,20 @@ type AgentGraphNodeSpec struct {
 	Hours         string        `json:"hours,omitempty"`
 	MaxIterations int           `json:"maxIterations,omitempty"`
 	NoAutotest    bool          `json:"noAutotest,omitempty"`
+	PreferredDevice string      `json:"preferredDevice,omitempty"`
+	AllowedDevices  []string    `json:"allowedDevices,omitempty"`
+	AllowedRunners  []string    `json:"allowedRunners,omitempty"`
 }
 
 type AgentGraphNodeState struct {
-	Spec       AgentGraphNodeSpec `json:"spec"`
-	Status     AgentNodeStatus    `json:"status"`
-	TaskID     string             `json:"taskId,omitempty"`
-	Summary    string             `json:"summary,omitempty"`
-	Error      string             `json:"error,omitempty"`
-	StartedAt  string             `json:"startedAt,omitempty"`
-	FinishedAt string             `json:"finishedAt,omitempty"`
+	Spec       AgentGraphNodeSpec  `json:"spec"`
+	Status     AgentNodeStatus     `json:"status"`
+	TaskID     string              `json:"taskId,omitempty"`
+	Summary    string              `json:"summary,omitempty"`
+	Error      string              `json:"error,omitempty"`
+	StartedAt  string              `json:"startedAt,omitempty"`
+	FinishedAt string              `json:"finishedAt,omitempty"`
+	Placement  *AgentNodePlacement `json:"placement,omitempty"`
 }
 
 type AgentGraphRun struct {
@@ -102,6 +106,7 @@ type AgentGraphCreateRequest struct {
 	Runner      string               `json:"runner,omitempty"`
 	Model       string               `json:"model,omitempty"`
 	MaxParallel int                  `json:"maxParallel,omitempty"`
+	PreferredDevice string           `json:"preferredDevice,omitempty"`
 	Nodes       []AgentGraphNodeSpec `json:"nodes,omitempty"`
 }
 
@@ -245,6 +250,7 @@ func (gm *AgentGraphManager) CreateRun(req AgentGraphCreateRequest) (*AgentGraph
 	if err := validateAgentGraphNodes(normalized); err != nil {
 		return nil, err
 	}
+	placements := planGraphPlacements(req, normalized)
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	name := strings.TrimSpace(req.Name)
@@ -263,10 +269,11 @@ func (gm *AgentGraphManager) CreateRun(req AgentGraphCreateRequest) (*AgentGraph
 		Status:      AgentGraphQueued,
 		CreatedAt:   now,
 	}
-	for _, spec := range normalized {
+	for i, spec := range normalized {
 		run.Nodes = append(run.Nodes, &AgentGraphNodeState{
-			Spec:   spec,
-			Status: AgentNodePending,
+			Spec:      spec,
+			Status:    AgentNodePending,
+			Placement: placements[i],
 		})
 	}
 
@@ -665,6 +672,9 @@ func (gm *AgentGraphManager) executeNode(ctx context.Context, runID, nodeID stri
 }
 
 func (gm *AgentGraphManager) executeChatNode(ctx context.Context, node *AgentGraphNodeState) (string, error) {
+	if node.Placement != nil && node.Placement.DeviceID != "" && node.Placement.DeviceID != "local" {
+		return gm.executeRemoteChatNode(ctx, node)
+	}
 	prompt := strings.TrimSpace(node.Spec.Prompt)
 	title := prompt
 	if title == "" {
@@ -724,6 +734,9 @@ func (gm *AgentGraphManager) attachTaskIDByTask(nodeID, taskID string) {
 }
 
 func (gm *AgentGraphManager) executeLoopNode(ctx context.Context, runID string, node *AgentGraphNodeState) (string, error) {
+	if node.Placement != nil && node.Placement.DeviceID != "" && node.Placement.DeviceID != "local" {
+		return gm.executeRemoteLoopNode(ctx, runID, node)
+	}
 	loopState, err := buildGraphLoopState(runID, node.Spec)
 	if err != nil {
 		return "", err
@@ -747,6 +760,172 @@ func (gm *AgentGraphManager) executeLoopNode(ctx context.Context, runID string, 
 		}
 		return msg, errors.New(msg)
 	}
+}
+
+func (gm *AgentGraphManager) executeRemoteChatNode(ctx context.Context, node *AgentGraphNodeState) (string, error) {
+	base, token, err := remoteAgentBaseAndToken(node.Placement.DeviceID)
+	if err != nil {
+		return "", err
+	}
+	title := strings.TrimSpace(node.Spec.Prompt)
+	if title == "" {
+		title = strings.TrimSpace(node.Spec.Title)
+	}
+	var createResp struct {
+		OK     bool   `json:"ok"`
+		TaskID string `json:"taskId"`
+	}
+	err = remoteAgentJSON(ctx, base, token, http.MethodPost, "/tasks", map[string]interface{}{
+		"title":  title,
+		"model":  firstNonEmpty(node.Placement.Model, node.Spec.Model),
+		"runner": firstNonEmpty(node.Placement.Runner, node.Spec.Runner),
+		"source": "agent-graph",
+	}, &createResp)
+	if err != nil {
+		return "", err
+	}
+	gm.attachTaskIDByTask(node.Spec.ID, createResp.TaskID)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			_ = remoteAgentJSON(context.Background(), base, token, http.MethodPost, "/tasks/"+createResp.TaskID+"/stop", map[string]interface{}{}, nil)
+			return "", ctx.Err()
+		case <-ticker.C:
+			var statusResp struct {
+				OK   bool     `json:"ok"`
+				Task TaskInfo `json:"task"`
+			}
+			if err := remoteAgentJSON(ctx, base, token, http.MethodGet, "/tasks/"+createResp.TaskID, nil, &statusResp); err != nil {
+				return "", err
+			}
+			switch statusResp.Task.Status {
+			case TaskStatusFinished:
+				if strings.TrimSpace(statusResp.Task.ResultText) != "" {
+					return statusResp.Task.ResultText, nil
+				}
+				return "task completed", nil
+			case TaskStatusFailed:
+				msg := strings.TrimSpace(statusResp.Task.ResultText)
+				if msg == "" {
+					msg = strings.TrimSpace(statusResp.Task.Output)
+				}
+				if msg == "" {
+					msg = "remote task failed"
+				}
+				return "", errors.New(msg)
+			case TaskStatusStopped:
+				return "", errors.New("remote task stopped")
+			}
+		}
+	}
+}
+
+func (gm *AgentGraphManager) executeRemoteLoopNode(ctx context.Context, runID string, node *AgentGraphNodeState) (string, error) {
+	base, token, err := remoteAgentBaseAndToken(node.Placement.DeviceID)
+	if err != nil {
+		return "", err
+	}
+	kind := "autodev"
+	path := "/autodev/start"
+	body := map[string]interface{}{
+		"project":        graphRemoteProjectName(runID, node.Spec),
+		"work_dir":       node.Spec.WorkDir,
+		"hours":          firstNonEmpty(node.Spec.Hours, "1"),
+		"load":           firstNonEmpty(node.Spec.Load, "lite"),
+		"prompt":         node.Spec.Prompt,
+		"runner":         firstNonEmpty(node.Placement.Runner, node.Spec.Runner),
+		"model":          firstNonEmpty(node.Placement.Model, node.Spec.Model),
+		"target":         node.Spec.Target,
+		"max_iterations": max(1, node.Spec.MaxIterations),
+		"no_autotest":    true,
+	}
+	switch node.Spec.Kind {
+	case AgentNodeAutoIdeas:
+		path = "/autoideas/start"
+		body = map[string]interface{}{
+			"project":     graphRemoteProjectName(runID, node.Spec),
+			"work_dir":    node.Spec.WorkDir,
+			"hours":       firstNonEmpty(node.Spec.Hours, "1"),
+			"load":        firstNonEmpty(node.Spec.Load, "lite"),
+			"prompt":      node.Spec.Prompt,
+			"engine":      firstNonEmpty(node.Placement.Runner, node.Spec.Runner),
+			"max_batches": max(1, node.Spec.MaxIterations),
+		}
+	case AgentNodeAutotest:
+		kind = "autotest"
+		body["kind"] = "autotest"
+	default:
+		body["kind"] = "autodev"
+	}
+	var createResp struct {
+		OK       bool   `json:"ok"`
+		LoopName string `json:"loop_name"`
+	}
+	if err := remoteAgentJSON(ctx, base, token, http.MethodPost, path, body, &createResp); err != nil {
+		return "", err
+	}
+	loopName := createResp.LoopName
+	if loopName == "" {
+		loopName = graphRemoteProjectName(runID, node.Spec) + "-" + kind
+	}
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			_ = remoteAgentJSON(context.Background(), base, token, http.MethodPost, "/autodev/loops/"+loopName+"/stop", map[string]interface{}{}, nil)
+			return "", ctx.Err()
+		case <-ticker.C:
+			var loopsResp struct {
+				OK    bool             `json:"ok"`
+				Loops []autodevLoopRow `json:"loops"`
+			}
+			if err := remoteAgentJSON(ctx, base, token, http.MethodGet, "/autodev/loops", nil, &loopsResp); err != nil {
+				return "", err
+			}
+			for _, loop := range loopsResp.Loops {
+				if loop.Name != loopName {
+					continue
+				}
+				switch loop.Status {
+				case string(LoopStatusRunning):
+					goto waitNext
+				case string(LoopStatusIdle):
+					return strings.TrimSpace(loop.LastSummary), nil
+				case string(LoopStatusStopped):
+					return "", errors.New("remote loop stopped")
+				case string(LoopStatusNeedsHuman), string(LoopStatusBudgetHit), string(LoopStatusStuck):
+					msg := strings.TrimSpace(loop.LastSummary)
+					if msg == "" {
+						msg = "remote loop failed"
+					}
+					return msg, errors.New(msg)
+				default:
+					return strings.TrimSpace(loop.LastSummary), nil
+				}
+			}
+		waitNext:
+		}
+	}
+}
+
+func graphRemoteProjectName(runID string, spec AgentGraphNodeSpec) string {
+	project := strings.TrimSpace(spec.Project)
+	if project == "" {
+		project = "graph"
+	}
+	return fmt.Sprintf("%s-%s-%s", project, strings.ToLower(runID), strings.ToLower(spec.ID))
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func buildGraphLoopState(runID string, spec AgentGraphNodeSpec) (*LoopState, error) {

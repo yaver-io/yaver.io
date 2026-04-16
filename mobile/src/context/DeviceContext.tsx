@@ -204,6 +204,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   const [relaysReady, setRelaysReady] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [guestInvitations, setGuestInvitations] = useState<GuestInvitation[]>([]);
+  const [agentAuthExpired, setAgentAuthExpired] = useState(false);
   const hasLoadedOnce = useRef(false);
 
   const refreshDevices = useCallback(async () => {
@@ -302,6 +303,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
 
       setConnectionStatus("connecting");
       setActiveDevice(device);
+      setAgentAuthExpired(false);
 
       try {
         sendTelemetry(token, "connect-start", `Connecting to ${device.name}`, JSON.stringify({
@@ -319,6 +321,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         }));
         setConnectionStatus("connected");
         setLastError(null);
+        setAgentAuthExpired(quicClient.agentAuthExpired);
         // Fetch hwid from /info for dedup (P2P only, never sent to Convex)
         try {
           const info = await quicClient.getInfo();
@@ -339,6 +342,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         // Stop any background reconnection attempts
         quicClient.disconnect();
         setConnectionStatus("disconnected");
+        setAgentAuthExpired(false);
         // Keep activeDevice so Retry button works — don't null it
         setLastError(errMsg);
       }
@@ -351,6 +355,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     setActiveDevice(null);
     setConnectionStatus("disconnected");
     setUserDisconnected(true);
+    setAgentAuthExpired(false);
   }, []);
 
   const handleDetachDevice = useCallback(async (device: Device) => {
@@ -375,6 +380,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       if (state === "connected") {
         setConnectionStatus("connected");
         setLastError(null);
+        setAgentAuthExpired(quicClient.agentAuthExpired);
       } else if (state === "connecting") {
         setConnectionStatus("connecting");
       } else if (state === "error") {
@@ -384,6 +390,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         if (gaveUp) {
           quicClient.disconnect();
           setConnectionStatus("disconnected");
+          setAgentAuthExpired(false);
           setLastError(
             quicClient.reconnectStopped
               ? "Reconnection stopped"
@@ -400,6 +407,21 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     });
     return () => unsub();
   }, [activeDevice]);
+
+  // Mirror auth-expiry changes from the transport into React state.
+  // The QUIC client updates this flag from /health probes, but it is
+  // not itself reactive.
+  useEffect(() => {
+    if (!activeDevice) {
+      setAgentAuthExpired(false);
+      return;
+    }
+    const iv = setInterval(() => {
+      const next = quicClient.agentAuthExpired;
+      setAgentAuthExpired((prev) => (prev === next ? prev : next));
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [activeDevice?.id]);
 
   // Fetch relay servers: local AsyncStorage > Convex user settings > Convex platform config
   // Extracted so it can be called on startup AND on reconnection (when relay list is empty).
@@ -731,6 +753,58 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(iv);
   }, [token, user?.id, activeDevice?.id, activeDevice?.host, activeDevice?.port, activeDevice?.publicKey, activeDevice?.name, refreshDevices]);
 
+  // Auth-expired recovery: the agent is still reachable, but its own
+  // Convex session is stale. Use the PHONE'S valid bearer token to
+  // authorize /auth/recover, open a one-shot pair session, then push
+  // the token back immediately. This is the critical "remote box
+  // rebooted, phone must recover it without SSH" path.
+  const recoveringAuthRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!token || !user?.id || !activeDevice || !agentAuthExpired) return;
+    if (recoveringAuthRef.current.has(activeDevice.id)) return;
+
+    let cancelled = false;
+    const tryRecover = async () => {
+      if (cancelled || recoveringAuthRef.current.has(activeDevice.id)) return;
+      recoveringAuthRef.current.add(activeDevice.id);
+      try {
+        const recovery = await quicClient.recoverAgent(undefined, "pair");
+        if (!recovery?.ok || !recovery.pairCode) {
+          appLog("warn", `Host-token recovery did not open a pair session for ${activeDevice.name}: ${recovery?.error || "unknown error"}`);
+          return;
+        }
+        const pairRes = await submitPair({
+          code: recovery.pairCode,
+          targetUrl: quicClient.baseUrl,
+          token,
+          userId: user.id,
+        });
+        if (!pairRes.ok) {
+          appLog("warn", `Auth recovery pair submit failed for ${activeDevice.name}: ${pairRes.error || "unknown error"}`);
+          return;
+        }
+        quicClient.agentAuthExpired = false;
+        setAgentAuthExpired(false);
+        appLog("info", `Recovered expired agent session for ${activeDevice.name} from mobile`);
+        setTimeout(() => refreshDevices(), 2000);
+      } finally {
+        if (!cancelled) {
+          setTimeout(() => {
+            recoveringAuthRef.current.delete(activeDevice.id);
+          }, 5000);
+        }
+      }
+    };
+
+    tryRecover().catch(() => {
+      recoveringAuthRef.current.delete(activeDevice.id);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token, user?.id, activeDevice, agentAuthExpired, refreshDevices]);
+
   // Fetch devices when token becomes available + poll every 30s (lightweight)
   useEffect(() => {
     if (token) {
@@ -812,7 +886,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       isLoadingDevices,
       userDisconnected,
       lastError,
-      agentAuthExpired: quicClient.agentAuthExpired,
+      agentAuthExpired,
       selectDevice,
       disconnect,
       refreshDevices,
@@ -822,7 +896,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       acceptGuestByCode,
       inviteGuest,
     }),
-    [devices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, selectDevice, disconnect, refreshDevices, handleDetachDevice, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest]
+    [devices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, selectDevice, disconnect, refreshDevices, handleDetachDevice, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

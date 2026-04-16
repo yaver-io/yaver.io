@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"net/http"
+	"os"
+	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/host"
@@ -12,19 +15,44 @@ import (
 // MachineInfo is the universal descriptor for anything that runs a Yaver agent.
 // Spans: local Mac Mini, home Linux box, Hetzner VPS, Yaver Cloud instance, etc.
 type MachineInfo struct {
-	DeviceID string `json:"deviceId"`
-	Name     string `json:"name"`
-	Platform string `json:"platform"`
-	OS       string `json:"os"`
-	Arch     string `json:"arch"`
-	IsLocal  bool   `json:"isLocal"`
-	IsOnline bool   `json:"isOnline"`
-	Provider string `json:"provider,omitempty"` // hetzner, digitalocean, local, yaver-cloud
-	Cost     string `json:"cost,omitempty"`     // best-effort monthly cost label
-	Uptime   uint64 `json:"uptime,omitempty"`
-	Hostname string `json:"hostname,omitempty"`
-	QuicHost string `json:"quicHost,omitempty"`
-	QuicPort int    `json:"quicPort,omitempty"`
+	DeviceID      string               `json:"deviceId"`
+	Name          string               `json:"name"`
+	Platform      string               `json:"platform"`
+	OS            string               `json:"os"`
+	Arch          string               `json:"arch"`
+	IsLocal       bool                 `json:"isLocal"`
+	IsOnline      bool                 `json:"isOnline"`
+	Provider      string               `json:"provider,omitempty"` // hetzner, digitalocean, local, yaver-cloud
+	Cost          string               `json:"cost,omitempty"`     // best-effort monthly cost label
+	Uptime        uint64               `json:"uptime,omitempty"`
+	Hostname      string               `json:"hostname,omitempty"`
+	QuicHost      string               `json:"quicHost,omitempty"`
+	QuicPort      int                  `json:"quicPort,omitempty"`
+	CurrentWorkDir string              `json:"currentWorkDir,omitempty"`
+	Capabilities  *MachineCapabilities `json:"capabilities,omitempty"`
+}
+
+type MachineRunnerCapability struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Installed      bool   `json:"installed"`
+	Ready          bool   `json:"ready"`
+	AuthConfigured bool   `json:"authConfigured,omitempty"`
+	AuthSource     string `json:"authSource,omitempty"`
+	Warning        string `json:"warning,omitempty"`
+	Error          string `json:"error,omitempty"`
+}
+
+type MachineCapabilities struct {
+	Hardware           HardwareProfile          `json:"hardware"`
+	Runners            []MachineRunnerCapability `json:"runners"`
+	SupportsIOS        bool                     `json:"supportsIos"`
+	SupportsAndroid    bool                     `json:"supportsAndroid"`
+	SupportsDocker     bool                     `json:"supportsDocker"`
+	SupportsLocalLLM   bool                     `json:"supportsLocalLlm"`
+	SupportsTestFlight bool                  `json:"supportsTestFlight"`
+	SupportsPlayStore bool                     `json:"supportsPlayStore"`
+	LowPower          bool                     `json:"lowPower"`
 }
 
 // listAllMachines returns every Yaver-managed machine this user owns — the
@@ -56,6 +84,7 @@ func listAllMachines(ctx context.Context) []MachineInfo {
 			}
 		}
 	}
+	enrichMachinesWithCapabilities(ctx, out)
 	return out
 }
 
@@ -72,18 +101,27 @@ func selfMachine(ctx context.Context) MachineInfo {
 		uptime = info.Uptime
 	}
 	return MachineInfo{
-		DeviceID: "local",
-		Name:     name,
-		Hostname: hostname,
-		Platform: platform,
-		OS:       runtime.GOOS,
-		Arch:     runtime.GOARCH,
-		IsLocal:  true,
-		IsOnline: true,
-		Uptime:   uptime,
-		Provider: detectSelfProvider(),
-		Cost:     "$0",
+		DeviceID:       "local",
+		Name:           name,
+		Hostname:       hostname,
+		Platform:       platform,
+		OS:             runtime.GOOS,
+		Arch:           runtime.GOARCH,
+		IsLocal:        true,
+		IsOnline:       true,
+		Uptime:         uptime,
+		Provider:       detectSelfProvider(),
+		Cost:           "$0",
+		CurrentWorkDir: localCurrentWorkDir(),
+		Capabilities:   detectMachineCapabilities(localCurrentWorkDir()),
 	}
+}
+
+func localCurrentWorkDir() string {
+	if wd, err := os.Getwd(); err == nil {
+		return wd
+	}
+	return ""
 }
 
 // detectSelfProvider inspects the environment to guess whether this agent is
@@ -130,11 +168,114 @@ func providerFromHint(platform, quicHost string) string {
 	return ""
 }
 
+func detectMachineCapabilities(workDir string) *MachineCapabilities {
+	caps := &MachineCapabilities{
+		Hardware: DetectHardware(),
+	}
+	for _, id := range []string{"claude", "codex", "aider", "aider-ollama", "ollama", "opencode"} {
+		cfg := GetRunnerConfig(id)
+		if cfg.RunnerID == "" || cfg.Command == "" {
+			continue
+		}
+		status := DetectRunnerRuntimeStatus(cfg, workDir)
+		_, lookErr := exec.LookPath(cfg.Command)
+		caps.Runners = append(caps.Runners, MachineRunnerCapability{
+			ID:             cfg.RunnerID,
+			Name:           cfg.Name,
+			Installed:      lookErr == nil,
+			Ready:          lookErr == nil && status.Ready,
+			AuthConfigured: status.AuthConfigured,
+			AuthSource:     status.AuthSource,
+			Warning:        status.Warning,
+			Error:          status.Error,
+		})
+	}
+	caps.SupportsDocker = caps.Hardware.DockerOK
+	caps.SupportsLocalLLM = machineHasReadyRunner(caps.Runners, "ollama") || machineHasReadyRunner(caps.Runners, "aider-ollama")
+	caps.SupportsTestFlight = runtime.GOOS == "darwin" && toolLooksInstalled("xcrun")
+	caps.SupportsIOS = caps.SupportsTestFlight || runtime.GOOS == "darwin"
+	caps.SupportsPlayStore = toolLooksInstalled("java") || toolLooksInstalled("javac") || toolLooksInstalled("gradle")
+	caps.SupportsAndroid = caps.SupportsPlayStore || toolLooksInstalled("adb")
+	caps.LowPower = caps.Hardware.CPUCores <= 4 || strings.Contains(strings.ToLower(caps.Hardware.Arch), "arm")
+	return caps
+}
+
+func machineHasReadyRunner(runners []MachineRunnerCapability, id string) bool {
+	for _, r := range runners {
+		if r.ID == id && r.Ready {
+			return true
+		}
+	}
+	return false
+}
+
+func toolLooksInstalled(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+func enrichMachinesWithCapabilities(ctx context.Context, machines []MachineInfo) {
+	if len(machines) == 0 {
+		return
+	}
+	for i := range machines {
+		if machines[i].IsLocal {
+			continue
+		}
+		if !machines[i].IsOnline {
+			continue
+		}
+		if info, err := fetchRemoteMachineCapabilities(ctx, machines[i]); err == nil {
+			machines[i].Capabilities = info.Capabilities
+			if info.CurrentWorkDir != "" {
+				machines[i].CurrentWorkDir = info.CurrentWorkDir
+			}
+			if info.OS != "" {
+				machines[i].OS = info.OS
+			}
+			if info.Arch != "" {
+				machines[i].Arch = info.Arch
+			}
+		}
+	}
+}
+
+func fetchRemoteMachineCapabilities(ctx context.Context, m MachineInfo) (*MachineInfo, error) {
+	base, token, err := remoteAgentBaseAndToken(m.DeviceID)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		OK      bool        `json:"ok"`
+		Machine MachineInfo `json:"machine"`
+	}
+	if err := remoteAgentJSON(ctx, base, token, http.MethodGet, "/agent/capabilities", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out.Machine, nil
+}
+
 // ---- HTTP ----
 
 func (s *HTTPServer) handleConsoleMachines(w http.ResponseWriter, r *http.Request) {
 	list := listAllMachines(r.Context())
 	writeJSON(w, http.StatusOK, map[string]interface{}{"machines": list})
+}
+
+func (s *HTTPServer) handleAgentCapabilities(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonError(w, http.StatusMethodNotAllowed, "use GET")
+		return
+	}
+	info := selfMachine(r.Context())
+	if s.taskMgr != nil {
+		info.CurrentWorkDir = s.taskMgr.workDir
+		info.Capabilities = detectMachineCapabilities(info.CurrentWorkDir)
+	}
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":      true,
+		"machine": info,
+	})
 }
 
 // mcpConsoleMachines is the MCP tool for the agent-chat interface.

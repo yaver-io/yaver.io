@@ -127,6 +127,7 @@ func (s *HTTPServer) handleAutodevStart(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var body struct {
+		Kind            string `json:"kind"`
 		Project         string `json:"project"`
 		WorkDir         string `json:"work_dir"`
 		Hours           string `json:"hours"`
@@ -145,8 +146,8 @@ func (s *HTTPServer) handleAutodevStart(w http.ResponseWriter, r *http.Request) 
 		AutoBranch      bool   `json:"auto_branch"` // true = work on autodev/<project>-autodev-<YYYYMMDD>
 		Harden          string `json:"harden"`      // ""|security|memory|perf|quality|all
 		Model           string `json:"model"`       // sonnet|opus|haiku|<full-id>
-		Planner         string `json:"planner"`     // hybrid layering: agent[:model]
-		Implementer    string `json:"implementer"`  // hybrid layering: agent[:model]
+		Planner         string `json:"planner"`      // hybrid layering: agent[:model]
+		Implementer     string `json:"implementer"`  // hybrid layering: agent[:model]
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
@@ -238,6 +239,15 @@ func (s *HTTPServer) handleAutodevStart(w http.ResponseWriter, r *http.Request) 
 		ensureAutodevBranch(body.WorkDir, resolvedBranch)
 	}
 
+	kind := strings.ToLower(strings.TrimSpace(body.Kind))
+	if kind == "" {
+		kind = "autodev"
+	}
+	if kind != "autodev" && kind != "autotest" {
+		jsonError(w, http.StatusBadRequest, "kind must be autodev or autotest")
+		return
+	}
+
 	d := autodevDefaults{
 		hours:      body.Hours,
 		load:       body.Load,
@@ -258,8 +268,8 @@ func (s *HTTPServer) handleAutodevStart(w http.ResponseWriter, r *http.Request) 
 	if d.load == "" {
 		d.load = autodevSleepLoad
 	}
-	d = applyAutodevDefaults(d, "autodev", body.WorkDir)
-	plan := buildAutodevPlan("autodev", d, body.WorkDir)
+	d = applyAutodevDefaults(d, kind, body.WorkDir)
+	plan := buildAutodevPlan(kind, d, body.WorkDir)
 
 	// Scaffold under the repo's workdir so the specs land where
 	// the CLI would have put them.
