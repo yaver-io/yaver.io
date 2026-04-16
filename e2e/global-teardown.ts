@@ -9,6 +9,11 @@ const CONVEX_URL =
 const STATE_FILE = join(__dirname, ".playwright", "test-user.json");
 
 export default async function globalTeardown(): Promise<void> {
+  if (process.env.E2E_SKIP_LIVE_AUTH === "1") {
+    console.log("[e2e teardown] Live dummy-user teardown skipped.");
+    return;
+  }
+
   let user: TestUser;
   try {
     user = JSON.parse(readFileSync(STATE_FILE, "utf8")) as TestUser;

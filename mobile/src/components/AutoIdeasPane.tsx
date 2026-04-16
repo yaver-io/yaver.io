@@ -27,9 +27,16 @@ type Props = {
   output?: string;
   /** Default engine for the implementation autodev triggered by Select. */
   defaultEngine?: string;
+  onStarted?: (res: { loopName?: string; streamName?: string }) => void;
 };
 
-export function AutoIdeasPane({ workDir, project, output = "ideas.md", defaultEngine = "" }: Props) {
+export function AutoIdeasPane({
+  workDir,
+  project,
+  output = "ideas.md",
+  defaultEngine = "",
+  onStarted,
+}: Props) {
   const colors = useColors();
   const [items, setItems] = useState<Item[]>([]);
   const [picked, setPicked] = useState<Set<number>>(new Set());
@@ -73,6 +80,8 @@ export function AutoIdeasPane({ workDir, project, output = "ideas.md", defaultEn
     setPicked(new Set(open));
   };
   const clearAll = () => setPicked(new Set());
+  const openItems = items.filter((i) => !i.checked);
+  const doneItems = items.filter((i) => i.checked);
 
   const generateMore = async () => {
     setBusy("Generating new ideas…");
@@ -106,6 +115,7 @@ export function AutoIdeasPane({ workDir, project, output = "ideas.md", defaultEn
       if (res.ok) {
         setPicked(new Set());
         setBusy(`Started ${res.loop_name} — switch to Chat tab to watch.`);
+        onStarted?.({ loopName: res.loop_name, streamName: res.stream_name });
       } else {
         setBusy(`Failed: ${res.error ?? "unknown"}`);
       }
@@ -127,6 +137,26 @@ export function AutoIdeasPane({ workDir, project, output = "ideas.md", defaultEn
 
   return (
     <View style={styles.container}>
+      <View style={styles.hero}>
+        <Text style={styles.heroTitle}>Auto-generated backlog</Text>
+        <Text style={styles.heroBody}>
+          Pick one or many ideas, then start implementation directly on the machine.
+        </Text>
+        <View style={styles.heroStats}>
+          <View style={styles.statPill}>
+            <Text style={styles.statLabel}>Open</Text>
+            <Text style={styles.statValue}>{openItems.length}</Text>
+          </View>
+          <View style={styles.statPill}>
+            <Text style={styles.statLabel}>Selected</Text>
+            <Text style={styles.statValue}>{picked.size}</Text>
+          </View>
+          <View style={styles.statPill}>
+            <Text style={styles.statLabel}>Done</Text>
+            <Text style={styles.statValue}>{doneItems.length}</Text>
+          </View>
+        </View>
+      </View>
       <View style={styles.toolbar}>
         <Pressable style={styles.btn} onPress={selectAll}>
           <Text style={styles.btnText}>Select all open</Text>
@@ -163,27 +193,40 @@ export function AutoIdeasPane({ workDir, project, output = "ideas.md", defaultEn
         renderItem={({ item }) => {
           const sel = picked.has(item.line);
           return (
-            <Pressable style={styles.row} onPress={() => !item.checked && toggle(item.line)}>
-              <View
-                style={[
-                  styles.box,
-                  item.checked && styles.boxDone,
-                  sel && styles.boxSelected,
-                ]}
-              >
-                <Text style={styles.boxMark}>
-                  {item.checked ? "✓" : sel ? "●" : ""}
-                </Text>
+            <Pressable
+              style={[styles.row, item.checked && styles.rowDone, sel && styles.rowSelected]}
+              onPress={() => !item.checked && toggle(item.line)}
+            >
+              <View style={styles.rowTop}>
+                <View
+                  style={[
+                    styles.box,
+                    item.checked && styles.boxDone,
+                    sel && styles.boxSelected,
+                  ]}
+                >
+                  <Text style={styles.boxMark}>
+                    {item.checked ? "✓" : sel ? "●" : ""}
+                  </Text>
+                </View>
+                <View style={styles.rowTextWrap}>
+                  <Text
+                    style={[
+                      styles.title,
+                      item.checked && styles.titleDone,
+                    ]}
+                    numberOfLines={3}
+                  >
+                    {item.title}
+                  </Text>
+                  <View style={styles.badges}>
+                    <Text style={styles.badge}>
+                      {item.checked ? "implemented" : sel ? "queued" : "ready"}
+                    </Text>
+                    <Text style={styles.badge}>line {item.line}</Text>
+                  </View>
+                </View>
               </View>
-              <Text
-                style={[
-                  styles.title,
-                  item.checked && styles.titleDone,
-                ]}
-                numberOfLines={3}
-              >
-                {item.title}
-              </Text>
             </Pressable>
           );
         }}
@@ -196,6 +239,52 @@ function makeStyles(c: ReturnType<typeof useColors>) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: c.bg },
     center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 8 },
+    hero: {
+      marginHorizontal: 12,
+      marginTop: 10,
+      marginBottom: 4,
+      padding: 14,
+      borderRadius: 14,
+      backgroundColor: c.bgCard,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: c.border,
+      gap: 8,
+    },
+    heroTitle: {
+      color: c.textPrimary,
+      fontSize: 16,
+      fontWeight: "700",
+    },
+    heroBody: {
+      color: c.textSecondary,
+      fontSize: 13,
+      lineHeight: 18,
+    },
+    heroStats: {
+      flexDirection: "row",
+      gap: 8,
+      flexWrap: "wrap",
+    },
+    statPill: {
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderRadius: 999,
+      backgroundColor: c.bgCardElevated,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: c.border,
+      minWidth: 72,
+    },
+    statLabel: {
+      color: c.textMuted,
+      fontSize: 10,
+      textTransform: "uppercase",
+      marginBottom: 2,
+    },
+    statValue: {
+      color: c.textPrimary,
+      fontSize: 16,
+      fontWeight: "700",
+    },
     dim: { color: c.textMuted, fontSize: 12, textAlign: "center", paddingHorizontal: 24 },
     code: { fontFamily: "Menlo", fontSize: 12 },
     toolbar: {
@@ -223,13 +312,43 @@ function makeStyles(c: ReturnType<typeof useColors>) {
       paddingVertical: 6,
     },
     row: {
-      flexDirection: "row",
-      alignItems: "center",
       paddingHorizontal: 12,
-      paddingVertical: 10,
+      paddingVertical: 12,
       gap: 10,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: c.border,
+      backgroundColor: c.bg,
+    },
+    rowSelected: {
+      backgroundColor: c.bgCard,
+    },
+    rowDone: {
+      opacity: 0.72,
+    },
+    rowTop: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: 10,
+    },
+    rowTextWrap: {
+      flex: 1,
+      gap: 6,
+    },
+    badges: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 6,
+    },
+    badge: {
+      color: c.textMuted,
+      fontSize: 11,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: c.border,
+      backgroundColor: c.bgCardElevated,
+      textTransform: "uppercase",
     },
     box: {
       width: 22,
@@ -245,7 +364,6 @@ function makeStyles(c: ReturnType<typeof useColors>) {
     boxSelected: { backgroundColor: c.tabActive, borderColor: c.tabActive },
     boxMark: { color: c.textPrimary, fontWeight: "700", fontSize: 13 },
     title: {
-      flex: 1,
       color: c.textPrimary,
       fontSize: 14,
       lineHeight: 18,

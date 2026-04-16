@@ -1,17 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { agentClient } from "@/lib/agent-client";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { agentClient, type AutoDevLoop } from "@/lib/agent-client";
 import TerminalView from "./TerminalView";
 
-type Tab = "overview" | "agent" | "machines" | "containers" | "terminal" | "catalog" | "images" | "multiregion";
+type Tab = "overview" | "autodev" | "agent" | "machines" | "containers" | "terminal" | "catalog" | "images" | "multiregion";
 
 export default function ConsoleView() {
   const [tab, setTab] = useState<Tab>("overview");
   return (
     <div className="space-y-4">
       <div className="flex gap-1 border-b border-surface-800">
-        {(["overview", "agent", "machines", "containers", "terminal", "catalog", "images", "multiregion"] as Tab[]).map((t) => (
+        {(["overview", "autodev", "agent", "machines", "containers", "terminal", "catalog", "images", "multiregion"] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)}
             className={`px-3 py-2 text-xs uppercase font-semibold ${tab === t ? "text-indigo-400 border-b-2 border-indigo-400" : "text-surface-500 hover:text-surface-300"}`}>
             {t}
@@ -19,6 +19,7 @@ export default function ConsoleView() {
         ))}
       </div>
       {tab === "overview" && <Overview />}
+      {tab === "autodev" && <AutodevWorkbench />}
       {tab === "agent" && <AgentOrchestrator />}
       {tab === "machines" && <Machines />}
       {tab === "containers" && <Containers />}
@@ -28,6 +29,388 @@ export default function ConsoleView() {
       {tab === "multiregion" && <MultiRegion />}
     </div>
   );
+}
+
+function AutodevWorkbench() {
+  const [loops, setLoops] = useState<AutoDevLoop[]>([]);
+  const [items, setItems] = useState<Array<{ line: number; checked: boolean; title: string }>>([]);
+  const [workDir, setWorkDir] = useState("");
+  const [project, setProject] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [runner, setRunner] = useState("");
+  const [runners, setRunners] = useState<any[]>([]);
+  const [busy, setBusy] = useState("");
+  const [picked, setPicked] = useState<number[]>([]);
+  const [streamEvents, setStreamEvents] = useState<Array<{ id: string; type?: string; text?: string; runner?: string; tool?: string; detail?: string; status?: string }>>([]);
+  const [connected, setConnected] = useState(agentClient.connectionState === "connected");
+
+  const activeLoop = useMemo(
+    () =>
+      loops.find((loop) => loop.status === "running") ??
+      loops.find((loop) => loop.status === "needs_human") ??
+      loops[0],
+    [loops],
+  );
+
+  async function refresh() {
+    if (agentClient.connectionState !== "connected") return;
+    const [loopRows, runnerRows] = await Promise.all([
+      agentClient.autodevLoops().catch(() => []),
+      agentClient.getRunners().catch(() => []),
+    ]);
+    setLoops(loopRows);
+    setRunners((runnerRows || []).filter((row: any) => row.installed));
+    if (!runner && runnerRows?.length) {
+      const pref = runnerRows.find((row: any) => row.isDefault) || runnerRows[0];
+      if (pref) setRunner(pref.id);
+    }
+    if (workDir.trim()) {
+      const ideas = await agentClient.autoideasFile(workDir, "ideas.md").catch(() => null);
+      if (ideas) setItems(ideas.items || []);
+    }
+  }
+
+  useEffect(() => {
+    const off = agentClient.on("connectionState", (state) => {
+      setConnected(state === "connected");
+    });
+    return off;
+  }, []);
+
+  useEffect(() => {
+    if (!connected) return;
+    refresh();
+    const id = setInterval(refresh, 5000);
+    return () => clearInterval(id);
+  }, [connected, workDir]);
+
+  useEffect(() => {
+    if (!activeLoop || !connected) {
+      setStreamEvents([]);
+      return;
+    }
+    const abort = agentClient.streamLog(`autodev:${activeLoop.name}`, (ev) => {
+      setStreamEvents((prev) => [
+        ...prev.slice(-199),
+        {
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          type: ev?.type,
+          text: ev?.text,
+          runner: ev?.runner,
+          tool: ev?.tool,
+          detail: ev?.detail,
+          status: ev?.status,
+        },
+      ]);
+    });
+    return abort;
+  }, [activeLoop?.name, connected]);
+
+  const openCount = items.filter((item) => !item.checked).length;
+
+  async function startLoop() {
+    if (!workDir.trim()) {
+      setBusy("Work dir is required.");
+      return;
+    }
+    setBusy("Starting autodev…");
+    const res = await agentClient.autodevStart({
+      project: project || undefined,
+      workDir,
+      prompt: prompt || undefined,
+      runner: runner || undefined,
+      deploy: "auto",
+      hours: "8",
+      load: "lite",
+    });
+    if (!res.ok) {
+      setBusy(res.error || "Could not start autodev.");
+      return;
+    }
+    setBusy(`Started ${res.loopName}.`);
+    setPrompt("");
+    refresh();
+  }
+
+  async function generateIdeas() {
+    if (!workDir.trim()) {
+      setBusy("Set a work dir first.");
+      return;
+    }
+    setBusy("Generating more ideas…");
+    const res = await agentClient.autoideasStart({
+      work_dir: workDir,
+      project: project || undefined,
+      output: "ideas.md",
+      max_batches: 1,
+      tick: 1,
+    });
+    if (!res.ok) {
+      setBusy(res.error || "Could not generate ideas.");
+      return;
+    }
+    setBusy("Idea generation started.");
+    setTimeout(() => refresh(), 1500);
+  }
+
+  async function implementSelected() {
+    if (!workDir.trim() || picked.length === 0) return;
+    setBusy(`Starting implementation for ${picked.length} idea(s)…`);
+    const res = await agentClient.autoideasSelect({
+      work_dir: workDir,
+      project: project || undefined,
+      output: "ideas.md",
+      lines: picked,
+      engine: runner || undefined,
+    });
+    if (!res.ok) {
+      setBusy(res.error || "Could not start implementation.");
+      return;
+    }
+    setBusy(`Started ${res.loop_name}.`);
+    setPicked([]);
+    refresh();
+  }
+
+  return (
+    <div className="space-y-4" data-testid="autodev-workbench">
+      {!connected && (
+        <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-200">
+          Connect to a device first. This view drives the live autodev session on that machine.
+        </div>
+      )}
+
+      <div className="grid gap-4 xl:grid-cols-[1.1fr,0.9fr]">
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-surface-800 bg-surface-900/60 p-5">
+            <div className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Machine status</div>
+            <div className="mt-2 text-2xl font-semibold text-surface-100" data-testid="autodev-live-title">
+              {activeLoop ? `${activeLoop.name} is ${humanLoopStatus(activeLoop.status)}` : "No active autodev loop"}
+            </div>
+            <div className="mt-2 max-w-2xl text-sm text-surface-400">
+              {activeLoop?.lastSummary || "Start a loop or promote a generated idea into implementation. The machine transcript shows up here instead of raw event JSON."}
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2 text-xs">
+              <MetricPill label="working" value={String(loops.filter((loop) => loop.status === "running" || loop.status === "paused").length)} />
+              <MetricPill label="total loops" value={String(loops.length)} />
+              <MetricPill label="runner" value={activeLoop?.runner || runner || "auto"} />
+              <MetricPill label="ideas open" value={String(openCount)} />
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-surface-800 bg-surface-900/60 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-surface-100">Live transcript</div>
+                <div className="text-xs text-surface-500">The machine talking to Yaver while it edits and tests.</div>
+              </div>
+              {activeLoop && (
+                <button
+                  onClick={async () => {
+                    await agentClient.autodevStop(activeLoop.name);
+                    refresh();
+                  }}
+                  className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/20"
+                >
+                  Stop active loop
+                </button>
+              )}
+            </div>
+            <div className="mt-4 h-[360px] overflow-auto rounded-xl border border-surface-800 bg-surface-950/80 p-3">
+              {streamEvents.length === 0 ? (
+                <div className="text-sm text-surface-500">No transcript yet.</div>
+              ) : (
+                <div className="space-y-2">
+                  {streamEvents.map((ev) => (
+                    <div key={ev.id} className={eventBubbleClass(ev.type)}>
+                      <div className="text-[10px] uppercase tracking-wide text-surface-500">
+                        {ev.type === "yaver_say" ? "yaver" : ev.runner || ev.type || "event"}
+                      </div>
+                      <div className="mt-1 text-sm text-surface-200">
+                        {ev.text || [ev.tool, ev.detail, ev.status].filter(Boolean).join(" · ")}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-surface-800 bg-surface-900/60 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-surface-100">All loops</div>
+                <div className="text-xs text-surface-500">Quick status across every active autodev lane on the machine.</div>
+              </div>
+              <button onClick={refresh} className="rounded-lg border border-surface-700 px-3 py-2 text-xs text-surface-300 hover:bg-surface-800">
+                Refresh
+              </button>
+            </div>
+            <div className="mt-3 space-y-2">
+              {loops.length === 0 ? (
+                <div className="text-sm text-surface-500">No loops yet.</div>
+              ) : (
+                loops.map((loop) => (
+                  <div key={loop.id} className={`rounded-xl border p-3 ${activeLoop?.id === loop.id ? "border-indigo-500/50 bg-indigo-500/10" : "border-surface-800 bg-surface-950/50"}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-surface-100">{loop.name}</div>
+                        <div className="text-xs text-surface-500">
+                          {loop.mode} · {humanLoopStatus(loop.status)} · iter {loop.iterationCount} · {loop.runner || "auto"}
+                        </div>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          await agentClient.autodevStop(loop.name);
+                          refresh();
+                        }}
+                        className="rounded-lg border border-surface-700 px-2.5 py-1.5 text-xs text-surface-300 hover:bg-surface-800"
+                      >
+                        Stop
+                      </button>
+                    </div>
+                    {loop.lastSummary && <div className="mt-2 text-sm text-surface-400">{loop.lastSummary}</div>}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-surface-800 bg-surface-900/60 p-4">
+            <div className="text-sm font-semibold text-surface-100">Start a loop</div>
+            <div className="mt-1 text-xs text-surface-500">This should feel like telling the machine what to do, not editing daemon internals.</div>
+            <div className="mt-4 space-y-3">
+              <input
+                value={project}
+                onChange={(e) => setProject(e.target.value)}
+                placeholder="project name"
+                className="w-full rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-sm text-surface-100"
+              />
+              <input
+                value={workDir}
+                onChange={(e) => setWorkDir(e.target.value)}
+                placeholder="/abs/path/to/project"
+                className="w-full rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-sm font-mono text-surface-100"
+              />
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder="Ship onboarding, fix the rough edges, and keep tests green."
+                className="min-h-28 w-full rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-sm text-surface-100"
+              />
+              <select
+                value={runner}
+                onChange={(e) => setRunner(e.target.value)}
+                className="w-full rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-sm text-surface-100"
+              >
+                <option value="">auto runner</option>
+                {runners.map((row: any) => (
+                  <option key={row.id} value={row.id}>{row.name}</option>
+                ))}
+              </select>
+              <button
+                onClick={startLoop}
+                disabled={!connected}
+                className="w-full rounded-xl bg-indigo-500 px-4 py-3 text-sm font-semibold text-white hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Start machine session
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-surface-800 bg-surface-900/60 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-surface-100">Auto-generated ideas</div>
+                <div className="text-xs text-surface-500">Select one or many and immediately turn them into implementation.</div>
+              </div>
+              <button
+                onClick={generateIdeas}
+                disabled={!connected}
+                className="rounded-lg border border-surface-700 px-3 py-2 text-xs text-surface-300 hover:bg-surface-800 disabled:opacity-50"
+              >
+                Generate more
+              </button>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              <MetricPill label="open" value={String(openCount)} />
+              <MetricPill label="selected" value={String(picked.length)} />
+              <MetricPill label="done" value={String(items.filter((item) => item.checked).length)} />
+            </div>
+            <div className="mt-4 space-y-2" data-testid="autoideas-list">
+              {items.length === 0 ? (
+                <div className="text-sm text-surface-500">No ideas loaded yet.</div>
+              ) : (
+                items.map((item) => {
+                  const selected = picked.includes(item.line);
+                  return (
+                    <button
+                      key={item.line}
+                      type="button"
+                      data-testid={`autoidea-card-${item.line}`}
+                      disabled={item.checked}
+                      onClick={() => {
+                        if (item.checked) return;
+                        setPicked((prev) =>
+                          prev.includes(item.line)
+                            ? prev.filter((line) => line !== item.line)
+                            : [...prev, item.line],
+                        );
+                      }}
+                      className={`w-full rounded-xl border p-3 text-left ${item.checked ? "border-surface-800 bg-surface-950/40 opacity-60" : selected ? "border-indigo-500/50 bg-indigo-500/10" : "border-surface-800 bg-surface-950/50 hover:bg-surface-900"}`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="text-sm font-medium text-surface-100">{item.title}</div>
+                        <div className="rounded-full border border-surface-700 px-2 py-1 text-[10px] uppercase tracking-wide text-surface-400">
+                          {item.checked ? "done" : selected ? "selected" : "ready"}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+            <button
+              onClick={implementSelected}
+              disabled={!connected || picked.length === 0}
+              data-testid="implement-selected-btn"
+              className="mt-4 w-full rounded-xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Implement selected ({picked.length})
+            </button>
+          </div>
+
+          {busy && (
+            <div className="rounded-xl border border-surface-800 bg-surface-900/60 px-4 py-3 text-sm text-surface-300">
+              {busy}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MetricPill({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-full border border-surface-700 bg-surface-950/70 px-3 py-2">
+      <div className="text-[10px] uppercase tracking-wide text-surface-500">{label}</div>
+      <div className="text-sm font-semibold text-surface-100">{value}</div>
+    </div>
+  );
+}
+
+function humanLoopStatus(status: AutoDevLoop["status"]): string {
+  return status.replaceAll("_", " ");
+}
+
+function eventBubbleClass(type?: string): string {
+  if (type === "yaver_say") return "rounded-2xl border border-cyan-500/30 bg-cyan-500/10 p-3";
+  if (type === "runner_action") return "rounded-2xl border border-surface-800 bg-surface-900/80 p-3";
+  if (type === "runner_result") return "rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-3";
+  return "rounded-2xl border border-surface-800 bg-surface-950/80 p-3";
 }
 
 function AgentOrchestrator() {

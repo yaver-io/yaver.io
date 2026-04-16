@@ -247,6 +247,7 @@ export interface GuestConfigEntry {
   machineIds?: string[];
   useHostApiKeys?: boolean;
   allowGuestProvidedApiKeys?: boolean;
+  requireIsolation?: boolean;
   cpuLimitPercent?: number;
   ramLimitMb?: number;
   priorityMode?: string;
@@ -258,6 +259,69 @@ export interface GuestUsageEntry {
   guestName: string;
   date: string;
   secondsUsed: number;
+}
+
+export interface AutoDevReleaseTrain {
+  enabled: boolean;
+  n: number;
+  greenRunSinceLastDeploy: number;
+  paused: boolean;
+  target?: string;
+  maxTestFlightPerDay?: number;
+}
+
+export interface AutoDevProviderUsage {
+  runner: string;
+  usedSeconds: number;
+  capSeconds: number;
+  sessionWindow: string;
+  windowStartedAt?: string;
+  overCap: boolean;
+}
+
+export interface AutoDevLoop {
+  id: string;
+  name: string;
+  mode: "fix" | "auto-fix" | "develop" | "ideas" | "auto-test";
+  status:
+    | "idle"
+    | "running"
+    | "paused"
+    | "stopped"
+    | "stuck"
+    | "budget_hit"
+    | "needs_human";
+  iterationCount: number;
+  lastSummary?: string;
+  branch: string;
+  tone?: string;
+  radicalnessUi?: number;
+  radicalnessFeatures?: number;
+  promptInline?: string;
+  commitsToday: number;
+  patchesToday: number;
+  testflightToday: number;
+  lastIterationAt?: string;
+  runner?: string;
+  releaseTrain?: AutoDevReleaseTrain;
+  sessionUsage?: AutoDevProviderUsage[];
+  testRoot?: string;
+}
+
+export interface AutoDevIdeasPayload {
+  generated_at?: string;
+  loop_name?: string;
+  persona?: string;
+  ideas: Array<{
+    id: string;
+    title: string;
+    description?: string;
+    prompt: string;
+    radicalness?: number;
+    effort?: "small" | "medium" | "large";
+    whyPersona?: string;
+    whyNot?: string;
+  }>;
 }
 
 export interface GuestInfo {
@@ -811,6 +875,23 @@ class AgentClient {
     return await res.json();
   }
 
+  /** POST /autoideas/start */
+  async autoideasStart(body: {
+    work_dir: string;
+    project?: string;
+    output?: string;
+    engine?: string;
+    max_batches?: number;
+    tick?: number;
+  }): Promise<{ ok: boolean; loop_name?: string; stream_name?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/autoideas/start`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return await res.json();
+  }
+
   /** POST /autoideas/select — picks → autodev kick */
   async autoideasSelect(body: {
     work_dir: string;
@@ -829,6 +910,96 @@ class AgentClient {
       body: JSON.stringify(body),
     });
     return await res.json();
+  }
+
+  async autodevStart(params: {
+    project?: string;
+    workDir: string;
+    hours?: string;
+    load?: string;
+    prompt?: string;
+    deploy?: string;
+    runner?: string;
+    branch?: string;
+    target?: string;
+    remainedPath?: string;
+    remainedContent?: string;
+    noAutotest?: boolean;
+    maxIterations?: number;
+  }): Promise<{ ok: boolean; loopName?: string; workDir?: string; hours?: string; deploy?: string; error?: string }> {
+    try {
+      const res = await fetch(`${this.baseUrl}/autodev/start`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project: params.project ?? "",
+          work_dir: params.workDir,
+          hours: params.hours ?? "",
+          load: params.load ?? "",
+          prompt: params.prompt ?? "",
+          deploy: params.deploy ?? "",
+          runner: params.runner ?? "",
+          branch: params.branch ?? "",
+          target: params.target ?? "",
+          remained_path: params.remainedPath ?? "",
+          remained_content: params.remainedContent ?? "",
+          no_autotest: params.noAutotest ?? false,
+          max_iterations: params.maxIterations ?? 0,
+        }),
+      });
+      if (!res.ok && res.status !== 202) {
+        const text = await res.text().catch(() => "");
+        return { ok: false, error: text || `HTTP ${res.status}` };
+      }
+      const data = await res.json();
+      return {
+        ok: true,
+        loopName: data.loop_name,
+        workDir: data.work_dir,
+        hours: data.hours,
+        deploy: data.deploy,
+      };
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? "network error" };
+    }
+  }
+
+  async autodevLoops(): Promise<AutoDevLoop[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/autodev/loops`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.loops || [];
+    } catch {
+      return [];
+    }
+  }
+
+  async autodevStop(name: string): Promise<boolean> {
+    try {
+      const res = await fetch(
+        `${this.baseUrl}/autodev/loops/${encodeURIComponent(name)}/stop`,
+        { method: "POST", headers: this.authHeaders },
+      );
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  async autodevIdeas(name: string): Promise<AutoDevIdeasPayload | null> {
+    try {
+      const res = await fetch(
+        `${this.baseUrl}/autodev/loops/${encodeURIComponent(name)}/ideas`,
+        { headers: this.authHeaders },
+      );
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
   }
 
   // ── EventEmitter ───────────────────────────────────────────────────
@@ -1096,6 +1267,7 @@ class AgentClient {
     machineIds?: string[];
     useHostApiKeys?: boolean;
     allowGuestProvidedApiKeys?: boolean;
+    requireIsolation?: boolean;
     cpuLimitPercent?: number;
     ramLimitMb?: number;
     priorityMode?: string;

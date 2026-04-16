@@ -54,6 +54,11 @@ async function createDummyUser(): Promise<TestUser> {
 }
 
 export default async function globalSetup(): Promise<void> {
+  if (process.env.E2E_SKIP_LIVE_AUTH === "1") {
+    console.log("[e2e setup] Skipping live dummy-user creation.");
+    return;
+  }
+
   const user = await createDummyUser();
 
   process.env.E2E_USER_EMAIL = user.email;
