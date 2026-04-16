@@ -144,6 +144,9 @@ func (s *HTTPServer) handleAutodevStart(w http.ResponseWriter, r *http.Request) 
 		AutoIdeas       *int   `json:"auto_ideas"`  // nil = default (999); 0 disables; N caps refills
 		AutoBranch      bool   `json:"auto_branch"` // true = work on autodev/<project>-autodev-<YYYYMMDD>
 		Harden          string `json:"harden"`      // ""|security|memory|perf|quality|all
+		Model           string `json:"model"`       // sonnet|opus|haiku|<full-id>
+		Planner         string `json:"planner"`     // hybrid layering: agent[:model]
+		Implementer    string `json:"implementer"`  // hybrid layering: agent[:model]
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
@@ -195,6 +198,22 @@ func (s *HTTPServer) handleAutodevStart(w http.ResponseWriter, r *http.Request) 
 	default:
 		jsonError(w, http.StatusBadRequest, "unknown engine: "+body.Engine+" (want claude|codex|hybrid)")
 		return
+	}
+	// Hybrid layering: planner / implementer per-tier override.
+	// Either set forces engine=hybrid; spawnHybrid reads the env
+	// vars below. Default (both empty) leaves the user's chosen
+	// engine alone — no slicing unless asked for.
+	if body.Planner != "" || body.Implementer != "" {
+		runnerOverride = "hybrid"
+		if body.Planner != "" {
+			os.Setenv("YAVER_HYBRID_PLANNER", body.Planner)
+		}
+		if body.Implementer != "" {
+			os.Setenv("YAVER_HYBRID_IMPLEMENTER", body.Implementer)
+		}
+	}
+	if body.Model != "" {
+		os.Setenv("YAVER_CLAUDE_MODEL", body.Model)
 	}
 	autoIdeas := 999
 	if body.AutoIdeas != nil {

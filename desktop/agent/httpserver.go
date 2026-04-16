@@ -8022,6 +8022,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			AutoIdeas       *int   `json:"auto_ideas"`
 			AutoBranch      bool   `json:"auto_branch"`
 			Harden          string `json:"harden"`
+			Model           string `json:"model"`
+			Planner         string `json:"planner"`
+			Implementer     string `json:"implementer"`
 			Branch          string `json:"branch"`
 			Target          string `json:"target"`
 			RemainedPath    string `json:"remained_path"`
@@ -8039,6 +8042,19 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			args.Runner = "hybrid"
 		default:
 			return mcpToolError("unknown engine: " + args.Engine + " (want claude|codex|hybrid)")
+		}
+		// Hybrid layering: per-tier overrides force hybrid.
+		if args.Planner != "" || args.Implementer != "" {
+			args.Runner = "hybrid"
+			if args.Planner != "" {
+				os.Setenv("YAVER_HYBRID_PLANNER", args.Planner)
+			}
+			if args.Implementer != "" {
+				os.Setenv("YAVER_HYBRID_IMPLEMENTER", args.Implementer)
+			}
+		}
+		if args.Model != "" {
+			os.Setenv("YAVER_CLAUDE_MODEL", args.Model)
 		}
 		autoIdeasMCP := 999
 		if args.AutoIdeas != nil {

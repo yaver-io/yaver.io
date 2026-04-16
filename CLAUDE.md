@@ -875,6 +875,30 @@ within Claude (`opus` plans, `sonnet` implements per kick) for users
 who want the article's "Codex for keystrokes, Claude Code for
 commits" pattern but using only Anthropic.
 
+## Hybrid layering (`--planner` + `--implementer`)
+
+Hybrid mode now exposes the two tiers separately so a user can compose any agent×model pair per role. Default is unchanged: no tier flags = single-engine end-to-end (the user's `--engine` choice).
+
+| Tier | Flag | Accepted values |
+|------|------|-----------------|
+| Planner | `--planner agent[:model]` | `claude` · `claude:opus` · `claude:sonnet` · `codex` |
+| Implementer | `--implementer agent[:model]` | `claude` · `claude:sonnet` · `claude:opus` · `codex` · `aider-ollama` · `aider-ollama:<ollama-model>` |
+
+Either flag set forces `--engine hybrid`. `splitAgentSpec` parses the `agent:model` form, expanding `sonnet` / `opus` / `haiku` aliases to current 4.6/4.5 ids; full ids and Ollama models pass through verbatim.
+
+Example layerings (the user picks the cost/quality split):
+
+| Use case | Command |
+|----------|---------|
+| Default — no split | `yaver autodev sfmg` |
+| Cheap volume, premium plan | `yaver autodev sfmg --planner claude:opus --implementer claude:sonnet` |
+| Token-efficient implementation | `yaver autodev sfmg --planner claude:opus --implementer codex` |
+| Free implementation, paid planning | `yaver autodev sfmg --planner claude:opus --implementer aider-ollama` |
+| Bug fix (highest stakes both tiers) | `yaver autodev sfmg --planner claude:opus --implementer claude:opus --max-iterations 1 --prompt "fix the auth race"` |
+| Daily volume, no Anthropic spend | `yaver autodev sfmg --planner codex --implementer codex` |
+
+Mechanism: `autodev_cmd` sets `YAVER_HYBRID_PLANNER` / `YAVER_HYBRID_IMPLEMENTER` env vars; `spawnHybrid` reads them and overrides `HybridSpec.Planner` / `Implementer` / `Model`. The runners themselves are dispatched via `runImplementer` against `builtinRunners` so adding a new agent just means adding it to that map.
+
 ## Container Sandbox (Optional Task Isolation)
 
 Run AI agent tasks inside Docker containers for filesystem isolation. **Optional and disabled by default** — the default mode runs tasks directly on the host (unchanged behavior).

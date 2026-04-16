@@ -32,6 +32,11 @@ type autodevOptions struct {
 	Engines []autodevEngineOption `json:"engines"`
 	Runners []autodevRunnerOption `json:"runners"`
 	Hardens []autodevHardenOption `json:"hardens"`
+	// Layerings is an opinionated preset list mobile / web render
+	// in the start form so a user can pick "Opus plans, Sonnet
+	// implements" without learning the planner/implementer flag
+	// shape. Empty preset = the default, no-slicing path.
+	Layerings []autodevLayeringPreset `json:"layerings"`
 	// DeployTargets the project actually supports, computed against
 	// the daemon's cwd by resolveAutodevDeployTargets("auto"). The
 	// mobile / web start form pre-checks these boxes so the user
@@ -46,6 +51,19 @@ type autodevHardenOption struct {
 	Value       string `json:"value"`       // "" | "security" | ...
 	Label       string `json:"label"`       // human-readable
 	Description string `json:"description"` // tooltip
+}
+
+// autodevLayeringPreset is a one-click "Opus plans / Sonnet
+// implements" style configuration the UI can offer alongside the
+// raw planner / implementer fields. Available reflects whether
+// the underlying CLIs are installed on this machine.
+type autodevLayeringPreset struct {
+	Value       string `json:"value"`        // stable id
+	Label       string `json:"label"`        // human-readable
+	Description string `json:"description"`  // tooltip / explainer
+	Planner     string `json:"planner"`      // agent[:model]
+	Implementer string `json:"implementer"`  // agent[:model]
+	Available   bool   `json:"available"`    // all required CLIs present
 }
 
 type autodevOptionDefaults struct {
@@ -129,11 +147,21 @@ func BuildAutodevOptions() autodevOptions {
 		{Value: "all", Label: "All Areas", Description: "Round-robin across security + memory + perf + quality"},
 	}
 
+	layerings := []autodevLayeringPreset{
+		{Value: "default", Label: "Default (no slicing)", Description: "Single engine end-to-end. Picks the user's --engine choice.", Planner: "", Implementer: "", Available: true},
+		{Value: "opus-plan-sonnet-impl", Label: "Opus plans · Sonnet implements", Description: "Cheap-default with high-quality planning. Best when your Claude Max bucket is tight on Opus but you still want premium reasoning on the planning subtask.", Planner: "claude:opus", Implementer: "claude:sonnet", Available: hasClaude},
+		{Value: "opus-plan-codex-impl", Label: "Opus plans · Codex implements", Description: "Premium planning, token-efficient implementation. Best for hours-long unattended runs.", Planner: "claude:opus", Implementer: "codex", Available: hasClaude && hasCodex},
+		{Value: "opus-plan-aider-impl", Label: "Opus plans · Aider+Ollama implements", Description: "Premium planning, free local implementation. Quality of edits varies with the local Ollama model.", Planner: "claude:opus", Implementer: "aider-ollama", Available: hasClaude && hasAider && hasOllama},
+		{Value: "codex-end-to-end", Label: "Codex end-to-end", Description: "No Anthropic spend. Codex plans + implements every kick.", Planner: "codex", Implementer: "codex", Available: hasCodex},
+		{Value: "opus-bug-fix", Label: "Opus everywhere (bug-fix mode)", Description: "Highest stakes both tiers. Use with --max-iterations 1 + a focused --prompt.", Planner: "claude:opus", Implementer: "claude:opus", Available: hasClaude},
+	}
+
 	return autodevOptions{
 		OK:            true,
 		Engines:       engines,
 		Runners:       runners,
 		Hardens:       hardens,
+		Layerings:     layerings,
 		DeployTargets: resolveAutodevDeployTargets("auto"),
 		Defaults: autodevOptionDefaults{
 			Engine:     "claude",
