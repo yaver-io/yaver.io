@@ -709,11 +709,24 @@ func computePhoneStats(dir string) (*PhoneStats, error) {
 	return stats, nil
 }
 
+// ErrPhoneProjectNotFound is returned when a slug doesn't resolve to an on-disk
+// phone project. HTTP handlers translate this to 404 so a missing project never
+// surfaces as a confusing SQLite "unable to open database file" error.
+var ErrPhoneProjectNotFound = fmt.Errorf("phone project not found")
+
 // PhoneAdapter returns a BackendAdapter over the project's local SQLite file,
 // so /backend/* endpoints can operate on a phone project via ?directory=<dir>.
+// Returns ErrPhoneProjectNotFound if the slug has never been created on this
+// agent — previously the missing dir leaked through as a SQLite CANTOPEN error.
 func PhoneAdapter(slug string) (BackendAdapter, error) {
 	dir, err := PhoneProjectDir(slug)
 	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(phoneMetaPath(dir)); err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("%w: %s", ErrPhoneProjectNotFound, slug)
+		}
 		return nil, err
 	}
 	cfg, err := LoadProjectConfig(dir)
