@@ -24,6 +24,7 @@ import ShareView from "@/components/dashboard/ShareView";
 import InfraView from "@/components/dashboard/InfraView";
 import PreviewPane from "@/components/dashboard/PreviewPane";
 import TwoFactorView from "@/components/dashboard/TwoFactorView";
+import MorningView from "@/components/dashboard/MorningView";
 
 function statusColor(s: string) {
   if (s === "running") return "text-amber-400";
@@ -47,7 +48,7 @@ export default function DashboardPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [guestCode, setGuestCode] = useState("");
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "infra" | "security">("home");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "infra" | "security" | "morning">("home");
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [relayReady, setRelayReady] = useState(false);
@@ -181,6 +182,7 @@ export default function DashboardPage() {
     { id: "share", label: "Share", icon: "\uD83D\uDCE3" },
     { id: "convex", label: "Convex", icon: "\u26A1" },
     { id: "security", label: "Security", icon: "\uD83D\uDD10" },
+    { id: "morning", label: "Morning", icon: "\u2600\uFE0F" },
   ];
 
   return (
@@ -415,6 +417,8 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full"><ConvexView /></div>
           ) : activeTab === "security" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><TwoFactorView token={token} /></div>
+          ) : activeTab === "morning" ? (
+            <div className="flex-1 overflow-hidden w-full"><MorningView /></div>
           ) : (
             <>
               <div className="flex flex-1 min-h-0">

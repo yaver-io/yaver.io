@@ -1281,6 +1281,11 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		// Schema + storage + logs
 		{"name": "backend_schema", "description": "Show schema (tables + columns + mermaid ERD) for the project's backend.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string"}}}},
 		{"name": "storage_list", "description": "List files across Convex Storage / Supabase Storage / local uploads/.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string"}, "bucket": map[string]interface{}{"type": "string"}}}},
+		{"name": "shared_storage_profiles", "description": "List machine-level shared storage profiles (NAS/SMB/WebDAV/Storage Box/S3) available to Yaver clients.", "inputSchema": map[string]interface{}{"type": "object"}},
+		{"name": "shared_storage_upsert", "description": "Create or update a shared storage profile. Profile is JSON with fields like {name,type,path|mount_path|endpoint,bucket,...}.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"profile"}, "properties": map[string]interface{}{"profile": map[string]interface{}{"type": "string", "description": "JSON shared storage profile"}}}},
+		{"name": "shared_storage_delete", "description": "Delete a shared storage profile.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"id"}, "properties": map[string]interface{}{"id": map[string]interface{}{"type": "string"}}}},
+		{"name": "shared_storage_list", "description": "Browse a configured shared storage profile.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"id"}, "properties": map[string]interface{}{"id": map[string]interface{}{"type": "string"}, "path": map[string]interface{}{"type": "string"}}}},
+		{"name": "shared_storage_search", "description": "Search names and text documents inside a configured shared storage profile.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"id", "query"}, "properties": map[string]interface{}{"id": map[string]interface{}{"type": "string"}, "query": map[string]interface{}{"type": "string"}, "path": map[string]interface{}{"type": "string"}, "limit": map[string]interface{}{"type": "number"}}}},
 		{"name": "cron_list", "description": "List scheduled/cron jobs across backends (Convex scheduled functions, pg_cron).", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string"}}}},
 		{"name": "console_machines", "description": "List every machine running a Yaver agent (local Mac/Linux/Windows + Hetzner, AWS, GCP VPSes). Hybrid view across own-hardware and cloud.", "inputSchema": map[string]interface{}{"type": "object"}},
 		// Deploy pipeline
@@ -2015,6 +2020,24 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				},
 			},
 		},
+		{
+			"name":        "sandbox_quickstart",
+			"description": "One-step containerization setup for Yaver. Picks a practical default, persists it, and optionally starts building the yaver-sandbox image so remote-dev and shared-infra tasks can use containers without manual setup.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"mode": map[string]interface{}{
+						"type":        "string",
+						"description": "Quickstart mode: 'guests' for shared infra isolation, or 'host' to containerize all tasks",
+						"enum":        []string{"guests", "host"},
+					},
+					"build_image": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Start building the sandbox image immediately (default true)",
+					},
+				},
+			},
+		},
 	}
 	tools = append(tools, sandboxTools...)
 
@@ -2529,6 +2552,80 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				"required": []string{"graph_id"},
 				"properties": map[string]interface{}{
 					"graph_id": map[string]interface{}{"type": "string", "description": "Agent graph id"},
+				},
+			},
+		},
+		{
+			"name":        "morning_latest",
+			"description": "Return the most recent morning match-report — what shipped overnight from an autodev run. One line per task: title, status (shipped/failed/rolled-back), files changed, commit sha, whether a video was captured. Use when the user asks what ran overnight or what's new.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "morning_list",
+			"description": "List recent morning match-report runs (newest first). Use when the user wants to see history of overnight runs before drilling into one.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"limit": map[string]interface{}{"type": "integer", "description": "Max runs to return (default 20)"},
+				},
+			},
+		},
+		{
+			"name":        "morning_show",
+			"description": "Return the full match report for a specific run id: every task's title, status, git stats, video metadata, and rollback state if applicable.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"run_id"},
+				"properties": map[string]interface{}{
+					"run_id": map[string]interface{}{"type": "string", "description": "Run id as reported by morning_latest or morning_list"},
+				},
+			},
+		},
+		{
+			"name":        "morning_rollback",
+			"description": "Revert a single task's commits (git revert, new commit chain — never destructive). The task must have recorded CommitSHAs. Returns the new HEAD sha. Use only when the user explicitly asks to undo a task.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"run_id", "task_id"},
+				"properties": map[string]interface{}{
+					"run_id":  map[string]interface{}{"type": "string"},
+					"task_id": map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+		{
+			"name":        "record_drivers",
+			"description": "Report which screen-recording drivers are available on this host (ffmpeg for macOS/Linux/Windows screen capture, xcrun for iOS Simulator, adb for Android emulator). Use this before record_start so the user knows what install step they may need.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "record_start",
+			"description": "Start capturing a video for the morning reel. Picks the best-available driver for the requested target, falling back to full-screen capture if the specific target (ios-sim/android-emu) is not ready.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"run_id", "task_id"},
+				"properties": map[string]interface{}{
+					"run_id":  map[string]interface{}{"type": "string"},
+					"task_id": map[string]interface{}{"type": "string"},
+					"target":  map[string]interface{}{"type": "string", "description": "screen | ios-sim | android-emu (default: screen)"},
+				},
+			},
+		},
+		{
+			"name":        "record_stop",
+			"description": "Finalize the recording started for (run_id, task_id). Returns duration_ms + size_bytes. After this the video is served at /recordings/{run_id}/{task_id}/video.mp4 with byte-range support.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"run_id", "task_id"},
+				"properties": map[string]interface{}{
+					"run_id":  map[string]interface{}{"type": "string"},
+					"task_id": map[string]interface{}{"type": "string"},
 				},
 			},
 		},

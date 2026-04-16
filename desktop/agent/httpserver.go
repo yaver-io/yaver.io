@@ -579,6 +579,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/sandbox/status", s.auth(s.handleSandboxStatus))
 	mux.HandleFunc("/sandbox/config", s.auth(s.handleSandboxConfig))
 	mux.HandleFunc("/sandbox/build", s.auth(s.handleSandboxBuild))
+	mux.HandleFunc("/sandbox/quickstart", s.auth(s.handleSandboxQuickstart))
 
 	// Convex local backend — dashboard proxy endpoints
 	mux.HandleFunc("/convex/status", s.auth(s.handleConvexStatus))
@@ -997,6 +998,7 @@ var guestAllowedPrefixes = []string{
 	"/builds",
 	"/health",
 	"/vibing",
+	"/shared-storage/",
 }
 
 func isGuestAllowedPath(path string) bool {
@@ -1382,6 +1384,7 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 			info["devServer"] = devStatus
 		}
 	}
+	info["sandbox"] = s.sandboxSummary()
 
 	// Todo list count + stats
 	if s.todolistMgr != nil {
@@ -1715,8 +1718,9 @@ func (s *HTTPServer) handleAgentStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	status := s.taskMgr.GetAgentStatus()
 	jsonReply(w, http.StatusOK, map[string]interface{}{
-		"ok":     true,
-		"status": status,
+		"ok":      true,
+		"status":  status,
+		"sandbox": s.sandboxSummary(),
 	})
 }
 
@@ -2127,6 +2131,9 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 			taskOpts.GuestCPULimitPercent = guestCfg.CPULimitPercent
 			taskOpts.GuestRAMLimitMB = guestCfg.RAMLimitMB
 		}
+	}
+	if mounts, err := sharedStorageContainerMountsForTask(taskOpts.GuestUserID, s.guestConfigMgr); err == nil {
+		taskOpts.GuestSharedStorageMounts = mounts
 	}
 
 	task, err := s.taskMgr.CreateTaskWithOptions(title, body.Description, body.Model, source, body.Runner, body.CustomCommand, body.Images, taskOpts, body.SpeechContext)
@@ -8726,31 +8733,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolResult(fmt.Sprintf("Config updated for %s", args.Email))
 
 	case "sandbox_status":
-		result := map[string]interface{}{
-			"containerizeGuests": s.containerizeGuests,
-			"containerizeHost":   s.containerizeHost,
-		}
-		if s.taskMgr != nil {
-			result["networkMode"] = s.taskMgr.ContainerNetwork
-			result["readOnly"] = s.taskMgr.ContainerReadOnly
-			if s.taskMgr.ContainerCPU != "" {
-				result["cpuLimit"] = s.taskMgr.ContainerCPU
-			}
-			if s.taskMgr.ContainerMemory != "" {
-				result["memoryLimit"] = s.taskMgr.ContainerMemory
-			}
-		}
-		if s.containerRunner != nil {
-			status := s.containerRunner.Status()
-			result["docker"] = status.Available
-			result["imageReady"] = status.ImageReady
-			result["imageName"] = status.ImageName
-			result["gpuAvailable"] = s.containerRunner.IsGPUAvailable()
-		} else {
-			result["docker"] = false
-			result["imageReady"] = false
-		}
-		return mcpToolJSON(result)
+		return mcpToolJSON(s.sandboxSummary())
 
 	case "sandbox_config":
 		var args struct {
@@ -8772,12 +8755,8 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			}
 		}
 
-		if s.containerRunner == nil {
-			cr := NewContainerRunner()
-			if !cr.IsAvailable() {
-				return mcpToolError("Docker not available — install Docker first")
-			}
-			s.containerRunner = cr
+		if err := s.ensureContainerRunner(); err != nil {
+			return mcpToolError(err.Error() + " — install Docker first")
 		}
 		if args.ContainerizeGuests != nil {
 			s.containerizeGuests = *args.ContainerizeGuests
@@ -8806,20 +8785,35 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			s.taskMgr.ContainerReadOnly = *args.ReadOnly
 		}
 
-		// Persist to config file
-		if cfg, err := LoadConfig(); err == nil {
-			cfg.ContainerizeGuests = s.containerizeGuests
-			cfg.ContainerizeHost = s.containerizeHost
-			if s.taskMgr != nil {
-				cfg.ContainerCPU = s.taskMgr.ContainerCPU
-				cfg.ContainerMemory = s.taskMgr.ContainerMemory
-				cfg.ContainerNetwork = s.taskMgr.ContainerNetwork
-				cfg.ContainerReadOnly = s.taskMgr.ContainerReadOnly
+		if s.taskMgr != nil {
+			s.taskMgr.ContainerRunner = s.containerRunner
+			if s.taskMgr.ContainerNetwork == "" {
+				s.taskMgr.ContainerNetwork = "host"
 			}
-			_ = SaveConfig(cfg)
 		}
+		s.persistSandboxConfig()
 
-		return mcpToolResult(fmt.Sprintf("Sandbox config updated: guests=%v, host=%v", s.containerizeGuests, s.containerizeHost))
+		return mcpToolJSON(s.sandboxSummary())
+
+	case "sandbox_quickstart":
+		var args struct {
+			Mode       string `json:"mode"`
+			BuildImage *bool  `json:"build_image"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		buildImage := true
+		if args.BuildImage != nil {
+			buildImage = *args.BuildImage
+		}
+		summary, message, err := s.applySandboxQuickstart(args.Mode, buildImage)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(map[string]interface{}{
+			"ok":      true,
+			"message": message,
+			"sandbox": summary,
+		})
 
 	case "guest_usage":
 		var args struct {

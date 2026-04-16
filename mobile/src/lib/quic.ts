@@ -311,6 +311,7 @@ export interface InfraSummary {
   network?: InfraNetworkInterface[];
   relays?: InfraRelaySummary[];
   sharing: InfraSharingSummary;
+  sandbox: SandboxStatus;
   capabilities: InfraCapabilities;
 }
 
@@ -2841,6 +2842,22 @@ export class QuicClient {
     } catch { return null; }
   }
 
+  /** One-step containerization setup for shared infra or full host isolation. */
+  async sandboxQuickstart(mode: "guests" | "host", buildImage = true): Promise<{ ok: boolean; message?: string; sandbox?: SandboxStatus; error?: string }> {
+    try {
+      const res = await fetch(`${this.baseUrl}/sandbox/quickstart`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ mode, buildImage }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
+      return { ok: true, message: data?.message, sandbox: data?.sandbox };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || "network error" };
+    }
+  }
+
   /** Update container sandbox config on agent. Changes are persisted. */
   async updateSandboxConfig(config: Partial<SandboxConfig>): Promise<boolean> {
     try {
@@ -4005,6 +4022,12 @@ export class QuicClient {
     remainedContent?: string;
     noAutotest?: boolean;
     maxIterations?: number;
+    // Morning match-report toggles. Undefined = agent default (both
+    // on). Pass false to opt out explicitly. Video is advisory — the
+    // agent skips capture gracefully when no iOS sim / Android emu
+    // is available.
+    createSummary?: boolean;
+    createVideo?: boolean;
   }): Promise<{ ok: boolean; loopName?: string; workDir?: string; hours?: string; deploy?: string; error?: string }> {
     try {
       const res = await fetch(`${this.baseUrl}/autodev/start`, {
@@ -4024,6 +4047,8 @@ export class QuicClient {
           remained_content: params.remainedContent ?? "",
           no_autotest: params.noAutotest ?? false,
           max_iterations: params.maxIterations ?? 0,
+          ...(params.createSummary !== undefined && { create_summary: params.createSummary }),
+          ...(params.createVideo !== undefined && { create_video: params.createVideo }),
         }),
       });
       if (!res.ok && res.status !== 202) {
@@ -4683,16 +4708,21 @@ export interface TestkitFlakeStats {
 /** Container sandbox status returned by the agent. */
 export interface SandboxStatus {
   ok: boolean;
+  enabledMode?: "off" | "guests" | "host";
   containerizeGuests: boolean;
   containerizeHost: boolean;
   docker: boolean;
   imageReady: boolean;
   imageName?: string;
+  dockerPath?: string;
   gpuAvailable?: boolean;
   networkMode?: string;
   readOnly?: boolean;
   cpuLimit?: string;
   memoryLimit?: string;
+  recommendedMode?: "guests" | "host";
+  recommendedReason?: string;
+  quickstartAvailable?: boolean;
 }
 
 /** Container sandbox config fields for updates. */

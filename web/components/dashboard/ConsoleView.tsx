@@ -40,6 +40,11 @@ function AutodevWorkbench() {
   const [runner, setRunner] = useState("");
   const [runners, setRunners] = useState<any[]>([]);
   const [busy, setBusy] = useState("");
+  // Morning match-report toggles — default on. The user's intent is
+  // "I want to wake up to a reel of what shipped"; video is advisory
+  // because a headless dev box won't have a sim or emu to point at.
+  const [morningSummary, setMorningSummary] = useState(true);
+  const [morningVideo, setMorningVideo] = useState(true);
   const [picked, setPicked] = useState<number[]>([]);
   const [streamEvents, setStreamEvents] = useState<Array<{ id: string; type?: string; text?: string; runner?: string; tool?: string; detail?: string; status?: string }>>([]);
   const [connected, setConnected] = useState(agentClient.connectionState === "connected");
@@ -122,6 +127,8 @@ function AutodevWorkbench() {
       deploy: "auto",
       hours: "8",
       load: "lite",
+      createSummary: morningSummary,
+      createVideo: morningVideo,
     });
     if (!res.ok) {
       setBusy(res.error || "Could not start autodev.");
@@ -310,6 +317,42 @@ function AutodevWorkbench() {
                   <option key={row.id} value={row.id}>{row.name}</option>
                 ))}
               </select>
+
+              {/* Morning match-report toggles. Default on; unchecking
+                  opts out. Video is advisory — agent skips capture
+                  gracefully when no sim/emu is running. */}
+              <label className="flex items-start gap-2 text-xs text-surface-300">
+                <input
+                  type="checkbox"
+                  checked={morningSummary}
+                  onChange={(e) => setMorningSummary(e.target.checked)}
+                  className="mt-0.5 accent-indigo-500"
+                />
+                <span>
+                  <span className="text-surface-100 font-medium">☀ Morning summary</span>
+                  <span className="block text-[11px] text-surface-500">
+                    Match-report card for every kick — title, diff stats, rollback in one tap.
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2 text-xs text-surface-300">
+                <input
+                  type="checkbox"
+                  checked={morningVideo}
+                  onChange={(e) => setMorningVideo(e.target.checked)}
+                  disabled={!morningSummary}
+                  className="mt-0.5 accent-indigo-500 disabled:opacity-50"
+                />
+                <span>
+                  <span className={`font-medium ${morningSummary ? "text-surface-100" : "text-surface-500"}`}>
+                    Video of the finished product
+                  </span>
+                  <span className="block text-[11px] text-surface-500">
+                    iOS Simulator or Android emulator required. Auto-skipped if neither is running — never blocks autodev.
+                  </span>
+                </span>
+              </label>
+
               <button
                 onClick={startLoop}
                 disabled={!connected}

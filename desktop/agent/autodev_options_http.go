@@ -45,6 +45,24 @@ type autodevOptions struct {
 	// Defaults the UI should pre-select. Match the CLI defaults so
 	// "click Start with no changes" behaves like `yaver autodev`.
 	Defaults autodevOptionDefaults `json:"defaults"`
+
+	// Morning match-report capability on this host. Lets the UI
+	// show a "Record video (requires iOS Simulator or Android
+	// emulator)" label when the toggle is effectively advisory.
+	Morning autodevOptionMorning `json:"morning"`
+}
+
+type autodevOptionMorning struct {
+	// CreateSummaryAvailable is always true (pure on-disk JSON).
+	CreateSummaryAvailable bool `json:"createSummaryAvailable"`
+	// CreateVideoAvailable is true iff at least one product-demo
+	// driver is ready RIGHT NOW on this host. If false, the UI
+	// should still let the user enable video (in case they boot a
+	// simulator mid-run), but can explain why it will likely be
+	// skipped.
+	CreateVideoAvailable bool                   `json:"createVideoAvailable"`
+	CreateVideoReason    string                 `json:"createVideoReason,omitempty"`
+	Drivers              []RecordingDriverStatus `json:"drivers"`
 }
 
 type autodevHardenOption struct {
@@ -67,14 +85,16 @@ type autodevLayeringPreset struct {
 }
 
 type autodevOptionDefaults struct {
-	Engine     string `json:"engine"`      // "claude"
-	Runner     string `json:"runner"`      // "claude-code" (only when engine=claude)
-	Hours      string `json:"hours"`       // "8"
-	Load       string `json:"load"`        // "lite"
-	NoAutotest bool   `json:"no_autotest"` // false → autotest on
-	AutoIdeas  int    `json:"auto_ideas"`  // 999
-	AutoBranch bool   `json:"auto_branch"` // false → work on main
-	Branch     string `json:"branch"`      // "main"
+	Engine         string `json:"engine"`          // "claude"
+	Runner         string `json:"runner"`          // "claude-code" (only when engine=claude)
+	Hours          string `json:"hours"`           // "8"
+	Load           string `json:"load"`            // "lite"
+	NoAutotest     bool   `json:"no_autotest"`     // false → autotest on
+	AutoIdeas      int    `json:"auto_ideas"`      // 999
+	AutoBranch     bool   `json:"auto_branch"`     // false → work on main
+	Branch         string `json:"branch"`          // "main"
+	CreateSummary  bool   `json:"create_summary"`  // true — morning match report
+	CreateVideo    bool   `json:"create_video"`    // true — product-demo video
 }
 
 // handleAutodevOptions answers GET /autodev/options.
@@ -156,6 +176,21 @@ func BuildAutodevOptions() autodevOptions {
 		{Value: "opus-bug-fix", Label: "Opus everywhere (bug-fix mode)", Description: "Highest stakes both tiers. Use with --max-iterations 1 + a focused --prompt.", Planner: "claude:opus", Implementer: "claude:opus", Available: hasClaude},
 	}
 
+	// Recording driver availability — mirrors GET /morning/drivers
+	// but embedded here so the autodev start form has everything
+	// it needs in one round trip.
+	recMgr := DefaultRecordingManager()
+	driverMap := recMgr.Drivers()
+	drivers := make([]RecordingDriverStatus, 0, len(driverMap))
+	for _, d := range driverMap {
+		drivers = append(drivers, d)
+	}
+	hasAppDemoDriver := recMgr.HasAnyAppDemoDriver()
+	videoReason := ""
+	if !hasAppDemoDriver {
+		videoReason = "no iOS Simulator booted and no Android device attached — video will be skipped. Morning summary still works."
+	}
+
 	return autodevOptions{
 		OK:            true,
 		Engines:       engines,
@@ -164,13 +199,21 @@ func BuildAutodevOptions() autodevOptions {
 		Layerings:     layerings,
 		DeployTargets: resolveAutodevDeployTargets("auto"),
 		Defaults: autodevOptionDefaults{
-			Engine:     "claude",
-			Runner:     "claude-code",
-			Hours:      autodevSleepHours,
-			Load:       autodevSleepLoad,
-			NoAutotest: false,
-			AutoIdeas:  999,
-			Branch:     "main",
+			Engine:        "claude",
+			Runner:        "claude-code",
+			Hours:         autodevSleepHours,
+			Load:          autodevSleepLoad,
+			NoAutotest:    false,
+			AutoIdeas:     999,
+			Branch:        "main",
+			CreateSummary: true,
+			CreateVideo:   true,
+		},
+		Morning: autodevOptionMorning{
+			CreateSummaryAvailable: true,
+			CreateVideoAvailable:   hasAppDemoDriver,
+			CreateVideoReason:      videoReason,
+			Drivers:                drivers,
 		},
 	}
 }
