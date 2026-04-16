@@ -42,13 +42,20 @@ func runDevStart(args []string) {
 	port := fs.Int("port", 0, "Dev server port (framework default if 0)")
 	platform := fs.String("platform", "ios", "Target platform (ios, android, web)")
 	workDir := fs.String("dir", ".", "Project directory")
+	targetDeviceID := fs.String("target-device-id", "", "Optional preview target device id")
+	targetDeviceName := fs.String("target-device-name", "", "Optional preview target device name")
+	targetDeviceClass := fs.String("target-device-class", "", "Optional preview target device class")
 	standalone := fs.Bool("standalone", false, "Run standalone (not through agent)")
 	fs.Parse(args)
 
 	if *standalone {
 		// Run dev server directly without agent
 		mgr := NewDevServerManager()
-		if err := mgr.Start(*framework, *workDir, *platform, *port); err != nil {
+		if err := mgr.Start(*framework, *workDir, *platform, *port, DevServerTarget{
+			DeviceID:    *targetDeviceID,
+			DeviceName:  *targetDeviceName,
+			DeviceClass: *targetDeviceClass,
+		}); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -78,6 +85,15 @@ func runDevStart(args []string) {
 		"workDir":   *workDir,
 		"platform":  *platform,
 		"port":      *port,
+	}
+	if *targetDeviceID != "" {
+		body["targetDeviceId"] = *targetDeviceID
+	}
+	if *targetDeviceName != "" {
+		body["targetDeviceName"] = *targetDeviceName
+	}
+	if *targetDeviceClass != "" {
+		body["targetDeviceClass"] = *targetDeviceClass
 	}
 	resp, err := localAgentRequest("POST", "/dev/start", body)
 	if err != nil {
@@ -193,6 +209,9 @@ Start options:
   --port N                              Dev server port (framework default)
   --platform ios|android|web            Target platform (default: ios)
   --dir /path                           Project directory (default: .)
+  --target-device-id <id>               Optional preview target device id
+  --target-device-name <name>           Optional preview target device name
+  --target-device-class <class>         Optional preview target class
   --standalone                          Run without agent (direct mode)
 
 The dev server is proxied through the agent at /dev/*

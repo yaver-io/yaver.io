@@ -30,6 +30,7 @@ type AutoIdeasStart struct {
 	Prompt     string `json:"prompt"`
 	Harden     string `json:"harden"`
 	Engine     string `json:"engine"`
+	Runner     string `json:"runner"`
 	Output     string `json:"output"`
 	MaxBatches int    `json:"max_batches"`
 	Tick       int    `json:"tick"`
@@ -111,6 +112,9 @@ func autoIdeasBuildArgs(project string, body AutoIdeasStart) []string {
 	}
 	if body.Engine != "" {
 		args = append(args, "--engine", body.Engine)
+	}
+	if body.Runner != "" {
+		args = append(args, "--runner", body.Runner)
 	}
 	if body.Output != "" {
 		args = append(args, "--output", body.Output)
@@ -199,7 +203,8 @@ func (s *HTTPServer) handleAutoIdeasFile(w http.ResponseWriter, r *http.Request)
 // the checklist. Used by mobile/web "Implement selected" buttons.
 //
 // POST /autoideas/select
-//   {work_dir, output (optional), lines:[12,17,33], engine, hours, load, ...}
+//
+//	{work_dir, output (optional), lines:[12,17,33], engine, hours, load, ...}
 //
 // We materialise a temp checklist file with just the selected
 // titles, then call the existing /autodev/start path so the
@@ -335,11 +340,11 @@ func (s *HTTPServer) handleAutoIdeasSelect(w http.ResponseWriter, r *http.Reques
 	go func() { _ = cmd.Wait() }()
 
 	jsonReply(w, http.StatusAccepted, map[string]interface{}{
-		"ok":           true,
-		"loop_name":    project + "-autodev",
-		"stream_name":  "autodev:" + project + "-autodev",
-		"selected":     len(picked),
-		"checklist":    autodevList,
-		"work_dir":     body.WorkDir,
+		"ok":          true,
+		"loop_name":   project + "-autodev",
+		"stream_name": "autodev:" + project + "-autodev",
+		"selected":    len(picked),
+		"checklist":   autodevList,
+		"work_dir":    body.WorkDir,
 	})
 }
