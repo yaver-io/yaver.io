@@ -3561,6 +3561,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			MaxParallel:     args.MaxParallel,
 			PreferredDevice: args.PreferredDevice,
 			AllowedDevices:  args.AllowedDevices,
+			AllowedRunners:  args.AllowedRunners,
 		}
 		run, err := s.agentGraphMgr.CreateRun(req)
 		if err != nil {
@@ -8107,8 +8108,12 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			DailyLimit        *int     `json:"daily_limit"`
 			UsageMode         string   `json:"usage_mode"`
 			AllowedRunners    []string `json:"allowed_runners"`
+			ResourcePreset    string   `json:"resource_preset"`
 			UseHostAPIKeys    *bool    `json:"use_host_api_keys"`
 			AllowGuestAPIKeys *bool    `json:"allow_guest_api_keys"`
+			AllowDesktop      *bool    `json:"allow_desktop_control"`
+			AllowBrowser      *bool    `json:"allow_browser_control"`
+			AllowTunnel       *bool    `json:"allow_tunnel_forward"`
 			RequireIsolation  *bool    `json:"require_isolation"`
 			CPULimitPercent   *int     `json:"cpu_limit_percent"`
 			RAMLimitMB        *int     `json:"ram_limit_mb"`
@@ -8144,23 +8149,27 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 				if c.UseHostAPIKeys != nil {
 					hostKeys = fmt.Sprintf("%v", *c.UseHostAPIKeys)
 				}
+				preset := guestResourcePreset(&c)
 				guestKeys := "inherit"
 				if c.AllowGuestProvidedAPIKeys != nil {
 					guestKeys = fmt.Sprintf("%v", *c.AllowGuestProvidedAPIKeys)
 				}
+				desktop := fmt.Sprintf("%v", guestAllowDesktopControl(&c))
+				tunnels := fmt.Sprintf("%v", guestAllowTunnelForward(&c))
 				isolation := "false"
 				if c.RequireIsolation != nil && *c.RequireIsolation {
 					isolation = "true"
 				}
-				sb.WriteString(fmt.Sprintf("- %s (%s): mode=%s limit=%s runners=%s host_keys=%s guest_keys=%s isolation=%s\n",
-					c.GuestEmail, c.GuestName, mode, limit, runners, hostKeys, guestKeys, isolation))
+				sb.WriteString(fmt.Sprintf("- %s (%s): mode=%s limit=%s runners=%s preset=%s host_keys=%s guest_keys=%s desktop=%s tunnels=%s isolation=%s\n",
+					c.GuestEmail, c.GuestName, mode, limit, runners, preset, hostKeys, guestKeys, desktop, tunnels, isolation))
 			}
 			return mcpToolResult(sb.String())
 		}
 
 		// If no update fields, just show this guest's config
 		isUpdate := args.DailyLimit != nil || args.UsageMode != "" || args.AllowedRunners != nil ||
-			args.UseHostAPIKeys != nil || args.AllowGuestAPIKeys != nil || args.RequireIsolation != nil ||
+			args.ResourcePreset != "" || args.UseHostAPIKeys != nil || args.AllowGuestAPIKeys != nil ||
+			args.AllowDesktop != nil || args.AllowBrowser != nil || args.AllowTunnel != nil || args.RequireIsolation != nil ||
 			args.CPULimitPercent != nil || args.RAMLimitMB != nil || args.PriorityMode != ""
 		if !isUpdate {
 			configs, err := FetchGuestConfigs(s.convexURL, s.token)
@@ -8185,10 +8194,14 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 					if c.UseHostAPIKeys != nil {
 						hostKeys = fmt.Sprintf("%v", *c.UseHostAPIKeys)
 					}
+					preset := guestResourcePreset(&c)
 					guestKeys := "inherit"
 					if c.AllowGuestProvidedAPIKeys != nil {
 						guestKeys = fmt.Sprintf("%v", *c.AllowGuestProvidedAPIKeys)
 					}
+					desktop := fmt.Sprintf("%v", guestAllowDesktopControl(&c))
+					browser := fmt.Sprintf("%v", guestAllowBrowserControl(&c))
+					tunnels := fmt.Sprintf("%v", guestAllowTunnelForward(&c))
 					isolation := "false"
 					if c.RequireIsolation != nil && *c.RequireIsolation {
 						isolation = "true"
@@ -8205,8 +8218,8 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 					if priority == "" {
 						priority = "default"
 					}
-					return mcpToolResult(fmt.Sprintf("Config for %s (%s):\n  Mode: %s\n  Daily limit: %s\n  Runners: %s\n  Host API keys: %s\n  Guest API keys: %s\n  Docker isolation: %s\n  CPU cap: %s\n  RAM cap: %s\n  Priority: %s",
-						c.GuestEmail, c.GuestName, mode, limit, runners, hostKeys, guestKeys, isolation, cpuCap, ramCap, priority))
+					return mcpToolResult(fmt.Sprintf("Config for %s (%s):\n  Mode: %s\n  Daily limit: %s\n  Runners: %s\n  Resource preset: %s\n  Host API keys: %s\n  Guest API keys: %s\n  Desktop control: %s\n  Browser control: %s\n  Tunnel forward: %s\n  Docker isolation: %s\n  CPU cap: %s\n  RAM cap: %s\n  Priority: %s",
+						c.GuestEmail, c.GuestName, mode, limit, runners, preset, hostKeys, guestKeys, desktop, browser, tunnels, isolation, cpuCap, ramCap, priority))
 				}
 			}
 			return mcpToolResult(fmt.Sprintf("No config found for %s", args.Email))
@@ -8223,11 +8236,23 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if args.AllowedRunners != nil {
 			payload["allowedRunners"] = args.AllowedRunners
 		}
+		if args.ResourcePreset != "" {
+			payload["resourcePreset"] = args.ResourcePreset
+		}
 		if args.UseHostAPIKeys != nil {
 			payload["useHostApiKeys"] = *args.UseHostAPIKeys
 		}
 		if args.AllowGuestAPIKeys != nil {
 			payload["allowGuestProvidedApiKeys"] = *args.AllowGuestAPIKeys
+		}
+		if args.AllowDesktop != nil {
+			payload["allowDesktopControl"] = *args.AllowDesktop
+		}
+		if args.AllowBrowser != nil {
+			payload["allowBrowserControl"] = *args.AllowBrowser
+		}
+		if args.AllowTunnel != nil {
+			payload["allowTunnelForward"] = *args.AllowTunnel
 		}
 		if args.RequireIsolation != nil {
 			payload["requireIsolation"] = *args.RequireIsolation

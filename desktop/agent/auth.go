@@ -399,8 +399,12 @@ type GuestConfig struct {
 	DeviceIDs                 []string `json:"deviceIds,omitempty"`
 	ShareAllMachines          *bool    `json:"shareAllMachines,omitempty"`
 	MachineIDs                []string `json:"machineIds,omitempty"`
+	ResourcePreset            string   `json:"resourcePreset,omitempty"`
 	UseHostAPIKeys            *bool    `json:"useHostApiKeys,omitempty"`
 	AllowGuestProvidedAPIKeys *bool    `json:"allowGuestProvidedApiKeys,omitempty"`
+	AllowDesktopControl       *bool    `json:"allowDesktopControl,omitempty"`
+	AllowBrowserControl       *bool    `json:"allowBrowserControl,omitempty"`
+	AllowTunnelForward        *bool    `json:"allowTunnelForward,omitempty"`
 	RequireIsolation          *bool    `json:"requireIsolation,omitempty"`
 	CPULimitPercent           *int     `json:"cpuLimitPercent,omitempty"`
 	RAMLimitMB                *int     `json:"ramLimitMb,omitempty"`

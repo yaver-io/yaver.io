@@ -1855,7 +1855,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 		{
 			"name":        "guest_config",
-			"description": "View or update guest config (daily limit, allowed runners, usage mode). Without email: list all. With email: show/update config.",
+			"description": "View or update guest config (limits, runners, share preset, resource controls). Without email: list all. With email: show/update config.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -1877,6 +1877,11 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 						"items":       map[string]interface{}{"type": "string"},
 						"description": "Runner IDs the guest can use (empty = all)",
 					},
+					"resource_preset": map[string]interface{}{
+						"type":        "string",
+						"description": "Share preset: machine-only, machine-with-host-keys, desktop-control, desktop-control-with-host-keys",
+						"enum":        []string{"machine-only", "machine-with-host-keys", "desktop-control", "desktop-control-with-host-keys"},
+					},
 					"use_host_api_keys": map[string]interface{}{
 						"type":        "boolean",
 						"description": "Let the guest consume host-managed API keys without revealing the raw key",
@@ -1884,6 +1889,18 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"allow_guest_api_keys": map[string]interface{}{
 						"type":        "boolean",
 						"description": "Allow the guest to bring and use their own API keys on the shared infra",
+					},
+					"allow_desktop_control": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Allow future remote desktop/control sessions on this shared machine",
+					},
+					"allow_browser_control": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Allow browser automation/control sessions on this shared machine",
+					},
+					"allow_tunnel_forward": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Allow guest access to host-approved local tunnel forwards",
 					},
 					"require_isolation": map[string]interface{}{
 						"type":        "boolean",
@@ -2426,7 +2443,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 		{
 			"name":        "agent_graph_start",
-			"description": "Start a dependency-aware agent graph. Pass allowed_devices to let Yaver load-balance across multiple machines while respecting runner concurrency policy.",
+			"description": "Start a dependency-aware agent graph. Pass allowed_devices to choose the Yaver mesh pool and allowed_runners to constrain which runners remote nodes may use.",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
 				"required": []string{"prompt"},
@@ -2442,6 +2459,11 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"allowed_devices": map[string]interface{}{
 						"type":        "array",
 						"description": "Optional machine ids or names to form the execution pool",
+						"items":       map[string]interface{}{"type": "string"},
+					},
+					"allowed_runners": map[string]interface{}{
+						"type":        "array",
+						"description": "Optional runner IDs to allow for graph nodes, e.g. ollama, opencode, codex",
 						"items":       map[string]interface{}{"type": "string"},
 					},
 				},

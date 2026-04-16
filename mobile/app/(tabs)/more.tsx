@@ -1562,6 +1562,12 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
   const [editLimit, setEditLimit] = useState("");
   const [editMode, setEditMode] = useState("always");
   const [editRunners, setEditRunners] = useState("");
+  const [editMachineIds, setEditMachineIds] = useState("");
+  const [editAllowedProjects, setEditAllowedProjects] = useState("");
+  const [editPreset, setEditPreset] = useState("machine-only");
+  const [editAllowGuestKeys, setEditAllowGuestKeys] = useState(true);
+  const [editAllowTunnels, setEditAllowTunnels] = useState(false);
+  const [editRequireIsolation, setEditRequireIsolation] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
   const [subTab, setSubTab] = useState<"invite" | "config" | "usage">("invite");
 
@@ -1664,6 +1670,12 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
     setEditLimit(cfg.dailyTokenLimit ? String(cfg.dailyTokenLimit) : "");
     setEditMode(cfg.usageMode || "always");
     setEditRunners(cfg.allowedRunners?.join(",") || "");
+    setEditMachineIds(cfg.machineIds?.join(",") || "");
+    setEditAllowedProjects(cfg.allowedProjects?.join(",") || "");
+    setEditPreset(cfg.resourcePreset || (cfg.useHostApiKeys ? "machine-with-host-keys" : "machine-only"));
+    setEditAllowGuestKeys(cfg.allowGuestProvidedApiKeys !== false);
+    setEditAllowTunnels(!!cfg.allowTunnelForward);
+    setEditRequireIsolation(!!cfg.requireIsolation);
   }, []);
 
   const handleSaveConfig = useCallback(async () => {
@@ -1678,6 +1690,12 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
         dailyTokenLimit: editLimit ? parseInt(editLimit, 10) : 0,
         usageMode: editMode,
         allowedRunners: editRunners ? editRunners.split(",").map(r => r.trim()).filter(Boolean) : [],
+        machineIds: editMachineIds ? editMachineIds.split(",").map(v => v.trim()).filter(Boolean) : [],
+        allowedProjects: editAllowedProjects ? editAllowedProjects.split(",").map(v => v.trim()).filter(Boolean) : [],
+        resourcePreset: editPreset,
+        allowGuestProvidedApiKeys: editAllowGuestKeys,
+        allowTunnelForward: editAllowTunnels,
+        requireIsolation: editRequireIsolation,
       });
       Alert.alert("Saved", `Config updated for ${configEmail}`);
       setConfigEmail(null);
@@ -1686,7 +1704,7 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
       Alert.alert("Error", e.message || "Failed to save config");
     }
     setSavingConfig(false);
-  }, [configEmail, editLimit, editMode, editRunners, connected, loadConfigs]);
+  }, [configEmail, editLimit, editMode, editRunners, editMachineIds, editAllowedProjects, editPreset, editAllowGuestKeys, editAllowTunnels, editRequireIsolation, connected, loadConfigs]);
 
   const activeGuests = guests.filter(g => g.status === "accepted");
   const pendingGuests = guests.filter(g => g.status === "pending");
@@ -1909,6 +1927,88 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
               autoCorrect={false}
             />
 
+            <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", textTransform: "uppercase" }}>
+              Allowed Machines (comma-separated IDs, empty = all granted)
+            </Text>
+            <TextInput
+              style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
+              placeholder="e.g. local,6d5c0624-..."
+              placeholderTextColor={c.textMuted}
+              value={editMachineIds}
+              onChangeText={setEditMachineIds}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", textTransform: "uppercase" }}>
+              Allowed Projects (comma-separated, empty = all)
+            </Text>
+            <TextInput
+              style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
+              placeholder="e.g. api,web,survey-app"
+              placeholderTextColor={c.textMuted}
+              value={editAllowedProjects}
+              onChangeText={setEditAllowedProjects}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", textTransform: "uppercase" }}>
+              Share Preset
+            </Text>
+            <View style={{ gap: 6 }}>
+              {[
+                { id: "machine-only", label: "Machine only", note: "Coding only on granted machines. No host API keys." },
+                { id: "machine-with-host-keys", label: "Machine + host keys", note: "Guest can use host-managed model keys without seeing raw secrets." },
+                { id: "desktop-control", label: "Desktop control", note: "Prepare for host-approved remote desktop/browser sessions without host API keys." },
+                { id: "desktop-control-with-host-keys", label: "Desktop + host keys", note: "Most permissive preset. Use only for highly trusted collaborators." },
+              ].map((preset) => (
+                <Pressable
+                  key={preset.id}
+                  onPress={() => setEditPreset(preset.id)}
+                  style={{
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: editPreset === preset.id ? c.accent : c.border,
+                    backgroundColor: editPreset === preset.id ? `${c.accent}20` : c.bg,
+                    paddingHorizontal: 12,
+                    paddingVertical: 10,
+                    gap: 3,
+                  }}
+                >
+                  <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "500" }}>{preset.label}</Text>
+                  <Text style={{ color: c.textMuted, fontSize: 11 }}>{preset.note}</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            {[
+              { label: "Allow Guest API Keys", value: editAllowGuestKeys, setValue: setEditAllowGuestKeys },
+              { label: "Allow Tunnel Forwarding", value: editAllowTunnels, setValue: setEditAllowTunnels },
+              { label: "Require Docker Isolation", value: editRequireIsolation, setValue: setEditRequireIsolation },
+            ].map((item) => (
+              <Pressable
+                key={item.label}
+                onPress={() => item.setValue(!item.value)}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  backgroundColor: c.bg,
+                  borderWidth: 1,
+                  borderColor: c.border,
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                }}
+              >
+                <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "500" }}>{item.label}</Text>
+                <Text style={{ color: item.value ? c.accent : c.textMuted, fontSize: 12, fontWeight: "700" }}>
+                  {item.value ? "ON" : "OFF"}
+                </Text>
+              </Pressable>
+            ))}
+
             <Pressable
               style={[s.actionBtn, { backgroundColor: c.accent, opacity: savingConfig ? 0.5 : 1, alignSelf: "flex-end" }]}
               onPress={handleSaveConfig}
@@ -1949,6 +2049,20 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
                     </Text>
                     <Text style={{ color: c.textMuted, fontSize: 11 }}>
                       Runners: {cfg.allowedRunners?.length ? cfg.allowedRunners.join(",") : "all"}
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: "row", gap: 12 }}>
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                      Machines: {cfg.machineIds?.length ? cfg.machineIds.join(",") : "all granted"}
+                    </Text>
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                      Preset: {cfg.resourcePreset || (cfg.useHostApiKeys ? "machine-with-host-keys" : "machine-only")}
+                    </Text>
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                      Isolation: {cfg.requireIsolation ? "required" : "optional"}
+                    </Text>
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                      Tunnels: {cfg.allowTunnelForward ? "on" : "off"}
                     </Text>
                   </View>
                 </Pressable>

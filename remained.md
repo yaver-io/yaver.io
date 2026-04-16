@@ -1,61 +1,61 @@
 # Remained
 
-## What Is Fixed
+## Just Landed
 
-- Mobile recovery now sends the signed-in bearer token to `/auth/recover`.
-- Mobile watches `authExpired` and can recover a reachable-but-stale agent.
-- `/auth/recover` pair mode now persists the recovered token into the running daemon.
-- Heartbeat reloads the latest token from config, so recovery applies without a restart.
-- Backend owner lookup now compares against the caller's real Convex user doc id.
-- Agent startup now caches Convex-provided relay settings locally and reuses them after reboot when auth is stale.
-- Mobile autodev now behaves like a live machine session instead of a loop-admin panel: live transcript first, ideas second, setup third.
-- Mobile autoideas now supports multi-select implementation with clearer backlog/status UI and jumps back into live autodev after starting.
-- Web dashboard console now has an actual `autodev` workbench with live transcript, backlog selection, and one-shot loop start.
-- Mocked browser coverage now exists for the web autodev workbench in [e2e/tests/dashboard-autodev.spec.ts](/Users/kivanccakmak/Workspace/yaver.io/e2e/tests/dashboard-autodev.spec.ts).
-- CLI stream rendering now keeps piped output free of ANSI escapes and the local yaver-to-yaver harness asserts that autodev transcript output is human-readable instead of raw JSON.
+- Guest/resource sharing now has explicit host-approved presets:
+  - `machine-only`
+  - `machine-with-host-keys`
+  - `desktop-control`
+  - `desktop-control-with-host-keys`
+- Infra grants now store future remote-control capability flags:
+  - `allowDesktopControl`
+  - `allowBrowserControl`
+  - `allowTunnelForward`
+- Agent-side guest policy now infers those presets safely and injects them into the guest security prompt.
+- MCP `guest_config`, CLI `yaver guests config`, mobile guest config UI, Convex guest config APIs, and docs all understand the new sharing model.
 
-## What Still Needs Real-World Validation
+## Next Work
 
-- Run the new GitHub workflow [remote-infra.yml](/Users/kivanccakmak/Workspace/yaver.io/.github/workflows/remote-infra.yml) with real secrets.
-- Confirm the rebooted remote box still reconnects through the public relay using only cached relay config.
-- Run the manual `mesh` workflow against two Yaver-controlled machines plus the runner and verify `yaver agent mesh-smoke` stays green.
-- Confirm on a physical phone that recovery keeps using the successful target URL end to end when relay is dead but direct HTTP/Tailscale still works.
-- Run `./scripts/run-ci-local.sh peer-local` against your preferred real runner stack and confirm the yaver-to-yaver autodev transcript matches the improved app UX.
-- Validate Expo web / mobile web rendering of the new autodev and autoideas screens on a narrow viewport.
-- Add one real device-facing automation path for the mobile app itself once the preferred harness is chosen (Expo/native vs browser wrapper).
+- Build the real remote desktop transport on top of the new policy layer.
+  - Start with host-approved tunnel-backed RFB/noVNC or equivalent browser-safe stream path.
+  - Require explicit host session approval per desktop session, not just per guest grant.
+  - Keep desktop control, browser automation, and raw tunnel access separately revocable.
+- Add backend tests for `resourcePreset` validation conflicts and default inference in Convex.
+- Add end-to-end guest sharing tests across two devices proving:
+  - `machine-only` never exposes host API keys
+  - `desktop-control` does not implicitly enable tunnel forwarding
+  - device-scoped grants stay device-scoped
+- Add web dashboard UI for guest resource sharing.
+  - The client types are updated, but there is not yet a dedicated dashboard editor for these new preset fields.
+- Wire future remote desktop session creation through the same guest policy checks before exposing any VNC/RFB/WebRTC endpoint.
 
-## Required GitHub Secrets
+## Still Dirty Locally
 
-- `CONVEX_SITE_URL`
-- `RELAY_HTTP_URL`
-- `YAVER_CI_SSH_HOST_PRIMARY`
-- `YAVER_CI_SSH_HOST_SECONDARY` for the mesh workflow
-- `YAVER_CI_SSH_USER`
-- `YAVER_CI_SSH_PORT`
-- `YAVER_CI_SSH_PRIVATE_KEY`
-- `YAVER_CI_SSH_KNOWN_HOSTS`
+- Uncommitted local files remain outside this commit scope:
+  - `desktop/agent/agent_mesh_remote.go`
+  - `desktop/agent/agent_mode.go`
+  - `desktop/agent/completion.go`
+  - `desktop/agent/exec_cmd.go`
+  - `desktop/agent/httpserver.go`
+  - `desktop/agent/mcp_workspace.go`
+  - `desktop/agent/remote_yaver.go`
+  - `desktop/agent/session_cmd.go`
+  - `desktop/agent/stream_cmd.go`
+  - `desktop/agent/tasks.go`
+  - `desktop/agent/template.go`
+  - `mobile/src/lib/quic.ts`
+  - `scripts/test-yaver-to-yaver-local.sh`
+  - `web/next-env.d.ts`
+- Untracked local files remain outside this commit scope:
+  - `desktop/agent/agent_mesh_remote_test.go`
+  - `desktop/agent/agent_mode_template_test.go`
+  - `desktop/agent/code_cmd.go`
+  - `desktop/agent/graph_slice.go`
+  - `desktop/agent/graph_slice_test.go`
+  - `desktop/agent/template_test.go`
 
-## Main Files To Read Next
+## Verification Run For This Slice
 
-- [AI_ARCH.md](/Users/kivanccakmak/Workspace/yaver.io/AI_ARCH.md)
-- [desktop/agent/main.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/main.go)
-- [desktop/agent/auth_recover.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/auth_recover.go)
-- [mobile/src/context/DeviceContext.tsx](/Users/kivanccakmak/Workspace/yaver.io/mobile/src/context/DeviceContext.tsx)
-- [mobile/app/(tabs)/autodev.tsx](/Users/kivanccakmak/Workspace/yaver.io/mobile/app/(tabs)/autodev.tsx)
-- [mobile/src/components/AutoIdeasPane.tsx](/Users/kivanccakmak/Workspace/yaver.io/mobile/src/components/AutoIdeasPane.tsx)
-- [web/components/dashboard/ConsoleView.tsx](/Users/kivanccakmak/Workspace/yaver.io/web/components/dashboard/ConsoleView.tsx)
-- [web/lib/agent-client.ts](/Users/kivanccakmak/Workspace/yaver.io/web/lib/agent-client.ts)
-- [scripts/test-remote-infra-ci.sh](/Users/kivanccakmak/Workspace/yaver.io/scripts/test-remote-infra-ci.sh)
-- [scripts/test-anthropic-local.sh](/Users/kivanccakmak/Workspace/yaver.io/scripts/test-anthropic-local.sh)
-
-## Local Anthropic Path
-
-- Run `./scripts/run-ci-local.sh anthropic-local` for a manual local-only Claude-backed validation path.
-- It drives real Yaver HTTP endpoints instead of GitHub Actions and never uses repository secrets.
-- It currently covers `autoinit` through the daemon; extend it to `autoideas` or `autodev` once the local spend profile is acceptable.
-
-## Local Yaver-To-Yaver Path
-
-- Run `./scripts/run-ci-local.sh peer-local` for a local controller→target Yaver harness.
-- It starts two local agents with separate homes, puts the target on port `18080`, and exercises real `yaver ... --to <device>` flows.
-- Use environment overrides like `RUNNER_SPEC`, `MODEL_SPEC`, `PLANNER_SPEC`, and `IMPLEMENTER_SPEC` to validate non-Anthropic runners or hybrid splits.
+- `go test -run 'TestGuestResourcePresetInference|TestGuestPromptPrefixIncludesResourcePolicies|TestCollectAPIKeysForGuestBlocksHostKeysByDefault|TestTaskEnvStripsSharedSecretEnvForGuests|TestTaskEnvKeepsHostKeysWhenExplicitlyAllowed' ./...` in `desktop/agent`
+- `npx tsc --noEmit` in `mobile`
+- `npx tsc --noEmit` in `web`

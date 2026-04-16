@@ -509,8 +509,12 @@ export const getGuestConfig = query({
       deviceIds?: string[];
       shareAllMachines?: boolean;
       machineIds?: Id<"cloudMachines">[];
+      resourcePreset?: string;
       useHostApiKeys?: boolean;
       allowGuestProvidedApiKeys?: boolean;
+      allowDesktopControl?: boolean;
+      allowBrowserControl?: boolean;
+      allowTunnelForward?: boolean;
       requireIsolation?: boolean;
       cpuLimitPercent?: number;
       ramLimitMb?: number;
@@ -537,8 +541,18 @@ export const getGuestConfig = query({
         deviceIds,
         shareAllMachines: grant?.shareAllMachines ?? false,
         machineIds,
+        resourcePreset:
+          grant?.resourcePreset ??
+          (
+            grant?.allowDesktopControl
+              ? (grant?.useHostApiKeys ? "desktop-control-with-host-keys" : "desktop-control")
+              : (grant?.useHostApiKeys ? "machine-with-host-keys" : "machine-only")
+          ),
         useHostApiKeys: grant?.useHostApiKeys ?? false,
         allowGuestProvidedApiKeys: grant?.allowGuestProvidedApiKeys ?? true,
+        allowDesktopControl: grant?.allowDesktopControl ?? false,
+        allowBrowserControl: grant?.allowBrowserControl ?? (grant?.allowDesktopControl ?? false),
+        allowTunnelForward: grant?.allowTunnelForward ?? false,
         requireIsolation: grant?.requireIsolation ?? false,
         cpuLimitPercent: grant?.cpuLimitPercent,
         ramLimitMb: grant?.ramLimitMb,
@@ -565,8 +579,12 @@ export const updateGuestConfig = mutation({
     deviceIds: v.optional(v.array(v.string())),
     shareAllMachines: v.optional(v.boolean()),
     machineIds: v.optional(v.array(v.id("cloudMachines"))),
+    resourcePreset: v.optional(v.string()),
     useHostApiKeys: v.optional(v.boolean()),
     allowGuestProvidedApiKeys: v.optional(v.boolean()),
+    allowDesktopControl: v.optional(v.boolean()),
+    allowBrowserControl: v.optional(v.boolean()),
+    allowTunnelForward: v.optional(v.boolean()),
     requireIsolation: v.optional(v.boolean()),
     cpuLimitPercent: v.optional(v.number()),
     ramLimitMb: v.optional(v.number()),
@@ -640,6 +658,41 @@ export const updateGuestConfig = mutation({
         throw new Error(`Invalid priorityMode: ${args.priorityMode}. Must be one of: ${validPriorities.join(", ")}`);
       }
     }
+    if (args.resourcePreset !== undefined) {
+      const validResourcePresets = [
+        "machine-only",
+        "machine-with-host-keys",
+        "desktop-control",
+        "desktop-control-with-host-keys",
+      ];
+      if (!validResourcePresets.includes(args.resourcePreset)) {
+        throw new Error(`Invalid resourcePreset: ${args.resourcePreset}. Must be one of: ${validResourcePresets.join(", ")}`);
+      }
+    }
+
+    let presetDefaults: {
+      useHostApiKeys: boolean;
+      allowDesktopControl: boolean;
+      allowBrowserControl: boolean;
+    } | null = null;
+    if (args.resourcePreset === "machine-only") {
+      presetDefaults = { useHostApiKeys: false, allowDesktopControl: false, allowBrowserControl: false };
+    } else if (args.resourcePreset === "machine-with-host-keys") {
+      presetDefaults = { useHostApiKeys: true, allowDesktopControl: false, allowBrowserControl: false };
+    } else if (args.resourcePreset === "desktop-control") {
+      presetDefaults = { useHostApiKeys: false, allowDesktopControl: true, allowBrowserControl: true };
+    } else if (args.resourcePreset === "desktop-control-with-host-keys") {
+      presetDefaults = { useHostApiKeys: true, allowDesktopControl: true, allowBrowserControl: true };
+    }
+    if (presetDefaults && args.useHostApiKeys !== undefined && args.useHostApiKeys !== presetDefaults.useHostApiKeys) {
+      throw new Error("useHostApiKeys conflicts with resourcePreset");
+    }
+    if (presetDefaults && args.allowDesktopControl !== undefined && args.allowDesktopControl !== presetDefaults.allowDesktopControl) {
+      throw new Error("allowDesktopControl conflicts with resourcePreset");
+    }
+    if (presetDefaults && args.allowBrowserControl !== undefined && args.allowBrowserControl !== presetDefaults.allowBrowserControl) {
+      throw new Error("allowBrowserControl conflicts with resourcePreset");
+    }
 
     // Build patch object — only include provided fields
     const patch: Record<string, unknown> = {};
@@ -665,12 +718,22 @@ export const updateGuestConfig = mutation({
     }
 
     const grantPatch: Record<string, unknown> = { updatedAt: now };
+    if (args.resourcePreset !== undefined) grantPatch.resourcePreset = args.resourcePreset;
     if (args.shareAllDevices !== undefined) grantPatch.shareAllDevices = args.shareAllDevices;
     if (args.shareAllMachines !== undefined) grantPatch.shareAllMachines = args.shareAllMachines;
-    if (args.useHostApiKeys !== undefined) grantPatch.useHostApiKeys = args.useHostApiKeys;
+    if (presetDefaults) {
+      grantPatch.useHostApiKeys = presetDefaults.useHostApiKeys;
+      grantPatch.allowDesktopControl = presetDefaults.allowDesktopControl;
+      grantPatch.allowBrowserControl = presetDefaults.allowBrowserControl;
+    } else {
+      if (args.useHostApiKeys !== undefined) grantPatch.useHostApiKeys = args.useHostApiKeys;
+      if (args.allowDesktopControl !== undefined) grantPatch.allowDesktopControl = args.allowDesktopControl;
+      if (args.allowBrowserControl !== undefined) grantPatch.allowBrowserControl = args.allowBrowserControl;
+    }
     if (args.allowGuestProvidedApiKeys !== undefined) {
       grantPatch.allowGuestProvidedApiKeys = args.allowGuestProvidedApiKeys;
     }
+    if (args.allowTunnelForward !== undefined) grantPatch.allowTunnelForward = args.allowTunnelForward;
     if (args.requireIsolation !== undefined) grantPatch.requireIsolation = args.requireIsolation;
     if (args.cpuLimitPercent !== undefined) grantPatch.cpuLimitPercent = args.cpuLimitPercent;
     if (args.ramLimitMb !== undefined) grantPatch.ramLimitMb = args.ramLimitMb;
