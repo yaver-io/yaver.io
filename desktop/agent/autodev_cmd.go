@@ -103,6 +103,8 @@ func runAutodevOrTest(kind string, args []string) {
 	hybrid := fs.Bool("hybrid", false, "Shortcut for --engine hybrid")
 	codex := fs.Bool("codex", false, "Shortcut for --engine codex")
 	model := fs.String("model", "", "Model alias for the runner (claude only): sonnet|opus|haiku, or a full model id like 'claude-opus-4-6'. Sonnet is the cheap default and burns the weekly bucket ~5x slower than Opus.")
+	planner := fs.String("planner", "", "Hybrid mode: planner agent (claude|claude:opus|claude:sonnet|codex). When set, forces --engine hybrid. Combine with --implementer for full agent×model layering (e.g. --planner claude:opus --implementer codex = 'Opus plans, Codex implements').")
+	implementer := fs.String("implementer", "", "Hybrid mode: implementer agent (claude|claude:sonnet|codex|aider-ollama|aider-ollama:<model>). When set, forces --engine hybrid. Default in hybrid is aider-ollama; pick claude:sonnet for cheap-but-quality, codex for token efficiency, opus for highest stakes.")
 	autoIdeas := fs.Int("auto-ideas", 999, "Maximum number of times the loop is allowed to auto-generate a fresh batch of ideas when work runs out. Default 999 = effectively unlimited so an overnight run keeps producing + implementing features until the deadline. 0 = exit the moment the checklist empties (legacy).")
 	branch := fs.String("branch", "", "Git branch to ship to (default: main)")
 	autoBranch := fs.Bool("auto-branch", false, "Work on a dedicated 'autodev/<loop>-<YYYYMMDD>' branch instead of main. Creates it from main if it doesn't exist. Useful for overnight runs you want to PR-review before merging.")
@@ -136,6 +138,19 @@ func runAutodevOrTest(kind string, args []string) {
 	}
 	if *codex {
 		*engine = "codex"
+	}
+	// --planner / --implementer compose into hybrid layering. Either
+	// flag forces engine=hybrid; spawnHybrid reads the env vars below
+	// and overrides HybridSpec.Planner / Implementer / Model so the
+	// user gets per-tier agent×model control.
+	if *planner != "" || *implementer != "" {
+		*engine = "hybrid"
+		if *planner != "" {
+			os.Setenv("YAVER_HYBRID_PLANNER", *planner)
+		}
+		if *implementer != "" {
+			os.Setenv("YAVER_HYBRID_IMPLEMENTER", *implementer)
+		}
 	}
 	switch strings.ToLower(strings.TrimSpace(*engine)) {
 	case "", "claude", "claude-code":

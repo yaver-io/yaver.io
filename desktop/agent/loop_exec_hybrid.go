@@ -23,15 +23,23 @@ func spawnHybrid(ctx context.Context, l *LoopState, workDir string, report *Heur
 		return nil, err
 	}
 
+	// Per-tier agent×model layering. The user can compose any
+	// combination via --planner / --implementer (env-injected by
+	// autodev_cmd) so e.g. "Opus plans, Codex implements" is one
+	// flag set away. Empty env → applyHybridDefaults picks the
+	// classic "claude + aider-ollama" cheap pair.
+	plannerSpec := strings.TrimSpace(os.Getenv("YAVER_HYBRID_PLANNER"))
+	implementerSpec := strings.TrimSpace(os.Getenv("YAVER_HYBRID_IMPLEMENTER"))
+	plannerAgent, _ := splitAgentSpec(plannerSpec)
+	implAgent, implModel := splitAgentSpec(implementerSpec)
+
 	spec := HybridSpec{
-		WorkDir: workDir,
-		Prompt:  prompt,
-		// Planner + Implementer left empty → applyHybridDefaults picks
-		// "claude" + "aider-ollama". Model/BaseURL inherit from the
-		// loop spec when set so users keep the same overrides they
-		// already use for `aider-ollama` runner kicks.
-		Model:   l.Spec.Think.Model,
-		BaseURL: l.Spec.Think.BaseURL,
+		WorkDir:     workDir,
+		Prompt:      prompt,
+		Planner:     plannerAgent,
+		Implementer: implAgent,
+		Model:       firstNonEmpty(implModel, l.Spec.Think.Model),
+		BaseURL:     l.Spec.Think.BaseURL,
 		// One kick = one small chunk of work; the loop's repetition
 		// does the long-horizon planning, not a single planner call.
 		MaxSubtasks: 5,
@@ -132,4 +140,34 @@ func defaultStr(v, fallback string) string {
 	}
 	return v
 }
+
+// splitAgentSpec parses "agent[:model]" into (agent, model). Model
+// aliases (sonnet/opus/haiku) are expanded to current generation
+// claude model ids; other strings pass through verbatim so users
+// can pass full ids ("claude-opus-4-6") or ollama models
+// ("ollama_chat/qwen2.5-coder:14b").
+func splitAgentSpec(spec string) (agent, model string) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return "", ""
+	}
+	parts := strings.SplitN(spec, ":", 2)
+	agent = strings.ToLower(parts[0])
+	if len(parts) == 1 {
+		return agent, ""
+	}
+	model = parts[1]
+	if agent == "claude" || agent == "claude-code" {
+		switch strings.ToLower(model) {
+		case "sonnet":
+			model = "claude-sonnet-4-6"
+		case "opus":
+			model = "claude-opus-4-6"
+		case "haiku":
+			model = "claude-haiku-4-5"
+		}
+	}
+	return agent, model
+}
+
 
