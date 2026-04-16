@@ -385,10 +385,10 @@ func (bs *bootstrapHTTPServer) handleInfo(w http.ResponseWriter, r *http.Request
 	hostname, _ := os.Hostname()
 	// Include the passkey + public key so the mobile app can pair
 	// over a direct HTTP connection without needing to receive the
-	// UDP beacon. iOS Release builds don't always deliver beacons
-	// (multicast entitlement), and Convex-known devices are marked
-	// online if /info responds — so the relay bootstrap-probe path
-	// skips them. Returning the passkey here is the fallback.
+	// UDP beacon. Do NOT reveal the passkey on proxied requests:
+	// relays and reverse proxies make the endpoint reachable from
+	// wider networks, so returning the active bootstrap secret there
+	// turns discovery into takeover.
 	resp := map[string]interface{}{
 		"ok":        true,
 		"mode":      "bootstrap",
@@ -396,8 +396,8 @@ func (bs *bootstrapHTTPServer) handleInfo(w http.ResponseWriter, r *http.Request
 		"hostname":  hostname,
 		"version":   version,
 	}
-	// Current passkey (if one is live and not suppressed)
-	if sess := activePairingSnapshot(); sess != nil && os.Getenv("YAVER_BOOTSTRAP_NO_BEACON_PK") != "1" {
+	// Current passkey (only on direct requests, and only if not suppressed).
+	if sess := activePairingSnapshot(); sess != nil && os.Getenv("YAVER_BOOTSTRAP_NO_BEACON_PK") != "1" && r.Header.Get("X-Forwarded-For") == "" {
 		resp["bootstrapPasskey"] = sess.Code
 	}
 	// Device's public key so mobile can do NaCl box encryption
@@ -432,6 +432,7 @@ func (bs *bootstrapHTTPServer) handlePairEncrypted(w http.ResponseWriter, r *htt
 		return
 	}
 	var body struct {
+		Code            string `json:"code"`
 		Encrypted       string `json:"encrypted"`
 		SenderPublicKey string `json:"senderPublicKey"`
 	}
@@ -439,6 +440,28 @@ func (bs *bootstrapHTTPServer) handlePairEncrypted(w http.ResponseWriter, r *htt
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
+	if strings.TrimSpace(body.Code) == "" {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "pair code required"})
+		return
+	}
+	pairingMu.Lock()
+	session := activePairing
+	if session == nil || session.Code != strings.ToUpper(strings.TrimSpace(body.Code)) {
+		pairingMu.Unlock()
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "invalid or inactive pairing code"})
+		return
+	}
+	if time.Now().After(session.ExpiresAt) {
+		pairingMu.Unlock()
+		jsonReply(w, http.StatusGone, map[string]string{"error": "pairing code expired"})
+		return
+	}
+	if session.ReceivedToken != "" {
+		pairingMu.Unlock()
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "token already received"})
+		return
+	}
+	pairingMu.Unlock()
 	if body.Encrypted == "" || body.SenderPublicKey == "" {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "encrypted and senderPublicKey required"})
 		return
@@ -489,6 +512,7 @@ func (bs *bootstrapHTTPServer) handlePairEncrypted(w http.ResponseWriter, r *htt
 	// Signal the bootstrap loop to exit and re-exec.
 	pairingMu.Lock()
 	if activePairing != nil {
+		activePairing.ReceivedURL = defaultConvexSiteURL
 		activePairing.ReceivedToken = token
 		select {
 		case <-activePairing.done:
