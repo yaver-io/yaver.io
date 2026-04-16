@@ -8019,10 +8019,12 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		switch strings.ToLower(strings.TrimSpace(args.Engine)) {
 		case "", "claude", "claude-code":
 			// keep args.Runner
+		case "codex":
+			args.Runner = "codex"
 		case "hybrid":
 			args.Runner = "hybrid"
 		default:
-			return mcpToolError("unknown engine: " + args.Engine + " (want claude|hybrid)")
+			return mcpToolError("unknown engine: " + args.Engine + " (want claude|codex|hybrid)")
 		}
 		autoIdeasMCP := 999
 		if args.AutoIdeas != nil {

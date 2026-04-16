@@ -279,6 +279,25 @@ exhausting Claude's 5h session window mid-run.
       runner so mobile / web can display "Claude session: 4h12m
       remaining" alongside the start form.
 
+## Codex parity (Apr 2026)
+
+`--engine codex` now routes all four entry points (autodev /
+autoinit / autoideas / autotest) through `spawnCodex` and through
+`RunAIGenerator`'s codex adapter, so codex CLI users get the same
+flag set. Two follow-ons remain to bring it to full Claude parity:
+
+- [ ] Codex live event publishing: parse `codex --json` (or
+      whatever the current CLI's structured-event flag is) and emit
+      `runner_action` / `runner_text` events through
+      AutodevPublishRunnerAction / Text — same chat-bubble UX
+      Claude already gets via parseClaudeStream. Today codex output
+      shows up as legacy "line" frames inside the yaver_say /
+      runner_result bubble pair, which works but is less rich.
+- [ ] Codex session-window tracking equivalent to Claude's: detect
+      remaining quota on Plus / Pro plans and surface "codex
+      window: 41 % used" lines per kick, same way the planned
+      Claude-window pacing work will work.
+
 ## Notes for whoever runs this on another machine
 
 * Build: `cd desktop/agent && go build ./...`

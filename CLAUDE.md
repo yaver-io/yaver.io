@@ -837,6 +837,20 @@ The runner prompt opens with these three sections under a `--- CACHED PROJECT CO
 
 **Run `yaver autoinit` once when adopting a new project** — the wall-clock + token cost of every subsequent autodev / autoideas / autotest kick drops sharply because Claude reads cached context instead of grepping the codebase from scratch.
 
+## Engine selection (claude vs codex vs hybrid)
+
+`yaver autodev` / `yaver autoinit` / `yaver autoideas` / `yaver autotest` all accept the same `--engine` flag and the matching `engine` field over HTTP / MCP. The choice has real cost/throughput consequences:
+
+| Engine | When to use | Why |
+|--------|-------------|-----|
+| `claude` (default) | High-stakes commits, complex refactors, architecture work, anything where being right matters more than throughput. | Highest quality (~67% win rate vs Codex in blind tests, 80.9% SWE-bench). Strongest at long-context reasoning. |
+| `codex` (also `--codex`) | Daily-volume work, autonomous DevOps, anything you'd run for hours overnight. Switch here when your Claude Max weekly bucket is depleted. | ~4× fewer tokens per task → ~4× more headroom on equivalent plans. Leads Terminal-Bench 2.0 (77.3%). Slightly lower code quality but actually usable when limits matter. |
+| `hybrid` (also `--hybrid`) | Long unattended runs where you want to amortise a planner call across many small implementations. | Claude plans up to 5 file-scoped subtasks per kick, local Aider+Ollama implements them. ~80–95 % cheaper than pure Claude. Quality varies with the local model. |
+
+A useful pattern (community consensus from Apr 2026): "Codex for keystrokes, Claude Code for commits" — daily volume on Codex, high-stakes changes on Claude Code. With yaver this maps to: `yaver autoideas --engine codex` to keep the queue full overnight, then `yaver autodev --engine claude` against the curated subset for the actual implementation.
+
+The mobile / web `Auto Dev` start form pulls `/autodev/options` to grey out engines whose CLIs aren't installed, so users never pick a runner the machine can't satisfy.
+
 ## Container Sandbox (Optional Task Isolation)
 
 Run AI agent tasks inside Docker containers for filesystem isolation. **Optional and disabled by default** — the default mode runs tasks directly on the host (unchanged behavior).

@@ -92,15 +92,22 @@ func BuildAutodevOptions() autodevOptions {
 	engines := []autodevEngineOption{
 		{
 			Value:       "claude",
-			Label:       "Claude Code (recommended)",
-			Description: "Claude Code writes the code end-to-end. Highest quality, highest API cost.",
+			Label:       "Claude Code",
+			Description: "Claude Code writes the code end-to-end. Highest quality (67% win rate vs Codex in blind tests, 80.9% SWE-bench), strongest at architecture / refactoring / long-context. Burns weekly limits fast on Max plans.",
 			Available:   hasClaude,
 			Missing:     missing("claude"),
 		},
 		{
+			Value:       "codex",
+			Label:       "OpenAI Codex",
+			Description: "OpenAI Codex CLI. ~4x fewer tokens per task than Claude Code → way more headroom on Plus/Pro plans. Leads Terminal-Bench 2.0 (77.3%), better at autonomous DevOps tasks. Slightly lower code quality than Claude Code but actually usable when limits matter. Recommended fallback when your Claude weekly is depleted.",
+			Available:   hasCodex,
+			Missing:     missing("codex"),
+		},
+		{
 			Value:       "hybrid",
 			Label:       "Hybrid (Claude planner + local Aider/Ollama)",
-			Description: "Claude plans up to 5 file-scoped subtasks per kick; a local Ollama model executes them via Aider. ~80–95 % cheaper, quality varies with the local model.",
+			Description: "Claude plans up to 5 file-scoped subtasks per kick; a local Ollama model executes them via Aider. ~80–95 % cheaper, quality varies with the local model. Best for overnight runs where the planner cost is amortised across many local-model implementations.",
 			Available:   hasClaude && hasAider && hasOllama,
 			Missing:     missing("claude", "aider", "ollama"),
 		},
