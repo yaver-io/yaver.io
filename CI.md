@@ -1,225 +1,73 @@
-# Yaver CI
+# CI / Validation Notes
 
-This document explains Yaver's GitHub Actions setup, which workflows need secrets, and how to reproduce the important checks locally.
+## Verified
 
-## At a Glance
+- `cd mobile && npx tsc --noEmit`
+- `cd web && npx tsc --noEmit`
+- `cd e2e && E2E_SKIP_LIVE_AUTH=1 npx playwright test tests/dashboard-autodev.spec.ts`
+- `cd desktop/agent && go test -run 'TestRenderStreamEvent|TestLogStream' -count=1`
+- `bash -n scripts/test-yaver-to-yaver-local.sh`
 
-Yaver has three CI layers:
+## Fixed During Validation
 
-- `CI` in [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
-  Runs the standard PR/build/test pipeline for Go, mobile, web, backend, SDKs, and agent E2E.
-- `autodev-smoke` in [`.github/workflows/autodev-smoke.yml`](.github/workflows/autodev-smoke.yml)
-  Verifies CLI planning surfaces without burning model credits.
-- `runner-integrations` in [`.github/workflows/runner-integrations.yml`](.github/workflows/runner-integrations.yml)
-  Exercises Yaver as the wrapper around real runner CLIs like Claude Code, Codex, OpenCode, and local Ollama.
+- `desktop/agent/remote_yaver.go`
+  yaver-to-yaver `--to` calls now try relay first and fall back to direct HTTP instead of hard-failing on a dead relay path.
+- `desktop/agent/stream_cmd.go`
+  remote stream tailing now uses the same relay-to-direct fallback path.
+- `scripts/test-yaver-to-yaver-local.sh`
+  always builds a fresh binary instead of trusting a stale `desktop/agent/yaver`.
+- `scripts/test-yaver-to-yaver-local.sh`
+  now uses the full target device id for remote calls, and the truncated 8-char id only for inventory matching.
+- `scripts/test-yaver-to-yaver-local.sh`
+  can reuse an already-running local agent on `:18080` as the target, which avoids false failures when this machine already has Yaver running.
 
-There are also heavier or specialized workflows:
+## Real End-to-End Result
 
-- [`.github/workflows/autodev-e2e.yml`](.github/workflows/autodev-e2e.yml)
-- [`.github/workflows/hybrid-local.yml`](.github/workflows/hybrid-local.yml)
-- [`.github/workflows/test-suite.yml`](.github/workflows/test-suite.yml)
-
-## Required Secrets
-
-These are the main secrets the repo expects today.
-
-### Runner Integration Secrets
-
-These power real wrapper tests in `runner-integrations` and `autodev-e2e`.
-
-- `ANTHROPIC_API_KEY`
-  Required for Claude Code wrapper tests.
-- `OPENAI_API_KEY`
-  Required for Codex and OpenCode wrapper tests when those are configured against OpenAI.
-
-### Agent / Backend Secrets
-
-These are used by the broader integration suite.
-
-- `CONVEX_SITE_URL`
-- `RELAY_QUIC_ADDR`
-- `RELAY_HTTP_URL`
-- `RELAY_PASSWORD`
-- `CF_TUNNEL_URL`
-- `CF_ACCESS_CLIENT_ID`
-- `CF_ACCESS_CLIENT_SECRET`
-- `TAILSCALE_AUTHKEY`
-
-### Recommended GitHub Environments
-
-For provider-backed workflows, keep secrets in protected environments instead of broad repo scope.
-
-- `anthropic-prod`
-  Used by `autodev-e2e`.
-- `testing`
-  Used by `test-suite`.
-
-You can require manual approval for these environments before the secrets are exposed to a runner.
-
-## How To Set Secrets
-
-In GitHub:
-
-1. Open the repo.
-2. Go to `Settings -> Secrets and variables -> Actions`.
-3. Add the repository secret or environment secret.
-4. If you want approval gates, create the environment first under `Settings -> Environments`.
-
-With GitHub CLI:
+I ran:
 
 ```bash
-gh secret set ANTHROPIC_API_KEY --repo kivanccakmak/yaver.io
-gh secret set OPENAI_API_KEY --repo kivanccakmak/yaver.io
-gh secret set CONVEX_SITE_URL --repo kivanccakmak/yaver.io
+RUNNER_SPEC=codex ./scripts/test-yaver-to-yaver-local.sh autodev
 ```
 
-For environment-scoped secrets:
+What succeeded:
 
-```bash
-gh secret set ANTHROPIC_API_KEY --env anthropic-prod --repo kivanccakmak/yaver.io
-gh secret set OPENAI_API_KEY --env testing --repo kivanccakmak/yaver.io
+- controller agent came up on `:18081`
+- existing local agent on `:18080` was reused as the target
+- remote `yaver autodev ... --to <device>` reached the correct target
+- target accepted `POST /autodev/start`
+- fixture repo got `.autodev.loop.yaml` created
+- authenticated `/autodev/loops` showed `fixture-autodev`
+
+What failed:
+
+- the loop settled in:
+
+```json
+{
+  "name": "fixture-autodev",
+  "status": "stuck",
+  "iterationCount": 7,
+  "lastSummary": "AI runner failed",
+  "runner": "codex"
+}
 ```
 
-## What Each Workflow Covers
+- fixture code never changed
+- no `autodev_fixture-autodev-latest.log` file was created under `/tmp/yaver`
 
-### `ci.yml`
+## Current Highest-Signal Blocker
 
-Baseline repo checks:
+The remaining blocker is no longer transport or routing. It is the actual runner execution path for remote/local autodev on this machine:
 
-- path-filtered PR/build/test jobs
-- Go unit tests and builds
-- mobile TypeScript checks
-- backend typecheck
-- web build
-- SDK tests
-- agent E2E
+- autodev loop starts
+- loop kicks repeatedly
+- runner resolves to `codex`
+- loop ends `stuck` with `AI runner failed`
 
-### `autodev-smoke.yml`
+This is the next thing to debug.
 
-Fast validation of CLI surfaces:
+## Next Checks
 
-- `yaver autodev --plan`
-- `yaver autotest --plan`
-- `yaver autoideas --plan`
-- `yaver autoinit --plan`
-- runner override parsing for `codex` and `opencode`
-
-This should stay cheap and safe to run on every PR.
-
-### `runner-integrations.yml`
-
-Real wrapper validation:
-
-- installs the actual runner CLI
-- builds `yaver`
-- runs [scripts/test-runner-integration.sh](scripts/test-runner-integration.sh)
-- checks `autoinit` and `autoideas` through the selected runner
-
-Current runner coverage:
-
-- `claude:sonnet`
-- `codex`
-- `opencode`
-- `ollama:qwen2.5-coder:1.5b`
-
-If the needed API key is not configured, the workflow skips that provider cleanly.
-
-### `autodev-e2e.yml`
-
-Real Anthropic-backed autodev/autoinit/autoideas run against a tiny fixture repo. This costs credits and should remain protected.
-
-### `hybrid-local.yml`
-
-Local-only hybrid path:
-
-- real Ollama
-- real Qwen local model
-- real Aider
-- no frontier API keys required
-
-## How To Run The Important Checks Locally
-
-### Agent build and unit tests
-
-```bash
-cd desktop/agent
-go test ./...
-go build ./...
-```
-
-### Mobile typecheck
-
-```bash
-cd mobile
-npx tsc --noEmit
-```
-
-### Autodev smoke surface
-
-```bash
-cd desktop/agent
-go build -o /tmp/yaver .
-
-mkdir -p /tmp/fixture && cd /tmp/fixture
-git init -q
-git config user.email ci@example.com
-git config user.name ci
-echo '{"name":"fixture","version":"0.0.1"}' > package.json
-echo "- [ ] item one" > remained.md
-git add . && git commit -q -m init
-
-/tmp/yaver autodev fixture --plan --hours 1 --no-autotest
-/tmp/yaver autoideas fixture --plan --hours 1 --runner codex
-/tmp/yaver autoinit fixture --plan --runner opencode
-```
-
-### Real runner wrapper tests
-
-Build Yaver once:
-
-```bash
-cd desktop/agent
-go build -o /tmp/yaver .
-```
-
-Run the shared wrapper script:
-
-```bash
-YAVER_BIN=/tmp/yaver bash scripts/test-runner-integration.sh codex
-YAVER_BIN=/tmp/yaver bash scripts/test-runner-integration.sh claude:sonnet
-YAVER_BIN=/tmp/yaver bash scripts/test-runner-integration.sh opencode
-YAVER_BIN=/tmp/yaver bash scripts/test-runner-integration.sh ollama:qwen2.5-coder:1.5b
-```
-
-Environment requirements:
-
-- `ANTHROPIC_API_KEY` for Claude Code
-- `OPENAI_API_KEY` for Codex and usually OpenCode
-- local `ollama` daemon plus the requested model for Ollama runs
-
-### Full integration suite
-
-```bash
-./scripts/test-suite.sh
-```
-
-Or use the helper:
-
-```bash
-./scripts/run-ci-local.sh
-```
-
-## How To Add A New Runner To CI
-
-1. Make sure the runner exists in [desktop/agent/tasks.go](desktop/agent/tasks.go).
-2. Add runtime auth detection in [desktop/agent/runner_auth.go](desktop/agent/runner_auth.go) if needed.
-3. Make sure `RunAIGenerator` supports the runner in [desktop/agent/ai_generator.go](desktop/agent/ai_generator.go).
-4. Add a matrix entry in [`.github/workflows/runner-integrations.yml`](.github/workflows/runner-integrations.yml).
-5. If it needs credentials, add a dedicated secret and document it here.
-6. Verify it locally with [scripts/test-runner-integration.sh](scripts/test-runner-integration.sh).
-
-## Notes
-
-- Yaver does not create GitHub secrets by itself. Workflow code expects them to exist already.
-- `runner-integrations` is intended to prove Yaver works as the orchestrator/wrapper, not just that a provider key is valid.
-- Keep expensive provider-backed workflows gated. Cheap flag parsing and local checks should remain in default PR CI.
+1. pull the live `autodev:fixture-autodev` stream with auth and capture the exact Codex failure text
+2. inspect the autodev kick path for why HTTP-started loops are not leaving a `/tmp/yaver/autodev_fixture-autodev-*.log`
+3. run the same peer-local autodev harness with `RUNNER_SPEC=claude` to separate a Codex-specific failure from a generic HTTP-started loop failure
