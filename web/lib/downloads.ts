@@ -15,6 +15,10 @@ export type DownloadSlug =
   | "linux-appimage-arm64"
   | "linux-deb-amd64"
   | "linux-deb-arm64"
+  | "linux-rpm-amd64"
+  | "linux-rpm-arm64"
+  | "linux-tarball-amd64"
+  | "linux-tarball-arm64"
   | "macos-arm64"
   | "windows-x64";
 
@@ -26,6 +30,10 @@ export const DOWNLOAD_SLUGS: Record<
   "linux-appimage-arm64": { platform: "linux", arch: "arm64", format: "appimage" },
   "linux-deb-amd64": { platform: "linux", arch: "amd64", format: "deb" },
   "linux-deb-arm64": { platform: "linux", arch: "arm64", format: "deb" },
+  "linux-rpm-amd64": { platform: "linux", arch: "amd64", format: "rpm" },
+  "linux-rpm-arm64": { platform: "linux", arch: "arm64", format: "rpm" },
+  "linux-tarball-amd64": { platform: "linux", arch: "amd64", format: "tarball" },
+  "linux-tarball-arm64": { platform: "linux", arch: "arm64", format: "tarball" },
   "macos-arm64": { platform: "macos", arch: "arm64", format: "dmg" },
   "windows-x64": { platform: "windows", arch: "amd64", format: "exe" },
 };

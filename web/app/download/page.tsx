@@ -24,7 +24,21 @@ const linuxArtifacts = [
     description: "Native Debian and Ubuntu package for ARM64 Linux machines.",
     slug: "linux-deb-arm64" as const,
     fallbackLabel: "arm64",
-    installHint: "sudo apt install ./yaver-arm64.deb",
+    installHint: "sudo dpkg -i yaver_*_arm64.deb  # or: sudo apt install ./yaver_*_arm64.deb",
+  },
+  {
+    title: "Linux ARM64 .rpm",
+    description: "Fedora, RHEL, openSUSE — CLI package for aarch64 machines.",
+    slug: "linux-rpm-arm64" as const,
+    fallbackLabel: "arm64",
+    installHint: "sudo rpm -i yaver_*_aarch64.rpm  # or: sudo dnf install ./yaver_*_aarch64.rpm",
+  },
+  {
+    title: "Linux ARM64 tarball",
+    description: "Raw binary tarball for any ARM64 Linux. Unzip and move to PATH.",
+    slug: "linux-tarball-arm64" as const,
+    fallbackLabel: "arm64",
+    installHint: "tar xzf yaver-*-linux-arm64.tar.gz && sudo mv yaver-linux-arm64 /usr/local/bin/yaver",
   },
   {
     title: "Linux x64 AppImage",
@@ -38,7 +52,21 @@ const linuxArtifacts = [
     description: "Native Debian and Ubuntu package for direct install.",
     slug: "linux-deb-amd64" as const,
     fallbackLabel: "x64 fallback",
-    installHint: "sudo apt install ./yaver-amd64.deb",
+    installHint: "sudo dpkg -i yaver_*_amd64.deb  # or: sudo apt install ./yaver_*_amd64.deb",
+  },
+  {
+    title: "Linux x64 .rpm",
+    description: "Fedora, RHEL, openSUSE — CLI package for x86_64 machines.",
+    slug: "linux-rpm-amd64" as const,
+    fallbackLabel: "x64 fallback",
+    installHint: "sudo rpm -i yaver_*_x86_64.rpm  # or: sudo dnf install ./yaver_*_x86_64.rpm",
+  },
+  {
+    title: "Linux x64 tarball",
+    description: "Raw binary tarball for any x86_64 Linux. Unzip and move to PATH.",
+    slug: "linux-tarball-amd64" as const,
+    fallbackLabel: "x64 fallback",
+    installHint: "tar xzf yaver-*-linux-amd64.tar.gz && sudo mv yaver-linux-amd64 /usr/local/bin/yaver",
   },
 ];
 
@@ -119,6 +147,28 @@ export default async function DownloadPage() {
         "brew install kivanccakmak/yaver/yaver",
         "yaver auth",
         "yaver serve",
+      ],
+    },
+    {
+      label: "One-liner (any Linux, auto-detect arch)",
+      commands: [
+        "curl -fsSL https://yaver.io/install.sh | sh",
+        "yaver auth && yaver serve",
+      ],
+    },
+    {
+      label: "dnf / rpm (Fedora / RHEL / openSUSE)",
+      commands: [
+        `curl -L https://yaver.io/download/linux-rpm-amd64 -o yaver.rpm`,
+        "sudo dnf install ./yaver.rpm  # or: sudo rpm -i yaver.rpm",
+      ],
+    },
+    {
+      label: "dpkg (offline .deb install)",
+      commands: [
+        `curl -L https://yaver.io/download/${debSlug} -o ${debName}`,
+        `sudo dpkg -i ${debName}`,
+        "sudo apt-get install -f  # resolve any missing deps",
       ],
     },
   ];
@@ -260,9 +310,10 @@ export default async function DownloadPage() {
               </p>
             )}
             <div className="mt-6 space-y-4">
-              {commandBlocks.slice(0, 2).map((block) => (
-                <CommandCard key={block.label} label={block.label} commands={block.commands} />
-              ))}
+              <CommandCard key={commandBlocks[0].label} label={commandBlocks[0].label} commands={commandBlocks[0].commands} />
+              <CommandCard key={commandBlocks[5].label} label={commandBlocks[5].label} commands={commandBlocks[5].commands} />
+              <CommandCard key={commandBlocks[4].label} label={commandBlocks[4].label} commands={commandBlocks[4].commands} />
+              <CommandCard key={commandBlocks[1].label} label={commandBlocks[1].label} commands={commandBlocks[1].commands} />
             </div>
             <p className="mt-4 text-xs text-surface-500">
               Repo source:{" "}
@@ -278,6 +329,7 @@ export default async function DownloadPage() {
           </div>
 
           <div className="space-y-5">
+            <CommandCard label={commandBlocks[3].label} commands={commandBlocks[3].commands} />
             <CommandCard label={commandBlocks[2].label} commands={commandBlocks[2].commands} />
 
             <div className="rounded-2xl border border-surface-800 bg-surface-900 p-6">

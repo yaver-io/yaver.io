@@ -26,8 +26,10 @@
     "win": {
       "target": ["nsis"],
       "icon": "assets/icon.ico",
-      "signingHashAlgorithms": ["sha256"],
-      "sign": "../../keys/sign-windows.sh"
+      "signtoolOptions": {
+        "signingHashAlgorithms": ["sha256"],
+        "sign": "../../keys/sign-windows.sh"
+      }
     },
     "linux": {
       "target": ["deb", "AppImage"],
@@ -35,9 +37,11 @@
       "icon": "assets/icon.png",
       "executableName": "yaver-desktop",
       "desktop": {
-        "Name": "Yaver",
-        "Comment": "AI agent control panel for your development machine",
-        "Categories": "Development;"
+        "entry": {
+          "Name": "Yaver",
+          "Comment": "AI agent control panel for your development machine",
+          "Categories": "Development;"
+        }
       }
     },
     "deb": {
