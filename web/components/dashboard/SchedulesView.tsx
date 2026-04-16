@@ -30,6 +30,7 @@ export default function SchedulesView() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [mode, setMode] = useState<ScheduleMode>("cron");
@@ -261,6 +262,49 @@ export default function SchedulesView() {
                 {s.lastRunAt && <span>last {s.lastRunAt}</span>}
               </div>
               {s.description && <p className="truncate text-xs text-surface-500">{s.description}</p>}
+              {s.history && s.history.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    className="mt-1 self-start text-[11px] text-surface-400 hover:text-surface-100"
+                    onClick={() =>
+                      setExpanded((prev) => ({ ...prev, [s.id]: !prev[s.id] }))
+                    }
+                  >
+                    {expanded[s.id] ? "Hide" : "Show"} history ({s.history.length})
+                  </button>
+                  {expanded[s.id] && (
+                    <ul className="ml-2 mt-1 flex flex-col gap-0.5 border-l border-surface-800 pl-2 text-[11px]">
+                      {[...s.history].reverse().slice(0, 20).map((h) => {
+                        const statusCls =
+                          h.status === "completed" || h.status === "finished"
+                            ? "text-emerald-300"
+                            : h.status === "failed"
+                              ? "text-red-300"
+                              : "text-surface-400";
+                        const dur = h.durationMs
+                          ? h.durationMs > 1000
+                            ? `${(h.durationMs / 1000).toFixed(1)}s`
+                            : `${h.durationMs}ms`
+                          : "";
+                        return (
+                          <li key={`${s.id}-${h.taskId}`} className="flex flex-wrap gap-2">
+                            <span className={statusCls}>●</span>
+                            <span className="text-surface-400">{h.startedAt}</span>
+                            {dur && <span className="text-surface-500">{dur}</span>}
+                            {typeof h.costUsd === "number" && h.costUsd > 0 && (
+                              <span className="text-surface-500">
+                                ${h.costUsd.toFixed(3)}
+                              </span>
+                            )}
+                            <code className="truncate text-surface-500">{h.taskId.slice(0, 8)}</code>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </>
+              )}
             </li>
           ))}
         </ul>

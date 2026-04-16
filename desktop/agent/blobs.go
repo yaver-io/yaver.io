@@ -43,6 +43,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -378,15 +379,53 @@ func (s *HTTPServer) handleBlobs(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, http.StatusMethodNotAllowed, "use GET")
 			return
 		}
-		items, err := listBlobs(parts[0])
+		all, err := listBlobs(parts[0])
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		// Sort deterministically so ?after=<key> is a stable cursor.
+		sort.Slice(all, func(i, j int) bool { return all[i].Key < all[j].Key })
+
+		limit := 500
+		if q := r.URL.Query().Get("limit"); q != "" {
+			if n, err := strconv.Atoi(q); err == nil && n > 0 && n <= 5000 {
+				limit = n
+			}
+		}
+		after := r.URL.Query().Get("after")
+		start := 0
+		if after != "" {
+			// Advance past the cursor. Linear scan is fine — the
+			// pagination gets invoked per-page, and we've already
+			// walked the whole directory on the line above.
+			for i, m := range all {
+				if m.Key > after {
+					start = i
+					break
+				}
+				// If after matches an existing key, start after it.
+				if m.Key == after {
+					start = i + 1
+				}
+			}
+		}
+		end := start + limit
+		if end > len(all) {
+			end = len(all)
+		}
+		page := all[start:end]
+		nextCursor := ""
+		if end < len(all) {
+			nextCursor = page[len(page)-1].Key
+		}
 		jsonReply(w, http.StatusOK, map[string]interface{}{
-			"ok":     true,
-			"bucket": parts[0],
-			"items":  items,
+			"ok":         true,
+			"bucket":     parts[0],
+			"keys":       page,      // preferred
+			"items":      page,      // back-compat
+			"nextCursor": nextCursor, // empty when no more pages
+			"total":      len(all),
 		})
 		return
 	}
