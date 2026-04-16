@@ -180,6 +180,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/autoideas/start", s.auth(s.handleAutoIdeasStart))
 	mux.HandleFunc("/autoideas/file", s.auth(s.handleAutoIdeasFile))
 	mux.HandleFunc("/autoideas/select", s.auth(s.handleAutoIdeasSelect))
+	mux.HandleFunc("/autoinit/start", s.auth(s.handleAutoInitStart))
+	mux.HandleFunc("/autoinit/status", s.auth(s.handleAutoInitStatus))
 	mux.HandleFunc("/releases/list", s.auth(s.handleReleaseList))
 	mux.HandleFunc("/releases/latest", s.auth(s.handleReleaseLatest))
 	mux.HandleFunc("/releases/bundle", s.auth(s.handleReleaseBundle))
@@ -7861,6 +7863,63 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolJSON(map[string]interface{}{"eventTypes": loadMeetings()})
 	case "meeting_bookings":
 		return mcpToolJSON(map[string]interface{}{"bookings": loadBookings()})
+
+	case "autoinit_start":
+		var spec AutoInitStart
+		_ = json.Unmarshal(call.Arguments, &spec)
+		if spec.WorkDir == "" {
+			return mcpToolError("work_dir required")
+		}
+		if _, err := os.Stat(spec.WorkDir); err != nil {
+			return mcpToolError("work_dir does not exist: " + spec.WorkDir)
+		}
+		project := spec.Project
+		if project == "" {
+			project = filepath.Base(spec.WorkDir)
+		}
+		exe, err := os.Executable()
+		if err != nil {
+			return mcpToolError("find yaver binary: " + err.Error())
+		}
+		args := []string{"autoinit", project}
+		if spec.Prompt != "" {
+			args = append(args, "--prompt", spec.Prompt)
+		}
+		if spec.Engine != "" {
+			args = append(args, "--engine", spec.Engine)
+		}
+		if spec.Output != "" {
+			args = append(args, "--output", spec.Output)
+		}
+		if spec.Force {
+			args = append(args, "--force")
+		}
+		cmd := osexec.Command(exe, args...)
+		cmd.Dir = spec.WorkDir
+		cmd.Stdin = nil
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		if err := cmd.Start(); err != nil {
+			return mcpToolError("spawn autoinit: " + err.Error())
+		}
+		go func() { _ = cmd.Wait() }()
+		return mcpToolJSON(map[string]interface{}{
+			"ok":          true,
+			"loop_name":   project + "-autoinit",
+			"stream_name": "autodev:" + project + "-autoinit",
+			"output":      autoinitOutputPath(spec),
+			"work_dir":    spec.WorkDir,
+		})
+
+	case "autoinit_status":
+		var args struct {
+			WorkDir string `json:"work_dir"`
+		}
+		_ = json.Unmarshal(call.Arguments, &args)
+		if args.WorkDir == "" {
+			return mcpToolError("work_dir required")
+		}
+		return mcpToolJSON(computeAutoInitStatus(args.WorkDir))
 
 	case "autoideas_start":
 		var spec AutoIdeasStart

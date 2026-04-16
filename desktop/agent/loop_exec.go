@@ -1301,6 +1301,11 @@ func buildLoopPrompt(l *LoopState, workDir string, report *HeuristicReport, nudg
 	}
 	reportJSON, _ := json.MarshalIndent(report, "", "  ")
 	parts := []string{
+		// Cached project context (init.md + CLAUDE.md + remained.md)
+		// goes FIRST so the runner sees it before the per-kick task.
+		// Cuts the per-kick re-read tax that was making autodev /
+		// autoideas / autotest slow.
+		autoinitContextBlock(workDir),
 		prompt,
 		"\n\n---\n\n# Heuristic report for this iteration\n\n```json\n" + string(reportJSON) + "\n```",
 	}
