@@ -4,6 +4,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![GitHub stars](https://img.shields.io/github/stars/kivanccakmak/yaver.io?style=social)](https://github.com/kivanccakmak/yaver.io)
 
+Docs: [CI setup](CI.md) · [Test SDK](docs/yaver-test-sdk.md)
+
 **AI writes the code. Yaver tests it on your real device.**
 
 Push your app to a real iPhone in 4 seconds. Shake to report a bug — AI sees your screen,

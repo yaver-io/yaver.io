@@ -65,7 +65,7 @@ func RunAIGenerator(spec AIGeneratorSpec) (string, error) {
 	}
 	cli := pickAIGeneratorCLI(spec)
 	if cli == "" {
-		return "", fmt.Errorf("ai-generator: no AI CLI on PATH (looked for claude, codex, aider, ollama)")
+		return "", fmt.Errorf("ai-generator: no AI CLI on PATH (looked for claude, codex, opencode, aider, ollama)")
 	}
 
 	fmt.Fprintf(os.Stderr, "[ai-gen] using %s\n", cli)
@@ -77,6 +77,8 @@ func RunAIGenerator(spec AIGeneratorSpec) (string, error) {
 		return runAIGeneratorClaude(ctx, spec)
 	case "codex":
 		return runAIGeneratorCodex(ctx, spec)
+	case "opencode":
+		return runAIGeneratorOpenCode(ctx, spec)
 	case "aider":
 		return runAIGeneratorAider(ctx, spec)
 	case "ollama":
@@ -88,9 +90,10 @@ func RunAIGenerator(spec AIGeneratorSpec) (string, error) {
 
 func pickAIGeneratorCLI(spec AIGeneratorSpec) string {
 	have := func(bin string) bool { _, err := osexec.LookPath(bin); return err == nil }
+	runnerID, _ := splitAgentSpec(spec.Runner)
 
 	// Explicit --runner takes precedence.
-	switch strings.ToLower(strings.TrimSpace(spec.Runner)) {
+	switch strings.ToLower(strings.TrimSpace(runnerID)) {
 	case "claude", "claude-code":
 		if have("claude") {
 			return "claude"
@@ -102,6 +105,10 @@ func pickAIGeneratorCLI(spec AIGeneratorSpec) string {
 	case "aider", "aider-ollama":
 		if have("aider") {
 			return "aider"
+		}
+	case "opencode":
+		if have("opencode") {
+			return "opencode"
 		}
 	}
 	if strings.HasPrefix(strings.ToLower(spec.Runner), "ollama") {
@@ -117,7 +124,7 @@ func pickAIGeneratorCLI(spec AIGeneratorSpec) string {
 	}
 
 	// Fallback chain.
-	for _, bin := range []string{"claude", "codex", "aider", "ollama"} {
+	for _, bin := range []string{"claude", "codex", "opencode", "aider", "ollama"} {
 		if have(bin) {
 			return bin
 		}
@@ -126,13 +133,20 @@ func pickAIGeneratorCLI(spec AIGeneratorSpec) string {
 }
 
 func runAIGeneratorClaude(ctx context.Context, spec AIGeneratorSpec) (string, error) {
-	cmd := osexec.CommandContext(ctx, "claude",
+	if err := CheckRunnerReady(GetRunnerConfig("claude"), spec.WorkDir); err != nil {
+		return "", err
+	}
+	args := []string{
 		"--print",
 		"--output-format", "stream-json",
 		"--verbose",
 		"--permission-mode", "bypassPermissions",
 		"--add-dir", spec.WorkDir,
-	)
+	}
+	if _, model := splitAgentSpec(spec.Runner); model != "" {
+		args = append(args, "--model", model)
+	}
+	cmd := osexec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = spec.WorkDir
 	cmd.Stdin = strings.NewReader(spec.Prompt)
 	cmd.Stderr = os.Stderr
@@ -157,6 +171,9 @@ func runAIGeneratorClaude(ctx context.Context, spec AIGeneratorSpec) (string, er
 }
 
 func runAIGeneratorCodex(ctx context.Context, spec AIGeneratorSpec) (string, error) {
+	if err := CheckRunnerReady(GetRunnerConfig("codex"), spec.WorkDir); err != nil {
+		return "", err
+	}
 	cmd := osexec.CommandContext(ctx, "codex", "--quiet", "--full-auto", "-")
 	cmd.Dir = spec.WorkDir
 	cmd.Stdin = strings.NewReader(spec.Prompt)
@@ -170,10 +187,12 @@ func runAIGeneratorCodex(ctx context.Context, spec AIGeneratorSpec) (string, err
 }
 
 func runAIGeneratorAider(ctx context.Context, spec AIGeneratorSpec) (string, error) {
-	cmd := osexec.CommandContext(ctx, "aider",
-		"--no-pretty", "--yes-always",
-		"--message", spec.Prompt,
-	)
+	args := []string{"--no-pretty", "--yes-always"}
+	if _, model := splitAgentSpec(spec.Runner); model != "" {
+		args = append(args, "--model", model)
+	}
+	args = append(args, "--message", spec.Prompt)
+	cmd := osexec.CommandContext(ctx, "aider", args...)
 	cmd.Dir = spec.WorkDir
 	cmd.Stderr = os.Stderr
 	var buf bytes.Buffer
@@ -186,8 +205,8 @@ func runAIGeneratorAider(ctx context.Context, spec AIGeneratorSpec) (string, err
 
 func runAIGeneratorOllama(ctx context.Context, spec AIGeneratorSpec) (string, error) {
 	model := envOr("YAVER_OLLAMA_MODEL", "qwen2.5-coder:14b")
-	if strings.HasPrefix(strings.ToLower(spec.Runner), "ollama:") {
-		model = strings.TrimPrefix(spec.Runner, "ollama:")
+	if _, runnerModel := splitAgentSpec(spec.Runner); runnerModel != "" {
+		model = runnerModel
 	}
 	cmd := osexec.CommandContext(ctx, "ollama", "run", model)
 	cmd.Dir = spec.WorkDir
@@ -197,6 +216,21 @@ func runAIGeneratorOllama(ctx context.Context, spec AIGeneratorSpec) (string, er
 	cmd.Stdout = io.MultiWriter(&buf, os.Stderr)
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("ollama: %w", err)
+	}
+	return buf.String(), nil
+}
+
+func runAIGeneratorOpenCode(ctx context.Context, spec AIGeneratorSpec) (string, error) {
+	if err := CheckRunnerReady(GetRunnerConfig("opencode"), spec.WorkDir); err != nil {
+		return "", err
+	}
+	cmd := osexec.CommandContext(ctx, "opencode", "--message", spec.Prompt)
+	cmd.Dir = spec.WorkDir
+	cmd.Stderr = os.Stderr
+	var buf bytes.Buffer
+	cmd.Stdout = io.MultiWriter(&buf, os.Stderr)
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("opencode: %w", err)
 	}
 	return buf.String(), nil
 }

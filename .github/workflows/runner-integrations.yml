@@ -1,0 +1,93 @@
+name: runner-integrations
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "desktop/agent/ai_generator.go"
+      - "desktop/agent/autoinit_cmd.go"
+      - "desktop/agent/autoideas_cmd.go"
+      - "desktop/agent/runner_auth*.go"
+      - "scripts/test-runner-integration.sh"
+      - ".github/workflows/runner-integrations.yml"
+
+jobs:
+  frontier-runners:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: claude:sonnet
+            install: npm install -g @anthropic-ai/claude-code
+            needs_anthropic: true
+          - runner: codex
+            install: npm install -g @openai/codex
+            needs_openai: true
+          - runner: opencode
+            install: npm install -g opencode-ai
+            needs_openai: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: desktop/agent/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install runner CLI
+        run: ${{ matrix.install }}
+      - name: Build yaver
+        working-directory: desktop/agent
+        run: go build -o /tmp/yaver .
+      - name: Run real wrapper integration
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NEEDS_ANTHROPIC: ${{ matrix.needs_anthropic }}
+          NEEDS_OPENAI: ${{ matrix.needs_openai }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          YAVER_BIN: /tmp/yaver
+        run: |
+          if [[ "${NEEDS_ANTHROPIC:-}" == "true" && -z "${ANTHROPIC_API_KEY:-}" ]]; then
+            echo "Skipping ${{ matrix.runner }} because ANTHROPIC_API_KEY is not configured."
+            exit 0
+          fi
+          if [[ "${NEEDS_OPENAI:-}" == "true" && -z "${OPENAI_API_KEY:-}" ]]; then
+            echo "Skipping ${{ matrix.runner }} because OPENAI_API_KEY is not configured."
+            exit 0
+          fi
+          bash scripts/test-runner-integration.sh "${{ matrix.runner }}"
+
+  local-provider-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: desktop/agent/go.sum
+      - name: Install ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve > "$RUNNER_TEMP/ollama.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:11434/api/tags >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "ollama failed to start" >&2
+          exit 1
+      - name: Pull local model
+        run: ollama pull qwen2.5-coder:1.5b
+      - name: Build yaver
+        working-directory: desktop/agent
+        run: go build -o /tmp/yaver .
+      - name: Run local ollama generator integration
+        env:
+          YAVER_BIN: /tmp/yaver
+        run: bash scripts/test-runner-integration.sh "ollama:qwen2.5-coder:1.5b"

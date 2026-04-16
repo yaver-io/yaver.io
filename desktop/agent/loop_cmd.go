@@ -61,7 +61,7 @@ const (
 type LoopSpec struct {
 	Name    string   `yaml:"name" json:"name"`
 	Mode    LoopMode `yaml:"mode" json:"mode"`
-	Target  string   `yaml:"target" json:"target"`   // web | ios-sim | android-emu
+	Target  string   `yaml:"target" json:"target"` // web | ios-sim | android-emu
 	URL     string   `yaml:"url,omitempty" json:"url,omitempty"`
 	App     string   `yaml:"app,omitempty" json:"app,omitempty"`
 	Persona string   `yaml:"persona,omitempty" json:"persona,omitempty"`
@@ -78,7 +78,7 @@ type LoopSpec struct {
 }
 
 type LoopSchedule struct {
-	Every         string   `yaml:"every,omitempty" json:"every,omitempty"`   // "15m", "1h"
+	Every         string   `yaml:"every,omitempty" json:"every,omitempty"` // "15m", "1h"
 	Cron          string   `yaml:"cron,omitempty" json:"cron,omitempty"`
 	MaxIterations int      `yaml:"max_iterations,omitempty" json:"max_iterations,omitempty"` // 0 = unlimited
 	OnlyWhen      []string `yaml:"only_when,omitempty" json:"only_when,omitempty"`           // plugged_in, idle, not_on_battery
@@ -120,16 +120,16 @@ func (p *LoopPlaytest) playtestEnabled(mode LoopMode) bool {
 }
 
 type LoopThink struct {
-	Runner       string   `yaml:"runner" json:"runner"`                                 // claude-code | codex | aider | aider-ollama | ollama:<model>
-	Model        string   `yaml:"model,omitempty" json:"model,omitempty"`               // optional override, e.g. ollama_chat/qwen2.5-coder:14b for aider-ollama
-	BaseURL      string   `yaml:"base_url,omitempty" json:"base_url,omitempty"`         // for ollama-backed runs, sets OLLAMA_API_BASE at spawn time
-	Fallback     []string `yaml:"fallback,omitempty" json:"fallback,omitempty"`         // provider chain when primary is rate-limited
-	Prompt       string   `yaml:"prompt,omitempty" json:"prompt,omitempty"`             // path to prompt file
-	PromptInline string   `yaml:"prompt_inline,omitempty" json:"prompt_inline,omitempty"` // inline prompt embedded in the spec
-	MaxEdits     int      `yaml:"max_edits,omitempty" json:"max_edits,omitempty"`       // default 1
-	MaxKicksPerRun int    `yaml:"max_kicks_per_run,omitempty" json:"max_kicks_per_run,omitempty"` // develop-mode safety cap (default 10)
-	RequireGreen []string `yaml:"require_green,omitempty" json:"require_green,omitempty"` // [typecheck, test]
-	Worktree     string   `yaml:"worktree,omitempty" json:"worktree,omitempty"`
+	Runner         string   `yaml:"runner" json:"runner"`                                           // claude-code | codex | aider | aider-ollama | ollama:<model>
+	Model          string   `yaml:"model,omitempty" json:"model,omitempty"`                         // optional override, e.g. ollama_chat/qwen2.5-coder:14b for aider-ollama
+	BaseURL        string   `yaml:"base_url,omitempty" json:"base_url,omitempty"`                   // for ollama-backed runs, sets OLLAMA_API_BASE at spawn time
+	Fallback       []string `yaml:"fallback,omitempty" json:"fallback,omitempty"`                   // provider chain when primary is rate-limited
+	Prompt         string   `yaml:"prompt,omitempty" json:"prompt,omitempty"`                       // path to prompt file
+	PromptInline   string   `yaml:"prompt_inline,omitempty" json:"prompt_inline,omitempty"`         // inline prompt embedded in the spec
+	MaxEdits       int      `yaml:"max_edits,omitempty" json:"max_edits,omitempty"`                 // default 1
+	MaxKicksPerRun int      `yaml:"max_kicks_per_run,omitempty" json:"max_kicks_per_run,omitempty"` // develop-mode safety cap (default 10)
+	RequireGreen   []string `yaml:"require_green,omitempty" json:"require_green,omitempty"`         // [typecheck, test]
+	Worktree       string   `yaml:"worktree,omitempty" json:"worktree,omitempty"`
 
 	// RespectSessionLimits tells the loop to yield to the dev's own manual
 	// usage of the same AI provider. Default true. When true, the loop:
@@ -204,11 +204,11 @@ type LoopReleaseTrain struct {
 }
 
 type LoopBudget struct {
-	MaxPatchesPerDay         int `yaml:"max_patches_per_day,omitempty" json:"max_patches_per_day,omitempty"`
-	MaxCommitsPerDay         int `yaml:"max_commits_per_day,omitempty" json:"max_commits_per_day,omitempty"`
-	MaxTestFlightPerDay      int `yaml:"max_testflight_per_day,omitempty" json:"max_testflight_per_day,omitempty"`
-	MaxPlayStorePerDay       int `yaml:"max_playstore_per_day,omitempty" json:"max_playstore_per_day,omitempty"`
-	MaxTokensPerDay          int `yaml:"max_tokens_per_day,omitempty" json:"max_tokens_per_day,omitempty"`
+	MaxPatchesPerDay          int `yaml:"max_patches_per_day,omitempty" json:"max_patches_per_day,omitempty"`
+	MaxCommitsPerDay          int `yaml:"max_commits_per_day,omitempty" json:"max_commits_per_day,omitempty"`
+	MaxTestFlightPerDay       int `yaml:"max_testflight_per_day,omitempty" json:"max_testflight_per_day,omitempty"`
+	MaxPlayStorePerDay        int `yaml:"max_playstore_per_day,omitempty" json:"max_playstore_per_day,omitempty"`
+	MaxTokensPerDay           int `yaml:"max_tokens_per_day,omitempty" json:"max_tokens_per_day,omitempty"`
 	StopAfterConsecutiveStuck int `yaml:"stop_after_consecutive_stuck,omitempty" json:"stop_after_consecutive_stuck,omitempty"`
 }
 
@@ -253,10 +253,10 @@ type LoopState struct {
 	// develop-mode multi-kick loops to keep an Auto Develop session
 	// from blowing past the dev's max_commits_per_day or
 	// max_patches_per_day before they wake up.
-	BudgetDayKey  string `json:"budgetDayKey,omitempty"` // YYYY-MM-DD UTC
-	CommitsToday  int    `json:"commitsToday"`
-	PatchesToday  int    `json:"patchesToday"`
-	TestflightToday int  `json:"testflightToday"`
+	BudgetDayKey    string `json:"budgetDayKey,omitempty"` // YYYY-MM-DD UTC
+	CommitsToday    int    `json:"commitsToday"`
+	PatchesToday    int    `json:"patchesToday"`
+	TestflightToday int    `json:"testflightToday"`
 
 	// LastIdeasPath is the filesystem path to the most recently
 	// generated ideas.json from an ideas-mode kick. Populated by
@@ -913,9 +913,9 @@ func validateLoopSpec(s *LoopSpec) error {
 		return fmt.Errorf("spec is missing required field: mode")
 	}
 	switch s.Mode {
-	case LoopModeFix, LoopModeAutoFix, LoopModeDevelop, LoopModeIdeas:
+	case LoopModeFix, LoopModeAutoFix, LoopModeDevelop, LoopModeIdeas, LoopModeAutoTest:
 	default:
-		return fmt.Errorf("unknown mode %q (want fix|auto-fix|develop|ideas)", s.Mode)
+		return fmt.Errorf("unknown mode %q (want fix|auto-fix|develop|ideas|auto-test)", s.Mode)
 	}
 	if s.Target == "" {
 		return fmt.Errorf("spec is missing required field: target")

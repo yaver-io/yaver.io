@@ -30,11 +30,11 @@ import (
 )
 
 const (
-	autoinitFile          = "init.md"
-	autoinitGenStart      = "<!-- yaver:autoinit:generated:start -->"
-	autoinitGenEnd        = "<!-- yaver:autoinit:generated:end -->"
-	autoinitHistoryStart  = "<!-- yaver:autoinit:history:start -->"
-	autoinitHistoryEnd    = "<!-- yaver:autoinit:history:end -->"
+	autoinitFile         = "init.md"
+	autoinitGenStart     = "<!-- yaver:autoinit:generated:start -->"
+	autoinitGenEnd       = "<!-- yaver:autoinit:generated:end -->"
+	autoinitHistoryStart = "<!-- yaver:autoinit:history:start -->"
+	autoinitHistoryEnd   = "<!-- yaver:autoinit:history:end -->"
 )
 
 func runAutoInit(args []string) {
@@ -52,6 +52,7 @@ func runAutoInit(args []string) {
 	fs := flag.NewFlagSet("autoinit", flag.ExitOnError)
 	prompt := fs.String("prompt", "", "Optional extra context to bias the description (e.g. 'mobile-first tipsters app')")
 	engine := fs.String("engine", "", "claude|hybrid (default: claude)")
+	runner := fs.String("runner", "", "Override the generator runner (e.g. claude:opus, codex, opencode, ollama:qwen2.5-coder:14b)")
 	hybrid := fs.Bool("hybrid", false, "Shortcut for --engine hybrid")
 	output := fs.String("output", autoinitFile, "Output file inside the project (default init.md)")
 	force := fs.Bool("force", false, "Regenerate the entire generated section even if init.md exists")
@@ -83,6 +84,7 @@ func runAutoInit(args []string) {
 			"work_dir": wd,
 			"prompt":   *prompt,
 			"engine":   *engine,
+			"runner":   *runner,
 			"output":   *output,
 			"force":    *force,
 		}
@@ -98,6 +100,7 @@ func runAutoInit(args []string) {
 		fmt.Printf("  project: %s\n", project)
 		fmt.Printf("  output:  %s\n", outPath)
 		fmt.Printf("  engine:  %s\n", defaultStr(*engine, "claude"))
+		fmt.Printf("  runner:  %s\n", defaultStr(*runner, "auto"))
 		fmt.Printf("  force:   %v\n", *force)
 		return
 	}
@@ -121,7 +124,7 @@ func runAutoInit(args []string) {
 	fmt.Printf("autoinit: generating %s for %s…\n", outPath, project)
 	AutodevPublishYaverSay(fmt.Sprintf("Generate init.md for project %s", project))
 
-	if err := autoinitGenerate(*engine, *prompt, project, outPath, wd, *force); err != nil {
+	if err := autoinitGenerate(*engine, *runner, *prompt, project, outPath, wd, *force); err != nil {
 		fmt.Fprintf(os.Stderr, "autoinit: %v\n", err)
 		os.Exit(1)
 	}
@@ -133,7 +136,7 @@ func runAutoInit(args []string) {
 // read the project and emit a structured init.md body. We bracket
 // the AI-written portion with markers so the next regen can replace
 // it without touching the human-written prose between them.
-func autoinitGenerate(engine, extraPrompt, project, outPath, wd string, force bool) error {
+func autoinitGenerate(engine, runner, extraPrompt, project, outPath, wd string, force bool) error {
 	existing := ""
 	if data, err := os.ReadFile(outPath); err == nil {
 		existing = string(data)
@@ -180,6 +183,7 @@ Output the markdown only.`,
 
 	body, err := RunAIGenerator(AIGeneratorSpec{
 		Engine:  engine,
+		Runner:  runner,
 		WorkDir: wd,
 		Prompt:  prompt,
 		Timeout: 10 * time.Minute,
@@ -370,6 +374,7 @@ Why:
 Flags:
   --prompt "..."   extra context to bias the description
   --engine claude|hybrid
+  --runner SPEC    generator runner override (claude:opus|codex|opencode|ollama:MODEL)
   --hybrid         shortcut for --engine hybrid
   --output PATH    default init.md inside the project
   --force          regenerate the AI section even if it already exists

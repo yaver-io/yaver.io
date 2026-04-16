@@ -6,9 +6,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"errors"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -64,6 +64,8 @@ func main() {
 		runPing(os.Args[2:])
 	case "attach":
 		runAttach(os.Args[2:])
+	case "agent":
+		runAgentMode(os.Args[2:])
 	case "status":
 		runStatus()
 	case "devices":
@@ -215,6 +217,7 @@ Usage:
   yaver stop        Stop the running agent
   yaver restart     Restart the agent
   yaver attach      Interactive terminal — see tasks, type prompts (like Claude Code)
+  yaver agent       Dependency-aware agent graph runner (chat + autoideas + autodev + autotest)
   yaver serve       Start the agent manually (advanced)
   yaver logs        Show agent logs
   yaver clear-logs  Clear agent log file
@@ -1614,6 +1617,8 @@ func runServe(args []string) {
 
 	// Start HTTP server (V1 — primary, also serves MCP)
 	httpServer := NewHTTPServer(*httpPort, cfg.AuthToken, ownerUserID, cfg.ConvexSiteURL, hostname, taskMgr)
+	httpServer.agentGraphMgr = NewAgentGraphManager(taskMgr)
+	globalAgentGraphMgr = httpServer.agentGraphMgr
 
 	// Start heartbeat loop (needs httpServer for authExpired flag)
 	go heartbeatLoop(ctx, cfg.ConvexSiteURL, cfg.AuthToken, cfg.DeviceID, taskMgr, httpServer)
@@ -4543,7 +4548,7 @@ type backendRunnerFull struct {
 	RunnerID        string `json:"runnerId"`
 	Name            string `json:"name"`
 	Command         string `json:"command"`
-	Args            string `json:"args"`            // JSON-encoded []string
+	Args            string `json:"args"` // JSON-encoded []string
 	OutputMode      string `json:"outputMode"`
 	ResumeSupported bool   `json:"resumeSupported"`
 	ResumeArgs      string `json:"resumeArgs,omitempty"` // JSON-encoded []string
@@ -4858,13 +4863,13 @@ type relayTunnelResponse struct {
 
 // RelayHealthStatus holds the latest health check result for a relay server.
 type RelayHealthStatus struct {
-	URL          string    `json:"url"`
-	OK           bool      `json:"ok"`
-	LatencyMs    int64     `json:"latencyMs"`
-	Tunnels      int       `json:"tunnels"`
-	Version      string    `json:"version"`
-	LastChecked  time.Time `json:"lastChecked"`
-	Error        string    `json:"error,omitempty"`
+	URL         string    `json:"url"`
+	OK          bool      `json:"ok"`
+	LatencyMs   int64     `json:"latencyMs"`
+	Tunnels     int       `json:"tunnels"`
+	Version     string    `json:"version"`
+	LastChecked time.Time `json:"lastChecked"`
+	Error       string    `json:"error,omitempty"`
 }
 
 // relayHealthFile returns the path to the relay health cache file.
@@ -4885,8 +4890,8 @@ type relayManager struct {
 	globalPassword    string
 	convexSiteURL     string
 	activeTunnels     map[string]context.CancelFunc // keyed by QuicAddr
-	healthStatus      map[string]*RelayHealthStatus  // keyed by httpUrl
-	lastSettingsRelay string                         // last relayUrl from user settings (for change detection)
+	healthStatus      map[string]*RelayHealthStatus // keyed by httpUrl
+	lastSettingsRelay string                        // last relayUrl from user settings (for change detection)
 	relayExposeMgr    *RelayExposeManager
 }
 
@@ -5414,6 +5419,8 @@ func runMCP(args []string) {
 		fmt.Printf("Yaver MCP server (HTTP) v%s on port %d — work dir: %s\n", version, *httpPort, *workDir)
 		hostname, _ := os.Hostname()
 		srv := NewHTTPServer(*httpPort, "", "", "", hostname, taskMgr)
+		srv.agentGraphMgr = NewAgentGraphManager(taskMgr)
+		globalAgentGraphMgr = srv.agentGraphMgr
 		srv.aclMgr = aclMgr
 		srv.emailMgr = emailMgr
 		ctx, cancel := context.WithCancel(context.Background())
@@ -5479,8 +5486,8 @@ func runMCPStdio(taskMgr *TaskManager, aclMgr *ACLManager, emailMgr *EmailManage
 		case "initialize":
 			resp.Result = map[string]interface{}{
 				"protocolVersion": "2024-11-05",
-				"capabilities":   map[string]interface{}{"tools": map[string]interface{}{}},
-				"serverInfo":     map[string]interface{}{"name": "yaver", "version": version},
+				"capabilities":    map[string]interface{}{"tools": map[string]interface{}{}},
+				"serverInfo":      map[string]interface{}{"name": "yaver", "version": version},
 			}
 		case "tools/list":
 			// Reuse the same tool list from the HTTP handler
@@ -5684,8 +5691,8 @@ func mcpRemoteCmd(subcmd string, args []string) {
 			os.Exit(1)
 		}
 		var manifest struct {
-			Name    string `json:"name"`
-			Version string `json:"version"`
+			Name    string        `json:"name"`
+			Version string        `json:"version"`
 			Tools   []interface{} `json:"tools"`
 		}
 		json.Unmarshal(manifestData, &manifest)
@@ -5696,9 +5703,13 @@ func mcpRemoteCmd(subcmd string, args []string) {
 		gw := gzip.NewWriter(&buf)
 		tw := tar.NewWriter(gw)
 		filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-			if err != nil { return err }
+			if err != nil {
+				return err
+			}
 			rel, _ := filepath.Rel(dir, path)
-			if rel == "." { return nil }
+			if rel == "." {
+				return nil
+			}
 			if info.IsDir() && (info.Name() == ".git" || info.Name() == "node_modules") {
 				return filepath.SkipDir
 			}
@@ -5763,7 +5774,9 @@ func mcpRemoteCmd(subcmd string, args []string) {
 		fmt.Printf("  %-20s %-10s %-8s %s\n", "NAME", "VERSION", "TOOLS", "STATUS")
 		for _, p := range data.Plugins {
 			status := "healthy"
-			if !p.Healthy { status = "unhealthy" }
+			if !p.Healthy {
+				status = "unhealthy"
+			}
 			fmt.Printf("  %-20s %-10s %-8d %s\n", p.Name, p.Version, p.Tools, status)
 		}
 
@@ -5800,9 +5813,15 @@ func mcpRemoteCmd(subcmd string, args []string) {
 		var data map[string]interface{}
 		json.NewDecoder(resp.Body).Decode(&data)
 		fmt.Println("MCP server is UP")
-		if v, ok := data["version"]; ok { fmt.Printf("  Version:  %v\n", v) }
-		if u, ok := data["uptime"]; ok { fmt.Printf("  Uptime:   %v\n", u) }
-		if p, ok := data["plugins"]; ok { fmt.Printf("  Plugins:  %v\n", p) }
+		if v, ok := data["version"]; ok {
+			fmt.Printf("  Version:  %v\n", v)
+		}
+		if u, ok := data["uptime"]; ok {
+			fmt.Printf("  Uptime:   %v\n", u)
+		}
+		if p, ok := data["plugins"]; ok {
+			fmt.Printf("  Plugins:  %v\n", p)
+		}
 	}
 }
 
@@ -6026,7 +6045,9 @@ func fetchLatestCLIVersion() string {
 		return ""
 	}
 	defer resp.Body.Close()
-	var result struct{ CliVersion string `json:"cliVersion"` }
+	var result struct {
+		CliVersion string `json:"cliVersion"`
+	}
 	json.NewDecoder(resp.Body).Decode(&result)
 	return result.CliVersion
 }
@@ -6037,14 +6058,24 @@ func isNewerVersion(a, b string) bool {
 		v = strings.TrimPrefix(v, "v")
 		parts := strings.Split(v, ".")
 		major, minor, patch := 0, 0, 0
-		if len(parts) >= 1 { fmt.Sscanf(parts[0], "%d", &major) }
-		if len(parts) >= 2 { fmt.Sscanf(parts[1], "%d", &minor) }
-		if len(parts) >= 3 { fmt.Sscanf(parts[2], "%d", &patch) }
+		if len(parts) >= 1 {
+			fmt.Sscanf(parts[0], "%d", &major)
+		}
+		if len(parts) >= 2 {
+			fmt.Sscanf(parts[1], "%d", &minor)
+		}
+		if len(parts) >= 3 {
+			fmt.Sscanf(parts[2], "%d", &patch)
+		}
 		return major, minor, patch
 	}
 	a1, a2, a3 := parse(a)
 	b1, b2, b3 := parse(b)
-	if a1 != b1 { return a1 > b1 }
-	if a2 != b2 { return a2 > b2 }
+	if a1 != b1 {
+		return a1 > b1
+	}
+	if a2 != b2 {
+		return a2 > b2
+	}
 	return a3 > b3
 }
