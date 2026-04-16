@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	osexec "os/exec"
@@ -322,6 +323,10 @@ func main() {
 		runExposeCmd(os.Args[2:])
 	case "completion":
 		runCompletion(os.Args[2:])
+	case "support":
+		runSupport(os.Args[2:])
+	case "ui":
+		runUI(os.Args[2:])
 	case "help", "--help", "-h":
 		printUsage()
 	case "version", "--version", "-v":
@@ -1095,6 +1100,13 @@ func isAgentRunning() (int, bool) {
 
 // installSystemdService creates and enables a systemd user service for yaver serve.
 func installSystemdService() {
+	if isWSL() {
+		fmt.Println("WSL detected.")
+		fmt.Println("Systemd user service install is skipped in WSL.")
+		fmt.Println("Use `yaver serve` from your shell, tmux, or a Windows-side startup wrapper instead.")
+		return
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -3588,6 +3600,8 @@ func runStatus() {
 		}
 	}
 
+	printStatusSharing(statusClient, cfg)
+
 	// Voice / Speech status
 	fmt.Println()
 	fmt.Println("Voice:")
@@ -3657,6 +3671,215 @@ func runTmux(args []string) {
 		fmt.Fprintf(os.Stderr, "Unknown tmux subcommand: %s\n", sub)
 		os.Exit(1)
 	}
+}
+
+type statusSharedUsersResponse struct {
+	Users    []statusSharedUser `json:"users"`
+	TeamID   string             `json:"teamId"`
+	MaxUsers int                `json:"maxUsers"`
+}
+
+type statusSharedUser struct {
+	UserID       string `json:"userId"`
+	Email        string `json:"email"`
+	FullName     string `json:"fullName"`
+	Provider     string `json:"provider"`
+	WorkspaceDir string `json:"workspaceDir"`
+	CreatedAt    string `json:"createdAt"`
+	LastActiveAt string `json:"lastActiveAt"`
+}
+
+func printStatusSharing(client *http.Client, cfg *Config) {
+	fmt.Println()
+	fmt.Println("Sharing:")
+
+	paired := ListPairedTokens()
+	fmt.Printf("  Paired users: %d\n", len(paired))
+	if len(paired) > 0 {
+		for _, p := range paired {
+			label := p.Label
+			if label == "" {
+				label = p.TokenHash[:8]
+			}
+			source := p.SourceHost
+			if source == "" {
+				source = "unknown"
+			}
+			lastUsed := p.LastUsedAt
+			if lastUsed == "" {
+				lastUsed = "never"
+			}
+			fmt.Printf("    %s  source=%s  last-used=%s\n", label, source, lastUsed)
+		}
+	}
+
+	if shared, err := fetchLocalSharedUsers(client, cfg.AuthToken); err == nil {
+		fmt.Printf("  Shared sessions: %d", len(shared.Users))
+		if shared.TeamID != "" {
+			fmt.Printf("  team=%s", shared.TeamID)
+		}
+		if shared.MaxUsers > 0 {
+			fmt.Printf("  limit=%d", shared.MaxUsers)
+		}
+		fmt.Println()
+		if len(shared.Users) > 0 {
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "    EMAIL\tPROVIDER\tLAST ACTIVE\tWORKSPACE")
+			for _, u := range shared.Users {
+				email := u.Email
+				if email == "" {
+					email = shortStatusUserID(u.UserID)
+				}
+				provider := u.Provider
+				if provider == "" {
+					provider = "-"
+				}
+				fmt.Fprintf(w, "    %s\t%s\t%s\t%s\n",
+					email,
+					provider,
+					statusTimeOrDash(u.LastActiveAt),
+					u.WorkspaceDir,
+				)
+			}
+			w.Flush()
+		}
+	} else {
+		fmt.Println("  Shared sessions: unavailable (agent not in multi-user mode or not reachable)")
+	}
+
+	guests, guestErr := FetchGuestList(cfg.ConvexSiteURL, cfg.AuthToken)
+	if guestErr != nil {
+		fmt.Printf("  Guests: unavailable (%v)\n", guestErr)
+		return
+	}
+	configs, cfgErr := FetchGuestConfigs(cfg.ConvexSiteURL, cfg.AuthToken)
+	configByEmail := map[string]*GuestConfig{}
+	if cfgErr == nil {
+		for i := range configs {
+			c := configs[i]
+			configByEmail[strings.ToLower(strings.TrimSpace(c.GuestEmail))] = &c
+		}
+	}
+
+	activeGuests := 0
+	for _, g := range guests {
+		if strings.EqualFold(g.Status, "accepted") || strings.EqualFold(g.Status, "active") {
+			activeGuests++
+		}
+	}
+	fmt.Printf("  Guests: %d total, %d active\n", len(guests), activeGuests)
+	if len(guests) == 0 {
+		return
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "    EMAIL\tSTATUS\tSINCE\tACCESS")
+	for _, g := range guests {
+		since := g.CreatedAt
+		if g.AcceptedAt > 0 {
+			since = g.AcceptedAt
+		}
+		cfg := configByEmail[strings.ToLower(strings.TrimSpace(g.Email))]
+		fmt.Fprintf(w, "    %s\t%s\t%s\t%s\n",
+			g.Email,
+			g.Status,
+			statusUnixMilliOrDash(since),
+			summarizeGuestAccess(cfg),
+		)
+	}
+	w.Flush()
+}
+
+func fetchLocalSharedUsers(client *http.Client, token string) (*statusSharedUsersResponse, error) {
+	req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:18080/users", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var out statusSharedUsersResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func summarizeGuestAccess(cfg *GuestConfig) string {
+	if cfg == nil {
+		return "default: unlimited, all runners, all shared devices"
+	}
+	var parts []string
+	mode := strings.TrimSpace(cfg.UsageMode)
+	if mode == "" {
+		mode = "always"
+	}
+	parts = append(parts, "mode="+mode)
+	if cfg.DailyTokenLimit != nil && *cfg.DailyTokenLimit > 0 {
+		parts = append(parts, fmt.Sprintf("limit=%ds/day", *cfg.DailyTokenLimit))
+	} else {
+		parts = append(parts, "limit=unlimited")
+	}
+	if len(cfg.AllowedRunners) > 0 {
+		parts = append(parts, "runners="+strings.Join(cfg.AllowedRunners, ","))
+	} else {
+		parts = append(parts, "runners=all")
+	}
+	if preset := guestResourcePreset(cfg); preset != "" {
+		parts = append(parts, "preset="+preset)
+	}
+	if cfg.ShareAllDevices != nil && *cfg.ShareAllDevices {
+		parts = append(parts, "devices=all")
+	} else if len(cfg.DeviceIDs) > 0 {
+		parts = append(parts, fmt.Sprintf("devices=%d", len(cfg.DeviceIDs)))
+	}
+	if cfg.ShareAllMachines != nil && *cfg.ShareAllMachines {
+		parts = append(parts, "machines=all")
+	} else if len(cfg.MachineIDs) > 0 {
+		parts = append(parts, fmt.Sprintf("machines=%d", len(cfg.MachineIDs)))
+	}
+	if cfg.UseHostAPIKeys != nil {
+		parts = append(parts, fmt.Sprintf("hostkeys=%t", *cfg.UseHostAPIKeys))
+	}
+	if cfg.AllowGuestProvidedAPIKeys != nil {
+		parts = append(parts, fmt.Sprintf("guestkeys=%t", *cfg.AllowGuestProvidedAPIKeys))
+	}
+	if cfg.RequireIsolation != nil {
+		parts = append(parts, fmt.Sprintf("isolation=%t", *cfg.RequireIsolation))
+	}
+	return strings.Join(parts, "; ")
+}
+
+func statusUnixMilliOrDash(ms int64) string {
+	if ms <= 0 {
+		return "-"
+	}
+	return time.UnixMilli(ms).Format("2006-01-02")
+}
+
+func statusTimeOrDash(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return value
+	}
+	return t.Local().Format("2006-01-02 15:04")
+}
+
+func shortStatusUserID(userID string) string {
+	userID = strings.TrimSpace(userID)
+	if len(userID) <= 8 {
+		return userID
+	}
+	return userID[:8] + "..."
 }
 
 func runTmuxList() {
@@ -4511,6 +4734,29 @@ func runDoctor() {
 		warning("not set — run `yaver init` or `yaver config bootstrap-secret <value>`")
 	}
 
+	check("Mobile auth recovery")
+	if cfg != nil && cfg.BootstrapSecretHash != "" {
+		pass("/auth/recover ready — phone can re-auth this machine if the session expires")
+	} else {
+		warning("bootstrap secret missing — mobile recovery will be limited. Guide: " + autoBootManualURL)
+	}
+
+	check("Headless power hardening")
+	if power := detectHeadlessPowerStatus(); power == nil {
+		warning("not supported on this OS — manual setup: " + autoBootManualURL)
+	} else if power.ok {
+		pass(power.summary)
+	} else {
+		warning(power.summary)
+		for _, detail := range power.details {
+			check("  hint")
+			warning(detail)
+		}
+	}
+
+	check("Auto-reboot how-to")
+	pass(autoBootManualURL + " (firmware/BIOS auto power-on must be configured manually)")
+
 	// SMART / disk health — run one fresh scan so doctor doesn't
 	// print stale goroutine state when the dev invokes it right
 	// after starting the agent.
@@ -5081,6 +5327,20 @@ func openBrowser(url string) {
 	case "darwin":
 		execOpen("open", url)
 	case "linux":
+		if isWSL() {
+			if _, err := osexec.LookPath("wslview"); err == nil {
+				execOpen("wslview", url)
+				return
+			}
+			if _, err := osexec.LookPath("explorer.exe"); err == nil {
+				execOpen("explorer.exe", url)
+				return
+			}
+			if _, err := osexec.LookPath("cmd.exe"); err == nil {
+				execOpen("cmd.exe", "/c", "start", url)
+				return
+			}
+		}
 		execOpen("xdg-open", url)
 	case "windows":
 		execOpen("cmd", "/c", "start", url)
