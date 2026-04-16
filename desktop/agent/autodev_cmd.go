@@ -536,7 +536,7 @@ func printAutodevPlan(p autodevPlan) {
 		fmt.Printf("  duration:      %s hour(s) — until %s\n", p.Hours, p.Deadline.Format("Mon 15:04"))
 	}
 	if p.RespectLimits {
-		fmt.Printf("  load:          %s (respects Claude/Codex session windows — safe while you work)\n", p.Load)
+		fmt.Printf("  load:          %s (respects Claude/Codex session windows — safe while you work; backs off when window > 80%% used)\n", p.Load)
 	} else {
 		fmt.Printf("  load:          %s (burst — competes with your interactive sessions)\n", p.Load)
 	}

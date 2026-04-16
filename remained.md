@@ -254,6 +254,31 @@ Still to do:
 - [ ] CI: smoke test `yaver autoideas <fixture> --plan` so the
       flag/help surface stays linted per PR.
 
+## Smarter session-limit pacing (Apr 2026)
+
+Lite mode already paces autodev / autoideas / autotest at 5 min
+between kicks and routes through `pickRunnerWithinLimits`, but the
+provider window tracking is approximate and the user-facing log
+doesn't surface what's happening. Make it explicit and accurate so
+an "8 hour autodev" run actually finishes 8 hours of work without
+exhausting Claude's 5h session window mid-run.
+
+- [ ] Read the runner's actual session window state (Claude's
+      `~/.claude/sessions/<id>.json` or whatever surface the CLI
+      exposes for "remaining tokens / minutes in this 5h window")
+      before each kick. Skip / sleep / fall back when usage > 80 %.
+- [ ] Print a per-kick line: "claude window: 23 % used, 3h12m
+      remaining" so the user tailing the stream sees pacing.
+- [ ] When the configured `--hours` exceeds the runner's session
+      window, automatically span across windows by sleeping past
+      the boundary instead of stalling on a 429.
+- [ ] When `--load lite` and the user is interactively using the
+      same Claude session in another terminal, back off harder
+      (sleep through any concurrent foreground claude process).
+- [ ] /autodev/options reports the detected window limits per
+      runner so mobile / web can display "Claude session: 4h12m
+      remaining" alongside the start form.
+
 ## Notes for whoever runs this on another machine
 
 * Build: `cd desktop/agent && go build ./...`
