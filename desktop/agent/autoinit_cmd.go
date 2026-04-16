@@ -20,12 +20,10 @@ package main
 // without losing their work to the next regen.
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	osexec "os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -114,16 +112,12 @@ func runAutoInit(args []string) {
 	fmt.Printf("autoinit: wrote %s\n", outPath)
 }
 
-// autoinitGenerate spawns Claude (or the hybrid planner) to read
-// the project and emit a structured init.md body. We bracket the
-// AI-written portion with markers so the next regen can replace it
-// without touching the human-written prose between them.
+// autoinitGenerate asks whichever AI runner the user has configured
+// (claude / codex / aider / ollama, picked by RunAIGenerator) to
+// read the project and emit a structured init.md body. We bracket
+// the AI-written portion with markers so the next regen can replace
+// it without touching the human-written prose between them.
 func autoinitGenerate(engine, extraPrompt, project, outPath, wd string, force bool) error {
-	cli := "claude"
-	if _, err := osexec.LookPath(cli); err != nil {
-		return fmt.Errorf("`%s` CLI not on PATH", cli)
-	}
-
 	existing := ""
 	if data, err := os.ReadFile(outPath); err == nil {
 		existing = string(data)
@@ -168,42 +162,17 @@ Output the markdown only.`,
 			return ""
 		}())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-
-	cmd := osexec.CommandContext(ctx, cli,
-		"--print",
-		"--output-format", "stream-json",
-		"--verbose",
-		"--permission-mode", "bypassPermissions",
-		"--add-dir", wd,
-	)
-	cmd.Dir = wd
-	cmd.Stdin = strings.NewReader(prompt)
-	cmd.Stderr = os.Stderr
-	stdout, err := cmd.StdoutPipe()
+	body, err := RunAIGenerator(AIGeneratorSpec{
+		Engine:  engine,
+		WorkDir: wd,
+		Prompt:  prompt,
+		Timeout: 10 * time.Minute,
+	})
 	if err != nil {
-		return err
+		return fmt.Errorf("autoinit generator: %w", err)
 	}
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("spawn %s: %w", cli, err)
-	}
-
-	// We don't need the full stream-json parser here — we just want
-	// the assistant text. Read raw and look for the result event.
-	resp, _, perr := parseClaudeStream(stdout)
-	if waitErr := cmd.Wait(); waitErr != nil && resp == nil {
-		return fmt.Errorf("%s: %w", cli, waitErr)
-	}
-	if perr != nil && resp == nil {
-		return perr
-	}
-	body := ""
-	if resp != nil {
-		body = resp.Summary
-	}
-	if body == "" {
-		return fmt.Errorf("autoinit: no body extracted from claude output")
+	if strings.TrimSpace(body) == "" {
+		return fmt.Errorf("autoinit: empty body from AI runner")
 	}
 
 	// Compose final init.md: preserve human-edited prose, replace the

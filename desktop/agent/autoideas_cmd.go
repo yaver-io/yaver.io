@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	osexec "os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -200,22 +199,11 @@ endLoop:
 	fmt.Printf("autoideas: %d batches generated → %s\n", batch, outputPath)
 }
 
-// autoIdeasGenerate is a thin wrapper that mirrors autodevRefillIdeas
-// but writes to a custom output path and respects the engine choice.
-// Hybrid mode is honoured by selecting the planner CLI as the
-// generator (ollama can't tool-call).
+// autoIdeasGenerate is a thin wrapper around RunAIGenerator that
+// formats the prompt, parses the JSON array of titles, and appends
+// them to the output file. Runner-agnostic — works with claude /
+// codex / aider / ollama via the picker in ai_generator.go.
 func autoIdeasGenerate(engine, focus, outputPath, wd string) error {
-	cli := "claude"
-	if strings.ToLower(engine) == "hybrid" {
-		// Hybrid still uses Claude as the planner — ollama-only
-		// generation tends to drift. Same default as autodev's
-		// hybrid mode.
-		cli = "claude"
-	}
-	if _, err := osexec.LookPath(cli); err != nil {
-		return fmt.Errorf("`%s` CLI not on PATH", cli)
-	}
-
 	focusBlock := ""
 	f := strings.TrimSpace(focus)
 	if f != "" {
@@ -232,44 +220,16 @@ Output ONLY a JSON array of strings — one short imperative title per item, no 
 Do not write any file. Do not commit. Just print the JSON array and stop.`,
 		wd, focusBlock, autodevRefillBatchSize)
 
-	cmd := osexec.Command(cli,
-		"--print",
-		"--output-format", "stream-json",
-		"--verbose",
-		"--permission-mode", "bypassPermissions",
-		"--add-dir", wd,
-	)
-	cmd.Dir = wd
-	cmd.Stdin = strings.NewReader(prompt)
-	cmd.Stderr = os.Stderr
-	stdout, err := cmd.StdoutPipe()
+	body, err := RunAIGenerator(AIGeneratorSpec{
+		Engine:  engine,
+		WorkDir: wd,
+		Prompt:  prompt,
+		Timeout: 5 * time.Minute,
+	})
 	if err != nil {
 		return err
 	}
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("spawn %s: %w", cli, err)
-	}
-
-	// Capture stdout while echoing to stderr/stream.
-	var raw strings.Builder
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, err := stdout.Read(buf)
-			if n > 0 {
-				raw.Write(buf[:n])
-				_, _ = os.Stderr.Write(buf[:n])
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
-	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("%s exited: %w", cli, err)
-	}
-
-	titles, err := extractRefillTitles(raw.String())
+	titles, err := extractRefillTitles(body)
 	if err != nil {
 		return err
 	}

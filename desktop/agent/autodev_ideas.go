@@ -13,12 +13,9 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -36,13 +33,11 @@ func ifFocus(focus, s string) string {
 }
 
 // autodevRefillIdeas appends fresh checklist items to p.RemainedFile.
-// Best-effort: returns an error only when nothing usable was produced
-// — the caller decides whether to keep going or end the run.
+// Runner-agnostic via RunAIGenerator (claude / codex / aider /
+// ollama). Best-effort: returns an error only when nothing usable
+// was produced — the caller decides whether to keep going or end
+// the run.
 func autodevRefillIdeas(p autodevPlan) error {
-	if _, err := exec.LookPath("claude"); err != nil {
-		return fmt.Errorf("`claude` CLI not on PATH")
-	}
-
 	wd, _ := os.Getwd()
 
 	// If the user gave the run a focus prompt (--prompt), thread it
@@ -85,28 +80,17 @@ Do not write any file. Do not commit. Just print the JSON array and stop.`,
 		ifFocus(focus, "\n- aligned with the ROOF THEME (skip anything off-topic, even if it looks valuable)"),
 	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "claude",
-		"--print",
-		"--permission-mode", "acceptEdits",
-		"--add-dir", wd,
-	)
-	cmd.Dir = wd
-	cmd.Stdin = strings.NewReader(prompt)
-	cmd.Stderr = os.Stderr
-	// Tee subprocess stdout to the user's terminal AND capture it for
-	// JSON parsing. Live UX + we still get the bytes.
-	var captured bytes.Buffer
-	cmd.Stdout = io.MultiWriter(&captured, os.Stderr)
-
-	fmt.Fprintf(os.Stderr, "[autodev] refilling %s via claude…\n", p.RemainedFile)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("claude refill: %w", err)
+	fmt.Fprintf(os.Stderr, "[autodev] refilling %s…\n", p.RemainedFile)
+	body, err := RunAIGenerator(AIGeneratorSpec{
+		WorkDir: wd,
+		Prompt:  prompt,
+		Timeout: 5 * time.Minute,
+	})
+	if err != nil {
+		return fmt.Errorf("refill: %w", err)
 	}
 
-	titles, err := extractRefillTitles(captured.String())
+	titles, err := extractRefillTitles(body)
 	if err != nil {
 		return err
 	}
