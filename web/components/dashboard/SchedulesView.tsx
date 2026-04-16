@@ -106,6 +106,15 @@ export default function SchedulesView() {
     }
   }
 
+  async function runNow(s: ScheduledTask) {
+    try {
+      await agentClient.runScheduleNow(s.id);
+      await load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto p-4 text-surface-100">
       <header>
@@ -214,6 +223,14 @@ export default function SchedulesView() {
                   {s.status}
                 </span>
                 <span className="ml-auto flex gap-1 text-xs">
+                  <button
+                    type="button"
+                    className="rounded bg-emerald-900/40 px-2 py-0.5 text-emerald-200 hover:bg-emerald-900/70"
+                    onClick={() => void runNow(s)}
+                    title="Fire now without altering cadence"
+                  >
+                    Run now
+                  </button>
                   <button
                     type="button"
                     className="rounded bg-surface-800 px-2 py-0.5 hover:bg-surface-700"

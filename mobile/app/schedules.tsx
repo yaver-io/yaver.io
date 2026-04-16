@@ -113,13 +113,22 @@ export default function SchedulesScreen() {
     ]);
   }
 
-  async function toggle(s: ScheduledTask) {
+  async function toggle(sch: ScheduledTask) {
     try {
-      if (s.status === "paused") await quicClient.resumeSchedule(s.id);
-      else await quicClient.pauseSchedule(s.id);
+      if (sch.status === "paused") await quicClient.resumeSchedule(sch.id);
+      else await quicClient.pauseSchedule(sch.id);
       await load();
     } catch (e: any) {
       Alert.alert("Schedules", e?.message ?? "failed to update");
+    }
+  }
+
+  async function runNow(sch: ScheduledTask) {
+    try {
+      await quicClient.runScheduleNow(sch.id);
+      await load();
+    } catch (e: any) {
+      Alert.alert("Schedules", e?.message ?? "failed to run");
     }
   }
 
@@ -164,6 +173,12 @@ export default function SchedulesScreen() {
         ) : null}
       </View>
       <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+        <Pressable
+          style={[s.btn, { backgroundColor: "#052e16", borderColor: "#166534" }]}
+          onPress={() => runNow(item)}
+        >
+          <Text style={{ color: "#bbf7d0" }}>Run now</Text>
+        </Pressable>
         <Pressable
           style={[s.btn, { backgroundColor: c.bg, borderColor: c.border }]}
           onPress={() => toggle(item)}

@@ -50,6 +50,7 @@ export default function ExecScreen() {
   const [command, setCommand] = useState("");
   const [workDir, setWorkDir] = useState("");
   const [starting, setStarting] = useState(false);
+  const [stdin, setStdin] = useState("");
   const outputRef = useRef<ScrollView>(null);
 
   const loadList = useCallback(async () => {
@@ -118,6 +119,16 @@ export default function ExecScreen() {
       await loadList();
     } catch (e: any) {
       Alert.alert("Exec", e?.message ?? "failed to kill");
+    }
+  }
+
+  async function sendInput() {
+    if (!selected || !stdin) return;
+    try {
+      await quicClient.sendExecInput(selected.id, stdin + "\n");
+      setStdin("");
+    } catch (e: any) {
+      Alert.alert("Exec", e?.message ?? "failed to send input");
     }
   }
 
@@ -276,6 +287,43 @@ export default function ExecScreen() {
                 : ""}
             </Text>
           </ScrollView>
+          {selected.status === "running" ? (
+            <View style={{ flexDirection: "row", gap: 6, marginTop: 6 }}>
+              <TextInput
+                value={stdin}
+                onChangeText={setStdin}
+                onSubmitEditing={sendInput}
+                placeholder="stdin (answers prompts)"
+                placeholderTextColor={c.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={[
+                  s.input,
+                  {
+                    color: c.textPrimary,
+                    borderColor: c.border,
+                    flex: 1,
+                    fontFamily: "monospace",
+                  },
+                ]}
+              />
+              <Pressable
+                onPress={sendInput}
+                disabled={!stdin}
+                style={{
+                  backgroundColor: c.accent,
+                  opacity: stdin ? 1 : 0.4,
+                  paddingHorizontal: 14,
+                  paddingVertical: 8,
+                  borderRadius: 4,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Text style={{ color: "#fff", fontWeight: "600" }}>Send</Text>
+              </Pressable>
+            </View>
+          ) : null}
         </View>
       ) : (
         <View style={{ flex: 1 }} />

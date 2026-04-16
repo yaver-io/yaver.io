@@ -2509,7 +2509,22 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
-        {/* Files — read-only browser over discovered project roots */}
+        {/* Storage — unified files + shared-storage + blobs */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/storage" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F4C2}"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Storage</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Project files · NAS · blob buckets — all local to your machine</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
+        {/* Files (classic) — rich preview, kept for back-compat */}
         {connected && (
           <Pressable
             style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
@@ -2517,8 +2532,8 @@ export default function MoreScreen() {
           >
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u25A1"}</Text>
             <View style={{ flex: 1 }}>
-              <Text style={[s.label, { color: c.textPrimary }]}>Files</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Browse project files (read-only)</Text>
+              <Text style={[s.label, { color: c.textPrimary }]}>Files (classic)</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Read-only file browser with rich previews</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>

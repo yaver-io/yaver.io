@@ -202,6 +202,19 @@ func (s *Scheduler) executeScheduled(st *ScheduledTask) {
 	}()
 }
 
+// RunScheduleNow fires a scheduled task immediately. Used by the
+// "Run now" button in the web + mobile UIs so the user can kick off
+// a scheduled prompt without waiting for the next fire time. Does
+// not reset NextRunAt — the cron / interval keeps its cadence.
+func (s *Scheduler) RunScheduleNow(id string) error {
+	st, ok := s.GetSchedule(id)
+	if !ok {
+		return fmt.Errorf("schedule %q not found", id)
+	}
+	go s.executeScheduled(st)
+	return nil
+}
+
 // AddSchedule creates a new scheduled task.
 func (s *Scheduler) AddSchedule(st *ScheduledTask) error {
 	if st.Title == "" {
