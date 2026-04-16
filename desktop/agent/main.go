@@ -213,6 +213,8 @@ func main() {
 		fmt.Printf("Project discovery complete: %s\n", fp)
 	case "purge", "reset", "factory-reset":
 		runPurge()
+	case "wipe":
+		runWipe(os.Args[2:])
 	case "uninstall":
 		runUninstall()
 	case "tmux":

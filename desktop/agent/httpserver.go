@@ -252,7 +252,12 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/changelog", s.auth(s.handleChangelog))
 	mux.HandleFunc("/changelog.html", s.handleChangelogHTML)
 	mux.HandleFunc("/changelog.atom", s.handleChangelogAtom)
-	mux.HandleFunc("/apikeys", s.auth(s.handleAPIKeys))
+	// /apikeys is wrapped in the token-bucket limiter because POST
+	// creates a new SDK token (network round-trip to Convex) and
+	// DELETE sweeps the token cache. Both are expensive and creation
+	// could be brute-forced by a compromised owner token to flood
+	// the Convex sdkTokens table.
+	mux.HandleFunc("/apikeys", s.rateLimit(s.auth(s.handleAPIKeys)))
 	mux.HandleFunc("/apm", s.auth(s.handleAPM))
 	mux.HandleFunc("/pubsub/publish", s.authSDK(s.handlePubSubPublish))
 	mux.HandleFunc("/pubsub/subscribe", s.authSDK(s.handlePubSubSubscribe))
@@ -724,6 +729,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/manifest/apply", s.auth(s.handleManifestApply))
 	mux.HandleFunc("/manifest/diff", s.auth(s.handleManifestDiff))
 
+	// Phone-first mini backend (in-app SQLite projects, portable to switch-engine targets)
+	s.registerPhoneRoutes(mux)
+
 	// Embedded SPA (when console_static is populated by the build)
 	s.mountConsoleEmbed(mux)
 
@@ -802,10 +810,14 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/builds/", s.authSDK(s.handleBuildByID))
 
 	// Vault (P2P encrypted key sync)
-	mux.HandleFunc("/vault/list", s.auth(s.handleVaultList))
-	mux.HandleFunc("/vault/get", s.auth(s.handleVaultGet))
-	mux.HandleFunc("/vault/set", s.auth(s.handleVaultSet))
-	mux.HandleFunc("/vault/delete", s.auth(s.handleVaultDelete))
+	// /vault/* is rate-limited on top of auth: the value payload
+	// of /vault/get is the most sensitive single response the agent
+	// can produce, so we make it prohibitively expensive to walk
+	// the namespace by hammering names.
+	mux.HandleFunc("/vault/list", s.rateLimit(s.auth(s.handleVaultList)))
+	mux.HandleFunc("/vault/get", s.rateLimit(s.auth(s.handleVaultGet)))
+	mux.HandleFunc("/vault/set", s.rateLimit(s.auth(s.handleVaultSet)))
+	mux.HandleFunc("/vault/delete", s.rateLimit(s.auth(s.handleVaultDelete)))
 
 	// MCP (Model Context Protocol) endpoint — JSON-RPC 2.0 over HTTP
 	mux.HandleFunc("/mcp", s.handleMCP)
