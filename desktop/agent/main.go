@@ -329,6 +329,8 @@ func main() {
 		runSupport(os.Args[2:])
 	case "ui":
 		runUI(os.Args[2:])
+	case "phone":
+		runPhone(os.Args[2:])
 	case "help", "--help", "-h":
 		printUsage()
 	case "version", "--version", "-v":
