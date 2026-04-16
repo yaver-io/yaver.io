@@ -21,6 +21,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"golang.org/x/term"
 )
 
 func runStream(args []string) {
@@ -93,6 +95,13 @@ const (
 	ansiReset = "\x1b[0m"
 )
 
+func streamANSI(code string) string {
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		return ""
+	}
+	return code
+}
+
 // renderStreamEvent prints one structured stream event to stdout in
 // chat-style. Generic across runners — yaver "speaks" on the left
 // (cyan), runner replies on the right (default), tool uses are dim
@@ -103,12 +112,12 @@ func renderStreamEvent(ev map[string]interface{}) {
 	switch t {
 	case "yaver_say":
 		txt, _ := ev["text"].(string)
-		fmt.Printf("\n%s[yaver]%s %s\n", ansiCyan, ansiReset, txt)
+		fmt.Printf("\n%s[yaver]%s %s\n", streamANSI(ansiCyan), streamANSI(ansiReset), txt)
 	case "runner_action":
 		runner, _ := ev["runner"].(string)
 		tool, _ := ev["tool"].(string)
 		detail, _ := ev["detail"].(string)
-		fmt.Printf("%s  %s · %s %s%s\n", ansiDim, runner, tool, detail, ansiReset)
+		fmt.Printf("%s  %s · %s %s%s\n", streamANSI(ansiDim), runner, tool, detail, streamANSI(ansiReset))
 	case "runner_text":
 		txt, _ := ev["text"].(string)
 		if strings.TrimSpace(txt) != "" {
@@ -120,7 +129,7 @@ func renderStreamEvent(ev map[string]interface{}) {
 		dur, _ := ev["duration_ms"].(float64)
 		cost, _ := ev["cost_usd"].(float64)
 		fmt.Printf("%s[%s done · %s · %.1fs · $%.4f]%s\n",
-			ansiBold, runner, status, dur/1000.0, cost, ansiReset)
+			streamANSI(ansiBold), runner, status, dur/1000.0, cost, streamANSI(ansiReset))
 	case "line", "":
 		// Legacy text frame — print verbatim.
 		if txt, ok := ev["text"].(string); ok {
@@ -129,7 +138,7 @@ func renderStreamEvent(ev map[string]interface{}) {
 	default:
 		// Unknown event type — surface compactly so it isn't lost.
 		if b, err := json.Marshal(ev); err == nil {
-			fmt.Printf("%s[%s] %s%s\n", ansiDim, t, string(b), ansiReset)
+			fmt.Printf("%s[%s] %s%s\n", streamANSI(ansiDim), t, string(b), streamANSI(ansiReset))
 		}
 	}
 }

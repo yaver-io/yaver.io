@@ -189,6 +189,38 @@ poll_autodev_effect() {
   return 1
 }
 
+capture_remote_stream_snippet() {
+  local target_hint="$1"
+  local stream_name="$2"
+  local out_file="$3"
+  HOME="$CONTROLLER_HOME" python3 - "$YAVER_BIN" "$target_hint" "$stream_name" "$out_file" <<'PY'
+import subprocess
+import sys
+
+bin_path, target_hint, stream_name, out_file = sys.argv[1:5]
+cmd = [bin_path, "stream", "--to", target_hint, stream_name]
+try:
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    out, _ = proc.communicate(timeout=8)
+except subprocess.TimeoutExpired:
+    proc.kill()
+    out, _ = proc.communicate()
+
+with open(out_file, "w", encoding="utf-8") as fh:
+    fh.write(out)
+PY
+}
+
+assert_human_stream_output() {
+  local out_file="$1"
+  if grep -q '"type":' "$out_file"; then
+    fail "stream output leaked raw JSON events"
+  fi
+  if ! grep -Eq '\[yaver\]|done ·|tailing autodev:' "$out_file"; then
+    fail "stream output did not look like a human transcript"
+  fi
+}
+
 run_remote_autoinit() {
   local target_hint="$1"
   log "controller -> target autoinit"
@@ -235,6 +267,8 @@ run_remote_autodev() {
   fi
   (cd "$FIXTURE_DIR" && HOME="$CONTROLLER_HOME" "${cmd[@]}") || fail "remote autodev command failed"
   poll_autodev_effect || fail "remote autodev did not modify fixture as expected"
+  capture_remote_stream_snippet "$target_hint" "fixture-autodev" "$WORK_DIR/stream.txt"
+  assert_human_stream_output "$WORK_DIR/stream.txt"
   pass "remote autodev completed through yaver-to-yaver"
 }
 

@@ -18,6 +18,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Process-wide opex counter — every claude "result" event adds its
@@ -172,6 +173,7 @@ func printClaudeEvent(ev map[string]interface{}) {
 		dur, _ := ev["duration_ms"].(float64)
 		cost, _ := ev["total_cost_usd"].(float64)
 		bumpClaudeOpex(cost)
+		AutodevPublishRunnerResult("claude", st, time.Duration(dur)*time.Millisecond, cost)
 		totalUSD, kicks := RunCostSnapshot()
 		fmt.Fprintf(os.Stderr, "[claude] result: %s (%.1fs, $%.4f)\n",
 			st, dur/1000.0, cost)
