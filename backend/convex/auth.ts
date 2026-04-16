@@ -208,12 +208,14 @@ export const createSession = mutation({
   args: {
     tokenHash: v.string(),
     userId: v.id("users"),
+    deviceId: v.optional(v.string()),
     expiresAt: v.number(),
   },
   handler: async (ctx, args) => {
     return await ctx.db.insert("sessions", {
       tokenHash: args.tokenHash,
       userId: args.userId,
+      deviceId: args.deviceId,
       expiresAt: args.expiresAt,
       createdAt: Date.now(),
     });
@@ -307,6 +309,24 @@ export const deleteAllSessions = mutation({
       .collect();
     for (const session of sessions) {
       await ctx.db.delete(session._id);
+    }
+  },
+});
+
+export const deleteSessionsByDeviceId = mutation({
+  args: {
+    userId: v.id("users"),
+    deviceId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const sessions = await ctx.db
+      .query("sessions")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .collect();
+    for (const session of sessions) {
+      if (session.userId === args.userId) {
+        await ctx.db.delete(session._id);
+      }
     }
   },
 });

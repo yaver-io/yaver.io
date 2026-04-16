@@ -20,6 +20,10 @@ func runGuests(args []string) {
 		runGuestsList()
 	case "remove", "revoke", "rm":
 		runGuestsRemove(args[1:])
+	case "unshare-machine":
+		runGuestsUnshareMachine(args[1:])
+	case "hostkeys":
+		runGuestsHostKeys(args[1:])
 	case "config":
 		runGuestsConfig(args[1:])
 	case "usage":
@@ -138,6 +142,118 @@ func runGuestsRemove(args []string) {
 	}
 
 	fmt.Printf("Guest access revoked for %s\n", email)
+}
+
+func runGuestsUnshareMachine(args []string) {
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "Usage: yaver guests unshare-machine <email> <machine-id>")
+		os.Exit(1)
+	}
+	email := args[0]
+	machineID := strings.TrimSpace(args[1])
+	if machineID == "" {
+		fmt.Fprintln(os.Stderr, "Machine ID required")
+		os.Exit(1)
+	}
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Not signed in. Run 'yaver auth' first.\n")
+		os.Exit(1)
+	}
+
+	convexURL := cfg.ConvexSiteURL
+	if convexURL == "" {
+		convexURL = defaultConvexSiteURL
+	}
+
+	configs, err := FetchGuestConfigs(convexURL, cfg.AuthToken)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to fetch guest configs: %v\n", err)
+		os.Exit(1)
+	}
+
+	var existing *GuestConfig
+	for i := range configs {
+		if strings.EqualFold(configs[i].GuestEmail, email) {
+			existing = &configs[i]
+			break
+		}
+	}
+	if existing == nil {
+		fmt.Fprintf(os.Stderr, "No guest config found for %s\n", email)
+		os.Exit(1)
+	}
+
+	var remaining []string
+	if existing.ShareAllMachines != nil && *existing.ShareAllMachines {
+		devices, err := listDevices(convexURL, cfg.AuthToken)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to list devices: %v\n", err)
+			os.Exit(1)
+		}
+		for _, d := range devices {
+			if d.IsGuest || d.DeviceID == "" || d.DeviceID == machineID {
+				continue
+			}
+			remaining = append(remaining, d.DeviceID)
+		}
+	} else {
+		for _, id := range existing.MachineIDs {
+			if id != "" && id != machineID {
+				remaining = append(remaining, id)
+			}
+		}
+	}
+
+	if err := UpdateGuestConfig(convexURL, cfg.AuthToken, map[string]interface{}{
+		"email":            email,
+		"shareAllMachines": false,
+		"machineIds":       remaining,
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to update guest config: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(remaining) == 0 {
+		fmt.Printf("Removed all machine sharing for %s\n", email)
+		return
+	}
+	fmt.Printf("Stopped sharing machine %s with %s\n", machineID, email)
+}
+
+func runGuestsHostKeys(args []string) {
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "Usage: yaver guests hostkeys <email> <on|off>")
+		os.Exit(1)
+	}
+	email := args[0]
+	value := parseBoolish(args[1])
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Not signed in. Run 'yaver auth' first.\n")
+		os.Exit(1)
+	}
+
+	convexURL := cfg.ConvexSiteURL
+	if convexURL == "" {
+		convexURL = defaultConvexSiteURL
+	}
+
+	if err := UpdateGuestConfig(convexURL, cfg.AuthToken, map[string]interface{}{
+		"email":          email,
+		"useHostApiKeys": value,
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to update guest config: %v\n", err)
+		os.Exit(1)
+	}
+
+	if value {
+		fmt.Printf("Host-managed keys enabled for %s\n", email)
+	} else {
+		fmt.Printf("Host-managed keys disabled for %s\n", email)
+	}
 }
 
 func runGuestsConfig(args []string) {
@@ -419,6 +535,8 @@ Commands:
   invite <email>    Invite a guest (max 5, expires in 2 days if not accepted)
   list              List all guests and their status
   remove <email>    Revoke guest access
+  unshare-machine <email> <machine-id>  Stop sharing one machine with a guest
+  hostkeys <email> <on|off>  Toggle host-managed keys for a guest
   config            Show all guest configs
   config <email>    Show config for a specific guest
   config <email> key=value ...   Set config (limit, mode, runners)
@@ -442,6 +560,8 @@ Examples:
   yaver guests config cousin@gmail.com limit=3600 mode=scheduled
   yaver guests config cousin@gmail.com runners=claude,aider
   yaver guests config cousin@gmail.com hostkeys=false isolation=true cpu=50 rammb=4096
+  yaver guests unshare-machine cousin@gmail.com mac-mini-01
+  yaver guests hostkeys cousin@gmail.com off
   yaver guests usage
   yaver guests usage 2026-04-06
   yaver guests list

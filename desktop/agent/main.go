@@ -19,6 +19,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -167,6 +168,8 @@ func main() {
 		runConnect(os.Args[2:])
 	case "serve":
 		runServe(os.Args[2:])
+	case "permissions":
+		runMacOSPermissions(os.Args[2:])
 	case "logs":
 		runLogs(os.Args[2:])
 	case "stop":
@@ -188,7 +191,7 @@ func main() {
 	case "status":
 		runStatus()
 	case "devices":
-		runDevices()
+		runDevices(os.Args[2:])
 	case "config":
 		runConfig(os.Args[2:])
 	case "relay":
@@ -279,6 +282,10 @@ func main() {
 		runGuests(os.Args[2:])
 	case "2fa", "totp":
 		runTwoFactor(os.Args[2:])
+	case "morning":
+		runMorning(os.Args[2:])
+	case "record":
+		runRecord(os.Args[2:])
 	case "sandbox":
 		runSandbox(os.Args[2:])
 	case "sdk-token":
@@ -341,6 +348,7 @@ Usage:
   yaver attach      Interactive terminal — see tasks, type prompts (like Claude Code)
   yaver agent       Dependency-aware agent graph runner (chat + autoideas + autodev + autotest)
   yaver serve       Start the agent manually (advanced)
+  yaver permissions Open the one-time macOS permission checklist again
   yaver logs        Show agent logs
   yaver clear-logs  Clear agent log file
   yaver config      Show current configuration
@@ -365,7 +373,7 @@ Usage:
   yaver email       Email connector setup and management (Office 365 / Gmail)
   yaver acl         Agent Communication Layer — connect to other MCP servers
   yaver status      Show auth, relay, and connection status
-  yaver devices     List your registered devices
+  yaver devices [remove <device-id>]  List your registered devices or remove one
   yaver exec        Execute a command on a remote device (like SSH)
   yaver session     Transfer AI agent sessions between machines
   yaver vault add <name> [--category <cat>] [--value <val>]  Add a secret to the vault
@@ -426,6 +434,12 @@ Usage:
   yaver 2fa status             Show whether two-factor auth is enabled
   yaver 2fa enable             Enroll a TOTP authenticator app (optional)
   yaver 2fa disable            Remove two-factor auth from your account
+  yaver morning latest         Match-report of what shipped overnight
+  yaver morning list           List recent autodev runs
+  yaver morning rollback <run> <task>   Revert a single task's commits
+  yaver record start <run> <task>       Start recording for the morning reel
+  yaver record stop  <run> <task>       Finalize a recording
+  yaver record drivers                  Show which recording drivers work here
   yaver expose --port <N> [--subdomain <name>]  Expose a local port via yaver.io subdomain
   yaver expose list            List active expose entries
   yaver expose stop [subdomain]  Stop exposing a subdomain (or all)
@@ -1197,6 +1211,8 @@ func runServe(args []string) {
 		*workDir = wd
 	}
 
+	maybeRunMacOSPermissionOnboarding("serve")
+
 	// If already running, stop the old instance and restart with new binary
 	if !*debug {
 		if pid, running := isAgentRunning(); running {
@@ -1412,7 +1428,7 @@ func runServe(args []string) {
 
 	if !offlineMode {
 		log.Printf("Registering device %s (%s) at %s:%d...", hostname, cfg.DeviceID, localIP, *httpPort)
-		if err := RegisterDevice(cfg.ConvexSiteURL, RegisterDeviceRequest{
+		if rotatedToken, err := RegisterDevice(cfg.ConvexSiteURL, RegisterDeviceRequest{
 			Token:      cfg.AuthToken,
 			DeviceID:   cfg.DeviceID,
 			Name:       hostname,
@@ -1428,7 +1444,7 @@ func runServe(args []string) {
 				if saveErr := SaveConfig(cfg); saveErr != nil {
 					log.Fatalf("save config after device ID reset: %v", saveErr)
 				}
-				if err2 := RegisterDevice(cfg.ConvexSiteURL, RegisterDeviceRequest{
+				if rotatedToken2, err2 := RegisterDevice(cfg.ConvexSiteURL, RegisterDeviceRequest{
 					Token:      cfg.AuthToken,
 					DeviceID:   cfg.DeviceID,
 					Name:       hostname,
@@ -1440,10 +1456,20 @@ func runServe(args []string) {
 				}); err2 != nil {
 					log.Printf("Warning: device registration failed: %v", err2)
 					offlineMode = true
+				} else if rotatedToken2 != "" && rotatedToken2 != cfg.AuthToken {
+					cfg.AuthToken = rotatedToken2
+					if saveErr := SaveConfig(cfg); saveErr != nil {
+						log.Printf("Warning: could not persist dedicated device session: %v", saveErr)
+					}
 				}
 			} else {
 				log.Printf("Warning: device registration failed: %v", err)
 				offlineMode = true
+			}
+		} else if rotatedToken != "" && rotatedToken != cfg.AuthToken {
+			cfg.AuthToken = rotatedToken
+			if saveErr := SaveConfig(cfg); saveErr != nil {
+				log.Printf("Warning: could not persist dedicated device session: %v", saveErr)
 			}
 		}
 		if !offlineMode {
@@ -3589,6 +3615,8 @@ func runStatus() {
 	} else {
 		fmt.Printf("  Not configured. Run: yaver config set speech.provider <whisper|openai|deepgram|assemblyai>\n")
 	}
+
+	printStatusMesh()
 }
 
 // ---------------------------------------------------------------------------
@@ -3962,6 +3990,57 @@ func runDoctor() {
 	} else {
 		pass(fmt.Sprintf("idle (%d total)", totalTasks))
 	}
+
+	fmt.Println("\n── Device Sessions ──")
+	check("Session binding")
+	if cfg != nil && cfg.AuthToken != "" && cfg.ConvexSiteURL != "" {
+		devices, err := listDevices(cfg.ConvexSiteURL, cfg.AuthToken)
+		if err != nil {
+			warning(fmt.Sprintf("Could not inspect devices: %v", err))
+		} else {
+			legacyCount := 0
+			for _, device := range devices {
+				if device.IsGuest {
+					continue
+				}
+				if device.SessionBinding != "dedicated" {
+					legacyCount++
+				}
+			}
+			if legacyCount == 0 {
+				pass("All owned devices use dedicated device sessions")
+			} else {
+				warning(fmt.Sprintf("%d owned device(s) still on legacy shared sessions", legacyCount))
+			}
+			for _, device := range devices {
+				if device.IsGuest {
+					continue
+				}
+				check("  " + device.Name)
+				switch device.SessionBinding {
+				case "dedicated":
+					pass("dedicated device session")
+				default:
+					warning("legacy shared session — restart/serve this machine once to rotate it")
+				}
+			}
+		}
+	} else {
+		warning("Sign in first to inspect device session binding")
+	}
+
+	if runtime.GOOS == "darwin" {
+		fmt.Println("\n── macOS Permissions ──")
+		check("Permission onboarding")
+		if cfg != nil && cfg.MacOSPermissionOnboardingDone {
+			pass("Completed (rerun with `yaver permissions`)")
+		} else {
+			warning("Not completed — run `yaver permissions` once to front-load common macOS prompts")
+		}
+	}
+
+	runDoctorMesh(check, pass, warning, failed)
+	runDoctorRecording(check, pass, warning, failed)
 
 	// 3b. Sessions — scan all agent processes and tmux sessions
 	fmt.Println("\n── Sessions ──")
@@ -4509,8 +4588,36 @@ func runDoctor() {
 	}
 }
 
-func runDevices() {
+func runDevices(args []string) {
 	cfg := mustLoadAuthConfig()
+
+	if len(args) > 0 {
+		switch args[0] {
+		case "remove", "rm", "delete":
+			if len(args) < 2 {
+				fmt.Fprintln(os.Stderr, "Usage: yaver devices remove <device-id>")
+				os.Exit(1)
+			}
+			deviceID := strings.TrimSpace(args[1])
+			if deviceID == "" {
+				fmt.Fprintln(os.Stderr, "Device ID required")
+				os.Exit(1)
+			}
+			if cfg.DeviceID != "" && deviceID == cfg.DeviceID {
+				fmt.Fprintln(os.Stderr, "Refusing to remove the current device from itself. Run this from another device or use the mobile app.")
+				os.Exit(1)
+			}
+			if err := RemoveDevice(cfg.ConvexSiteURL, cfg.AuthToken, deviceID); err != nil {
+				fmt.Fprintf(os.Stderr, "Remove failed: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Removed device %s\n", deviceID)
+			return
+		default:
+			fmt.Fprintln(os.Stderr, "Usage: yaver devices [remove <device-id>]")
+			os.Exit(1)
+		}
+	}
 
 	devices, err := listDevices(cfg.ConvexSiteURL, cfg.AuthToken)
 	if err != nil {
@@ -4524,18 +4631,26 @@ func runDevices() {
 		return
 	}
 
-	fmt.Printf("%-10s  %-20s  %-8s  %-8s  %s\n", "ID", "NAME", "PLATFORM", "STATUS", "ADDRESS")
+	fmt.Printf("%-10s  %-20s  %-8s  %-8s  %-14s  %s\n", "ID", "NAME", "PLATFORM", "STATUS", "SESSION", "ADDRESS")
 	for _, d := range devices {
 		status := "offline"
 		if d.IsOnline {
 			status = "online"
 		}
+		sessionBinding := "-"
+		if !d.IsGuest {
+			if d.SessionBinding != "" {
+				sessionBinding = d.SessionBinding
+			} else {
+				sessionBinding = "legacy-shared"
+			}
+		}
 		id := d.DeviceID
 		if len(id) > 8 {
 			id = id[:8] + "..."
 		}
-		fmt.Printf("%-10s  %-20s  %-8s  %-8s  %s:%d\n",
-			id, d.Name, d.Platform, status, d.QuicHost, d.QuicPort)
+		fmt.Printf("%-10s  %-20s  %-8s  %-8s  %-14s  %s:%d\n",
+			id, d.Name, d.Platform, status, sessionBinding, d.QuicHost, d.QuicPort)
 	}
 }
 
@@ -4772,6 +4887,7 @@ type DeviceInfo struct {
 	PriorityMode              string `json:"priorityMode,omitempty"`
 	UseHostAPIKeys            bool   `json:"useHostApiKeys,omitempty"`
 	AllowGuestProvidedAPIKeys bool   `json:"allowGuestProvidedApiKeys,omitempty"`
+	SessionBinding            string `json:"sessionBinding,omitempty"`
 }
 
 func listDevices(baseURL, token string) ([]DeviceInfo, error) {
@@ -4797,6 +4913,155 @@ func listDevices(baseURL, token string) ([]DeviceInfo, error) {
 		return nil, fmt.Errorf("parse devices: %w", err)
 	}
 	return result.Devices, nil
+}
+
+func summarizePeerStates(peers []*PeerState) (online, stale, offline int) {
+	for _, peer := range peers {
+		switch peer.State {
+		case "online":
+			online++
+		case "stale":
+			stale++
+		case "offline":
+			offline++
+		}
+	}
+	return
+}
+
+func sortedPeerSnapshot() []*PeerState {
+	peers := globalPeerWatcher().Snapshot()
+	sort.Slice(peers, func(i, j int) bool {
+		rank := func(state string) int {
+			switch state {
+			case "online":
+				return 0
+			case "stale":
+				return 1
+			case "offline":
+				return 2
+			default:
+				return 3
+			}
+		}
+		if rank(peers[i].State) != rank(peers[j].State) {
+			return rank(peers[i].State) < rank(peers[j].State)
+		}
+		left := peers[i].Name
+		if left == "" {
+			left = peers[i].DeviceID
+		}
+		right := peers[j].Name
+		if right == "" {
+			right = peers[j].DeviceID
+		}
+		return strings.ToLower(left) < strings.ToLower(right)
+	})
+	return peers
+}
+
+func printStatusMesh() {
+	fmt.Println()
+	fmt.Println("Mesh:")
+	ts := DetectTailscale()
+	switch {
+	case ts == nil:
+		fmt.Println("  Tailscale: unavailable")
+	case ts.Running && ts.Self != nil:
+		addr := ts.Self.TailAddr
+		if addr == "" && len(ts.Self.Addrs) > 0 {
+			addr = ts.Self.Addrs[0]
+		}
+		fmt.Printf("  Tailscale: up (%s", ts.BackendState)
+		if addr != "" {
+			fmt.Printf(", %s", addr)
+		}
+		fmt.Println(")")
+	case ts.BackendState != "":
+		fmt.Printf("  Tailscale: %s\n", strings.ToLower(ts.BackendState))
+	default:
+		fmt.Println("  Tailscale: not installed or not running")
+	}
+
+	peers := sortedPeerSnapshot()
+	online, stale, offline := summarizePeerStates(peers)
+	if len(peers) == 0 {
+		fmt.Println("  Peers:     none observed yet")
+		return
+	}
+	fmt.Printf("  Peers:     %d online, %d stale, %d offline\n", online, stale, offline)
+	limit := len(peers)
+	if limit > 5 {
+		limit = 5
+	}
+	for _, peer := range peers[:limit] {
+		name := peer.Name
+		if name == "" {
+			name = peer.DeviceID
+		}
+		lastSeen := peer.LastSeen
+		if lastSeen == "" {
+			lastSeen = "never"
+		}
+		fmt.Printf("    %-20s %-7s %s\n", name, peer.State, lastSeen)
+	}
+	if len(peers) > limit {
+		fmt.Printf("    ... and %d more\n", len(peers)-limit)
+	}
+}
+
+func runDoctorMesh(check func(string), pass func(string), warning func(string), failed func(string)) {
+	fmt.Println("\n── Mesh ──")
+	check("Tailscale")
+	ts := DetectTailscale()
+	switch {
+	case ts == nil:
+		warning("Unavailable")
+	case ts.Running && ts.Self != nil:
+		addr := ts.Self.TailAddr
+		if addr == "" && len(ts.Self.Addrs) > 0 {
+			addr = ts.Self.Addrs[0]
+		}
+		if addr != "" {
+			pass(fmt.Sprintf("Running (%s, %s)", ts.BackendState, addr))
+		} else {
+			pass(fmt.Sprintf("Running (%s)", ts.BackendState))
+		}
+	case ts.BackendState != "":
+		warning(fmt.Sprintf("Installed but %s", strings.ToLower(ts.BackendState)))
+	default:
+		warning("Not installed or not running")
+	}
+
+	peers := sortedPeerSnapshot()
+	check("Peer heartbeats")
+	if len(peers) == 0 {
+		warning("No peers observed yet")
+		return
+	}
+	online, stale, offline := summarizePeerStates(peers)
+	if offline > 0 {
+		failed(fmt.Sprintf("%d online, %d stale, %d offline", online, stale, offline))
+	} else if stale > 0 {
+		warning(fmt.Sprintf("%d online, %d stale", online, stale))
+	} else {
+		pass(fmt.Sprintf("%d online", online))
+	}
+	for _, peer := range peers {
+		check("  " + nonEmpty(peer.Name, peer.DeviceID))
+		lastSeen := peer.LastSeen
+		if lastSeen == "" {
+			lastSeen = "never"
+		}
+		switch peer.State {
+		case "online":
+			pass("online, last seen " + lastSeen)
+		case "stale":
+			warning("stale, last seen " + lastSeen)
+		default:
+			failed("offline, last seen " + lastSeen)
+		}
+	}
 }
 
 // getLocalIP returns the preferred outbound local IP address.

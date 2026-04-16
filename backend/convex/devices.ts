@@ -153,13 +153,43 @@ export const listMyDevices = query({
     const session = await validateSessionInternal(ctx, args.tokenHash);
     if (!session) throw new Error("Unauthorized");
 
+    const allSessions = await ctx.db
+      .query("sessions")
+      .withIndex("by_userId", (q) => q.eq("userId", session.user._id))
+      .collect();
+    const dedicatedSessionDeviceIds = new Set(
+      allSessions
+        .map((row) => row.deviceId)
+        .filter((deviceId): deviceId is string => typeof deviceId === "string" && deviceId.trim() !== ""),
+    );
+
     // Own devices
     const ownDevices = await ctx.db
       .query("devices")
       .withIndex("by_userId", (q) => q.eq("userId", session.user._id))
       .collect();
 
-    const result = ownDevices.map((d) => ({
+    const result: Array<{
+      deviceId: string;
+      name: string;
+      platform: string;
+      publicKey?: string;
+      quicHost: string;
+      quicPort: number;
+      isOnline: boolean;
+      needsAuth: boolean;
+      runnerDown: boolean;
+      runners: Doc<"devices">["runners"];
+      lastHeartbeat: number;
+      isGuest: boolean;
+      hostName?: string;
+      hostEmail?: string;
+      accessScope: "owner" | "shared-scoped" | "shared-legacy";
+      priorityMode?: string;
+      useHostApiKeys?: boolean;
+      allowGuestProvidedApiKeys?: boolean;
+      sessionBinding?: "dedicated" | "legacy-shared";
+    }> = ownDevices.map((d) => ({
       deviceId: d.deviceId,
       name: d.name,
       platform: d.platform,
@@ -178,6 +208,7 @@ export const listMyDevices = query({
       priorityMode: undefined as string | undefined,
       useHostApiKeys: undefined as boolean | undefined,
       allowGuestProvidedApiKeys: undefined as boolean | undefined,
+      sessionBinding: dedicatedSessionDeviceIds.has(d.deviceId) ? "dedicated" as const : "legacy-shared" as const,
     }));
 
     const scopedGrants = await listActiveInfraGrantsForGuest(ctx, session.user._id);
@@ -222,6 +253,7 @@ export const listMyDevices = query({
           priorityMode: grant.priorityMode,
           useHostApiKeys: grant.useHostApiKeys,
           allowGuestProvidedApiKeys: grant.allowGuestProvidedApiKeys,
+          sessionBinding: undefined as "dedicated" | "legacy-shared" | undefined,
         });
       }
     }
@@ -264,6 +296,7 @@ export const listMyDevices = query({
           priorityMode: access.usageMode === "idle-only" ? "spare-capacity" : undefined,
           useHostApiKeys: undefined,
           allowGuestProvidedApiKeys: true,
+          sessionBinding: undefined as "dedicated" | "legacy-shared" | undefined,
         });
       }
     }
@@ -408,6 +441,16 @@ export const removeDevice = mutation({
 
     if (!device) throw new Error("Device not found");
     if (device.userId !== session.user._id) throw new Error("Unauthorized");
+
+    const deviceSessions = await ctx.db
+      .query("sessions")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .collect();
+    for (const deviceSession of deviceSessions) {
+      if (deviceSession.userId === session.user._id) {
+        await ctx.db.delete(deviceSession._id);
+      }
+    }
 
     await ctx.db.delete(device._id);
   },

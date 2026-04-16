@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Suspense } from "react";
 import { CONVEX_URL } from "@/lib/constants";
+import { sanitizeReturnTo } from "@/lib/oauth";
 
 function CallbackHandler() {
   const searchParams = useSearchParams();
@@ -13,6 +14,7 @@ function CallbackHandler() {
   useEffect(() => {
     const token = searchParams.get("token");
     const errorParam = searchParams.get("error");
+    const returnTo = sanitizeReturnTo(searchParams.get("return"));
 
     if (errorParam) {
       setError(errorParam);
@@ -38,18 +40,18 @@ function CallbackHandler() {
       })
         .then((res) => {
           if (!res.ok) {
-            router.push("/dashboard");
+            router.push(returnTo || "/dashboard");
             return;
           }
           return res.json();
         })
         .then((data) => {
           if (!data) return;
-          router.push("/dashboard");
+          router.push(returnTo || "/dashboard");
         })
         .catch(() => {
           // On error, default to dashboard
-          router.push("/dashboard");
+          router.push(returnTo || "/dashboard");
         });
     } catch {
       setError("Failed to store authentication token.");

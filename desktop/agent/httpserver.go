@@ -22,6 +22,8 @@ import (
 	"time"
 )
 
+var currentLocalAgentPort atomic.Int64
+
 // HTTPServer serves the V1 HTTP API for mobile clients over Tailscale.
 type HTTPServer struct {
 	port               int
@@ -131,10 +133,17 @@ type HTTPServer struct {
 	// Named log streams for fan-out of long-running CLI ops
 	// (autodev, autotest, etc.) to mobile + web subscribers.
 	streams *LogStreamRegistry
+
+	// Morning match-report + recording state. Lazy-initialized so
+	// tests and the production agent share the same code path.
+	morningMu       sync.Mutex
+	morningStoreRef *MorningStore
+	recordingMgrRef *RecordingManager
 }
 
 // NewHTTPServer creates a new HTTP server bound to the given port.
 func NewHTTPServer(port int, token, ownerUserID, deviceID, convexURL, hostname string, taskMgr *TaskManager) *HTTPServer {
+	currentLocalAgentPort.Store(int64(port))
 	return &HTTPServer{
 		port:        port,
 		token:       token,
@@ -170,6 +179,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/agent/graphs", s.auth(s.handleAgentGraphs))
 	mux.HandleFunc("/agent/graphs/", s.auth(s.handleAgentGraphByID))
 	mux.HandleFunc("/agent/runners", s.auth(s.handleRunners))
+
+	// Morning match-report + recording video byte-range streamer.
+	// Owner-only; deliberately NOT in guestAllowedPrefixes.
+	s.RegisterMorningRoutes(mux)
 	mux.HandleFunc("/agent/runner/restart", s.auth(s.handleRunnerRestart))
 	mux.HandleFunc("/agent/runner/switch", s.auth(s.handleRunnerSwitch))
 	mux.HandleFunc("/agent/shutdown", s.auth(s.handleShutdown))
@@ -251,8 +264,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/feedback-board/public", s.authSDK(s.handleFeedbackBoardPublic))
 	// Auth pair endpoints are intentionally UNAUTHENTICATED —
 	// the pairing code (10-min window, single use) is the secret.
-	mux.HandleFunc("/auth/pair/info", s.handlePairInfo)
-	mux.HandleFunc("/auth/pair/submit", s.handlePairSubmit)
+	// They still go through the generic rate limiter so brute-
+	// force attempts on the 6-char code are throttled hard.
+	mux.HandleFunc("/auth/pair/info", s.rateLimit(s.handlePairInfo))
+	mux.HandleFunc("/auth/pair/submit", s.rateLimit(s.handlePairSubmit))
 	mux.HandleFunc("/auth/browser-session", s.auth(s.handleBrowserSession))
 	mux.HandleFunc("/machine/health", s.auth(s.handleMachineHealth))
 	mux.HandleFunc("/machine/peers", s.auth(s.handlePeerHealth))
@@ -267,6 +282,12 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/files/list", s.auth(s.handleFilesList))
 	mux.HandleFunc("/files/read", s.auth(s.handleFilesRead))
 	mux.HandleFunc("/files/raw", s.auth(s.handleFilesRaw))
+	mux.HandleFunc("/shared-storage/profiles", s.auth(s.handleSharedStorageProfiles))
+	mux.HandleFunc("/shared-storage/profile/delete", s.auth(s.handleSharedStorageDelete))
+	mux.HandleFunc("/shared-storage/list", s.auth(s.handleSharedStorageList))
+	mux.HandleFunc("/shared-storage/read", s.auth(s.handleSharedStorageRead))
+	mux.HandleFunc("/shared-storage/raw", s.auth(s.handleSharedStorageRaw))
+	mux.HandleFunc("/shared-storage/search", s.auth(s.handleSharedStorageSearch))
 	// Project wizard (fullstack generator) — drives the same
 	// state machine as `yaver new` over HTTP so the mobile app,
 	// the web dashboard and MCP clients all share it.
@@ -1876,7 +1897,7 @@ func (s *HTTPServer) handleRunnerSwitch(w http.ResponseWriter, r *http.Request) 
 			RunnerID:   "codex",
 			Name:       "OpenAI Codex",
 			Command:    "codex",
-			Args:       []string{"--quiet", "--full-auto", "{prompt}"},
+			Args:       []string{"exec", "--full-auto", "{prompt}"},
 			OutputMode: "raw",
 		}
 	case "aider":
@@ -3758,6 +3779,132 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolResult(strings.TrimSpace(sb.String()))
 
 	// --- Two-Factor Authentication (optional) ---
+	case "morning_latest":
+		runs := s.morningStore().List(1)
+		if len(runs) == 0 {
+			return mcpToolResult("No runs yet. Try `yaver autodev --morning`.")
+		}
+		return mcpToolJSON(map[string]interface{}{"ok": true, "run": runs[0]})
+
+	case "morning_list":
+		var args struct {
+			Limit int `json:"limit"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.Limit <= 0 {
+			args.Limit = 20
+		}
+		return mcpToolJSON(map[string]interface{}{"ok": true, "runs": s.morningStore().List(args.Limit)})
+
+	case "morning_show":
+		var args struct {
+			RunID string `json:"run_id"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.RunID) == "" {
+			return mcpToolError("run_id is required")
+		}
+		run, ok := s.morningStore().Load(args.RunID)
+		if !ok {
+			return mcpToolError("run not found: " + args.RunID)
+		}
+		return mcpToolJSON(map[string]interface{}{"ok": true, "run": run})
+
+	case "morning_rollback":
+		var args struct {
+			RunID  string `json:"run_id"`
+			TaskID string `json:"task_id"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.RunID == "" || args.TaskID == "" {
+			return mcpToolError("run_id and task_id required")
+		}
+		summary, ok := s.morningStore().Load(args.RunID)
+		if !ok {
+			return mcpToolError("run not found: " + args.RunID)
+		}
+		var task *TaskHighlight
+		for i := range summary.Tasks {
+			if summary.Tasks[i].TaskID == args.TaskID {
+				task = &summary.Tasks[i]
+				break
+			}
+		}
+		if task == nil {
+			return mcpToolError("task not found: " + args.TaskID)
+		}
+		if task.Status == TaskStatusHighlightRolledBack {
+			return mcpToolError("task already rolled back")
+		}
+		if len(task.CommitSHAs) == 0 {
+			return mcpToolError("no commits recorded for this task — nothing to revert")
+		}
+		workDir := task.WorkDir
+		if workDir == "" {
+			workDir = summary.WorkDir
+		}
+		revertSHA, err := gitRevertCommits(context.Background(), workDir, task.CommitSHAs)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		if _, err := s.morningStore().MarkRollback(args.RunID, args.TaskID, revertSHA); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult(fmt.Sprintf("Rolled back task %s — new revert commit %s", args.TaskID, revertSHA))
+
+	case "record_drivers":
+		return mcpToolJSON(map[string]interface{}{
+			"ok":       true,
+			"platform": platformDescription(),
+			"drivers":  s.recordingManager().Drivers(),
+		})
+
+	case "record_start":
+		var args struct {
+			RunID  string `json:"run_id"`
+			TaskID string `json:"task_id"`
+			Target string `json:"target"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.RunID == "" || args.TaskID == "" {
+			return mcpToolError("run_id and task_id required")
+		}
+		handle, err := s.recordingManager().Start(context.Background(), args.RunID, args.TaskID, RecordingTarget(args.Target))
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(map[string]interface{}{
+			"ok":     true,
+			"handle": handle,
+		})
+
+	case "record_stop":
+		var args struct {
+			RunID  string `json:"run_id"`
+			TaskID string `json:"task_id"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.RunID == "" || args.TaskID == "" {
+			return mcpToolError("run_id and task_id required")
+		}
+		result, err := s.recordingManager().Stop(args.RunID, args.TaskID)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		// Also stamp video metadata onto the task highlight so mobile
+		// clients see hasVideo=true on their next poll.
+		_, _ = s.morningStore().UpsertTask(args.RunID, "", "", TaskHighlight{
+			TaskID:          args.TaskID,
+			HasVideo:        true,
+			VideoDurationMs: result.DurationMs,
+			VideoSizeBytes:  result.SizeBytes,
+		})
+		return mcpToolJSON(map[string]interface{}{
+			"ok":       true,
+			"result":   result,
+			"streamAt": fmt.Sprintf("/recordings/%s/%s/video.mp4", args.RunID, args.TaskID),
+		})
+
 	case "totp_status":
 		cfg, err := LoadConfig()
 		if err != nil || cfg == nil || strings.TrimSpace(cfg.AuthToken) == "" || strings.TrimSpace(cfg.ConvexSiteURL) == "" {
@@ -3788,10 +3935,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolError(err.Error())
 		}
 		body := map[string]interface{}{
-			"secret":     setup.Secret,
+			"secret":         setup.Secret,
 			"secretReadable": groupTwoFactorSecret(setup.Secret),
-			"otpauthUrl": setup.OtpAuthURL,
-			"instructions": "Scan the otpauth:// URL with Microsoft Authenticator, Google Authenticator, 1Password, or any TOTP app. Then call totp_enable_confirm with a 6-digit code to finish enrollment.",
+			"otpauthUrl":     setup.OtpAuthURL,
+			"instructions":   "Scan the otpauth:// URL with Microsoft Authenticator, Google Authenticator, 1Password, or any TOTP app. Then call totp_enable_confirm with a 6-digit code to finish enrollment.",
 		}
 		return mcpToolJSON(body)
 
@@ -7039,6 +7186,36 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpStorageList(a.Dir, a.Bucket))
+	case "shared_storage_profiles":
+		return mcpToolJSON(mcpSharedStorageProfiles())
+	case "shared_storage_upsert":
+		var a struct {
+			Profile string `json:"profile"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSharedStorageUpsert(a.Profile))
+	case "shared_storage_delete":
+		var a struct {
+			ID string `json:"id"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSharedStorageDelete(a.ID))
+	case "shared_storage_list":
+		var a struct {
+			ID   string `json:"id"`
+			Path string `json:"path"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSharedStorageList(a.ID, a.Path))
+	case "shared_storage_search":
+		var a struct {
+			ID    string `json:"id"`
+			Query string `json:"query"`
+			Path  string `json:"path"`
+			Limit int    `json:"limit"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSharedStorageSearch(a.ID, a.Query, a.Path, a.Limit))
 	case "cron_list":
 		var a struct {
 			Dir string `json:"directory"`

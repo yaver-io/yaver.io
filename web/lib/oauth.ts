@@ -62,7 +62,15 @@ export function isProviderConfigured(provider: OAuthProvider): boolean {
 
 type OAuthState = {
   client?: string;
+  returnTo?: string;
 };
+
+export function sanitizeReturnTo(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("/") || trimmed.startsWith("//")) return undefined;
+  return trimmed;
+}
 
 export function encodeOAuthState(state: OAuthState): string {
   return Buffer.from(JSON.stringify(state)).toString("base64url");
@@ -192,4 +200,3 @@ export async function getUserInfo(
 
   throw new Error(`Unknown provider: ${provider}`);
 }
-

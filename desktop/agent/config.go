@@ -22,25 +22,26 @@ type Config struct {
 	RelayServers  []RelayServerConfig `json:"relay_servers,omitempty"`
 	// Cached relay settings come from Convex/user settings and are used as a
 	// reboot-safe fallback when the agent's auth token has expired.
-	CachedRelayPassword string              `json:"cached_relay_password,omitempty"`
-	CachedRelayServers  []RelayServerConfig `json:"cached_relay_servers,omitempty"`
-	CloudflareTunnels []CloudflareTunnelConfig `json:"cloudflare_tunnels,omitempty"`
-	Sandbox       *SandboxConfig      `json:"sandbox,omitempty"`
-	Exec          *ExecConfig         `json:"exec,omitempty"`
-	Email         *EmailConfig        `json:"email,omitempty"`
-	ACLPeers      []ACLPeerConfig     `json:"acl_peers,omitempty"`
-	Speech        *SpeechConfig       `json:"speech,omitempty"`
-	Voice         *VoiceConfig        `json:"voice,omitempty"`
-	Notifications *NotificationConfig `json:"notifications,omitempty"`
-	WebhookSecret       string              `json:"webhook_secret,omitempty"`
-	AnalyticsWebhookURL string              `json:"analytics_webhook_url,omitempty"`
-	RateLimit           *RateLimitConfig    `json:"rate_limit,omitempty"`
+	CachedRelayPassword           string                   `json:"cached_relay_password,omitempty"`
+	CachedRelayServers            []RelayServerConfig      `json:"cached_relay_servers,omitempty"`
+	CloudflareTunnels             []CloudflareTunnelConfig `json:"cloudflare_tunnels,omitempty"`
+	MacOSPermissionOnboardingDone bool                     `json:"macos_permission_onboarding_done,omitempty"`
+	Sandbox                       *SandboxConfig           `json:"sandbox,omitempty"`
+	Exec                          *ExecConfig              `json:"exec,omitempty"`
+	Email                         *EmailConfig             `json:"email,omitempty"`
+	ACLPeers                      []ACLPeerConfig          `json:"acl_peers,omitempty"`
+	Speech                        *SpeechConfig            `json:"speech,omitempty"`
+	Voice                         *VoiceConfig             `json:"voice,omitempty"`
+	Notifications                 *NotificationConfig      `json:"notifications,omitempty"`
+	WebhookSecret                 string                   `json:"webhook_secret,omitempty"`
+	AnalyticsWebhookURL           string                   `json:"analytics_webhook_url,omitempty"`
+	RateLimit                     *RateLimitConfig         `json:"rate_limit,omitempty"`
 
 	// Machine-level monitors (disk-health, peer heartbeat)
 	// run on every serve by default. Each can be individually
 	// disabled in config for devs who don't want extra
 	// goroutines or who've wired the same checks elsewhere.
-	DisableDiskHealth bool `json:"disable_disk_health,omitempty"`
+	DisableDiskHealth       bool `json:"disable_disk_health,omitempty"`
 	DisableHeartbeatWatcher bool `json:"disable_heartbeat_watcher,omitempty"`
 
 	// BootstrapSecretHash is the SHA-256 of a pre-shared
@@ -50,51 +51,52 @@ type Config struct {
 	// and stores the plaintext in their password manager so
 	// they can unlock a headless agent that's lost auth
 	// without SSH'ing in.
-	BootstrapSecretHash string `json:"bootstrap_secret_hash,omitempty"`
-	HAURL         string              `json:"ha_url,omitempty"`
-	HAToken       string              `json:"ha_token,omitempty"`
-	AllowedIPs    []string            `json:"allowed_ips,omitempty"`     // IP allowlist CIDRs
-	TLSFingerprint string            `json:"tls_fingerprint,omitempty"` // SHA256 of TLS cert
-	TLSPort       int                 `json:"tls_port,omitempty"`       // HTTPS port (default 18443)
-	IOSInstallMethod string           `json:"ios_install_method,omitempty"` // "auto" (default), "native", "bundle"
+	BootstrapSecretHash string   `json:"bootstrap_secret_hash,omitempty"`
+	HAURL               string   `json:"ha_url,omitempty"`
+	HAToken             string   `json:"ha_token,omitempty"`
+	AllowedIPs          []string `json:"allowed_ips,omitempty"`        // IP allowlist CIDRs
+	TLSFingerprint      string   `json:"tls_fingerprint,omitempty"`    // SHA256 of TLS cert
+	TLSPort             int      `json:"tls_port,omitempty"`           // HTTPS port (default 18443)
+	IOSInstallMethod    string   `json:"ios_install_method,omitempty"` // "auto" (default), "native", "bundle"
 
 	// Container isolation — run tasks inside Docker containers
-	ContainerizeGuests bool              `json:"containerize_guests,omitempty"` // run guest tasks in containers (default: false)
-	ContainerizeHost   bool              `json:"containerize_host,omitempty"`   // run host tasks in containers (default: false)
-	ContainerImage     string            `json:"container_image,omitempty"`     // custom image (default: yaver-sandbox)
-	ContainerCPU       string            `json:"container_cpu,omitempty"`       // CPU limit e.g. "2.0"
-	ContainerMemory    string            `json:"container_memory,omitempty"`    // Memory limit e.g. "4g"
-	ContainerNetwork   string            `json:"container_network,omitempty"`   // Network mode: "host" (default), "bridge", "none"
-	ContainerReadOnly  bool              `json:"container_read_only,omitempty"` // Read-only root filesystem (writes only to /workspace, /tmp)
-	ContainerMounts    []string          `json:"container_mounts,omitempty"`    // Extra volume mounts e.g. ["/opt/android-sdk:/opt/android-sdk:ro"]
+	ContainerizeGuests bool     `json:"containerize_guests,omitempty"` // run guest tasks in containers (default: false)
+	ContainerizeHost   bool     `json:"containerize_host,omitempty"`   // run host tasks in containers (default: false)
+	ContainerImage     string   `json:"container_image,omitempty"`     // custom image (default: yaver-sandbox)
+	ContainerCPU       string   `json:"container_cpu,omitempty"`       // CPU limit e.g. "2.0"
+	ContainerMemory    string   `json:"container_memory,omitempty"`    // Memory limit e.g. "4g"
+	ContainerNetwork   string   `json:"container_network,omitempty"`   // Network mode: "host" (default), "bridge", "none"
+	ContainerReadOnly  bool     `json:"container_read_only,omitempty"` // Read-only root filesystem (writes only to /workspace, /tmp)
+	ContainerMounts    []string `json:"container_mounts,omitempty"`    // Extra volume mounts e.g. ["/opt/android-sdk:/opt/android-sdk:ro"]
+	SharedStorage      []SharedStorageProfile `json:"shared_storage,omitempty"`
 }
 
 // ExecConfig controls remote command execution settings.
 type ExecConfig struct {
-	Enabled        bool   `json:"enabled"`            // default: true
-	MaxConcurrent  int    `json:"max_concurrent,omitempty"`  // default: 10
+	Enabled        bool   `json:"enabled"`                     // default: true
+	MaxConcurrent  int    `json:"max_concurrent,omitempty"`    // default: 10
 	DefaultTimeout int    `json:"default_timeout_s,omitempty"` // default: 300
-	Shell          string `json:"shell,omitempty"`    // default: "sh"
+	Shell          string `json:"shell,omitempty"`             // default: "sh"
 }
 
 // SpeechConfig holds speech-to-text and text-to-speech settings for CLI voice input.
 type SpeechConfig struct {
-	Provider  string `json:"provider,omitempty"`   // "whisper" (local), "openai", "deepgram", "assemblyai"
-	APIKey    string `json:"api_key,omitempty"`    // API key for cloud providers
-	TTSEnabled bool  `json:"tts_enabled,omitempty"` // read responses aloud (macOS `say`, linux `espeak`)
+	Provider   string `json:"provider,omitempty"`    // "whisper" (local), "openai", "deepgram", "assemblyai"
+	APIKey     string `json:"api_key,omitempty"`     // API key for cloud providers
+	TTSEnabled bool   `json:"tts_enabled,omitempty"` // read responses aloud (macOS `say`, linux `espeak`)
 }
 
 // EmailConfig holds email provider credentials.
 type EmailConfig struct {
-	Provider          string `json:"provider,omitempty"`           // "office365" or "gmail"
-	AzureTenantID     string `json:"azure_tenant_id,omitempty"`
-	AzureClientID     string `json:"azure_client_id,omitempty"`
-	AzureClientSecret string `json:"azure_client_secret,omitempty"`
+	Provider           string `json:"provider,omitempty"` // "office365" or "gmail"
+	AzureTenantID      string `json:"azure_tenant_id,omitempty"`
+	AzureClientID      string `json:"azure_client_id,omitempty"`
+	AzureClientSecret  string `json:"azure_client_secret,omitempty"`
 	GoogleClientID     string `json:"google_client_id,omitempty"`
 	GoogleClientSecret string `json:"google_client_secret,omitempty"`
 	GoogleRefreshToken string `json:"google_refresh_token,omitempty"`
-	SenderEmail       string `json:"sender_email,omitempty"`
-	SenderName        string `json:"sender_name,omitempty"`
+	SenderEmail        string `json:"sender_email,omitempty"`
+	SenderName         string `json:"sender_name,omitempty"`
 	// Transactional SMTP relay — used by yaver email send for
 	// outbound-only "send password reset" style mail. Lives
 	// alongside the inbox-sync fields above because they share
@@ -115,10 +117,10 @@ type EmailConfig struct {
 type ACLPeerConfig struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
-	URL     string `json:"url,omitempty"`      // HTTP MCP endpoint
-	Type    string `json:"type"`               // "http" or "stdio"
-	Command string `json:"command,omitempty"`   // for stdio transport
-	Auth    string `json:"auth,omitempty"`      // bearer token
+	URL     string `json:"url,omitempty"`     // HTTP MCP endpoint
+	Type    string `json:"type"`              // "http" or "stdio"
+	Command string `json:"command,omitempty"` // for stdio transport
+	Auth    string `json:"auth,omitempty"`    // bearer token
 }
 
 // RelayServerConfig describes a relay server configured in config.json.
@@ -135,11 +137,31 @@ type RelayServerConfig struct {
 // CloudflareTunnelConfig describes a Cloudflare Tunnel endpoint in config.json.
 type CloudflareTunnelConfig struct {
 	ID                   string `json:"id"`
-	URL                  string `json:"url"`                           // e.g. "https://my-tunnel.example.com"
+	URL                  string `json:"url"` // e.g. "https://my-tunnel.example.com"
 	CFAccessClientId     string `json:"cf_access_client_id,omitempty"`
 	CFAccessClientSecret string `json:"cf_access_client_secret,omitempty"`
 	Label                string `json:"label,omitempty"`
 	Priority             int    `json:"priority,omitempty"`
+}
+
+// SharedStorageProfile defines a machine-level shared storage target that any
+// authenticated Yaver client on this machine may browse.
+type SharedStorageProfile struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Type      string `json:"type"` // local, smb, webdav, storagebox, s3
+	Path      string `json:"path,omitempty"`
+	MountPath string `json:"mount_path,omitempty"`
+	Remote    string `json:"remote,omitempty"`
+	Endpoint  string `json:"endpoint,omitempty"`
+	Bucket    string `json:"bucket,omitempty"`
+	Region    string `json:"region,omitempty"`
+	Username  string `json:"username,omitempty"`
+	Password  string `json:"password,omitempty"`
+	AccessKey string `json:"access_key,omitempty"`
+	SecretKey string `json:"secret_key,omitempty"`
+	ReadOnly  bool   `json:"read_only,omitempty"`
+	Notes     string `json:"notes,omitempty"`
 }
 
 // ConfigDir returns the path to ~/.yaver/, creating it if needed.

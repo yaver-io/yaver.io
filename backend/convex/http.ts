@@ -94,7 +94,11 @@ async function verifyPassword(password: string, stored: string): Promise<boolean
   return computedB64 === hashB64;
 }
 
-async function createSessionToken(ctx: { runMutation: (m: any, args: any) => Promise<any> }, userId: any) {
+async function createSessionToken(
+  ctx: { runMutation: (m: any, args: any) => Promise<any> },
+  userId: any,
+  deviceId?: string,
+) {
   const tokenBytes = new Uint8Array(32);
   crypto.getRandomValues(tokenBytes);
   const token = Array.from(tokenBytes)
@@ -102,7 +106,7 @@ async function createSessionToken(ctx: { runMutation: (m: any, args: any) => Pro
     .join("");
   const tokenHash = await sha256Hex(token);
   const expiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000;
-  await ctx.runMutation(api.auth.createSession, { tokenHash, userId, expiresAt });
+  await ctx.runMutation(api.auth.createSession, { tokenHash, userId, deviceId, expiresAt });
   return token;
 }
 
@@ -420,6 +424,7 @@ http.route({
     const sessionId = await ctx.runMutation(api.auth.createSession, {
       tokenHash: body.tokenHash,
       userId: body.userId,
+      deviceId: body.deviceId,
       expiresAt: body.expiresAt,
     });
     return jsonResponse({ sessionId });
@@ -565,6 +570,7 @@ http.route({
     await ctx.runMutation(api.auth.createSession, {
       tokenHash,
       userId,
+      deviceId: body.deviceId || undefined,
       expiresAt,
     });
 
@@ -609,7 +615,18 @@ http.route({
       hardwareId: body.hardwareId || undefined,
     });
 
-    return jsonResponse({ deviceId });
+    const session = await ctx.runQuery(api.auth.validateSession, { tokenHash });
+    if (!session?.userDocId) {
+      return errorResponse("Unauthorized", 401);
+    }
+
+    await ctx.runMutation(api.auth.deleteSessionsByDeviceId, {
+      userId: session.userDocId,
+      deviceId: body.deviceId,
+    });
+    const dedicatedToken = await createSessionToken(ctx, session.userDocId, body.deviceId);
+
+    return jsonResponse({ deviceId, token: dedicatedToken });
   }),
 });
 
