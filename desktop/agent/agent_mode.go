@@ -777,8 +777,8 @@ func (gm *AgentGraphManager) executeRemoteChatNode(ctx context.Context, node *Ag
 	}
 	err = remoteAgentJSON(ctx, base, token, http.MethodPost, "/tasks", map[string]interface{}{
 		"title":  title,
-		"model":  firstNonEmpty(node.Placement.Model, node.Spec.Model),
-		"runner": firstNonEmpty(node.Placement.Runner, node.Spec.Runner),
+		"model":  firstGraphNonEmpty(node.Placement.Model, node.Spec.Model),
+		"runner": firstGraphNonEmpty(node.Placement.Runner, node.Spec.Runner),
 		"source": "agent-graph",
 	}, &createResp)
 	if err != nil {
@@ -832,11 +832,11 @@ func (gm *AgentGraphManager) executeRemoteLoopNode(ctx context.Context, runID st
 	body := map[string]interface{}{
 		"project":        graphRemoteProjectName(runID, node.Spec),
 		"work_dir":       node.Spec.WorkDir,
-		"hours":          firstNonEmpty(node.Spec.Hours, "1"),
-		"load":           firstNonEmpty(node.Spec.Load, "lite"),
+		"hours":          firstGraphNonEmpty(node.Spec.Hours, "1"),
+		"load":           firstGraphNonEmpty(node.Spec.Load, "lite"),
 		"prompt":         node.Spec.Prompt,
-		"runner":         firstNonEmpty(node.Placement.Runner, node.Spec.Runner),
-		"model":          firstNonEmpty(node.Placement.Model, node.Spec.Model),
+		"runner":         firstGraphNonEmpty(node.Placement.Runner, node.Spec.Runner),
+		"model":          firstGraphNonEmpty(node.Placement.Model, node.Spec.Model),
 		"target":         node.Spec.Target,
 		"max_iterations": max(1, node.Spec.MaxIterations),
 		"no_autotest":    true,
@@ -847,10 +847,10 @@ func (gm *AgentGraphManager) executeRemoteLoopNode(ctx context.Context, runID st
 		body = map[string]interface{}{
 			"project":     graphRemoteProjectName(runID, node.Spec),
 			"work_dir":    node.Spec.WorkDir,
-			"hours":       firstNonEmpty(node.Spec.Hours, "1"),
-			"load":        firstNonEmpty(node.Spec.Load, "lite"),
+			"hours":       firstGraphNonEmpty(node.Spec.Hours, "1"),
+			"load":        firstGraphNonEmpty(node.Spec.Load, "lite"),
 			"prompt":      node.Spec.Prompt,
-			"engine":      firstNonEmpty(node.Placement.Runner, node.Spec.Runner),
+			"engine":      graphAutoIdeasEngine(firstGraphNonEmpty(node.Placement.Runner, node.Spec.Runner)),
 			"max_batches": max(1, node.Spec.MaxIterations),
 		}
 	case AgentNodeAutotest:
@@ -919,7 +919,20 @@ func graphRemoteProjectName(runID string, spec AgentGraphNodeSpec) string {
 	return fmt.Sprintf("%s-%s-%s", project, strings.ToLower(runID), strings.ToLower(spec.ID))
 }
 
-func firstNonEmpty(values ...string) string {
+func graphAutoIdeasEngine(runner string) string {
+	switch normalizedPlacementRunner(runner) {
+	case "codex":
+		return "codex"
+	case "claude-code":
+		return "claude"
+	case "hybrid":
+		return "hybrid"
+	default:
+		return ""
+	}
+}
+
+func firstGraphNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
 			return value
@@ -1026,6 +1039,10 @@ func (gm *AgentGraphManager) finishRun(id string, status AgentGraphStatus, summa
 func runAgentMode(args []string) {
 	if len(args) == 0 {
 		printAgentUsage()
+		return
+	}
+	if args[0] == "mesh-smoke" {
+		runAgentMeshSmoke(args[1:])
 		return
 	}
 	if globalAgentGraphMgr == nil {
@@ -1173,6 +1190,7 @@ func printAgentUsage() {
 
 Usage:
   yaver agent run --work-dir <path> --prompt "<goal>" [--template full|ship] [--runner codex] [--max-parallel 2]
+  yaver agent mesh-smoke [--device <id-or-name>]
   yaver agent list
   yaver agent show <id>
   yaver agent stop <id>

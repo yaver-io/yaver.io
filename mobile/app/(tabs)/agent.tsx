@@ -13,7 +13,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
-import { quicClient, type AgentGraphRun, type RunnerInfo } from "../../src/lib/quic";
+import { quicClient, type AgentGraphRun, type MachineInfo, type RunnerInfo } from "../../src/lib/quic";
 
 export default function AgentModeScreen() {
   const c = useColors();
@@ -25,11 +25,13 @@ export default function AgentModeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [starting, setStarting] = useState(false);
   const [runners, setRunners] = useState<RunnerInfo[]>([]);
+  const [machines, setMachines] = useState<MachineInfo[]>([]);
 
   const [name, setName] = useState(params.project ? `${params.project}-agent` : "");
   const [workDir, setWorkDir] = useState(params.path ?? "");
   const [prompt, setPrompt] = useState("");
   const [runner, setRunner] = useState("");
+  const [preferredDevice, setPreferredDevice] = useState("");
   const [template, setTemplate] = useState<"full" | "ship">("full");
   const [maxParallel, setMaxParallel] = useState("2");
 
@@ -37,13 +39,15 @@ export default function AgentModeScreen() {
     if (!isConnected) return;
     setRefreshing(true);
     try {
-      const [graphs, availableRunners] = await Promise.all([
+      const [graphs, availableRunners, machineInventory] = await Promise.all([
         quicClient.agentGraphs(),
         quicClient.getRunners(),
+        quicClient.consoleMachines(),
       ]);
       setRuns(graphs);
       const installed = availableRunners.filter((r) => r.installed);
       setRunners(installed);
+      setMachines((machineInventory.machines || []).filter((m) => m.isOnline));
       if (!runner) {
         const preferred = installed.find((r) => r.isDefault) ?? installed[0];
         if (preferred) setRunner(preferred.id);
@@ -74,6 +78,7 @@ export default function AgentModeScreen() {
         runner: runner || undefined,
         template,
         maxParallel: Math.max(1, parseInt(maxParallel || "2", 10) || 2),
+        preferredDevice: preferredDevice || undefined,
       });
       if (!res.ok) {
         Alert.alert("Start failed", res.error || "Could not create agent graph");
@@ -84,7 +89,7 @@ export default function AgentModeScreen() {
     } finally {
       setStarting(false);
     }
-  }, [workDir, prompt, name, runner, template, maxParallel, refresh]);
+  }, [workDir, prompt, name, runner, template, maxParallel, preferredDevice, refresh]);
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: c.bg }]} edges={["top"]}>
@@ -164,6 +169,36 @@ export default function AgentModeScreen() {
             </>
           )}
 
+          {!!machines.length && (
+            <>
+              <Text style={[styles.label, { color: c.textPrimary }]}>Machine</Text>
+              <View style={styles.segmentWrap}>
+                <Pressable
+                  onPress={() => setPreferredDevice("")}
+                  style={[styles.segment, { borderColor: c.border, backgroundColor: preferredDevice === "" ? c.accent : c.bg }]}
+                >
+                  <Text style={{ color: preferredDevice === "" ? "#fff" : c.textPrimary, fontWeight: "600" }}>
+                    Auto
+                  </Text>
+                </Pressable>
+                {machines.slice(0, 6).map((m) => (
+                  <Pressable
+                    key={m.deviceId}
+                    onPress={() => setPreferredDevice(m.deviceId)}
+                    style={[styles.segment, { borderColor: c.border, backgroundColor: preferredDevice === m.deviceId ? c.accent : c.bg }]}
+                  >
+                    <Text style={{ color: preferredDevice === m.deviceId ? "#fff" : c.textPrimary, fontWeight: "600" }}>
+                      {m.name}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={[styles.helper, { color: c.textSecondary }]}>
+                Auto placement prefers planning on stronger Claude-ready machines, cheaper runners for bulk edits, macOS for TestFlight, and Android-capable hosts for Play Store work.
+              </Text>
+            </>
+          )}
+
           <Pressable
             onPress={handleStart}
             disabled={starting}
@@ -205,8 +240,15 @@ export default function AgentModeScreen() {
                     {node.status}
                     {node.spec.dependsOn?.length ? ` • deps ${node.spec.dependsOn.join(", ")}` : ""}
                   </Text>
+                  {!!node.placement && (
+                    <Text style={[styles.meta, { color: c.textSecondary }]}>
+                      {node.placement.deviceName || node.placement.deviceId}
+                      {node.placement.runner ? ` • ${node.placement.runner}` : ""}
+                    </Text>
+                  )}
                   {!!node.summary && <Text style={[styles.nodeSummary, { color: c.textSecondary }]}>{node.summary}</Text>}
                   {!!node.error && <Text style={[styles.nodeError, { color: "#ef4444" }]}>{node.error}</Text>}
+                  {!!node.placement?.reason && <Text style={[styles.helper, { color: c.textMuted }]}>{node.placement.reason}</Text>}
                 </View>
               </View>
             ))}
@@ -224,6 +266,7 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 14, lineHeight: 20 },
   card: { borderWidth: 1, borderRadius: 16, padding: 14, gap: 10 },
   label: { fontSize: 13, fontWeight: "700" },
+  helper: { fontSize: 12, lineHeight: 18 },
   input: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
   textarea: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, minHeight: 110, fontSize: 14, textAlignVertical: "top" },
   row: { flexDirection: "row", gap: 10 },
