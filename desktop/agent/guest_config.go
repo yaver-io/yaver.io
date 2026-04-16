@@ -18,6 +18,7 @@ type GuestConfigManager struct {
 	mu       sync.RWMutex
 	configs  map[string]*GuestConfig // guestUserId -> config
 	projects map[string][]string     // guestUserId -> allowed project paths
+	storage  map[string][]string     // guestUserId -> allowed shared storage profile ids
 
 	// Daily usage tracked locally (flushed to Convex periodically)
 	usageMu    sync.Mutex
@@ -34,11 +35,13 @@ func NewGuestConfigManager(dataDir string) *GuestConfigManager {
 	mgr := &GuestConfigManager{
 		configs:    make(map[string]*GuestConfig),
 		projects:   make(map[string][]string),
+		storage:    make(map[string][]string),
 		dailyUsage: make(map[string]float64),
 		dirty:      make(map[string]bool),
 		configDir:  configDir,
 	}
 	mgr.loadProjectAccess()
+	mgr.loadSharedStorageAccess()
 	return mgr
 }
 
@@ -159,6 +162,29 @@ func (m *GuestConfigManager) CheckProject(guestUserID, projectPath string) *Acce
 	return &AccessDeniedReason{
 		Denied: true,
 		Reason: "project not accessible for this guest",
+	}
+}
+
+// CheckSharedStorage verifies whether a guest can access a shared storage profile.
+func (m *GuestConfigManager) CheckSharedStorage(guestUserID, profileID string) *AccessDeniedReason {
+	m.mu.RLock()
+	ids, ok := m.storage[guestUserID]
+	m.mu.RUnlock()
+
+	if !ok || len(ids) == 0 {
+		return &AccessDeniedReason{
+			Denied: true,
+			Reason: "shared storage not accessible for this guest",
+		}
+	}
+	for _, id := range ids {
+		if id == profileID {
+			return nil
+		}
+	}
+	return &AccessDeniedReason{
+		Denied: true,
+		Reason: "shared storage profile not accessible for this guest",
 	}
 }
 
@@ -320,6 +346,33 @@ func (m *GuestConfigManager) saveProjectAccess() {
 	}
 }
 
+// SetSharedStorageAccess sets the allowed shared storage profile IDs for a guest.
+func (m *GuestConfigManager) SetSharedStorageAccess(guestUserID string, profileIDs []string) {
+	m.mu.Lock()
+	m.storage[guestUserID] = profileIDs
+	m.mu.Unlock()
+	m.saveSharedStorageAccess()
+}
+
+// GetSharedStorageAccess returns the allowed shared storage profile IDs for a guest.
+func (m *GuestConfigManager) GetSharedStorageAccess(guestUserID string) []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.storage[guestUserID]
+}
+
+func (m *GuestConfigManager) saveSharedStorageAccess() {
+	data, err := json.MarshalIndent(m.storage, "", "  ")
+	if err != nil {
+		log.Printf("[GUEST-CONFIG] Failed to marshal shared storage access: %v", err)
+		return
+	}
+	path := filepath.Join(m.configDir, "shared-storage-access.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		log.Printf("[GUEST-CONFIG] Failed to save shared storage access: %v", err)
+	}
+}
+
 // guestPromptPrefix returns a security preamble prepended to guest task prompts.
 // This instructs the AI agent to stay within the project directory and avoid
 // accessing sensitive files. Combined with workdir restriction, this provides
@@ -383,4 +436,18 @@ func (m *GuestConfigManager) loadProjectAccess() {
 		return
 	}
 	m.projects = projects
+}
+
+func (m *GuestConfigManager) loadSharedStorageAccess() {
+	path := filepath.Join(m.configDir, "shared-storage-access.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var storage map[string][]string
+	if err := json.Unmarshal(data, &storage); err != nil {
+		log.Printf("[GUEST-CONFIG] Failed to parse shared storage access: %v", err)
+		return
+	}
+	m.storage = storage
 }

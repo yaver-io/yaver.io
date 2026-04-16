@@ -4720,6 +4720,7 @@ export interface SandboxStatus {
   readOnly?: boolean;
   cpuLimit?: string;
   memoryLimit?: string;
+  extraMounts?: string[];
   recommendedMode?: "guests" | "host";
   recommendedReason?: string;
   quickstartAvailable?: boolean;
@@ -4733,6 +4734,7 @@ export interface SandboxConfig {
   memoryLimit: string;
   networkMode: "host" | "bridge" | "none";
   readOnly: boolean;
+  extraMounts?: string[];
 }
 
 /** Dev server status returned by the agent. */

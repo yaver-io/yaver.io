@@ -55,6 +55,7 @@ func (s *HTTPServer) handleGuestConfigGet(w http.ResponseWriter, r *http.Request
 		RAMLimitMB                *int        `json:"ramLimitMb,omitempty"`
 		PriorityMode              string      `json:"priorityMode,omitempty"`
 		AllowedProjects           []string    `json:"allowedProjects,omitempty"`
+		AllowedSharedStorage      []string    `json:"allowedSharedStorage,omitempty"`
 	}
 
 	var result []configWithProjects
@@ -85,6 +86,7 @@ func (s *HTTPServer) handleGuestConfigGet(w http.ResponseWriter, r *http.Request
 			RAMLimitMB:                c.RAMLimitMB,
 			PriorityMode:              c.PriorityMode,
 			AllowedProjects:           s.guestConfigMgr.GetProjectAccess(c.GuestUserID),
+			AllowedSharedStorage:      s.guestConfigMgr.GetSharedStorageAccess(c.GuestUserID),
 		})
 	}
 
@@ -124,7 +126,8 @@ func (s *HTTPServer) handleGuestConfigPost(w http.ResponseWriter, r *http.Reques
 			EndHour   int    `json:"endHour"`
 			Timezone  string `json:"timezone,omitempty"`
 		} `json:"schedule,omitempty"`
-		AllowedProjects []string `json:"allowedProjects,omitempty"`
+		AllowedProjects      []string `json:"allowedProjects,omitempty"`
+		AllowedSharedStorage []string `json:"allowedSharedStorage,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Email == "" {
@@ -213,6 +216,18 @@ func (s *HTTPServer) handleGuestConfigPost(w http.ResponseWriter, r *http.Reques
 		for _, c := range configs {
 			if c.GuestEmail == body.Email {
 				s.guestConfigMgr.SetProjectAccess(c.GuestUserID, body.AllowedProjects)
+				if body.AllowedSharedStorage != nil {
+					s.guestConfigMgr.SetSharedStorageAccess(c.GuestUserID, body.AllowedSharedStorage)
+				}
+				break
+			}
+		}
+	}
+	if body.AllowedProjects == nil && body.AllowedSharedStorage != nil {
+		configs := s.guestConfigMgr.GetAllConfigs()
+		for _, c := range configs {
+			if c.GuestEmail == body.Email {
+				s.guestConfigMgr.SetSharedStorageAccess(c.GuestUserID, body.AllowedSharedStorage)
 				break
 			}
 		}

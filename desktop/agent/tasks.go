@@ -142,7 +142,7 @@ var builtinRunners = map[string]RunnerConfig{
 		RunnerID:   "codex",
 		Name:       "OpenAI Codex",
 		Command:    "codex",
-		Args:       []string{"--quiet", "--full-auto", "{prompt}"},
+		Args:       []string{"exec", "--full-auto", "{prompt}"},
 		OutputMode: "raw",
 	},
 	"aider": {
@@ -542,6 +542,7 @@ type TaskCreateOptions struct {
 	GuestRequireIsolation       bool
 	GuestCPULimitPercent        *int
 	GuestRAMLimitMB             *int
+	GuestSharedStorageMounts    []string
 }
 
 type Task struct {
@@ -584,11 +585,12 @@ type Task struct {
 	SliceContract *TaskSliceContract `json:"sliceContract,omitempty"`
 
 	// Guest execution policy snapshot resolved at task creation time.
-	GuestUseHostAPIKeys         bool `json:"-"`
-	GuestAllowGuestProvidedKeys bool `json:"-"`
-	GuestRequireIsolation       bool `json:"-"`
-	GuestCPULimitPercent        *int `json:"-"`
-	GuestRAMLimitMB             *int `json:"-"`
+	GuestUseHostAPIKeys         bool     `json:"-"`
+	GuestAllowGuestProvidedKeys bool     `json:"-"`
+	GuestRequireIsolation       bool     `json:"-"`
+	GuestCPULimitPercent        *int     `json:"-"`
+	GuestRAMLimitMB             *int     `json:"-"`
+	GuestSharedStorageMounts    []string `json:"-"`
 
 	runner     RunnerConfig // the runner config used for this task (not persisted)
 	cmd        *exec.Cmd
@@ -625,6 +627,12 @@ func formatTaskSliceContract(contract *TaskSliceContract) string {
 	}
 	if contract.IsolationMode != "" {
 		lines = append(lines, "Isolation mode: "+contract.IsolationMode)
+	}
+	if contract.IsolationMode == "remote-repo-contract" {
+		lines = append(lines,
+			"You are already running on the assigned machine inside its local isolated checkout.",
+			"Do not use SSH, relay hops, or any second remote-control step to reach that machine.",
+			"Treat the current filesystem as the assigned machine's workspace and make the change directly here.")
 	}
 	lines = append(lines,
 		"Operate only inside the effective work dir for this slice.",
@@ -1027,6 +1035,7 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 		GuestRequireIsolation:       opts.GuestRequireIsolation,
 		GuestCPULimitPercent:        opts.GuestCPULimitPercent,
 		GuestRAMLimitMB:             opts.GuestRAMLimitMB,
+		GuestSharedStorageMounts:    append([]string{}, opts.GuestSharedStorageMounts...),
 		Turns: []ConversationTurn{
 			{Role: "user", Content: title, Timestamp: now},
 		},
@@ -1563,7 +1572,10 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		} else if tm.ContainerImage != "" {
 			opts.CustomImage = tm.ContainerImage
 		}
-		opts.ExtraMounts = tm.ContainerMounts
+		opts.ExtraMounts = append([]string{}, tm.ContainerMounts...)
+		if len(task.GuestSharedStorageMounts) > 0 {
+			opts.ExtraMounts = append(opts.ExtraMounts, task.GuestSharedStorageMounts...)
+		}
 
 		cmd, stdout, stderr, err := tm.ContainerRunner.RunTask(ctx, opts)
 		if err != nil {
