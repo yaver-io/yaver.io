@@ -931,6 +931,92 @@ export class QuicClient {
     return () => controller.abort();
   }
 
+  // ── Autoinit + Autoideas (cached project context + idea queue) ──
+
+  /** GET /autoinit/status?work_dir=… */
+  async autoinitStatus(workDir: string): Promise<{
+    done: boolean;
+    path: string;
+    bytes: number;
+    updated_at?: string;
+    has_generated_section: boolean;
+    has_history_section: boolean;
+  }> {
+    const url = `${this.baseUrl}/autoinit/status?work_dir=${encodeURIComponent(workDir)}`;
+    const res = await fetch(url, { headers: this.authHeaders });
+    return await res.json();
+  }
+
+  /** POST /autoinit/start */
+  async autoinitStart(body: {
+    work_dir: string;
+    project?: string;
+    prompt?: string;
+    engine?: string;
+    output?: string;
+    force?: boolean;
+  }): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/autoinit/start`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return await res.json();
+  }
+
+  /** GET /autoideas/file?work_dir=…&output=… */
+  async autoideasFile(workDir: string, output = "ideas.md"): Promise<{
+    ok: boolean;
+    items: { line: number; checked: boolean; title: string }[];
+    raw: string;
+    path: string;
+  }> {
+    const url = `${this.baseUrl}/autoideas/file?work_dir=${encodeURIComponent(workDir)}&output=${encodeURIComponent(output)}`;
+    const res = await fetch(url, { headers: this.authHeaders });
+    return await res.json();
+  }
+
+  /** POST /autoideas/start */
+  async autoideasStart(body: {
+    work_dir: string;
+    project?: string;
+    hours?: string;
+    load?: string;
+    prompt?: string;
+    harden?: string;
+    engine?: string;
+    output?: string;
+    max_batches?: number;
+    tick?: number;
+  }): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/autoideas/start`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return await res.json();
+  }
+
+  /** POST /autoideas/select — turns picked lines into an autodev run */
+  async autoideasSelect(body: {
+    work_dir: string;
+    output?: string;
+    project?: string;
+    lines: number[];
+    engine?: string;
+    hours?: string;
+    load?: string;
+    auto_branch?: boolean;
+    deploy?: string;
+  }): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/autoideas/select`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return await res.json();
+  }
+
   // ── Projects (discovery + switching) ────────────────────────────
 
   /** List discovered projects on the machine. */

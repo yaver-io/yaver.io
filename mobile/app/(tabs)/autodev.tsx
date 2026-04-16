@@ -37,6 +37,7 @@ import {
   type RunnerInfo,
 } from "../../src/lib/quic";
 import { AutodevChat } from "../../src/components/AutodevChat";
+import { AutoIdeasPane } from "../../src/components/AutoIdeasPane";
 
 type LoopRow = AutoDevLoop;
 type LoopStatus = LoopRow["status"];
@@ -58,7 +59,7 @@ type IdeaRow = {
   radicalness?: number;
 };
 
-type Section = "loops" | "prompts" | "ideas" | "chat";
+type Section = "loops" | "prompts" | "ideas" | "chat" | "queue";
 
 export default function AutoDevScreen() {
   const c = useColors();
@@ -224,7 +225,7 @@ export default function AutoDevScreen() {
       </View>
 
       <View style={[styles.tabs, { borderBottomColor: c.border }]}>
-        {(["loops", "chat", "prompts", "ideas"] as Section[]).map((s) => (
+        {(["loops", "chat", "queue", "prompts", "ideas"] as Section[]).map((s) => (
           <Pressable key={s} onPress={() => setSection(s)} style={styles.tabBtn}>
             <Text
               style={[
@@ -239,6 +240,8 @@ export default function AutoDevScreen() {
                 ? "Loops"
                 : s === "chat"
                 ? "Chat"
+                : s === "queue"
+                ? "Ideas Queue"
                 : s === "prompts"
                 ? "Prompts"
                 : "Ideas"}
@@ -319,6 +322,32 @@ export default function AutoDevScreen() {
             );
           }
           return <AutodevChat streamName={`autodev:${target.name}`} />;
+        })()
+      )}
+
+      {section === "queue" && (
+        (() => {
+          // workDir resolution: prefer the param the user came in
+          // with from the Apps tile; fall back to the form's value.
+          const wd = (params.path as string) || formWorkDir;
+          const proj =
+            (params.project as string) ||
+            formProject ||
+            (wd ? wd.split("/").filter(Boolean).pop() ?? "" : "");
+          if (!wd) {
+            return (
+              <View style={styles.empty}>
+                <Text style={[styles.emptyTitle, { color: c.textPrimary }]}>
+                  No project selected.
+                </Text>
+                <Text style={[styles.emptyBody, { color: c.textSecondary }]}>
+                  Open this tab from the Apps tile (so the work_dir is set),
+                  or fill in the work dir on the Loops tab's start form.
+                </Text>
+              </View>
+            );
+          }
+          return <AutoIdeasPane workDir={wd} project={proj} />;
         })()
       )}
 
