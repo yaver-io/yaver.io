@@ -15,7 +15,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { useRouter } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
-import { quicClient } from "../../src/lib/quic";
+import { quicClient, type MachineInfo } from "../../src/lib/quic";
 import {
   listGuests,
   inviteGuest,
@@ -1562,7 +1562,8 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
   const [editLimit, setEditLimit] = useState("");
   const [editMode, setEditMode] = useState("always");
   const [editRunners, setEditRunners] = useState("");
-  const [editMachineIds, setEditMachineIds] = useState("");
+  const [editMachineIds, setEditMachineIds] = useState<string[]>([]);
+  const [editShareAllMachines, setEditShareAllMachines] = useState(true);
   const [editAllowedProjects, setEditAllowedProjects] = useState("");
   const [editPreset, setEditPreset] = useState("machine-only");
   const [editAllowGuestKeys, setEditAllowGuestKeys] = useState(true);
@@ -1570,6 +1571,7 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
   const [editRequireIsolation, setEditRequireIsolation] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
   const [subTab, setSubTab] = useState<"invite" | "config" | "usage">("invite");
+  const [availableMachines, setAvailableMachines] = useState<MachineInfo[]>([]);
 
   const loadGuests = useCallback(async () => {
     if (!token) return;
@@ -1660,17 +1662,30 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
     } catch {}
   }, [connected]);
 
+  const loadMachines = useCallback(async () => {
+    if (!connected) return;
+    try {
+      const result = await quicClient.consoleMachines();
+      const ownMachines = (result.machines || []).filter((machine) => !machine.isShared);
+      setAvailableMachines(ownMachines);
+    } catch {}
+  }, [connected]);
+
   useEffect(() => {
     if (subTab === "config") loadConfigs();
     if (subTab === "usage") loadUsage();
-  }, [subTab, loadConfigs, loadUsage]);
+    if (subTab === "config") loadMachines();
+  }, [subTab, loadConfigs, loadUsage, loadMachines]);
 
   const startEditConfig = useCallback((cfg: GuestConfigEntry) => {
     setConfigEmail(cfg.guestEmail);
     setEditLimit(cfg.dailyTokenLimit ? String(cfg.dailyTokenLimit) : "");
     setEditMode(cfg.usageMode || "always");
     setEditRunners(cfg.allowedRunners?.join(",") || "");
-    setEditMachineIds(cfg.machineIds?.join(",") || "");
+    const scopedMachineIds = cfg.machineIds?.filter(Boolean) || [];
+    const shareAllMachines = cfg.shareAllMachines === true || scopedMachineIds.length === 0;
+    setEditMachineIds(scopedMachineIds);
+    setEditShareAllMachines(shareAllMachines);
     setEditAllowedProjects(cfg.allowedProjects?.join(",") || "");
     setEditPreset(cfg.resourcePreset || (cfg.useHostApiKeys ? "machine-with-host-keys" : "machine-only"));
     setEditAllowGuestKeys(cfg.allowGuestProvidedApiKeys !== false);
@@ -1690,7 +1705,8 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
         dailyTokenLimit: editLimit ? parseInt(editLimit, 10) : 0,
         usageMode: editMode,
         allowedRunners: editRunners ? editRunners.split(",").map(r => r.trim()).filter(Boolean) : [],
-        machineIds: editMachineIds ? editMachineIds.split(",").map(v => v.trim()).filter(Boolean) : [],
+        shareAllMachines: editShareAllMachines,
+        machineIds: editShareAllMachines ? [] : editMachineIds,
         allowedProjects: editAllowedProjects ? editAllowedProjects.split(",").map(v => v.trim()).filter(Boolean) : [],
         resourcePreset: editPreset,
         allowGuestProvidedApiKeys: editAllowGuestKeys,
@@ -1704,10 +1720,50 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
       Alert.alert("Error", e.message || "Failed to save config");
     }
     setSavingConfig(false);
-  }, [configEmail, editLimit, editMode, editRunners, editMachineIds, editAllowedProjects, editPreset, editAllowGuestKeys, editAllowTunnels, editRequireIsolation, connected, loadConfigs]);
+  }, [configEmail, editLimit, editMode, editRunners, editMachineIds, editShareAllMachines, editAllowedProjects, editPreset, editAllowGuestKeys, editAllowTunnels, editRequireIsolation, connected, loadConfigs]);
+
+  const updateGuestQuickAction = useCallback(async (email: string, patch: Record<string, any>, successMessage: string) => {
+    if (!connected) return;
+    try {
+      const baseUrl = (quicClient as any).baseUrl;
+      const t = (quicClient as any).token;
+      if (!baseUrl || !t) return;
+      await updateGuestConfig(baseUrl, t, { email, ...patch });
+      Alert.alert("Updated", successMessage);
+      loadConfigs();
+    } catch (e: any) {
+      Alert.alert("Error", e.message || "Failed to update guest");
+    }
+  }, [connected, loadConfigs]);
 
   const activeGuests = guests.filter(g => g.status === "accepted");
   const pendingGuests = guests.filter(g => g.status === "pending");
+  const machineLabel = useCallback((machineId: string) => {
+    const match = availableMachines.find((machine) => machine.deviceId === machineId);
+    return match?.name || machineId;
+  }, [availableMachines]);
+  const scopedMachineIdsForConfig = useCallback((cfg: GuestConfigEntry) => {
+    if (cfg.shareAllMachines) {
+      return availableMachines.map((machine) => machine.deviceId).filter(Boolean);
+    }
+    return cfg.machineIds?.filter(Boolean) || [];
+  }, [availableMachines]);
+  const toggleMachineSelection = useCallback((machineId: string) => {
+    setEditShareAllMachines(false);
+    setEditMachineIds((prev) => (
+      prev.includes(machineId)
+        ? prev.filter((id) => id !== machineId)
+        : [...prev, machineId]
+    ));
+  }, []);
+  const unshareSingleMachine = useCallback((cfg: GuestConfigEntry, machineId: string) => {
+    const remaining = scopedMachineIdsForConfig(cfg).filter((id) => id !== machineId);
+    updateGuestQuickAction(
+      cfg.guestEmail,
+      { shareAllMachines: false, machineIds: remaining },
+      `Stopped sharing ${machineLabel(machineId)} with ${cfg.guestEmail}`,
+    );
+  }, [machineLabel, scopedMachineIdsForConfig, updateGuestQuickAction]);
 
   return (
     <View style={{ padding: 12, gap: 12 }}>
@@ -1928,17 +1984,66 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
             />
 
             <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", textTransform: "uppercase" }}>
-              Allowed Machines (comma-separated IDs, empty = all granted)
+              Allowed Machines
             </Text>
-            <TextInput
-              style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
-              placeholder="e.g. local,6d5c0624-..."
-              placeholderTextColor={c.textMuted}
-              value={editMachineIds}
-              onChangeText={setEditMachineIds}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
+            <View style={{ gap: 8 }}>
+              <Pressable
+                onPress={() => setEditShareAllMachines(true)}
+                style={{
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  borderColor: editShareAllMachines ? c.accent : c.border,
+                  backgroundColor: editShareAllMachines ? `${c.accent}20` : c.bg,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                }}
+              >
+                <Text style={{ color: editShareAllMachines ? c.accent : c.textPrimary, fontSize: 13, fontWeight: "600" }}>
+                  All my machines
+                </Text>
+                <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 2 }}>
+                  Share every machine you own on this account.
+                </Text>
+              </Pressable>
+              {availableMachines.length === 0 ? (
+                <Text style={{ color: c.textMuted, fontSize: 12 }}>
+                  No machines available yet.
+                </Text>
+              ) : (
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                  {availableMachines.map((machine) => {
+                    const selected = editShareAllMachines || editMachineIds.includes(machine.deviceId);
+                    return (
+                      <Pressable
+                        key={machine.deviceId}
+                        onPress={() => toggleMachineSelection(machine.deviceId)}
+                        style={{
+                          borderRadius: 999,
+                          borderWidth: 1,
+                          borderColor: selected && !editShareAllMachines ? c.accent : c.border,
+                          backgroundColor: selected && !editShareAllMachines ? `${c.accent}20` : c.bg,
+                          paddingHorizontal: 12,
+                          paddingVertical: 8,
+                          opacity: editShareAllMachines ? 0.6 : 1,
+                        }}
+                      >
+                        <Text style={{ color: selected && !editShareAllMachines ? c.accent : c.textPrimary, fontSize: 12, fontWeight: "600" }}>
+                          {machine.name}
+                        </Text>
+                        <Text style={{ color: c.textMuted, fontSize: 10, marginTop: 1 }}>
+                          {machine.deviceId}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              )}
+              {!editShareAllMachines ? (
+                <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                  Selected {editMachineIds.length} machine{editMachineIds.length === 1 ? "" : "s"}.
+                </Text>
+              ) : null}
+            </View>
 
             <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", textTransform: "uppercase" }}>
               Allowed Projects (comma-separated, empty = all)
@@ -2053,7 +2158,7 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
                   </View>
                   <View style={{ flexDirection: "row", gap: 12 }}>
                     <Text style={{ color: c.textMuted, fontSize: 11 }}>
-                      Machines: {cfg.machineIds?.length ? cfg.machineIds.join(",") : "all granted"}
+                      Machines: {cfg.shareAllMachines ? "all granted" : (cfg.machineIds?.length ? cfg.machineIds.map(machineLabel).join(", ") : "none")}
                     </Text>
                     <Text style={{ color: c.textMuted, fontSize: 11 }}>
                       Preset: {cfg.resourcePreset || (cfg.useHostApiKeys ? "machine-with-host-keys" : "machine-only")}
@@ -2064,6 +2169,29 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
                     <Text style={{ color: c.textMuted, fontSize: 11 }}>
                       Tunnels: {cfg.allowTunnelForward ? "on" : "off"}
                     </Text>
+                  </View>
+                  <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                    <Pressable
+                      onPress={() => updateGuestQuickAction(
+                        cfg.guestEmail,
+                        { useHostApiKeys: false, resourcePreset: "machine-only" },
+                        `Stopped sharing host keys with ${cfg.guestEmail}`,
+                      )}
+                      style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCard }}
+                    >
+                      <Text style={{ color: c.textPrimary, fontSize: 11, fontWeight: "600" }}>Stop host keys</Text>
+                    </Pressable>
+                    {scopedMachineIdsForConfig(cfg).map((machineId) => (
+                      <Pressable
+                        key={`${cfg.guestUserId}-${machineId}`}
+                        onPress={() => unshareSingleMachine(cfg, machineId)}
+                        style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCard }}
+                      >
+                        <Text style={{ color: "#ef4444", fontSize: 11, fontWeight: "600" }}>
+                          Unshare {machineLabel(machineId)}
+                        </Text>
+                      </Pressable>
+                    ))}
                   </View>
                 </Pressable>
               ))
@@ -2270,6 +2398,21 @@ export default function MoreScreen() {
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Home</Text>
               <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Machines · Projects · Services · Alerts · Cost · Uptime</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
+        {/* Infra — managed machine workspace */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/infra" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\uD83D\uDEE0\uFE0F"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Infra</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Machine health · services · relay · sharing · power</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>

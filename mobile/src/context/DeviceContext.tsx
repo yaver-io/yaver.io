@@ -14,7 +14,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { quicClient, RelayServer, TunnelServer } from "../lib/quic";
 import { useAuth } from "./AuthContext";
-import { getUserSettings } from "../lib/auth";
+import { getLocalSecret, getUserSettings, LOCAL_KEYS } from "../lib/auth";
 import { appLog } from "../lib/logger";
 import { beaconListener, type DiscoveredDevice } from "../lib/beacon";
 import { fetchPairInfo, submitPair } from "../lib/pairDevice";
@@ -114,6 +114,8 @@ export interface Device {
   useHostApiKeys?: boolean;
   /** guest may bring their own credentials on top of host infra */
   allowGuestProvidedApiKeys?: boolean;
+  /** whether this owned device is on its own dedicated backend session */
+  sessionBinding?: "dedicated" | "legacy-shared";
 }
 
 function deviceIdentityKey(device: Pick<Device, "id" | "hwid" | "name" | "isGuest" | "hostEmail" | "hostName">): string {
@@ -153,6 +155,7 @@ interface DeviceState {
   disconnect: () => void;
   refreshDevices: () => Promise<void>;
   detachDevice: (device: Device) => Promise<void>;
+  removeDevice: (device: Device) => Promise<void>;
   /** Pending guest invitations from other users */
   guestInvitations: GuestInvitation[];
   /** Accept a guest invitation by email match */
@@ -273,6 +276,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             priorityMode: d.priorityMode,
             useHostApiKeys: d.useHostApiKeys,
             allowGuestProvidedApiKeys: d.allowGuestProvidedApiKeys,
+            sessionBinding: d.sessionBinding,
           };
         });
         // Deduplicate by stable device identity. Guest devices must include
@@ -392,6 +396,33 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     }
     setDevices((prev) => prev.filter((d) => deviceIdentityKey(d) !== key));
   }, [activeDevice]);
+
+  const handleRemoveDevice = useCallback(async (device: Device) => {
+    if (!token) throw new Error("Not signed in");
+    if (device.isGuest) {
+      await handleDetachDevice(device);
+      return;
+    }
+    const res = await fetch(`${CONVEX_SITE_URL}/devices/remove`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ deviceId: device.id }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || "Failed to remove device");
+    }
+    if (activeDevice?.id === device.id) {
+      quicClient.disconnect();
+      setActiveDevice(null);
+      setConnectionStatus("disconnected");
+      setAgentAuthExpired(false);
+    }
+    setDevices((prev) => prev.filter((d) => d.id !== device.id));
+  }, [activeDevice, handleDetachDevice, token]);
 
   // Sync DeviceContext state with QUIC client's internal state changes
   // (e.g., polling failures trigger reconnection inside the QUIC client)
@@ -792,11 +823,32 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       if (cancelled || recoveringAuthRef.current.has(activeDevice.id)) return;
       recoveringAuthRef.current.add(activeDevice.id);
       try {
-        const recovery = await quicClient.recoverAgent(undefined, "pair");
+        let recovery = await quicClient.recoverAgent(undefined, "pair");
         if (!recovery?.ok || !recovery.pairCode) {
           appLog("warn", `Host-token recovery did not open a pair session for ${activeDevice.name}: ${recovery?.error || "unknown error"}`);
+
+          const bootstrapSecret = await getLocalSecret(LOCAL_KEYS.bootstrapSecret);
+          if (bootstrapSecret) {
+            recovery = await quicClient.recoverAgent(bootstrapSecret, "pair");
+            if (recovery?.ok && recovery.pairCode) {
+              appLog("info", `Recovered ${activeDevice.name} using stored bootstrap secret`);
+            } else {
+              appLog("warn", `Bootstrap-secret recovery did not open a pair session for ${activeDevice.name}: ${recovery?.error || "unknown error"}`);
+            }
+          }
+        }
+
+        if (!recovery?.ok || !recovery.pairCode) {
+          const deviceCode = await quicClient.recoverAgent(undefined, "device-code");
+          if (deviceCode?.ok && deviceCode.deviceCodeUrl) {
+            appLog("info", `Opened device-code recovery for ${activeDevice.name}: ${deviceCode.userCode || "code unavailable"}`);
+            Linking.openURL(deviceCode.deviceCodeUrl).catch(() => {});
+          } else {
+            appLog("warn", `Device-code recovery did not start for ${activeDevice.name}: ${deviceCode?.error || recovery?.error || "unknown error"}`);
+          }
           return;
         }
+
         const pairRes = await submitPair({
           code: recovery.pairCode,
           targetUrl: recovery.targetUrl || quicClient.baseUrl,
@@ -915,12 +967,13 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       disconnect,
       refreshDevices,
       detachDevice: handleDetachDevice,
+      removeDevice: handleRemoveDevice,
       guestInvitations,
       acceptGuestInvitation,
       acceptGuestByCode,
       inviteGuest,
     }),
-    [devices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, selectDevice, disconnect, refreshDevices, handleDetachDevice, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest]
+    [devices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

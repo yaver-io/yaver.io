@@ -18,6 +18,7 @@ export interface Device {
   priorityMode?: string;
   useHostApiKeys?: boolean;
   allowGuestProvidedApiKeys?: boolean;
+  sessionBinding?: "dedicated" | "legacy-shared";
 }
 
 function deviceIdentityKey(device: Pick<Device, "id" | "name" | "isGuest" | "hostEmail" | "hostName">): string {
@@ -64,6 +65,7 @@ export function useDevices(token: string | null): DevicesState {
         priorityMode: d.priorityMode,
         useHostApiKeys: d.useHostApiKeys,
         allowGuestProvidedApiKeys: d.allowGuestProvidedApiKeys,
+        sessionBinding: d.sessionBinding,
       }));
 
       // Deduplicate by stable device identity. Guest devices include host

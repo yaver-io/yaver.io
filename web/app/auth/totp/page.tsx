@@ -3,11 +3,13 @@
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState, useRef } from "react";
 import { CONVEX_URL } from "@/lib/constants";
+import { sanitizeReturnTo } from "@/lib/oauth";
 
 function TotpContent() {
   const params = useSearchParams();
   const pendingToken = params.get("pendingToken") || "";
   const client = params.get("client") || "web";
+  const returnTo = sanitizeReturnTo(params.get("return"));
 
   const [code, setCode] = useState("");
   const [useRecovery, setUseRecovery] = useState(false);
@@ -74,7 +76,7 @@ function TotpContent() {
         return;
       }
 
-      window.location.href = "/dashboard";
+      window.location.href = returnTo || "/dashboard";
     } catch {
       setErrorMsg("Network error. Please try again.");
       setStatus("error");

@@ -246,6 +246,24 @@ function DeviceCard({
                 <Text style={{ color: "#a78bfa", fontSize: 10, fontWeight: "700" }}>SPARE</Text>
               </View>
             ) : null}
+            {!device.isGuest && device.sessionBinding ? (
+              <View style={{
+                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+                backgroundColor: device.sessionBinding === "dedicated" ? "#22c55e22" : "#f59e0b22",
+                borderWidth: 1,
+                borderColor: device.sessionBinding === "dedicated" ? "#22c55e66" : "#f59e0b66",
+              }}>
+                <Text
+                  style={{
+                    color: device.sessionBinding === "dedicated" ? "#22c55e" : "#f59e0b",
+                    fontSize: 10,
+                    fontWeight: "700",
+                  }}
+                >
+                  {device.sessionBinding === "dedicated" ? "DEDICATED SESSION" : "LEGACY SESSION"}
+                </Text>
+              </View>
+            ) : null}
             {autoPairing ? (
               <View style={{
                 paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
@@ -537,6 +555,7 @@ export default function DevicesScreen() {
     disconnect,
     refreshDevices,
     detachDevice,
+    removeDevice,
     acceptGuestByCode,
   } = useDevice();
 
@@ -719,12 +738,30 @@ export default function DevicesScreen() {
               isActive={activeDevice?.id === item.id}
               onSelect={() => selectDevice(item)}
               onLongPress={() => {
+                const actionLabel = item.isGuest ? "Detach" : "Remove";
+                const message = item.isGuest
+                  ? "Remove this shared machine from your list? It will reappear if the host shares it again."
+                  : "Remove this device from your account? The node will need to re-register before it shows up again.";
                 Alert.alert(
                   item.name,
-                  "Remove this device from your list? It will reappear if it connects again.",
+                  message,
                   [
                     { text: "Cancel", style: "cancel" },
-                    { text: "Detach", style: "destructive", onPress: () => detachDevice(item) },
+                    {
+                      text: actionLabel,
+                      style: "destructive",
+                      onPress: async () => {
+                        try {
+                          if (item.isGuest) {
+                            await detachDevice(item);
+                          } else {
+                            await removeDevice(item);
+                          }
+                        } catch (e: any) {
+                          Alert.alert("Error", e?.message || "Failed");
+                        }
+                      },
+                    },
                   ]
                 );
               }}

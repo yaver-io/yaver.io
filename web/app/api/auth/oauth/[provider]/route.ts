@@ -4,6 +4,7 @@ import {
   isProviderConfigured,
   encodeOAuthState,
   buildAuthorizationUrl,
+  sanitizeReturnTo,
 } from "@/lib/oauth";
 
 const VALID_PROVIDERS = new Set<OAuthProvider>(["google", "microsoft", "apple"]);
@@ -28,8 +29,9 @@ export async function GET(
 
   const url = new URL(request.url);
   const client = url.searchParams.get("client") || "web";
+  const returnTo = sanitizeReturnTo(url.searchParams.get("return"));
 
-  const state = encodeOAuthState({ client });
+  const state = encodeOAuthState({ client, returnTo });
   const authUrl = buildAuthorizationUrl(provider, state);
 
   return NextResponse.redirect(authUrl);

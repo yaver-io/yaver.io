@@ -152,6 +152,7 @@ export interface AgentGraphNode {
     project?: string;
     preferredDevice?: string;
     allowedDevices?: string[];
+    allowedRunners?: string[];
   };
   status: AgentNodeStatus;
   taskId?: string;
@@ -160,6 +161,7 @@ export interface AgentGraphNode {
   startedAt?: string;
   finishedAt?: string;
   placement?: AgentNodePlacement;
+  sliceContract?: TaskSliceContract;
 }
 
 export interface AgentGraphRun {
@@ -185,6 +187,19 @@ export interface AgentNodePlacement {
   runner?: string;
   model?: string;
   reason?: string;
+}
+
+export interface TaskSliceContract {
+  runId?: string;
+  nodeId?: string;
+  deviceId?: string;
+  deviceName?: string;
+  sourceWorkDir?: string;
+  effectiveWorkDir?: string;
+  gitRemote?: string;
+  gitBranch?: string;
+  gitCommit?: string;
+  isolationMode?: string;
 }
 
 export interface MachineRunnerCapability {
@@ -225,9 +240,78 @@ export interface MachineInfo {
   arch?: string;
   isLocal: boolean;
   isOnline: boolean;
+  isShared?: boolean;
+  hostName?: string;
+  hostEmail?: string;
   provider?: string;
   currentWorkDir?: string;
   capabilities?: MachineCapabilities;
+}
+
+export interface InfraNetworkInterface {
+  name: string;
+  mac?: string;
+  flags?: string;
+  addresses?: string[];
+}
+
+export interface InfraRelaySummary {
+  id: string;
+  label?: string;
+  httpUrl?: string;
+  quicAddr?: string;
+  region?: string;
+  source: string;
+  passwordRequired: boolean;
+}
+
+export interface InfraSharingSummary {
+  isShared: boolean;
+  accessScope?: string;
+  pendingGuests: number;
+  acceptedGuests: number;
+}
+
+export interface InfraCapabilities {
+  terminal: boolean;
+  mcp: boolean;
+  devServices: boolean;
+  systemServices: boolean;
+  agentShutdown: boolean;
+  hostReboot: boolean;
+}
+
+export interface InfraSummary {
+  machine: MachineInfo;
+  metrics?: {
+    cpuPct?: number;
+    ramUsed?: number;
+    ramTotal?: number;
+    ramPct?: number;
+    diskUsed?: number;
+    diskTotal?: number;
+    diskPct?: number;
+    netRxBps?: number;
+    netTxBps?: number;
+    uptime?: number;
+    hostname?: string;
+    os?: string;
+    cores?: number;
+  };
+  devServices?: Array<{
+    name: string;
+    running: boolean;
+    port: number;
+    image?: string;
+    container?: string;
+    health: string;
+    uptime?: string;
+    memory?: string;
+  }>;
+  network?: InfraNetworkInterface[];
+  relays?: InfraRelaySummary[];
+  sharing: InfraSharingSummary;
+  capabilities: InfraCapabilities;
 }
 
 export interface TmuxSession {
@@ -1613,6 +1697,33 @@ export class QuicClient {
     }
   }
 
+  async infraSummary(): Promise<InfraSummary> {
+    if (!this.isConnected && !this.hasConnectionInfo) throw new Error("Not connected");
+    const res = await fetch(`${this.baseUrl}/infra/summary`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Failed to fetch infra summary: ${res.status}`);
+    return res.json();
+  }
+
+  async infraServiceAction(scope: "dev" | "system", name: string, action: "start" | "stop" | "restart" | "status"): Promise<any> {
+    if (!this.isConnected && !this.hasConnectionInfo) throw new Error("Not connected");
+    const res = await fetch(`${this.baseUrl}/infra/services/action`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ scope, name, action }),
+    });
+    return res.json();
+  }
+
+  async infraPower(action: "agent_shutdown" | "host_reboot"): Promise<any> {
+    if (!this.isConnected && !this.hasConnectionInfo) throw new Error("Not connected");
+    const res = await fetch(`${this.baseUrl}/infra/power`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ action, confirm: true }),
+    });
+    return res.json();
+  }
+
   /** Clean up old tasks, images, and logs on the desktop agent. */
   async cleanAgent(days: number = 30): Promise<{ tasksRemoved: number; imagesRemoved: number; bytesFreed: number }> {
     this.assertConnected();
@@ -2124,6 +2235,14 @@ export class QuicClient {
    */
   onOutput(callback: OutputCallback): () => void {
     return this.on("output", callback);
+  }
+
+  /** Public wrapper around the internal auth-header builder. Used by
+   *  free helpers in this file (morning/* fetches, video stream
+   *  headers) that need the same bearer + relay-password combo a
+   *  regular task call uses but live outside the class. */
+  morningAuthHeaders(): Record<string, string> {
+    return this.authHeaders;
   }
 
   // ── Private helpers ────────────────────────────────────────────────
@@ -3817,7 +3936,21 @@ export class QuicClient {
           body,
         }, 8000);
         if (!res.ok) {
-          lastError = `HTTP ${res.status}`;
+          let message = `HTTP ${res.status}`;
+          try {
+            const data = await res.json();
+            if (typeof data?.error === "string" && data.error.trim()) {
+              message = data.error.trim();
+            }
+          } catch {
+            try {
+              const text = await res.text();
+              if (text.trim()) {
+                message = text.trim();
+              }
+            } catch {}
+          }
+          lastError = message;
           continue;
         }
         const data = (await res.json()) as RecoveryResult;
@@ -4037,6 +4170,7 @@ export class QuicClient {
     maxParallel?: number;
     preferredDevice?: string;
     allowedDevices?: string[];
+    allowedRunners?: string[];
   }): Promise<{ ok: boolean; run?: AgentGraphRun; error?: string }> {
     try {
       const res = await fetch(`${this.baseUrl}/agent/graphs`, {
@@ -4052,6 +4186,7 @@ export class QuicClient {
           maxParallel: params.maxParallel ?? 2,
           preferredDevice: params.preferredDevice ?? "",
           allowedDevices: params.allowedDevices ?? [],
+          allowedRunners: params.allowedRunners ?? [],
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -4586,5 +4721,124 @@ export interface DevServerStatus {
   hotReload: boolean;
 }
 
+// ── Morning match-report types & helpers ──────────────────────────────
+// Mirror the Go structs in desktop/agent/morning.go. Kept here rather
+// than in a separate file so the mobile app's single quic.ts has all
+// agent-HTTP surface types co-located (matches the pattern for tasks,
+// guests, sandbox, etc. already in this file).
+
+export type MorningTaskStatus = "shipped" | "failed" | "skipped" | "rolled-back";
+
+export interface MorningTaskHighlight {
+  taskId: string;
+  runnerId?: string;
+  title: string;
+  oneLineSummary?: string;
+  status: MorningTaskStatus;
+  startedAt: string;
+  finishedAt: string;
+  costUsd?: number;
+  baseSha?: string;
+  headSha?: string;
+  commitShas?: string[];
+  workDir?: string;
+  filesChanged?: number;
+  linesAdded?: number;
+  linesRemoved?: number;
+  hasVideo: boolean;
+  videoDurationMs?: number;
+  videoSizeBytes?: number;
+  rolledBackAt?: string;
+  revertSha?: string;
+  failureNote?: string;
+}
+
+export interface MorningRunStats {
+  tasksShipped: number;
+  tasksFailed: number;
+  tasksRolledBack: number;
+  tasksTotal: number;
+  totalCostUsd: number;
+  totalMinutes: number;
+}
+
+export interface MorningRunSummary {
+  runId: string;
+  project: string;
+  workDir: string;
+  startedAt: string;
+  finishedAt?: string;
+  tasks: MorningTaskHighlight[];
+  stats: MorningRunStats;
+  note?: string;
+}
+
 /** Singleton client instance. */
 export const quicClient = new QuicClient();
+
+// Morning endpoints use the same relay-aware baseUrl + auth that tasks
+// do, so a user vibing at the beach gets their overnight report over
+// the same QUIC/relay channel as everything else — no new transport.
+// These helpers live at file scope so screens can import them without
+// having to know about the internal QuicClient layout.
+
+function morningAuthHeaders(): Record<string, string> | null {
+  return quicClient.isConnected ? quicClient.morningAuthHeaders() : null;
+}
+
+export async function morningListRuns(limit = 20): Promise<MorningRunSummary[]> {
+  const headers = morningAuthHeaders();
+  if (!headers || !quicClient.isConnected || !quicClient.baseUrl) return [];
+  try {
+    const res = await fetch(`${quicClient.baseUrl}/morning/runs?limit=${limit}`, { headers });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data?.runs) ? data.runs : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function morningGetRun(runId: string): Promise<MorningRunSummary | null> {
+  const headers = morningAuthHeaders();
+  if (!headers || !quicClient.isConnected || !quicClient.baseUrl) return null;
+  try {
+    const res = await fetch(`${quicClient.baseUrl}/morning/runs/${encodeURIComponent(runId)}`, { headers });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return (data?.run as MorningRunSummary) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function morningRollback(
+  runId: string,
+  taskId: string
+): Promise<{ ok: boolean; revertSha?: string; error?: string }> {
+  const headers = morningAuthHeaders();
+  if (!headers || !quicClient.isConnected || !quicClient.baseUrl) return { ok: false, error: "not connected" };
+  try {
+    const res = await fetch(
+      `${quicClient.baseUrl}/morning/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/rollback`,
+      { method: "POST", headers }
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error ?? `HTTP ${res.status}` };
+    return { ok: true, revertSha: data?.revertSha };
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : "rollback failed" };
+  }
+}
+
+/** Build a video URL + bearer header the native Video element can
+ *  pipe into expo-av / expo-video. The agent emits byte-range on mp4
+ *  so the player handles seek natively. */
+export function morningVideoRequest(runId: string, taskId: string): { uri: string; headers: Record<string, string> } | null {
+  const headers = morningAuthHeaders();
+  if (!headers || !quicClient.baseUrl) return null;
+  return {
+    uri: `${quicClient.baseUrl}/recordings/${encodeURIComponent(runId)}/${encodeURIComponent(taskId)}/video.mp4`,
+    headers,
+  };
+}

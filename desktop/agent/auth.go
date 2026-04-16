@@ -350,6 +350,32 @@ func RevokeGuest(baseURL, token, email string) error {
 	return nil
 }
 
+// RemoveDevice removes one device from the authenticated user's registry.
+func RemoveDevice(baseURL, token, deviceID string) error {
+	payload := map[string]string{"deviceId": deviceID}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal remove device: %w", err)
+	}
+
+	req, err := newBearerRequest("POST", baseURL+"/devices/remove", token, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create remove device request: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("remove device request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("%s", string(respBody))
+	}
+	return nil
+}
+
 // GuestInfo describes a guest from the Convex /guests/list endpoint.
 type GuestInfo struct {
 	Email      string `json:"email"`
@@ -654,28 +680,34 @@ func FetchRelayServers(baseURL string) ([]RelayServerInfo, error) {
 }
 
 // RegisterDevice registers this desktop agent with the Convex backend.
-func RegisterDevice(baseURL string, r RegisterDeviceRequest) error {
+func RegisterDevice(baseURL string, r RegisterDeviceRequest) (string, error) {
 	body, err := json.Marshal(r)
 	if err != nil {
-		return fmt.Errorf("marshal register request: %w", err)
+		return "", fmt.Errorf("marshal register request: %w", err)
 	}
 
 	req, err := newBearerRequest("POST", baseURL+"/devices/register", r.Token, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("create register request: %w", err)
+		return "", fmt.Errorf("create register request: %w", err)
 	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("register device request: %w", err)
+		return "", fmt.Errorf("register device request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("register device failed (status %d): %s", resp.StatusCode, string(respBody))
+		return "", fmt.Errorf("register device failed (status %d): %s", resp.StatusCode, string(respBody))
 	}
-	return nil
+	var result struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode register device response: %w", err)
+	}
+	return strings.TrimSpace(result.Token), nil
 }
 
 // ErrAuthExpired is returned when a 401 response indicates the token has expired.

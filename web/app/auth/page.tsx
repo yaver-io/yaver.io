@@ -20,7 +20,11 @@ function AuthContent() {
   const [loading, setLoading] = useState(false);
 
   const handleOAuth = (provider: "google" | "microsoft" | "apple") => {
-    window.location.href = `/api/auth/oauth/${provider}?client=${client}`;
+    const qs = new URLSearchParams({ client });
+    if (returnUrl) {
+      qs.set("return", returnUrl);
+    }
+    window.location.href = `/api/auth/oauth/${provider}?${qs.toString()}`;
   };
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
@@ -64,7 +68,9 @@ function AuthContent() {
       // 2FA required
       if (data.requires2fa && data.pendingToken) {
         const totpUrl = `/auth/totp?pendingToken=${data.pendingToken}&client=${client}`;
-        window.location.href = totpUrl;
+        window.location.href = returnUrl
+          ? `${totpUrl}&return=${encodeURIComponent(returnUrl)}`
+          : totpUrl;
         return;
       }
 

@@ -104,6 +104,10 @@ func runInit(args []string) {
 	}
 	fmt.Println()
 
+	if runtime.GOOS == "darwin" {
+		maybeRunMacOSPermissionOnboarding("init")
+	}
+
 	// Step 6 — auto update
 	fmt.Println("Step 6 of 7 — auto-update")
 	if promptYes(r, "Auto-update agent from GitHub releases?", true) {

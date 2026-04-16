@@ -42,11 +42,13 @@ export default defineSchema({
   sessions: defineTable({
     tokenHash: v.string(),
     userId: v.id("users"),
+    deviceId: v.optional(v.string()),
     expiresAt: v.number(),
     createdAt: v.number(),
   })
     .index("by_tokenHash", ["tokenHash"])
-    .index("by_userId", ["userId"]),
+    .index("by_userId", ["userId"])
+    .index("by_deviceId", ["deviceId"]),
 
   devices: defineTable({
     userId: v.id("users"),

@@ -147,6 +147,9 @@ async function handleCallback(
           const totpUrl = new URL("/auth/totp", baseUrl);
           totpUrl.searchParams.set("pendingToken", pendingToken);
           totpUrl.searchParams.set("client", state.client || "web");
+          if (state.returnTo) {
+            totpUrl.searchParams.set("return", state.returnTo);
+          }
           return NextResponse.redirect(totpUrl.toString(), 303);
         }
       }
@@ -205,6 +208,9 @@ async function handleCallback(
   // Web client: redirect to /auth/callback which stores token in localStorage
   const callbackUrl = new URL("/auth/callback", baseUrl);
   callbackUrl.searchParams.set("token", token);
+  if (state.returnTo) {
+    callbackUrl.searchParams.set("return", state.returnTo);
+  }
   await logToConvex(provider, "redirect", "info", "Redirecting to web /auth/callback");
   return NextResponse.redirect(callbackUrl.toString(), 303);
 }

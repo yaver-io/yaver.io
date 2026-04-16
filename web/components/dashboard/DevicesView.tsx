@@ -72,6 +72,17 @@ export default function DevicesView({ devices, onRefresh }: DevicesViewProps) {
                   <h3 className="font-semibold text-surface-50">
                     {device.name}
                   </h3>
+                  {!device.isGuest && device.sessionBinding ? (
+                    <span
+                      className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                        device.sessionBinding === "dedicated"
+                          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                          : "border-amber-500/40 bg-amber-500/10 text-amber-300"
+                      }`}
+                    >
+                      {device.sessionBinding === "dedicated" ? "Dedicated Session" : "Legacy Shared Session"}
+                    </span>
+                  ) : null}
                   <span
                     className={`inline-flex h-2 w-2 rounded-full ${
                       device.online ? "bg-green-400" : "bg-surface-600"
