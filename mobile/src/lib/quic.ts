@@ -150,6 +150,8 @@ export interface AgentGraphNode {
     model?: string;
     workDir?: string;
     project?: string;
+    preferredDevice?: string;
+    allowedDevices?: string[];
   };
   status: AgentNodeStatus;
   taskId?: string;
@@ -157,6 +159,7 @@ export interface AgentGraphNode {
   error?: string;
   startedAt?: string;
   finishedAt?: string;
+  placement?: AgentNodePlacement;
 }
 
 export interface AgentGraphRun {
@@ -174,6 +177,49 @@ export interface AgentGraphRun {
   startedAt?: string;
   finishedAt?: string;
   nodes: AgentGraphNode[];
+}
+
+export interface AgentNodePlacement {
+  deviceId: string;
+  deviceName?: string;
+  runner?: string;
+  model?: string;
+  reason?: string;
+}
+
+export interface MachineRunnerCapability {
+  id: string;
+  name: string;
+  installed: boolean;
+  ready: boolean;
+  authConfigured?: boolean;
+  authSource?: string;
+  warning?: string;
+  error?: string;
+}
+
+export interface MachineCapabilities {
+  supportsIos?: boolean;
+  supportsAndroid?: boolean;
+  supportsDocker?: boolean;
+  supportsLocalLlm?: boolean;
+  supportsTestFlight?: boolean;
+  supportsPlayStore?: boolean;
+  lowPower?: boolean;
+  runners?: MachineRunnerCapability[];
+}
+
+export interface MachineInfo {
+  deviceId: string;
+  name: string;
+  platform: string;
+  os?: string;
+  arch?: string;
+  isLocal: boolean;
+  isOnline: boolean;
+  provider?: string;
+  currentWorkDir?: string;
+  capabilities?: MachineCapabilities;
 }
 
 export interface TmuxSession {
@@ -3916,6 +3962,7 @@ export class QuicClient {
     model?: string;
     template?: "full" | "ship";
     maxParallel?: number;
+    preferredDevice?: string;
   }): Promise<{ ok: boolean; run?: AgentGraphRun; error?: string }> {
     try {
       const res = await fetch(`${this.baseUrl}/agent/graphs`, {
@@ -3929,6 +3976,7 @@ export class QuicClient {
           model: params.model ?? "",
           template: params.template ?? "full",
           maxParallel: params.maxParallel ?? 2,
+          preferredDevice: params.preferredDevice ?? "",
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -3948,6 +3996,18 @@ export class QuicClient {
       return res.ok;
     } catch {
       return false;
+    }
+  }
+
+  async consoleMachines(): Promise<{ machines: MachineInfo[] }> {
+    try {
+      const res = await fetch(`${this.baseUrl}/console/machines`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return { machines: [] };
+      return res.json();
+    } catch {
+      return { machines: [] };
     }
   }
 }

@@ -125,6 +125,72 @@ export interface Runner {
   models?: string[];
 }
 
+export interface AgentNodePlacement {
+  deviceId: string;
+  deviceName?: string;
+  runner?: string;
+  model?: string;
+  reason?: string;
+}
+
+export interface AgentGraphNode {
+  spec: {
+    id: string;
+    title: string;
+    kind: "chat" | "autodev" | "autoideas" | "autotest";
+    prompt?: string;
+    dependsOn?: string[];
+    runner?: string;
+    model?: string;
+    preferredDevice?: string;
+  };
+  status: "pending" | "running" | "completed" | "failed" | "blocked" | "stopped";
+  summary?: string;
+  error?: string;
+  placement?: AgentNodePlacement;
+}
+
+export interface AgentGraphRun {
+  id: string;
+  name: string;
+  workDir: string;
+  status: "queued" | "running" | "completed" | "failed" | "stopped";
+  maxParallel: number;
+  summary?: string;
+  nodes: AgentGraphNode[];
+}
+
+export interface MachineRunnerCapability {
+  id: string;
+  name: string;
+  installed: boolean;
+  ready: boolean;
+}
+
+export interface MachineCapabilities {
+  supportsIos?: boolean;
+  supportsAndroid?: boolean;
+  supportsDocker?: boolean;
+  supportsLocalLlm?: boolean;
+  supportsTestFlight?: boolean;
+  supportsPlayStore?: boolean;
+  lowPower?: boolean;
+  runners?: MachineRunnerCapability[];
+}
+
+export interface MachineInfo {
+  deviceId: string;
+  name: string;
+  platform: string;
+  os?: string;
+  arch?: string;
+  isLocal: boolean;
+  isOnline: boolean;
+  provider?: string;
+  currentWorkDir?: string;
+  capabilities?: MachineCapabilities;
+}
+
 export interface SandboxStatus {
   ok: boolean;
   containerizeGuests: boolean;
@@ -554,6 +620,55 @@ class AgentClient {
       body: JSON.stringify({ runner: runnerId }),
     });
     if (!res.ok) throw new Error(`Failed to switch runner: ${res.status}`);
+  }
+
+  async agentGraphs(): Promise<AgentGraphRun[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/agent/graphs`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to get agent graphs: ${res.status}`);
+    const data = await res.json();
+    return data.runs || [];
+  }
+
+  async createAgentGraph(params: {
+    name?: string;
+    workDir: string;
+    prompt: string;
+    runner?: string;
+    model?: string;
+    template?: "full" | "ship";
+    maxParallel?: number;
+    preferredDevice?: string;
+  }): Promise<{ ok: boolean; run?: AgentGraphRun; error?: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/agent/graphs`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: params.name ?? "",
+        workDir: params.workDir,
+        prompt: params.prompt,
+        runner: params.runner ?? "",
+        model: params.model ?? "",
+        template: params.template ?? "full",
+        maxParallel: params.maxParallel ?? 2,
+        preferredDevice: params.preferredDevice ?? "",
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
+    return { ok: true, run: data.run };
+  }
+
+  async stopAgentGraph(id: string): Promise<boolean> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/agent/graphs/${encodeURIComponent(id)}/stop`, {
+      method: "POST",
+      headers: this.authHeaders,
+    });
+    return res.ok;
   }
 
   // ── Voice ────────────────────────────────────────────────────────
@@ -1568,7 +1683,7 @@ class AgentClient {
     return res.json();
   }
 
-  async consoleMachines(): Promise<{ machines: any[] }> {
+  async consoleMachines(): Promise<{ machines: MachineInfo[] }> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/console/machines`, { headers: this.authHeaders });
     return res.json();

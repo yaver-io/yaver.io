@@ -4,14 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import { agentClient } from "@/lib/agent-client";
 import TerminalView from "./TerminalView";
 
-type Tab = "overview" | "machines" | "containers" | "terminal" | "catalog" | "images" | "multiregion";
+type Tab = "overview" | "agent" | "machines" | "containers" | "terminal" | "catalog" | "images" | "multiregion";
 
 export default function ConsoleView() {
   const [tab, setTab] = useState<Tab>("overview");
   return (
     <div className="space-y-4">
       <div className="flex gap-1 border-b border-surface-800">
-        {(["overview", "machines", "containers", "terminal", "catalog", "images", "multiregion"] as Tab[]).map((t) => (
+        {(["overview", "agent", "machines", "containers", "terminal", "catalog", "images", "multiregion"] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)}
             className={`px-3 py-2 text-xs uppercase font-semibold ${tab === t ? "text-indigo-400 border-b-2 border-indigo-400" : "text-surface-500 hover:text-surface-300"}`}>
             {t}
@@ -19,12 +19,141 @@ export default function ConsoleView() {
         ))}
       </div>
       {tab === "overview" && <Overview />}
+      {tab === "agent" && <AgentOrchestrator />}
       {tab === "machines" && <Machines />}
       {tab === "containers" && <Containers />}
       {tab === "terminal" && <TerminalView />}
       {tab === "catalog" && <Catalog />}
       {tab === "images" && <Images />}
       {tab === "multiregion" && <MultiRegion />}
+    </div>
+  );
+}
+
+function AgentOrchestrator() {
+  const [runs, setRuns] = useState<any[]>([]);
+  const [runners, setRunners] = useState<any[]>([]);
+  const [machines, setMachines] = useState<any[]>([]);
+  const [name, setName] = useState("");
+  const [workDir, setWorkDir] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [runner, setRunner] = useState("");
+  const [preferredDevice, setPreferredDevice] = useState("");
+  const [template, setTemplate] = useState<"full" | "ship">("full");
+  const [maxParallel, setMaxParallel] = useState("2");
+  const [starting, setStarting] = useState(false);
+
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 4000);
+    return () => clearInterval(id);
+  }, []);
+
+  async function refresh() {
+    const [graphRuns, availableRunners, inventory] = await Promise.all([
+      agentClient.agentGraphs(),
+      agentClient.getRunners(),
+      agentClient.consoleMachines(),
+    ]);
+    setRuns(graphRuns || []);
+    setRunners((availableRunners || []).filter((r: any) => r.installed));
+    setMachines((inventory.machines || []).filter((m: any) => m.isOnline));
+  }
+
+  async function start() {
+    if (!workDir.trim() || !prompt.trim()) {
+      alert("work dir and goal are required");
+      return;
+    }
+    setStarting(true);
+    const res = await agentClient.createAgentGraph({
+      name: name || undefined,
+      workDir,
+      prompt,
+      runner: runner || undefined,
+      template,
+      maxParallel: Math.max(1, parseInt(maxParallel || "2", 10) || 2),
+      preferredDevice: preferredDevice || undefined,
+    });
+    setStarting(false);
+    if (!res.ok) {
+      alert(res.error || "could not create graph");
+      return;
+    }
+    setPrompt("");
+    refresh();
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-surface-900/50 border border-surface-800 rounded-xl p-4 space-y-3">
+        <div className="text-xs text-surface-500">
+          Mesh orchestration can pin the graph to one machine or leave placement on auto so Yaver schedules nodes across Claude, Codex, and local runners by capability and session budget.
+        </div>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="graph name"
+          className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200" />
+        <input value={workDir} onChange={(e) => setWorkDir(e.target.value)} placeholder="/abs/path/to/project"
+          className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-mono text-surface-200" />
+        <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Ship onboarding, keep iOS and Android release paths green, and stay budget-aware."
+          className="w-full min-h-28 rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200" />
+        <div className="grid md:grid-cols-4 gap-2">
+          <select value={template} onChange={(e) => setTemplate(e.target.value as "full" | "ship")}
+            className="rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200">
+            <option value="full">full</option>
+            <option value="ship">ship</option>
+          </select>
+          <input value={maxParallel} onChange={(e) => setMaxParallel(e.target.value)} placeholder="max parallel"
+            className="rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200" />
+          <select value={runner} onChange={(e) => setRunner(e.target.value)}
+            className="rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200">
+            <option value="">auto runner</option>
+            {runners.map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+          <select value={preferredDevice} onChange={(e) => setPreferredDevice(e.target.value)}
+            className="rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200">
+            <option value="">auto machine</option>
+            {machines.map((m: any) => <option key={m.deviceId} value={m.deviceId}>{m.name}</option>)}
+          </select>
+        </div>
+        <button onClick={start} disabled={starting}
+          className="px-4 py-2 text-sm rounded-lg bg-indigo-500 text-white hover:bg-indigo-400 disabled:opacity-50">
+          {starting ? "Starting…" : "Start agent graph"}
+        </button>
+      </div>
+
+      <div className="space-y-3">
+        {runs.map((run: any) => (
+          <div key={run.id} className="bg-surface-900/50 border border-surface-800 rounded-xl p-4 space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="flex-1">
+                <div className="text-sm font-semibold text-surface-200">{run.name}</div>
+                <div className="text-xs text-surface-500">{run.status} · {run.nodes.length} nodes · parallel {run.maxParallel}</div>
+              </div>
+              {(run.status === "running" || run.status === "queued") && (
+                <button onClick={async () => { await agentClient.stopAgentGraph(run.id); refresh(); }}
+                  className="px-3 py-1.5 text-xs rounded bg-surface-800 text-surface-200 hover:bg-surface-700">
+                  Stop
+                </button>
+              )}
+            </div>
+            {run.summary && <div className="text-xs text-surface-500">{run.summary}</div>}
+            <div className="space-y-2">
+              {run.nodes.map((node: any) => (
+                <div key={node.spec.id} className="border border-surface-800 rounded-lg p-3 bg-surface-950/50">
+                  <div className="text-sm text-surface-200">{node.spec.title} <span className="text-surface-500">({node.spec.kind})</span></div>
+                  <div className="text-xs text-surface-500">
+                    {node.status}
+                    {node.placement ? ` · ${node.placement.deviceName || node.placement.deviceId}${node.placement.runner ? ` · ${node.placement.runner}` : ""}` : ""}
+                  </div>
+                  {node.summary && <div className="text-xs text-surface-400 mt-1">{node.summary}</div>}
+                  {node.error && <div className="text-xs text-red-400 mt-1">{node.error}</div>}
+                  {node.placement?.reason && <div className="text-[11px] text-surface-600 mt-1">{node.placement.reason}</div>}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -409,7 +538,7 @@ function Machines() {
     <div className="space-y-3">
       {error && <div className="text-xs text-red-400">{error}</div>}
       <div className="text-xs text-surface-500">
-        Hybrid view: own hardware + cloud VPSes managed through one UI. Pick a machine in the device bar to re-target Containers/Terminal/etc.
+        Hybrid view: own hardware + cloud VPSes managed through one UI. Agent mode can now pin a graph to one machine or leave placement on auto for per-node mesh scheduling.
       </div>
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {list.map((m) => (
@@ -428,6 +557,18 @@ function Machines() {
               {m.arch && <span className="px-1.5 py-0.5 rounded bg-surface-800 text-surface-400">{m.arch}</span>}
               {m.cost && <span className="px-1.5 py-0.5 rounded bg-surface-800 text-surface-400">{m.cost}</span>}
             </div>
+            {m.capabilities?.runners?.length > 0 && (
+              <div className="flex flex-wrap gap-1 text-[10px]">
+                {m.capabilities.runners.filter((r: any) => r.ready).slice(0, 4).map((r: any) => (
+                  <span key={r.id} className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300">
+                    {r.id}
+                  </span>
+                ))}
+                {m.capabilities.supportsTestFlight && <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-300">testflight</span>}
+                {m.capabilities.supportsAndroid && <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300">android</span>}
+                {m.capabilities.supportsLocalLlm && <span className="px-1.5 py-0.5 rounded bg-surface-800 text-surface-300">local-llm</span>}
+              </div>
+            )}
             {m.uptime > 0 && (
               <div className="text-[10px] text-surface-500">uptime: {Math.floor(m.uptime / 86400)}d {Math.floor((m.uptime % 86400) / 3600)}h</div>
             )}

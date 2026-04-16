@@ -163,6 +163,10 @@ func providerFromHint(platform, quicHost string) string {
 	if platform == "darwin" {
 		return "local-mac"
 	}
+	hint := strings.ToLower(platform + " " + quicHost)
+	if strings.Contains(hint, "hel1") || strings.Contains(hint, "fsn1") || strings.Contains(hint, "nbg1") || strings.Contains(hint, "hetzner") {
+		return "hetzner"
+	}
 	// Hetzner IP ranges start with 5.xx, 116.xx, 159.xx, etc. — too broad to match.
 	// We keep it vague unless the device explicitly reports its provider.
 	return ""

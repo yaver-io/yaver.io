@@ -251,16 +251,13 @@ func readyRunner(caps *MachineCapabilities, runner string) bool {
 	if caps == nil {
 		return runner == ""
 	}
-	runner = strings.TrimSpace(strings.TrimPrefix(runner, "claude-code"))
+	runner = normalizedPlacementRunner(runner)
 	if runner == "" {
 		return true
 	}
 	for _, r := range caps.Runners {
 		id := normalizedPlacementRunner(r.ID)
-		if id == "" {
-			id = normalizedPlacementRunner(runner)
-		}
-		if normalizedPlacementRunner(runner) == id && r.Ready {
+		if runner == id && r.Ready {
 			return true
 		}
 	}
