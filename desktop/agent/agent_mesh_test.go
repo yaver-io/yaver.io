@@ -178,6 +178,22 @@ func TestPlanGraphPlacementsBalancesAcrossAllowedMachines(t *testing.T) {
 	}
 }
 
+func TestAllowedDevicesMatchesMachineNameAndPrefix(t *testing.T) {
+	req := AgentGraphCreateRequest{AllowedDevices: []string{"ubuntu-4gb", "mac"}}
+	machines := []MachineInfo{
+		{DeviceID: "local", Name: "Kvancs-MacBook-Air.local", IsLocal: true, IsOnline: true},
+		{DeviceID: "6d5c0624-128d-419e-9da9-47362d5de434", Name: "ubuntu-4gb-hel1-1", IsOnline: true},
+	}
+
+	filtered := filterPlacementMachines(req, AgentGraphNodeSpec{}, machines)
+	if len(filtered) != 1 {
+		t.Fatalf("expected one allowed machine, got %d", len(filtered))
+	}
+	if filtered[0].Name != "ubuntu-4gb-hel1-1" {
+		t.Fatalf("expected Hetzner machine by name match, got %q", filtered[0].Name)
+	}
+}
+
 func TestChooseNodePlacementPrefersOwnOverSharedSpareCapacity(t *testing.T) {
 	node := AgentGraphNodeSpec{
 		ID:     "local-dev",

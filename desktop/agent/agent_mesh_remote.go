@@ -48,6 +48,9 @@ func remoteAgentBaseAndToken(deviceHint string) (string, string, error) {
 	if !target.IsOnline {
 		return "", "", fmt.Errorf("device %q is offline", target.Name)
 	}
+	if direct := preferDirectAgentBase(target); direct != "" {
+		return direct, cfg.AuthToken, nil
+	}
 
 	if relays, err := FetchRelayServers(cfg.ConvexSiteURL); err == nil {
 		for _, r := range relays {
@@ -82,6 +85,23 @@ func isLoopbackHost(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+func preferDirectAgentBase(target *DeviceInfo) string {
+	if target == nil || strings.TrimSpace(target.QuicHost) == "" {
+		return ""
+	}
+	host := strings.TrimSpace(target.QuicHost)
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+			return ""
+		}
+	}
+	port := target.QuicPort
+	if port <= 0 {
+		port = 18080
+	}
+	return fmt.Sprintf("http://%s:%d", host, port)
 }
 
 func relayPasswordForBase(baseURL string) (string, error) {

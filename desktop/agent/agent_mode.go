@@ -957,6 +957,9 @@ func (gm *AgentGraphManager) executeRemoteLoopNode(ctx context.Context, runID st
 	if err != nil {
 		return "", err
 	}
+	if strings.TrimSpace(workDir) == "" {
+		workDir = firstNonEmpty(resolveRemoteCurrentWorkDir(ctx, base, token), ".")
+	}
 	kind := "autodev"
 	path := "/autodev/start"
 	body := map[string]interface{}{
@@ -1039,6 +1042,27 @@ func (gm *AgentGraphManager) executeRemoteLoopNode(ctx context.Context, runID st
 		waitNext:
 		}
 	}
+}
+
+func resolveRemoteCurrentWorkDir(ctx context.Context, base, token string) string {
+	var resp struct {
+		OK       bool          `json:"ok"`
+		Machines []MachineInfo `json:"machines"`
+	}
+	if err := remoteAgentJSON(ctx, base, token, http.MethodGet, "/console/machines", nil, &resp); err != nil {
+		return ""
+	}
+	for _, machine := range resp.Machines {
+		if machine.IsLocal && strings.TrimSpace(machine.CurrentWorkDir) != "" {
+			return machine.CurrentWorkDir
+		}
+	}
+	for _, machine := range resp.Machines {
+		if strings.TrimSpace(machine.CurrentWorkDir) != "" {
+			return machine.CurrentWorkDir
+		}
+	}
+	return ""
 }
 
 func graphRemoteProjectName(runID string, spec AgentGraphNodeSpec) string {
