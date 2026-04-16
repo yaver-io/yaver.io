@@ -62,8 +62,13 @@ export interface GuestConfigEntry {
   deviceIds?: string[];
   shareAllMachines?: boolean;
   machineIds?: string[];
+  resourcePreset?: string;
   useHostApiKeys?: boolean;
   allowGuestProvidedApiKeys?: boolean;
+  allowDesktopControl?: boolean;
+  allowBrowserControl?: boolean;
+  allowTunnelForward?: boolean;
+  requireIsolation?: boolean;
   cpuLimitPercent?: number;
   ramLimitMb?: number;
   priorityMode?: string;
@@ -91,8 +96,13 @@ export interface GuestConfigUpdate {
   deviceIds?: string[];
   shareAllMachines?: boolean;
   machineIds?: string[];
+  resourcePreset?: string;
   useHostApiKeys?: boolean;
   allowGuestProvidedApiKeys?: boolean;
+  allowDesktopControl?: boolean;
+  allowBrowserControl?: boolean;
+  allowTunnelForward?: boolean;
+  requireIsolation?: boolean;
   cpuLimitPercent?: number;
   ramLimitMb?: number;
   priorityMode?: string;

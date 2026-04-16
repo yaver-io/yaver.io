@@ -44,8 +44,12 @@ func (s *HTTPServer) handleGuestConfigGet(w http.ResponseWriter, r *http.Request
 		DeviceIDs                 []string    `json:"deviceIds,omitempty"`
 		ShareAllMachines          *bool       `json:"shareAllMachines,omitempty"`
 		MachineIDs                []string    `json:"machineIds,omitempty"`
+		ResourcePreset            string      `json:"resourcePreset,omitempty"`
 		UseHostAPIKeys            *bool       `json:"useHostApiKeys,omitempty"`
 		AllowGuestProvidedAPIKeys *bool       `json:"allowGuestProvidedApiKeys,omitempty"`
+		AllowDesktopControl       *bool       `json:"allowDesktopControl,omitempty"`
+		AllowBrowserControl       *bool       `json:"allowBrowserControl,omitempty"`
+		AllowTunnelForward        *bool       `json:"allowTunnelForward,omitempty"`
 		RequireIsolation          *bool       `json:"requireIsolation,omitempty"`
 		CPULimitPercent           *int        `json:"cpuLimitPercent,omitempty"`
 		RAMLimitMB                *int        `json:"ramLimitMb,omitempty"`
@@ -70,8 +74,12 @@ func (s *HTTPServer) handleGuestConfigGet(w http.ResponseWriter, r *http.Request
 			DeviceIDs:                 c.DeviceIDs,
 			ShareAllMachines:          c.ShareAllMachines,
 			MachineIDs:                c.MachineIDs,
+			ResourcePreset:            guestResourcePreset(&c),
 			UseHostAPIKeys:            c.UseHostAPIKeys,
 			AllowGuestProvidedAPIKeys: c.AllowGuestProvidedAPIKeys,
+			AllowDesktopControl:       c.AllowDesktopControl,
+			AllowBrowserControl:       c.AllowBrowserControl,
+			AllowTunnelForward:        c.AllowTunnelForward,
 			RequireIsolation:          c.RequireIsolation,
 			CPULimitPercent:           c.CPULimitPercent,
 			RAMLimitMB:                c.RAMLimitMB,
@@ -101,8 +109,12 @@ func (s *HTTPServer) handleGuestConfigPost(w http.ResponseWriter, r *http.Reques
 		DeviceIDs                 []string `json:"deviceIds,omitempty"`
 		ShareAllMachines          *bool    `json:"shareAllMachines,omitempty"`
 		MachineIDs                []string `json:"machineIds,omitempty"`
+		ResourcePreset            string   `json:"resourcePreset,omitempty"`
 		UseHostAPIKeys            *bool    `json:"useHostApiKeys,omitempty"`
 		AllowGuestProvidedAPIKeys *bool    `json:"allowGuestProvidedApiKeys,omitempty"`
+		AllowDesktopControl       *bool    `json:"allowDesktopControl,omitempty"`
+		AllowBrowserControl       *bool    `json:"allowBrowserControl,omitempty"`
+		AllowTunnelForward        *bool    `json:"allowTunnelForward,omitempty"`
 		RequireIsolation          *bool    `json:"requireIsolation,omitempty"`
 		CPULimitPercent           *int     `json:"cpuLimitPercent,omitempty"`
 		RAMLimitMB                *int     `json:"ramLimitMb,omitempty"`
@@ -143,11 +155,23 @@ func (s *HTTPServer) handleGuestConfigPost(w http.ResponseWriter, r *http.Reques
 	if body.MachineIDs != nil {
 		cfgPayload["machineIds"] = body.MachineIDs
 	}
+	if body.ResourcePreset != "" {
+		cfgPayload["resourcePreset"] = body.ResourcePreset
+	}
 	if body.UseHostAPIKeys != nil {
 		cfgPayload["useHostApiKeys"] = *body.UseHostAPIKeys
 	}
 	if body.AllowGuestProvidedAPIKeys != nil {
 		cfgPayload["allowGuestProvidedApiKeys"] = *body.AllowGuestProvidedAPIKeys
+	}
+	if body.AllowDesktopControl != nil {
+		cfgPayload["allowDesktopControl"] = *body.AllowDesktopControl
+	}
+	if body.AllowBrowserControl != nil {
+		cfgPayload["allowBrowserControl"] = *body.AllowBrowserControl
+	}
+	if body.AllowTunnelForward != nil {
+		cfgPayload["allowTunnelForward"] = *body.AllowTunnelForward
 	}
 	if body.RequireIsolation != nil {
 		cfgPayload["requireIsolation"] = *body.RequireIsolation
@@ -170,7 +194,9 @@ func (s *HTTPServer) handleGuestConfigPost(w http.ResponseWriter, r *http.Reques
 		body.UsageMode != "" || body.Schedule != nil ||
 		body.ShareAllDevices != nil || body.DeviceIDs != nil ||
 		body.ShareAllMachines != nil || body.MachineIDs != nil ||
+		body.ResourcePreset != "" ||
 		body.UseHostAPIKeys != nil || body.AllowGuestProvidedAPIKeys != nil ||
+		body.AllowDesktopControl != nil || body.AllowBrowserControl != nil || body.AllowTunnelForward != nil ||
 		body.RequireIsolation != nil ||
 		body.CPULimitPercent != nil || body.RAMLimitMB != nil || body.PriorityMode != ""
 	if hasConvexFields {

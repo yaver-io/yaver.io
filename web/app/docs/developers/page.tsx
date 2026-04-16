@@ -2428,6 +2428,18 @@ CLI Agent ◄──QUIC──────────────── Relay (:
                   <td className="px-4 py-2">all</td>
                   <td className="px-4 py-2">Which AI runners the guest can use</td>
                 </tr>
+                <tr>
+                  <td className="px-4 py-2 font-mono text-surface-200">preset</td>
+                  <td className="px-4 py-2">machine-only, machine-with-host-keys, desktop-control, desktop-control-with-host-keys</td>
+                  <td className="px-4 py-2">machine-only</td>
+                  <td className="px-4 py-2">High-level share mode for coding-only vs host-key vs future remote desktop sessions</td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-2 font-mono text-surface-200">tunnels</td>
+                  <td className="px-4 py-2">true, false</td>
+                  <td className="px-4 py-2">false</td>
+                  <td className="px-4 py-2">Allow the guest to use host-approved local tunnel forwards such as DB/devserver/VNC endpoints</td>
+                </tr>
               </tbody>
             </table>
           </div>

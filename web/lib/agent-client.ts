@@ -133,6 +133,19 @@ export interface AgentNodePlacement {
   reason?: string;
 }
 
+export interface TaskSliceContract {
+  runId?: string;
+  nodeId?: string;
+  deviceId?: string;
+  deviceName?: string;
+  sourceWorkDir?: string;
+  effectiveWorkDir?: string;
+  gitRemote?: string;
+  gitBranch?: string;
+  gitCommit?: string;
+  isolationMode?: string;
+}
+
 export interface AgentGraphNode {
   spec: {
     id: string;
@@ -143,11 +156,14 @@ export interface AgentGraphNode {
     runner?: string;
     model?: string;
     preferredDevice?: string;
+    allowedRunners?: string[];
+    workDir?: string;
   };
   status: "pending" | "running" | "completed" | "failed" | "blocked" | "stopped";
   summary?: string;
   error?: string;
   placement?: AgentNodePlacement;
+  sliceContract?: TaskSliceContract;
 }
 
 export interface AgentGraphRun {
@@ -245,8 +261,12 @@ export interface GuestConfigEntry {
   deviceIds?: string[];
   shareAllMachines?: boolean;
   machineIds?: string[];
+  resourcePreset?: string;
   useHostApiKeys?: boolean;
   allowGuestProvidedApiKeys?: boolean;
+  allowDesktopControl?: boolean;
+  allowBrowserControl?: boolean;
+  allowTunnelForward?: boolean;
   requireIsolation?: boolean;
   cpuLimitPercent?: number;
   ramLimitMb?: number;
@@ -723,6 +743,7 @@ class AgentClient {
     maxParallel?: number;
     preferredDevice?: string;
     allowedDevices?: string[];
+    allowedRunners?: string[];
   }): Promise<{ ok: boolean; run?: AgentGraphRun; error?: string }> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/agent/graphs`, {
@@ -738,6 +759,7 @@ class AgentClient {
         maxParallel: params.maxParallel ?? 2,
         preferredDevice: params.preferredDevice ?? "",
         allowedDevices: params.allowedDevices ?? [],
+        allowedRunners: params.allowedRunners ?? [],
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -1282,8 +1304,12 @@ class AgentClient {
     deviceIds?: string[];
     shareAllMachines?: boolean;
     machineIds?: string[];
+    resourcePreset?: string;
     useHostApiKeys?: boolean;
     allowGuestProvidedApiKeys?: boolean;
+    allowDesktopControl?: boolean;
+    allowBrowserControl?: boolean;
+    allowTunnelForward?: boolean;
     requireIsolation?: boolean;
     cpuLimitPercent?: number;
     ramLimitMb?: number;

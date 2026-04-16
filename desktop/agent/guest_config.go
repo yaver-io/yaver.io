@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -226,7 +227,53 @@ func (m *GuestConfigManager) GetConfig(guestUserID string) *GuestConfig {
 }
 
 func guestUseHostAPIKeys(cfg *GuestConfig) bool {
-	return cfg != nil && cfg.UseHostAPIKeys != nil && *cfg.UseHostAPIKeys
+	if cfg != nil && cfg.UseHostAPIKeys != nil {
+		return *cfg.UseHostAPIKeys
+	}
+	switch guestResourcePreset(cfg) {
+	case "machine-with-host-keys", "desktop-control-with-host-keys":
+		return true
+	default:
+		return false
+	}
+}
+
+func guestResourcePreset(cfg *GuestConfig) string {
+	if cfg == nil {
+		return "machine-only"
+	}
+	if cfg.ResourcePreset != "" {
+		return cfg.ResourcePreset
+	}
+	hostKeys := cfg.UseHostAPIKeys != nil && *cfg.UseHostAPIKeys
+	if cfg.AllowDesktopControl != nil && *cfg.AllowDesktopControl {
+		if hostKeys {
+			return "desktop-control-with-host-keys"
+		}
+		return "desktop-control"
+	}
+	if hostKeys {
+		return "machine-with-host-keys"
+	}
+	return "machine-only"
+}
+
+func guestAllowDesktopControl(cfg *GuestConfig) bool {
+	if cfg != nil && cfg.AllowDesktopControl != nil {
+		return *cfg.AllowDesktopControl
+	}
+	return strings.HasPrefix(guestResourcePreset(cfg), "desktop-control")
+}
+
+func guestAllowBrowserControl(cfg *GuestConfig) bool {
+	if cfg != nil && cfg.AllowBrowserControl != nil {
+		return *cfg.AllowBrowserControl
+	}
+	return guestAllowDesktopControl(cfg)
+}
+
+func guestAllowTunnelForward(cfg *GuestConfig) bool {
+	return cfg != nil && cfg.AllowTunnelForward != nil && *cfg.AllowTunnelForward
 }
 
 func guestRequireIsolation(cfg *GuestConfig) bool {
@@ -278,6 +325,7 @@ func (m *GuestConfigManager) saveProjectAccess() {
 // accessing sensitive files. Combined with workdir restriction, this provides
 // defense-in-depth for guest tasks.
 func guestPromptPrefix(workDir string, cfg *GuestConfig) string {
+	resourcePreset := guestResourcePreset(cfg)
 	hostKeyPolicy := "Host-managed API keys are NOT available in this session."
 	if guestUseHostAPIKeys(cfg) {
 		hostKeyPolicy = "Host-managed API keys may be used only through approved tools/runtime wiring; never reveal or print raw secret values."
@@ -290,6 +338,18 @@ func guestPromptPrefix(workDir string, cfg *GuestConfig) string {
 	if guestRequireIsolation(cfg) {
 		isolationPolicy = "Task must run in Docker isolation; if isolation is unavailable, the task must not proceed."
 	}
+	desktopPolicy := "Desktop-control sessions are NOT approved for this guest."
+	if guestAllowDesktopControl(cfg) {
+		desktopPolicy = "Desktop-control sessions may be created only when the host explicitly initiates or approves them."
+	}
+	browserPolicy := "Browser-control sessions are NOT approved for this guest."
+	if guestAllowBrowserControl(cfg) {
+		browserPolicy = "Browser automation is approved only for the host-approved session scope; do not use it to escape project boundaries or reveal host secrets."
+	}
+	tunnelPolicy := "Tunnel forwarding to local machine services is NOT approved for this guest."
+	if guestAllowTunnelForward(cfg) {
+		tunnelPolicy = "Tunnel forwarding is approved only for the exact host-approved endpoints needed for the task."
+	}
 	return fmt.Sprintf(`[SECURITY CONTEXT — GUEST SESSION]
 You are running as a GUEST user with restricted access. You MUST follow these rules:
 1. ONLY read/write files within the project directory: %s
@@ -301,10 +361,14 @@ You are running as a GUEST user with restricted access. You MUST follow these ru
 7. %s
 8. %s
 9. %s
-10. Focus only on the coding task requested by the user
+10. Share preset for this guest: %s
+11. %s
+12. %s
+13. %s
+14. Focus only on the coding task requested by the user
 [END SECURITY CONTEXT]
 
-`, workDir, hostKeyPolicy, guestKeyPolicy, isolationPolicy)
+`, workDir, hostKeyPolicy, guestKeyPolicy, isolationPolicy, resourcePreset, desktopPolicy, browserPolicy, tunnelPolicy)
 }
 
 func (m *GuestConfigManager) loadProjectAccess() {

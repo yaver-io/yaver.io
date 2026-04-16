@@ -183,8 +183,14 @@ func runGuestsConfig(args []string) {
 			if c.UseHostAPIKeys != nil {
 				fmt.Printf("  host_keys=%v", *c.UseHostAPIKeys)
 			}
+			if preset := guestResourcePreset(&c); preset != "" {
+				fmt.Printf("  preset=%s", preset)
+			}
 			if c.AllowGuestProvidedAPIKeys != nil {
 				fmt.Printf("  guest_keys=%v", *c.AllowGuestProvidedAPIKeys)
+			}
+			if c.AllowTunnelForward != nil {
+				fmt.Printf("  tunnels=%v", *c.AllowTunnelForward)
 			}
 			if c.PriorityMode != "" {
 				fmt.Printf("  priority=%s", c.PriorityMode)
@@ -231,8 +237,20 @@ func runGuestsConfig(args []string) {
 				if c.UseHostAPIKeys != nil {
 					fmt.Printf("  Use host keys:    %v\n", *c.UseHostAPIKeys)
 				}
+				if preset := guestResourcePreset(&c); preset != "" {
+					fmt.Printf("  Resource preset:  %s\n", preset)
+				}
 				if c.AllowGuestProvidedAPIKeys != nil {
 					fmt.Printf("  Guest keys:       %v\n", *c.AllowGuestProvidedAPIKeys)
+				}
+				if c.AllowDesktopControl != nil {
+					fmt.Printf("  Desktop control:  %v\n", *c.AllowDesktopControl)
+				}
+				if c.AllowBrowserControl != nil {
+					fmt.Printf("  Browser control:  %v\n", *c.AllowBrowserControl)
+				}
+				if c.AllowTunnelForward != nil {
+					fmt.Printf("  Tunnel forward:   %v\n", *c.AllowTunnelForward)
 				}
 				if c.RequireIsolation != nil {
 					fmt.Printf("  Docker isolation: %v\n", *c.RequireIsolation)
@@ -282,8 +300,16 @@ func runGuestsConfig(args []string) {
 			payload["allowedRunners"] = runners
 		case "hostkeys":
 			payload["useHostApiKeys"] = parseBoolish(parts[1])
+		case "preset":
+			payload["resourcePreset"] = parts[1]
 		case "guestkeys":
 			payload["allowGuestProvidedApiKeys"] = parseBoolish(parts[1])
+		case "desktop":
+			payload["allowDesktopControl"] = parseBoolish(parts[1])
+		case "browser":
+			payload["allowBrowserControl"] = parseBoolish(parts[1])
+		case "tunnels":
+			payload["allowTunnelForward"] = parseBoolish(parts[1])
 		case "isolation", "docker":
 			payload["requireIsolation"] = parseBoolish(parts[1])
 		case "cpu":
@@ -313,7 +339,7 @@ func runGuestsConfig(args []string) {
 				payload["machineIds"] = splitComma(parts[1])
 			}
 		default:
-			fmt.Fprintf(os.Stderr, "Unknown config key: %s (use: limit, mode, runners, hostkeys, guestkeys, isolation, cpu, rammb, priority, devices, machines)\n", parts[0])
+			fmt.Fprintf(os.Stderr, "Unknown config key: %s (use: limit, mode, runners, preset, hostkeys, guestkeys, desktop, browser, tunnels, isolation, cpu, rammb, priority, devices, machines)\n", parts[0])
 			os.Exit(1)
 		}
 	}
