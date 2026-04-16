@@ -29,6 +29,7 @@ import VaultView from "@/components/dashboard/VaultView";
 import APIKeysView from "@/components/dashboard/APIKeysView";
 import StorageView from "@/components/dashboard/StorageView";
 import SchedulesView from "@/components/dashboard/SchedulesView";
+import PhoneProjectsView from "@/components/dashboard/PhoneProjectsView";
 import ExecView from "@/components/dashboard/ExecView";
 
 function statusColor(s: string) {
@@ -53,7 +54,7 @@ export default function DashboardPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [guestCode, setGuestCode] = useState("");
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "infra" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec">("home");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "infra" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone">("home");
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [relayReady, setRelayReady] = useState(false);
@@ -228,6 +229,7 @@ export default function DashboardPage() {
     { id: "vault", label: "Vault", icon: "\uD83D\uDD12" },
     { id: "apikeys", label: "API Keys", icon: "\uD83D\uDD11" },
     { id: "schedules", label: "Schedules", icon: "\u23F0" },
+    { id: "phone", label: "Phone Backend", icon: "\u26A1" },
     { id: "exec", label: "Exec", icon: "\u2699\uFE0F" },
     { id: "security", label: "Security", icon: "\uD83D\uDD10" },
     { id: "morning", label: "Morning", icon: "\u2600\uFE0F" },
@@ -475,6 +477,8 @@ export default function DashboardPage() {
             <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto"><APIKeysView /></div>
           ) : activeTab === "schedules" ? (
             <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto"><SchedulesView /></div>
+          ) : activeTab === "phone" ? (
+            <div className="flex-1 min-h-0 w-full max-w-6xl mx-auto overflow-auto p-4"><PhoneProjectsView /></div>
           ) : activeTab === "exec" ? (
             <div className="flex-1 min-h-0 w-full"><ExecView /></div>
           ) : (
