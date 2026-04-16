@@ -19,6 +19,24 @@ func TestAuthRecoverRequiresProof(t *testing.T) {
 	}
 }
 
+func TestAuthRecoverRejectedWhenAgentHealthy(t *testing.T) {
+	recoveryLimiter.reset()
+	if err := SetBootstrapSecret("healthy-secret"); err != nil {
+		t.Fatalf("SetBootstrapSecret: %v", err)
+	}
+	defer func() { _ = SetBootstrapSecret("") }()
+
+	srv := &HTTPServer{token: "live-token"}
+	req := httptest.NewRequest(http.MethodPost, "/auth/recover", strings.NewReader(`{"secret":"healthy-secret","mode":"pair"}`))
+	req.RemoteAddr = "192.168.1.20:40000"
+	rec := httptest.NewRecorder()
+
+	srv.handleAuthRecover(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", rec.Code)
+	}
+}
+
 func TestAuthRecoverSecretCannotStartDeviceCode(t *testing.T) {
 	recoveryLimiter.reset()
 	if err := SetBootstrapSecret("secret-123"); err != nil {
@@ -89,6 +107,29 @@ func TestAuthRecoverPairWorksWithBootstrapSecret(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"pairCode"`) {
 		t.Fatalf("expected pairCode in response, got %s", rec.Body.String())
+	}
+}
+
+func TestAuthRecoverPairAllowedWhenAuthExpired(t *testing.T) {
+	recoveryLimiter.reset()
+	if err := SetBootstrapSecret("expired-secret"); err != nil {
+		t.Fatalf("SetBootstrapSecret: %v", err)
+	}
+	defer func() {
+		_ = SetBootstrapSecret("")
+		EndPairingSession()
+	}()
+
+	srv := &HTTPServer{token: "stale-token"}
+	srv.authExpired.Store(true)
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/recover", strings.NewReader(`{"secret":"expired-secret","mode":"pair"}`))
+	req.RemoteAddr = "192.168.1.21:40000"
+	rec := httptest.NewRecorder()
+
+	srv.handleAuthRecover(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
