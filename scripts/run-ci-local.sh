@@ -18,6 +18,9 @@
 #                    (the ~20-section Integration Test Suite)
 #   hybrid-local  → .github/workflows/hybrid-local.yml → scripts/test-hybrid-local.sh
 #                    (Aider + Ollama + Qwen calculator end-to-end)
+#   anthropic-local
+#                 → local-only real Claude run via Yaver HTTP
+#                   (manual; uses your local Claude auth / API key)
 #
 # Each section is a bash function whose body is the precise command set
 # from the workflow. We run steps sequentially, collect pass/fail into
@@ -29,6 +32,7 @@
 #   ./scripts/run-ci-local.sh                   # run all sections
 #   ./scripts/run-ci-local.sh ci                # just the CI workflow
 #   ./scripts/run-ci-local.sh ci e2e            # several sections
+#   ./scripts/run-ci-local.sh anthropic-local   # real Claude local test via Yaver
 #   ./scripts/run-ci-local.sh --list            # enumerate sections
 #   ./scripts/run-ci-local.sh --help            # this help
 #
@@ -185,6 +189,14 @@ run_hybrid_local() {
   step "hybrid-local calculator" bash "$REPO_ROOT/scripts/test-hybrid-local.sh"
 }
 
+# ── local-only real Claude path via Yaver HTTP ─────────────────────
+run_anthropic_local() {
+  header "anthropic-local (manual local Claude run through Yaver)"
+  if ! need go; then skip "anthropic-local" "go missing"; return 0; fi
+  if ! need claude; then skip "anthropic-local" "claude not on PATH"; return 0; fi
+  step "anthropic-local autoinit" bash "$REPO_ROOT/scripts/test-anthropic-local.sh" autoinit
+}
+
 # ── Dispatch ────────────────────────────────────────────────────────
 usage() {
   sed -n '1,50p' "$0"
@@ -198,6 +210,7 @@ list_sections() {
   printf "  ${BOLD}bento-e2e${NC}     agent integration test + Bento scaffold + iOS bundle\n"
   printf "  ${BOLD}test-suite${NC}    scripts/test-suite.sh --unit --lan --relay\n"
   printf "  ${BOLD}hybrid-local${NC}  Aider + Ollama + Qwen calculator E2E (requires local deps)\n"
+  printf "  ${BOLD}anthropic-local${NC} local-only real Claude run via Yaver HTTP (manual, burns local credits)\n"
   exit 0
 }
 
@@ -206,12 +219,12 @@ for arg in "$@"; do
   case "$arg" in
     --help|-h) usage ;;
     --list)    list_sections ;;
-    ci|e2e|bento-e2e|bento|test-suite|hybrid-local) sections+=("$arg") ;;
+    ci|e2e|bento-e2e|bento|test-suite|hybrid-local|anthropic-local) sections+=("$arg") ;;
     *) echo "Unknown section: $arg" >&2; exit 2 ;;
   esac
 done
 if [[ ${#sections[@]} -eq 0 ]]; then
-  sections=(ci e2e bento-e2e test-suite hybrid-local)
+  sections=(ci e2e bento-e2e test-suite hybrid-local anthropic-local)
 fi
 
 started=$(date +%s)
@@ -227,6 +240,7 @@ for s in "${sections[@]}"; do
     bento-e2e|bento) run_bento ;;
     test-suite)   run_test_suite ;;
     hybrid-local) run_hybrid_local ;;
+    anthropic-local) run_anthropic_local ;;
   esac
 done
 

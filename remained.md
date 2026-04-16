@@ -34,3 +34,10 @@
 - [desktop/agent/auth_recover.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/auth_recover.go)
 - [mobile/src/context/DeviceContext.tsx](/Users/kivanccakmak/Workspace/yaver.io/mobile/src/context/DeviceContext.tsx)
 - [scripts/test-remote-infra-ci.sh](/Users/kivanccakmak/Workspace/yaver.io/scripts/test-remote-infra-ci.sh)
+- [scripts/test-anthropic-local.sh](/Users/kivanccakmak/Workspace/yaver.io/scripts/test-anthropic-local.sh)
+
+## Local Anthropic Path
+
+- Run `./scripts/run-ci-local.sh anthropic-local` for a manual local-only Claude-backed validation path.
+- It drives real Yaver HTTP endpoints instead of GitHub Actions and never uses repository secrets.
+- It currently covers `autoinit` through the daemon; extend it to `autoideas` or `autodev` once the local spend profile is acceptable.
