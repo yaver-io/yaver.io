@@ -281,7 +281,24 @@ function RotatePanel() {
 function StudiosPanel() {
   const [list, setList] = useState<any[]>([]);
   const [active, setActive] = useState<string | null>(null);
+  const [proxyUrl, setProxyUrl] = useState<string>("");
   useEffect(() => { (async () => setList((await agentClient.studioList()).studios || []))(); }, []);
+  useEffect(() => {
+    let cancelled = false;
+    if (!active) {
+      setProxyUrl("");
+      return;
+    }
+    void (async () => {
+      try {
+        const url = await agentClient.studioProxyUrl(active);
+        if (!cancelled) setProxyUrl(url);
+      } catch {
+        if (!cancelled) setProxyUrl("");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [active]);
   if (active) {
     const studio = list.find(s => s.id === active);
     return (
@@ -291,8 +308,14 @@ function StudiosPanel() {
           <span className="text-sm font-semibold">{studio?.label}</span>
           <span className="text-xs text-surface-500 font-mono">{studio?.url}</span>
         </div>
-        <iframe src={agentClient.studioProxyUrl(active)}
-          className="w-full h-[70vh] rounded-lg border border-surface-800" />
+        {proxyUrl ? (
+          <iframe src={proxyUrl}
+            className="w-full h-[70vh] rounded-lg border border-surface-800" />
+        ) : (
+          <div className="w-full h-[70vh] rounded-lg border border-surface-800 bg-surface-950/40 flex items-center justify-center text-sm text-surface-500">
+            Opening studio…
+          </div>
+        )}
       </div>
     );
   }

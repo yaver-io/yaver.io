@@ -103,6 +103,9 @@ type HTTPServer struct {
 	// Track seen IPs per token prefix for new-device notifications
 	seenIPs sync.Map // "tokenPrefix_IP" -> true
 
+	// Short-lived browser-scoped session tokens for websocket and iframe flows.
+	browserSessions sync.Map
+
 	// Guest access: cached list of approved guest userIds (refreshed every 60s)
 	guestUserIDs   []string
 	guestUserIDsMu sync.RWMutex
@@ -247,6 +250,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// the pairing code (10-min window, single use) is the secret.
 	mux.HandleFunc("/auth/pair/info", s.handlePairInfo)
 	mux.HandleFunc("/auth/pair/submit", s.handlePairSubmit)
+	mux.HandleFunc("/auth/browser-session", s.auth(s.handleBrowserSession))
 	mux.HandleFunc("/machine/health", s.auth(s.handleMachineHealth))
 	mux.HandleFunc("/machine/peers", s.auth(s.handlePeerHealth))
 	mux.HandleFunc("/tunnel/forward/", s.auth(s.handleTunnelForward))
@@ -1056,6 +1060,15 @@ func (s *HTTPServer) allowGuest(w http.ResponseWriter, r *http.Request, uid stri
 
 func (s *HTTPServer) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if sessionToken := r.URL.Query().Get("browser_session"); sessionToken != "" {
+			if s.validateBrowserSession(sessionToken, r.URL.Path) {
+				next(w, r)
+				return
+			}
+			jsonError(w, http.StatusUnauthorized, "invalid browser session")
+			return
+		}
+
 		authHeader := r.Header.Get("Authorization")
 		if !strings.HasPrefix(authHeader, "Bearer ") {
 			log.Printf("[AUTH] %s %s — missing Authorization header", r.Method, r.URL.Path)

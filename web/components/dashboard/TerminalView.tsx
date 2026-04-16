@@ -29,7 +29,9 @@ export default function TerminalView({ cwd }: { cwd?: string }) {
       term.open(ref.current);
       fit.fit();
 
-      const ws = new WebSocket(agentClient.terminalWsUrl(cwd));
+      const url = await agentClient.terminalWsUrl(cwd);
+      if (disposed) return;
+      const ws = new WebSocket(url);
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
 

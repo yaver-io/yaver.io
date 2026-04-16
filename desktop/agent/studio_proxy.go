@@ -97,6 +97,9 @@ func (s *HTTPServer) handleStudioProxy(w http.ResponseWriter, r *http.Request) {
 			req.URL.Scheme = upstream.Scheme
 			req.URL.Host = upstream.Host
 			req.Host = upstream.Host
+			q := req.URL.Query()
+			q.Del("browser_session")
+			req.URL.RawQuery = q.Encode()
 			// strip our auth header — the upstream doesn't want it.
 			req.Header.Del("Authorization")
 		},

@@ -1038,6 +1038,23 @@ class AgentClient {
     return h;
   }
 
+  private async issueBrowserSession(pathPrefix: string): Promise<string> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/auth/browser-session`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ pathPrefix }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to issue browser session (${res.status})`);
+    }
+    const data = await res.json();
+    if (!data?.token) {
+      throw new Error("Browser session response missing token");
+    }
+    return data.token;
+  }
+
   private assertConnected(): void {
     if (!this.isConnected) {
       throw new Error("AgentClient is not connected. Call connect() first.");
@@ -1824,9 +1841,10 @@ class AgentClient {
     return res.json();
   }
 
-  /** URL that proxies a local studio through the agent (iframe-safe, same-origin to the agent). */
-  studioProxyUrl(id: string): string {
-    return `${this.baseUrl}/proxy/${encodeURIComponent(id)}/?token=${encodeURIComponent(this.authHeaders.Authorization?.replace("Bearer ", "") || "")}`;
+  /** URL that proxies a local studio through the agent using a short-lived browser session token. */
+  async studioProxyUrl(id: string): Promise<string> {
+    const token = await this.issueBrowserSession(`/proxy/${encodeURIComponent(id)}/`);
+    return `${this.baseUrl}/proxy/${encodeURIComponent(id)}/?browser_session=${encodeURIComponent(token)}`;
   }
 
   // ── Environment switcher + Overview summary ──────────────────────
@@ -1914,19 +1932,20 @@ class AgentClient {
     return res.json();
   }
 
-  // WebSocket URL builders — the UI opens the socket itself so auth header
-  // can be passed as a query param (WS doesn't support custom headers in browsers).
-  metricsWsUrl(): string {
-    return `${this.baseUrl.replace(/^http/, "ws")}/ws/metrics?token=${encodeURIComponent(this.authHeaders.Authorization?.replace("Bearer ", "") || "")}`;
+  // WebSocket URL builders — issue short-lived browser session tokens so the
+  // browser never has to put the real bearer token into a URL.
+  async metricsWsUrl(): Promise<string> {
+    const token = await this.issueBrowserSession("/ws/metrics");
+    return `${this.baseUrl.replace(/^http/, "ws")}/ws/metrics?browser_session=${encodeURIComponent(token)}`;
   }
-  containerLogsWsUrl(id: string): string {
-    const token = encodeURIComponent(this.authHeaders.Authorization?.replace("Bearer ", "") || "");
-    return `${this.baseUrl.replace(/^http/, "ws")}/ws/logs?id=${encodeURIComponent(id)}&token=${token}`;
+  async containerLogsWsUrl(id: string): Promise<string> {
+    const token = await this.issueBrowserSession("/ws/logs");
+    return `${this.baseUrl.replace(/^http/, "ws")}/ws/logs?id=${encodeURIComponent(id)}&browser_session=${encodeURIComponent(token)}`;
   }
-  terminalWsUrl(cwd?: string): string {
-    const token = encodeURIComponent(this.authHeaders.Authorization?.replace("Bearer ", "") || "");
+  async terminalWsUrl(cwd?: string): Promise<string> {
+    const token = await this.issueBrowserSession("/ws/terminal");
     const c = cwd ? `&cwd=${encodeURIComponent(cwd)}` : "";
-    return `${this.baseUrl.replace(/^http/, "ws")}/ws/terminal?token=${token}${c}`;
+    return `${this.baseUrl.replace(/^http/, "ws")}/ws/terminal?browser_session=${encodeURIComponent(token)}${c}`;
   }
 
   // ── Schema / storage / jobs / logs SSE ───────────────────────────
