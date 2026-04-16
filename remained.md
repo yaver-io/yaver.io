@@ -164,7 +164,7 @@ voice on the other, tool uses as small inline tags, runner-agnostic
 across Claude / Codex / Aider / Ollama. Same pattern as the
 existing tasks chat in mobile.
 
-- [ ] Define a structured event schema published over /streams/{name}
+- [x] Define a structured event schema published over /streams/{name}
       instead of raw text lines. Event kinds:
       * yaver_say     — what yaver sent to the runner (kick prompt, refill, regression)
       * runner_action — tool use: { runner, tool, detail }
@@ -172,24 +172,24 @@ existing tasks chat in mobile.
       * runner_result — { runner, status, duration_ms, cost_usd }
       Each event JSON-encoded, one per SSE frame, backwards-compatible
       additive (legacy "line" frames still allowed).
-- [ ] Update LogStream / streamPublisher to accept structured events
+- [x] Update LogStream / streamPublisher to accept structured events
       alongside string lines. Publisher API: AppendEvent(kind, fields).
-- [ ] phaseThink emits yaver_say before each spawn with a 1-line
+- [x] phaseThink emits yaver_say before each spawn with a 1-line
       prompt summary (target, mode, focus).
 - [ ] spawnClaudeCode / spawnCodex / spawnAider / spawnOllama each
       emit runner_action + runner_text + runner_result via a shared
       adapter (so adding a runner only requires implementing the
       event mapping, not duplicating UI logic).
-- [ ] CLI `yaver stream` renders structured events as colored,
+- [x] CLI `yaver stream` renders structured events as colored,
       indented chat-style output (yaver=cyan, runner=white, tools=dim).
-- [ ] Mobile Auto Dev tab adds a per-loop chat view that subscribes
+- [x] Mobile Auto Dev tab adds a per-loop chat view that subscribes
       to /streams/autodev:<loop> and renders bubbles by kind. Same
       EventSource pattern the tasks chat already uses.
 - [ ] Web dashboard mirrors the mobile chat view.
 - [ ] Add an `events_only` query param to GET /streams/{name} that
       filters out raw text frames so older pre-structured publishers
       don't pollute the chat UI.
-- [ ] Test: extractRefillTitles-style unit tests for the event
+- [x] Test: extractRefillTitles-style unit tests for the event
       adapter — verify each runner's output translates into the
       right event sequence.
 
@@ -202,13 +202,13 @@ existing tasks chat in mobile.
       parseClaudeStream return tuple, just needs the read/write +
       flag plumbing in spawnClaudeCode.
 - [ ] Same for Codex (--resume) and Aider (--restore-chat-history).
-- [ ] Replace `time.Sleep` between kicks with a context-cancellable
+- [x] Replace `time.Sleep` between kicks with a context-cancellable
       ticker so `yaver loop stop` interrupts mid-sleep instead of
       waiting up to 5 min for the current sleep to finish.
 - [ ] When --auto-branch is on, push to the branch + open a draft
       PR after the deploy step so overnight runs land as a single
       reviewable PR rather than committing-as-you-go on a branch.
-- [ ] /autodev/options should also report which deploy targets the
+- [x] /autodev/options should also report which deploy targets the
       project actually ships to (testflight + convex + vercel +
       playstore) so mobile can pre-check the right boxes.
 - [ ] Mobile "start autodev" form: render engine + harden + auto_ideas

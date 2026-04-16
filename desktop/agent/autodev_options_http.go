@@ -28,10 +28,15 @@ type autodevRunnerOption struct {
 }
 
 type autodevOptions struct {
-	OK       bool                  `json:"ok"`
-	Engines  []autodevEngineOption `json:"engines"`
-	Runners  []autodevRunnerOption `json:"runners"`
-	Hardens  []autodevHardenOption `json:"hardens"`
+	OK      bool                  `json:"ok"`
+	Engines []autodevEngineOption `json:"engines"`
+	Runners []autodevRunnerOption `json:"runners"`
+	Hardens []autodevHardenOption `json:"hardens"`
+	// DeployTargets the project actually supports, computed against
+	// the daemon's cwd by resolveAutodevDeployTargets("auto"). The
+	// mobile / web start form pre-checks these boxes so the user
+	// doesn't have to figure out which surfaces exist.
+	DeployTargets []string `json:"deploy_targets"`
 	// Defaults the UI should pre-select. Match the CLI defaults so
 	// "click Start with no changes" behaves like `yaver autodev`.
 	Defaults autodevOptionDefaults `json:"defaults"`
@@ -118,10 +123,11 @@ func BuildAutodevOptions() autodevOptions {
 	}
 
 	return autodevOptions{
-		OK:      true,
-		Engines: engines,
-		Runners: runners,
-		Hardens: hardens,
+		OK:            true,
+		Engines:       engines,
+		Runners:       runners,
+		Hardens:       hardens,
+		DeployTargets: resolveAutodevDeployTargets("auto"),
 		Defaults: autodevOptionDefaults{
 			Engine:     "claude",
 			Runner:     "claude-code",
