@@ -16,6 +16,22 @@ import (
 	"time"
 )
 
+func remoteYaverTargets(cfg *Config, deviceHint string) []string {
+	targets := []string{}
+	seen := map[string]bool{}
+	add := func(url string) {
+		url = strings.TrimSpace(url)
+		if url == "" || seen[url] {
+			return
+		}
+		seen[url] = true
+		targets = append(targets, url)
+	}
+	add(resolveDeviceURL(cfg, deviceHint, true))
+	add(resolveDeviceURL(cfg, deviceHint, false))
+	return targets
+}
+
 // remoteYaverPOST fires a JSON POST against the named device's
 // daemon at <baseURL><path> and returns the parsed body. Best-
 // effort: missing device hint, unauthenticated config, or a 5xx
@@ -27,28 +43,35 @@ func remoteYaverPOST(deviceHint, path string, body map[string]interface{}) map[s
 		os.Exit(2)
 	}
 	cfg := mustLoadAuthConfig()
-	target := resolveDeviceURL(cfg, deviceHint, true)
 	payload, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", target+path, strings.NewReader(string(payload)))
-	req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
-	req.Header.Set("Content-Type", "application/json")
-
 	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "remote %s: %v\n", path, err)
-		os.Exit(1)
-	}
-	defer resp.Body.Close()
+	var lastErr string
+	for _, target := range remoteYaverTargets(cfg, deviceHint) {
+		req, _ := http.NewRequest("POST", target+path, strings.NewReader(string(payload)))
+		req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
+		req.Header.Set("Content-Type", "application/json")
 
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		fmt.Fprintf(os.Stderr, "remote %s: HTTP %d — %s\n", path, resp.StatusCode, strings.TrimSpace(string(raw)))
-		os.Exit(1)
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err.Error()
+			continue
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			lastErr = fmt.Sprintf("HTTP %d — %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+			continue
+		}
+		var out map[string]interface{}
+		_ = json.Unmarshal(raw, &out)
+		return out
 	}
-	var out map[string]interface{}
-	_ = json.Unmarshal(raw, &out)
-	return out
+	if lastErr == "" {
+		lastErr = "no reachable target"
+	}
+	fmt.Fprintf(os.Stderr, "remote %s: %s\n", path, lastErr)
+	os.Exit(1)
+	return nil
 }
 
 // remoteYaverGET is the GET sibling of remoteYaverPOST. Same exit
@@ -59,22 +82,30 @@ func remoteYaverGET(deviceHint, path string) map[string]interface{} {
 		os.Exit(2)
 	}
 	cfg := mustLoadAuthConfig()
-	target := resolveDeviceURL(cfg, deviceHint, true)
-	req, _ := http.NewRequest("GET", target+path, nil)
-	req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
 	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "remote %s: %v\n", path, err)
-		os.Exit(1)
+	var lastErr string
+	for _, target := range remoteYaverTargets(cfg, deviceHint) {
+		req, _ := http.NewRequest("GET", target+path, nil)
+		req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err.Error()
+			continue
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			lastErr = fmt.Sprintf("HTTP %d — %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+			continue
+		}
+		var out map[string]interface{}
+		_ = json.Unmarshal(raw, &out)
+		return out
 	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		fmt.Fprintf(os.Stderr, "remote %s: HTTP %d — %s\n", path, resp.StatusCode, strings.TrimSpace(string(raw)))
-		os.Exit(1)
+	if lastErr == "" {
+		lastErr = "no reachable target"
 	}
-	var out map[string]interface{}
-	_ = json.Unmarshal(raw, &out)
-	return out
+	fmt.Fprintf(os.Stderr, "remote %s: %s\n", path, lastErr)
+	os.Exit(1)
+	return nil
 }
