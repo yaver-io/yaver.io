@@ -29,6 +29,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -332,12 +333,80 @@ func apiKeyEnableCmd(args []string) {
 // --- HTTP -----------------------------------------------------------------
 
 func (s *HTTPServer) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		jsonError(w, http.StatusMethodNotAllowed, "use GET")
-		return
+	switch r.Method {
+	case http.MethodGet:
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"ok":   true,
+			"keys": ListAPIKeys(),
+		})
+	case http.MethodPost:
+		// Create + register an SDK token so the web / mobile UI
+		// doesn't have to shell out to the CLI. The raw token is
+		// returned once; we never store or re-surface it.
+		var body struct {
+			Label        string   `json:"label"`
+			Scopes       []string `json:"scopes"`
+			ExpiresInMs  int64    `json:"expiresInMs"`
+			AllowedCIDRs []string `json:"allowedCIDRs"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(r.Body).Decode(&body)
+		}
+		if body.Label == "" {
+			jsonError(w, http.StatusBadRequest, "label is required")
+			return
+		}
+		cfg, err := LoadConfig()
+		if err != nil || cfg == nil || cfg.AuthToken == "" {
+			jsonError(w, http.StatusServiceUnavailable, "agent not authenticated — run `yaver auth`")
+			return
+		}
+		opts := SdkTokenCreateOpts{
+			Label:        body.Label,
+			Scopes:       body.Scopes,
+			AllowedCIDRs: body.AllowedCIDRs,
+			ExpiresInMs:  body.ExpiresInMs,
+		}
+		rawToken, err := CreateSdkToken(s.convexURL, cfg.AuthToken, opts)
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, "create token: "+err.Error())
+			return
+		}
+		if err := RegisterAPIKey(rawToken, body.Label, body.Scopes); err != nil {
+			jsonError(w, http.StatusInternalServerError, "register: "+err.Error())
+			return
+		}
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"ok":        true,
+			"token":     rawToken, // raw secret — shown once, never again
+			"tokenHash": hashToken(rawToken),
+			"label":     body.Label,
+			"scopes":    body.Scopes,
+		})
+	case http.MethodDelete:
+		// Disable — identifier can be label or hash-prefix (8+ chars).
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if id == "" {
+			id = strings.TrimSpace(r.URL.Query().Get("label"))
+		}
+		if id == "" {
+			jsonError(w, http.StatusBadRequest, "id (label or hash-prefix) required")
+			return
+		}
+		if err := DisableAPIKey(id); err != nil {
+			jsonError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		// Clear the cached-token entry so the disable takes effect on
+		// the next request without waiting for TTL rotation.
+		s.tokenCache.Range(func(k, _ interface{}) bool {
+			if tok, ok := k.(string); ok && IsAPIKeyDisabled(tok) {
+				s.tokenCache.Delete(tok)
+			}
+			return true
+		})
+		jsonReply(w, http.StatusOK, map[string]interface{}{"ok": true, "id": id})
+	default:
+		jsonError(w, http.StatusMethodNotAllowed, "use GET / POST / DELETE")
 	}
-	jsonReply(w, http.StatusOK, map[string]interface{}{
-		"ok":   true,
-		"keys": ListAPIKeys(),
-	})
 }

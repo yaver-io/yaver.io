@@ -20,6 +20,19 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RELAY_DIR="$(dirname "$SCRIPT_DIR")"
 REPO_URL="https://github.com/kivanccakmak/yaver.io.git"
 
+detect_remote_goarch() {
+  local machine
+  machine="$(ssh "root@${SERVER}" 'uname -m')"
+  case "$machine" in
+    x86_64|amd64) echo "amd64" ;;
+    aarch64|arm64) echo "arm64" ;;
+    *)
+      echo "Unsupported remote architecture: $machine" >&2
+      return 1
+      ;;
+  esac
+}
+
 case "$MODE" in
   --docker)
     echo "=== Docker deploy to $SERVER ==="
@@ -79,22 +92,24 @@ REMOTE
     ;;
 
   --build-only)
-    echo "=== Building yaver-relay for linux/amd64 ==="
+    TARGET_GOARCH="${TARGET_GOARCH:-amd64}"
+    echo "=== Building yaver-relay for linux/${TARGET_GOARCH} ==="
     cd "$RELAY_DIR"
-    GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o yaver-relay-linux-amd64 .
-    echo "  Built: yaver-relay-linux-amd64 ($(du -h yaver-relay-linux-amd64 | cut -f1))"
+    GOOS=linux GOARCH="${TARGET_GOARCH}" CGO_ENABLED=0 go build -ldflags="-s -w" -o "yaver-relay-linux-${TARGET_GOARCH}" .
+    echo "  Built: yaver-relay-linux-${TARGET_GOARCH} ($(du -h "yaver-relay-linux-${TARGET_GOARCH}" | cut -f1))"
     ;;
 
   --binary|*)
     echo "=== Binary deploy to $SERVER ==="
     cd "$RELAY_DIR"
+    TARGET_GOARCH="$(detect_remote_goarch)"
 
-    echo "  Building for linux/amd64..."
-    GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o yaver-relay-linux-amd64 .
-    echo "  Built: $(du -h yaver-relay-linux-amd64 | cut -f1)"
+    echo "  Building for linux/${TARGET_GOARCH}..."
+    GOOS=linux GOARCH="${TARGET_GOARCH}" CGO_ENABLED=0 go build -ldflags="-s -w" -o "yaver-relay-linux-${TARGET_GOARCH}" .
+    echo "  Built: $(du -h "yaver-relay-linux-${TARGET_GOARCH}" | cut -f1)"
 
     echo "  Copying binary..."
-    scp yaver-relay-linux-amd64 "root@${SERVER}:/usr/local/bin/yaver-relay"
+    scp "yaver-relay-linux-${TARGET_GOARCH}" "root@${SERVER}:/usr/local/bin/yaver-relay"
 
     echo "  Copying systemd unit..."
     scp deploy/yaver-relay.service "root@${SERVER}:/etc/systemd/system/yaver-relay.service"
@@ -124,7 +139,7 @@ echo "  Stop:    systemctl stop yaver-relay"
 echo "  Health:  curl http://localhost:8443/health"
 REMOTE
 
-    rm -f yaver-relay-linux-amd64
+    rm -f "yaver-relay-linux-${TARGET_GOARCH}"
     ;;
 esac
 

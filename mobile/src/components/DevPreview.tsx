@@ -264,6 +264,9 @@ export function DevPreview() {
                 {status.workDir.split("/").pop()}
               </Text>
             )}
+            <Text style={[styles.bannerSubtitle, { color: "#7dd3fc", marginTop: 2 }]} numberOfLines={1}>
+              {`target · ${status.targetDeviceName || "this device"}`}
+            </Text>
             {lastLogLine ? (
               <Text style={[styles.bannerSubtitle, {
                 color: status.building ? "#eab308" : "#6b7280",

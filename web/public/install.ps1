@@ -7,8 +7,12 @@ $installDir = "$env:LOCALAPPDATA\yaver"
 
 Write-Host "Installing yaver..." -ForegroundColor Cyan
 
-# Get latest release
-$latest = (Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest").tag_name
+# Get latest semver release
+$releases = Invoke-RestMethod "https://api.github.com/repos/$repo/releases?per_page=100"
+$latest = ($releases | Where-Object { $_.tag_name -match '^v\d' } | Select-Object -First 1).tag_name
+if (-not $latest) {
+    throw "Could not determine latest Yaver release"
+}
 Write-Host "Latest version: $latest"
 
 $url = "https://github.com/$repo/releases/download/$latest/yaver-windows-amd64.exe"

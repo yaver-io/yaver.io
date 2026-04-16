@@ -1149,7 +1149,7 @@ func getWorkspaceMCPTools() []map[string]interface{} {
 		// --- Templates ---
 		{
 			"name":        "template_list",
-			"description": "List available full-stack SaaS templates (saas-complete, indie-hacker, api-first, content-site).",
+			"description": "List available project templates (saas-complete, indie-hacker, api-first, content-site, survey-app).",
 			"inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
 		},
 		{
@@ -1158,7 +1158,7 @@ func getWorkspaceMCPTools() []map[string]interface{} {
 			"inputSchema": map[string]interface{}{
 				"type": "object", "required": []string{"name"},
 				"properties": map[string]interface{}{
-					"name":         map[string]interface{}{"type": "string", "description": "Template name", "enum": []string{"saas-complete", "indie-hacker", "api-first", "content-site"}},
+					"name":         map[string]interface{}{"type": "string", "description": "Template name", "enum": []string{"saas-complete", "indie-hacker", "api-first", "content-site", "survey-app"}},
 					"project_name": map[string]interface{}{"type": "string", "description": "Project name"},
 				},
 			},

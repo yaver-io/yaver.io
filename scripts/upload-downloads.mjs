@@ -26,15 +26,76 @@ const DIST = path.join(ROOT, "desktop", "installer", "dist");
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "desktop", "installer", "package.json"), "utf8"));
 const VERSION = pkg.version;
 
-const FILES = [
-  { file: `Yaver-${VERSION}-arm64.dmg`, platform: "macos", arch: "arm64", format: "dmg", filename: "Yaver-arm64.dmg" },
-  { file: `Yaver-${VERSION}-arm64-mac.zip`, platform: "macos", arch: "arm64", format: "zip", filename: "Yaver-arm64.zip" },
-  { file: `Yaver-${VERSION}-arm64.AppImage`, platform: "linux", arch: "arm64", format: "appimage", filename: "Yaver-arm64.AppImage" },
-  { file: `yaver-installer_${VERSION}_arm64.deb`, platform: "linux", arch: "arm64", format: "deb", filename: "yaver-arm64.deb" },
-  { file: `Yaver-${VERSION}.deb`, platform: "linux", arch: "amd64", format: "deb", filename: "yaver-amd64.deb" },
-  { file: `Yaver-${VERSION}.AppImage`, platform: "linux", arch: "amd64", format: "appimage", filename: "Yaver-amd64.AppImage" },
-  { file: `Yaver Setup ${VERSION}.exe`, platform: "windows", arch: "amd64", format: "exe", filename: "Yaver-Setup.exe" },
-];
+const CANONICAL_FILENAMES = {
+  "macos:arm64:dmg": "Yaver-arm64.dmg",
+  "macos:arm64:zip": "Yaver-arm64.zip",
+  "macos:amd64:dmg": "Yaver-amd64.dmg",
+  "macos:amd64:zip": "Yaver-amd64.zip",
+  "linux:arm64:appimage": "Yaver-arm64.AppImage",
+  "linux:arm64:deb": "yaver-arm64.deb",
+  "linux:amd64:deb": "yaver-amd64.deb",
+  "linux:amd64:appimage": "Yaver-amd64.AppImage",
+  "windows:amd64:exe": "Yaver-Setup.exe",
+};
+
+function inferArtifact(file) {
+  const lower = file.toLowerCase();
+  const ext = path.extname(file).toLowerCase();
+  const arch = lower.includes("arm64") || lower.includes("aarch64")
+    ? "arm64"
+    : lower.includes("amd64") || lower.includes("x64")
+      ? "amd64"
+      : null;
+
+  if (lower.endsWith(".dmg")) {
+    return { platform: "macos", arch, format: "dmg" };
+  }
+  if (lower.endsWith(".zip") && lower.includes("mac")) {
+    return { platform: "macos", arch, format: "zip" };
+  }
+  if (lower.endsWith(".appimage")) {
+    return { platform: "linux", arch, format: "appimage" };
+  }
+  if (lower.endsWith(".deb")) {
+    return { platform: "linux", arch, format: "deb" };
+  }
+  if (lower.endsWith(".exe")) {
+    return { platform: "windows", arch: arch || "amd64", format: "exe" };
+  }
+
+  return null;
+}
+
+function collectFiles() {
+  if (!fs.existsSync(DIST)) {
+    throw new Error(`Dist directory not found: ${DIST}`);
+  }
+
+  const files = fs.readdirSync(DIST);
+  const seen = new Map();
+  const entries = [];
+
+  for (const file of files) {
+    const inferred = inferArtifact(file);
+    if (!inferred?.arch) continue;
+
+    const key = `${inferred.platform}:${inferred.arch}:${inferred.format}`;
+    if (seen.has(key)) {
+      throw new Error(`Duplicate artifact for ${key}: ${seen.get(key)} and ${file}`);
+    }
+
+    seen.set(key, file);
+    entries.push({
+      file,
+      platform: inferred.platform,
+      arch: inferred.arch,
+      format: inferred.format,
+      filename: CANONICAL_FILENAMES[key] || file,
+    });
+  }
+
+  return entries;
+}
 
 async function convexMutation(fnPath, args = {}) {
   const res = await fetch(`${convexUrl}/api/mutation`, {
@@ -104,10 +165,11 @@ async function uploadFile(entry) {
 }
 
 async function main() {
+  const files = collectFiles();
   console.log(`Uploading to: ${convexUrl}`);
   console.log(`Dist dir: ${DIST}\n`);
 
-  for (const entry of FILES) {
+  for (const entry of files) {
     await uploadFile(entry);
   }
 

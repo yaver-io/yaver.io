@@ -23,10 +23,16 @@ function platformLabel(platform: string): string {
   switch (platform.toLowerCase()) {
     case "darwin":
       return "macOS";
+    case "macos":
+      return "macOS";
     case "linux":
       return "Linux";
     case "windows":
       return "Windows";
+    case "android":
+      return "Android";
+    case "ios":
+      return "iOS";
     default:
       return platform;
   }
@@ -72,6 +78,11 @@ export default function DevicesView({ devices, onRefresh }: DevicesViewProps) {
                   <h3 className="font-semibold text-surface-50">
                     {device.name}
                   </h3>
+                  {device.deviceClass ? (
+                    <span className="rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
+                      {device.deviceClass === "edge-mobile" ? "Edge Worker" : device.deviceClass}
+                    </span>
+                  ) : null}
                   {!device.isGuest && device.sessionBinding ? (
                     <span
                       className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
@@ -95,6 +106,11 @@ export default function DevicesView({ devices, onRefresh }: DevicesViewProps) {
                 <p className="text-sm text-surface-500">
                   {platformLabel(device.platform)} -- Last seen {device.lastSeen}
                 </p>
+                {device.edgeProfile ? (
+                  <p className="text-xs text-surface-500">
+                    {device.edgeProfile.supportsLocalInference ? "Local inference" : "No local inference"} · max {device.edgeProfile.maxModelClass} model · {device.edgeProfile.preferredTasks.slice(0, 3).join(", ")}
+                  </p>
+                ) : null}
                 <p className="text-xs text-surface-600 font-mono">
                   {device.id.substring(0, 8)}...
                 </p>

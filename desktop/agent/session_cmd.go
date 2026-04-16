@@ -246,6 +246,7 @@ func localAgentRequest(method, path string, body map[string]interface{}) (map[st
 	if err != nil || cfg.AuthToken == "" {
 		return nil, fmt.Errorf("not authenticated — run 'yaver auth'")
 	}
+	baseURL := localAgentBaseURL()
 
 	doOnce := func() (map[string]interface{}, error, bool) {
 		var bodyReader io.Reader
@@ -253,7 +254,7 @@ func localAgentRequest(method, path string, body map[string]interface{}) (map[st
 			data, _ := json.Marshal(body)
 			bodyReader = strings.NewReader(string(data))
 		}
-		req, err := http.NewRequest(method, "http://127.0.0.1:18080"+path, bodyReader)
+		req, err := http.NewRequest(method, baseURL+path, bodyReader)
 		if err != nil {
 			return nil, err, false
 		}
@@ -267,8 +268,29 @@ func localAgentRequest(method, path string, body map[string]interface{}) (map[st
 			return nil, err, true // transport-level failure → eligible for retry
 		}
 		defer resp.Body.Close()
+		raw, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, readErr, false
+		}
 		var result map[string]interface{}
-		json.NewDecoder(resp.Body).Decode(&result)
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &result); err != nil {
+				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+					return nil, fmt.Errorf("invalid JSON response from local agent for %s %s (status %d)", method, path, resp.StatusCode), false
+				}
+				return nil, fmt.Errorf("local agent returned status %d for %s %s", resp.StatusCode, method, path), false
+			}
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			msg := strings.TrimSpace(string(raw))
+			if errMsg, ok := result["error"].(string); ok && strings.TrimSpace(errMsg) != "" {
+				msg = strings.TrimSpace(errMsg)
+			}
+			if msg == "" {
+				msg = fmt.Sprintf("HTTP %d", resp.StatusCode)
+			}
+			return nil, fmt.Errorf("%s", msg), false
+		}
 		return result, nil, false
 	}
 
@@ -295,8 +317,9 @@ func localAgentRequest(method, path string, body map[string]interface{}) (map[st
 // never does.
 func ensureDaemonAlive() error {
 	healthClient := &http.Client{Timeout: 800 * time.Millisecond}
+	baseURL := localAgentBaseURL()
 	probe := func() bool {
-		resp, err := healthClient.Get("http://127.0.0.1:18080/health")
+		resp, err := healthClient.Get(baseURL + "/health")
 		if err != nil {
 			return false
 		}
@@ -332,4 +355,11 @@ func ensureDaemonAlive() error {
 		time.Sleep(300 * time.Millisecond)
 	}
 	return fmt.Errorf("daemon did not come up within 10s (see ~/.yaver/agent.log)")
+}
+
+func localAgentBaseURL() string {
+	if port := int(currentLocalAgentPort.Load()); port > 0 {
+		return fmt.Sprintf("http://127.0.0.1:%d", port)
+	}
+	return "http://127.0.0.1:18080"
 }

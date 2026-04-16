@@ -3,14 +3,16 @@ const path = require('path');
 const fs = require('fs');
 const https = require('https');
 const http = require('http');
-const { execSync, spawn } = require('child_process');
+const { execSync, spawn, spawnSync } = require('child_process');
 const os = require('os');
 
-const AGENT_REPO = 'yaver-io/agent';
-const AGENT_BINARY_NAME = process.platform === 'win32' ? 'yaver-agent.exe' : 'yaver-agent';
+const AGENT_REPO = 'kivanccakmak/yaver.io';
+const AGENT_BINARY_NAME = process.platform === 'win32' ? 'yaver.exe' : 'yaver';
 const INSTALL_DIR = process.platform === 'win32'
   ? path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Yaver')
-  : '/usr/local/bin';
+  : process.platform === 'linux'
+    ? path.join(os.homedir(), '.local', 'bin')
+    : '/usr/local/bin';
 const CONFIG_DIR = process.platform === 'win32'
   ? path.join(process.env.APPDATA || '', 'Yaver')
   : path.join(os.homedir(), '.yaver');
@@ -22,6 +24,17 @@ const DEFAULT_AGENT_URL = 'http://localhost:18080';
 
 let mainWindow;
 let tray = null;
+
+function isWSL() {
+  if (process.platform !== 'linux') return false;
+  if (process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP) return true;
+  try {
+    const version = fs.readFileSync('/proc/version', 'utf8').toLowerCase();
+    return version.includes('microsoft');
+  } catch {
+    return false;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Window management
@@ -154,7 +167,11 @@ function signOut() {
     if (process.platform === 'darwin') {
       execSync('launchctl unload ~/Library/LaunchAgents/io.yaver.agent.plist 2>/dev/null', { stdio: 'ignore' });
     } else if (process.platform === 'linux') {
-      execSync('systemctl --user stop yaver-agent 2>/dev/null', { stdio: 'ignore' });
+      if (isWSL()) {
+        execSync('pkill -f "yaver serve" 2>/dev/null', { stdio: 'ignore' });
+      } else {
+        execSync('systemctl --user stop yaver 2>/dev/null', { stdio: 'ignore' });
+      }
     } else if (process.platform === 'win32') {
       execSync('sc stop YaverAgent 2>nul', { stdio: 'ignore' });
     }
@@ -173,7 +190,11 @@ function isAgentRunning() {
       const out = execSync('launchctl list io.yaver.agent 2>&1', { encoding: 'utf8' });
       return !out.includes('Could not find');
     } else if (process.platform === 'linux') {
-      const out = execSync('systemctl --user is-active yaver-agent 2>&1', { encoding: 'utf8' });
+      if (isWSL()) {
+        const out = execSync('pgrep -af "yaver serve" 2>&1', { encoding: 'utf8' });
+        return out.trim().length > 0;
+      }
+      const out = execSync('systemctl --user is-active yaver 2>&1', { encoding: 'utf8' });
       return out.trim() === 'active';
     } else if (process.platform === 'win32') {
       const out = execSync('sc query YaverAgent 2>&1', { encoding: 'utf8' });
@@ -346,10 +367,10 @@ ipcMain.handle('download-agent', async () => {
     const archMap = { x64: 'amd64', arm64: 'arm64' };
     const plat = platformMap[process.platform] || process.platform;
     const arch = archMap[process.arch] || process.arch;
-    const assetName = `yaver-agent-${plat}-${arch}${process.platform === 'win32' ? '.exe' : ''}`;
-
-    const releaseUrl = `https://api.github.com/repos/${AGENT_REPO}/releases/latest`;
-    const releaseMeta = await httpGetJson(releaseUrl);
+    const releaseMeta = await getLatestAgentRelease();
+    const assetName = process.platform === 'win32'
+      ? `yaver-${releaseMeta.tag_name}-${plat}-${arch}.exe`
+      : `yaver-${releaseMeta.tag_name}-${plat}-${arch}.tar.gz`;
 
     const asset = releaseMeta.assets && releaseMeta.assets.find((a) => a.name === assetName);
     if (!asset) {
@@ -361,7 +382,23 @@ ipcMain.handle('download-agent', async () => {
       fs.mkdirSync(destDir, { recursive: true });
     }
     const destPath = path.join(destDir, AGENT_BINARY_NAME);
-    await downloadFile(asset.browser_download_url, destPath);
+    if (process.platform === 'win32') {
+      await downloadFile(asset.browser_download_url, destPath);
+    } else {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yaver-agent-'));
+      const archivePath = path.join(tempDir, assetName);
+      await downloadFile(asset.browser_download_url, archivePath);
+      const extractResult = spawnSync('tar', ['-xzf', archivePath, '-C', tempDir], { encoding: 'utf8' });
+      if (extractResult.status !== 0) {
+        throw new Error(extractResult.stderr || 'Failed to extract agent archive');
+      }
+      const extractedBinary = path.join(tempDir, `yaver-${plat}-${arch}`);
+      if (!fs.existsSync(extractedBinary)) {
+        throw new Error(`Extracted archive did not contain yaver-${plat}-${arch}`);
+      }
+      fs.copyFileSync(extractedBinary, destPath);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
 
     if (process.platform !== 'win32') {
       fs.chmodSync(destPath, 0o755);
@@ -433,6 +470,9 @@ ipcMain.handle('install-service', async () => {
     if (process.platform === 'darwin') {
       return installLaunchd(agentPath);
     } else if (process.platform === 'linux') {
+      if (isWSL()) {
+        return startAgentDetached(agentPath);
+      }
       return installSystemd(agentPath);
     } else if (process.platform === 'win32') {
       return installWindowsService(agentPath);
@@ -450,7 +490,12 @@ ipcMain.handle('restart-service', async () => {
       execSync('launchctl unload ~/Library/LaunchAgents/io.yaver.agent.plist 2>/dev/null || true', { stdio: 'ignore' });
       execSync('launchctl load -w ~/Library/LaunchAgents/io.yaver.agent.plist', { stdio: 'ignore' });
     } else if (process.platform === 'linux') {
-      execSync('systemctl --user restart yaver-agent');
+      if (isWSL()) {
+        const agentPath = path.join(INSTALL_DIR, AGENT_BINARY_NAME);
+        execSync('pkill -f "yaver serve" 2>/dev/null || true');
+        return startAgentDetached(agentPath);
+      }
+      execSync('systemctl --user restart yaver');
     } else if (process.platform === 'win32') {
       execSync('sc stop YaverAgent 2>nul & sc start YaverAgent');
     }
@@ -702,6 +747,8 @@ function installLaunchd(agentPath) {
   <array>
     <string>${agentPath}</string>
     <string>serve</string>
+    <string>--debug</string>
+    <string>--work-dir=${os.homedir()}</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -732,13 +779,13 @@ function installSystemd(agentPath) {
   if (!fs.existsSync(unitDir)) {
     fs.mkdirSync(unitDir, { recursive: true });
   }
-  const unitPath = path.join(unitDir, 'yaver-agent.service');
+  const unitPath = path.join(unitDir, 'yaver.service');
   const unit = `[Unit]
 Description=Yaver Desktop Agent
 After=network.target
 
 [Service]
-ExecStart=${agentPath} serve
+ExecStart=${agentPath} serve --debug --work-dir=${os.homedir()}
 Restart=always
 RestartSec=5
 
@@ -748,13 +795,29 @@ WantedBy=default.target
 
   fs.writeFileSync(unitPath, unit);
   execSync('systemctl --user daemon-reload');
-  execSync('systemctl --user enable --now yaver-agent');
+  execSync('systemctl --user enable --now yaver');
   return { success: true };
+}
+
+function startAgentDetached(agentPath) {
+  const logDir = CONFIG_DIR;
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir, { recursive: true });
+  }
+
+  const out = fs.openSync(path.join(logDir, 'agent.log'), 'a');
+  const err = fs.openSync(path.join(logDir, 'agent.err'), 'a');
+  const child = spawn(agentPath, ['serve'], {
+    detached: true,
+    stdio: ['ignore', out, err],
+  });
+  child.unref();
+  return { success: true, mode: 'process' };
 }
 
 function installWindowsService(agentPath) {
   try {
-    execSync(`sc create YaverAgent binPath= "\\"${agentPath}\\" serve" start= auto DisplayName= "Yaver Agent"`);
+    execSync(`sc create YaverAgent binPath= "\\"${agentPath}\\" serve --debug --work-dir ${os.homedir()}" start= auto DisplayName= "Yaver Agent"`);
     execSync('sc start YaverAgent');
     return { success: true };
   } catch (err) {
@@ -784,6 +847,20 @@ function httpGetJson(url) {
     };
     get(url);
   });
+}
+
+async function getLatestAgentRelease() {
+  const releases = await httpGetJson(`https://api.github.com/repos/${AGENT_REPO}/releases?per_page=100`);
+  if (!Array.isArray(releases)) {
+    throw new Error('Unexpected GitHub releases response');
+  }
+
+  const release = releases.find((entry) => typeof entry.tag_name === 'string' && /^v\d/.test(entry.tag_name));
+  if (!release) {
+    throw new Error('No semver Yaver release found');
+  }
+
+  return release;
 }
 
 function downloadFile(url, dest) {

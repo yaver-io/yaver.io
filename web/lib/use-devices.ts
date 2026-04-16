@@ -11,6 +11,16 @@ export interface Device {
   port: number;
   lastSeen: string;
   online: boolean;
+  deviceClass?: "desktop" | "edge-mobile" | "server";
+  edgeProfile?: {
+    supportsLocalInference: boolean;
+    maxModelClass: "none" | "tiny" | "small" | "medium";
+    preferredTasks: string[];
+    memoryMb?: number;
+    batteryPct?: number;
+    isCharging?: boolean;
+    thermalState?: "nominal" | "warm" | "hot";
+  };
   isGuest?: boolean;
   hostName?: string;
   hostEmail?: string;
@@ -58,6 +68,8 @@ export function useDevices(token: string | null): DevicesState {
         port: d.quicPort || d.port || 18080,
         lastSeen: d.lastHeartbeat ? new Date(d.lastHeartbeat).toISOString() : "",
         online: d.isOnline ?? d.online ?? false,
+        deviceClass: d.deviceClass,
+        edgeProfile: d.edgeProfile,
         isGuest: d.isGuest ?? false,
         hostName: d.hostName,
         hostEmail: d.hostEmail,

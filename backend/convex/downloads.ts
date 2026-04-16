@@ -93,3 +93,41 @@ export const listDownloads = query({
     return result;
   },
 });
+
+/** Resolve a single download by platform, arch, and format. */
+export const getDownload = query({
+  args: {
+    platform: v.union(
+      v.literal("macos"),
+      v.literal("windows"),
+      v.literal("linux"),
+      v.literal("android"),
+      v.literal("ios")
+    ),
+    arch: v.string(),
+    format: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const download = await ctx.db
+      .query("downloads")
+      .withIndex("by_platform_arch_format", (q) =>
+        q.eq("platform", args.platform).eq("arch", args.arch).eq("format", args.format)
+      )
+      .first();
+
+    if (!download) return null;
+
+    const url = await ctx.storage.getUrl(download.storageId);
+    if (!url) return null;
+
+    return {
+      platform: download.platform,
+      arch: download.arch,
+      format: download.format,
+      version: download.version,
+      filename: download.filename,
+      size: download.size,
+      url,
+    };
+  },
+});

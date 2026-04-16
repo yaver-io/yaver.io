@@ -57,8 +57,45 @@ export default defineSchema({
     platform: v.union(
       v.literal("macos"),
       v.literal("windows"),
-      v.literal("linux")
+      v.literal("linux"),
+      v.literal("android"),
+      v.literal("ios")
     ),
+    deviceClass: v.optional(
+      v.union(
+        v.literal("desktop"),
+        v.literal("edge-mobile"),
+        v.literal("server")
+      )
+    ),
+    edgeProfile: v.optional(v.object({
+      supportsLocalInference: v.boolean(),
+      maxModelClass: v.union(
+        v.literal("none"),
+        v.literal("tiny"),
+        v.literal("small"),
+        v.literal("medium")
+      ),
+      preferredTasks: v.array(v.union(
+        v.literal("speech"),
+        v.literal("ocr"),
+        v.literal("vision"),
+        v.literal("embedding"),
+        v.literal("rerank"),
+        v.literal("automation"),
+        v.literal("small-llm")
+      )),
+      memoryMb: v.optional(v.number()),
+      batteryPct: v.optional(v.number()),
+      isCharging: v.optional(v.boolean()),
+      thermalState: v.optional(
+        v.union(
+          v.literal("nominal"),
+          v.literal("warm"),
+          v.literal("hot")
+        )
+      ),
+    })),
     publicKey: v.optional(v.string()),
     quicHost: v.string(),
     quicPort: v.number(),

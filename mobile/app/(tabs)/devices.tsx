@@ -134,6 +134,12 @@ function DeviceCard({
   }, [device.host, device.port, device.publicKey, token]);
   const runners = device.runners || [];
   const activeRunners = runners.filter((r) => r.status === "running");
+  const workerLabel =
+    device.deviceClass === "edge-mobile"
+      ? "MOBILE WORKER"
+      : device.deviceClass === "server"
+        ? "SERVER"
+        : undefined;
 
   const timeSince = (ts: number) => {
     if (!ts) return "never";
@@ -264,6 +270,14 @@ function DeviceCard({
                 </Text>
               </View>
             ) : null}
+            {workerLabel ? (
+              <View style={{
+                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+                backgroundColor: "#0ea5e922", borderWidth: 1, borderColor: "#0ea5e966",
+              }}>
+                <Text style={{ color: "#38bdf8", fontSize: 10, fontWeight: "700" }}>{workerLabel}</Text>
+              </View>
+            ) : null}
             {autoPairing ? (
               <View style={{
                 paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
@@ -291,6 +305,15 @@ function DeviceCard({
             {device.os} &middot; {device.host}:{device.port}
             {device.isGuest && device.hostName ? ` · shared from ${device.hostName}` : ""}
           </Text>
+          {device.edgeProfile ? (
+            <Text style={[styles.deviceMeta, { color: c.textMuted, marginTop: 4 }]}>
+              {device.edgeProfile.supportsLocalInference ? "local inference" : "no local inference"}
+              {` · max ${device.edgeProfile.maxModelClass}`}
+              {device.edgeProfile.thermalState ? ` · ${device.edgeProfile.thermalState}` : ""}
+              {typeof device.edgeProfile.batteryPct === "number" ? ` · ${device.edgeProfile.batteryPct}% battery` : ""}
+              {device.edgeProfile.isCharging ? " · charging" : ""}
+            </Text>
+          ) : null}
         </View>
         <View style={styles.cardRight}>
           <View style={[styles.onlineDot, { backgroundColor: isOnline ? c.success : c.textMuted }]} />

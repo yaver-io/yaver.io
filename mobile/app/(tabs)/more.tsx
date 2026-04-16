@@ -2538,6 +2538,36 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
+        {/* Vault — encrypted secrets stored on host (AES-GCM + Argon2id). */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/vault" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F512}"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Vault</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Encrypted secrets, API keys, SSH keys — never leaves your machine</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
+        {/* API keys — labeled SDK tokens with usage tracking */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/apikeys" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F511}"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>API Keys</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>SDK tokens — create, scope, disable</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
         {/* New Project — fullstack wizard (web + mobile + backend + DNS + OAuth) */}
         {connected && (
           <Pressable

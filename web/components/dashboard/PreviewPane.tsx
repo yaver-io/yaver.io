@@ -3,8 +3,26 @@
 import { useState, useEffect, useRef } from "react";
 import { agentClient } from "@/lib/agent-client";
 
-export default function PreviewPane() {
-  const [devStatus, setDevStatus] = useState<{ running: boolean; framework?: string; workDir?: string } | null>(null);
+interface PreviewTarget {
+  id: string;
+  name: string;
+}
+
+export default function PreviewPane({
+  selectedPreviewTarget,
+  onSelectPreviewTarget,
+  mobileWorkers,
+}: {
+  selectedPreviewTarget: PreviewTarget | null;
+  onSelectPreviewTarget: (deviceId: string | null) => void;
+  mobileWorkers: PreviewTarget[];
+}) {
+  const [devStatus, setDevStatus] = useState<{
+    running: boolean;
+    framework?: string;
+    workDir?: string;
+    targetDeviceName?: string;
+  } | null>(null);
   const [iframeKey, setIframeKey] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
@@ -83,9 +101,36 @@ export default function PreviewPane() {
       <div className="h-9 flex items-center px-3 gap-2 border-b border-surface-800 bg-surface-900/50 shrink-0">
         <span className="flex-1 text-[10px] text-surface-500 font-mono truncate">{previewUrl}</span>
         <span className="text-[10px] text-emerald-400">{devStatus.framework}</span>
+        <span className="text-[10px] text-sky-300">
+          {devStatus.targetDeviceName || selectedPreviewTarget?.name || "current device"}
+        </span>
         <button onClick={handleReload} className="text-surface-400 hover:text-surface-200 text-sm" title="Reload">&#x21BB;</button>
         <button onClick={handleStop} className="text-red-400 hover:text-red-300 text-sm" title="Stop">&#x25A0;</button>
       </div>
+      {mobileWorkers.length > 0 && (
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-surface-800 bg-surface-950/60 overflow-x-auto">
+          <span className="text-[10px] uppercase tracking-widest text-surface-500 shrink-0">Target</span>
+          <button
+            onClick={() => onSelectPreviewTarget(null)}
+            className={`px-2 py-1 text-[10px] rounded border shrink-0 ${
+              !selectedPreviewTarget ? "border-sky-500/40 bg-sky-500/10 text-sky-300" : "border-surface-800 text-surface-500"
+            }`}
+          >
+            Current device
+          </button>
+          {mobileWorkers.map((device) => (
+            <button
+              key={device.id}
+              onClick={() => onSelectPreviewTarget(device.id)}
+              className={`px-2 py-1 text-[10px] rounded border shrink-0 ${
+                selectedPreviewTarget?.id === device.id ? "border-sky-500/40 bg-sky-500/10 text-sky-300" : "border-surface-800 text-surface-500"
+              }`}
+            >
+              {device.name}
+            </button>
+          ))}
+        </div>
+      )}
       <iframe
         key={iframeKey}
         ref={iframeRef}

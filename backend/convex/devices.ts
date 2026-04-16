@@ -3,6 +3,7 @@ import { mutation, query } from "./_generated/server";
 import { Doc } from "./_generated/dataModel";
 import { validateSessionInternal } from "./auth";
 import { listActiveInfraGrantsForGuest, listGrantedDeviceIdsForGrant } from "./access";
+import { recommendPlacement } from "./edgePlacement";
 
 /**
  * Register or update a device for peer discovery.
@@ -16,8 +17,39 @@ export const registerDevice = mutation({
     platform: v.union(
       v.literal("macos"),
       v.literal("windows"),
-      v.literal("linux")
+      v.literal("linux"),
+      v.literal("android"),
+      v.literal("ios")
     ),
+    deviceClass: v.optional(
+      v.union(
+        v.literal("desktop"),
+        v.literal("edge-mobile"),
+        v.literal("server")
+      )
+    ),
+    edgeProfile: v.optional(v.object({
+      supportsLocalInference: v.boolean(),
+      maxModelClass: v.union(
+        v.literal("none"),
+        v.literal("tiny"),
+        v.literal("small"),
+        v.literal("medium")
+      ),
+      preferredTasks: v.array(v.union(
+        v.literal("speech"),
+        v.literal("ocr"),
+        v.literal("vision"),
+        v.literal("embedding"),
+        v.literal("rerank"),
+        v.literal("automation"),
+        v.literal("small-llm")
+      )),
+      memoryMb: v.optional(v.number()),
+      batteryPct: v.optional(v.number()),
+      isCharging: v.optional(v.boolean()),
+      thermalState: v.optional(v.union(v.literal("nominal"), v.literal("warm"), v.literal("hot"))),
+    })),
     publicKey: v.optional(v.string()),
     quicHost: v.string(),
     quicPort: v.number(),
@@ -40,6 +72,8 @@ export const registerDevice = mutation({
       await ctx.db.patch(existing._id, {
         name: args.name,
         platform: args.platform,
+        deviceClass: args.deviceClass,
+        edgeProfile: args.edgeProfile,
         publicKey: args.publicKey,
         quicHost: args.quicHost,
         quicPort: args.quicPort,
@@ -55,6 +89,8 @@ export const registerDevice = mutation({
       deviceId: args.deviceId,
       name: args.name,
       platform: args.platform,
+      deviceClass: args.deviceClass,
+      edgeProfile: args.edgeProfile,
       publicKey: args.publicKey,
       quicHost: args.quicHost,
       quicPort: args.quicPort,
@@ -109,6 +145,35 @@ export const heartbeat = mutation({
     }))),
     quicHost: v.optional(v.string()),
     hardwareId: v.optional(v.string()),
+    deviceClass: v.optional(
+      v.union(
+        v.literal("desktop"),
+        v.literal("edge-mobile"),
+        v.literal("server")
+      )
+    ),
+    edgeProfile: v.optional(v.object({
+      supportsLocalInference: v.boolean(),
+      maxModelClass: v.union(
+        v.literal("none"),
+        v.literal("tiny"),
+        v.literal("small"),
+        v.literal("medium")
+      ),
+      preferredTasks: v.array(v.union(
+        v.literal("speech"),
+        v.literal("ocr"),
+        v.literal("vision"),
+        v.literal("embedding"),
+        v.literal("rerank"),
+        v.literal("automation"),
+        v.literal("small-llm")
+      )),
+      memoryMb: v.optional(v.number()),
+      batteryPct: v.optional(v.number()),
+      isCharging: v.optional(v.boolean()),
+      thermalState: v.optional(v.union(v.literal("nominal"), v.literal("warm"), v.literal("hot"))),
+    })),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -136,6 +201,12 @@ export const heartbeat = mutation({
     // on their next heartbeat.
     if (args.hardwareId && args.hardwareId !== device.hardwareId) {
       patch.hardwareId = args.hardwareId;
+    }
+    if (args.deviceClass) {
+      patch.deviceClass = args.deviceClass;
+    }
+    if (args.edgeProfile) {
+      patch.edgeProfile = args.edgeProfile;
     }
     await ctx.db.patch(device._id, patch);
   },
@@ -189,6 +260,8 @@ export const listMyDevices = query({
       useHostApiKeys?: boolean;
       allowGuestProvidedApiKeys?: boolean;
       sessionBinding?: "dedicated" | "legacy-shared";
+      deviceClass?: "desktop" | "edge-mobile" | "server";
+      edgeProfile?: Doc<"devices">["edgeProfile"];
     }> = ownDevices.map((d) => ({
       deviceId: d.deviceId,
       name: d.name,
@@ -209,6 +282,8 @@ export const listMyDevices = query({
       useHostApiKeys: undefined as boolean | undefined,
       allowGuestProvidedApiKeys: undefined as boolean | undefined,
       sessionBinding: dedicatedSessionDeviceIds.has(d.deviceId) ? "dedicated" as const : "legacy-shared" as const,
+      deviceClass: d.deviceClass,
+      edgeProfile: d.edgeProfile,
     }));
 
     const scopedGrants = await listActiveInfraGrantsForGuest(ctx, session.user._id);
@@ -254,6 +329,8 @@ export const listMyDevices = query({
           useHostApiKeys: grant.useHostApiKeys,
           allowGuestProvidedApiKeys: grant.allowGuestProvidedApiKeys,
           sessionBinding: undefined as "dedicated" | "legacy-shared" | undefined,
+          deviceClass: d.deviceClass,
+          edgeProfile: d.edgeProfile,
         });
       }
     }
@@ -297,11 +374,53 @@ export const listMyDevices = query({
           useHostApiKeys: undefined,
           allowGuestProvidedApiKeys: true,
           sessionBinding: undefined as "dedicated" | "legacy-shared" | undefined,
+          deviceClass: d.deviceClass,
+          edgeProfile: d.edgeProfile,
         });
       }
     }
 
     return result;
+  },
+});
+
+export const recommendTaskPlacement = query({
+  args: {
+    tokenHash: v.string(),
+    taskKind: v.union(
+      v.literal("speech-transcription"),
+      v.literal("ocr"),
+      v.literal("vision-labeling"),
+      v.literal("embedding"),
+      v.literal("rerank"),
+      v.literal("small-local-agent"),
+      v.literal("batch-preprocessing"),
+      v.literal("big-llm-chat"),
+      v.literal("long-context-reasoning"),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) throw new Error("Unauthorized");
+
+    const ownDevices = await ctx.db
+      .query("devices")
+      .withIndex("by_userId", (q) => q.eq("userId", session.user._id))
+      .collect();
+
+    return recommendPlacement(
+      ownDevices.map((device) => ({
+        deviceId: device.deviceId,
+        name: device.name,
+        platform: device.platform,
+        isOnline: device.isOnline,
+        needsAuth: device.needsAuth,
+        runnerDown: device.runnerDown,
+        deviceClass: device.deviceClass,
+        edgeProfile: device.edgeProfile,
+      })),
+      args.taskKind,
+    );
   },
 });
 
