@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -105,4 +107,114 @@ func firstLine(s string) string {
 // at the top of main.go (which would force a longer build dep cycle).
 func testkitHostStatus() testkit.HostStatus {
 	return testkit.SnapshotHost()
+}
+
+const autoBootManualURL = "https://yaver.io/manuals/auto-boot"
+
+type headlessPowerStatus struct {
+	ok      bool
+	summary string
+	details []string
+}
+
+func detectHeadlessPowerStatus() *headlessPowerStatus {
+	switch runtime.GOOS {
+	case "darwin":
+		return detectDarwinHeadlessPowerStatus()
+	case "linux":
+		return detectLinuxHeadlessPowerStatus()
+	default:
+		return nil
+	}
+}
+
+func detectDarwinHeadlessPowerStatus() *headlessPowerStatus {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "pmset", "-g").CombinedOutput()
+	if err != nil {
+		return &headlessPowerStatus{
+			ok:      false,
+			summary: "pmset unavailable",
+			details: []string{"Install/enable macOS power tools or verify manually: " + autoBootManualURL},
+		}
+	}
+	values := parseKeyValueLines(string(out))
+	var problems []string
+	if v := pmsetIntValue(values, "sleep"); v != 0 {
+		problems = append(problems, fmt.Sprintf("sleep=%d (expected 0 for headless serve)", v))
+	}
+	if v := pmsetIntValue(values, "disksleep"); v != 0 {
+		problems = append(problems, fmt.Sprintf("disksleep=%d (expected 0)", v))
+	}
+	if v := pmsetIntValue(values, "autorestart"); v != 1 {
+		problems = append(problems, fmt.Sprintf("autorestart=%d (expected 1 after power loss)", v))
+	}
+	if v, ok := values["powernap"]; ok && strings.TrimSpace(v) != "0" {
+		problems = append(problems, fmt.Sprintf("powernap=%s (expected 0)", strings.TrimSpace(v)))
+	}
+	summary := fmt.Sprintf("sleep=%d, disksleep=%d, autorestart=%d", pmsetIntValue(values, "sleep"), pmsetIntValue(values, "disksleep"), pmsetIntValue(values, "autorestart"))
+	if len(problems) == 0 {
+		return &headlessPowerStatus{ok: true, summary: summary}
+	}
+	return &headlessPowerStatus{
+		ok:      false,
+		summary: summary,
+		details: append(problems, "Manual: "+autoBootManualURL),
+	}
+}
+
+func detectLinuxHeadlessPowerStatus() *headlessPowerStatus {
+	var details []string
+	ok := true
+	linger := "unknown"
+	if user := strings.TrimSpace(os.Getenv("USER")); user != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, "loginctl", "show-user", user, "-p", "Linger").CombinedOutput()
+		if err == nil {
+			parts := strings.Split(strings.TrimSpace(string(out)), "=")
+			if len(parts) == 2 {
+				linger = strings.TrimSpace(parts[1])
+				if !strings.EqualFold(linger, "yes") {
+					ok = false
+					details = append(details, "linger disabled (run: sudo loginctl enable-linger $USER)")
+				}
+			}
+		}
+	}
+	if !isAutoStartInstalled() {
+		ok = false
+		details = append(details, "auto-start service missing (run `yaver serve` once)")
+	}
+	details = append(details, "Firmware auto-reboot after power loss is manual: "+autoBootManualURL)
+	return &headlessPowerStatus{
+		ok:      ok,
+		summary: fmt.Sprintf("auto-start=%t, linger=%s", isAutoStartInstalled(), linger),
+		details: details,
+	}
+}
+
+func parseKeyValueLines(out string) map[string]string {
+	values := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 2 {
+			continue
+		}
+		values[fields[0]] = fields[len(fields)-1]
+	}
+	return values
+}
+
+func pmsetIntValue(values map[string]string, key string) int {
+	raw, ok := values[key]
+	if !ok {
+		return -1
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return -1
+	}
+	return n
 }
