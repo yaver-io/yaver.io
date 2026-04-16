@@ -12,6 +12,7 @@
 - Mobile autoideas now supports multi-select implementation with clearer backlog/status UI and jumps back into live autodev after starting.
 - Web dashboard console now has an actual `autodev` workbench with live transcript, backlog selection, and one-shot loop start.
 - Mocked browser coverage now exists for the web autodev workbench in [e2e/tests/dashboard-autodev.spec.ts](/Users/kivanccakmak/Workspace/yaver.io/e2e/tests/dashboard-autodev.spec.ts).
+- CLI stream rendering now keeps piped output free of ANSI escapes and the local yaver-to-yaver harness asserts that autodev transcript output is human-readable instead of raw JSON.
 
 ## What Still Needs Real-World Validation
 
