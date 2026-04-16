@@ -230,6 +230,7 @@ export const validateSession = query({
     const result = await validateSessionInternal(ctx, args.tokenHash);
     if (!result) return null;
     return {
+      userDocId: result.user._id,
       userId: result.user.userId,
       email: result.user.email,
       fullName: result.user.fullName,
