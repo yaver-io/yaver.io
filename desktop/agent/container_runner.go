@@ -14,6 +14,27 @@ import (
 	"time"
 )
 
+var sharedSecretEnvVars = []string{
+	"ANTHROPIC_API_KEY",
+	"ANTHROPIC_AUTH_TOKEN",
+	"CLAUDE_CODE_OAUTH_TOKEN",
+	"OPENAI_API_KEY",
+	"GOOGLE_API_KEY",
+	"MISTRAL_API_KEY",
+	"GROQ_API_KEY",
+	"TOGETHER_API_KEY",
+	"DEEPSEEK_API_KEY",
+	"XAI_API_KEY",
+	"OPENROUTER_API_KEY",
+	"AWS_ACCESS_KEY_ID",
+	"AWS_SECRET_ACCESS_KEY",
+	"AWS_SESSION_TOKEN",
+	"AWS_REGION",
+	"GITHUB_TOKEN",
+	"GH_TOKEN",
+	"GITLAB_TOKEN",
+}
+
 const (
 	sandboxImage       = "yaver-sandbox"
 	sandboxDockerfile  = "Dockerfile.sandbox"
@@ -23,10 +44,10 @@ const (
 // ContainerRunner executes tasks inside Docker containers for isolation.
 // Used for both guest (security) and host (optional clean builds) tasks.
 type ContainerRunner struct {
-	mu          sync.Mutex
-	imageReady  bool
-	dockerPath  string
-	agentDir    string // path to desktop/agent/ (for Dockerfile)
+	mu         sync.Mutex
+	imageReady bool
+	dockerPath string
+	agentDir   string // path to desktop/agent/ (for Dockerfile)
 
 	// Cache mount paths (persisted across container runs for speed)
 	cacheDirs []string
@@ -249,22 +270,8 @@ func (cr *ContainerRunner) DetectProjectImage(ctx context.Context, projectDir st
 // Only passes explicitly needed keys — not the entire host environment.
 func CollectAPIKeys() map[string]string {
 	keys := map[string]string{}
-	envVars := []string{
-		"ANTHROPIC_API_KEY",
-		"OPENAI_API_KEY",
-		"GOOGLE_API_KEY",
-		"MISTRAL_API_KEY",
-		"GROQ_API_KEY",
-		"TOGETHER_API_KEY",
-		"DEEPSEEK_API_KEY",
-		"XAI_API_KEY",
-		"OPENROUTER_API_KEY",
-		"CLAUDE_CODE_USE_BEDROCK",
-		"AWS_ACCESS_KEY_ID",
-		"AWS_SECRET_ACCESS_KEY",
-		"AWS_REGION",
-		"ANTHROPIC_MODEL",
-	}
+	envVars := append([]string{}, sharedSecretEnvVars...)
+	envVars = append(envVars, "CLAUDE_CODE_USE_BEDROCK", "ANTHROPIC_MODEL")
 	for _, k := range envVars {
 		if v := os.Getenv(k); v != "" {
 			keys[k] = v
@@ -273,12 +280,19 @@ func CollectAPIKeys() map[string]string {
 	return keys
 }
 
+func CollectAPIKeysForTask(task *Task) map[string]string {
+	if task != nil && task.GuestUserID != "" && !task.GuestUseHostAPIKeys {
+		return map[string]string{}
+	}
+	return CollectAPIKeys()
+}
+
 // Status returns the current state of the container runner.
 type ContainerStatus struct {
-	Available    bool   `json:"available"`    // Docker installed and running
-	ImageReady   bool   `json:"imageReady"`   // yaver-sandbox image built
-	DockerPath   string `json:"dockerPath"`   // path to docker binary
-	ImageName    string `json:"imageName"`    // sandbox image name
+	Available  bool   `json:"available"`  // Docker installed and running
+	ImageReady bool   `json:"imageReady"` // yaver-sandbox image built
+	DockerPath string `json:"dockerPath"` // path to docker binary
+	ImageName  string `json:"imageName"`  // sandbox image name
 }
 
 func (cr *ContainerRunner) Status() ContainerStatus {

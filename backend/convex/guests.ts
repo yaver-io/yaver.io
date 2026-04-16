@@ -4,7 +4,7 @@ import { validateSessionInternal } from "./auth";
 import { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { guestInviteHtml } from "./email";
-import { getActiveInfraGrant, guestCanReachHostDevice, listGrantedDeviceIdsForGrant, listGrantedMachineIdsForGrant, revokeInfraGrantsBetweenUsers } from "./access";
+import { getActiveInfraGrant, guestCanReachHostDevice, guestCanReachSpecificHostDevice, listGrantedDeviceIdsForGrant, listGrantedMachineIdsForGrant, revokeInfraGrantsBetweenUsers } from "./access";
 
 const MAX_GUESTS_PER_HOST = 5;
 const INVITATION_TTL_MS = 2 * 24 * 60 * 60 * 1000; // 2 days
@@ -442,6 +442,7 @@ export const listHosts = query({
 export const getGuestUserIds = query({
   args: {
     tokenHash: v.string(),
+    deviceId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -457,7 +458,13 @@ export const getGuestUserIds = query({
 
     const guestUserIds: string[] = [];
     for (const access of accessRecords) {
-      if (!(await guestCanReachHostDevice(ctx, hostUserId, access.guestUserId))) continue;
+      let allowed = false;
+      if (args.deviceId && args.deviceId.trim() !== "") {
+        allowed = await guestCanReachSpecificHostDevice(ctx, hostUserId, access.guestUserId, args.deviceId);
+      } else {
+        allowed = await guestCanReachHostDevice(ctx, hostUserId, access.guestUserId);
+      }
+      if (!allowed) continue;
       const guest = await ctx.db.get(access.guestUserId);
       if (!guest) continue;
       guestUserIds.push(guest.userId);
@@ -504,6 +511,7 @@ export const getGuestConfig = query({
       machineIds?: Id<"cloudMachines">[];
       useHostApiKeys?: boolean;
       allowGuestProvidedApiKeys?: boolean;
+      requireIsolation?: boolean;
       cpuLimitPercent?: number;
       ramLimitMb?: number;
       priorityMode?: string;
@@ -531,6 +539,7 @@ export const getGuestConfig = query({
         machineIds,
         useHostApiKeys: grant?.useHostApiKeys ?? false,
         allowGuestProvidedApiKeys: grant?.allowGuestProvidedApiKeys ?? true,
+        requireIsolation: grant?.requireIsolation ?? false,
         cpuLimitPercent: grant?.cpuLimitPercent,
         ramLimitMb: grant?.ramLimitMb,
         priorityMode: grant?.priorityMode,
@@ -558,6 +567,7 @@ export const updateGuestConfig = mutation({
     machineIds: v.optional(v.array(v.id("cloudMachines"))),
     useHostApiKeys: v.optional(v.boolean()),
     allowGuestProvidedApiKeys: v.optional(v.boolean()),
+    requireIsolation: v.optional(v.boolean()),
     cpuLimitPercent: v.optional(v.number()),
     ramLimitMb: v.optional(v.number()),
     priorityMode: v.optional(v.string()),
@@ -661,6 +671,7 @@ export const updateGuestConfig = mutation({
     if (args.allowGuestProvidedApiKeys !== undefined) {
       grantPatch.allowGuestProvidedApiKeys = args.allowGuestProvidedApiKeys;
     }
+    if (args.requireIsolation !== undefined) grantPatch.requireIsolation = args.requireIsolation;
     if (args.cpuLimitPercent !== undefined) grantPatch.cpuLimitPercent = args.cpuLimitPercent;
     if (args.ramLimitMb !== undefined) grantPatch.ramLimitMb = args.ramLimitMb;
     if (args.priorityMode !== undefined) grantPatch.priorityMode = args.priorityMode;

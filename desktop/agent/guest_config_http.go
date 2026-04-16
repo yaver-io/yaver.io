@@ -9,6 +9,9 @@ import (
 // GET: returns all guest configs (cached from Convex + local project access).
 // POST: updates guest config via Convex + optionally sets project access locally.
 func (s *HTTPServer) handleGuestConfig(w http.ResponseWriter, r *http.Request) {
+	if rejectGuestManagementCall(w, r) {
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		s.handleGuestConfigGet(w, r)
@@ -30,14 +33,24 @@ func (s *HTTPServer) handleGuestConfigGet(w http.ResponseWriter, r *http.Request
 	configs := s.guestConfigMgr.GetAllConfigs()
 
 	type configWithProjects struct {
-		GuestUserID     string   `json:"guestUserId"`
-		GuestEmail      string   `json:"guestEmail"`
-		GuestName       string   `json:"guestName"`
-		DailyTokenLimit *int     `json:"dailyTokenLimit,omitempty"`
-		AllowedRunners  []string `json:"allowedRunners,omitempty"`
-		UsageMode       string   `json:"usageMode,omitempty"`
-		Schedule        interface{} `json:"schedule,omitempty"`
-		AllowedProjects []string `json:"allowedProjects,omitempty"`
+		GuestUserID               string      `json:"guestUserId"`
+		GuestEmail                string      `json:"guestEmail"`
+		GuestName                 string      `json:"guestName"`
+		DailyTokenLimit           *int        `json:"dailyTokenLimit,omitempty"`
+		AllowedRunners            []string    `json:"allowedRunners,omitempty"`
+		UsageMode                 string      `json:"usageMode,omitempty"`
+		Schedule                  interface{} `json:"schedule,omitempty"`
+		ShareAllDevices           *bool       `json:"shareAllDevices,omitempty"`
+		DeviceIDs                 []string    `json:"deviceIds,omitempty"`
+		ShareAllMachines          *bool       `json:"shareAllMachines,omitempty"`
+		MachineIDs                []string    `json:"machineIds,omitempty"`
+		UseHostAPIKeys            *bool       `json:"useHostApiKeys,omitempty"`
+		AllowGuestProvidedAPIKeys *bool       `json:"allowGuestProvidedApiKeys,omitempty"`
+		RequireIsolation          *bool       `json:"requireIsolation,omitempty"`
+		CPULimitPercent           *int        `json:"cpuLimitPercent,omitempty"`
+		RAMLimitMB                *int        `json:"ramLimitMb,omitempty"`
+		PriorityMode              string      `json:"priorityMode,omitempty"`
+		AllowedProjects           []string    `json:"allowedProjects,omitempty"`
 	}
 
 	var result []configWithProjects
@@ -46,14 +59,24 @@ func (s *HTTPServer) handleGuestConfigGet(w http.ResponseWriter, r *http.Request
 			continue
 		}
 		result = append(result, configWithProjects{
-			GuestUserID:     c.GuestUserID,
-			GuestEmail:      c.GuestEmail,
-			GuestName:       c.GuestName,
-			DailyTokenLimit: c.DailyTokenLimit,
-			AllowedRunners:  c.AllowedRunners,
-			UsageMode:       c.UsageMode,
-			Schedule:        c.Schedule,
-			AllowedProjects: s.guestConfigMgr.GetProjectAccess(c.GuestUserID),
+			GuestUserID:               c.GuestUserID,
+			GuestEmail:                c.GuestEmail,
+			GuestName:                 c.GuestName,
+			DailyTokenLimit:           c.DailyTokenLimit,
+			AllowedRunners:            c.AllowedRunners,
+			UsageMode:                 c.UsageMode,
+			Schedule:                  c.Schedule,
+			ShareAllDevices:           c.ShareAllDevices,
+			DeviceIDs:                 c.DeviceIDs,
+			ShareAllMachines:          c.ShareAllMachines,
+			MachineIDs:                c.MachineIDs,
+			UseHostAPIKeys:            c.UseHostAPIKeys,
+			AllowGuestProvidedAPIKeys: c.AllowGuestProvidedAPIKeys,
+			RequireIsolation:          c.RequireIsolation,
+			CPULimitPercent:           c.CPULimitPercent,
+			RAMLimitMB:                c.RAMLimitMB,
+			PriorityMode:              c.PriorityMode,
+			AllowedProjects:           s.guestConfigMgr.GetProjectAccess(c.GuestUserID),
 		})
 	}
 
@@ -70,11 +93,21 @@ func (s *HTTPServer) handleGuestConfigPost(w http.ResponseWriter, r *http.Reques
 	}
 
 	var body struct {
-		Email           string   `json:"email"`
-		DailyTokenLimit *int     `json:"dailyTokenLimit,omitempty"`
-		AllowedRunners  []string `json:"allowedRunners,omitempty"`
-		UsageMode       string   `json:"usageMode,omitempty"`
-		Schedule        *struct {
+		Email                     string   `json:"email"`
+		DailyTokenLimit           *int     `json:"dailyTokenLimit,omitempty"`
+		AllowedRunners            []string `json:"allowedRunners,omitempty"`
+		UsageMode                 string   `json:"usageMode,omitempty"`
+		ShareAllDevices           *bool    `json:"shareAllDevices,omitempty"`
+		DeviceIDs                 []string `json:"deviceIds,omitempty"`
+		ShareAllMachines          *bool    `json:"shareAllMachines,omitempty"`
+		MachineIDs                []string `json:"machineIds,omitempty"`
+		UseHostAPIKeys            *bool    `json:"useHostApiKeys,omitempty"`
+		AllowGuestProvidedAPIKeys *bool    `json:"allowGuestProvidedApiKeys,omitempty"`
+		RequireIsolation          *bool    `json:"requireIsolation,omitempty"`
+		CPULimitPercent           *int     `json:"cpuLimitPercent,omitempty"`
+		RAMLimitMB                *int     `json:"ramLimitMb,omitempty"`
+		PriorityMode              string   `json:"priorityMode,omitempty"`
+		Schedule                  *struct {
 			StartHour int    `json:"startHour"`
 			EndHour   int    `json:"endHour"`
 			Timezone  string `json:"timezone,omitempty"`
@@ -98,13 +131,48 @@ func (s *HTTPServer) handleGuestConfigPost(w http.ResponseWriter, r *http.Reques
 	if body.UsageMode != "" {
 		cfgPayload["usageMode"] = body.UsageMode
 	}
+	if body.ShareAllDevices != nil {
+		cfgPayload["shareAllDevices"] = *body.ShareAllDevices
+	}
+	if body.DeviceIDs != nil {
+		cfgPayload["deviceIds"] = body.DeviceIDs
+	}
+	if body.ShareAllMachines != nil {
+		cfgPayload["shareAllMachines"] = *body.ShareAllMachines
+	}
+	if body.MachineIDs != nil {
+		cfgPayload["machineIds"] = body.MachineIDs
+	}
+	if body.UseHostAPIKeys != nil {
+		cfgPayload["useHostApiKeys"] = *body.UseHostAPIKeys
+	}
+	if body.AllowGuestProvidedAPIKeys != nil {
+		cfgPayload["allowGuestProvidedApiKeys"] = *body.AllowGuestProvidedAPIKeys
+	}
+	if body.RequireIsolation != nil {
+		cfgPayload["requireIsolation"] = *body.RequireIsolation
+	}
+	if body.CPULimitPercent != nil {
+		cfgPayload["cpuLimitPercent"] = *body.CPULimitPercent
+	}
+	if body.RAMLimitMB != nil {
+		cfgPayload["ramLimitMb"] = *body.RAMLimitMB
+	}
+	if body.PriorityMode != "" {
+		cfgPayload["priorityMode"] = body.PriorityMode
+	}
 	if body.Schedule != nil {
 		cfgPayload["schedule"] = body.Schedule
 	}
 
 	// Only call Convex if there are Convex-side fields to update
 	hasConvexFields := body.DailyTokenLimit != nil || body.AllowedRunners != nil ||
-		body.UsageMode != "" || body.Schedule != nil
+		body.UsageMode != "" || body.Schedule != nil ||
+		body.ShareAllDevices != nil || body.DeviceIDs != nil ||
+		body.ShareAllMachines != nil || body.MachineIDs != nil ||
+		body.UseHostAPIKeys != nil || body.AllowGuestProvidedAPIKeys != nil ||
+		body.RequireIsolation != nil ||
+		body.CPULimitPercent != nil || body.RAMLimitMB != nil || body.PriorityMode != ""
 	if hasConvexFields {
 		if err := UpdateGuestConfig(s.convexURL, s.token, cfgPayload); err != nil {
 			jsonError(w, http.StatusBadRequest, err.Error())
@@ -139,6 +207,9 @@ func (s *HTTPServer) handleGuestConfigPost(w http.ResponseWriter, r *http.Reques
 
 // handleGuestUsage handles GET /guests/usage — returns daily usage stats.
 func (s *HTTPServer) handleGuestUsage(w http.ResponseWriter, r *http.Request) {
+	if rejectGuestManagementCall(w, r) {
+		return
+	}
 	if r.Method != http.MethodGet {
 		jsonError(w, http.StatusMethodNotAllowed, "GET only")
 		return

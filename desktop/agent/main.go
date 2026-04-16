@@ -119,6 +119,8 @@ func main() {
 		runPing(os.Args[2:])
 	case "attach":
 		runAttach(os.Args[2:])
+	case "code":
+		runCode(os.Args[2:])
 	case "agent":
 		runAgentMode(os.Args[2:])
 	case "status":
@@ -271,6 +273,7 @@ Usage:
   yaver ping        Ping a device (direct or via relay)
   yaver stop        Stop the running agent
   yaver restart     Restart the agent
+  yaver code        Terminal-first coding UX (interactive by default, mesh with --mesh)
   yaver attach      Interactive terminal — see tasks, type prompts (like Claude Code)
   yaver agent       Dependency-aware agent graph runner (chat + autoideas + autodev + autotest)
   yaver serve       Start the agent manually (advanced)
@@ -1674,7 +1677,7 @@ func runServe(args []string) {
 	}()
 
 	// Start HTTP server (V1 — primary, also serves MCP)
-	httpServer := NewHTTPServer(*httpPort, cfg.AuthToken, ownerUserID, cfg.ConvexSiteURL, hostname, taskMgr)
+	httpServer := NewHTTPServer(*httpPort, cfg.AuthToken, ownerUserID, cfg.DeviceID, cfg.ConvexSiteURL, hostname, taskMgr)
 	httpServer.agentGraphMgr = NewAgentGraphManager(taskMgr)
 	globalAgentGraphMgr = httpServer.agentGraphMgr
 
@@ -5476,7 +5479,7 @@ func runMCP(args []string) {
 	case "http":
 		fmt.Printf("Yaver MCP server (HTTP) v%s on port %d — work dir: %s\n", version, *httpPort, *workDir)
 		hostname, _ := os.Hostname()
-		srv := NewHTTPServer(*httpPort, "", "", "", hostname, taskMgr)
+		srv := NewHTTPServer(*httpPort, "", "", "", "", hostname, taskMgr)
 		srv.agentGraphMgr = NewAgentGraphManager(taskMgr)
 		globalAgentGraphMgr = srv.agentGraphMgr
 		srv.aclMgr = aclMgr

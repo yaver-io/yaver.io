@@ -84,6 +84,33 @@ export async function guestCanReachHostDevice(
   return legacy !== null;
 }
 
+export async function guestCanReachSpecificHostDevice(
+  ctx: AccessCtx,
+  hostUserId: Id<"users">,
+  guestUserId: Id<"users">,
+  deviceId: string,
+): Promise<boolean> {
+  const normalizedDeviceID = deviceId.trim();
+  if (!normalizedDeviceID) {
+    return guestCanReachHostDevice(ctx, hostUserId, guestUserId);
+  }
+
+  const grant = await getActiveInfraGrant(ctx, hostUserId, guestUserId);
+  if (grant) {
+    if (grant.shareAllDevices) return true;
+    const match = await ctx.db
+      .query("infraAccessGrantDevices")
+      .withIndex("by_device_guest", (q) =>
+        q.eq("deviceId", normalizedDeviceID).eq("guestUserId", guestUserId),
+      )
+      .first();
+    return match !== null && match.hostUserId === hostUserId;
+  }
+
+  const legacy = await getLegacyGuestAccess(ctx, hostUserId, guestUserId);
+  return legacy !== null;
+}
+
 export async function revokeInfraGrantsBetweenUsers(
   ctx: MutationCtx,
   hostUserId: Id<"users">,

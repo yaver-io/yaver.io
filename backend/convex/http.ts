@@ -2367,7 +2367,10 @@ http.route({
     const token = authHeader.slice(7);
     const tokenHash = await sha256Hex(token);
 
-    const guestUserIds = await ctx.runQuery(api.guests.getGuestUserIds, { tokenHash });
+    const url = new URL(request.url);
+    const deviceId = url.searchParams.get("deviceId") ?? undefined;
+
+    const guestUserIds = await ctx.runQuery(api.guests.getGuestUserIds, { tokenHash, deviceId });
     return jsonResponse({ guestUserIds });
   }),
 });
@@ -2420,6 +2423,7 @@ http.route({
         machineIds: body.machineIds,
         useHostApiKeys: body.useHostApiKeys,
         allowGuestProvidedApiKeys: body.allowGuestProvidedApiKeys,
+        requireIsolation: body.requireIsolation,
         cpuLimitPercent: body.cpuLimitPercent,
         ramLimitMb: body.ramLimitMb,
         priorityMode: body.priorityMode,

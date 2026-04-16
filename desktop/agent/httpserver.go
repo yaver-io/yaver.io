@@ -27,6 +27,7 @@ type HTTPServer struct {
 	port               int
 	token              string
 	ownerUserID        string
+	deviceID           string
 	convexURL          string
 	hostname           string
 	taskMgr            *TaskManager
@@ -130,11 +131,12 @@ type HTTPServer struct {
 }
 
 // NewHTTPServer creates a new HTTP server bound to the given port.
-func NewHTTPServer(port int, token, ownerUserID, convexURL, hostname string, taskMgr *TaskManager) *HTTPServer {
+func NewHTTPServer(port int, token, ownerUserID, deviceID, convexURL, hostname string, taskMgr *TaskManager) *HTTPServer {
 	return &HTTPServer{
 		port:        port,
 		token:       token,
 		ownerUserID: ownerUserID,
+		deviceID:    deviceID,
 		convexURL:   convexURL,
 		hostname:    hostname,
 		taskMgr:     taskMgr,
@@ -970,7 +972,6 @@ var guestAllowedPrefixes = []string{
 	"/projects",
 	"/todolist",
 	"/builds",
-	"/guests",
 	"/health",
 	"/vibing",
 }
@@ -997,7 +998,7 @@ func (s *HTTPServer) isApprovedGuest(userID string) bool {
 
 // refreshGuestList periodically fetches the approved guest list and configs from Convex.
 func (s *HTTPServer) refreshGuestList(ctx context.Context) {
-	if ids, err := FetchGuestUserIds(s.convexURL, s.token); err == nil {
+	if ids, err := FetchGuestUserIds(s.convexURL, s.token, s.deviceID); err == nil {
 		s.guestUserIDsMu.Lock()
 		s.guestUserIDs = ids
 		s.guestUserIDsMu.Unlock()
@@ -1019,7 +1020,7 @@ func (s *HTTPServer) refreshGuestList(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if ids, err := FetchGuestUserIds(s.convexURL, s.token); err == nil {
+			if ids, err := FetchGuestUserIds(s.convexURL, s.token, s.deviceID); err == nil {
 				s.guestUserIDsMu.Lock()
 				s.guestUserIDs = ids
 				s.guestUserIDsMu.Unlock()
@@ -2037,7 +2038,9 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 
 	// Check guest restrictions before creating task
 	guestUID := r.Header.Get("X-Yaver-GuestUserID")
+	var guestCfg *GuestConfig
 	if guestUID != "" && s.guestConfigMgr != nil {
+		guestCfg = s.guestConfigMgr.GetConfig(guestUID)
 		// Check runner restriction
 		if body.Runner != "" {
 			if denied := s.guestConfigMgr.CheckRunner(guestUID, body.Runner); denied != nil {
@@ -2050,13 +2053,19 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, http.StatusForbidden, "guests cannot run custom commands")
 			return
 		}
+		if guestRequireIsolation(guestCfg) {
+			if s.containerRunner == nil || !s.containerRunner.IsAvailable() {
+				jsonError(w, http.StatusServiceUnavailable, "guest is configured to require Docker isolation, but Docker is not available on this host")
+				return
+			}
+		}
 	}
 
 	// For guest tasks, prepend security context to the prompt so the AI agent
 	// stays within the project directory and doesn't access sensitive files.
 	title := body.Title
 	if guestUID != "" {
-		title = guestPromptPrefix(s.taskMgr.workDir) + title
+		title = guestPromptPrefix(s.taskMgr.workDir, guestCfg) + title
 	}
 
 	task, err := s.taskMgr.CreateTask(title, body.Description, body.Model, source, body.Runner, body.CustomCommand, body.Images, body.SpeechContext)
@@ -2068,6 +2077,13 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	// Tag task with guest userId if created by a guest
 	if guestUID != "" {
 		task.GuestUserID = guestUID
+		task.GuestUseHostAPIKeys = guestUseHostAPIKeys(guestCfg)
+		task.GuestRequireIsolation = guestRequireIsolation(guestCfg)
+		task.GuestAllowGuestProvidedKeys = guestCfg == nil || guestCfg.AllowGuestProvidedAPIKeys == nil || *guestCfg.AllowGuestProvidedAPIKeys
+		if guestCfg != nil {
+			task.GuestCPULimitPercent = guestCfg.CPULimitPercent
+			task.GuestRAMLimitMB = guestCfg.RAMLimitMB
+		}
 	}
 
 	log.Printf("[HTTP] Task created: %s — %s (status: %s, model: %s, runner: %s)", task.ID, task.Title, task.Status, body.Model, task.RunnerID)
@@ -8017,7 +8033,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolError(err.Error())
 		}
 		// Refresh guest list
-		if ids, err := FetchGuestUserIds(s.convexURL, s.token); err == nil {
+		if ids, err := FetchGuestUserIds(s.convexURL, s.token, s.deviceID); err == nil {
 			s.guestUserIDsMu.Lock()
 			s.guestUserIDs = ids
 			s.guestUserIDsMu.Unlock()
@@ -8062,7 +8078,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolError(err.Error())
 		}
 		// Refresh guest list
-		if ids, err := FetchGuestUserIds(s.convexURL, s.token); err == nil {
+		if ids, err := FetchGuestUserIds(s.convexURL, s.token, s.deviceID); err == nil {
 			s.guestUserIDsMu.Lock()
 			s.guestUserIDs = ids
 			s.guestUserIDsMu.Unlock()
@@ -8079,10 +8095,16 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	case "guest_config":
 		var args struct {
-			Email          string   `json:"email"`
-			DailyLimit     *int     `json:"daily_limit"`
-			UsageMode      string   `json:"usage_mode"`
-			AllowedRunners []string `json:"allowed_runners"`
+			Email             string   `json:"email"`
+			DailyLimit        *int     `json:"daily_limit"`
+			UsageMode         string   `json:"usage_mode"`
+			AllowedRunners    []string `json:"allowed_runners"`
+			UseHostAPIKeys    *bool    `json:"use_host_api_keys"`
+			AllowGuestAPIKeys *bool    `json:"allow_guest_api_keys"`
+			RequireIsolation  *bool    `json:"require_isolation"`
+			CPULimitPercent   *int     `json:"cpu_limit_percent"`
+			RAMLimitMB        *int     `json:"ram_limit_mb"`
+			PriorityMode      string   `json:"priority_mode"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 
@@ -8110,14 +8132,28 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 				if len(c.AllowedRunners) > 0 {
 					runners = strings.Join(c.AllowedRunners, ",")
 				}
-				sb.WriteString(fmt.Sprintf("- %s (%s): mode=%s limit=%s runners=%s\n",
-					c.GuestEmail, c.GuestName, mode, limit, runners))
+				hostKeys := "inherit"
+				if c.UseHostAPIKeys != nil {
+					hostKeys = fmt.Sprintf("%v", *c.UseHostAPIKeys)
+				}
+				guestKeys := "inherit"
+				if c.AllowGuestProvidedAPIKeys != nil {
+					guestKeys = fmt.Sprintf("%v", *c.AllowGuestProvidedAPIKeys)
+				}
+				isolation := "false"
+				if c.RequireIsolation != nil && *c.RequireIsolation {
+					isolation = "true"
+				}
+				sb.WriteString(fmt.Sprintf("- %s (%s): mode=%s limit=%s runners=%s host_keys=%s guest_keys=%s isolation=%s\n",
+					c.GuestEmail, c.GuestName, mode, limit, runners, hostKeys, guestKeys, isolation))
 			}
 			return mcpToolResult(sb.String())
 		}
 
 		// If no update fields, just show this guest's config
-		isUpdate := args.DailyLimit != nil || args.UsageMode != "" || args.AllowedRunners != nil
+		isUpdate := args.DailyLimit != nil || args.UsageMode != "" || args.AllowedRunners != nil ||
+			args.UseHostAPIKeys != nil || args.AllowGuestAPIKeys != nil || args.RequireIsolation != nil ||
+			args.CPULimitPercent != nil || args.RAMLimitMB != nil || args.PriorityMode != ""
 		if !isUpdate {
 			configs, err := FetchGuestConfigs(s.convexURL, s.token)
 			if err != nil {
@@ -8137,8 +8173,32 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 					if len(c.AllowedRunners) > 0 {
 						runners = strings.Join(c.AllowedRunners, ", ")
 					}
-					return mcpToolResult(fmt.Sprintf("Config for %s (%s):\n  Mode: %s\n  Daily limit: %s\n  Runners: %s",
-						c.GuestEmail, c.GuestName, mode, limit, runners))
+					hostKeys := "inherit"
+					if c.UseHostAPIKeys != nil {
+						hostKeys = fmt.Sprintf("%v", *c.UseHostAPIKeys)
+					}
+					guestKeys := "inherit"
+					if c.AllowGuestProvidedAPIKeys != nil {
+						guestKeys = fmt.Sprintf("%v", *c.AllowGuestProvidedAPIKeys)
+					}
+					isolation := "false"
+					if c.RequireIsolation != nil && *c.RequireIsolation {
+						isolation = "true"
+					}
+					cpuCap := "unset"
+					if c.CPULimitPercent != nil {
+						cpuCap = fmt.Sprintf("%d%%", *c.CPULimitPercent)
+					}
+					ramCap := "unset"
+					if c.RAMLimitMB != nil {
+						ramCap = fmt.Sprintf("%d MB", *c.RAMLimitMB)
+					}
+					priority := c.PriorityMode
+					if priority == "" {
+						priority = "default"
+					}
+					return mcpToolResult(fmt.Sprintf("Config for %s (%s):\n  Mode: %s\n  Daily limit: %s\n  Runners: %s\n  Host API keys: %s\n  Guest API keys: %s\n  Docker isolation: %s\n  CPU cap: %s\n  RAM cap: %s\n  Priority: %s",
+						c.GuestEmail, c.GuestName, mode, limit, runners, hostKeys, guestKeys, isolation, cpuCap, ramCap, priority))
 				}
 			}
 			return mcpToolResult(fmt.Sprintf("No config found for %s", args.Email))
@@ -8154,6 +8214,24 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		if args.AllowedRunners != nil {
 			payload["allowedRunners"] = args.AllowedRunners
+		}
+		if args.UseHostAPIKeys != nil {
+			payload["useHostApiKeys"] = *args.UseHostAPIKeys
+		}
+		if args.AllowGuestAPIKeys != nil {
+			payload["allowGuestProvidedApiKeys"] = *args.AllowGuestAPIKeys
+		}
+		if args.RequireIsolation != nil {
+			payload["requireIsolation"] = *args.RequireIsolation
+		}
+		if args.CPULimitPercent != nil {
+			payload["cpuLimitPercent"] = *args.CPULimitPercent
+		}
+		if args.RAMLimitMB != nil {
+			payload["ramLimitMb"] = *args.RAMLimitMB
+		}
+		if args.PriorityMode != "" {
+			payload["priorityMode"] = args.PriorityMode
 		}
 		if err := UpdateGuestConfig(s.convexURL, s.token, payload); err != nil {
 			return mcpToolError(err.Error())

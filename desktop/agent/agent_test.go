@@ -29,7 +29,7 @@ func startTestServer(t *testing.T, token string, taskMgr *TaskManager) (string, 
 	t.Helper()
 	port := getFreePort(t)
 
-	srv := NewHTTPServer(port, token, "test-user-id", "", "test-host", taskMgr)
+	srv := NewHTTPServer(port, token, "test-user-id", "test-device-id", "", "test-host", taskMgr)
 	srv.execMgr = NewExecManager(taskMgr.workDir, nil)
 	srv.agentGraphMgr = NewAgentGraphManager(taskMgr)
 
