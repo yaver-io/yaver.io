@@ -205,8 +205,8 @@ jobs:
             desktop/agent/yaver-*.tar.gz
             desktop/agent/yaver-*.zip
             desktop/agent/yaver-*.exe
-            desktop/agent/yaver-*.deb
-            desktop/agent/yaver-*.rpm
+            desktop/agent/yaver_*.deb
+            desktop/agent/yaver_*.rpm
             desktop/agent/Yaver-*.dmg
           retention-days: 7
 
@@ -479,18 +479,19 @@ jobs:
           REPO="${{ secrets.YAVER_CLI_REPO || github.repository }}"
           git clone "https://x-access-token:${GH_TOKEN}@github.com/kivanccakmak/apt-yaver.git" apt-yaver
 
-          # Download deb packages from release
+          # Download deb packages from release into pool/main (existing repo layout)
+          mkdir -p apt-yaver/pool/main
           for ARCH in amd64 arm64; do
             DEB="yaver_${VERSION}_${ARCH}.deb"
-            gh release download "v${VERSION}" --repo "$REPO" --pattern "$DEB" --dir apt-yaver/pool/ 2>/dev/null || echo "No $DEB found in release"
+            gh release download "v${VERSION}" --repo "$REPO" --pattern "$DEB" --dir apt-yaver/pool/main/ 2>/dev/null || echo "No $DEB found in release"
           done
 
-          # Regenerate Packages index
+          # Regenerate Packages index (scan pool/main, which is where debs live)
           cd apt-yaver
           mkdir -p dists/stable/main/binary-amd64 dists/stable/main/binary-arm64
           for ARCH in amd64 arm64; do
-            if ls pool/yaver_*_${ARCH}.deb 1>/dev/null 2>&1; then
-              dpkg-scanpackages --arch "$ARCH" pool/ > "dists/stable/main/binary-${ARCH}/Packages"
+            if ls pool/main/yaver_*_${ARCH}.deb 1>/dev/null 2>&1; then
+              dpkg-scanpackages --arch "$ARCH" pool/main/ > "dists/stable/main/binary-${ARCH}/Packages"
               gzip -k -f "dists/stable/main/binary-${ARCH}/Packages"
             fi
           done

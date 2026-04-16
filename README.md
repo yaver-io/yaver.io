@@ -296,8 +296,10 @@ the resulting token back through the device-code flow.
 | **Winget** | `winget install Yaver.Yaver` |
 | **Chocolatey** | `choco install yaver` |
 | **AUR** | `git clone https://github.com/kivanccakmak/aur-yaver.git && cd aur-yaver && makepkg -si` |
-| **apt** | See [download page](https://yaver.io/download) for repo setup |
-| **RPM** | `sudo rpm -i https://github.com/kivanccakmak/yaver.io/releases/latest/download/yaver_latest_x86_64.rpm` |
+| **apt** (Debian/Ubuntu) | See [download page](https://yaver.io/download) for signed-repo setup, or grab a `.deb` from [releases](https://github.com/kivanccakmak/yaver.io/releases) and `sudo dpkg -i yaver_*_amd64.deb` |
+| **dnf/rpm** (Fedora/RHEL) | Download `yaver_<version>_x86_64.rpm` from [releases](https://github.com/kivanccakmak/yaver.io/releases) and `sudo rpm -i yaver_*.rpm` (or `sudo dnf install ./yaver_*.rpm`) |
+| **AppImage** | Download from [download page](https://yaver.io/download), `chmod +x Yaver-*.AppImage && ./Yaver-*.AppImage` |
+| **Tarball** | `curl -fsSL https://yaver.io/install.sh \| sh` — auto-detects arch, downloads the right tarball, installs to `~/.local/bin/yaver` |
 | **Nix** | `nix run github:kivanccakmak/yaver.io` |
 | **Docker** | `docker run --rm kivanccakmak/yaver-cli version` |
 | **curl** | `curl -fsSL https://yaver.io/install.sh \| sh` |

@@ -938,7 +938,7 @@ export default function HomePage() {
               <p className="mt-3 text-[11px] text-surface-500">
                 Works with: Claude Code, Codex, Aider, Ollama, Goose, or any tmux session.
                 {" "}<Link href="/download" className="underline hover:text-surface-300">All install methods</Link>.
-                {" "}Linux users can grab AppImage or <code>.deb</code> builds there.
+                {" "}Linux: <code>apt</code>, <code>dnf</code>, <code>dpkg</code>, AppImage, <code>.rpm</code>, tarball, or <code>curl | sh</code>.
               </p>
             </div>
 
