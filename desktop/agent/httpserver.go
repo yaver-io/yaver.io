@@ -177,6 +177,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/autodev/reports/revert", s.auth(s.handleAutodevRevert))
 	mux.HandleFunc("/autodev/start", s.auth(s.handleAutodevStart))
 	mux.HandleFunc("/autodev/options", s.auth(s.handleAutodevOptions))
+	mux.HandleFunc("/autoideas/start", s.auth(s.handleAutoIdeasStart))
+	mux.HandleFunc("/autoideas/file", s.auth(s.handleAutoIdeasFile))
+	mux.HandleFunc("/autoideas/select", s.auth(s.handleAutoIdeasSelect))
 	mux.HandleFunc("/releases/list", s.auth(s.handleReleaseList))
 	mux.HandleFunc("/releases/latest", s.auth(s.handleReleaseLatest))
 	mux.HandleFunc("/releases/bundle", s.auth(s.handleReleaseBundle))
@@ -7858,6 +7861,72 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolJSON(map[string]interface{}{"eventTypes": loadMeetings()})
 	case "meeting_bookings":
 		return mcpToolJSON(map[string]interface{}{"bookings": loadBookings()})
+
+	case "autoideas_start":
+		var spec AutoIdeasStart
+		_ = json.Unmarshal(call.Arguments, &spec)
+		if spec.WorkDir == "" {
+			return mcpToolError("work_dir required")
+		}
+		if _, err := os.Stat(spec.WorkDir); err != nil {
+			return mcpToolError("work_dir does not exist: " + spec.WorkDir)
+		}
+		project := spec.Project
+		if project == "" {
+			project = filepath.Base(spec.WorkDir)
+		}
+		exe, err := os.Executable()
+		if err != nil {
+			return mcpToolError("find yaver binary: " + err.Error())
+		}
+		args := autoIdeasBuildArgs(project, spec)
+		cmd := osexec.Command(exe, append([]string{"autoideas"}, args...)...)
+		cmd.Dir = spec.WorkDir
+		cmd.Stdin = nil
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		if err := cmd.Start(); err != nil {
+			return mcpToolError("spawn autoideas: " + err.Error())
+		}
+		go func() { _ = cmd.Wait() }()
+		return mcpToolJSON(map[string]interface{}{
+			"ok":          true,
+			"loop_name":   project + "-autoideas",
+			"stream_name": "autodev:" + project + "-autoideas",
+			"output":      autoIdeasOutputPath(spec),
+			"work_dir":    spec.WorkDir,
+		})
+
+	case "autoideas_file":
+		var args struct {
+			WorkDir string `json:"work_dir"`
+			Output  string `json:"output"`
+		}
+		_ = json.Unmarshal(call.Arguments, &args)
+		if args.WorkDir == "" {
+			return mcpToolError("work_dir required")
+		}
+		// Reuse the HTTP handler by synthesising a request — keeps
+		// the parsing logic in one place.
+		req, _ := http.NewRequest("GET",
+			fmt.Sprintf("/autoideas/file?work_dir=%s&output=%s", args.WorkDir, args.Output),
+			nil)
+		rec := newCapturingResponseWriter()
+		s.handleAutoIdeasFile(rec, req)
+		var payload interface{}
+		_ = json.Unmarshal(rec.Body(), &payload)
+		return mcpToolJSON(payload)
+
+	case "autoideas_select":
+		// Just forward the JSON args through to the HTTP handler.
+		req, _ := http.NewRequest("POST", "/autoideas/select",
+			bytes.NewReader(call.Arguments))
+		req.Header.Set("Content-Type", "application/json")
+		rec := newCapturingResponseWriter()
+		s.handleAutoIdeasSelect(rec, req)
+		var payload interface{}
+		_ = json.Unmarshal(rec.Body(), &payload)
+		return mcpToolJSON(payload)
 
 	case "autodev_options":
 		return mcpToolJSON(BuildAutodevOptions())
