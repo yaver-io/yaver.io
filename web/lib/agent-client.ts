@@ -175,6 +175,14 @@ export interface MachineCapabilities {
   supportsTestFlight?: boolean;
   supportsPlayStore?: boolean;
   lowPower?: boolean;
+  maxTaskSlots?: number;
+  profile?: {
+    path?: string;
+    summary?: string;
+    tags?: string[];
+    signatures?: string[];
+    preferredFor?: string[];
+  };
   runners?: MachineRunnerCapability[];
 }
 
@@ -641,6 +649,7 @@ class AgentClient {
     template?: "full" | "ship";
     maxParallel?: number;
     preferredDevice?: string;
+    allowedDevices?: string[];
   }): Promise<{ ok: boolean; run?: AgentGraphRun; error?: string }> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/agent/graphs`, {
@@ -655,6 +664,7 @@ class AgentClient {
         template: params.template ?? "full",
         maxParallel: params.maxParallel ?? 2,
         preferredDevice: params.preferredDevice ?? "",
+        allowedDevices: params.allowedDevices ?? [],
       }),
     });
     const data = await res.json().catch(() => ({}));

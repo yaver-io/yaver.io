@@ -31,7 +31,7 @@ export default function AgentModeScreen() {
   const [workDir, setWorkDir] = useState(params.path ?? "");
   const [prompt, setPrompt] = useState("");
   const [runner, setRunner] = useState("");
-  const [preferredDevice, setPreferredDevice] = useState("");
+  const [selectedDevices, setSelectedDevices] = useState<string[]>([]);
   const [template, setTemplate] = useState<"full" | "ship">("full");
   const [maxParallel, setMaxParallel] = useState("2");
 
@@ -78,7 +78,8 @@ export default function AgentModeScreen() {
         runner: runner || undefined,
         template,
         maxParallel: Math.max(1, parseInt(maxParallel || "2", 10) || 2),
-        preferredDevice: preferredDevice || undefined,
+        preferredDevice: selectedDevices.length == 1 ? selectedDevices[0] : undefined,
+        allowedDevices: selectedDevices,
       });
       if (!res.ok) {
         Alert.alert("Start failed", res.error || "Could not create agent graph");
@@ -89,7 +90,7 @@ export default function AgentModeScreen() {
     } finally {
       setStarting(false);
     }
-  }, [workDir, prompt, name, runner, template, maxParallel, preferredDevice, refresh]);
+  }, [workDir, prompt, name, runner, template, maxParallel, selectedDevices, refresh]);
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: c.bg }]} edges={["top"]}>
@@ -174,27 +175,27 @@ export default function AgentModeScreen() {
               <Text style={[styles.label, { color: c.textPrimary }]}>Machine</Text>
               <View style={styles.segmentWrap}>
                 <Pressable
-                  onPress={() => setPreferredDevice("")}
-                  style={[styles.segment, { borderColor: c.border, backgroundColor: preferredDevice === "" ? c.accent : c.bg }]}
+                  onPress={() => setSelectedDevices([])}
+                  style={[styles.segment, { borderColor: c.border, backgroundColor: selectedDevices.length === 0 ? c.accent : c.bg }]}
                 >
-                  <Text style={{ color: preferredDevice === "" ? "#fff" : c.textPrimary, fontWeight: "600" }}>
+                  <Text style={{ color: selectedDevices.length === 0 ? "#fff" : c.textPrimary, fontWeight: "600" }}>
                     Auto
                   </Text>
                 </Pressable>
                 {machines.slice(0, 6).map((m) => (
                   <Pressable
                     key={m.deviceId}
-                    onPress={() => setPreferredDevice(m.deviceId)}
-                    style={[styles.segment, { borderColor: c.border, backgroundColor: preferredDevice === m.deviceId ? c.accent : c.bg }]}
+                    onPress={() => setSelectedDevices((current) => current.includes(m.deviceId) ? current.filter((id) => id !== m.deviceId) : [...current, m.deviceId])}
+                    style={[styles.segment, { borderColor: c.border, backgroundColor: selectedDevices.includes(m.deviceId) ? c.accent : c.bg }]}
                   >
-                    <Text style={{ color: preferredDevice === m.deviceId ? "#fff" : c.textPrimary, fontWeight: "600" }}>
+                    <Text style={{ color: selectedDevices.includes(m.deviceId) ? "#fff" : c.textPrimary, fontWeight: "600" }}>
                       {m.name}
                     </Text>
                   </Pressable>
                 ))}
               </View>
               <Text style={[styles.helper, { color: c.textSecondary }]}>
-                Auto placement prefers planning on stronger Claude-ready machines, cheaper runners for bulk edits, macOS for TestFlight, and Android-capable hosts for Play Store work.
+                Select one or several machines. Yaver will load-balance across the selected pool, respect runner caps for Claude/Codex, and use machine signatures for TestFlight, Android, local-LLM, and deploy decisions.
               </Text>
             </>
           )}

@@ -38,7 +38,7 @@ function AgentOrchestrator() {
   const [workDir, setWorkDir] = useState("");
   const [prompt, setPrompt] = useState("");
   const [runner, setRunner] = useState("");
-  const [preferredDevice, setPreferredDevice] = useState("");
+  const [selectedDevices, setSelectedDevices] = useState<string[]>([]);
   const [template, setTemplate] = useState<"full" | "ship">("full");
   const [maxParallel, setMaxParallel] = useState("2");
   const [starting, setStarting] = useState(false);
@@ -73,7 +73,8 @@ function AgentOrchestrator() {
       runner: runner || undefined,
       template,
       maxParallel: Math.max(1, parseInt(maxParallel || "2", 10) || 2),
-      preferredDevice: preferredDevice || undefined,
+      preferredDevice: selectedDevices.length === 1 ? selectedDevices[0] : undefined,
+      allowedDevices: selectedDevices,
     });
     setStarting(false);
     if (!res.ok) {
@@ -88,7 +89,7 @@ function AgentOrchestrator() {
     <div className="space-y-4">
       <div className="bg-surface-900/50 border border-surface-800 rounded-xl p-4 space-y-3">
         <div className="text-xs text-surface-500">
-          Mesh orchestration can pin the graph to one machine or leave placement on auto so Yaver schedules nodes across Claude, Codex, and local runners by capability and session budget.
+          Mesh orchestration can use several machines at once. Pick a pool or leave it on auto and Yaver will spread nodes across capable hosts while serializing Claude/Codex usage when policy says so.
         </div>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="graph name"
           className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200" />
@@ -109,11 +110,26 @@ function AgentOrchestrator() {
             <option value="">auto runner</option>
             {runners.map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
           </select>
-          <select value={preferredDevice} onChange={(e) => setPreferredDevice(e.target.value)}
-            className="rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200">
-            <option value="">auto machine</option>
-            {machines.map((m: any) => <option key={m.deviceId} value={m.deviceId}>{m.name}</option>)}
-          </select>
+          <div className="rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200">
+            <div className="text-[11px] uppercase text-surface-500 mb-2">Machine Pool</div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setSelectedDevices([])}
+                className={`px-2 py-1 rounded-full border text-xs ${selectedDevices.length === 0 ? "border-indigo-400 bg-indigo-500/20 text-indigo-200" : "border-surface-700 text-surface-300"}`}>
+                Auto
+              </button>
+              {machines.map((m: any) => (
+                <button
+                  key={m.deviceId}
+                  type="button"
+                  onClick={() => setSelectedDevices((current) => current.includes(m.deviceId) ? current.filter((id) => id !== m.deviceId) : [...current, m.deviceId])}
+                  className={`px-2 py-1 rounded-full border text-xs ${selectedDevices.includes(m.deviceId) ? "border-indigo-400 bg-indigo-500/20 text-indigo-200" : "border-surface-700 text-surface-300"}`}>
+                  {m.name}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
         <button onClick={start} disabled={starting}
           className="px-4 py-2 text-sm rounded-lg bg-indigo-500 text-white hover:bg-indigo-400 disabled:opacity-50">
@@ -567,7 +583,11 @@ function Machines() {
                 {m.capabilities.supportsTestFlight && <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-300">testflight</span>}
                 {m.capabilities.supportsAndroid && <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300">android</span>}
                 {m.capabilities.supportsLocalLlm && <span className="px-1.5 py-0.5 rounded bg-surface-800 text-surface-300">local-llm</span>}
+                {m.capabilities.maxTaskSlots ? <span className="px-1.5 py-0.5 rounded bg-surface-800 text-surface-300">slots {m.capabilities.maxTaskSlots}</span> : null}
               </div>
+            )}
+            {m.capabilities?.profile?.summary && (
+              <div className="text-[10px] text-surface-500">{m.capabilities.profile.summary}</div>
             )}
             {m.uptime > 0 && (
               <div className="text-[10px] text-surface-500">uptime: {Math.floor(m.uptime / 86400)}d {Math.floor((m.uptime % 86400) / 3600)}h</div>

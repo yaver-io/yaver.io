@@ -3458,6 +3458,183 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		log.Printf("[MCP] Runner switched to %s", args.RunnerID)
 		return mcpToolResult(fmt.Sprintf("Runner switched to %s (%s)", r.Name, args.RunnerID))
 
+	case "agent_machine_inventory":
+		machines := listAllMachines(context.Background())
+		if len(machines) == 0 {
+			return mcpToolResult("No machines found.")
+		}
+		var sb strings.Builder
+		for _, m := range machines {
+			status := "offline"
+			if m.IsOnline {
+				status = "online"
+			}
+			scope := "remote"
+			if m.IsLocal {
+				scope = "local"
+			}
+			sb.WriteString(fmt.Sprintf("- %s (%s) [%s, %s]", m.Name, m.DeviceID, scope, status))
+			if m.Provider != "" {
+				sb.WriteString(fmt.Sprintf(" provider=%s", m.Provider))
+			}
+			if m.Capabilities != nil {
+				sb.WriteString(fmt.Sprintf(" slots=%d", m.Capabilities.MaxTaskSlots))
+				var ready []string
+				for _, runner := range m.Capabilities.Runners {
+					if runner.Ready {
+						ready = append(ready, runner.ID)
+					}
+				}
+				if len(ready) > 0 {
+					sb.WriteString(fmt.Sprintf(" runners=%s", strings.Join(ready, ",")))
+				}
+				if m.Capabilities.Profile != nil {
+					if m.Capabilities.Profile.Summary != "" {
+						sb.WriteString(fmt.Sprintf("\n  summary: %s", m.Capabilities.Profile.Summary))
+					}
+					if len(m.Capabilities.Profile.Signatures) > 0 {
+						sb.WriteString(fmt.Sprintf("\n  signatures: %s", strings.Join(m.Capabilities.Profile.Signatures, ", ")))
+					}
+					if len(m.Capabilities.Profile.PreferredFor) > 0 {
+						sb.WriteString(fmt.Sprintf("\n  preferred_for: %s", strings.Join(m.Capabilities.Profile.PreferredFor, ", ")))
+					}
+				}
+			}
+			sb.WriteString("\n")
+		}
+		return mcpToolResult(strings.TrimSpace(sb.String()))
+
+	case "agent_graph_start":
+		if s.agentGraphMgr == nil {
+			return mcpToolError("agent graphs unavailable")
+		}
+		var args struct {
+			Name            string   `json:"name"`
+			WorkDir         string   `json:"work_dir"`
+			Prompt          string   `json:"prompt"`
+			Template        string   `json:"template"`
+			Runner          string   `json:"runner"`
+			Model           string   `json:"model"`
+			MaxParallel     int      `json:"max_parallel"`
+			PreferredDevice string   `json:"preferred_device"`
+			AllowedDevices  []string `json:"allowed_devices"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.Prompt) == "" {
+			return mcpToolError("prompt is required")
+		}
+		workDir := strings.TrimSpace(args.WorkDir)
+		if workDir == "" {
+			workDir = s.taskMgr.workDir
+		}
+		req := AgentGraphCreateRequest{
+			Name:            args.Name,
+			WorkDir:         workDir,
+			Prompt:          args.Prompt,
+			Template:        args.Template,
+			Runner:          args.Runner,
+			Model:           args.Model,
+			MaxParallel:     args.MaxParallel,
+			PreferredDevice: args.PreferredDevice,
+			AllowedDevices:  args.AllowedDevices,
+		}
+		run, err := s.agentGraphMgr.CreateRun(req)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("start agent graph: %v", err))
+		}
+		var pool string
+		if len(args.AllowedDevices) > 0 {
+			pool = strings.Join(args.AllowedDevices, ", ")
+		} else if args.PreferredDevice != "" {
+			pool = args.PreferredDevice
+		} else {
+			pool = "auto"
+		}
+		return mcpToolResult(fmt.Sprintf("Agent graph started.\nGraph ID: %s\nName: %s\nMachine pool: %s\nNodes: %d", run.ID, run.Name, pool, len(run.Nodes)))
+
+	case "agent_graph_list":
+		if s.agentGraphMgr == nil {
+			return mcpToolError("agent graphs unavailable")
+		}
+		runs := s.agentGraphMgr.ListRuns()
+		if len(runs) == 0 {
+			return mcpToolResult("No agent graphs yet.")
+		}
+		var sb strings.Builder
+		for _, run := range runs {
+			sb.WriteString(fmt.Sprintf("- %s [%s] %s nodes=%d parallel=%d\n", run.ID, run.Status, run.Name, len(run.Nodes), run.MaxParallel))
+			for _, node := range run.Nodes {
+				sb.WriteString(fmt.Sprintf("  • %s [%s]", node.Spec.Title, node.Status))
+				if node.Placement != nil {
+					sb.WriteString(fmt.Sprintf(" @ %s", node.Placement.DeviceNameOrID()))
+					if node.Placement.Runner != "" {
+						sb.WriteString(fmt.Sprintf(" via %s", node.Placement.Runner))
+					}
+				}
+				sb.WriteString("\n")
+			}
+		}
+		return mcpToolResult(strings.TrimSpace(sb.String()))
+
+	case "agent_graph_show":
+		if s.agentGraphMgr == nil {
+			return mcpToolError("agent graphs unavailable")
+		}
+		var args struct {
+			GraphID string `json:"graph_id"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.GraphID) == "" {
+			return mcpToolError("graph_id is required")
+		}
+		run, ok := s.agentGraphMgr.GetRun(args.GraphID)
+		if !ok {
+			return mcpToolError("graph not found: " + args.GraphID)
+		}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("Graph %s [%s]\n", run.Name, run.Status))
+		sb.WriteString(fmt.Sprintf("ID: %s\nWorkDir: %s\nParallel: %d\n", run.ID, run.WorkDir, run.MaxParallel))
+		if run.Summary != "" {
+			sb.WriteString("Summary: " + run.Summary + "\n")
+		}
+		sb.WriteString("\nNodes:\n")
+		for _, node := range run.Nodes {
+			sb.WriteString(fmt.Sprintf("- %s (%s) [%s]\n", node.Spec.Title, node.Spec.Kind, node.Status))
+			if node.Placement != nil {
+				sb.WriteString(fmt.Sprintf("  placement: %s", node.Placement.DeviceNameOrID()))
+				if node.Placement.Runner != "" {
+					sb.WriteString(fmt.Sprintf(" via %s", node.Placement.Runner))
+				}
+				sb.WriteString("\n")
+				if node.Placement.Reason != "" {
+					sb.WriteString(fmt.Sprintf("  reason: %s\n", node.Placement.Reason))
+				}
+			}
+			if node.Summary != "" {
+				sb.WriteString(fmt.Sprintf("  summary: %s\n", node.Summary))
+			}
+			if node.Error != "" {
+				sb.WriteString(fmt.Sprintf("  error: %s\n", node.Error))
+			}
+		}
+		return mcpToolResult(strings.TrimSpace(sb.String()))
+
+	case "agent_graph_stop":
+		if s.agentGraphMgr == nil {
+			return mcpToolError("agent graphs unavailable")
+		}
+		var args struct {
+			GraphID string `json:"graph_id"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.GraphID) == "" {
+			return mcpToolError("graph_id is required")
+		}
+		if err := s.agentGraphMgr.StopRun(args.GraphID); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult("Stopped agent graph: " + args.GraphID)
+
 	// --- System & Config ---
 	case "get_system_info":
 		status := s.taskMgr.GetAgentStatus()

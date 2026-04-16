@@ -584,6 +584,50 @@ func TestMCPToolNotFound(t *testing.T) {
 	}
 }
 
+func TestMCPAgentGraphStartAndList(t *testing.T) {
+	token := "test-token-mcp-agent-graph"
+	workDir := t.TempDir()
+	tm := NewTaskManager(workDir, nil, defaultTestRunner())
+	tm.DummyMode = true
+	baseURL, cancel := startTestServer(t, token, tm)
+	defer cancel()
+
+	doMCPRequest(t, baseURL, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+		"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}
+	}}`)
+
+	startResp := doMCPRequest(t, baseURL, fmt.Sprintf(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+		"name":"agent_graph_start","arguments":{
+			"work_dir":%q,
+			"prompt":"Ship onboarding and keep mobile releases green",
+			"template":"ship",
+			"allowed_devices":["local"]
+		}
+	}}`, workDir))
+	startResult := startResp["result"].(map[string]interface{})
+	startContent := startResult["content"].([]interface{})
+	startText := startContent[0].(map[string]interface{})["text"].(string)
+	if !strings.Contains(startText, "Agent graph started.") {
+		t.Fatalf("expected graph start confirmation, got: %s", startText)
+	}
+	if !strings.Contains(startText, "Machine pool: local") {
+		t.Fatalf("expected machine pool in result, got: %s", startText)
+	}
+
+	listResp := doMCPRequest(t, baseURL, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
+		"name":"agent_graph_list","arguments":{}
+	}}`)
+	listResult := listResp["result"].(map[string]interface{})
+	listContent := listResult["content"].([]interface{})
+	listText := listContent[0].(map[string]interface{})["text"].(string)
+	if !strings.Contains(listText, "nodes=2") {
+		t.Fatalf("expected ship template node count, got: %s", listText)
+	}
+	if !strings.Contains(listText, "@ ") {
+		t.Fatalf("expected node placement output, got: %s", listText)
+	}
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Config
 // ═══════════════════════════════════════════════════════════════════════
