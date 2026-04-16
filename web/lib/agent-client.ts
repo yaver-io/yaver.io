@@ -2433,6 +2433,16 @@ class AgentClient {
     if (!res.ok) throw new Error(`schedule resume: HTTP ${res.status}`);
   }
 
+  // Fire a scheduled task immediately without altering its cadence.
+  async runScheduleNow(id: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/schedules/${encodeURIComponent(id)}/run-now`,
+      { method: "POST", headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`schedule run-now: HTTP ${res.status}`);
+  }
+
   async signalExec(execId: string, signal: string): Promise<void> {
     this.assertConnected();
     const res = await fetch(
@@ -2476,23 +2486,60 @@ class AgentClient {
 
   // PUT a File straight into a bucket. The agent persists it to
   // ~/.yaver/blobs/<bucket>/<key> and returns metadata. Bytes never
-  // transit Convex.
-  async blobsUpload(bucket: string, key: string, file: File): Promise<{ key: string; size?: number; contentType?: string }> {
+  // transit Convex. `onProgress` receives (loaded, total) pairs so
+  // the caller can draw a progress bar. Falls back to XHR because
+  // fetch() has no upload-progress event in any browser today.
+  async blobsUpload(
+    bucket: string,
+    key: string,
+    file: File,
+    onProgress?: (loaded: number, total: number) => void,
+  ): Promise<{ key: string; size?: number; contentType?: string }> {
     this.assertConnected();
-    const res = await fetch(
-      `${this.baseUrl}/blobs/${encodeURIComponent(bucket)}/${encodeURIComponent(key)}`,
-      {
+    const url = `${this.baseUrl}/blobs/${encodeURIComponent(bucket)}/${encodeURIComponent(key)}`;
+
+    if (!onProgress) {
+      const res = await fetch(url, {
         method: "PUT",
         headers: {
           ...this.authHeaders,
           "Content-Type": file.type || "application/octet-stream",
         },
         body: file,
-      },
-    );
-    const data = await res.json();
-    if (!res.ok) throw new Error(data?.error || `blob upload: HTTP ${res.status}`);
-    return data.blob;
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `blob upload: HTTP ${res.status}`);
+      return data.blob;
+    }
+
+    // Progress-aware path: XHR is the only cross-browser way to get
+    // upload.onprogress events. We still respect the same auth +
+    // content-type contract.
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", url);
+      for (const [k, v] of Object.entries(this.authHeaders)) {
+        xhr.setRequestHeader(k, v);
+      }
+      xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(e.loaded, e.total);
+      };
+      xhr.onload = () => {
+        try {
+          const data = JSON.parse(xhr.responseText || "{}");
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(data.blob);
+          } else {
+            reject(new Error(data?.error || `blob upload: HTTP ${xhr.status}`));
+          }
+        } catch {
+          reject(new Error(`blob upload: HTTP ${xhr.status}`));
+        }
+      };
+      xhr.onerror = () => reject(new Error("blob upload: network error"));
+      xhr.send(file);
+    });
   }
 
   // ── Files (read-only project browser) ─────────────────────────────
@@ -2998,6 +3045,252 @@ class AgentClient {
       return [];
     }
   }
+
+  // ── Phone-first mini backend ───────────────────────────────────────
+  //
+  // Mirrors desktop/agent/phone_backend_http.go. Each phone project is a
+  // SQLite-backed Yaver project stored at ~/.yaver/phone-projects/<slug>/.
+  // Promotion reuses the 19-target switch engine.
+
+  async listPhoneProjects(): Promise<PhoneProject[]> {
+    if (!this.isConnected || !this.baseUrl) return [];
+    const res = await fetch(`${this.baseUrl}/phone/projects/list`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data?.projects) ? data.projects : [];
+  }
+
+  async listPhoneTemplates(): Promise<PhoneTemplate[]> {
+    if (!this.isConnected || !this.baseUrl) return [];
+    const res = await fetch(`${this.baseUrl}/phone/projects/templates`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data?.templates) ? data.templates : [];
+  }
+
+  async createPhoneProject(spec: PhoneCreateSpec): Promise<PhoneProject> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/phone/projects/create`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(spec),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+    return data as PhoneProject;
+  }
+
+  async getPhoneProject(slug: string): Promise<PhoneProject | null> {
+    if (!this.isConnected || !this.baseUrl) return null;
+    const res = await fetch(
+      `${this.baseUrl}/phone/projects/get?slug=${encodeURIComponent(slug)}`,
+      { headers: this.authHeaders },
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as PhoneProject;
+  }
+
+  async deletePhoneProject(slug: string): Promise<boolean> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/phone/projects/delete`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ slug }),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return !!data?.ok;
+  }
+
+  async listPhoneTables(slug: string): Promise<Array<{ name: string; rowCount?: number }>> {
+    if (!this.isConnected || !this.baseUrl) return [];
+    const res = await fetch(
+      `${this.baseUrl}/phone/projects/tables?slug=${encodeURIComponent(slug)}`,
+      { headers: this.authHeaders },
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data?.tables) ? data.tables : [];
+  }
+
+  async browsePhoneTable(slug: string, table: string, cursor = "", limit = 50): Promise<{ rows: Array<Record<string, unknown>>; nextCursor?: string }> {
+    if (!this.isConnected || !this.baseUrl) return { rows: [] };
+    const params = new URLSearchParams({ slug, table, cursor, limit: String(limit) });
+    const res = await fetch(
+      `${this.baseUrl}/phone/projects/browse?${params.toString()}`,
+      { headers: this.authHeaders },
+    );
+    if (!res.ok) return { rows: [] };
+    return (await res.json()) as { rows: Array<Record<string, unknown>>; nextCursor?: string };
+  }
+
+  async insertPhoneRow(slug: string, table: string, doc: Record<string, unknown>): Promise<string | null> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/phone/projects/insert`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ slug, table, doc }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.id ?? null;
+  }
+
+  async updatePhoneRow(slug: string, table: string, id: string, fields: Record<string, unknown>): Promise<boolean> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/phone/projects/update`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ slug, table, id, fields }),
+    });
+    return res.ok;
+  }
+
+  async deletePhoneRow(slug: string, table: string, id: string): Promise<boolean> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/phone/projects/delete-row`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ slug, table, id }),
+    });
+    return res.ok;
+  }
+
+  async setPhoneSchema(slug: string, schema: PhoneSchema): Promise<PhoneProject | null> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/phone/projects/schema`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ slug, schema }),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as PhoneProject;
+  }
+
+  async setPhoneAuth(slug: string, auth: PhoneAuth): Promise<boolean> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/phone/projects/auth`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ slug, auth }),
+    });
+    return res.ok;
+  }
+
+  async setPhoneSeed(slug: string, seed: PhoneSeed): Promise<boolean> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/phone/projects/seed`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ slug, seed }),
+    });
+    return res.ok;
+  }
+
+  /** Returns a blob of the tgz export so callers can .click() to download. */
+  async exportPhoneProjectBlob(slug: string): Promise<Blob | null> {
+    if (!this.isConnected || !this.baseUrl) return null;
+    const res = await fetch(
+      `${this.baseUrl}/phone/projects/export?slug=${encodeURIComponent(slug)}`,
+      { headers: this.authHeaders },
+    );
+    if (!res.ok) return null;
+    return await res.blob();
+  }
+
+  async promotePhoneProject(slug: string, target: string, opts: { run?: boolean; dryRun?: boolean } = {}): Promise<PhonePromoteResult> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/phone/projects/promote`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ slug, target, run: !!opts.run, dryRun: !!opts.dryRun }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+    return data as PhonePromoteResult;
+  }
+}
+
+// ── Phone-first mini backend types (mirror desktop/agent/phone_backend.go) ──
+
+export interface PhoneColumn {
+  name: string;
+  type: string;
+  primary?: boolean;
+  required?: boolean;
+  unique?: boolean;
+  default?: string;
+}
+export interface PhoneIndex {
+  columns: string[];
+  unique?: boolean;
+}
+export interface PhoneTable {
+  name: string;
+  columns: PhoneColumn[];
+  indexes?: PhoneIndex[];
+}
+export interface PhoneRelation {
+  from: string;
+  to: string;
+  onDelete?: string;
+}
+export interface PhoneSchema {
+  tables: PhoneTable[];
+  relations?: PhoneRelation[];
+}
+export interface PhonePersona {
+  id: string;
+  email: string;
+  name?: string;
+  role?: string;
+}
+export interface PhoneAuth {
+  personas: PhonePersona[];
+}
+export type PhoneSeed = Record<string, Array<Record<string, unknown>>>;
+export interface PhoneStats {
+  tableCount: number;
+  rowCount: number;
+  perTable: Record<string, number>;
+  dbBytes: number;
+}
+export interface PhoneProject {
+  slug: string;
+  name: string;
+  template?: string;
+  dir: string;
+  createdAt: string;
+  updatedAt: string;
+  schema?: PhoneSchema | null;
+  auth?: PhoneAuth | null;
+  seed?: PhoneSeed | null;
+  stats?: PhoneStats | null;
+}
+export interface PhoneTemplate {
+  id: string;
+  label: string;
+  description: string;
+}
+export interface PhoneCreateSpec {
+  slug?: string;
+  name: string;
+  template?: string;
+  schema?: PhoneSchema;
+  auth?: PhoneAuth;
+  seed?: PhoneSeed;
+}
+export interface PhonePromoteResult {
+  state?: {
+    id: string;
+    fromBackend: string;
+    to: string;
+    complexity: string;
+    status: string;
+    steps: Array<{ id: string; title: string; status: string; error?: string }>;
+    rollbackExpiresAt?: string;
+  };
+  error?: string;
 }
 
 // ── Morning match-report types ─────────────────────────────────────────

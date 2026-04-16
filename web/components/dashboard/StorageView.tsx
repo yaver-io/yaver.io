@@ -356,6 +356,8 @@ function BlobsTab() {
   const [keys, setKeys] = useState<{ key: string; size?: number; contentType?: string; updatedAt?: string }[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadLabel, setUploadLabel] = useState("");
+  const [uploadPct, setUploadPct] = useState(0);
   const [newBucket, setNewBucket] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -395,9 +397,15 @@ function BlobsTab() {
       return;
     }
     setUploading(true);
+    setUploadPct(0);
     try {
-      for (const file of Array.from(files)) {
-        await agentClient.blobsUpload(bucket, file.name, file);
+      const list = Array.from(files);
+      for (let i = 0; i < list.length; i++) {
+        const file = list[i];
+        setUploadLabel(`${i + 1}/${list.length} ${file.name}`);
+        await agentClient.blobsUpload(bucket, file.name, file, (loaded, total) => {
+          if (total > 0) setUploadPct(Math.round((loaded / total) * 100));
+        });
       }
       await loadBuckets();
       setActive(bucket);
@@ -407,6 +415,8 @@ function BlobsTab() {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setUploading(false);
+      setUploadLabel("");
+      setUploadPct(0);
     }
   }
 
@@ -433,8 +443,26 @@ function BlobsTab() {
           value={newBucket}
           onChange={(e) => setNewBucket(e.target.value)}
         />
-        <input ref={fileRef} type="file" multiple onChange={(e) => void onUpload(e.target.files)} className="text-surface-300" />
-        {uploading && <span className="text-surface-400">uploading…</span>}
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          disabled={uploading}
+          onChange={(e) => void onUpload(e.target.files)}
+          className="text-surface-300"
+        />
+        {uploading && (
+          <span className="flex flex-1 items-center gap-2 text-surface-300">
+            <span className="truncate text-xs">{uploadLabel}</span>
+            <span className="h-1 flex-1 min-w-[80px] overflow-hidden rounded bg-surface-800">
+              <span
+                className="block h-full bg-indigo-500 transition-all"
+                style={{ width: `${uploadPct}%` }}
+              />
+            </span>
+            <span className="text-xs tabular-nums">{uploadPct}%</span>
+          </span>
+        )}
         <span className="ml-auto text-surface-500">files land in <code className="rounded bg-surface-900 px-1">~/.yaver/blobs/&lt;bucket&gt;/</code> on your machine</span>
       </div>
       {buckets.length === 0 && !err && !uploading && (

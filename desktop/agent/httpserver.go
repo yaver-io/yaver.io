@@ -2790,6 +2790,16 @@ func (s *HTTPServer) handleScheduleByID(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		jsonReply(w, http.StatusOK, map[string]interface{}{"ok": true})
+	case "run-now", "run":
+		if r.Method != http.MethodPost {
+			jsonError(w, http.StatusMethodNotAllowed, "POST only")
+			return
+		}
+		if err := s.scheduler.RunScheduleNow(id); err != nil {
+			jsonError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		jsonReply(w, http.StatusAccepted, map[string]interface{}{"ok": true, "queued": true})
 	default:
 		jsonError(w, http.StatusNotFound, "unknown action")
 	}
@@ -11194,6 +11204,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolResult(s.lemonMgr.Setup())
 
 	default:
+		// Phone-first mini backend (desktop/agent/phone_backend.go)
+		if handled, result := dispatchPhoneMCP(call.Name, call.Arguments); handled {
+			return result
+		}
 		// Try workspace tools (services, proxy, dns, storage, mock, check, perf, db, preview, oauth, cloud, migrate, remote, scale, backend, platform, domain, site, form, seo, cms, template)
 		if result := s.handleWorkspaceMCPTool(call); result != nil {
 			return result

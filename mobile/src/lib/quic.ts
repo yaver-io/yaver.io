@@ -2089,6 +2089,15 @@ export class QuicClient {
     if (!res.ok) throw new Error(`schedule resume: HTTP ${res.status}`);
   }
 
+  async runScheduleNow(id: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/schedules/${encodeURIComponent(id)}/run-now`,
+      { method: 'POST', headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`schedule run-now: HTTP ${res.status}`);
+  }
+
   // ── Accounts (cloud-provider credentials — stored on host only) ──
 
   async accountsList(): Promise<{ accounts: any[]; providers: any[] }> {
@@ -2118,6 +2127,78 @@ export class QuicClient {
       body: JSON.stringify({ provider }),
     });
     if (!res.ok) throw new Error(`account disconnect: HTTP ${res.status}`);
+  }
+
+  // ── Files (read-only project browser) ──
+
+  async filesRoots(): Promise<{ roots: { id: string; name: string; path: string }[] }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/files/roots`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`files roots: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async filesList(root: string, path = ''): Promise<any> {
+    this.assertConnected();
+    const p = new URLSearchParams({ root });
+    if (path) p.set('path', path);
+    const res = await fetch(`${this.baseUrl}/files/list?${p}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`files list: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async filesRead(root: string, path: string): Promise<any> {
+    this.assertConnected();
+    const p = new URLSearchParams({ root, path });
+    const res = await fetch(`${this.baseUrl}/files/read?${p}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`files read: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  // ── Shared storage (NAS / SMB / S3 / Azure) ──
+
+  async sharedStorageProfiles(): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/shared-storage/profiles`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`shared storage profiles: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async sharedStorageList(id: string, path = ''): Promise<any> {
+    this.assertConnected();
+    const p = new URLSearchParams({ id });
+    if (path) p.set('path', path);
+    const res = await fetch(`${this.baseUrl}/shared-storage/list?${p}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`shared storage list: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  // ── Blobs (simple key-value object store on the host) ──
+
+  async blobsListBuckets(): Promise<{ buckets: string[] }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/blobs`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`blobs list: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async blobsListKeys(bucket: string): Promise<{ keys: { key: string; size?: number; contentType?: string; updatedAt?: string }[] }> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/blobs/${encodeURIComponent(bucket)}`,
+      { headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`blob keys: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async blobsDelete(bucket: string, key: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/blobs/${encodeURIComponent(bucket)}/${encodeURIComponent(key)}`,
+      { method: 'DELETE', headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`blob delete: HTTP ${res.status}`);
   }
 
   // ── Quality Gates ──────────────────────────────────────────────────
