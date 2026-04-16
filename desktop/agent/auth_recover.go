@@ -40,6 +40,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -130,6 +131,7 @@ type recoveryRateLimiter struct {
 var recoveryLimiter = &recoveryRateLimiter{attempts: map[string]time.Time{}}
 var verifyHostTokenFn = verifyHostToken
 var requestDeviceCodeFn = requestDeviceCode
+var reportRecoveryEventFn = reportRecoveryEvent
 
 // SetBootstrapSecret stores the hash of a newly-minted
 // bootstrap secret into config.json. Called from
@@ -191,6 +193,14 @@ func (r *recoveryRateLimiter) reset() {
 	r.attempts = map[string]time.Time{}
 }
 
+func reportRecoveryEvent(s *HTTPServer, stage string, details map[string]interface{}) {
+	log.Printf("[RECOVER] %s %+v", stage, details)
+	if s == nil || strings.TrimSpace(s.convexURL) == "" || strings.TrimSpace(s.token) == "" {
+		return
+	}
+	go ReportSecurityEvent(s.convexURL, s.token, "auth_recover_"+stage, details)
+}
+
 // --- HTTP ---------------------------------------------------------------
 
 // handleAuthRecover is the unauthenticated recovery endpoint.
@@ -202,11 +212,13 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s != nil && strings.TrimSpace(s.token) != "" && !s.authExpired.Load() {
+		reportRecoveryEventFn(s, "rejected_healthy", map[string]interface{}{"ip": clientIP(r)})
 		jsonError(w, http.StatusConflict, "agent auth is healthy; recovery is not allowed")
 		return
 	}
 	ip := clientIP(r)
 	if !recoveryLimiter.allow(ip) {
+		reportRecoveryEventFn(s, "rate_limited", map[string]interface{}{"ip": ip})
 		jsonError(w, http.StatusTooManyRequests, "too many recovery attempts — wait 5 seconds")
 		return
 	}
@@ -228,17 +240,21 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 	//      caller presents the pre-shared bootstrap secret that
 	//      was set up at install time.
 	authedAsHost := false
+	authMethod := "bootstrap_secret"
 	if bearer := extractBearerToken(r); bearer != "" {
 		if ok, hostErr := verifyHostTokenFn(bearer); hostErr == nil && ok {
 			authedAsHost = true
+			authMethod = "host_token"
 		}
 	}
 	if !authedAsHost {
 		if body.Secret == "" {
+			reportRecoveryEventFn(s, "missing_proof", map[string]interface{}{"ip": ip, "mode": body.Mode})
 			jsonError(w, http.StatusUnauthorized, "host token or bootstrap secret required")
 			return
 		}
 		if !verifyBootstrapSecret(body.Secret) {
+			reportRecoveryEventFn(s, "invalid_secret", map[string]interface{}{"ip": ip, "mode": body.Mode})
 			jsonError(w, http.StatusForbidden, "invalid bootstrap secret")
 			return
 		}
@@ -247,6 +263,7 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 		body.Mode = "pair"
 	}
 	if body.Mode == "device-code" && !authedAsHost {
+		reportRecoveryEventFn(s, "device_code_rejected", map[string]interface{}{"ip": ip, "authMethod": authMethod})
 		jsonError(w, http.StatusForbidden, "device-code recovery requires verified host authentication")
 		return
 	}
@@ -266,6 +283,7 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 			PairSubmitURL: fmt.Sprintf("/auth/pair/submit?code=%s", session.Code),
 			ExpiresAt:     session.ExpiresAt.UTC().Format(time.RFC3339),
 		}
+		reportRecoveryEventFn(s, "pair_started", map[string]interface{}{"ip": ip, "authMethod": authMethod})
 		jsonReply(w, http.StatusOK, resp)
 
 	case "device-code":
@@ -298,9 +316,11 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 			UserCode:      dc.UserCode,
 			ExpiresAt:     time.UnixMilli(dc.ExpiresAt).UTC().Format(time.RFC3339),
 		}
+		reportRecoveryEventFn(s, "device_code_started", map[string]interface{}{"ip": ip, "authMethod": authMethod})
 		jsonReply(w, http.StatusOK, resp)
 
 	default:
+		reportRecoveryEventFn(s, "invalid_mode", map[string]interface{}{"ip": ip, "mode": body.Mode, "authMethod": authMethod})
 		jsonError(w, http.StatusBadRequest, "mode must be 'pair' or 'device-code'")
 	}
 }
