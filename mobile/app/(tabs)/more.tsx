@@ -2568,6 +2568,21 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
+        {/* Exec — run shell commands on the connected machine */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/exec" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u2699"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Exec</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Run shell commands on this machine, stream output back</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
         {/* Schedules — cron / runAt / interval tasks on the agent */}
         {connected && (
           <Pressable
@@ -2593,6 +2608,21 @@ export default function MoreScreen() {
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Accounts</Text>
               <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Connect AWS / GCP / Stripe / LemonSqueezy — creds stay local</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
+        {/* Phone Backend — mini backend lives inside the app, promotable to real infra */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/phone-projects" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u26A1"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Phone Backend</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Create a mini backend from your phone — portable to Convex / Supabase</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
