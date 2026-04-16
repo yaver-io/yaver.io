@@ -174,7 +174,7 @@ func runAIGeneratorCodex(ctx context.Context, spec AIGeneratorSpec) (string, err
 	if err := CheckRunnerReady(GetRunnerConfig("codex"), spec.WorkDir); err != nil {
 		return "", err
 	}
-	cmd := osexec.CommandContext(ctx, "codex", "--quiet", "--full-auto", "-")
+	cmd := osexec.CommandContext(ctx, "codex", "exec", "--full-auto", "-")
 	cmd.Dir = spec.WorkDir
 	cmd.Stdin = strings.NewReader(spec.Prompt)
 	cmd.Stderr = os.Stderr

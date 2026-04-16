@@ -11,6 +11,8 @@ package main
 // daemon, or talks to Claude — those belong in e2e.
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -74,6 +76,107 @@ func TestResolveAutodevDeployTargets(t *testing.T) {
 		if !sliceEq(got, c.want) {
 			t.Errorf("resolveDeploy(%q): want %v, got %v", c.in, c.want, got)
 		}
+	}
+}
+
+func TestEnsureAutodevSpecReRegistersExistingSpec(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workDir := t.TempDir()
+	specPath := filepath.Join(workDir, ".autodev.loop.yaml")
+	if err := os.WriteFile(specPath, []byte(`name: demo-autodev
+mode: develop
+target: web
+schedule:
+  every: 30s
+think:
+  runner: codex
+ship:
+  branch: main
+budget:
+  max_iterations_per_day: 10
+`), 0o644); err != nil {
+		t.Fatalf("write spec: %v", err)
+	}
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	p := autodevPlan{LoopName: "demo-autodev", SpecPath: specPath}
+	if err := ensureAutodevSpec(p); err != nil {
+		t.Fatalf("ensureAutodevSpec: %v", err)
+	}
+	loops, err := loadLoops()
+	if err != nil {
+		t.Fatalf("loadLoops: %v", err)
+	}
+	l, ok := loops[p.LoopName]
+	if !ok {
+		t.Fatalf("expected loop %q to be registered", p.LoopName)
+	}
+	wantWorkDir, _ := filepath.EvalSymlinks(workDir)
+	gotWorkDir, _ := filepath.EvalSymlinks(l.WorkDir)
+	if wantWorkDir == "" {
+		wantWorkDir = workDir
+	}
+	if gotWorkDir == "" {
+		gotWorkDir = l.WorkDir
+	}
+	if gotWorkDir != wantWorkDir {
+		t.Fatalf("expected workdir %q, got %q", wantWorkDir, gotWorkDir)
+	}
+}
+
+func TestEnsureAutodevSpecRewritesStaleLoopName(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workDir := t.TempDir()
+	specPath := filepath.Join(workDir, ".autodev.loop.yaml")
+	if err := os.WriteFile(specPath, []byte(`name: stale-loop
+mode: develop
+target: web
+schedule:
+  every: 30s
+think:
+  runner: codex
+ship:
+  branch: main
+budget:
+  max_iterations_per_day: 10
+`), 0o644); err != nil {
+		t.Fatalf("write stale spec: %v", err)
+	}
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	p := autodevPlan{
+		LoopName:   "demo-autodev",
+		SpecPath:   specPath,
+		Kind:       "autodev",
+		Target:     "web",
+		Runner:     "codex",
+		Branch:     "main",
+		MaxIterDay: 10,
+	}
+	if err := ensureAutodevSpec(p); err != nil {
+		t.Fatalf("ensureAutodevSpec: %v", err)
+	}
+	data, err := os.ReadFile(specPath)
+	if err != nil {
+		t.Fatalf("read rewritten spec: %v", err)
+	}
+	if !strings.Contains(string(data), "name: demo-autodev") {
+		t.Fatalf("expected rewritten spec to contain updated loop name, got %q", string(data))
+	}
+	loops, err := loadLoops()
+	if err != nil {
+		t.Fatalf("loadLoops: %v", err)
+	}
+	if _, ok := loops[p.LoopName]; !ok {
+		t.Fatalf("expected loop %q to be registered after stale spec rewrite", p.LoopName)
 	}
 }
 
@@ -230,11 +333,11 @@ func TestLogStreamRegistryConcurrent(t *testing.T) {
 
 func TestSafeFileSegment(t *testing.T) {
 	cases := map[string]string{
-		"plain":              "plain",
-		"with spaces":        "with_spaces",
-		"path/with/slashes":  "path_with_slashes",
-		"colon:in:name":      "colon_in_name",
-		"a/b:c d":            "a_b_c_d",
+		"plain":             "plain",
+		"with spaces":       "with_spaces",
+		"path/with/slashes": "path_with_slashes",
+		"colon:in:name":     "colon_in_name",
+		"a/b:c d":           "a_b_c_d",
 	}
 	for in, want := range cases {
 		if got := safeFileSegment(in); got != want {
