@@ -219,6 +219,41 @@ existing tasks chat in mobile.
       against a checked-in tiny project so the planner+implementer
       path is smoke-tested per PR.
 
+## Autoideas (Apr 2026)
+
+`yaver autoideas <project>` is a sibling of autodev that ONLY
+generates ideas — appends `- [ ] <title>` lines to `ideas.md` (or
+`--output`) on a timer, runs detached, mirrors autodev's flag set
+(`--hours`, `--lite/--heavy`, `--prompt`, `--harden`, `--engine`,
+`--hybrid`). Mobile / web shows the file as checkboxes; user
+selects items to implement and triggers `autoideas_select` /
+POST /autoideas/select / MCP `autoideas_select` which materialises
+a curated checklist and starts an autodev run with --remained
+pointed at it. Generation continues in parallel with implementation.
+
+Wired in this commit:
+  CLI:   `yaver autoideas <project> [...flags]`
+  HTTP:  POST /autoideas/start, GET /autoideas/file, POST /autoideas/select
+  MCP:   autoideas_start, autoideas_file, autoideas_select
+
+Still to do:
+
+- [ ] Mobile Auto Dev tab gets an "Ideas" section that fetches
+      `/autoideas/file?work_dir=…` every few seconds, renders one
+      checkbox per item, "Select all" and "Implement selected"
+      buttons. "Implement selected" calls `/autoideas/select` with
+      the picked line numbers and switches to the Chat section.
+      Also needs a "Generate more" button that calls /autoideas/start.
+- [ ] Web dashboard mirrors the same Ideas pane.
+- [ ] Yaver-to-yaver: when the user picks "Run on <other-device>"
+      from the mobile Ideas pane, the call goes through the
+      existing P2P/relay device-routing layer (same one
+      yaver_handoff uses) instead of hitting localhost. The HTTP
+      contract is identical — just resolve the target device's
+      base URL via resolveDeviceURL.
+- [ ] CI: smoke test `yaver autoideas <fixture> --plan` so the
+      flag/help surface stays linted per PR.
+
 ## Notes for whoever runs this on another machine
 
 * Build: `cd desktop/agent && go build ./...`

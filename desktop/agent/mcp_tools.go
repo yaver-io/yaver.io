@@ -2265,6 +2265,57 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name": "autoideas_start",
+			"description": "Start a yaver autoideas run on a local project. Long-lived loop that asks the AI for fresh single-PR-sized ideas every tick and appends them as `- [ ] <title>` lines to ideas.md (or --output). Mobile/web renders them as checkboxes; the user picks ones to implement and triggers autoideas_select which materialises a curated checklist and starts an autodev run with --remained pointed at it. Generation continues in parallel with implementation.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"work_dir"},
+				"properties": map[string]interface{}{
+					"project":     map[string]interface{}{"type": "string"},
+					"work_dir":    map[string]interface{}{"type": "string"},
+					"hours":       map[string]interface{}{"type": "string"},
+					"load":        map[string]interface{}{"type": "string", "enum": []string{"lite", "high"}},
+					"prompt":      map[string]interface{}{"type": "string"},
+					"harden":      map[string]interface{}{"type": "string", "enum": []string{"", "security", "memory", "perf", "quality", "all"}},
+					"engine":      map[string]interface{}{"type": "string", "enum": []string{"claude", "hybrid"}},
+					"output":      map[string]interface{}{"type": "string", "description": "default ideas.md"},
+					"max_batches": map[string]interface{}{"type": "integer"},
+					"tick":        map[string]interface{}{"type": "integer"},
+				},
+			},
+		},
+		{
+			"name":        "autoideas_file",
+			"description": "Read the current ideas file as a structured list of {line, checked, title}.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"work_dir"},
+				"properties": map[string]interface{}{
+					"work_dir": map[string]interface{}{"type": "string"},
+					"output":   map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+		{
+			"name":        "autoideas_select",
+			"description": "Materialise selected ideas as a checklist + start an autodev run with --remained pointed at it. Marks the picked lines checked in the source file.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"work_dir", "lines"},
+				"properties": map[string]interface{}{
+					"work_dir":    map[string]interface{}{"type": "string"},
+					"output":      map[string]interface{}{"type": "string"},
+					"project":     map[string]interface{}{"type": "string"},
+					"lines":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "integer"}},
+					"engine":      map[string]interface{}{"type": "string", "enum": []string{"claude", "hybrid"}},
+					"hours":       map[string]interface{}{"type": "string"},
+					"load":        map[string]interface{}{"type": "string", "enum": []string{"lite", "high"}},
+					"auto_branch": map[string]interface{}{"type": "boolean"},
+					"deploy":      map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+		{
 			"name":        "autodev_options",
 			"description": "Discover what autodev settings the remote dev machine supports — which engines (claude / hybrid) are usable, which underlying runners are installed, and the defaults the UI should pre-fill (engine=claude, hours=8, load=lite, auto_ideas=1, autotest=on). Mobile/web/MCP clients should call this before showing an autodev start form so they only offer what's actually available.",
 			"inputSchema": map[string]interface{}{
