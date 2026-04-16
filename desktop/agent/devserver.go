@@ -72,6 +72,9 @@ type DevServerStatus struct {
 	PID        int    `json:"pid,omitempty"`
 	WorkDir    string `json:"workDir,omitempty"`
 	HotReload  bool   `json:"hotReload"`
+	TargetDeviceID    string `json:"targetDeviceId,omitempty"`
+	TargetDeviceName  string `json:"targetDeviceName,omitempty"`
+	TargetDeviceClass string `json:"targetDeviceClass,omitempty"`
 }
 
 // DevServerEvent is pushed via SSE on /dev/events.
@@ -154,6 +157,13 @@ type devServerSession struct {
 	proxy   *httputil.ReverseProxy
 	ctx     context.Context
 	cancel  context.CancelFunc
+	target  DevServerTarget
+}
+
+type DevServerTarget struct {
+	DeviceID    string
+	DeviceName  string
+	DeviceClass string
 }
 
 // NewDevServerManager creates a new manager.
@@ -164,7 +174,7 @@ func NewDevServerManager() *DevServerManager {
 // Start launches a dev server for the given framework in the given directory.
 // For fast frameworks (Vite, Next.js), blocks until ready.
 // For slow frameworks (Flutter, Expo), launches async and returns immediately.
-func (m *DevServerManager) Start(framework, workDir, platform string, port int) error {
+func (m *DevServerManager) Start(framework, workDir, platform string, port int, target DevServerTarget) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -252,6 +262,7 @@ func (m *DevServerManager) Start(framework, workDir, platform string, port int) 
 		server: ds,
 		ctx:    ctx,
 		cancel: cancel,
+		target: target,
 	}
 
 	// Emit starting event
@@ -370,6 +381,9 @@ func (m *DevServerManager) Status() *DevServerStatus {
 	}
 
 	s := m.active.server.Status()
+	s.TargetDeviceID = m.active.target.DeviceID
+	s.TargetDeviceName = m.active.target.DeviceName
+	s.TargetDeviceClass = m.active.target.DeviceClass
 	return &s
 }
 

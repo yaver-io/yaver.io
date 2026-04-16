@@ -9,6 +9,7 @@ import {
   Text,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
@@ -36,16 +37,47 @@ const FRAMEWORK_ICONS: Record<string, string> = {
   vite: "\u26A1",
 };
 
+const PREVIEW_TARGET_KEY = "@yaver/hotreload_preview_target";
+
 // ── Hot Reload Tab ────────────────────────────────────────────────
 
 export default function HotReloadScreen() {
   const c = useColors();
-  const { activeDevice, connectionStatus } = useDevice();
+  const { activeDevice, connectionStatus, devices } = useDevice();
   const isConnected = connectionStatus === "connected" && !!activeDevice;
 
   const [devStatus, setDevStatus] = useState<DevServerStatus | null>(null);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [startingProject, setStartingProject] = useState<string | null>(null);
+  const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
+  const mobileWorkers = devices.filter((d) => d.deviceClass === "edge-mobile");
+  const selectedTarget = mobileWorkers.find((d) => d.id === selectedTargetId) || null;
+
+  useEffect(() => {
+    AsyncStorage.getItem(PREVIEW_TARGET_KEY)
+      .then((value) => {
+        if (value) setSelectedTargetId(value);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (selectedTargetId) {
+      AsyncStorage.setItem(PREVIEW_TARGET_KEY, selectedTargetId).catch(() => {});
+      return;
+    }
+    AsyncStorage.removeItem(PREVIEW_TARGET_KEY).catch(() => {});
+  }, [selectedTargetId]);
+
+  useEffect(() => {
+    if (devStatus?.targetDeviceId) {
+      setSelectedTargetId(devStatus.targetDeviceId);
+      return;
+    }
+    if (!devStatus?.running && !devStatus?.building) {
+      return;
+    }
+  }, [devStatus?.targetDeviceId, devStatus?.running, devStatus?.building]);
 
   // Poll dev server status + mobile projects
   useEffect(() => {
@@ -186,6 +218,9 @@ export default function HotReloadScreen() {
       await quicClient.startDevServer({
         framework: project.framework || "",
         workDir: project.path,
+        targetDeviceId: selectedTarget?.id,
+        targetDeviceName: selectedTarget?.name,
+        targetDeviceClass: selectedTarget?.deviceClass,
       });
     } catch {
       Alert.alert("Failed", `Could not start dev server for ${project.name}`);
@@ -223,6 +258,50 @@ export default function HotReloadScreen() {
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <View style={s.container}>
+        {mobileWorkers.length > 0 && (
+          <>
+            <Text style={[s.sectionTitle, { color: c.textMuted }]}>Preview Target</Text>
+            <View style={[s.card, s.projectCard, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+              <Text style={[s.projectName, { color: c.textPrimary }]}>Choose real-device Hermes target</Text>
+              <Text style={[s.projectMeta, { color: c.textMuted, marginTop: 4 }]}>
+                Default stays on this phone. Pick a spare mobile worker only when you want Hermes preview to target that device.
+              </Text>
+              <View style={s.targetChipRow}>
+                <Pressable
+                  onPress={() => setSelectedTargetId(null)}
+                  style={[
+                    s.targetChip,
+                    {
+                      borderColor: !selectedTarget ? c.accent : c.border,
+                      backgroundColor: !selectedTarget ? c.accent + "22" : c.bg,
+                    },
+                  ]}
+                >
+                  <Text style={{ color: !selectedTarget ? c.accent : c.textSecondary, fontWeight: "600" }}>
+                    This device
+                  </Text>
+                </Pressable>
+                {mobileWorkers.map((worker) => (
+                  <Pressable
+                    key={worker.id}
+                    onPress={() => setSelectedTargetId(worker.id)}
+                    style={[
+                      s.targetChip,
+                      {
+                        borderColor: selectedTarget?.id === worker.id ? c.accent : c.border,
+                        backgroundColor: selectedTarget?.id === worker.id ? c.accent + "22" : c.bg,
+                      },
+                    ]}
+                  >
+                    <Text style={{ color: selectedTarget?.id === worker.id ? c.accent : c.textSecondary, fontWeight: "600" }}>
+                      {worker.name}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          </>
+        )}
 
         {/* Running / starting dev server card */}
         {devStatus && (
@@ -236,6 +315,16 @@ export default function HotReloadScreen() {
                     ? `${devStatus.framework} · port ${devStatus.port} · hot reload ${devStatus.hotReload ? "on" : "off"}`
                     : `${devStatus.framework} · starting...`}
                 </Text>
+                {(devStatus.targetDeviceName || selectedTarget?.name) && (
+                  <Text style={[s.cardMeta, { color: "#7dd3fc" }]}>
+                    target · {devStatus.targetDeviceName || selectedTarget?.name}
+                  </Text>
+                )}
+                {!devStatus.targetDeviceName && !selectedTarget && (
+                  <Text style={[s.cardMeta, { color: "#7dd3fc" }]}>
+                    target · this device
+                  </Text>
+                )}
               </View>
               {!devStatus.running && <ActivityIndicator size="small" color="#f59e0b" />}
             </View>
@@ -379,6 +468,13 @@ const s = StyleSheet.create({
   projectName: { fontSize: 14, fontWeight: "600" },
   projectMeta: { fontSize: 11, marginTop: 1 },
   listContent: { paddingBottom: 40 },
+  targetChipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
+  targetChip: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
 
   // Empty
   emptyContainer: { flex: 1, alignItems: "center", justifyContent: "center", padding: 40 },

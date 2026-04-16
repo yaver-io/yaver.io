@@ -125,7 +125,7 @@ func (em *ExecManager) StartExec(command, workDir, shell string, env map[string]
 		if runtime.GOOS == "windows" {
 			shell = "cmd"
 		} else {
-			shell = "sh"
+			shell = preferredUnixShell()
 		}
 	}
 

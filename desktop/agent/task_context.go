@@ -141,6 +141,11 @@ When they ask to "start", "load", "run", or "hot reload" an app on their phone:
      -d '{"framework":"<auto>","workDir":"<project-path>"}'
    (No auth header needed — you're running on the same machine as the agent.)
 
+   Optional: if the user wants a secondary phone as the real-device preview
+   target, include:
+   "targetDeviceId", "targetDeviceName", and "targetDeviceClass":"edge-mobile"
+   in the JSON body. If omitted, the current phone remains the default target.
+
 2. The phone automatically detects the dev server and shows a green "Open App" banner.
    The user taps it and the app loads in a WebView through the P2P channel.
 

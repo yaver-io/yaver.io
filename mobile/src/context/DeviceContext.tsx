@@ -116,6 +116,18 @@ export interface Device {
   allowGuestProvidedApiKeys?: boolean;
   /** whether this owned device is on its own dedicated backend session */
   sessionBinding?: "dedicated" | "legacy-shared";
+  /** broad role of the node in Yaver scheduling */
+  deviceClass?: "desktop" | "edge-mobile" | "server";
+  /** edge/mobile capability hints for placement */
+  edgeProfile?: {
+    supportsLocalInference: boolean;
+    maxModelClass: "none" | "tiny" | "small" | "medium";
+    preferredTasks: Array<"speech" | "ocr" | "vision" | "embedding" | "rerank" | "automation" | "small-llm">;
+    memoryMb?: number;
+    batteryPct?: number;
+    isCharging?: boolean;
+    thermalState?: "nominal" | "warm" | "hot";
+  };
 }
 
 function deviceIdentityKey(device: Pick<Device, "id" | "hwid" | "name" | "isGuest" | "hostEmail" | "hostName">): string {
@@ -277,6 +289,8 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             useHostApiKeys: d.useHostApiKeys,
             allowGuestProvidedApiKeys: d.allowGuestProvidedApiKeys,
             sessionBinding: d.sessionBinding,
+            deviceClass: d.deviceClass,
+            edgeProfile: d.edgeProfile,
           };
         });
         // Deduplicate by stable device identity. Guest devices must include

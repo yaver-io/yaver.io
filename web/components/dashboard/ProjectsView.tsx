@@ -13,6 +13,16 @@ interface Project {
   tags?: string[];
 }
 
+interface PreviewTarget {
+  id: string;
+  name: string;
+  deviceClass?: string;
+  edgeProfile?: {
+    supportsLocalInference: boolean;
+    maxModelClass: "none" | "tiny" | "small" | "medium";
+  };
+}
+
 const FRAMEWORK_ICONS: Record<string, string> = {
   expo: "\uD83D\uDCF1",
   "react-native": "\u269B",
@@ -34,12 +44,27 @@ function getCategory(framework?: string): "mobile" | "web" | "other" {
   return "other";
 }
 
-export default function ProjectsView({ onTaskCreated }: { onTaskCreated?: (taskId: string) => void }) {
+export default function ProjectsView({
+  onTaskCreated,
+  mobileWorkers,
+  selectedPreviewTarget,
+  onSelectPreviewTarget,
+}: {
+  onTaskCreated?: (taskId: string) => void;
+  mobileWorkers: PreviewTarget[];
+  selectedPreviewTarget: PreviewTarget | null;
+  onSelectPreviewTarget: (deviceId: string | null) => void;
+}) {
   const [envProject, setEnvProject] = useState<string | null>(null);
   const [detailPath, setDetailPath] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
-  const [devStatus, setDevStatus] = useState<{ running: boolean; framework?: string; workDir?: string } | null>(null);
+  const [devStatus, setDevStatus] = useState<{
+    running: boolean;
+    framework?: string;
+    workDir?: string;
+    targetDeviceName?: string;
+  } | null>(null);
   const [filter, setFilter] = useState<Category>("all");
   const [search, setSearch] = useState("");
 
@@ -65,11 +90,14 @@ export default function ProjectsView({ onTaskCreated }: { onTaskCreated?: (taskI
 
   async function startProject(project: Project) {
     try {
-      const task = await agentClient.sendTask(
-        `Start dev server for ${project.name}`,
-        `Start the dev server for ${project.name} at ${project.path}. Use the appropriate framework (auto-detect). Make it available for preview.`
-      );
-      onTaskCreated?.(task.id);
+      await agentClient.startDevServer({
+        framework: project.framework || "",
+        workDir: project.path,
+        targetDeviceId: selectedPreviewTarget?.id,
+        targetDeviceName: selectedPreviewTarget?.name,
+        targetDeviceClass: selectedPreviewTarget?.deviceClass,
+      });
+      await pollDevServer();
     } catch {}
   }
 
@@ -136,6 +164,9 @@ export default function ProjectsView({ onTaskCreated }: { onTaskCreated?: (taskI
           <div className="text-sm">
             <span className="text-emerald-400 font-medium">Dev server running</span>
             <span className="text-surface-400 ml-2">{devStatus.framework} &middot; {devStatus.workDir?.split("/").pop()}</span>
+            {devStatus.targetDeviceName ? (
+              <span className="text-sky-300 ml-2">→ {devStatus.targetDeviceName}</span>
+            ) : null}
           </div>
           <div className="flex gap-2">
             <button onClick={() => agentClient.reloadDevServer()} className="px-3 py-1 text-xs rounded-md bg-surface-800 text-surface-300 hover:bg-surface-700">Reload</button>
@@ -145,6 +176,41 @@ export default function ProjectsView({ onTaskCreated }: { onTaskCreated?: (taskI
       )}
 
       {/* Search + Filter */}
+      {mobileWorkers.length > 0 && (
+        <div className="rounded-lg border border-surface-800 bg-surface-900/40 p-3 space-y-2">
+          <div className="text-[11px] font-semibold uppercase tracking-widest text-surface-500">Preview Target</div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => onSelectPreviewTarget(null)}
+              className={`px-2.5 py-1 text-[11px] rounded-md border ${
+                !selectedPreviewTarget
+                  ? "border-sky-500/40 bg-sky-500/10 text-sky-300"
+                  : "border-surface-800 text-surface-500 hover:border-surface-700 hover:text-surface-300"
+              }`}
+            >
+              Current device
+            </button>
+            {mobileWorkers.map((device) => (
+              <button
+                key={device.id}
+                onClick={() => onSelectPreviewTarget(device.id)}
+                className={`px-2.5 py-1 text-[11px] rounded-md border ${
+                  selectedPreviewTarget?.id === device.id
+                    ? "border-sky-500/40 bg-sky-500/10 text-sky-300"
+                    : "border-surface-800 text-surface-500 hover:border-surface-700 hover:text-surface-300"
+                }`}
+                title={device.edgeProfile ? `max ${device.edgeProfile.maxModelClass}` : "mobile worker"}
+              >
+                {device.name}
+              </button>
+            ))}
+          </div>
+          <div className="text-xs text-surface-500">
+            Hermes preview metadata now tracks the selected real-device worker. Remote load/stream execution comes next.
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex gap-1">
           {filterChips.map(c => (

@@ -23,6 +23,32 @@ import type { BuildInfo, BuildSummary } from "./builds";
 
 export type TaskStatus = "queued" | "running" | "completed" | "failed" | "stopped";
 
+// ── Vault + API key types (mirrors desktop/agent/vault.go + apikeys.go) ──
+export type VaultCategory = "api-key" | "signing-key" | "ssh-key" | "git-credential" | "custom";
+
+export interface VaultEntrySummary {
+  name: string;
+  category: VaultCategory;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface VaultEntry extends VaultEntrySummary {
+  value: string;
+}
+
+export interface APIKeyRecord {
+  tokenHash: string;
+  label: string;
+  createdAt?: string;
+  lastUsedAt?: string;
+  usageCount?: number;
+  rateLimitPerMin?: number;
+  disabled?: boolean;
+  scopes?: string[];
+}
+
 export interface ImageAttachment {
   base64: string;       // base64 encoded image data (no data URI prefix)
   mimeType: string;     // "image/jpeg" or "image/png"
@@ -1923,6 +1949,76 @@ export class QuicClient {
     }
   }
 
+  // ── Vault CRUD (POST /vault/set, GET /vault/get, DELETE /vault/delete) ──
+
+  async vaultList(): Promise<VaultEntrySummary[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/vault/list`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`vault list: HTTP ${res.status}`);
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  }
+
+  async vaultGet(name: string): Promise<VaultEntry> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/vault/get?name=${encodeURIComponent(name)}`,
+      { headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`vault get: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async vaultSet(entry: VaultEntry): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/vault/set`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify(entry),
+    });
+    if (!res.ok) throw new Error(`vault set: HTTP ${res.status}`);
+  }
+
+  async vaultDelete(name: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/vault/delete?name=${encodeURIComponent(name)}`,
+      { method: 'DELETE', headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`vault delete: HTTP ${res.status}`);
+  }
+
+  // ── API keys (labeled SDK tokens, local registry) ──
+
+  async apiKeyList(): Promise<APIKeyRecord[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/apikeys`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`apikey list: HTTP ${res.status}`);
+    const data = await res.json();
+    return Array.isArray(data?.keys) ? data.keys : [];
+  }
+
+  async apiKeyCreate(opts: { label: string; scopes?: string[]; expiresInMs?: number; allowedCIDRs?: string[] }): Promise<{ token: string; tokenHash: string; label: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/apikeys`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || `apikey create: HTTP ${res.status}`);
+    return data;
+  }
+
+  async apiKeyDisable(idOrLabel: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/apikeys?id=${encodeURIComponent(idOrLabel)}`,
+      { method: 'DELETE', headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`apikey disable: HTTP ${res.status}`);
+  }
+
   // ── Quality Gates ──────────────────────────────────────────────────
 
   /** Detect available quality checks for a project. */
@@ -2789,7 +2885,15 @@ export class QuicClient {
   }
 
   /** Start a dev server on the agent. */
-  async startDevServer(opts: { framework?: string; workDir?: string; platform?: string; port?: number }): Promise<DevServerStatus | null> {
+  async startDevServer(opts: {
+    framework?: string;
+    workDir?: string;
+    platform?: string;
+    port?: number;
+    targetDeviceId?: string;
+    targetDeviceName?: string;
+    targetDeviceClass?: string;
+  }): Promise<DevServerStatus | null> {
     try {
       const res = await fetch(`${this.baseUrl}/dev/start`, {
         method: "POST",
@@ -4751,6 +4855,9 @@ export interface DevServerStatus {
   pid?: number;
   workDir?: string;
   hotReload: boolean;
+  targetDeviceId?: string;
+  targetDeviceName?: string;
+  targetDeviceClass?: string;
 }
 
 // ── Morning match-report types & helpers ──────────────────────────────

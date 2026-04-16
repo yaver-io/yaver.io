@@ -31,7 +31,7 @@ _yaver_completions() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    commands="auth signout connect serve logs stop clear-logs restart shutdown ping attach status devices config relay tunnel set-runner mcp email acl tmux exec session vault build expo debug deploy test repo pipeline feedback voice clean cloud discover purge uninstall doctor completion help version"
+    commands="auth signout connect serve logs stop clear-logs restart shutdown ping attach code status devices config relay tunnel set-runner mcp email acl tmux exec session vault build expo debug deploy test repo pipeline feedback voice clean cloud discover purge uninstall doctor completion help version"
 
     case "$prev" in
         yaver)
@@ -130,6 +130,7 @@ _yaver() {
         'shutdown:Graceful shutdown'
         'ping:Ping a device'
         'attach:Interactive terminal'
+        'code:Terminal-first coding mode'
         'status:Show connection status'
         'devices:List registered devices'
         'config:Get/set configuration'
@@ -261,6 +262,7 @@ complete -c yaver -n '__fish_use_subcommand' -a 'restart' -d 'Restart agent'
 complete -c yaver -n '__fish_use_subcommand' -a 'shutdown' -d 'Graceful shutdown'
 complete -c yaver -n '__fish_use_subcommand' -a 'ping' -d 'Ping a device'
 complete -c yaver -n '__fish_use_subcommand' -a 'attach' -d 'Interactive terminal'
+complete -c yaver -n '__fish_use_subcommand' -a 'code' -d 'Terminal-first coding mode'
 complete -c yaver -n '__fish_use_subcommand' -a 'status' -d 'Show connection status'
 complete -c yaver -n '__fish_use_subcommand' -a 'devices' -d 'List registered devices'
 complete -c yaver -n '__fish_use_subcommand' -a 'config' -d 'Get/set configuration'

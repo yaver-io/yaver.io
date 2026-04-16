@@ -11,6 +11,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { WebView } from "react-native-webview";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -41,6 +42,7 @@ const FRAMEWORK_ICONS: Record<string, string> = {
 
 const MOBILE_FRAMEWORKS = ["expo", "react-native", "flutter"];
 const WEB_FRAMEWORKS = ["nextjs", "vite", "react"];
+const PREVIEW_TARGET_KEY = "@yaver/hotreload_preview_target";
 
 function getProjectCategory(framework?: string): "mobile" | "web" | "other" {
   if (!framework) return "other";
@@ -54,8 +56,11 @@ function getProjectCategory(framework?: string): "mobile" | "web" | "other" {
 export default function AppsScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
-  const { activeDevice, connectionStatus } = useDevice();
+  const { activeDevice, connectionStatus, devices } = useDevice();
   const isConnected = connectionStatus === "connected" && !!activeDevice;
+  const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
+  const mobileWorkers = devices.filter((d) => d.deviceClass === "edge-mobile");
+  const selectedTarget = mobileWorkers.find((d) => d.id === selectedTargetId) || null;
 
   const [devStatus, setDevStatus] = useState<DevServerStatus | null>(null);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
@@ -252,6 +257,9 @@ export default function AppsScreen() {
           framework: action.framework || "",
           workDir: targetPath,
           platform: action.platform || "",
+          targetDeviceId: selectedTarget?.id,
+          targetDeviceName: selectedTarget?.name,
+          targetDeviceClass: selectedTarget?.deviceClass,
         });
         // Check if it started
         const status = await quicClient.getDevServerStatus();
@@ -287,7 +295,7 @@ export default function AppsScreen() {
       ).catch(() => {});
       router.navigate("/(tabs)/tasks");
     }
-  }, [actionSheet, router]);
+  }, [actionSheet, router, selectedTarget]);
 
   const [nativeLoading, setNativeLoading] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState("");
@@ -296,6 +304,20 @@ export default function AppsScreen() {
   // Direct device install state
   const [buildStatus, setBuildStatus] = useState<string | null>(null);
   const [quickActionStatus, setQuickActionStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    AsyncStorage.getItem(PREVIEW_TARGET_KEY)
+      .then((value) => {
+        if (value) setSelectedTargetId(value);
+      })
+      .catch(() => {});
+  }, [selectedTarget]);
+
+  useEffect(() => {
+    if (devStatus?.targetDeviceId) {
+      setSelectedTargetId(devStatus.targetDeviceId);
+    }
+  }, [devStatus?.targetDeviceId]);
 
   // Direct device install: build with Xcode and install on device via xcrun devicectl
   const handleDirectBuild = useCallback(async () => {
@@ -401,6 +423,9 @@ export default function AppsScreen() {
         await quicClient.startDevServer({
           framework: "expo",
           workDir: workDir,
+          targetDeviceId: selectedTarget?.id,
+          targetDeviceName: selectedTarget?.name,
+          targetDeviceClass: selectedTarget?.deviceClass,
         });
         // Wait for ready
         for (let i = 0; i < 30; i++) {
@@ -501,6 +526,9 @@ export default function AppsScreen() {
                 <Text style={s.cardTitle}>{runningProject}</Text>
                 <Text style={s.cardMeta}>
                   {devStatus.framework} · port {devStatus.port} · hot reload {devStatus.hotReload ? "on" : "off"}
+                </Text>
+                <Text style={[s.cardMeta, { color: "#7dd3fc" }]}>
+                  target · {devStatus.targetDeviceName || selectedTarget?.name || "this device"}
                 </Text>
               </View>
             </View>

@@ -39,7 +39,7 @@ Options:
 The script:
   1. Verifies it can SSH in non-interactively.
   2. Installs google-chrome-stable + tmux + curl (apt-get).
-  3. Downloads the latest yaver release for linux/amd64 from GitHub.
+  3. Downloads the latest yaver release tarball for linux/amd64 from GitHub.
   4. Drops it into /usr/local/bin/yaver.
   5. Creates a 'yaver' user, home directory, and systemd unit
      (yaver-agent.service) that runs `yaver serve` on boot.
@@ -128,11 +128,18 @@ echo "=> creating yaver user..."
 ssh_run "id yaver >/dev/null 2>&1 || sudo useradd -r -m -d /home/yaver -s /bin/bash yaver"
 
 echo "=> downloading latest yaver agent for linux/amd64..."
-LATEST_URL="https://github.com/kivanccakmak/yaver.io/releases/latest/download/yaver-linux-amd64"
+LATEST_TAG="$(curl -fsSL 'https://api.github.com/repos/kivanccakmak/yaver.io/releases?per_page=100' | grep -o '\"tag_name\": *\"v[0-9][^\"]*\"' | head -n1 | sed 's/.*\"\(v[^\"]*\)\"/\1/')"
+if [[ -z "$LATEST_TAG" ]]; then
+  echo "error: could not determine latest yaver release tag" >&2
+  exit 4
+fi
+LATEST_URL="https://github.com/kivanccakmak/yaver.io/releases/download/${LATEST_TAG}/yaver-${LATEST_TAG}-linux-amd64.tar.gz"
 ssh_run "set -e; \
-  curl -fL $LATEST_URL -o /tmp/yaver && \
-  sudo install -m 0755 /tmp/yaver /usr/local/bin/yaver && \
-  rm -f /tmp/yaver"
+  rm -rf /tmp/yaver-dist && mkdir -p /tmp/yaver-dist && \
+  curl -fL $LATEST_URL -o /tmp/yaver.tar.gz && \
+  tar -xzf /tmp/yaver.tar.gz -C /tmp/yaver-dist && \
+  sudo install -m 0755 /tmp/yaver-dist/yaver-linux-amd64 /usr/local/bin/yaver && \
+  rm -rf /tmp/yaver.tar.gz /tmp/yaver-dist"
 
 echo "=> writing systemd unit..."
 SERVICE=$(cat <<UNIT
@@ -146,7 +153,7 @@ Type=simple
 User=yaver
 Group=yaver
 Environment=HOME=/home/yaver
-ExecStart=/usr/local/bin/yaver serve --port $PORT
+ExecStart=/usr/local/bin/yaver serve --debug --port $PORT --work-dir /home/yaver
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

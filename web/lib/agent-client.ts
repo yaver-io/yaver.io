@@ -108,6 +108,45 @@ export interface AgentInfo {
   sttProvider?: string;
 }
 
+// Vault entries — mirrors VaultEntry / VaultEntrySummary in vault.go.
+export type VaultCategory = "api-key" | "signing-key" | "ssh-key" | "git-credential" | "custom";
+
+export interface VaultEntrySummary {
+  name: string;
+  category: VaultCategory;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface VaultEntry extends VaultEntrySummary {
+  value: string;
+}
+
+export interface APIKeyRecord {
+  tokenHash: string;
+  label: string;
+  createdAt?: string;
+  lastUsedAt?: string;
+  usageCount?: number;
+  rateLimitPerMin?: number;
+  disabled?: boolean;
+  scopes?: string[];
+}
+
+// Matches ExecSession.Snapshot() in desktop/agent/exec.go.
+export interface ExecSnapshot {
+  id: string;
+  command: string;
+  status: "running" | "completed" | "failed";
+  stdout: string;
+  stderr: string;
+  startedAt: string;
+  finishedAt?: string;
+  exitCode?: number;
+  pid?: number;
+}
+
 export interface VoiceStatus {
   voiceInputEnabled: boolean;
   s2sProvider?: string;
@@ -1529,7 +1568,15 @@ class AgentClient {
 
   // ── Dev Server ────────────────────────────────────────────────────
 
-  async getDevServerStatus(): Promise<{ running: boolean; framework?: string; workDir?: string; port?: number } | null> {
+  async getDevServerStatus(): Promise<{
+    running: boolean;
+    framework?: string;
+    workDir?: string;
+    port?: number;
+    targetDeviceId?: string;
+    targetDeviceName?: string;
+    targetDeviceClass?: string;
+  } | null> {
     this.assertConnected();
     try {
       const res = await fetch(`${this.baseUrl}/dev/status`, { headers: this.authHeaders });
@@ -1538,7 +1585,14 @@ class AgentClient {
     } catch { return null; }
   }
 
-  async startDevServer(opts: { framework: string; workDir: string; platform?: string }): Promise<void> {
+  async startDevServer(opts: {
+    framework: string;
+    workDir: string;
+    platform?: string;
+    targetDeviceId?: string;
+    targetDeviceName?: string;
+    targetDeviceClass?: string;
+  }): Promise<void> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/dev/start`, {
       method: "POST",
@@ -2094,6 +2148,206 @@ class AgentClient {
     const token = await this.issueBrowserSession("/ws/terminal");
     const c = cwd ? `&cwd=${encodeURIComponent(cwd)}` : "";
     return `${this.baseUrl.replace(/^http/, "ws")}/ws/terminal?browser_session=${encodeURIComponent(token)}${c}`;
+  }
+
+  // ── Vault (secrets stored encrypted on host disk) ─────────────────
+  //
+  // GET /vault/list returns summaries — never values. Use vaultGet
+  // to reveal one at a time (audit trail lives on the host).
+
+  async vaultList(): Promise<VaultEntrySummary[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/vault/list`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`vault list: HTTP ${res.status}`);
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  }
+
+  async vaultGet(name: string): Promise<VaultEntry> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/vault/get?name=${encodeURIComponent(name)}`,
+      { headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`vault get: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async vaultSet(entry: VaultEntry): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/vault/set`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(entry),
+    });
+    if (!res.ok) throw new Error(`vault set: HTTP ${res.status}`);
+  }
+
+  async vaultDelete(name: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/vault/delete?name=${encodeURIComponent(name)}`,
+      { method: "DELETE", headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`vault delete: HTTP ${res.status}`);
+  }
+
+  // ── API keys (SDK-token registry with labels + usage) ─────────────
+
+  async apiKeyList(): Promise<APIKeyRecord[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/apikeys`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`apikey list: HTTP ${res.status}`);
+    const data = await res.json();
+    return Array.isArray(data?.keys) ? data.keys : [];
+  }
+
+  // Returns the raw token once — the server never exposes it again.
+  async apiKeyCreate(opts: { label: string; scopes?: string[]; expiresInMs?: number; allowedCIDRs?: string[] }): Promise<{ token: string; tokenHash: string; label: string; scopes?: string[] }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/apikeys`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(opts),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || `apikey create: HTTP ${res.status}`);
+    return data;
+  }
+
+  async apiKeyDisable(idOrLabel: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/apikeys?id=${encodeURIComponent(idOrLabel)}`,
+      { method: "DELETE", headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`apikey disable: HTTP ${res.status}`);
+  }
+
+  // ── Exec (compute: run commands, poll / stream output) ────────────
+  //
+  // Mirrors the shape already in mobile/src/lib/quic.ts so UI code
+  // can be written against the same interface on both surfaces.
+
+  async listExecs(): Promise<ExecSnapshot[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/exec`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`exec list: HTTP ${res.status}`);
+    const data = await res.json();
+    return Array.isArray(data?.execs) ? data.execs : [];
+  }
+
+  async startExec(opts: { command: string; workDir?: string; shell?: string; timeout?: number; env?: Record<string, string> }): Promise<{ execId: string; pid?: number }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/exec`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(opts),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || `exec start: HTTP ${res.status}`);
+    return data;
+  }
+
+  async getExec(execId: string): Promise<ExecSnapshot | null> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/exec/${encodeURIComponent(execId)}`,
+      { headers: this.authHeaders },
+    );
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`exec get: HTTP ${res.status}`);
+    const data = await res.json();
+    return data?.exec ?? null;
+  }
+
+  async killExec(execId: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/exec/${encodeURIComponent(execId)}`,
+      { method: "DELETE", headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`exec kill: HTTP ${res.status}`);
+  }
+
+  async sendExecInput(execId: string, input: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/exec/${encodeURIComponent(execId)}/input`,
+      {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ input }),
+      },
+    );
+    if (!res.ok) throw new Error(`exec input: HTTP ${res.status}`);
+  }
+
+  async signalExec(execId: string, signal: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/exec/${encodeURIComponent(execId)}/signal`,
+      {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ signal }),
+      },
+    );
+    if (!res.ok) throw new Error(`exec signal: HTTP ${res.status}`);
+  }
+
+  // ── Blobs (simple key-value object storage on the host) ───────────
+
+  async blobsListBuckets(): Promise<{ buckets: string[] }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/blobs`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`blobs list: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async blobsListKeys(bucket: string): Promise<{ keys: { key: string; size?: number; contentType?: string; updatedAt?: string }[] }> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/blobs/${encodeURIComponent(bucket)}`,
+      { headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`blobs list: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async blobsDelete(bucket: string, key: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/blobs/${encodeURIComponent(bucket)}/${encodeURIComponent(key)}`,
+      { method: "DELETE", headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`blob delete: HTTP ${res.status}`);
+  }
+
+  // ── Files (read-only project browser) ─────────────────────────────
+
+  async filesRoots(): Promise<{ roots: { id: string; name: string; path: string }[] }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/files/roots`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`files roots: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async filesList(root: string, path = ""): Promise<any> {
+    this.assertConnected();
+    const p = new URLSearchParams({ root });
+    if (path) p.set("path", path);
+    const res = await fetch(`${this.baseUrl}/files/list?${p}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`files list: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async filesRead(root: string, path: string): Promise<any> {
+    this.assertConnected();
+    const p = new URLSearchParams({ root, path });
+    const res = await fetch(`${this.baseUrl}/files/read?${p}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`files read: HTTP ${res.status}`);
+    return res.json();
   }
 
   // ── Schema / storage / jobs / logs SSE ───────────────────────────

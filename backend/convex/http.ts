@@ -609,6 +609,8 @@ http.route({
       deviceId: body.deviceId,
       name: body.name,
       platform: body.platform,
+      deviceClass: body.deviceClass || undefined,
+      edgeProfile: body.edgeProfile || undefined,
       publicKey: body.publicKey || undefined,
       quicHost: body.quicHost,
       quicPort: body.quicPort,
@@ -725,9 +727,39 @@ http.route({
       deviceId: body.deviceId,
       runners: body.runners,
       quicHost: body.quicHost || undefined,
+      hardwareId: body.hardwareId || undefined,
+      deviceClass: body.deviceClass || undefined,
+      edgeProfile: body.edgeProfile || undefined,
     });
 
     return jsonResponse({ ok: true });
+  }),
+});
+
+/** POST /devices/placement/recommend — Recommend edge vs infra placement for a task. */
+http.route({
+  path: "/devices/placement/recommend",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+    const body = await request.json().catch(() => null);
+    if (!body?.taskKind || typeof body.taskKind !== "string") {
+      return errorResponse("taskKind required", 400);
+    }
+    try {
+      const recommendation = await ctx.runQuery((api as any).devices.recommendTaskPlacement, {
+        tokenHash,
+        taskKind: body.taskKind,
+      });
+      return jsonResponse(recommendation);
+    } catch (e: any) {
+      return errorResponse(e?.message || "could not recommend placement", 400);
+    }
   }),
 });
 

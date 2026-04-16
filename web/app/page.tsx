@@ -866,7 +866,7 @@ export default function HomePage() {
       <section className="px-6 pb-12 pt-20 md:pt-32">
         <div className="mx-auto max-w-4xl text-center">
           <h1 className="mb-6 text-5xl font-bold leading-[1.05] tracking-tight text-surface-50 sm:text-6xl md:text-7xl lg:text-8xl">
-            Your machine.
+            Your infra.
             <br />
             <span className="bg-gradient-to-r from-indigo-400 to-emerald-400 bg-clip-text text-transparent">Your cloud.</span>
           </h1>
@@ -937,7 +937,8 @@ export default function HomePage() {
               </div>
               <p className="mt-3 text-[11px] text-surface-500">
                 Works with: Claude Code, Codex, Aider, Ollama, Goose, or any tmux session.
-                {" "}<Link href="/download" className="underline hover:text-surface-300">All install methods</Link>
+                {" "}<Link href="/download" className="underline hover:text-surface-300">All install methods</Link>.
+                {" "}Linux users can grab AppImage or <code>.deb</code> builds there.
               </p>
             </div>
 

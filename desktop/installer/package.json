@@ -32,7 +32,22 @@
     "linux": {
       "target": ["deb", "AppImage"],
       "category": "Development",
-      "icon": "assets/icon.png"
+      "icon": "assets/icon.png",
+      "executableName": "yaver-desktop",
+      "desktop": {
+        "Name": "Yaver",
+        "Comment": "AI agent control panel for your development machine",
+        "Categories": "Development;"
+      }
+    },
+    "deb": {
+      "packageName": "yaver-desktop",
+      "artifactName": "Yaver-${version}-${arch}.deb",
+      "synopsis": "Yaver desktop app",
+      "description": "Desktop shell for Yaver. Connects your development machine to the Yaver mobile app and downloads the local agent."
+    },
+    "appImage": {
+      "artifactName": "Yaver-${version}-${arch}.AppImage"
     },
     "directories": {
       "output": "dist"

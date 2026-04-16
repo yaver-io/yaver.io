@@ -268,6 +268,15 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// force attempts on the 6-char code are throttled hard.
 	mux.HandleFunc("/auth/pair/info", s.rateLimit(s.handlePairInfo))
 	mux.HandleFunc("/auth/pair/submit", s.rateLimit(s.handlePairSubmit))
+	// Remote-support sessions (TeamViewer-style, in-memory, TTL'd).
+	// Owner-only control plane:
+	mux.HandleFunc("/support/start", s.auth(s.handleSupportStart))
+	mux.HandleFunc("/support/stop", s.auth(s.handleSupportStop))
+	mux.HandleFunc("/support/status", s.auth(s.handleSupportStatus))
+	// Unauth probe + redeem — code is the secret, same model as
+	// /auth/pair/submit. Rate-limited to throttle brute force.
+	mux.HandleFunc("/support/info", s.rateLimit(s.handleSupportInfo))
+	mux.HandleFunc("/support/redeem", s.rateLimit(s.handleSupportRedeem))
 	mux.HandleFunc("/auth/browser-session", s.auth(s.handleBrowserSession))
 	mux.HandleFunc("/machine/health", s.auth(s.handleMachineHealth))
 	mux.HandleFunc("/machine/peers", s.auth(s.handlePeerHealth))
@@ -1109,6 +1118,18 @@ func (s *HTTPServer) auth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		// Fast path: active support-session bearer. Narrow allowlist,
+		// no Convex round-trip, revoked instantly by `yaver support
+		// stop` / TTL expiry. A support token that misses the
+		// allowlist falls through to the normal owner/guest path so
+		// the caller gets the same 401/403 any unrecognized token
+		// does — we don't want to special-case the rejection.
+		if strings.HasPrefix(token, "yv_supp_") && supportTokenValidFor(token, r.URL.Path) {
+			r.Header.Set("X-Yaver-Support", "true")
+			next(w, r)
+			return
+		}
+
 		// Second fast path: paired tokens (multi-user pairing).
 		// A startup that bought one Mac Studio can have 5 phones
 		// paired with it — each gets the same scope as the primary
@@ -1670,7 +1691,7 @@ func (s *HTTPServer) handleProjectSwitch(w http.ResponseWriter, r *http.Request)
 			s.devServerMgr.Stop()
 		}
 		framework := DetectProjectInfo(projectPath).Framework
-		if err := s.devServerMgr.Start(framework, projectPath, "", 0); err != nil {
+		if err := s.devServerMgr.Start(framework, projectPath, "", 0, DevServerTarget{}); err != nil {
 			resp["devServerError"] = err.Error()
 		} else {
 			resp["devServer"] = s.devServerMgr.Status()
@@ -8556,6 +8577,33 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return true
 		})
 		return mcpToolResult(fmt.Sprintf("Guest access revoked for %s", args.Email))
+
+	// --- Remote Support Sessions ---
+	case "support_start":
+		var args struct {
+			TTL   string `json:"ttl"`
+			Label string `json:"label"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		ttl := defaultSupportTTL
+		if strings.TrimSpace(args.TTL) != "" {
+			if d, err := time.ParseDuration(args.TTL); err == nil && d > 0 {
+				ttl = d
+			}
+		}
+		sess := StartSupportSession(args.Label, ttl)
+		return mcpToolJSON(supportSessionPayload(sess, s.deviceID, true))
+
+	case "support_status":
+		sess := activeSupportSnapshot()
+		if sess == nil {
+			return mcpToolJSON(map[string]interface{}{"active": false})
+		}
+		return mcpToolJSON(supportSessionPayload(sess, s.deviceID, true))
+
+	case "support_stop":
+		stopped := StopSupportSession()
+		return mcpToolJSON(map[string]interface{}{"ok": true, "stopped": stopped})
 
 	case "guest_config":
 		var args struct {

@@ -971,6 +971,106 @@ Place a `Dockerfile.yaver` in your project root. The agent auto-detects it and b
 | `desktop/agent/tasks.go` | Task execution with container branch |
 | `desktop/agent/mcp_tools.go` | MCP tools: `sandbox_status`, `sandbox_config` |
 
+## Remote Support Sessions (TeamViewer-style)
+
+`yaver support` opens a short-lived, in-memory, owner-initiated window that lets a trusted second party (a guest's phone, a web browser, another Yaver agent) reach a scoped subset of this agent's HTTP API — terminal, exec, file browse, browser sessions, system status — until the host stops it or the TTL expires. Nothing is persisted; nothing touches Convex. This is deliberately distinct from the Convex-backed Guest Access above: guest grants are long-lived and email-tied, support sessions are transient and code-tied.
+
+### Scope (allowlist)
+
+| Allowed (Support bearer) | Blocked (Owner only) |
+|--------------------------|----------------------|
+| `/health`, `/info`, `/agent/{status,capabilities,runners}` | `/vault/*` |
+| `/files/{roots,list,read,raw}` | `/tasks`, `/session/*` |
+| `/exec`, `/exec/` | `/agent/shutdown` |
+| `/ws/terminal` | `/autodev/*` |
+| `/browser/`, `/streams`, `/streams/` | `/schedules`, `/notifications/*` |
+| `/support/` (self-management) | anything else not in the left column |
+
+The session sets an `X-Yaver-Support: true` header on allowed requests so downstream handlers can log / audit accordingly. An expired or revoked bearer hits the same 401/403 any unknown token does.
+
+### How it flows
+
+```
+Host (CLI/mobile/MCP)              Agent                    Guest (web/mobile/CLI)
+┌───────────────────┐    POST    ┌────────────────┐
+│ yaver support     │ ──────────►│ /support/start │
+│ start --ttl 30m   │            │ (owner-auth)   │
+│                   │            │                │
+│ prints:           │◄────────── │ code + bearer  │
+│   ABCD23          │            │ + URLs         │
+│   + share URL     │            └────────────────┘
+└────────┬──────────┘
+         │ share code / URL out-of-band
+         ▼
+                                                            ┌───────────────────┐
+                                            POST            │ yaver support     │
+                                  ┌──────────────────────── │ connect <url> CODE│
+                                  ▼                         │                   │
+                          /support/redeem ────────► bearer  │ or visit          │
+                          (unauth, rate-limited)            │ yaver.io/support  │
+                                                            │ ?agent=...&code=..│
+                                                            └───────────────────┘
+                                                                      │
+                              bearer used against /exec, /ws/terminal,
+                              /files/*, /browser/*, /streams/*
+                                                                      │
+                          ┌──────────────────────────┐                │
+                  anytime │ POST /support/stop       │ ◄──────────────┘
+                          │ (owner-auth) → revokes   │
+                          └──────────────────────────┘
+```
+
+### Endpoint table
+
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `POST /support/start` | owner | open a session; returns code + bearer + shareable URLs |
+| `POST /support/stop`  | owner | revoke the active session immediately |
+| `GET  /support/status`| owner | full state incl. code + bearer (for the host's own UI) |
+| `GET  /support/info`  | none (rate-limited) | `{active, host, expiresAt, allowed}` — no secrets |
+| `POST /support/redeem`| none (rate-limited) | exchange code for bearer |
+
+### CLI
+
+```bash
+yaver support start  --ttl 30m --label "cousin"   # open a window
+yaver support status                               # code + time left
+yaver support stop                                 # revoke
+yaver support connect https://relay.yaver.io/d/abc123 K7WP3N   # interactive REPL
+yaver support connect http://10.0.0.5:18080 ABCD23 "uname -a"  # one-shot exec
+yaver ui --local --code K7WP3N                     # open the embedded console
+yaver ui --hosted --device abc123 --code K7WP3N    # open yaver.io/support
+```
+
+### Surfaces
+
+| Interface | Start | Redeem | Connect |
+|-----------|-------|--------|---------|
+| **CLI** | `yaver support start` | `yaver support connect <url> <CODE>` | interactive REPL via `/exec` polling |
+| **Web** | (owner UI, TBD) | `yaver.io/support?agent=<base>&code=<CODE>` | in-browser fetch → exec + files |
+| **Agent-embedded** | N/A | `http://<agent>/app/?support=<CODE>` | same HTML as fallback, served by the agent |
+| **MCP** | `support_start` | N/A (agents use `support_status` to fetch bearer directly) | via `support_status` + `exec` |
+| **Agent HTTP** | `POST /support/start` | `POST /support/redeem` | bearer-authed `/exec`, `/ws/terminal`, `/files/*` |
+
+### Security model
+- Code is 6 chars from the pair alphabet (no 0/O/1/I). 1 in ~1.3B to brute force, and the whole flow is behind `s.rateLimit`.
+- Bearer is `yv_supp_` + 24 random bytes (base64 URL). The `auth()` middleware short-circuits on the prefix so Convex is never touched.
+- Session lives only in the host's process memory. Agent restart, `yaver support stop`, or TTL expiry all revoke it immediately.
+- The guest's bearer is kept in memory on their side too (console fallback + `/support` page both refuse to write to localStorage). Close the tab = end the guest's access.
+
+### Key files
+| File | Purpose |
+|------|---------|
+| `desktop/agent/support.go` | `supportSession`, code/token generation, allowlist, TTL, replace-on-start |
+| `desktop/agent/support_http.go` | `/support/start`, `/stop`, `/status`, `/info`, `/redeem` handlers + shared payload |
+| `desktop/agent/support_cmd.go` | `yaver support start / status / stop / connect` CLI |
+| `desktop/agent/support_test.go` + `_integration_test.go` | unit + end-to-end HTTP tests (12 tests) |
+| `desktop/agent/ui_cmd.go` | `yaver ui` — probes local agent, opens embedded console or hosted dashboard |
+| `desktop/agent/httpserver.go` | Route registration + third fast path in `auth()` for support bearers + MCP dispatch |
+| `desktop/agent/mcp_tools.go` | MCP tools: `support_start`, `support_status`, `support_stop` |
+| `desktop/agent/console_embed.go` | Fallback `/app/` page — inline HTML/JS that redeems codes + runs exec |
+| `web/app/support/page.tsx` | Hosted landing — parses `?agent=&code=`, redeems, runs exec |
+
 ## SDK Token Security
 
 The Feedback SDK uses a dedicated token system with defense-in-depth security:

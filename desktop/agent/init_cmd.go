@@ -91,7 +91,10 @@ func runInit(args []string) {
 	// Step 5 — service install
 	fmt.Println("Step 5 of 7 — run on boot")
 	if runtime.GOOS == "linux" {
-		if promptYes(r, "Install systemd user service so yaver starts on login?", true) {
+		if isWSL() {
+			fmt.Println("  WSL detected — skipping systemd setup.")
+			fmt.Println("  Recommended: run `yaver serve` inside tmux / screen or from your shell startup.")
+		} else if promptYes(r, "Install systemd user service so yaver starts on login?", true) {
 			runServe([]string{"--install-systemd"})
 		}
 	} else if runtime.GOOS == "darwin" {

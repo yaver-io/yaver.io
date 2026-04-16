@@ -1,0 +1,359 @@
+import React, { useCallback, useEffect, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
+import * as Clipboard from "expo-clipboard";
+import { useColors } from "../src/context/ThemeContext";
+import { useDevice } from "../src/context/DeviceContext";
+import {
+  quicClient,
+  type VaultCategory,
+  type VaultEntrySummary,
+} from "../src/lib/quic";
+
+// Mobile UI for desktop/agent/vault.go. Values are never cached on
+// device — each reveal re-fetches over the P2P channel and lives in
+// React state only until the user hides or navigates away.
+
+const CATEGORIES: VaultCategory[] = [
+  "api-key",
+  "signing-key",
+  "ssh-key",
+  "git-credential",
+  "custom",
+];
+
+export default function VaultScreen() {
+  const c = useColors();
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const { connectionStatus } = useDevice();
+  const connected = connectionStatus === "connected";
+
+  const [entries, setEntries] = useState<VaultEntrySummary[]>([]);
+  const [revealed, setRevealed] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Add form state
+  const [draftName, setDraftName] = useState("");
+  const [draftValue, setDraftValue] = useState("");
+  const [draftNotes, setDraftNotes] = useState("");
+  const [draftCategory, setDraftCategory] = useState<VaultCategory>("api-key");
+  const [showForm, setShowForm] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!connected) return;
+    setErr(null);
+    try {
+      const rows = await quicClient.vaultList();
+      setEntries(rows.sort((a, b) => a.name.localeCompare(b.name)));
+    } catch (e: any) {
+      setErr(e?.message ?? "failed to load");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [connected]);
+
+  useEffect(() => {
+    setLoading(true);
+    void load();
+  }, [load]);
+
+  async function toggleReveal(name: string) {
+    if (revealed[name]) {
+      setRevealed((prev) => {
+        const next = { ...prev };
+        delete next[name];
+        return next;
+      });
+      return;
+    }
+    try {
+      const entry = await quicClient.vaultGet(name);
+      setRevealed((prev) => ({ ...prev, [name]: entry.value }));
+    } catch (e: any) {
+      Alert.alert("Vault", e?.message ?? "failed to reveal");
+    }
+  }
+
+  async function copy(value: string) {
+    await Clipboard.setStringAsync(value);
+    Alert.alert("Vault", "Copied to clipboard");
+  }
+
+  async function remove(name: string) {
+    Alert.alert("Delete?", `Remove vault entry "${name}"? This cannot be undone.`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await quicClient.vaultDelete(name);
+            await load();
+          } catch (e: any) {
+            Alert.alert("Vault", e?.message ?? "failed to delete");
+          }
+        },
+      },
+    ]);
+  }
+
+  async function save() {
+    if (!draftName.trim() || !draftValue.trim()) {
+      Alert.alert("Vault", "Name and value are required");
+      return;
+    }
+    try {
+      await quicClient.vaultSet({
+        name: draftName.trim(),
+        value: draftValue,
+        category: draftCategory,
+        notes: draftNotes.trim() || undefined,
+      });
+      setDraftName("");
+      setDraftValue("");
+      setDraftNotes("");
+      setShowForm(false);
+      await load();
+    } catch (e: any) {
+      Alert.alert("Vault", e?.message ?? "failed to save");
+    }
+  }
+
+  const renderItem = ({ item }: { item: VaultEntrySummary }) => {
+    const value = revealed[item.name];
+    return (
+      <View
+        style={[
+          s.row,
+          { backgroundColor: c.bgCard, borderColor: c.border },
+        ]}
+      >
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Text
+            style={{ color: c.textPrimary, fontFamily: "monospace", flexShrink: 1 }}
+            numberOfLines={1}
+          >
+            {item.name}
+          </Text>
+          <Text
+            style={[s.badge, { color: c.accent, borderColor: c.accent }]}
+          >
+            {item.category}
+          </Text>
+        </View>
+        {item.notes ? (
+          <Text style={{ color: c.textMuted, marginTop: 4 }}>{item.notes}</Text>
+        ) : null}
+        {value ? (
+          <View style={[s.valueBox, { backgroundColor: c.bg }]}>
+            <Text style={{ color: c.textPrimary, fontFamily: "monospace" }} selectable>
+              {value}
+            </Text>
+          </View>
+        ) : null}
+        <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+          <Pressable
+            style={[s.btn, { backgroundColor: c.bg, borderColor: c.border }]}
+            onPress={() => toggleReveal(item.name)}
+          >
+            <Text style={{ color: c.textPrimary }}>{value ? "Hide" : "Reveal"}</Text>
+          </Pressable>
+          {value ? (
+            <Pressable
+              style={[s.btn, { backgroundColor: c.bg, borderColor: c.border }]}
+              onPress={() => copy(value)}
+            >
+              <Text style={{ color: c.textPrimary }}>Copy</Text>
+            </Pressable>
+          ) : null}
+          <Pressable
+            style={[s.btn, { backgroundColor: "#3f0a0a", borderColor: "#991b1b" }]}
+            onPress={() => remove(item.name)}
+          >
+            <Text style={{ color: "#fecaca" }}>Delete</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  };
+
+  return (
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top }}
+    >
+      <View style={[s.header, { borderColor: c.border }]}>
+        <Pressable onPress={() => router.back()}>
+          <Text style={{ color: c.textMuted, fontSize: 20 }}>{"\u2039"}</Text>
+        </Pressable>
+        <Text style={[s.title, { color: c.textPrimary }]}>Vault</Text>
+        <Pressable onPress={() => setShowForm((v) => !v)}>
+          <Text style={{ color: c.accent, fontSize: 18 }}>{showForm ? "\u00D7" : "+"}</Text>
+        </Pressable>
+      </View>
+
+      {err ? (
+        <View style={[s.err, { borderColor: "#991b1b" }]}>
+          <Text style={{ color: "#fecaca" }}>{err}</Text>
+        </View>
+      ) : null}
+
+      {showForm ? (
+        <ScrollView
+          style={{ maxHeight: 320 }}
+          contentContainerStyle={[s.form, { backgroundColor: c.bgCard, borderColor: c.border }]}
+        >
+          <Text style={{ color: c.textMuted, fontSize: 11 }}>Name</Text>
+          <TextInput
+            value={draftName}
+            onChangeText={setDraftName}
+            placeholder="OPENAI_API_KEY"
+            placeholderTextColor={c.textMuted}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            style={[s.input, { color: c.textPrimary, borderColor: c.border }]}
+          />
+          <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 8 }}>Category</Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+            {CATEGORIES.map((cat) => (
+              <Pressable
+                key={cat}
+                onPress={() => setDraftCategory(cat)}
+                style={{
+                  borderWidth: 1,
+                  borderColor: draftCategory === cat ? c.accent : c.border,
+                  backgroundColor: draftCategory === cat ? `${c.accent}22` : "transparent",
+                  paddingHorizontal: 8,
+                  paddingVertical: 4,
+                  borderRadius: 4,
+                }}
+              >
+                <Text style={{ color: draftCategory === cat ? c.accent : c.textMuted, fontSize: 11 }}>{cat}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 8 }}>Value</Text>
+          <TextInput
+            value={draftValue}
+            onChangeText={setDraftValue}
+            placeholder="secret value"
+            placeholderTextColor={c.textMuted}
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={[s.input, { color: c.textPrimary, borderColor: c.border }]}
+          />
+          <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 8 }}>Notes (optional)</Text>
+          <TextInput
+            value={draftNotes}
+            onChangeText={setDraftNotes}
+            placeholder="what's this for?"
+            placeholderTextColor={c.textMuted}
+            style={[s.input, { color: c.textPrimary, borderColor: c.border }]}
+          />
+          <Pressable
+            style={[s.saveBtn, { backgroundColor: c.accent }]}
+            onPress={save}
+          >
+            <Text style={{ color: "#fff", fontWeight: "600" }}>Save</Text>
+          </Pressable>
+        </ScrollView>
+      ) : null}
+
+      {loading ? (
+        <ActivityIndicator style={{ marginTop: 24 }} color={c.accent} />
+      ) : (
+        <FlatList
+          data={entries}
+          keyExtractor={(i) => i.name}
+          renderItem={renderItem}
+          contentContainerStyle={{ padding: 12, paddingBottom: insets.bottom + 24 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => {
+                setRefreshing(true);
+                void load();
+              }}
+              tintColor={c.accent}
+            />
+          }
+          ListEmptyComponent={
+            <Text style={{ color: c.textMuted, padding: 16, textAlign: "center" }}>
+              {connected ? "No entries yet. Tap + to add one." : "Connect to a device to view vault."}
+            </Text>
+          }
+        />
+      )}
+    </KeyboardAvoidingView>
+  );
+}
+
+const s = StyleSheet.create({
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  title: { fontSize: 17, fontWeight: "600" },
+  err: { margin: 12, padding: 8, borderRadius: 6, borderWidth: 1, backgroundColor: "#3f0a0a22" },
+  form: { padding: 12, borderRadius: 6, borderWidth: 1, margin: 12 },
+  input: {
+    borderWidth: 1,
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    marginTop: 4,
+    fontFamily: "monospace",
+  },
+  saveBtn: {
+    marginTop: 12,
+    paddingVertical: 10,
+    borderRadius: 6,
+    alignItems: "center",
+  },
+  row: {
+    padding: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    marginBottom: 8,
+  },
+  badge: {
+    fontSize: 10,
+    borderWidth: 1,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 2,
+  },
+  valueBox: {
+    marginTop: 6,
+    padding: 8,
+    borderRadius: 4,
+  },
+  btn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+});

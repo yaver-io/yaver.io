@@ -1976,6 +1976,46 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, guestTools...)
 
+	// --- Remote Support Sessions ---
+	// In-memory, TTL'd, owner-initiated remote-control grant. Think
+	// TeamViewer, not Convex-tied guest access.
+	supportTools := []map[string]interface{}{
+		{
+			"name":        "support_start",
+			"description": "Open a TeamViewer-style remote-support window on this machine. Returns a 6-char code, a scoped bearer token, and shareable URLs. A guest who redeems the code gets terminal / exec / file-browse access for the TTL. Revoke anytime with support_stop.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"ttl": map[string]interface{}{
+						"type":        "string",
+						"description": "Duration string (e.g. \"30m\", \"2h\"). Default 30m.",
+					},
+					"label": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional tag — e.g. \"cousin\" or \"support-ticket-1234\" — shown in status.",
+					},
+				},
+			},
+		},
+		{
+			"name":        "support_status",
+			"description": "Return the active remote-support session (code, expiry, allowed URL prefixes) or {active:false}.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "support_stop",
+			"description": "Revoke the active remote-support session. Any bearer token redeemed from it stops working on the next request.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+	}
+	tools = append(tools, supportTools...)
+
 	// --- Container Sandbox ---
 	sandboxTools := []map[string]interface{}{
 		{

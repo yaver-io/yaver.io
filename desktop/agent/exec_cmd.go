@@ -172,14 +172,19 @@ func resolveDeviceURL(cfg *Config, deviceHint string, useRelay bool) string {
 		if err == nil {
 			for _, r := range relays {
 				if r.HttpURL != "" {
-					return r.HttpURL + "/proxy/" + target.DeviceID
+					return strings.TrimRight(r.HttpURL, "/") + "/d/" + target.DeviceID
 				}
 			}
 		}
 		// Also try config relay servers
 		for _, r := range cfg.RelayServers {
 			if r.HttpURL != "" {
-				return r.HttpURL + "/proxy/" + target.DeviceID
+				return strings.TrimRight(r.HttpURL, "/") + "/d/" + target.DeviceID
+			}
+		}
+		for _, r := range cfg.CachedRelayServers {
+			if r.HttpURL != "" {
+				return strings.TrimRight(r.HttpURL, "/") + "/d/" + target.DeviceID
 			}
 		}
 	}
@@ -200,6 +205,13 @@ func execHTTP(method, url, token string, body map[string]interface{}) (map[strin
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	relayPassword, err := relayPasswordForBase(url)
+	if err != nil {
+		return nil, err
+	}
+	if relayPassword != "" {
+		req.Header.Set("X-Relay-Password", relayPassword)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

@@ -14,6 +14,12 @@ writes the fix, and hot reloads. Test suites that grow themselves.
 Works with any AI coding agent: Claude Code, Codex, Aider, Ollama, Goose, Amp, OpenCode.
 P2P encrypted — your code never leaves your machine. MIT licensed. Free forever.
 
+Your infra. Your cloud.
+
+Yaver connects your phone to your MacBook, Linux box, or VPS. No cloud accounts to configure.
+No infrastructure to set up. Run AI agents, start Convex or Supabase locally, test on real
+devices, deploy — all from your pocket. Your code never touches someone else's server.
+
 ## The Four Pieces of Yaver
 
 Yaver is built for solo developers and small teams who ship from anywhere. It has four distinct pieces — each exists for a specific reason:

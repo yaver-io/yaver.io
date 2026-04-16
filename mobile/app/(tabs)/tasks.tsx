@@ -1462,6 +1462,7 @@ export default function TasksScreen() {
                         <Text style={[s.reconnectDeviceName, { color: c.textPrimary }]}>{devices[0].name}</Text>
                         <Text style={[s.reconnectDeviceMeta, { color: c.textMuted }]}>
                           {devices[0].os} · {devices[0].host}
+                          {devices[0].deviceClass === "edge-mobile" ? " · mobile worker" : ""}
                         </Text>
                       </View>
                       <View style={[s.reconnectDeviceStatus, { backgroundColor: devices[0].online ? "#22c55e22" : "#a1a1aa22" }]}>
@@ -1542,6 +1543,9 @@ export default function TasksScreen() {
                       <View>
                         <Text style={[s.devicePickerName, { color: c.textPrimary }]}>{d.name}</Text>
                         <Text style={[s.devicePickerMeta, { color: c.textMuted }]}>{d.os} · {d.host}</Text>
+                        {d.deviceClass === "edge-mobile" && (
+                          <Text style={[s.devicePickerMeta, { color: c.accent, marginTop: 2 }]}>Mobile worker</Text>
+                        )}
                       </View>
                       <View style={[s.devicePickerDot, { backgroundColor: d.online ? c.success || "#22c55e" : c.textMuted }]} />
                     </View>

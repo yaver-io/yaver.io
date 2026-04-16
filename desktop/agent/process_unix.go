@@ -323,6 +323,10 @@ func installAutoStartDarwin(exePath, workDir string) error {
 }
 
 func installAutoStartLinux(exePath, workDir string) error {
+	if isWSL() {
+		return fmt.Errorf("auto-start via systemd is disabled in WSL; start the agent from your shell profile or Windows startup flow instead")
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("get home dir: %w", err)
@@ -383,6 +387,9 @@ func isAutoStartInstalled() bool {
 		_, err := os.Stat(filepath.Join(home, "Library", "LaunchAgents", "io.yaver.agent.plist"))
 		return err == nil
 	case "linux":
+		if isWSL() {
+			return false
+		}
 		_, err := os.Stat(filepath.Join(home, ".config", "systemd", "user", "yaver.service"))
 		return err == nil
 	}
@@ -401,6 +408,9 @@ func ensureAutoStart(exePath, workDir string) string {
 		msg, _ := ensureAutoStartDarwin(exePath, workDir)
 		return msg
 	case "linux":
+		if isWSL() {
+			return ""
+		}
 		msg, _ := ensureAutoStartLinux(exePath, workDir)
 		return msg
 	}
@@ -457,6 +467,10 @@ func ensureAutoStartDarwin(exePath, workDir string) (string, error) {
 }
 
 func ensureAutoStartLinux(exePath, workDir string) (string, error) {
+	if isWSL() {
+		return "", nil
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -511,6 +525,9 @@ func stopAutoStartService() {
 			}
 		}
 	case "linux":
+		if isWSL() {
+			return
+		}
 		home, _ := os.UserHomeDir()
 		if home != "" {
 			unitPath := filepath.Join(home, ".config", "systemd", "user", "yaver.service")
@@ -535,6 +552,9 @@ func removeAutoStart() {
 		osexec.Command("launchctl", "unload", plistPath).Run()
 		os.Remove(plistPath)
 	case "linux":
+		if isWSL() {
+			return
+		}
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return

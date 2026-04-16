@@ -148,6 +148,7 @@ export default function TabLayout() {
       <Tabs.Screen name="qualitygates" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="settings" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="ops" options={{ href: null, headerShown: false }} />
+      <Tabs.Screen name="infra" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="data" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="console" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="home" options={{ href: null, headerShown: false }} />
