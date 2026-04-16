@@ -724,6 +724,22 @@ export default function SettingsScreen() {
           </Pressable>
         </View>
 
+        {/* Overnight — match report for autodev runs */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Overnight</Text>
+          <Pressable
+            style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, padding: 14 }]}
+            onPress={() => router.push("/morning")}
+          >
+            <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "600" }}>
+              ☀ Morning match report
+            </Text>
+            <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 4 }}>
+              See what autodev shipped overnight: per-task video, diff stats, and a one-tap rollback.
+            </Text>
+          </Pressable>
+        </View>
+
         {/* Connected device */}
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Connected Device</Text>

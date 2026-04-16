@@ -148,6 +148,14 @@ func (s *HTTPServer) handleAutodevStart(w http.ResponseWriter, r *http.Request) 
 		Model           string `json:"model"`       // sonnet|opus|haiku|<full-id>
 		Planner         string `json:"planner"`      // hybrid layering: agent[:model]
 		Implementer     string `json:"implementer"`  // hybrid layering: agent[:model]
+
+		// Morning match-report controls. Default on; UI toggles visible
+		// in both mobile and web start forms. Graceful fallback: if
+		// the requested capability can't run here (e.g. RecordVideo
+		// requested on a machine with no iOS sim or Android emu
+		// attached), autodev logs-and-skips rather than failing.
+		CreateSummary *bool `json:"create_summary,omitempty"`
+		CreateVideo   *bool `json:"create_video,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
@@ -248,19 +256,33 @@ func (s *HTTPServer) handleAutodevStart(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Morning toggles default ON when the field is omitted — the
+	// match report is the overnight-vibe-code headline feature. A
+	// caller who explicitly sends false opts out.
+	morningSummary := true
+	if body.CreateSummary != nil {
+		morningSummary = *body.CreateSummary
+	}
+	morningVideo := true
+	if body.CreateVideo != nil {
+		morningVideo = *body.CreateVideo
+	}
+
 	d := autodevDefaults{
-		hours:      body.Hours,
-		load:       body.Load,
-		deploy:     body.Deploy,
-		prompt:     resolvedPrompt,
-		project:    project,
-		runner:     runnerOverride,
-		branch:     resolvedBranch,
-		target:     body.Target,
-		maxIter:    body.MaxIterations,
-		noAutotest: body.NoAutotest,
-		remained:   remainedPath,
-		autoIdeas:  autoIdeas,
+		hours:          body.Hours,
+		load:           body.Load,
+		deploy:         body.Deploy,
+		prompt:         resolvedPrompt,
+		project:        project,
+		runner:         runnerOverride,
+		branch:         resolvedBranch,
+		target:         body.Target,
+		maxIter:        body.MaxIterations,
+		noAutotest:     body.NoAutotest,
+		remained:       remainedPath,
+		autoIdeas:      autoIdeas,
+		morningSummary: morningSummary,
+		morningVideo:   morningVideo,
 	}
 	if d.hours == "" {
 		d.hours = autodevSleepHours

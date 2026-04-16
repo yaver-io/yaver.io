@@ -32,6 +32,11 @@ func startTestServer(t *testing.T, token string, taskMgr *TaskManager) (string, 
 	srv := NewHTTPServer(port, token, "test-user-id", "test-device-id", "", "test-host", taskMgr)
 	srv.execMgr = NewExecManager(taskMgr.workDir, nil)
 	srv.agentGraphMgr = NewAgentGraphManager(taskMgr)
+	// Expose the server to tests that need to reach into its internal
+	// managers (morning store, recording manager, etc.). Safe to set
+	// here because Go tests run serially within a package unless
+	// -parallel is passed; nothing in this file calls t.Parallel().
+	currentTestHTTPServer = srv
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)

@@ -148,6 +148,16 @@ var integrations = []installPlan{
 			{"pacman", "sudo pacman -S --noconfirm tmux"},
 		},
 	},
+	{
+		name:        "ffmpeg",
+		description: "ffmpeg — required for the morning match-report screen recorder (run `yaver record`)",
+		macOS:       []string{"brew install ffmpeg"},
+		linux: []linuxStep{
+			{"apt-get", "sudo apt-get install -y ffmpeg"},
+			{"dnf", "sudo dnf install -y ffmpeg"},
+			{"pacman", "sudo pacman -S --noconfirm ffmpeg"},
+		},
+	},
 }
 
 func runInstall(args []string) {
@@ -232,6 +242,7 @@ func checkInstalled(name string) string {
 		"opencode":    {"opencode"},
 		"hybrid":      {"aider"}, // presence of aider is our cheapest proxy
 		"tmux":        {"tmux"},
+		"ffmpeg":      {"ffmpeg"},
 	}
 	candidates := probe[name]
 	for _, c := range candidates {

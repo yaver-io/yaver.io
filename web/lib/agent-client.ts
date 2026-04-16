@@ -215,18 +215,90 @@ export interface MachineInfo {
   capabilities?: MachineCapabilities;
 }
 
+export interface InfraNetworkInterface {
+  name: string;
+  mac?: string;
+  flags?: string;
+  addresses?: string[];
+}
+
+export interface InfraRelaySummary {
+  id: string;
+  label?: string;
+  httpUrl?: string;
+  quicAddr?: string;
+  region?: string;
+  source: string;
+  passwordRequired: boolean;
+}
+
+export interface InfraSharingSummary {
+  isShared: boolean;
+  accessScope?: string;
+  pendingGuests: number;
+  acceptedGuests: number;
+}
+
+export interface InfraCapabilities {
+  terminal: boolean;
+  mcp: boolean;
+  devServices: boolean;
+  systemServices: boolean;
+  agentShutdown: boolean;
+  hostReboot: boolean;
+}
+
+export interface InfraSummary {
+  machine: MachineInfo;
+  metrics?: {
+    cpuPct?: number;
+    ramUsed?: number;
+    ramTotal?: number;
+    ramPct?: number;
+    diskUsed?: number;
+    diskTotal?: number;
+    diskPct?: number;
+    netRxBps?: number;
+    netTxBps?: number;
+    uptime?: number;
+    hostname?: string;
+    os?: string;
+    cores?: number;
+  };
+  devServices?: Array<{
+    name: string;
+    running: boolean;
+    port: number;
+    image?: string;
+    container?: string;
+    health: string;
+    uptime?: string;
+    memory?: string;
+  }>;
+  network?: InfraNetworkInterface[];
+  relays?: InfraRelaySummary[];
+  sharing: InfraSharingSummary;
+  sandbox: SandboxStatus;
+  capabilities: InfraCapabilities;
+}
+
 export interface SandboxStatus {
   ok: boolean;
+  enabledMode?: "off" | "guests" | "host";
   containerizeGuests: boolean;
   containerizeHost: boolean;
   docker: boolean;
   imageReady: boolean;
   imageName?: string;
+  dockerPath?: string;
   gpuAvailable?: boolean;
   networkMode?: string;
   readOnly?: boolean;
   cpuLimit?: string;
   memoryLimit?: string;
+  recommendedMode?: "guests" | "host";
+  recommendedReason?: string;
+  quickstartAvailable?: boolean;
 }
 
 export interface SandboxConfig {
@@ -948,6 +1020,12 @@ class AgentClient {
     remainedContent?: string;
     noAutotest?: boolean;
     maxIterations?: number;
+    // Morning match-report toggles. Undefined = agent default (both
+    // on). Pass false to opt out; pass true to be explicit. Video is
+    // advisory — the agent skips capture gracefully when no iOS sim /
+    // Android emu is available.
+    createSummary?: boolean;
+    createVideo?: boolean;
   }): Promise<{ ok: boolean; loopName?: string; workDir?: string; hours?: string; deploy?: string; error?: string }> {
     try {
       const res = await fetch(`${this.baseUrl}/autodev/start`, {
@@ -967,6 +1045,8 @@ class AgentClient {
           remained_content: params.remainedContent ?? "",
           no_autotest: params.noAutotest ?? false,
           max_iterations: params.maxIterations ?? 0,
+          ...(params.createSummary !== undefined && { create_summary: params.createSummary }),
+          ...(params.createVideo !== undefined && { create_video: params.createVideo }),
         }),
       });
       if (!res.ok && res.status !== 202) {
@@ -1412,6 +1492,18 @@ class AgentClient {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || "Failed to start sandbox build");
     }
+  }
+
+  async sandboxQuickstart(mode: "guests" | "host", buildImage = true): Promise<{ ok: boolean; message?: string; sandbox?: SandboxStatus; error?: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/sandbox/quickstart`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ mode, buildImage }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
+    return { ok: true, message: data?.message, sandbox: data?.sandbox };
   }
 
   // ── Projects ───────────────────────────────────────────────────────
@@ -1935,6 +2027,32 @@ class AgentClient {
     return res.json();
   }
 
+  async infraSummary(): Promise<InfraSummary> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/infra/summary`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async infraServiceAction(scope: "dev" | "system", name: string, action: "start" | "stop" | "restart" | "status"): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/infra/services/action`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ scope, name, action }),
+    });
+    return res.json();
+  }
+
+  async infraPower(action: "agent_shutdown" | "host_reboot"): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/infra/power`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ action, confirm: true }),
+    });
+    return res.json();
+  }
+
   async consoleMetricsSnapshot(): Promise<any> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/console/metrics`, { headers: this.authHeaders });
@@ -1989,6 +2107,63 @@ class AgentClient {
     if (bucket) p.set("bucket", bucket);
     if (directory) p.set("directory", directory);
     const res = await fetch(`${this.baseUrl}/storage/list?${p}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async sharedStorageProfiles(): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/shared-storage/profiles`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async sharedStorageUpsert(profile: Record<string, any>): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/shared-storage/profiles`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(profile),
+    });
+    return res.json();
+  }
+
+  async sharedStorageDelete(id: string): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/shared-storage/profile/delete`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    return res.json();
+  }
+
+  async sharedStorageList(id: string, path = ""): Promise<any> {
+    this.assertConnected();
+    const p = new URLSearchParams();
+    p.set("id", id);
+    if (path) p.set("path", path);
+    const res = await fetch(`${this.baseUrl}/shared-storage/list?${p}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async sharedStorageRead(id: string, path: string): Promise<any> {
+    this.assertConnected();
+    const p = new URLSearchParams({ id, path });
+    const res = await fetch(`${this.baseUrl}/shared-storage/read?${p}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  sharedStorageRawUrl(id: string, path: string): string {
+    const p = new URLSearchParams({ id, path });
+    return `${this.baseUrl}/shared-storage/raw?${p.toString()}`;
+  }
+
+  async sharedStorageSearch(query: string, opts: { id?: string; path?: string; limit?: number } = {}): Promise<any> {
+    this.assertConnected();
+    const p = new URLSearchParams({ q: query });
+    if (opts.id) p.set("id", opts.id);
+    if (opts.path) p.set("path", opts.path);
+    if (opts.limit) p.set("limit", String(opts.limit));
+    const res = await fetch(`${this.baseUrl}/shared-storage/search?${p}`, { headers: this.authHeaders });
     return res.json();
   }
 
@@ -2316,6 +2491,141 @@ class AgentClient {
       return [];
     }
   }
+
+  // ── Morning match-report ───────────────────────────────────────────
+  //
+  // These methods go through the same relay-aware base URL as everything
+  // else, so a yaver-to-yaver viewer on a paired Mac hits the same
+  // endpoints the mobile app does. The match-report UI renders only
+  // what the agent serves; there is no client-side enrichment.
+
+  async listMorningRuns(limit = 20): Promise<MorningRunSummary[]> {
+    if (!this.isConnected || !this.baseUrl) return [];
+    try {
+      const res = await fetch(`${this.baseUrl}/morning/runs?limit=${limit}`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data?.runs) ? data.runs : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async getMorningRun(runId: string): Promise<MorningRunSummary | null> {
+    if (!this.isConnected || !this.baseUrl) return null;
+    try {
+      const res = await fetch(`${this.baseUrl}/morning/runs/${encodeURIComponent(runId)}`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return (data?.run as MorningRunSummary) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  async rollbackMorningTask(runId: string, taskId: string): Promise<{ ok: boolean; revertSha?: string; error?: string }> {
+    if (!this.isConnected || !this.baseUrl) {
+      return { ok: false, error: "not connected" };
+    }
+    try {
+      const res = await fetch(
+        `${this.baseUrl}/morning/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/rollback`,
+        { method: "POST", headers: this.authHeaders }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, error: data?.error ?? `HTTP ${res.status}` };
+      return { ok: true, revertSha: data?.revertSha };
+    } catch (e: unknown) {
+      return { ok: false, error: e instanceof Error ? e.message : "rollback failed" };
+    }
+  }
+
+  /**
+   * Absolute URL the `<video>` element can point its `src` at. The
+   * element issues byte-range requests directly; the browser is good
+   * at this and doesn't need us to stream manually.
+   *
+   * Returns null when not connected — the caller should hide the
+   * video layer and render the card's diff panel instead.
+   */
+  morningVideoUrl(runId: string, taskId: string): string | null {
+    if (!this.baseUrl) return null;
+    return `${this.baseUrl}/recordings/${encodeURIComponent(runId)}/${encodeURIComponent(taskId)}/video.mp4`;
+  }
+
+  async recordingDrivers(): Promise<RecordingDriverStatus[]> {
+    if (!this.isConnected || !this.baseUrl) return [];
+    try {
+      const res = await fetch(`${this.baseUrl}/morning/drivers`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json();
+      const raw = data?.drivers ?? {};
+      return Object.values(raw) as RecordingDriverStatus[];
+    } catch {
+      return [];
+    }
+  }
+}
+
+// ── Morning match-report types ─────────────────────────────────────────
+// Mirror the Go structs in morning.go. Clients render whatever fields
+// exist; the agent is authoritative for which are populated.
+
+export type MorningTaskStatus = "shipped" | "failed" | "skipped" | "rolled-back";
+
+export interface MorningTaskHighlight {
+  taskId: string;
+  runnerId?: string;
+  title: string;
+  oneLineSummary?: string;
+  status: MorningTaskStatus;
+  startedAt: string;
+  finishedAt: string;
+  costUsd?: number;
+  baseSha?: string;
+  headSha?: string;
+  commitShas?: string[];
+  workDir?: string;
+  filesChanged?: number;
+  linesAdded?: number;
+  linesRemoved?: number;
+  hasVideo: boolean;
+  videoDurationMs?: number;
+  videoSizeBytes?: number;
+  rolledBackAt?: string;
+  revertSha?: string;
+  failureNote?: string;
+}
+
+export interface MorningRunStats {
+  tasksShipped: number;
+  tasksFailed: number;
+  tasksRolledBack: number;
+  tasksTotal: number;
+  totalCostUsd: number;
+  totalMinutes: number;
+}
+
+export interface MorningRunSummary {
+  runId: string;
+  project: string;
+  workDir: string;
+  startedAt: string;
+  finishedAt?: string;
+  tasks: MorningTaskHighlight[];
+  stats: MorningRunStats;
+  note?: string;
+}
+
+export interface RecordingDriverStatus {
+  driver: string;
+  target: string;
+  available: boolean;
+  reason?: string;
 }
 
 /** Singleton client instance. */

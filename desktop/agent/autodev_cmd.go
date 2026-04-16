@@ -45,6 +45,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -68,6 +70,14 @@ type autodevDefaults struct {
 	noAutotest bool
 	remained   string
 	autoIdeas  int
+
+	// Morning match-report toggles. Default-on semantics live in the
+	// caller; these flags are the resolved state. If morningVideo is
+	// true but no product-demo driver is available, autodev will
+	// log-and-continue rather than fail — the match report is a
+	// nice-to-have, not a precondition for shipping code.
+	morningSummary bool
+	morningVideo   bool
 }
 
 // runAutodev is `yaver autodev <project> [flags]`.
@@ -116,6 +126,18 @@ func runAutodevOrTest(kind string, args []string) {
 	noAutotest := fs.Bool("no-autotest", false, "autodev only: skip the interleaved autotest pass")
 	remained := fs.String("remained", "", "Path to a remained.md checklist file — each kick picks the next unchecked item, implements it, checks it off, commits")
 	_ = remained
+
+	// Morning match-report toggles. Default ON ("it's the overnight
+	// vibe-code headline feature"); --no-morning / --no-morning-video
+	// opt out. `--morning-video` on a host with no product-demo
+	// driver (ios-sim / android-emu) degrades to summary-only rather
+	// than failing — autodev must never be blocked by missing
+	// peripheral tools.
+	morning := fs.Bool("morning", true, "Emit a morning match-report summary per run (default on)")
+	morningVideo := fs.Bool("morning-video", true, "Capture a short product-demo video per kick. Requires an iOS Simulator or Android emulator — skips gracefully if neither is available (default on)")
+	noMorning := fs.Bool("no-morning", false, "Disable the morning match report (overrides --morning)")
+	noMorningVideo := fs.Bool("no-morning-video", false, "Disable video capture even when a driver is available (overrides --morning-video)")
+
 	fs.Usage = func() { printAutodevHelp(kind) }
 
 	positional, flagArgs := splitAutodevArgs(args)
@@ -229,20 +251,26 @@ func runAutodevOrTest(kind string, args []string) {
 		*branch = auto
 	}
 
+	// --no-morning / --no-morning-video win over the positive flags.
+	morningOn := *morning && !*noMorning
+	morningVideoOn := morningOn && *morningVideo && !*noMorningVideo
+
 	d := autodevDefaults{
-		hours:      *hours,
-		load:       *load,
-		deploy:     *deploy,
-		prompt:     *prompt,
-		project:    project,
-		runner:     *runner,
-		branch:     *branch,
-		target:     *target,
-		maxIter:    *maxIter,
-		notify:     *notify,
-		noAutotest: *noAutotest,
-		remained:   *remained,
-		autoIdeas:  *autoIdeas,
+		hours:          *hours,
+		load:           *load,
+		deploy:         *deploy,
+		prompt:         *prompt,
+		project:        project,
+		runner:         *runner,
+		branch:         *branch,
+		target:         *target,
+		maxIter:        *maxIter,
+		notify:         *notify,
+		noAutotest:     *noAutotest,
+		remained:       *remained,
+		autoIdeas:      *autoIdeas,
+		morningSummary: morningOn,
+		morningVideo:   morningVideoOn,
 	}
 	d = applyAutodevDefaults(d, kind, wd)
 
@@ -316,8 +344,8 @@ func runAutodevOrTest(kind string, args []string) {
 // focus on code changed since the last passing test run — a
 // smart regression pass rather than a full re-test every kick.
 func ensureAutodevRegressionSpec(p autodevPlan) error {
-	if fileExists(p.TestSpecPath) {
-		return nil
+	if fileExists(p.TestSpecPath) && autodevSpecHasLoopName(p.TestSpecPath, p.TestLoopName) {
+		return ensureLoopRegistered(p.TestLoopName, p.TestSpecPath)
 	}
 	respect := "false"
 	if p.RespectLimits {
@@ -498,6 +526,16 @@ type autodevPlan struct {
 	// emptied --remained checklist by asking the runner to generate
 	// fresh ideas. 0 = old behavior (exit when the list empties).
 	AutoIdeas int
+
+	// MorningSummary enables per-kick upsert into the morning match
+	// report store so the user gets a "what shipped overnight" card
+	// stack in mobile + web.
+	MorningSummary bool
+	// MorningVideo asks autodev to capture a short product-demo
+	// video around each kick. Best-effort: falls back to summary
+	// only when no ios-sim/android-emu driver is available on this
+	// host. Never blocks the kick.
+	MorningVideo bool
 }
 
 func buildAutodevPlan(kind string, d autodevDefaults, wd string) autodevPlan {
@@ -577,6 +615,8 @@ func buildAutodevPlan(kind string, d autodevDefaults, wd string) autodevPlan {
 		TestSpecPath:    testSpecPath,
 		RemainedFile:    remainedFile,
 		AutoIdeas:       d.autoIdeas,
+		MorningSummary:  d.morningSummary,
+		MorningVideo:    d.morningVideo,
 	}
 }
 
@@ -657,8 +697,8 @@ func oneLineAutodev(s string, max int) string {
 // ensureAutodevSpec scaffolds `.autodev.loop.yaml` or `.autotest.loop.yaml`
 // on first run and registers the loop via loopAdd().
 func ensureAutodevSpec(p autodevPlan) error {
-	if fileExists(p.SpecPath) {
-		return nil
+	if fileExists(p.SpecPath) && autodevSpecHasLoopName(p.SpecPath, p.LoopName) {
+		return ensureLoopRegistered(p.LoopName, p.SpecPath)
 	}
 	respect := "false"
 	if p.RespectLimits {
@@ -736,6 +776,29 @@ budget:
 	return nil
 }
 
+func ensureLoopRegistered(loopName, specPath string) error {
+	loops, err := loadLoops()
+	if err == nil {
+		if _, ok := loops[loopName]; ok {
+			return nil
+		}
+	}
+	loopAdd([]string{specPath})
+	return nil
+}
+
+func autodevSpecHasLoopName(specPath, loopName string) bool {
+	data, err := os.ReadFile(specPath)
+	if err != nil {
+		return false
+	}
+	var spec LoopSpec
+	if err := yaml.Unmarshal(data, &spec); err != nil {
+		return false
+	}
+	return strings.TrimSpace(spec.Name) == strings.TrimSpace(loopName)
+}
+
 func indentAutodev(s, prefix string) string {
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
 	for i, l := range lines {
@@ -808,9 +871,11 @@ func autodevForceResume(name string) {
 
 func runAutodevLoop(p autodevPlan) {
 	report := newAutodevReport(p)
+	mhook := newMorningHookFromPlan(p)
 	defer func() {
 		report.EndedAt = time.Now().UTC().Format(time.RFC3339)
 		report.save()
+		mhook.finalize("") // no-op when mhook == nil
 	}()
 	report.save()
 
@@ -827,16 +892,31 @@ func runAutodevLoop(p autodevPlan) {
 
 	kickOne := func(iter int, name string, label string) (before, after string) {
 		fmt.Printf("%s: %s kick #%d at %s\n", p.Kind, label, iter, time.Now().Format("15:04:05"))
-		before = autodevGitHead()
+		kickStart := time.Now()
+		// Only instrument the primary dev/autotest kick, not the
+		// interleaved regression pass — the regression is noise in
+		// the morning report. We recognize the primary by the loop
+		// name matching p.LoopName.
+		instrument := mhook != nil && name == p.LoopName
+		if instrument {
+			before = mhook.beforeKick(iter, label)
+		} else {
+			before = autodevGitHead()
+		}
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
 					fmt.Fprintf(os.Stderr, "%s: %s kick panicked: %v\n", p.Kind, label, r)
 				}
 			}()
-			loopRun([]string{name})
+			if _, _, err := kickLoopOnce(contextBackground(), name); err != nil {
+				fmt.Fprintf(os.Stderr, "%s: %s kick failed: %v\n", p.Kind, label, err)
+			}
 		}()
 		after = autodevGitHead()
+		if instrument {
+			mhook.afterKick(iter, label, before, kickStart)
+		}
 		return
 	}
 
@@ -1390,13 +1470,13 @@ Examples:
 SSH (detached so you can disconnect):
   ssh macmini 'cd ~/Workspace/sfmg && nohup yaver %s sfmg >%s.log 2>&1 &'
 `,
-		kind,                               // header
-		kind, kind, kind, kind,             // Usage block (4)
-		desc, kind,                         // what-it-does + defaults
-		kickDesc, kind,                     // multi-kick block
+		kind,                   // header
+		kind, kind, kind, kind, // Usage block (4)
+		desc, kind, // what-it-does + defaults
+		kickDesc, kind, // multi-kick block
 		kind,                               // status command
 		kind, kind, kind, kind, kind, kind, // Examples (6)
-		kind, kind,                         // SSH
+		kind, kind, // SSH
 	)
 }
 

@@ -50,6 +50,8 @@ export default function AutoDevScreen() {
   const [formPrompt, setFormPrompt] = useState("");
   const [formDeploy, setFormDeploy] = useState<"auto" | "none" | "testflight" | "playstore" | "both">("auto");
   const [formNoAutotest, setFormNoAutotest] = useState(false);
+  const [formMorningSummary, setFormMorningSummary] = useState(true);
+  const [formMorningVideo, setFormMorningVideo] = useState(true);
   const [starting, setStarting] = useState(false);
 
   // Load available runners from the remote agent once connected. The
@@ -105,6 +107,8 @@ export default function AutoDevScreen() {
         prompt: formPrompt || undefined,
         deploy: formDeploy,
         noAutotest: formNoAutotest,
+        createSummary: formMorningSummary,
+        createVideo: formMorningVideo,
       });
       if (!res.ok) {
         Alert.alert("Start failed", res.error || "Could not start auto dev");
@@ -117,7 +121,7 @@ export default function AutoDevScreen() {
     } finally {
       setStarting(false);
     }
-  }, [canStart, starting, formProject, formWorkDir, formInfinite, formHours, formLoad, formRunner, formPrompt, formDeploy, formNoAutotest]);
+  }, [canStart, starting, formProject, formWorkDir, formInfinite, formHours, formLoad, formRunner, formPrompt, formDeploy, formNoAutotest, formMorningSummary, formMorningVideo]);
 
   const refreshRef = React.useRef<(() => void) | undefined>(undefined);
 
@@ -297,6 +301,10 @@ export default function AutoDevScreen() {
             setDeploy={setFormDeploy}
             noAutotest={formNoAutotest}
             setNoAutotest={setFormNoAutotest}
+            morningSummary={formMorningSummary}
+            setMorningSummary={setFormMorningSummary}
+            morningVideo={formMorningVideo}
+            setMorningVideo={setFormMorningVideo}
             canStart={canStart}
             starting={starting}
             onStart={handleStart}
@@ -400,6 +408,10 @@ function StartForm(props: {
   setDeploy: (v: "auto" | "none" | "testflight" | "playstore" | "both") => void;
   noAutotest: boolean;
   setNoAutotest: (v: boolean) => void;
+  morningSummary: boolean;
+  setMorningSummary: (v: boolean) => void;
+  morningVideo: boolean;
+  setMorningVideo: (v: boolean) => void;
   canStart: boolean;
   starting: boolean;
   onStart: () => void;
@@ -531,6 +543,30 @@ function StartForm(props: {
             <Switch value={!props.noAutotest} onValueChange={(v) => props.setNoAutotest(!v)} />
             <Text style={{ color: c.textSecondary, fontSize: 12 }}>
               Interleave auto-test regression
+            </Text>
+          </View>
+
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Switch value={props.morningSummary} onValueChange={props.setMorningSummary} />
+            <Text style={{ color: c.textSecondary, fontSize: 12, flex: 1 }}>
+              ☀ Morning summary — per-kick match report
+            </Text>
+          </View>
+
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Switch
+              value={props.morningVideo}
+              onValueChange={props.setMorningVideo}
+              disabled={!props.morningSummary}
+            />
+            <Text
+              style={{
+                color: props.morningSummary ? c.textSecondary : c.textMuted,
+                fontSize: 12,
+                flex: 1,
+              }}
+            >
+              Video of the finished product (iOS Simulator or Android emulator — skipped if neither is running)
             </Text>
           </View>
 
