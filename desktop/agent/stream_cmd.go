@@ -59,6 +59,56 @@ func listStreams() {
 	}
 }
 
+// ANSI helpers — kept tiny on purpose. Color codes are only emitted
+// when stdout is a terminal so piped output stays clean.
+const (
+	ansiCyan  = "\x1b[36m"
+	ansiDim   = "\x1b[2m"
+	ansiBold  = "\x1b[1m"
+	ansiReset = "\x1b[0m"
+)
+
+// renderStreamEvent prints one structured stream event to stdout in
+// chat-style. Generic across runners — yaver "speaks" on the left
+// (cyan), runner replies on the right (default), tool uses are dim
+// inline tags. Falls back to a raw text line for legacy "line"
+// events so old publishers still render fine.
+func renderStreamEvent(ev map[string]interface{}) {
+	t, _ := ev["type"].(string)
+	switch t {
+	case "yaver_say":
+		txt, _ := ev["text"].(string)
+		fmt.Printf("\n%s[yaver]%s %s\n", ansiCyan, ansiReset, txt)
+	case "runner_action":
+		runner, _ := ev["runner"].(string)
+		tool, _ := ev["tool"].(string)
+		detail, _ := ev["detail"].(string)
+		fmt.Printf("%s  %s · %s %s%s\n", ansiDim, runner, tool, detail, ansiReset)
+	case "runner_text":
+		txt, _ := ev["text"].(string)
+		if strings.TrimSpace(txt) != "" {
+			fmt.Println(txt)
+		}
+	case "runner_result":
+		runner, _ := ev["runner"].(string)
+		status, _ := ev["status"].(string)
+		dur, _ := ev["duration_ms"].(float64)
+		cost, _ := ev["cost_usd"].(float64)
+		fmt.Printf("%s[%s done · %s · %.1fs · $%.4f]%s\n",
+			ansiBold, runner, status, dur/1000.0, cost, ansiReset)
+	case "line", "":
+		// Legacy text frame — print verbatim.
+		if txt, ok := ev["text"].(string); ok {
+			fmt.Println(txt)
+		}
+	default:
+		// Unknown event type — surface compactly so it isn't lost.
+		if b, err := json.Marshal(ev); err == nil {
+			fmt.Printf("%s[%s] %s%s\n", ansiDim, t, string(b), ansiReset)
+		}
+	}
+}
+
 // resolveStreamName accepts either a fully-qualified stream name
 // ("autodev:sfmg-autodev") or a bare loop name ("sfmg-autodev") and
 // returns whichever exists. Falls back to "autodev:<name>" when
@@ -123,16 +173,11 @@ func tailStream(name string) {
 			continue
 		}
 		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		var ev struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		}
+		var ev map[string]interface{}
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
 			continue
 		}
-		if ev.Type == "line" {
-			fmt.Println(ev.Text)
-		}
+		renderStreamEvent(ev)
 	}
 	if err := scanner.Err(); err != nil {
 		fmt.Fprintf(os.Stderr, "stream: connection closed: %v\n", err)

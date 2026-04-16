@@ -21,6 +21,50 @@ import (
 // daemon's /streams/{name}/append endpoint. It is intentionally
 // best-effort: if the daemon is unreachable, drops are silent and
 // the CLI keeps running. We never block the producer.
+// activePublisher is set by teeStdoutToStream while a tee is in
+// effect so spawn functions (phaseThink, spawnClaudeCode, refill,
+// etc.) can publish structured chat events without threading a
+// publisher through every signature. Nil when no autodev run is
+// owning this process.
+var (
+	activePublisher   *streamPublisher
+	activePublisherMu sync.Mutex
+)
+
+func setActivePublisher(p *streamPublisher) {
+	activePublisherMu.Lock()
+	activePublisher = p
+	activePublisherMu.Unlock()
+}
+func getActivePublisher() *streamPublisher {
+	activePublisherMu.Lock()
+	defer activePublisherMu.Unlock()
+	return activePublisher
+}
+
+// Package-level chat-event helpers. Safe to call from anywhere; no-op
+// when no autodev run is active.
+func AutodevPublishYaverSay(text string) {
+	if p := getActivePublisher(); p != nil {
+		p.PublishYaverSay(text)
+	}
+}
+func AutodevPublishRunnerAction(runner, tool, detail string) {
+	if p := getActivePublisher(); p != nil {
+		p.PublishRunnerAction(runner, tool, detail)
+	}
+}
+func AutodevPublishRunnerText(runner, text string) {
+	if p := getActivePublisher(); p != nil {
+		p.PublishRunnerText(runner, text)
+	}
+}
+func AutodevPublishRunnerResult(runner, status string, dur time.Duration, costUSD float64) {
+	if p := getActivePublisher(); p != nil {
+		p.PublishRunnerResult(runner, status, dur, costUSD)
+	}
+}
+
 type streamPublisher struct {
 	endpoint string
 	token    string
@@ -49,6 +93,70 @@ func (p *streamPublisher) Publish(line string) {
 	case p.in <- line:
 	default: // buffer full → drop; CLI must never stall on streaming
 	}
+}
+
+// PublishEvent ships a structured event to the daemon's log stream
+// as a separate POST so chat-rendering subscribers (mobile, web,
+// CLI tail) can render bubbles by `type`. Best-effort: silently
+// drops on transport errors; the run keeps going.
+func (p *streamPublisher) PublishEvent(ev map[string]interface{}) {
+	if p == nil || ev == nil {
+		return
+	}
+	go func() {
+		body, _ := json.Marshal(map[string]interface{}{"event": ev})
+		req, err := http.NewRequest("POST", p.endpoint, bytes.NewReader(body))
+		if err != nil {
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if p.token != "" {
+			req.Header.Set("Authorization", "Bearer "+p.token)
+		}
+		client := &http.Client{Timeout: 2 * time.Second}
+		if resp, err := client.Do(req); err == nil {
+			resp.Body.Close()
+		}
+	}()
+}
+
+// PublishYaverSay emits a "yaver_say" chat bubble — what yaver said
+// to the runner this kick. Use a short, single-line summary; long
+// prompts go in the actual subprocess stdin, not here.
+func (p *streamPublisher) PublishYaverSay(text string) {
+	p.PublishEvent(map[string]interface{}{"type": "yaver_say", "text": text})
+}
+
+// PublishRunnerAction emits a "runner_action" event for one tool
+// use. detail is whatever 1-line label fits the tool (file path,
+// shell command, URL, etc.).
+func (p *streamPublisher) PublishRunnerAction(runner, tool, detail string) {
+	p.PublishEvent(map[string]interface{}{
+		"type":   "runner_action",
+		"runner": runner,
+		"tool":   tool,
+		"detail": detail,
+	})
+}
+
+// PublishRunnerText emits an assistant chat bubble.
+func (p *streamPublisher) PublishRunnerText(runner, text string) {
+	p.PublishEvent(map[string]interface{}{
+		"type":   "runner_text",
+		"runner": runner,
+		"text":   text,
+	})
+}
+
+// PublishRunnerResult marks the end of a runner turn.
+func (p *streamPublisher) PublishRunnerResult(runner, status string, dur time.Duration, costUSD float64) {
+	p.PublishEvent(map[string]interface{}{
+		"type":        "runner_result",
+		"runner":      runner,
+		"status":      status,
+		"duration_ms": dur.Milliseconds(),
+		"cost_usd":    costUSD,
+	})
 }
 
 func (p *streamPublisher) Close() {
@@ -127,6 +235,7 @@ func teeStdoutToStream(streamName string) func() {
 	}
 
 	publisher := newStreamPublisher(streamName)
+	setActivePublisher(publisher)
 
 	// Open a per-run log file under /tmp/yaver/<stream>-<ts>.log so
 	// the user (or another agent) can `tail -f` the run after the
@@ -213,6 +322,7 @@ func teeStdoutToStream(streamName string) func() {
 		rErr.Close()
 		publisher.Publish(fmt.Sprintf("─── %s ended %s ───",
 			streamName, time.Now().Format(time.RFC3339)))
+		setActivePublisher(nil)
 		publisher.Close()
 		if logFile != nil {
 			_, _ = logFile.WriteString(fmt.Sprintf("─── %s ended %s ───\n",

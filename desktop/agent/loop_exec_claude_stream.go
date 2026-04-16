@@ -91,8 +91,6 @@ func printClaudeEvent(ev map[string]interface{}) {
 			return
 		}
 	case "assistant":
-		// Walk the content blocks: text => print snippet, tool_use
-		// => print "tool: <name> <args summary>".
 		msg, _ := ev["message"].(map[string]interface{})
 		if msg == nil {
 			return
@@ -108,11 +106,14 @@ func printClaudeEvent(ev map[string]interface{}) {
 				txt, _ := block["text"].(string)
 				if s := claudeStreamLine(txt, 200); s != "" {
 					fmt.Fprintln(os.Stderr, s)
+					AutodevPublishRunnerText("claude", s)
 				}
 			case "tool_use":
 				name, _ := block["name"].(string)
 				input, _ := block["input"].(map[string]interface{})
-				fmt.Fprintf(os.Stderr, "[claude] %s %s\n", name, summariseToolInput(name, input))
+				detail := summariseToolInput(name, input)
+				fmt.Fprintf(os.Stderr, "[claude] %s %s\n", name, detail)
+				AutodevPublishRunnerAction("claude", name, detail)
 			}
 		}
 		return

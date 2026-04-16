@@ -38,21 +38,44 @@ func newLogStream(name string) *LogStream {
 	}
 }
 
-// Append publishes a single line to history and to every live
-// subscriber. Slow subscribers drop the line silently.
+// Append publishes a single text line as a {"type":"line","text":...}
+// event. Kept for backwards compatibility; new call sites should use
+// AppendEvent for structured data.
 func (s *LogStream) Append(line string) {
+	s.publishJSON(jsonString(map[string]interface{}{
+		"type": "line",
+		"text": line,
+	}))
+}
+
+// AppendEvent publishes a structured event. Callers pass any map
+// shape; we JSON-encode it and broadcast it verbatim. Recommended
+// kinds for autodev:
+//   - {"type":"yaver_say", "text":"<one-line summary>"}
+//   - {"type":"runner_action", "runner":"claude","tool":"Read","detail":"src/foo.tsx"}
+//   - {"type":"runner_text", "runner":"claude","text":"<assistant chatter>"}
+//   - {"type":"runner_result", "runner":"claude","status":"done","duration_ms":12345,"cost_usd":0.012}
+// Mobile / web subscribers render bubbles by `type`.
+func (s *LogStream) AppendEvent(ev map[string]interface{}) {
+	if ev == nil {
+		return
+	}
+	s.publishJSON(jsonString(ev))
+}
+
+func (s *LogStream) publishJSON(payload string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return
 	}
-	s.history.PushBack(line)
+	s.history.PushBack(payload)
 	for s.history.Len() > s.historyMax {
 		s.history.Remove(s.history.Front())
 	}
 	for ch := range s.subscribers {
 		select {
-		case ch <- line:
+		case ch <- payload:
 		default: // subscriber too slow — drop
 		}
 	}
@@ -173,8 +196,10 @@ func (s *HTTPServer) handleStreamByName(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		var body struct {
-			Line  string   `json:"line"`
-			Lines []string `json:"lines"`
+			Line   string                   `json:"line"`
+			Lines  []string                 `json:"lines"`
+			Event  map[string]interface{}   `json:"event"`
+			Events []map[string]interface{} `json:"events"`
 		}
 		_ = decodeJSONBody(r, &body)
 		if body.Line != "" {
@@ -182,6 +207,12 @@ func (s *HTTPServer) handleStreamByName(w http.ResponseWriter, r *http.Request) 
 		}
 		for _, l := range body.Lines {
 			stream.Append(l)
+		}
+		if body.Event != nil {
+			stream.AppendEvent(body.Event)
+		}
+		for _, e := range body.Events {
+			stream.AppendEvent(e)
 		}
 		jsonReply(w, http.StatusOK, map[string]interface{}{"ok": true})
 	default:
@@ -204,11 +235,8 @@ func (s *HTTPServer) streamSSE(w http.ResponseWriter, r *http.Request, stream *L
 	ch, snapshot, cancel := stream.Subscribe()
 	defer cancel()
 
-	for _, line := range snapshot {
-		fmt.Fprintf(w, "data: %s\n\n", jsonString(map[string]interface{}{
-			"type": "line",
-			"text": line,
-		}))
+	for _, payload := range snapshot {
+		fmt.Fprintf(w, "data: %s\n\n", payload)
 	}
 	flusher.Flush()
 
@@ -225,14 +253,11 @@ func (s *HTTPServer) streamSSE(w http.ResponseWriter, r *http.Request, stream *L
 			// proxies / mobile NAT.
 			fmt.Fprintf(w, ": ping\n\n")
 			flusher.Flush()
-		case line, ok := <-ch:
+		case payload, ok := <-ch:
 			if !ok {
 				return
 			}
-			fmt.Fprintf(w, "data: %s\n\n", jsonString(map[string]interface{}{
-				"type": "line",
-				"text": line,
-			}))
+			fmt.Fprintf(w, "data: %s\n\n", payload)
 			flusher.Flush()
 		}
 	}

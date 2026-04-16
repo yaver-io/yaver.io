@@ -1239,6 +1239,33 @@ func runHeuristicDetectors(visibleText string, consoleMsgs []string) []Finding {
 
 func phaseThink(ctx context.Context, l *LoopState, workDir string, report *HeuristicReport, reportPath string, nudge string) (*AIResponse, error) {
 	runner := strings.ToLower(l.Spec.Think.Runner)
+
+	// Chat-style: emit one yaver_say bubble before every spawn so
+	// the user (terminal/mobile/web) sees what we asked for. Keep
+	// it short — the full prompt goes on the runner's stdin, not
+	// here.
+	prompt := strings.TrimSpace(l.Spec.Think.PromptInline)
+	if prompt == "" {
+		prompt = "(no inline prompt — runner picks next coherent improvement)"
+	}
+	AutodevPublishYaverSay(fmt.Sprintf("%s · %s · %s",
+		runner, l.Spec.Mode, claudeStreamLine(prompt, 200)))
+
+	// Wrap the runner result so a single point emits the result event
+	// without each spawnFoo function having to know about chat.
+	started := time.Now()
+	resp, err := dispatchRunner(ctx, runner, l, workDir, report, reportPath, nudge)
+	status := "ok"
+	if err != nil {
+		status = "error"
+	} else if resp != nil {
+		status = resp.Status
+	}
+	AutodevPublishRunnerResult(runner, status, time.Since(started), 0)
+	return resp, err
+}
+
+func dispatchRunner(ctx context.Context, runner string, l *LoopState, workDir string, report *HeuristicReport, reportPath, nudge string) (*AIResponse, error) {
 	switch {
 	case runner == "claude-code" || runner == "claude":
 		return spawnClaudeCode(ctx, l, workDir, report, reportPath, nudge)
