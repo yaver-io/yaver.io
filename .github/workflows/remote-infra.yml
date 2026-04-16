@@ -1,0 +1,143 @@
+name: Remote Infra
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Which remote-infra suite to run"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - reauth
+          - mesh
+  push:
+    branches: [main]
+    paths:
+      - "desktop/agent/**"
+      - "backend/convex/**"
+      - "scripts/test-remote-infra-ci.sh"
+      - ".github/workflows/remote-infra.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  relay-reauth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: testing
+    if: github.event_name == 'push' || github.event.inputs.suite == 'all' || github.event.inputs.suite == 'reauth'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preflight
+        id: preflight
+        env:
+          CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+          RELAY_HTTP_URL: ${{ secrets.RELAY_HTTP_URL }}
+          YAVER_CI_SSH_HOST_PRIMARY: ${{ secrets.YAVER_CI_SSH_HOST_PRIMARY }}
+          YAVER_CI_SSH_PRIVATE_KEY: ${{ secrets.YAVER_CI_SSH_PRIVATE_KEY }}
+          YAVER_CI_SSH_KNOWN_HOSTS: ${{ secrets.YAVER_CI_SSH_KNOWN_HOSTS }}
+        run: |
+          missing=""
+          for name in CONVEX_SITE_URL RELAY_HTTP_URL YAVER_CI_SSH_HOST_PRIMARY YAVER_CI_SSH_PRIVATE_KEY YAVER_CI_SSH_KNOWN_HOSTS; do
+            if [ -z "${!name}" ]; then
+              missing="$missing $name"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Remote reauth skipped. Missing secrets:$missing" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v5
+        if: steps.preflight.outputs.skip != 'true'
+        with:
+          go-version: "1.22"
+
+      - name: Install SSH key
+        if: steps.preflight.outputs.skip != 'true'
+        env:
+          YAVER_CI_SSH_PRIVATE_KEY: ${{ secrets.YAVER_CI_SSH_PRIVATE_KEY }}
+          YAVER_CI_SSH_KNOWN_HOSTS: ${{ secrets.YAVER_CI_SSH_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$YAVER_CI_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$YAVER_CI_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Relay reauth smoke
+        if: steps.preflight.outputs.skip != 'true'
+        env:
+          CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+          RELAY_HTTP_URL: ${{ secrets.RELAY_HTTP_URL }}
+          YAVER_CI_SSH_HOST_PRIMARY: ${{ secrets.YAVER_CI_SSH_HOST_PRIMARY }}
+          YAVER_CI_SSH_USER: ${{ secrets.YAVER_CI_SSH_USER }}
+          YAVER_CI_SSH_PORT: ${{ secrets.YAVER_CI_SSH_PORT }}
+        run: ./scripts/test-remote-infra-ci.sh reauth
+
+  mesh-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: testing
+    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.suite == 'all' || github.event.inputs.suite == 'mesh')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preflight
+        id: preflight
+        env:
+          CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+          RELAY_HTTP_URL: ${{ secrets.RELAY_HTTP_URL }}
+          YAVER_CI_SSH_HOST_PRIMARY: ${{ secrets.YAVER_CI_SSH_HOST_PRIMARY }}
+          YAVER_CI_SSH_HOST_SECONDARY: ${{ secrets.YAVER_CI_SSH_HOST_SECONDARY }}
+          YAVER_CI_SSH_PRIVATE_KEY: ${{ secrets.YAVER_CI_SSH_PRIVATE_KEY }}
+          YAVER_CI_SSH_KNOWN_HOSTS: ${{ secrets.YAVER_CI_SSH_KNOWN_HOSTS }}
+        run: |
+          missing=""
+          for name in CONVEX_SITE_URL RELAY_HTTP_URL YAVER_CI_SSH_HOST_PRIMARY YAVER_CI_SSH_HOST_SECONDARY YAVER_CI_SSH_PRIVATE_KEY YAVER_CI_SSH_KNOWN_HOSTS; do
+            if [ -z "${!name}" ]; then
+              missing="$missing $name"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Mesh smoke skipped. Missing secrets:$missing" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v5
+        if: steps.preflight.outputs.skip != 'true'
+        with:
+          go-version: "1.22"
+
+      - name: Install SSH key
+        if: steps.preflight.outputs.skip != 'true'
+        env:
+          YAVER_CI_SSH_PRIVATE_KEY: ${{ secrets.YAVER_CI_SSH_PRIVATE_KEY }}
+          YAVER_CI_SSH_KNOWN_HOSTS: ${{ secrets.YAVER_CI_SSH_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$YAVER_CI_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$YAVER_CI_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Mesh smoke over relay
+        if: steps.preflight.outputs.skip != 'true'
+        env:
+          CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+          RELAY_HTTP_URL: ${{ secrets.RELAY_HTTP_URL }}
+          YAVER_CI_SSH_HOST_PRIMARY: ${{ secrets.YAVER_CI_SSH_HOST_PRIMARY }}
+          YAVER_CI_SSH_HOST_SECONDARY: ${{ secrets.YAVER_CI_SSH_HOST_SECONDARY }}
+          YAVER_CI_SSH_USER: ${{ secrets.YAVER_CI_SSH_USER }}
+          YAVER_CI_SSH_PORT: ${{ secrets.YAVER_CI_SSH_PORT }}
+        run: ./scripts/test-remote-infra-ci.sh mesh

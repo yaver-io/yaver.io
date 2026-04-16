@@ -34,6 +34,61 @@ const version = "1.93.0"
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
 
+func relayInfosFromConfig(servers []RelayServerConfig) ([]RelayServerInfo, map[string]string) {
+	var relayServers []RelayServerInfo
+	passwords := make(map[string]string)
+	for _, rs := range servers {
+		relayServers = append(relayServers, RelayServerInfo{
+			ID:       rs.ID,
+			QuicAddr: rs.QuicAddr,
+			HttpURL:  rs.HttpURL,
+			Region:   rs.Region,
+			Priority: rs.Priority,
+		})
+		if rs.Password != "" {
+			passwords[rs.QuicAddr] = rs.Password
+		}
+	}
+	return relayServers, passwords
+}
+
+func relayConfigMatches(a, b []RelayServerConfig) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func cacheResolvedRelayConfig(cfg *Config, servers []RelayServerInfo, globalPassword string, perRelayPasswords map[string]string) {
+	if cfg == nil || len(cfg.RelayServers) > 0 || len(servers) == 0 {
+		return
+	}
+	cached := make([]RelayServerConfig, 0, len(servers))
+	for _, rs := range servers {
+		cached = append(cached, RelayServerConfig{
+			ID:       rs.ID,
+			QuicAddr: rs.QuicAddr,
+			HttpURL:  rs.HttpURL,
+			Password: perRelayPasswords[rs.QuicAddr],
+			Region:   rs.Region,
+			Priority: rs.Priority,
+		})
+	}
+	if relayConfigMatches(cfg.CachedRelayServers, cached) && cfg.CachedRelayPassword == globalPassword {
+		return
+	}
+	cfg.CachedRelayServers = cached
+	cfg.CachedRelayPassword = globalPassword
+	if err := SaveConfig(cfg); err != nil {
+		log.Printf("Warning: could not cache relay config: %v", err)
+	}
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -1336,24 +1391,24 @@ func runServe(args []string) {
 	// Determine relay password: --relay-password flag > config.relay_password
 	effectiveRelayPassword := *relayPassword
 	if effectiveRelayPassword == "" {
-		effectiveRelayPassword = cfg.RelayPassword
+		if cfg.RelayPassword != "" {
+			effectiveRelayPassword = cfg.RelayPassword
+		} else {
+			effectiveRelayPassword = cfg.CachedRelayPassword
+		}
 	}
 
 	if !*noRelay && len(cfg.RelayServers) > 0 {
 		// Use relay servers from config.json (highest priority)
 		log.Printf("Using %d relay server(s) from config.json:", len(cfg.RelayServers))
-		for _, rs := range cfg.RelayServers {
-			relayServers = append(relayServers, RelayServerInfo{
-				ID:       rs.ID,
-				QuicAddr: rs.QuicAddr,
-				HttpURL:  rs.HttpURL,
-				Region:   rs.Region,
-				Priority: rs.Priority,
-			})
-			// Per-relay password takes priority over global relay password
-			if rs.Password != "" {
-				relayPasswords[rs.QuicAddr] = rs.Password
-			}
+		relayServers, relayPasswords = relayInfosFromConfig(cfg.RelayServers)
+		for _, rs := range relayServers {
+			log.Printf("  [%s] %s (%s)", rs.ID, rs.QuicAddr, rs.Region)
+		}
+	} else if !*noRelay && len(cfg.CachedRelayServers) > 0 {
+		log.Printf("Using %d cached relay server(s):", len(cfg.CachedRelayServers))
+		relayServers, relayPasswords = relayInfosFromConfig(cfg.CachedRelayServers)
+		for _, rs := range relayServers {
 			log.Printf("  [%s] %s (%s)", rs.ID, rs.QuicAddr, rs.Region)
 		}
 	}
@@ -1417,6 +1472,9 @@ func runServe(args []string) {
 			log.Printf("Loaded %d model(s) from Convex", len(platformCfg.Models))
 			LoadModelsFromBackend(platformCfg.Models)
 		}
+	}
+	if !*noRelay && len(relayServers) > 0 {
+		cacheResolvedRelayConfig(cfg, relayServers, effectiveRelayPassword, relayPasswords)
 	}
 
 	// Write PID file (for debug mode too, so stop/status work)
@@ -4956,22 +5014,15 @@ func (rm *relayManager) reloadNow() {
 		log.Printf("[RELAY] Config reload failed: %v", err)
 		return
 	}
-	var servers []RelayServerInfo
-	passwords := make(map[string]string)
-	for _, rs := range cfg.RelayServers {
-		servers = append(servers, RelayServerInfo{
-			ID:       rs.ID,
-			QuicAddr: rs.QuicAddr,
-			HttpURL:  rs.HttpURL,
-			Region:   rs.Region,
-			Priority: rs.Priority,
-		})
-		if rs.Password != "" {
-			passwords[rs.QuicAddr] = rs.Password
-		}
+	relayCfg := cfg.RelayServers
+	if len(relayCfg) == 0 {
+		relayCfg = cfg.CachedRelayServers
 	}
+	servers, passwords := relayInfosFromConfig(relayCfg)
 	if cfg.RelayPassword != "" {
 		rm.globalPassword = cfg.RelayPassword
+	} else if cfg.CachedRelayPassword != "" {
+		rm.globalPassword = cfg.CachedRelayPassword
 	}
 	rm.applyRelayServers(servers, passwords)
 	log.Printf("[RELAY] Config reloaded: %d relay server(s)", len(servers))
