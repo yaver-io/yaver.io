@@ -27,7 +27,6 @@ set -euo pipefail
 MODE="${1:-autoinit}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-YAVER_BIN="${YAVER_BIN:-$ROOT_DIR/desktop/agent/yaver}"
 CONVEX_SITE_URL="${CONVEX_SITE_URL:-https://shocking-echidna-394.eu-west-1.convex.site}"
 RUNNER_SPEC="${RUNNER_SPEC:-}"
 MODEL_SPEC="${MODEL_SPEC:-}"
@@ -37,11 +36,13 @@ CI_TEST_EMAIL="${CI_TEST_EMAIL:-ci-test@yaver.io}"
 CI_TEST_PASSWORD="${CI_TEST_PASSWORD:-ciTestPass2026!}"
 CI_TEST_FULLNAME="${CI_TEST_FULLNAME:-CI Test User}"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/yaver-peer-local-XXXXXX")"
+YAVER_BIN="${YAVER_BIN:-$WORK_DIR/yaver-peer-local}"
 TARGET_HOME="$WORK_DIR/target-home"
 CONTROLLER_HOME="$WORK_DIR/controller-home"
 FIXTURE_DIR="$WORK_DIR/fixture"
 TARGET_PID=""
 CONTROLLER_PID=""
+USE_EXISTING_LOCAL_TARGET=0
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -69,10 +70,9 @@ need_prereqs() {
   command -v python3 >/dev/null 2>&1 || fail "python3 not installed"
   command -v curl >/dev/null 2>&1 || fail "curl not installed"
   command -v git >/dev/null 2>&1 || fail "git not installed"
-  if [ ! -x "$YAVER_BIN" ]; then
-    log "building yaver binary..."
-    (cd "$ROOT_DIR/desktop/agent" && go build -o yaver .) || fail "failed to build yaver"
-  fi
+  log "building fresh yaver test binary..."
+  (cd "$ROOT_DIR/desktop/agent" && go build -o "$YAVER_BIN" .) || fail "failed to build yaver"
+  "$YAVER_BIN" autodev help >/dev/null 2>&1 || fail "fresh test binary does not support autodev"
 }
 
 get_ci_token() {
@@ -91,6 +91,25 @@ get_ci_token() {
   token="$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null)" || true
   [ -n "$token" ] || fail "could not obtain CI token from Convex"
   printf '%s' "$token"
+}
+
+local_agent_running() {
+  curl -sf "http://127.0.0.1:18080/health" >/dev/null 2>&1
+}
+
+read_local_config_field() {
+  local field="$1"
+  python3 - "$field" <<'PY'
+import json, os, sys
+field = sys.argv[1]
+path = os.path.expanduser("~/.yaver/config.json")
+try:
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    print(data.get(field, ""))
+except Exception:
+    print("")
+PY
 }
 
 make_fixture() {
@@ -273,7 +292,6 @@ run_remote_autodev() {
 }
 
 need_prereqs
-TOKEN="$(get_ci_token)"
 TARGET_ID="peer-target-$(python3 - <<'PY'
 import uuid
 print(uuid.uuid4())
@@ -286,14 +304,29 @@ PY
 )"
 make_fixture
 
-TARGET_PID="$(start_agent "$TARGET_HOME" 18080 4433 "$TOKEN" "$TARGET_ID" "$WORK_DIR/target.log")"
+if local_agent_running; then
+  local_token="$(read_local_config_field auth_token)"
+  local_device_id="$(read_local_config_field device_id)"
+  if [ -n "$local_token" ] && [ -n "$local_device_id" ]; then
+    USE_EXISTING_LOCAL_TARGET=1
+    TOKEN="$local_token"
+    TARGET_ID="$local_device_id"
+    log "reusing existing local agent on :18080 as target (${TARGET_ID:0:8})"
+  else
+    fail "port 18080 already has a Yaver agent, but local config token/device_id could not be read"
+  fi
+else
+  TOKEN="$(get_ci_token)"
+  TARGET_PID="$(start_agent "$TARGET_HOME" 18080 4433 "$TOKEN" "$TARGET_ID" "$WORK_DIR/target.log")"
+fi
+
 CONTROLLER_PID="$(start_agent "$CONTROLLER_HOME" 18081 4434 "$TOKEN" "$CONTROLLER_ID" "$WORK_DIR/controller.log")"
-wait_device_online "$CONTROLLER_HOME" "${TARGET_ID%%-*}" || fail "controller never saw target in device inventory"
+wait_device_online "$CONTROLLER_HOME" "${TARGET_ID:0:8}" || fail "controller never saw target in device inventory"
 
 case "$MODE" in
-  autoinit) run_remote_autoinit "${TARGET_ID%%-*}" ;;
-  autoideas) run_remote_autoideas "${TARGET_ID%%-*}" ;;
-  autodev) run_remote_autodev "${TARGET_ID%%-*}" ;;
+  autoinit) run_remote_autoinit "$TARGET_ID" ;;
+  autoideas) run_remote_autoideas "$TARGET_ID" ;;
+  autodev) run_remote_autodev "$TARGET_ID" ;;
   *)
     fail "unknown mode: $MODE (use autoinit|autoideas|autodev)"
     ;;
