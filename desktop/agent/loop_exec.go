@@ -1336,6 +1336,40 @@ func buildLoopPrompt(l *LoopState, workDir string, report *HeuristicReport, nudg
 	return strings.Join(parts, ""), nil
 }
 
+// readClaudeSessionID returns the persisted Claude session id for
+// this loop, or "" if none. Used to add --resume <id> on follow-up
+// kicks so the runner doesn't reload the project every time.
+func readClaudeSessionID(loopName string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	path := filepath.Join(home, ".yaver", "loops", loopName, "claude_session.id")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// writeClaudeSessionID persists a Claude session id so the next
+// kick can resume it. Best-effort: directory is created if needed,
+// failures are silently swallowed.
+func writeClaudeSessionID(loopName, sessionID string) {
+	if strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	dir := filepath.Join(home, ".yaver", "loops", loopName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(dir, "claude_session.id"), []byte(sessionID), 0o644)
+}
+
 // resolveClaudeModelEnv expands the YAVER_CLAUDE_MODEL alias into
 // a concrete model id. Empty env returns "" so the CLI uses its
 // default. Aliases sonnet/opus/haiku map to the latest 4.6
@@ -1394,6 +1428,15 @@ func spawnClaudeCode(ctx context.Context, l *LoopState, workDir string, report *
 		"--permission-mode", "bypassPermissions",
 		"--add-dir", workDir,
 	}
+	// --resume <session-id>: reuse the same Claude conversation
+	// across kicks of the same loop so the runner doesn't reload
+	// the entire project every 5 minutes. session_id is captured
+	// from the first kick's system/init event and persisted to
+	// ~/.yaver/loops/<name>/claude_session.id.
+	if prev := readClaudeSessionID(l.Spec.Name); prev != "" {
+		args = append(args, "--resume", prev)
+		fmt.Fprintf(os.Stderr, "[loop %s] resuming claude session %s\n", l.Spec.Name, prev)
+	}
 	// --model: alias-or-id passed via YAVER_CLAUDE_MODEL by autodev's
 	// --model flag. Sonnet is the cheap-default the user should
 	// reach for; Opus burns the Max weekly bucket ~5× faster.
@@ -1439,15 +1482,15 @@ func spawnClaudeCode(ctx context.Context, l *LoopState, workDir string, report *
 		}
 	}()
 
-	resp, _, parseErr := parseClaudeStream(stdout)
+	resp, sessionID, parseErr := parseClaudeStream(stdout)
 	hbCancel()
-	// Cost transparency: parseClaudeStream already prints
-	// "[claude] result: success (Xs, $0.0Y)" per kick. Bump a
-	// process-level counter so the autodev loop can summarise
-	// "spent so far: $0.45 in 12 kicks" at the end of the run.
+	// Persist session id from the FIRST kick so subsequent kicks
+	// can --resume it (cuts per-kick cost dramatically).
+	if sessionID != "" {
+		writeClaudeSessionID(l.Spec.Name, sessionID)
+	}
 	if claudeKickCostUSD > 0 {
-		// already updated inside printClaudeEvent; nothing else to do
-		_ = claudeKickCostUSD
+		_ = claudeKickCostUSD // counter bumped inside printClaudeEvent
 	}
 	if waitErr := cmd.Wait(); waitErr != nil {
 		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
