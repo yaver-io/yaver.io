@@ -1,6 +1,7 @@
 import { mutation, query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import { listActiveInfraGrantsForGuest, listGrantedMachineIdsForGrant } from "./access";
 
 // Machine specs by type
 const MACHINE_SPECS = {
@@ -49,9 +50,29 @@ export const listForUser = query({
       teamMachines.push(...machines);
     }
 
-    // Deduplicate (user might own a team machine)
+    const grantedMachines: typeof owned = [];
+    const grants = await listActiveInfraGrantsForGuest(ctx, userId);
+    for (const grant of grants) {
+      if (grant.shareAllMachines) {
+        const hostMachines = await ctx.db
+          .query("cloudMachines")
+          .withIndex("by_user", (q) => q.eq("userId", grant.hostUserId))
+          .collect();
+        grantedMachines.push(...hostMachines);
+        continue;
+      }
+      const machineIds = await listGrantedMachineIdsForGrant(ctx, grant._id);
+      for (const machineId of machineIds) {
+        const machine = await ctx.db.get(machineId);
+        if (!machine) continue;
+        if (machine.userId !== grant.hostUserId) continue;
+        grantedMachines.push(machine);
+      }
+    }
+
+    // Deduplicate (user might own a team machine or receive the same machine twice)
     const seen = new Set<string>();
-    const all = [...owned, ...teamMachines].filter((m) => {
+    const all = [...owned, ...teamMachines, ...grantedMachines].filter((m) => {
       const id = m._id.toString();
       if (seen.has(id)) return false;
       seen.add(id);

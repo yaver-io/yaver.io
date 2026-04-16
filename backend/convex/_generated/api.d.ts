@@ -8,7 +8,9 @@
  * @module
  */
 
+import type * as access from "../access.js";
 import type * as admin from "../admin.js";
+import type * as agentSync from "../agentSync.js";
 import type * as aiModels from "../aiModels.js";
 import type * as aiRunners from "../aiRunners.js";
 import type * as auth from "../auth.js";
@@ -44,7 +46,9 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  access: typeof access;
   admin: typeof admin;
+  agentSync: typeof agentSync;
   aiModels: typeof aiModels;
   aiRunners: typeof aiRunners;
   auth: typeof auth;

@@ -371,6 +371,58 @@ export default defineSchema({
     .index("by_guestUserId", ["guestUserId"])
     .index("by_host_guest", ["hostUserId", "guestUserId"]),
 
+  // Explicit infra grants — hosts can share selected devices/machines with
+  // another user without giving them blanket access to the whole account.
+  infraAccessGrants: defineTable({
+    hostUserId: v.id("users"),
+    guestUserId: v.id("users"),
+    status: v.union(v.literal("active"), v.literal("revoked")),
+    shareAllDevices: v.optional(v.boolean()),
+    shareAllMachines: v.optional(v.boolean()),
+    useHostApiKeys: v.optional(v.boolean()),
+    allowGuestProvidedApiKeys: v.optional(v.boolean()),
+    cpuLimitPercent: v.optional(v.number()),
+    ramLimitMb: v.optional(v.number()),
+    priorityMode: v.optional(v.string()), // "same-priority" | "spare-capacity" | "background"
+    allowedRunners: v.optional(v.array(v.string())),
+    usageMode: v.optional(v.string()),
+    schedule: v.optional(v.object({
+      startHour: v.number(),
+      endHour: v.number(),
+      timezone: v.optional(v.string()),
+    })),
+    grantedAt: v.number(),
+    updatedAt: v.number(),
+    revokedAt: v.optional(v.number()),
+  })
+    .index("by_hostUserId", ["hostUserId"])
+    .index("by_guestUserId", ["guestUserId"])
+    .index("by_host_guest", ["hostUserId", "guestUserId"]),
+
+  infraAccessGrantDevices: defineTable({
+    grantId: v.id("infraAccessGrants"),
+    hostUserId: v.id("users"),
+    guestUserId: v.id("users"),
+    deviceId: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_grant", ["grantId"])
+    .index("by_guestUserId", ["guestUserId"])
+    .index("by_hostUserId", ["hostUserId"])
+    .index("by_device_guest", ["deviceId", "guestUserId"]),
+
+  infraAccessGrantMachines: defineTable({
+    grantId: v.id("infraAccessGrants"),
+    hostUserId: v.id("users"),
+    guestUserId: v.id("users"),
+    machineId: v.id("cloudMachines"),
+    createdAt: v.number(),
+  })
+    .index("by_grant", ["grantId"])
+    .index("by_guestUserId", ["guestUserId"])
+    .index("by_hostUserId", ["hostUserId"])
+    .index("by_machine_guest", ["machineId", "guestUserId"]),
+
   // Guest usage tracking — daily task-seconds consumed per guest
   guestUsage: defineTable({
     hostUserId: v.id("users"),
