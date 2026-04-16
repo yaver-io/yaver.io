@@ -139,8 +139,14 @@ func TestLogStreamHistorySnapshot(t *testing.T) {
 
 	_, snapshot, cancel := s.Subscribe()
 	defer cancel()
-	if !sliceEq(snapshot, []string{"first", "second"}) {
-		t.Errorf("snapshot: want [first second], got %v", snapshot)
+	if len(snapshot) != 2 {
+		t.Fatalf("want 2 entries, got %d", len(snapshot))
+	}
+	for i, want := range []string{"first", "second"} {
+		if !strings.Contains(snapshot[i], `"line"`) ||
+			!strings.Contains(snapshot[i], want) {
+			t.Errorf("snapshot[%d] missing line/%q: %q", i, want, snapshot[i])
+		}
 	}
 }
 
@@ -152,8 +158,8 @@ func TestLogStreamLiveDelivery(t *testing.T) {
 	s.Append("hello")
 	select {
 	case got := <-ch:
-		if got != "hello" {
-			t.Errorf("want hello, got %q", got)
+		if !strings.Contains(got, `"line"`) || !strings.Contains(got, "hello") {
+			t.Errorf("payload mismatch: %q", got)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for line")
@@ -240,6 +246,52 @@ func TestSafeFileSegment(t *testing.T) {
 func TestSafeStreamName(t *testing.T) {
 	if got := safeStreamName("autodev:sfmg-autodev"); got != "autodev_sfmg-autodev" {
 		t.Errorf("safeStreamName: got %q", got)
+	}
+}
+
+// --- structured event publishing ---------------------------------------------
+
+func TestLogStreamAppendEventStoresJSON(t *testing.T) {
+	s := newLogStream("ev")
+	s.AppendEvent(map[string]interface{}{
+		"type":   "yaver_say",
+		"text":   "hello",
+		"runner": "claude",
+	})
+	_, snapshot, cancel := s.Subscribe()
+	defer cancel()
+	if len(snapshot) != 1 {
+		t.Fatalf("want 1 event in history, got %d", len(snapshot))
+	}
+	// The history payload must be valid JSON containing both fields.
+	if !strings.Contains(snapshot[0], `"yaver_say"`) ||
+		!strings.Contains(snapshot[0], `"hello"`) {
+		t.Errorf("payload missing fields: %q", snapshot[0])
+	}
+}
+
+func TestLogStreamAppendEventDeliversLive(t *testing.T) {
+	s := newLogStream("ev2")
+	ch, _, cancel := s.Subscribe()
+	defer cancel()
+	s.AppendEvent(map[string]interface{}{"type": "runner_text", "text": "x"})
+	select {
+	case got := <-ch:
+		if !strings.Contains(got, `"runner_text"`) {
+			t.Errorf("payload mismatch: %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout")
+	}
+}
+
+func TestLogStreamAppendEventNilSafe(t *testing.T) {
+	s := newLogStream("ev3")
+	s.AppendEvent(nil) // must not panic
+	_, snapshot, cancel := s.Subscribe()
+	defer cancel()
+	if len(snapshot) != 0 {
+		t.Errorf("nil event should not be stored, got %d", len(snapshot))
 	}
 }
 

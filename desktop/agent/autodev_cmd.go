@@ -865,8 +865,23 @@ func runAutodevLoop(p autodevPlan) {
 		fmt.Printf("%s: next kick at %s (in %s)\n",
 			p.Kind, nextAt.Format("15:04:05"),
 			time.Duration(p.TickSleepSec)*time.Second)
-		time.Sleep(time.Duration(p.TickSleepSec) * time.Second)
+		// Cancellable sleep: poll the loop's STOP file every second
+		// instead of one big time.Sleep so `yaver loop stop` is felt
+		// within ~1s rather than waiting up to 5 min for the current
+		// tick to finish.
+		stopAt := time.Now().Add(time.Duration(p.TickSleepSec) * time.Second)
+		killFile, _ := loopKillFilePath(p.LoopName)
+		for time.Now().Before(stopAt) {
+			if killFile != "" {
+				if _, err := os.Stat(killFile); err == nil {
+					fmt.Printf("%s: STOP file detected during sleep — exiting\n", p.Kind)
+					goto endLoop
+				}
+			}
+			time.Sleep(1 * time.Second)
+		}
 	}
+endLoop:
 	loopStop([]string{p.LoopName})
 	if p.TestLoopName != "" {
 		loopStop([]string{p.TestLoopName})
