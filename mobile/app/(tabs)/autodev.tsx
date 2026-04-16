@@ -36,6 +36,7 @@ import {
   type AutoDevIdeasPayload,
   type RunnerInfo,
 } from "../../src/lib/quic";
+import { AutodevChat } from "../../src/components/AutodevChat";
 
 type LoopRow = AutoDevLoop;
 type LoopStatus = LoopRow["status"];
@@ -57,7 +58,7 @@ type IdeaRow = {
   radicalness?: number;
 };
 
-type Section = "loops" | "prompts" | "ideas";
+type Section = "loops" | "prompts" | "ideas" | "chat";
 
 export default function AutoDevScreen() {
   const c = useColors();
@@ -223,7 +224,7 @@ export default function AutoDevScreen() {
       </View>
 
       <View style={[styles.tabs, { borderBottomColor: c.border }]}>
-        {(["loops", "prompts", "ideas"] as Section[]).map((s) => (
+        {(["loops", "chat", "prompts", "ideas"] as Section[]).map((s) => (
           <Pressable key={s} onPress={() => setSection(s)} style={styles.tabBtn}>
             <Text
               style={[
@@ -234,7 +235,13 @@ export default function AutoDevScreen() {
                 },
               ]}
             >
-              {s === "loops" ? "Loops" : s === "prompts" ? "Prompts" : "Ideas"}
+              {s === "loops"
+                ? "Loops"
+                : s === "chat"
+                ? "Chat"
+                : s === "prompts"
+                ? "Prompts"
+                : "Ideas"}
             </Text>
           </Pressable>
         ))}
@@ -292,6 +299,27 @@ export default function AutoDevScreen() {
           }
           renderItem={({ item }) => <LoopCard row={item} />}
         />
+      )}
+
+      {section === "chat" && (
+        (() => {
+          // Pick the first running loop (or the most-recent if none).
+          const target =
+            loops.find((l) => l.status === "running") ?? loops[0];
+          if (!target) {
+            return (
+              <View style={styles.empty}>
+                <Text style={[styles.emptyTitle, { color: c.textPrimary }]}>
+                  No autodev loops yet.
+                </Text>
+                <Text style={[styles.emptyBody, { color: c.textSecondary }]}>
+                  Start one from the Loops tab — chat will stream here.
+                </Text>
+              </View>
+            );
+          }
+          return <AutodevChat streamName={`autodev:${target.name}`} />;
+        })()
       )}
 
       {section === "prompts" && (

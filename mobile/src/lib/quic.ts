@@ -880,6 +880,57 @@ export class QuicClient {
     return () => controller.abort();
   }
 
+  // ── SSE Log Stream (autodev / loop chat events) ─────────────────
+
+  /**
+   * Subscribe to a daemon-hosted log stream (e.g. "autodev:sfmg-autodev").
+   * Yields one parsed structured event per onEvent call. Backwards-
+   * compatible with legacy "line" frames (rendered as a runner_text-ish
+   * shape with no runner). Returns an abort function.
+   *
+   * Event shapes (`type`):
+   *   yaver_say     {text}
+   *   runner_action {runner, tool, detail}
+   *   runner_text   {runner, text}
+   *   runner_result {runner, status, duration_ms, cost_usd}
+   *   line          {text}                    — legacy
+   */
+  streamLog(streamName: string, onEvent: (ev: any) => void): () => void {
+    const controller = new AbortController();
+    const url = `${this.baseUrl}/streams/${encodeURIComponent(streamName)}`;
+    (async () => {
+      try {
+        const res = await fetch(url, {
+          method: "GET",
+          headers: { ...this.authHeaders, Accept: "text/event-stream" },
+          signal: controller.signal,
+        });
+        if (!res.ok || !res.body) return;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              onEvent(JSON.parse(line.slice(6)));
+            } catch {
+              // ignore malformed frame
+            }
+          }
+        }
+      } catch {
+        // aborted or network error
+      }
+    })();
+    return () => controller.abort();
+  }
+
   // ── Projects (discovery + switching) ────────────────────────────
 
   /** List discovered projects on the machine. */
