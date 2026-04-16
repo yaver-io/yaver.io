@@ -150,33 +150,49 @@ func chooseNodePlacement(req AgentGraphCreateRequest, node AgentGraphNodeSpec, m
 }
 
 func filterPlacementMachines(req AgentGraphCreateRequest, node AgentGraphNodeSpec, machines []MachineInfo) []MachineInfo {
-	targets := map[string]bool{}
+	var targets []string
 	for _, id := range req.AllowedDevices {
 		if v := strings.TrimSpace(id); v != "" {
-			targets[v] = true
+			targets = append(targets, v)
 		}
 	}
 	for _, id := range node.AllowedDevices {
 		if v := strings.TrimSpace(id); v != "" {
-			targets[v] = true
+			targets = append(targets, v)
 		}
 	}
 	if v := strings.TrimSpace(req.PreferredDevice); v != "" {
-		targets[v] = true
+		targets = append(targets, v)
 	}
 	if v := strings.TrimSpace(node.PreferredDevice); v != "" {
-		targets[v] = true
+		targets = append(targets, v)
 	}
 	if len(targets) == 0 {
 		return machines
 	}
 	out := make([]MachineInfo, 0, len(machines))
 	for _, m := range machines {
-		if targets[m.DeviceID] || strings.EqualFold(m.Name, req.PreferredDevice) || strings.EqualFold(m.Name, node.PreferredDevice) {
+		if placementTargetMatchesMachine(targets, m) {
 			out = append(out, m)
 		}
 	}
 	return out
+}
+
+func placementTargetMatchesMachine(targets []string, m MachineInfo) bool {
+	for _, target := range targets {
+		target = strings.TrimSpace(target)
+		if target == "" {
+			continue
+		}
+		if m.DeviceID == target || strings.HasPrefix(m.DeviceID, target) {
+			return true
+		}
+		if strings.EqualFold(m.Name, target) || strings.HasPrefix(strings.ToLower(m.Name), strings.ToLower(target)) {
+			return true
+		}
+	}
+	return false
 }
 
 func scoreNodePlacement(req AgentGraphCreateRequest, node AgentGraphNodeSpec, m MachineInfo, state *meshPlannerState) (int, string, string) {
