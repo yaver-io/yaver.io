@@ -99,8 +99,9 @@ func runAutodevOrTest(kind string, args []string) {
 	prompt := fs.String("prompt", "", "Focus prompt, e.g. \"focus on the purchase flow\"")
 	target := fs.String("target", "", "web|ios-sim|android-emu (auto-detected)")
 	runner := fs.String("runner", "", "Primary AI runner (default: claude-code)")
-	engine := fs.String("engine", "", "claude|hybrid — high-level engine selector. 'claude' (default) uses Claude Code end-to-end. 'hybrid' uses Claude as a planner and a local Ollama model (via aider) as the implementer to cut API spend.")
+	engine := fs.String("engine", "", "claude|codex|hybrid — high-level engine selector. 'claude' (default) uses Claude Code end-to-end. 'codex' uses OpenAI Codex CLI (often more headroom on Plus/Pro plans, ~4x fewer tokens). 'hybrid' uses Claude as a planner and a local Ollama model (via aider) as the implementer to cut API spend.")
 	hybrid := fs.Bool("hybrid", false, "Shortcut for --engine hybrid")
+	codex := fs.Bool("codex", false, "Shortcut for --engine codex")
 	autoIdeas := fs.Int("auto-ideas", 999, "Maximum number of times the loop is allowed to auto-generate a fresh batch of ideas when work runs out. Default 999 = effectively unlimited so an overnight run keeps producing + implementing features until the deadline. 0 = exit the moment the checklist empties (legacy).")
 	branch := fs.String("branch", "", "Git branch to ship to (default: main)")
 	autoBranch := fs.Bool("auto-branch", false, "Work on a dedicated 'autodev/<loop>-<YYYYMMDD>' branch instead of main. Creates it from main if it doesn't exist. Useful for overnight runs you want to PR-review before merging.")
@@ -132,13 +133,18 @@ func runAutodevOrTest(kind string, args []string) {
 	if *hybrid {
 		*engine = "hybrid"
 	}
+	if *codex {
+		*engine = "codex"
+	}
 	switch strings.ToLower(strings.TrimSpace(*engine)) {
 	case "", "claude", "claude-code":
 		// keep --runner default
+	case "codex":
+		*runner = "codex"
 	case "hybrid":
 		*runner = "hybrid"
 	default:
-		fmt.Fprintf(os.Stderr, "%s: unknown --engine %q (want claude|hybrid)\n", kind, *engine)
+		fmt.Fprintf(os.Stderr, "%s: unknown --engine %q (want claude|codex|hybrid)\n", kind, *engine)
 		os.Exit(2)
 	}
 

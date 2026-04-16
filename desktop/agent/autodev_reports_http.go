@@ -188,10 +188,12 @@ func (s *HTTPServer) handleAutodevStart(w http.ResponseWriter, r *http.Request) 
 	switch strings.ToLower(strings.TrimSpace(body.Engine)) {
 	case "", "claude", "claude-code":
 		// keep runner as supplied (or empty -> default)
+	case "codex":
+		runnerOverride = "codex"
 	case "hybrid":
 		runnerOverride = "hybrid"
 	default:
-		jsonError(w, http.StatusBadRequest, "unknown engine: "+body.Engine+" (want claude|hybrid)")
+		jsonError(w, http.StatusBadRequest, "unknown engine: "+body.Engine+" (want claude|codex|hybrid)")
 		return
 	}
 	autoIdeas := 999
