@@ -168,12 +168,13 @@ export default function AppsScreen() {
     setLoadingActions(true);
     try {
       const result = await quicClient.getProjectActions(projectName);
-      // Always prepend "Vibing" + "Auto Dev" + "Auto Test" as the first three options
+      // Always prepend "Vibing" + orchestration surfaces as the first options.
       const vibingAction = { label: "Vibing", target: ".", type: "vibing", icon: "\u{1F3B5}", framework: "", platform: "", command: "" };
+      const agentAction = { label: "Agent Mode", target: ".", type: "agent", icon: "\u{1F9E0}", framework: "", platform: "", command: "" };
       const autoDevAction = { label: "Auto Dev", target: ".", type: "autodev", icon: "\u{1F916}", framework: "", platform: "", command: "" };
       const autoTestAction = { label: "Auto Test", target: ".", type: "autotest", icon: "\u{1F9EA}", framework: "", platform: "", command: "" };
       const gitSyncAction = { label: "Git Sync", target: ".", type: "git-sync", icon: "\u{1F504}", framework: "", platform: "", command: "" };
-      result.actions = [vibingAction, autoDevAction, autoTestAction, gitSyncAction, ...result.actions];
+      result.actions = [vibingAction, agentAction, autoDevAction, autoTestAction, gitSyncAction, ...result.actions];
       setActionSheet(result);
     } catch {
       // Fallback
@@ -219,6 +220,11 @@ export default function AppsScreen() {
           Alert.alert("Failed", String(e));
         }
       }, 400);
+      return;
+    }
+
+    if (action.type === "agent") {
+      router.navigate({ pathname: "/(tabs)/agent", params: { project, path } } as any);
       return;
     }
 

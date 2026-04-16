@@ -162,9 +162,9 @@ var builtinRunners = map[string]RunnerConfig{
 		ExitCommand: "exit",
 	},
 	"ollama": {
-		RunnerID:   "ollama",
-		Name:       "Ollama",
-		Command:    "ollama",
+		RunnerID: "ollama",
+		Name:     "Ollama",
+		Command:  "ollama",
 		// {model} is substituted from task.Model via buildRunnerArgs.
 		// Falls back to a reasonable small default when the caller
 		// doesn't specify one so `runner=ollama` without a model
@@ -257,11 +257,12 @@ func GetCachedModels() []BackendModel {
 
 // ClaudeEvent represents a top-level line of stream-json output from Claude CLI.
 // With --include-partial-messages, events include:
-//   {"type":"system","subtype":"init",...}
-//   {"type":"stream_event","event":{...}} — incremental streaming (text_delta, tool_use, etc.)
-//   {"type":"assistant","message":{...}}  — complete assistant message (text or tool_use)
-//   {"type":"user","message":{...},"tool_use_result":{...}} — tool execution results (stdout/stderr)
-//   {"type":"result","result":"...", "total_cost_usd":0.01,...}
+//
+//	{"type":"system","subtype":"init",...}
+//	{"type":"stream_event","event":{...}} — incremental streaming (text_delta, tool_use, etc.)
+//	{"type":"assistant","message":{...}}  — complete assistant message (text or tool_use)
+//	{"type":"user","message":{...},"tool_use_result":{...}} — tool execution results (stdout/stderr)
+//	{"type":"result","result":"...", "total_cost_usd":0.01,...}
 type ClaudeEvent struct {
 	Type      string          `json:"type"`
 	Subtype   string          `json:"subtype,omitempty"`
@@ -344,28 +345,31 @@ type sessionProcess struct {
 
 // AgentStatus is returned by the /agent/status endpoint.
 type AgentStatus struct {
-	Runner          RunnerStatusInfo  `json:"runner"`
-	RunningTasks    int               `json:"runningTasks"`
-	TotalTasks      int               `json:"totalTasks"`
-	RunnerProcesses []RunnerProcess   `json:"runnerProcesses"`
-	System          SystemInfo        `json:"system"`
+	Runner          RunnerStatusInfo `json:"runner"`
+	RunningTasks    int              `json:"runningTasks"`
+	TotalTasks      int              `json:"totalTasks"`
+	RunnerProcesses []RunnerProcess  `json:"runnerProcesses"`
+	System          SystemInfo       `json:"system"`
 }
 
 // RunnerStatusInfo describes the configured runner.
 type RunnerStatusInfo struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Command   string `json:"command"`
-	Installed bool   `json:"installed"`
-	Error     string `json:"error,omitempty"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Command        string `json:"command"`
+	Installed      bool   `json:"installed"`
+	AuthConfigured bool   `json:"authConfigured,omitempty"`
+	AuthSource     string `json:"authSource,omitempty"`
+	Warning        string `json:"warning,omitempty"`
+	Error          string `json:"error,omitempty"`
 }
 
 // SystemInfo describes the host machine.
 type SystemInfo struct {
-	Hostname string  `json:"hostname"`
-	OS       string  `json:"os"`
-	Arch     string  `json:"arch"`
-	MemoryMB int64   `json:"memoryMb,omitempty"`
+	Hostname string `json:"hostname"`
+	OS       string `json:"os"`
+	Arch     string `json:"arch"`
+	MemoryMB int64  `json:"memoryMb,omitempty"`
 }
 
 // GetRunnerInfos returns info about active runner processes for heartbeat reporting.
@@ -448,6 +452,13 @@ func (tm *TaskManager) GetAgentStatus() AgentStatus {
 		runnerInfo.Error = err.Error()
 	} else {
 		runnerInfo.Installed = true
+		status := DetectRunnerRuntimeStatus(tm.runner, tm.workDir)
+		runnerInfo.AuthConfigured = status.AuthConfigured
+		runnerInfo.AuthSource = status.AuthSource
+		runnerInfo.Warning = status.Warning
+		if status.Error != "" {
+			runnerInfo.Error = status.Error
+		}
 	}
 
 	// Count running tasks
@@ -489,10 +500,10 @@ func (tm *TaskManager) GetAgentStatus() AgentStatus {
 // SpeechContext carries speech-to-text/text-to-speech preferences from the mobile app.
 type SpeechContext struct {
 	InputFromSpeech bool   `json:"inputFromSpeech"` // true if user dictated this task
-	STTProvider     string `json:"sttProvider"`      // "on-device", "openai", "deepgram", "assemblyai"
-	TTSEnabled      bool   `json:"ttsEnabled"`       // user wants response read aloud
-	TTSProvider     string `json:"ttsProvider"`      // "device" (OS TTS)
-	Verbosity       *int   `json:"verbosity"`        // 0-10: response detail level (nil = default 10)
+	STTProvider     string `json:"sttProvider"`     // "on-device", "openai", "deepgram", "assemblyai"
+	TTSEnabled      bool   `json:"ttsEnabled"`      // user wants response read aloud
+	TTSProvider     string `json:"ttsProvider"`     // "device" (OS TTS)
+	Verbosity       *int   `json:"verbosity"`       // 0-10: response detail level (nil = default 10)
 }
 
 // ImageAttachment represents a base64-encoded image sent from mobile.
@@ -503,26 +514,26 @@ type ImageAttachment struct {
 }
 
 type Task struct {
-	ID          string     `json:"id"`
-	Title       string     `json:"title"`
-	Description string     `json:"description"`
-	Status      TaskStatus `json:"status"`
-	Source      string     `json:"source,omitempty"`      // "mobile", "mcp", "cli"
-	GuestUserID string     `json:"guestUserId,omitempty"` // set when task created by a guest
-	Model       string     `json:"model,omitempty"`
-	RunnerID    string     `json:"runnerId,omitempty"` // which runner is executing this task
-	SessionID   string     `json:"session_id,omitempty"`
-	Output      string     `json:"output"`
-	ResultText   string  // Extracted clean result text from Claude
-	CostUSD      float64 // Total API cost
+	ID          string             `json:"id"`
+	Title       string             `json:"title"`
+	Description string             `json:"description"`
+	Status      TaskStatus         `json:"status"`
+	Source      string             `json:"source,omitempty"`      // "mobile", "mcp", "cli"
+	GuestUserID string             `json:"guestUserId,omitempty"` // set when task created by a guest
+	Model       string             `json:"model,omitempty"`
+	RunnerID    string             `json:"runnerId,omitempty"` // which runner is executing this task
+	SessionID   string             `json:"session_id,omitempty"`
+	Output      string             `json:"output"`
+	ResultText  string             // Extracted clean result text from Claude
+	CostUSD     float64            // Total API cost
 	Turns       []ConversationTurn // Full conversation history
-	CreatedAt   time.Time  `json:"created_at"`
-	StartedAt   *time.Time `json:"started_at,omitempty"`
-	FinishedAt  *time.Time `json:"finished_at,omitempty"`
+	CreatedAt   time.Time          `json:"created_at"`
+	StartedAt   *time.Time         `json:"started_at,omitempty"`
+	FinishedAt  *time.Time         `json:"finished_at,omitempty"`
 
-	WorkDir      string `json:"workDir,omitempty"`     // per-task workDir (auto-detected from prompt)
-	TmuxSession  string `json:"tmuxSession,omitempty"` // tmux session name (for adopted sessions)
-	IsAdopted    bool   `json:"isAdopted,omitempty"`   // true if adopted from an existing tmux session
+	WorkDir     string `json:"workDir,omitempty"`     // per-task workDir (auto-detected from prompt)
+	TmuxSession string `json:"tmuxSession,omitempty"` // tmux session name (for adopted sessions)
+	IsAdopted   bool   `json:"isAdopted,omitempty"`   // true if adopted from an existing tmux session
 
 	// Chained tasks: execute in order, next starts when previous completes
 	ChainID    string `json:"chainId,omitempty"`    // shared ID linking tasks in a chain
@@ -539,51 +550,51 @@ type Task struct {
 	// Image paths saved to disk for this task (not persisted in tasks.json)
 	ImagePaths []string `json:"-"`
 
-	runner       RunnerConfig // the runner config used for this task (not persisted)
-	cmd          *exec.Cmd
-	cancel       context.CancelFunc
-	stdin        io.WriteCloser
-	outputCh     chan string
-	doneCh       chan struct{}
-	retryCount   int  // Number of auto-restart attempts so far
+	runner     RunnerConfig // the runner config used for this task (not persisted)
+	cmd        *exec.Cmd
+	cancel     context.CancelFunc
+	stdin      io.WriteCloser
+	outputCh   chan string
+	doneCh     chan struct{}
+	retryCount int // Number of auto-restart attempts so far
 }
 
 // TaskInfo is the JSON-safe subset returned in listings.
 type TaskInfo struct {
-	ID          string             `json:"id"`
-	Title       string             `json:"title"`
-	Description string             `json:"description"`
-	Status      TaskStatus         `json:"status"`
-	RunnerID    string             `json:"runnerId,omitempty"`
-	SessionID   string             `json:"sessionId,omitempty"`
-	Output      string             `json:"output,omitempty"`
-	ResultText  string             `json:"resultText,omitempty"`
-	CostUSD     float64            `json:"costUsd,omitempty"`
-	Turns       []ConversationTurn `json:"turns,omitempty"`
-	Source      string             `json:"source,omitempty"`
-	TmuxSession string            `json:"tmuxSession,omitempty"`
-	IsAdopted   bool               `json:"isAdopted,omitempty"`
-	CreatedAt   time.Time          `json:"createdAt"`
-	StartedAt   *time.Time         `json:"startedAt,omitempty"`
-	FinishedAt  *time.Time         `json:"finishedAt,omitempty"`
-	ChainID    string `json:"chainId,omitempty"`
-	ChainOrder int    `json:"chainOrder,omitempty"`
-	AutoRetry      bool `json:"autoRetry,omitempty"`
-	AutoRetryCount int  `json:"autoRetryCount,omitempty"`
-	AutoRetryMax   int  `json:"autoRetryMax,omitempty"`
+	ID             string             `json:"id"`
+	Title          string             `json:"title"`
+	Description    string             `json:"description"`
+	Status         TaskStatus         `json:"status"`
+	RunnerID       string             `json:"runnerId,omitempty"`
+	SessionID      string             `json:"sessionId,omitempty"`
+	Output         string             `json:"output,omitempty"`
+	ResultText     string             `json:"resultText,omitempty"`
+	CostUSD        float64            `json:"costUsd,omitempty"`
+	Turns          []ConversationTurn `json:"turns,omitempty"`
+	Source         string             `json:"source,omitempty"`
+	TmuxSession    string             `json:"tmuxSession,omitempty"`
+	IsAdopted      bool               `json:"isAdopted,omitempty"`
+	CreatedAt      time.Time          `json:"createdAt"`
+	StartedAt      *time.Time         `json:"startedAt,omitempty"`
+	FinishedAt     *time.Time         `json:"finishedAt,omitempty"`
+	ChainID        string             `json:"chainId,omitempty"`
+	ChainOrder     int                `json:"chainOrder,omitempty"`
+	AutoRetry      bool               `json:"autoRetry,omitempty"`
+	AutoRetryCount int                `json:"autoRetryCount,omitempty"`
+	AutoRetryMax   int                `json:"autoRetryMax,omitempty"`
 }
 
 // TaskManager manages the lifecycle of tasks.
 type TaskManager struct {
-	mu           sync.RWMutex
-	tasks        map[string]*Task
-	workDir      string
-	store        *TaskStore
-	runner       RunnerConfig
-	TmuxMgr      *TmuxManager // manages tmux session adoption (nil if tmux unavailable)
-	Sandbox      SandboxConfig // Command sandbox configuration
-	WaitForSlot  bool // If true, wait for other Claude Code sessions to finish before starting
-	DummyMode    bool // If true, use fake responses instead of launching a real runner
+	mu          sync.RWMutex
+	tasks       map[string]*Task
+	workDir     string
+	store       *TaskStore
+	runner      RunnerConfig
+	TmuxMgr     *TmuxManager  // manages tmux session adoption (nil if tmux unavailable)
+	Sandbox     SandboxConfig // Command sandbox configuration
+	WaitForSlot bool          // If true, wait for other Claude Code sessions to finish before starting
+	DummyMode   bool          // If true, use fake responses instead of launching a real runner
 
 	// Container isolation (optional — set by httpserver when enabled)
 	ContainerRunner    *ContainerRunner
@@ -606,10 +617,10 @@ type TaskManager struct {
 	OwnerEmail string // for dev logging
 
 	// Warm session: forked at startup, reused for all tasks
-	warmSessionID  string     // Claude session ID from warmup
-	warmCreatedAt  time.Time  // when the warm session was established
-	warmPID        int        // PID of the warmup process (0 if not running)
-	warmReady      bool       // true once warmup completed successfully
+	warmSessionID string    // Claude session ID from warmup
+	warmCreatedAt time.Time // when the warm session was established
+	warmPID       int       // PID of the warmup process (0 if not running)
+	warmReady     bool      // true once warmup completed successfully
 }
 
 // NewTaskManager creates a new TaskManager. If store is non-nil, previously
@@ -1104,11 +1115,12 @@ func (tm *TaskManager) runDummyTask(task *Task) {
 
 // buildArgs replaces placeholders in the runner's arg template with actual values.
 // Supported placeholders:
-//   {prompt} — always required
-//   {model}  — substituted from the runner config's Model field (used
-//              by the ollama runner so `yaver tasks --runner ollama
-//              --model qwen2.5-coder:7b` lands on the right model
-//              instead of the previous hardcoded "llama3").
+//
+//	{prompt} — always required
+//	{model}  — substituted from the runner config's Model field (used
+//	           by the ollama runner so `yaver tasks --runner ollama
+//	           --model qwen2.5-coder:7b` lands on the right model
+//	           instead of the previous hardcoded "llama3").
 func buildRunnerArgs(runner RunnerConfig, prompt string) []string {
 	args := make([]string, len(runner.Args))
 	for i, a := range runner.Args {
@@ -1341,6 +1353,10 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	if task.WorkDir != "" && task.GuestUserID == "" {
 		taskDir = task.WorkDir
 	}
+	if err := CheckRunnerReady(runner, taskDir); err != nil {
+		cancel()
+		return fmt.Errorf("runner not ready: %w", err)
+	}
 
 	// ── Container execution (optional) ──────────────────────────────
 	// If containerization is enabled for this task type, run inside Docker.
@@ -1410,73 +1426,73 @@ func (tm *TaskManager) startProcess(task *Task) error {
 			}
 		}()
 	} else {
-	// ── Direct execution (default) ──────────────────────────────────
+		// ── Direct execution (default) ──────────────────────────────────
 
-	cmd := exec.CommandContext(ctx, runner.Command, args...)
-	cmd.Dir = taskDir
+		cmd := exec.CommandContext(ctx, runner.Command, args...)
+		cmd.Dir = taskDir
 
-	// Ensure common tool paths are in PATH for background processes.
-	cmd.Env = append(os.Environ(), "PATH="+expandedPath())
+		// Ensure common tool paths are in PATH for background processes.
+		cmd.Env = append(os.Environ(), "PATH="+expandedPath())
 
-	log.Printf("[task %s] Launching: %s %v (dir=%s)", task.ID, runner.Command, args[:2], taskDir)
+		log.Printf("[task %s] Launching: %s %v (dir=%s)", task.ID, runner.Command, args[:2], taskDir)
 
-	// Dev log: task launch
-	go SendDevLog(tm.ConvexURL, tm.AuthToken, tm.OwnerEmail, "task-launch",
-		fmt.Sprintf("Launching task %s: %s", task.ID, task.Title),
-		map[string]interface{}{"runner": runner.RunnerID, "model": task.Model, "argCount": len(args)})
+		// Dev log: task launch
+		go SendDevLog(tm.ConvexURL, tm.AuthToken, tm.OwnerEmail, "task-launch",
+			fmt.Sprintf("Launching task %s: %s", task.ID, task.Title),
+			map[string]interface{}{"runner": runner.RunnerID, "model": task.Model, "argCount": len(args)})
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		return fmt.Errorf("stdout pipe: %w", err)
-	}
-
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		cancel()
-		return fmt.Errorf("stderr pipe: %w", err)
-	}
-
-	// Point stdin to /dev/null — Claude CLI blocks when stdin is a pipe.
-	// Graceful exit is handled via process signals instead.
-	devNull, err := os.Open(os.DevNull)
-	if err == nil {
-		cmd.Stdin = devNull
-		defer devNull.Close()
-	}
-
-	task.cmd = cmd
-
-	if err := cmd.Start(); err != nil {
-		cancel()
-		go SendDevLog(tm.ConvexURL, tm.AuthToken, tm.OwnerEmail, "task-start-fail",
-			fmt.Sprintf("Failed to start process for task %s: %v", task.ID, err), nil)
-		return fmt.Errorf("start process: %w", err)
-	}
-
-	now := time.Now()
-	task.StartedAt = &now
-	task.Status = TaskStatusRunning
-
-	trackForkedPID(cmd.Process.Pid)
-
-	go SendDevLog(tm.ConvexURL, tm.AuthToken, tm.OwnerEmail, "task-started",
-		fmt.Sprintf("Claude PID %d started for task %s", cmd.Process.Pid, task.ID), nil)
-
-	// Monitor stdout based on output mode.
-	if runner.OutputMode == "raw" {
-		go tm.readRawOutput(task, stdout)
-	} else {
-		go tm.readStreamJSON(task, stdout)
-	}
-
-	// Drain stderr.
-	go func() {
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			log.Printf("[task %s stderr] %s", task.ID, scanner.Text())
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			cancel()
+			return fmt.Errorf("stdout pipe: %w", err)
 		}
-	}()
+
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			cancel()
+			return fmt.Errorf("stderr pipe: %w", err)
+		}
+
+		// Point stdin to /dev/null — Claude CLI blocks when stdin is a pipe.
+		// Graceful exit is handled via process signals instead.
+		devNull, err := os.Open(os.DevNull)
+		if err == nil {
+			cmd.Stdin = devNull
+			defer devNull.Close()
+		}
+
+		task.cmd = cmd
+
+		if err := cmd.Start(); err != nil {
+			cancel()
+			go SendDevLog(tm.ConvexURL, tm.AuthToken, tm.OwnerEmail, "task-start-fail",
+				fmt.Sprintf("Failed to start process for task %s: %v", task.ID, err), nil)
+			return fmt.Errorf("start process: %w", err)
+		}
+
+		now := time.Now()
+		task.StartedAt = &now
+		task.Status = TaskStatusRunning
+
+		trackForkedPID(cmd.Process.Pid)
+
+		go SendDevLog(tm.ConvexURL, tm.AuthToken, tm.OwnerEmail, "task-started",
+			fmt.Sprintf("Claude PID %d started for task %s", cmd.Process.Pid, task.ID), nil)
+
+		// Monitor stdout based on output mode.
+		if runner.OutputMode == "raw" {
+			go tm.readRawOutput(task, stdout)
+		} else {
+			go tm.readStreamJSON(task, stdout)
+		}
+
+		// Drain stderr.
+		go func() {
+			scanner := bufio.NewScanner(stderr)
+			for scanner.Scan() {
+				log.Printf("[task %s stderr] %s", task.ID, scanner.Text())
+			}
+		}()
 	} // end else (direct execution)
 
 	// Watchdog: if no output after 30s, emit a warning to the mobile user.
@@ -2237,24 +2253,24 @@ func (tm *TaskManager) ListTasks() []TaskInfo {
 			output = output[len(output)-2000:]
 		}
 		result = append(result, TaskInfo{
-			ID:          t.ID,
-			Title:       t.Title,
-			Description: t.Description,
-			Status:      t.Status,
-			RunnerID:    t.RunnerID,
-			SessionID:   t.SessionID,
-			Output:      output,
-			ResultText:  t.ResultText,
-			CostUSD:     t.CostUSD,
-			Turns:       t.Turns,
-			Source:      t.Source,
-			TmuxSession: t.TmuxSession,
-			IsAdopted:   t.IsAdopted,
-			CreatedAt:   t.CreatedAt,
-			StartedAt:   t.StartedAt,
-			FinishedAt:  t.FinishedAt,
-			ChainID:       t.ChainID,
-			ChainOrder:    t.ChainOrder,
+			ID:             t.ID,
+			Title:          t.Title,
+			Description:    t.Description,
+			Status:         t.Status,
+			RunnerID:       t.RunnerID,
+			SessionID:      t.SessionID,
+			Output:         output,
+			ResultText:     t.ResultText,
+			CostUSD:        t.CostUSD,
+			Turns:          t.Turns,
+			Source:         t.Source,
+			TmuxSession:    t.TmuxSession,
+			IsAdopted:      t.IsAdopted,
+			CreatedAt:      t.CreatedAt,
+			StartedAt:      t.StartedAt,
+			FinishedAt:     t.FinishedAt,
+			ChainID:        t.ChainID,
+			ChainOrder:     t.ChainOrder,
 			AutoRetry:      t.AutoRetry,
 			AutoRetryCount: t.AutoRetryCount,
 			AutoRetryMax:   t.AutoRetryMax,
@@ -2536,14 +2552,14 @@ func (tm *TaskManager) autoRetryTask(task *Task) bool {
 
 // TaskSummary provides a digest of task activity for a time period.
 type TaskSummary struct {
-	Period      string  `json:"period"`      // e.g. "last 24 hours"
-	Total       int     `json:"total"`
-	Completed   int     `json:"completed"`
-	Failed      int     `json:"failed"`
-	Running     int     `json:"running"`
-	Queued      int     `json:"queued"`
-	TotalCost   float64 `json:"totalCost"`
-	Items       []TaskSummaryItem `json:"items"`
+	Period    string            `json:"period"` // e.g. "last 24 hours"
+	Total     int               `json:"total"`
+	Completed int               `json:"completed"`
+	Failed    int               `json:"failed"`
+	Running   int               `json:"running"`
+	Queued    int               `json:"queued"`
+	TotalCost float64           `json:"totalCost"`
+	Items     []TaskSummaryItem `json:"items"`
 }
 
 // TaskSummaryItem is a brief description of a completed task.

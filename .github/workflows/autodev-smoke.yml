@@ -85,12 +85,12 @@ jobs:
       - name: yaver autoideas --plan
         run: |
           cd /tmp/fixture
-          /tmp/yaver autoideas fixture --plan --hours 1
+          /tmp/yaver autoideas fixture --plan --hours 1 --runner codex
 
       - name: yaver autoinit --plan
         run: |
           cd /tmp/fixture
-          /tmp/yaver autoinit fixture --plan
+          /tmp/yaver autoinit fixture --plan --runner opencode
 
       - name: yaver autoinit status (before generation)
         run: |

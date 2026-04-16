@@ -45,6 +45,7 @@ func runAutoIdeas(args []string) {
 	prompt := fs.String("prompt", "", "Roof theme — generated ideas stay within this focus area")
 	harden := fs.String("harden", "", "Hardening preset — security|memory|perf|quality|all")
 	engine := fs.String("engine", "", "claude|hybrid (default: claude)")
+	runner := fs.String("runner", "", "Override the generator runner (e.g. claude:sonnet, codex, opencode, ollama:qwen2.5-coder:14b)")
 	hybrid := fs.Bool("hybrid", false, "Shortcut for --engine hybrid")
 	output := fs.String("output", "ideas.md", "Output file inside the project for generated ideas")
 	maxBatches := fs.Int("max-batches", 0, "Hard cap on idea batches (0 = no cap; deadline still applies)")
@@ -90,6 +91,7 @@ func runAutoIdeas(args []string) {
 			"prompt":      *prompt,
 			"harden":      *harden,
 			"engine":      *engine,
+			"runner":      *runner,
 			"output":      *output,
 			"max_batches": *maxBatches,
 			"tick":        *tickSec,
@@ -145,6 +147,7 @@ func runAutoIdeas(args []string) {
 		fmt.Printf("  duration:       %s\n", durationLabel(*hours, deadline))
 		fmt.Printf("  load:           %s (tick=%ds)\n", *load, tick)
 		fmt.Printf("  engine:         %s\n", defaultStr(*engine, "claude"))
+		fmt.Printf("  runner:         %s\n", defaultStr(*runner, "auto"))
 		fmt.Printf("  roof theme:     %s\n", oneLineAutodev(*prompt, 80))
 		if *maxBatches > 0 {
 			fmt.Printf("  max batches:    %d\n", *maxBatches)
@@ -199,7 +202,7 @@ func runAutoIdeas(args []string) {
 		fmt.Printf("autoideas: generating batch %d…\n", batch)
 		AutodevPublishYaverSay(fmt.Sprintf("Generate batch %d of fresh ideas", batch))
 
-		if err := autoIdeasGenerate(*engine, *prompt, outputPath, wd); err != nil {
+		if err := autoIdeasGenerate(*engine, *runner, *prompt, outputPath, wd); err != nil {
 			fmt.Fprintf(os.Stderr, "autoideas: batch %d failed: %v — sleeping then retry\n", batch, err)
 		} else {
 			fmt.Printf("autoideas: batch %d done\n", batch)
@@ -227,7 +230,7 @@ endLoop:
 // formats the prompt, parses the JSON array of titles, and appends
 // them to the output file. Runner-agnostic — works with claude /
 // codex / aider / ollama via the picker in ai_generator.go.
-func autoIdeasGenerate(engine, focus, outputPath, wd string) error {
+func autoIdeasGenerate(engine, runner, focus, outputPath, wd string) error {
 	focusBlock := ""
 	f := strings.TrimSpace(focus)
 	if f != "" {
@@ -246,6 +249,7 @@ Do not write any file. Do not commit. Just print the JSON array and stop.`,
 
 	body, err := RunAIGenerator(AIGeneratorSpec{
 		Engine:  engine,
+		Runner:  runner,
 		WorkDir: wd,
 		Prompt:  prompt,
 		Timeout: 5 * time.Minute,
@@ -327,6 +331,7 @@ Flags (mirror yaver autodev):
   --prompt "..."       roof theme — generated ideas stay focused.
   --harden AREA        security|memory|perf|quality|all preset.
   --engine claude|hybrid
+  --runner SPEC        generator runner override (claude:sonnet|codex|opencode|ollama:MODEL).
   --hybrid             shortcut for --engine hybrid.
   --output PATH        ideas file (default ideas.md inside the project).
   --max-batches N      hard cap on batches (0 = no cap).

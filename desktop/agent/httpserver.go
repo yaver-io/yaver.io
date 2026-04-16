@@ -24,68 +24,68 @@ import (
 
 // HTTPServer serves the V1 HTTP API for mobile clients over Tailscale.
 type HTTPServer struct {
-	port        int
-	token       string
-	ownerUserID string
-	convexURL   string
-	hostname    string
-	taskMgr     *TaskManager
-	execMgr     *ExecManager
-	scheduler   *Scheduler
-	analytics   *Analytics
-	aclMgr      *ACLManager
-	emailMgr    *EmailManager
-	notifyMgr   *NotificationManager
-	vaultStore  *VaultStore
-	buildMgr    *BuildManager
-	tunnelMgr   *TunnelManager
-	testMgr     *TestManager
-	feedbackMgr *FeedbackManager
-	blackboxMgr   *BlackBoxManager
-	devServerMgr  *DevServerManager
-	todolistMgr    *TodoListManager
-	sessionAuditor *SessionAuditor
-	guestConfigMgr *GuestConfigManager
-	containerRunner *ContainerRunner   // nil if Docker not available
-	containerizeGuests bool            // run guest tasks in containers
-	containerizeHost   bool            // run host tasks in containers
-	browserMgr     *BrowserManager   // nil until first browser_open
-	pipelineRunner *PipelineRunner   // nil until first pipeline_run
-	analyticsMgr   *AnalyticsManager // nil until first analytics_start
-	authDevMgr     *AuthDevManager   // nil until first auth_dev_start
-	mailDevMgr     *MailDevManager   // nil until first mail_dev_start
-	exposeMgr      *ExposeManager    // nil until first expose_start
-	relayExposeMgr *RelayExposeManager // relay-based subdomain expose (set when relay connected)
-	stripeDevMgr   *StripeDevManager // nil until first stripe_listen
-	uptimeMonitor  *UptimeMonitor    // nil until first monitor_add
-	modelMgr       *ModelManager     // nil until first models_*
-	lemonMgr       *LemonSqueezyManager // nil until first lemonsqueezy_*
-	servicesMgr    *ServicesManager     // nil until first services_*
-	proxyMgr       *ProxyManager        // nil until first proxy_*
-	dnsMgr         *DNSManager          // nil until first dns_*
-	storageMgr     *StorageManager      // nil until first storage_*
-	mockServer     *MockServer          // nil until first mock_*
-	preCheckMgr    *PreCheckManager     // nil until first check_*
-	perfMgr        *PerfManager         // nil until first perf_lighthouse
-	dbLifecycleMgr *DBLifecycleManager  // nil until first db_migrate
-	previewMgr     *PreviewManager      // nil until first preview_*
-	oauthWizardMgr *OAuthWizardManager  // nil until first auth_oauth_*
-	cloudDeployMgr *CloudDeployManager  // nil until first cloud_*
-	migrateMgr     *MigrateManager      // nil until first migrate_*
-	remoteMgr      *RemoteManager       // nil until first remote_*
-	scaleMgr       *ScaleManager        // nil until first scale_*
-	pocketBaseMgr  *PocketBaseManager   // nil until first backend_*
-	platformMgr    *PlatformManager     // nil until first platform_*
-	domainMgr      *DomainManager       // nil until first domain_*
-	siteMgr        *SiteManager         // nil until first site_*
-	formMgr        *FormManager         // nil until first form_*
-	seoMgr         *SEOManager          // nil until first seo_*
-	cmsMgr         *CMSManager          // nil until first cms_*
-	templateMgr    *TemplateManager     // nil until first template_*
-	multiUserMgr   *MultiUserManager // nil in single-user mode
-	server       *http.Server
-	tlsServer    *http.Server
-	onShutdown   func() // called when mobile requests agent shutdown
+	port               int
+	token              string
+	ownerUserID        string
+	convexURL          string
+	hostname           string
+	taskMgr            *TaskManager
+	execMgr            *ExecManager
+	scheduler          *Scheduler
+	analytics          *Analytics
+	aclMgr             *ACLManager
+	emailMgr           *EmailManager
+	notifyMgr          *NotificationManager
+	vaultStore         *VaultStore
+	buildMgr           *BuildManager
+	tunnelMgr          *TunnelManager
+	testMgr            *TestManager
+	feedbackMgr        *FeedbackManager
+	blackboxMgr        *BlackBoxManager
+	devServerMgr       *DevServerManager
+	todolistMgr        *TodoListManager
+	sessionAuditor     *SessionAuditor
+	guestConfigMgr     *GuestConfigManager
+	containerRunner    *ContainerRunner     // nil if Docker not available
+	containerizeGuests bool                 // run guest tasks in containers
+	containerizeHost   bool                 // run host tasks in containers
+	browserMgr         *BrowserManager      // nil until first browser_open
+	pipelineRunner     *PipelineRunner      // nil until first pipeline_run
+	analyticsMgr       *AnalyticsManager    // nil until first analytics_start
+	authDevMgr         *AuthDevManager      // nil until first auth_dev_start
+	mailDevMgr         *MailDevManager      // nil until first mail_dev_start
+	exposeMgr          *ExposeManager       // nil until first expose_start
+	relayExposeMgr     *RelayExposeManager  // relay-based subdomain expose (set when relay connected)
+	stripeDevMgr       *StripeDevManager    // nil until first stripe_listen
+	uptimeMonitor      *UptimeMonitor       // nil until first monitor_add
+	modelMgr           *ModelManager        // nil until first models_*
+	lemonMgr           *LemonSqueezyManager // nil until first lemonsqueezy_*
+	servicesMgr        *ServicesManager     // nil until first services_*
+	proxyMgr           *ProxyManager        // nil until first proxy_*
+	dnsMgr             *DNSManager          // nil until first dns_*
+	storageMgr         *StorageManager      // nil until first storage_*
+	mockServer         *MockServer          // nil until first mock_*
+	preCheckMgr        *PreCheckManager     // nil until first check_*
+	perfMgr            *PerfManager         // nil until first perf_lighthouse
+	dbLifecycleMgr     *DBLifecycleManager  // nil until first db_migrate
+	previewMgr         *PreviewManager      // nil until first preview_*
+	oauthWizardMgr     *OAuthWizardManager  // nil until first auth_oauth_*
+	cloudDeployMgr     *CloudDeployManager  // nil until first cloud_*
+	migrateMgr         *MigrateManager      // nil until first migrate_*
+	remoteMgr          *RemoteManager       // nil until first remote_*
+	scaleMgr           *ScaleManager        // nil until first scale_*
+	pocketBaseMgr      *PocketBaseManager   // nil until first backend_*
+	platformMgr        *PlatformManager     // nil until first platform_*
+	domainMgr          *DomainManager       // nil until first domain_*
+	siteMgr            *SiteManager         // nil until first site_*
+	formMgr            *FormManager         // nil until first form_*
+	seoMgr             *SEOManager          // nil until first seo_*
+	cmsMgr             *CMSManager          // nil until first cms_*
+	templateMgr        *TemplateManager     // nil until first template_*
+	multiUserMgr       *MultiUserManager    // nil in single-user mode
+	server             *http.Server
+	tlsServer          *http.Server
+	onShutdown         func() // called when mobile requests agent shutdown
 
 	iosInstallMethod string // "auto", "native", "bundle" — resolved at startup
 
@@ -121,7 +121,8 @@ type HTTPServer struct {
 	qualityMgr *QualityManager
 
 	// Health monitor (production URL pinging)
-	healthMon *HealthMonitor
+	healthMon     *HealthMonitor
+	agentGraphMgr *AgentGraphManager
 
 	// Named log streams for fan-out of long-running CLI ops
 	// (autodev, autotest, etc.) to mobile + web subscribers.
@@ -160,6 +161,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/summary", s.auth(s.handleSummary))
 	mux.HandleFunc("/info", s.auth(s.handleInfo))
 	mux.HandleFunc("/agent/status", s.auth(s.handleAgentStatus))
+	mux.HandleFunc("/agent/graphs", s.auth(s.handleAgentGraphs))
+	mux.HandleFunc("/agent/graphs/", s.auth(s.handleAgentGraphByID))
 	mux.HandleFunc("/agent/runners", s.auth(s.handleRunners))
 	mux.HandleFunc("/agent/runner/restart", s.auth(s.handleRunnerRestart))
 	mux.HandleFunc("/agent/runner/switch", s.auth(s.handleRunnerSwitch))
@@ -185,9 +188,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/autodev/cost", s.auth(func(w http.ResponseWriter, r *http.Request) {
 		usd, kicks := RunCostSnapshot()
 		jsonReply(w, http.StatusOK, map[string]interface{}{
-			"ok":             true,
-			"total_usd":      usd,
-			"kicks":          kicks,
+			"ok":        true,
+			"total_usd": usd,
+			"kicks":     kicks,
 			"avg_usd_per_kick": func() float64 {
 				if kicks == 0 {
 					return 0
@@ -410,7 +413,6 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/tunnels", s.auth(s.handleTunnels))
 	mux.HandleFunc("/tunnels/", s.auth(s.handleTunnelByID))
 
-
 	// Tests (automated test sessions — legacy "spawn an external runner" path)
 	mux.HandleFunc("/tests", s.auth(s.handleTests))
 	mux.HandleFunc("/tests/", s.auth(s.handleTestByID))
@@ -462,7 +464,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/dev/build-native", s.authSDK(s.handleBuildNativeBundle))
 	mux.HandleFunc("/dev/native-bundle", s.handleServeNativeBundle) // No auth — serves compiled bundle
 	mux.HandleFunc("/dev/native-assets", s.handleServeNativeAssets) // No auth — serves compiled assets
-	mux.HandleFunc("/dev/", s.handleDevServerProxy) // No auth — serves app bundle in WebView (not sensitive)
+	mux.HandleFunc("/dev/", s.handleDevServerProxy)                 // No auth — serves app bundle in WebView (not sensitive)
 
 	// Relay-based expose (subdomain routing via QUIC relay)
 	mux.HandleFunc("/expose/start", s.auth(s.handleRelayExposeStart))
@@ -1701,12 +1703,16 @@ func (s *HTTPServer) handleRunners(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type runnerInfo struct {
-		ID        string      `json:"id"`
-		Name      string      `json:"name"`
-		Command   string      `json:"command"`
-		Installed bool        `json:"installed"`
-		IsDefault bool        `json:"isDefault"`
-		Models    []modelInfo `json:"models"`
+		ID             string      `json:"id"`
+		Name           string      `json:"name"`
+		Command        string      `json:"command"`
+		Installed      bool        `json:"installed"`
+		AuthConfigured bool        `json:"authConfigured,omitempty"`
+		AuthSource     string      `json:"authSource,omitempty"`
+		Warning        string      `json:"warning,omitempty"`
+		Error          string      `json:"error,omitempty"`
+		IsDefault      bool        `json:"isDefault"`
+		Models         []modelInfo `json:"models"`
 	}
 
 	// Build models index by runner
@@ -1730,13 +1736,18 @@ func (s *HTTPServer) handleRunners(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_, err := osexec.LookPath(r.Command)
+		status := DetectRunnerRuntimeStatus(r, s.taskMgr.workDir)
 		runners = append(runners, runnerInfo{
-			ID:        r.RunnerID,
-			Name:      r.Name,
-			Command:   r.Command,
-			Installed: err == nil,
-			IsDefault: r.RunnerID == defaultID,
-			Models:    modelsByRunner[r.RunnerID],
+			ID:             r.RunnerID,
+			Name:           r.Name,
+			Command:        r.Command,
+			Installed:      err == nil,
+			AuthConfigured: status.AuthConfigured,
+			AuthSource:     status.AuthSource,
+			Warning:        status.Warning,
+			Error:          status.Error,
+			IsDefault:      r.RunnerID == defaultID,
+			Models:         modelsByRunner[r.RunnerID],
 		})
 		seenIDs[r.RunnerID] = true
 	}
@@ -1849,18 +1860,18 @@ func (s *HTTPServer) handleRunnerSwitch(w http.ResponseWriter, r *http.Request) 
 		newRunner = defaultRunner
 	case "codex":
 		newRunner = RunnerConfig{
-			RunnerID: "codex",
-			Name:     "OpenAI Codex",
-			Command:  "codex",
-			Args:     []string{"--quiet", "--full-auto", "{prompt}"},
+			RunnerID:   "codex",
+			Name:       "OpenAI Codex",
+			Command:    "codex",
+			Args:       []string{"--quiet", "--full-auto", "{prompt}"},
 			OutputMode: "raw",
 		}
 	case "aider":
 		newRunner = RunnerConfig{
-			RunnerID: "aider",
-			Name:     "Aider",
-			Command:  "aider",
-			Args:     []string{"--yes-always", "--no-git", "--message", "{prompt}"},
+			RunnerID:    "aider",
+			Name:        "Aider",
+			Command:     "aider",
+			Args:        []string{"--yes-always", "--no-git", "--message", "{prompt}"},
 			OutputMode:  "raw",
 			ExitCommand: "/quit",
 		}
@@ -2002,7 +2013,7 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		Runner        string            `json:"runner"`        // runner ID: "claude", "codex", "aider" — empty uses default
 		CustomCommand string            `json:"customCommand"` // arbitrary command — runs via sh -c
 		Source        string            `json:"source"`        // client type: "mobile", "desktop-app", "web", "cli"
-		SpeechContext *SpeechContext     `json:"speechContext"` // voice input/output preferences
+		SpeechContext *SpeechContext    `json:"speechContext"` // voice input/output preferences
 		Images        []ImageAttachment `json:"images,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -3473,16 +3484,16 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		// Redact sensitive fields
 		safeCfg := map[string]interface{}{
-			"auto_start":   cfg.AutoStart,
-			"auto_update":  cfg.AutoUpdate,
-			"relay_count":  len(cfg.RelayServers),
-			"acl_peers":    len(cfg.ACLPeers),
+			"auto_start":       cfg.AutoStart,
+			"auto_update":      cfg.AutoUpdate,
+			"relay_count":      len(cfg.RelayServers),
+			"acl_peers":        len(cfg.ACLPeers),
 			"email_configured": cfg.Email != nil && cfg.Email.Provider != "",
 		}
 		if cfg.Sandbox != nil {
 			safeCfg["sandbox"] = map[string]interface{}{
-				"enabled":     cfg.Sandbox.Enabled,
-				"allow_sudo":  cfg.Sandbox.AllowSudo,
+				"enabled":    cfg.Sandbox.Enabled,
+				"allow_sudo": cfg.Sandbox.AllowSudo,
 			}
 		} else {
 			safeCfg["sandbox"] = "default (enabled, no sudo)"
@@ -3963,8 +3974,8 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolError("ACL not initialized")
 		}
 		var args struct {
-			PeerID   string          `json:"peer_id"`
-			ToolName string          `json:"tool_name"`
+			PeerID    string          `json:"peer_id"`
+			ToolName  string          `json:"tool_name"`
 			Arguments json.RawMessage `json:"arguments"`
 		}
 		json.Unmarshal(call.Arguments, &args)
@@ -5568,17 +5579,26 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		json.Unmarshal(call.Arguments, &args)
 		return mcpToolJSON(mcpEVCharging(args.Lat, args.Lon, args.Radius, args.ConnectorType, args.Network, args.Country, args.MinPowerKW))
 	case "ev_networks":
-		var args struct { Country string `json:"country"` }
+		var args struct {
+			Country string `json:"country"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		return mcpToolJSON(mcpEVNetworks(args.Country))
 	case "ev_connector_types":
 		return mcpToolJSON(mcpEVConnectorTypes())
 	case "nobetci_eczane":
-		var args struct { City string `json:"city"`; District string `json:"district"` }
+		var args struct {
+			City     string `json:"city"`
+			District string `json:"district"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		return mcpToolJSON(mcpNobetciEczane(args.City, args.District))
 	case "eczane_nearby":
-		var args struct { Lat float64 `json:"lat"`; Lon float64 `json:"lon"`; Radius int `json:"radius"` }
+		var args struct {
+			Lat    float64 `json:"lat"`
+			Lon    float64 `json:"lon"`
+			Radius int     `json:"radius"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		return mcpToolJSON(mcpEczaneSearch(args.Lat, args.Lon, args.Radius))
 	case "places_search":
@@ -5729,70 +5749,120 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	// --- Kubernetes ---
 	case "k8s_pods":
-		var a struct { NS string `json:"namespace"`; Ctx string `json:"context"` }
+		var a struct {
+			NS  string `json:"namespace"`
+			Ctx string `json:"context"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpK8sPods(a.NS, a.Ctx))
 	case "k8s_logs":
-		var a struct { Pod string `json:"pod"`; NS string `json:"namespace"`; Ctx string `json:"context"`; Container string `json:"container"`; Tail int `json:"tail"` }
+		var a struct {
+			Pod       string `json:"pod"`
+			NS        string `json:"namespace"`
+			Ctx       string `json:"context"`
+			Container string `json:"container"`
+			Tail      int    `json:"tail"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpK8sLogs(a.Pod, a.NS, a.Ctx, a.Container, a.Tail))
 	case "k8s_describe":
-		var a struct { Resource string `json:"resource"`; Name string `json:"name"`; NS string `json:"namespace"`; Ctx string `json:"context"` }
+		var a struct {
+			Resource string `json:"resource"`
+			Name     string `json:"name"`
+			NS       string `json:"namespace"`
+			Ctx      string `json:"context"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpK8sDescribe(a.Resource, a.Name, a.NS, a.Ctx))
 	case "k8s_get":
-		var a struct { Resource string `json:"resource"`; NS string `json:"namespace"`; Ctx string `json:"context"` }
+		var a struct {
+			Resource string `json:"resource"`
+			NS       string `json:"namespace"`
+			Ctx      string `json:"context"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpK8sGet(a.Resource, a.NS, a.Ctx))
 	case "k8s_apply":
-		var a struct { File string `json:"file"`; NS string `json:"namespace"`; Ctx string `json:"context"` }
+		var a struct {
+			File string `json:"file"`
+			NS   string `json:"namespace"`
+			Ctx  string `json:"context"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpK8sApply(a.File, a.NS, a.Ctx))
 	case "k8s_exec":
-		var a struct { Pod string `json:"pod"`; Command string `json:"command"`; NS string `json:"namespace"`; Ctx string `json:"context"`; Container string `json:"container"` }
+		var a struct {
+			Pod       string `json:"pod"`
+			Command   string `json:"command"`
+			NS        string `json:"namespace"`
+			Ctx       string `json:"context"`
+			Container string `json:"container"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpK8sExec(a.Pod, a.NS, a.Ctx, a.Command, a.Container))
 	case "k8s_contexts":
 		return mcpToolJSON(mcpK8sContexts())
 	case "k8s_namespaces":
-		var a struct { Ctx string `json:"context"` }
+		var a struct {
+			Ctx string `json:"context"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpK8sNamespaces(a.Ctx))
 	case "k8s_top":
-		var a struct { Resource string `json:"resource"`; NS string `json:"namespace"`; Ctx string `json:"context"` }
+		var a struct {
+			Resource string `json:"resource"`
+			NS       string `json:"namespace"`
+			Ctx      string `json:"context"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		if a.Resource == "nodes" {
 			return mcpToolJSON(mcpK8sTopNodes(a.Ctx))
 		}
 		return mcpToolJSON(mcpK8sTopPods(a.NS, a.Ctx))
 	case "k8s_events":
-		var a struct { NS string `json:"namespace"`; Ctx string `json:"context"` }
+		var a struct {
+			NS  string `json:"namespace"`
+			Ctx string `json:"context"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpK8sEvents(a.NS, a.Ctx))
 
 	// --- Terraform ---
 	case "tf_plan":
-		var a struct { Dir string `json:"directory"` }
+		var a struct {
+			Dir string `json:"directory"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpTerraformPlan(a.Dir))
 	case "tf_apply":
-		var a struct { Dir string `json:"directory"`; Auto bool `json:"auto_approve"` }
+		var a struct {
+			Dir  string `json:"directory"`
+			Auto bool   `json:"auto_approve"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpTerraformApply(a.Dir, a.Auto))
 	case "tf_state":
-		var a struct { Dir string `json:"directory"` }
+		var a struct {
+			Dir string `json:"directory"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpTerraformState(a.Dir))
 	case "tf_output":
-		var a struct { Dir string `json:"directory"` }
+		var a struct {
+			Dir string `json:"directory"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpTerraformOutput(a.Dir))
 	case "tf_init":
-		var a struct { Dir string `json:"directory"` }
+		var a struct {
+			Dir string `json:"directory"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpTerraformInit(a.Dir))
 	case "tf_validate":
-		var a struct { Dir string `json:"directory"` }
+		var a struct {
+			Dir string `json:"directory"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpTerraformValidate(a.Dir))
 
@@ -5800,115 +5870,173 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	case "lambda_list":
 		return mcpToolJSON(mcpLambdaList())
 	case "lambda_invoke":
-		var a struct { Name string `json:"name"`; Payload string `json:"payload"` }
+		var a struct {
+			Name    string `json:"name"`
+			Payload string `json:"payload"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpLambdaInvoke(a.Name, a.Payload))
 	case "lambda_logs":
-		var a struct { Name string `json:"name"`; Minutes int `json:"minutes"` }
+		var a struct {
+			Name    string `json:"name"`
+			Minutes int    `json:"minutes"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpLambdaLogs(a.Name, a.Minutes))
 
 	// --- Vercel ---
 	case "vercel_status":
-		var a struct { Dir string `json:"directory"` }
+		var a struct {
+			Dir string `json:"directory"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpVercelStatus(a.Dir))
 	case "vercel_logs":
-		var a struct { URL string `json:"url"` }
+		var a struct {
+			URL string `json:"url"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpVercelLogs(a.URL))
 	case "vercel_env":
-		var a struct { Dir string `json:"directory"` }
+		var a struct {
+			Dir string `json:"directory"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpVercelEnv(a.Dir))
 
 	// --- Netlify ---
 	case "netlify_status":
-		var a struct { Dir string `json:"directory"` }
+		var a struct {
+			Dir string `json:"directory"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpNetlifyStatus(a.Dir))
 
 	// --- Sentry ---
 	case "sentry_issues":
-		var a struct { Org string `json:"org"`; Project string `json:"project"` }
+		var a struct {
+			Org     string `json:"org"`
+			Project string `json:"project"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpSentryIssues(a.Org, a.Project))
 
 	// --- Linear ---
 	case "linear_issues":
-		var a struct { APIKey string `json:"api_key"`; Team string `json:"team"` }
+		var a struct {
+			APIKey string `json:"api_key"`
+			Team   string `json:"team"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpLinearIssues(a.APIKey, a.Team))
 
 	// --- Notion ---
 	case "notion_search":
-		var a struct { APIKey string `json:"api_key"`; Query string `json:"query"` }
+		var a struct {
+			APIKey string `json:"api_key"`
+			Query  string `json:"query"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpNotionSearch(a.APIKey, a.Query))
 
 	// --- 1Password ---
 	case "op_get":
-		var a struct { Item string `json:"item"`; Vault string `json:"vault"` }
+		var a struct {
+			Item  string `json:"item"`
+			Vault string `json:"vault"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpOnePasswordGet(a.Item, a.Vault))
 	case "op_list":
-		var a struct { Vault string `json:"vault"` }
+		var a struct {
+			Vault string `json:"vault"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpOnePasswordList(a.Vault))
 
 	// --- Raycast ---
 	case "raycast":
-		var a struct { Command string `json:"command"` }
+		var a struct {
+			Command string `json:"command"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpRaycastTrigger(a.Command))
 
 	// --- App Store / iOS ---
 	case "appstore_status":
-		var a struct { BundleID string `json:"bundle_id"` }
+		var a struct {
+			BundleID string `json:"bundle_id"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpAppStoreStatus(a.BundleID))
 	case "testflight_builds":
-		var a struct { BundleID string `json:"bundle_id"` }
+		var a struct {
+			BundleID string `json:"bundle_id"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpAppStoreTestFlight(a.BundleID))
 	case "xcode_build":
-		var a struct { Dir string `json:"directory"`; Scheme string `json:"scheme"`; Dest string `json:"destination"` }
+		var a struct {
+			Dir    string `json:"directory"`
+			Scheme string `json:"scheme"`
+			Dest   string `json:"destination"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpXcodeBuild(a.Dir, a.Scheme, a.Dest))
 	case "xcode_test":
-		var a struct { Dir string `json:"directory"`; Scheme string `json:"scheme"`; Dest string `json:"destination"` }
+		var a struct {
+			Dir    string `json:"directory"`
+			Scheme string `json:"scheme"`
+			Dest   string `json:"destination"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpXcodeTest(a.Dir, a.Scheme, a.Dest))
 	case "simulators":
 		return mcpToolJSON(mcpSimulators())
 	case "simulator_boot":
-		var a struct { Device string `json:"device"` }
+		var a struct {
+			Device string `json:"device"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpSimulatorBoot(a.Device))
 	case "simulator_screenshot":
-		var a struct { Device string `json:"device"` }
+		var a struct {
+			Device string `json:"device"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpSimulatorScreenshot(a.Device))
 
 	// --- Google Play / Android ---
 	case "playstore_status":
-		var a struct { Package string `json:"package"` }
+		var a struct {
+			Package string `json:"package"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpPlayStoreStatus(a.Package))
 	case "playstore_track":
-		var a struct { Package string `json:"package"`; Track string `json:"track"` }
+		var a struct {
+			Package string `json:"package"`
+			Track   string `json:"track"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpPlayStoreTrack(a.Package, a.Track))
 	case "gradle_build":
-		var a struct { Dir string `json:"directory"`; Task string `json:"task"` }
+		var a struct {
+			Dir  string `json:"directory"`
+			Task string `json:"task"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpGradleBuild(a.Dir, a.Task))
 	case "gradle_test":
-		var a struct { Dir string `json:"directory"` }
+		var a struct {
+			Dir string `json:"directory"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpGradleTest(a.Dir))
 	case "android_lint":
-		var a struct { Dir string `json:"directory"` }
+		var a struct {
+			Dir string `json:"directory"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpAndroidLint(a.Dir))
 	case "emulators":
@@ -5918,25 +6046,38 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	case "firebase_projects":
 		return mcpToolJSON(mcpFirebaseProjects())
 	case "firebase_deploy":
-		var a struct { Dir string `json:"directory"`; Only string `json:"only"` }
+		var a struct {
+			Dir  string `json:"directory"`
+			Only string `json:"only"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpFirebaseDeploy(a.Dir, a.Only))
 	case "firebase_crashlytics":
-		var a struct { ProjectID string `json:"project_id"` }
+		var a struct {
+			ProjectID string `json:"project_id"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpFirebaseCrashlytics(a.ProjectID))
 
 	// --- React Native / Expo ---
 	case "expo_status":
-		var a struct { Dir string `json:"directory"` }
+		var a struct {
+			Dir string `json:"directory"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpExpoStatus(a.Dir))
 	case "eas_build":
-		var a struct { Dir string `json:"directory"`; Platform string `json:"platform"` }
+		var a struct {
+			Dir      string `json:"directory"`
+			Platform string `json:"platform"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpExpoBuild(a.Dir, a.Platform))
 	case "eas_submit":
-		var a struct { Dir string `json:"directory"`; Platform string `json:"platform"` }
+		var a struct {
+			Dir      string `json:"directory"`
+			Platform string `json:"platform"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpEASSubmit(a.Dir, a.Platform))
 
@@ -5944,297 +6085,705 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	case "flutter_doctor":
 		return mcpToolJSON(mcpFlutterDoctor())
 	case "flutter_build":
-		var a struct { Dir string `json:"directory"`; Platform string `json:"platform"` }
+		var a struct {
+			Dir      string `json:"directory"`
+			Platform string `json:"platform"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpFlutterBuild(a.Dir, a.Platform))
 	case "flutter_test":
-		var a struct { Dir string `json:"directory"` }
+		var a struct {
+			Dir string `json:"directory"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpFlutterTest(a.Dir))
 
 	// --- CocoaPods ---
 	case "pod_install":
-		var a struct { Dir string `json:"directory"` }
+		var a struct {
+			Dir string `json:"directory"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpPodInstall(a.Dir))
 	case "pod_outdated":
-		var a struct { Dir string `json:"directory"` }
+		var a struct {
+			Dir string `json:"directory"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpPodOutdated(a.Dir))
 
 	// --- App Review ---
 	case "app_review_check":
-		var a struct { Platform string `json:"platform"` }
+		var a struct {
+			Platform string `json:"platform"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpAppReviewCheck(a.Platform))
 
 	// --- Package Registries ---
 	case "dockerhub_search":
-		var a struct { Query string `json:"query"`; Limit int `json:"limit"` }
+		var a struct {
+			Query string `json:"query"`
+			Limit int    `json:"limit"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpDockerHubSearch(a.Query, a.Limit))
 	case "dockerhub_tags":
-		var a struct { Image string `json:"image"`; Limit int `json:"limit"` }
+		var a struct {
+			Image string `json:"image"`
+			Limit int    `json:"limit"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpDockerHubTags(a.Image, a.Limit))
 	case "pypi_info":
-		var a struct { Pkg string `json:"package"` }
+		var a struct {
+			Pkg string `json:"package"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpPyPIInfo(a.Pkg))
 	case "pypi_versions":
-		var a struct { Pkg string `json:"package"` }
+		var a struct {
+			Pkg string `json:"package"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpPyPIVersions(a.Pkg))
 	case "npm_search":
-		var a struct { Query string `json:"query"`; Limit int `json:"limit"` }
+		var a struct {
+			Query string `json:"query"`
+			Limit int    `json:"limit"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpNPMSearch(a.Query, a.Limit))
 	case "npm_versions":
-		var a struct { Pkg string `json:"package"` }
+		var a struct {
+			Pkg string `json:"package"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpNPMVersions(a.Pkg))
 	case "crates_info":
-		var a struct { Crate string `json:"crate"` }
+		var a struct {
+			Crate string `json:"crate"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpCratesInfo(a.Crate))
 	case "crates_search":
-		var a struct { Query string `json:"query"`; Limit int `json:"limit"` }
+		var a struct {
+			Query string `json:"query"`
+			Limit int    `json:"limit"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpCratesSearch(a.Query, a.Limit))
 	case "go_module_info":
-		var a struct { Module string `json:"module"` }
+		var a struct {
+			Module string `json:"module"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpGoModuleInfo(a.Module))
 	case "go_module_versions":
-		var a struct { Module string `json:"module"` }
+		var a struct {
+			Module string `json:"module"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpGoModuleVersions(a.Module))
 	case "pubdev_info":
-		var a struct { Pkg string `json:"package"` }
+		var a struct {
+			Pkg string `json:"package"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpPubDevInfo(a.Pkg))
 	case "pubdev_search":
-		var a struct { Query string `json:"query"` }
+		var a struct {
+			Query string `json:"query"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpPubDevSearch(a.Query))
 	case "brew_info":
-		var a struct { Formula string `json:"formula"` }
+		var a struct {
+			Formula string `json:"formula"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpBrewInfo(a.Formula))
 	case "brew_search":
-		var a struct { Query string `json:"query"` }
+		var a struct {
+			Query string `json:"query"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpBrewSearch(a.Query))
 	case "gem_info":
-		var a struct { Gem string `json:"gem"` }
+		var a struct {
+			Gem string `json:"gem"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpGemInfo(a.Gem))
 	case "gem_search":
-		var a struct { Query string `json:"query"` }
+		var a struct {
+			Query string `json:"query"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpGemSearch(a.Query))
 	case "maven_search":
-		var a struct { Query string `json:"query"` }
+		var a struct {
+			Query string `json:"query"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpMavenSearch(a.Query))
 	case "nuget_search":
-		var a struct { Query string `json:"query"` }
+		var a struct {
+			Query string `json:"query"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpNuGetSearch(a.Query))
 	case "apt_search":
-		var a struct { Query string `json:"query"` }
+		var a struct {
+			Query string `json:"query"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpAptSearch(a.Query))
 	case "apt_show":
-		var a struct { Pkg string `json:"package"` }
+		var a struct {
+			Pkg string `json:"package"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpAptShow(a.Pkg))
 	case "pip_show":
-		var a struct { Pkg string `json:"package"` }
+		var a struct {
+			Pkg string `json:"package"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpPipShow(a.Pkg))
 	case "pip_list":
 		return mcpToolJSON(mcpPipList())
 	case "cargo_search":
-		var a struct { Query string `json:"query"` }
+		var a struct {
+			Query string `json:"query"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpCargoSearch(a.Query))
 	case "pkg_install":
-		var a struct { Manager string `json:"manager"`; Pkg string `json:"package"`; Global bool `json:"global"` }
+		var a struct {
+			Manager string `json:"manager"`
+			Pkg     string `json:"package"`
+			Global  bool   `json:"global"`
+		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpPkgInstall(a.Manager, a.Pkg, a.Global))
 
 	// --- Supabase ---
 	case "supabase_status":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSupabaseStatus(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSupabaseStatus(a.Dir))
 	case "supabase_db":
-		var a struct { Dir string `json:"directory"`; Query string `json:"query"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSupabaseDB(a.Dir, a.Query))
+		var a struct {
+			Dir   string `json:"directory"`
+			Query string `json:"query"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSupabaseDB(a.Dir, a.Query))
 	case "supabase_migrations":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSupabaseMigrations(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSupabaseMigrations(a.Dir))
 	case "supabase_functions":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSupabaseFunctions(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSupabaseFunctions(a.Dir))
 	case "supabase_deploy":
-		var a struct { Dir string `json:"directory"`; Function string `json:"function"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSupabaseDeploy(a.Dir, a.Function))
+		var a struct {
+			Dir      string `json:"directory"`
+			Function string `json:"function"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSupabaseDeploy(a.Dir, a.Function))
 	// --- Convex ---
 	case "convex_deploy":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexDeploy(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpConvexDeploy(a.Dir))
 	case "convex_logs":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexLogs(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpConvexLogs(a.Dir))
 	case "convex_run":
-		var a struct { Dir string `json:"directory"`; Function string `json:"function"`; Args string `json:"args"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexRun(a.Dir, a.Function, a.Args))
+		var a struct {
+			Dir      string `json:"directory"`
+			Function string `json:"function"`
+			Args     string `json:"args"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpConvexRun(a.Dir, a.Function, a.Args))
 	case "convex_local_status":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexLocalStatus(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpConvexLocalStatus(a.Dir))
 	case "convex_tables":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexTables(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpConvexTables(a.Dir))
 	case "convex_browse":
-		var a struct { Dir string `json:"directory"`; Table string `json:"table"`; Cursor string `json:"cursor"`; Limit int `json:"limit"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexBrowse(a.Dir, a.Table, a.Cursor, a.Limit))
+		var a struct {
+			Dir    string `json:"directory"`
+			Table  string `json:"table"`
+			Cursor string `json:"cursor"`
+			Limit  int    `json:"limit"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpConvexBrowse(a.Dir, a.Table, a.Cursor, a.Limit))
 	case "convex_query":
-		var a struct { Dir string `json:"directory"`; Function string `json:"function"`; Args string `json:"args"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexAdminQuery(a.Dir, a.Function, a.Args))
+		var a struct {
+			Dir      string `json:"directory"`
+			Function string `json:"function"`
+			Args     string `json:"args"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpConvexAdminQuery(a.Dir, a.Function, a.Args))
 	case "convex_mutate":
-		var a struct { Dir string `json:"directory"`; Function string `json:"function"`; Args string `json:"args"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexAdminMutate(a.Dir, a.Function, a.Args))
+		var a struct {
+			Dir      string `json:"directory"`
+			Function string `json:"function"`
+			Args     string `json:"args"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpConvexAdminMutate(a.Dir, a.Function, a.Args))
 	case "convex_action":
-		var a struct { Dir string `json:"directory"`; Function string `json:"function"`; Args string `json:"args"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexAdminAction(a.Dir, a.Function, a.Args))
+		var a struct {
+			Dir      string `json:"directory"`
+			Function string `json:"function"`
+			Args     string `json:"args"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpConvexAdminAction(a.Dir, a.Function, a.Args))
 	case "convex_schema":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexSchema(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpConvexSchema(a.Dir))
 	case "convex_export":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexExport(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpConvexExport(a.Dir))
 	case "convex_install_helper":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpConvexInstallHelper(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpConvexInstallHelper(a.Dir))
 	// --- Universal backend ---
 	case "backend_status":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpBackendStatus(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpBackendStatus(a.Dir))
 	case "data_tables":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDataTables(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDataTables(a.Dir))
 	case "data_browse":
-		var a struct { Dir string `json:"directory"`; Table string `json:"table"`; Cursor string `json:"cursor"`; Limit int `json:"limit"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDataBrowse(a.Dir, a.Table, a.Cursor, a.Limit))
+		var a struct {
+			Dir    string `json:"directory"`
+			Table  string `json:"table"`
+			Cursor string `json:"cursor"`
+			Limit  int    `json:"limit"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDataBrowse(a.Dir, a.Table, a.Cursor, a.Limit))
 	case "data_query":
-		var a struct { Dir string `json:"directory"`; Query string `json:"query"`; Args string `json:"args"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDataQuery(a.Dir, a.Query, a.Args))
+		var a struct {
+			Dir   string `json:"directory"`
+			Query string `json:"query"`
+			Args  string `json:"args"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDataQuery(a.Dir, a.Query, a.Args))
 	case "data_insert":
-		var a struct { Dir string `json:"directory"`; Table string `json:"table"`; Doc string `json:"doc"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDataInsert(a.Dir, a.Table, a.Doc))
+		var a struct {
+			Dir   string `json:"directory"`
+			Table string `json:"table"`
+			Doc   string `json:"doc"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDataInsert(a.Dir, a.Table, a.Doc))
 	case "data_update":
-		var a struct { Dir string `json:"directory"`; Table string `json:"table"`; ID string `json:"id"`; Fields string `json:"fields"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDataUpdate(a.Dir, a.Table, a.ID, a.Fields))
+		var a struct {
+			Dir    string `json:"directory"`
+			Table  string `json:"table"`
+			ID     string `json:"id"`
+			Fields string `json:"fields"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDataUpdate(a.Dir, a.Table, a.ID, a.Fields))
 	case "data_delete":
-		var a struct { Dir string `json:"directory"`; Table string `json:"table"`; ID string `json:"id"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDataDelete(a.Dir, a.Table, a.ID))
+		var a struct {
+			Dir   string `json:"directory"`
+			Table string `json:"table"`
+			ID    string `json:"id"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDataDelete(a.Dir, a.Table, a.ID))
 	// --- Cloud emulators ---
 	case "cloud_emu_start":
-		var a struct { Dir string `json:"directory"`; Provider string `json:"provider"`; Services string `json:"services"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCloudEmuStart(a.Dir, a.Provider, splitCSV(a.Services)))
+		var a struct {
+			Dir      string `json:"directory"`
+			Provider string `json:"provider"`
+			Services string `json:"services"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCloudEmuStart(a.Dir, a.Provider, splitCSV(a.Services)))
 	case "cloud_emu_stop":
-		var a struct { Dir string `json:"directory"`; Provider string `json:"provider"`; Services string `json:"services"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCloudEmuStop(a.Dir, a.Provider, splitCSV(a.Services)))
+		var a struct {
+			Dir      string `json:"directory"`
+			Provider string `json:"provider"`
+			Services string `json:"services"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCloudEmuStop(a.Dir, a.Provider, splitCSV(a.Services)))
 	case "cloud_emu_status":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCloudEmuStatus(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCloudEmuStatus(a.Dir))
 	case "cloud_emu_config":
-		var a struct { Provider string `json:"provider"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCloudEmuConfig(a.Provider))
+		var a struct {
+			Provider string `json:"provider"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCloudEmuConfig(a.Provider))
 	// --- Switch engine ---
 	case "switch_targets":
 		return mcpToolJSON(mcpSwitchTargets())
 	case "switch_plan":
-		var a struct { Dir string `json:"directory"`; Target string `json:"target"`; DryRun bool `json:"dryRun"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSwitchPlan(a.Dir, a.Target, a.DryRun))
+		var a struct {
+			Dir    string `json:"directory"`
+			Target string `json:"target"`
+			DryRun bool   `json:"dryRun"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSwitchPlan(a.Dir, a.Target, a.DryRun))
 	case "switch_run":
-		var a struct { Dir string `json:"directory"`; ID string `json:"id"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSwitchRun(a.Dir, a.ID))
+		var a struct {
+			Dir string `json:"directory"`
+			ID  string `json:"id"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSwitchRun(a.Dir, a.ID))
 	case "switch_rollback":
-		var a struct { Dir string `json:"directory"`; ID string `json:"id"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSwitchRollback(a.Dir, a.ID))
+		var a struct {
+			Dir string `json:"directory"`
+			ID  string `json:"id"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSwitchRollback(a.Dir, a.ID))
 	case "switch_history":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSwitchHistory(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSwitchHistory(a.Dir))
 	case "switch_cleanup":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSwitchCleanup(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSwitchCleanup(a.Dir))
 	// --- Accounts manager ---
 	case "account_list":
 		return mcpToolJSON(mcpAccountList())
 	case "account_connect":
-		var a struct { Provider string `json:"provider"`; Label string `json:"label"`; Fields string `json:"fields"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpAccountConnect(a.Provider, a.Label, a.Fields))
+		var a struct {
+			Provider string `json:"provider"`
+			Label    string `json:"label"`
+			Fields   string `json:"fields"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpAccountConnect(a.Provider, a.Label, a.Fields))
 	case "account_disconnect":
-		var a struct { Provider string `json:"provider"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpAccountDisconnect(a.Provider))
+		var a struct {
+			Provider string `json:"provider"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpAccountDisconnect(a.Provider))
 	case "account_status":
-		var a struct { Provider string `json:"provider"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpAccountStatus(a.Provider))
+		var a struct {
+			Provider string `json:"provider"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpAccountStatus(a.Provider))
 	// --- Cloud provisioning ---
 	case "cloud_provision":
-		var a struct { Host string `json:"host"`; Name string `json:"name"`; Opts string `json:"opts"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCloudProvision(a.Host, a.Name, a.Opts))
+		var a struct {
+			Host string `json:"host"`
+			Name string `json:"name"`
+			Opts string `json:"opts"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCloudProvision(a.Host, a.Name, a.Opts))
 	case "studio_list":
 		return mcpToolJSON(mcpStudioList())
 	case "switch_cost":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSwitchCost(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSwitchCost(a.Dir))
 	case "init_project":
-		var a struct { Opts string `json:"opts"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpInitProject(a.Opts))
+		var a struct {
+			Opts string `json:"opts"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpInitProject(a.Opts))
 	case "backend_schema":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSchemaView(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSchemaView(a.Dir))
 	case "storage_list":
-		var a struct { Dir string `json:"directory"`; Bucket string `json:"bucket"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpStorageList(a.Dir, a.Bucket))
+		var a struct {
+			Dir    string `json:"directory"`
+			Bucket string `json:"bucket"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpStorageList(a.Dir, a.Bucket))
 	case "cron_list":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpJobsList(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpJobsList(a.Dir))
 	case "console_machines":
 		return mcpToolJSON(mcpConsoleMachines())
 	case "deploy_run":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDeployRun(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDeployRun(a.Dir))
 	case "deploy_list":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDeployList(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDeployList(a.Dir))
 	case "deploy_rollback":
-		var a struct { Dir string `json:"directory"`; ID string `json:"id"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDeployRollback(a.Dir, a.ID))
+		var a struct {
+			Dir string `json:"directory"`
+			ID  string `json:"id"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDeployRollback(a.Dir, a.ID))
 	case "clone_env":
-		var a struct { Source string `json:"source"`; Target string `json:"target"`; Subset int `json:"subsetRows"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCloneEnv(a.Source, a.Target, a.Subset))
+		var a struct {
+			Source string `json:"source"`
+			Target string `json:"target"`
+			Subset int    `json:"subsetRows"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCloneEnv(a.Source, a.Target, a.Subset))
 	case "log_search":
-		var a struct { Q string `json:"q"`; Services string `json:"services"`; Limit int `json:"limit"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpLogSearch(a.Q, a.Services, a.Limit))
+		var a struct {
+			Q        string `json:"q"`
+			Services string `json:"services"`
+			Limit    int    `json:"limit"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpLogSearch(a.Q, a.Services, a.Limit))
 	// --- Cloudflare ---
 	case "cf_workers":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCFWorkers(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCFWorkers(a.Dir))
 	case "cf_deploy":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCFDeploy(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCFDeploy(a.Dir))
 	case "cf_pages":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCFPages(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCFPages(a.Dir))
 	case "cf_r2":
-		var a struct { Action string `json:"action"`; Bucket string `json:"bucket"`; Key string `json:"key"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCFR2(a.Action, a.Bucket, a.Key))
+		var a struct {
+			Action string `json:"action"`
+			Bucket string `json:"bucket"`
+			Key    string `json:"key"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCFR2(a.Action, a.Bucket, a.Key))
 	case "cf_d1":
-		var a struct { Action string `json:"action"`; DB string `json:"database"`; Query string `json:"query"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCFD1(a.Action, a.DB, a.Query))
+		var a struct {
+			Action string `json:"action"`
+			DB     string `json:"database"`
+			Query  string `json:"query"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCFD1(a.Action, a.DB, a.Query))
 	case "cf_kv":
-		var a struct { Action string `json:"action"`; NS string `json:"namespace"`; Key string `json:"key"`; Value string `json:"value"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCFKV(a.Action, a.NS, a.Key, a.Value))
+		var a struct {
+			Action string `json:"action"`
+			NS     string `json:"namespace"`
+			Key    string `json:"key"`
+			Value  string `json:"value"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCFKV(a.Action, a.NS, a.Key, a.Value))
 	// --- GitLab ---
 	case "gitlab_mrs":
-		var a struct { Dir string `json:"directory"`; State string `json:"state"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGitLabMRs(a.Dir, a.State))
+		var a struct {
+			Dir   string `json:"directory"`
+			State string `json:"state"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitLabMRs(a.Dir, a.State))
 	case "gitlab_issues":
-		var a struct { Dir string `json:"directory"`; State string `json:"state"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGitLabIssues(a.Dir, a.State))
+		var a struct {
+			Dir   string `json:"directory"`
+			State string `json:"state"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitLabIssues(a.Dir, a.State))
 	case "gitlab_pipelines":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGitLabPipelines(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitLabPipelines(a.Dir))
 	case "gitlab_ci":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGitLabCI(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitLabCI(a.Dir))
 	// --- GitHub extras ---
 	case "github_repo_info":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGitHubRepoInfo(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitHubRepoInfo(a.Dir))
 	case "github_releases":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGitHubReleases(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitHubReleases(a.Dir))
 	case "github_stars":
-		var a struct { Repo string `json:"repo"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGitHubStargazers(a.Repo))
+		var a struct {
+			Repo string `json:"repo"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitHubStargazers(a.Repo))
 	// --- PlanetScale ---
 	case "pscale_branches":
-		var a struct { DB string `json:"database"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpPlanetScaleBranches(a.DB))
+		var a struct {
+			DB string `json:"database"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpPlanetScaleBranches(a.DB))
 	case "pscale_deploy":
-		var a struct { DB string `json:"database"`; Branch string `json:"branch"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpPlanetScaleDeploy(a.DB, a.Branch))
+		var a struct {
+			DB     string `json:"database"`
+			Branch string `json:"branch"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpPlanetScaleDeploy(a.DB, a.Branch))
 	// --- Prisma ---
 	case "prisma_status":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpPrismaStatus(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpPrismaStatus(a.Dir))
 	case "prisma_generate":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpPrismaGenerate(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpPrismaGenerate(a.Dir))
 	case "prisma_push":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpPrismaPush(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpPrismaPush(a.Dir))
 	// --- Drizzle ---
 	case "drizzle_push":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDrizzlePush(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDrizzlePush(a.Dir))
 	case "drizzle_generate":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDrizzleGenerate(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDrizzleGenerate(a.Dir))
 	// --- Fly.io ---
 	case "fly_status":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpFlyStatus(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpFlyStatus(a.Dir))
 	case "fly_deploy":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpFlyDeploy(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpFlyDeploy(a.Dir))
 	case "fly_logs":
-		var a struct { App string `json:"app"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpFlyLogs(a.App))
+		var a struct {
+			App string `json:"app"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpFlyLogs(a.App))
 	// --- Railway ---
 	case "railway_status":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpRailwayStatus(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpRailwayStatus(a.Dir))
 	case "railway_deploy":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpRailwayDeploy(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpRailwayDeploy(a.Dir))
 
 	// --- Docker Extended ---
 	case "docker_prune":
-		var a struct { What string `json:"what"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDockerPrune(a.What))
+		var a struct {
+			What string `json:"what"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDockerPrune(a.What))
 	case "docker_disk_usage":
 		return mcpToolJSON(mcpDockerDiskUsage())
 	case "docker_networks":
@@ -6242,65 +6791,185 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	case "docker_volumes":
 		return mcpToolJSON(mcpDockerVolumes())
 	case "docker_inspect":
-		var a struct { Target string `json:"target"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDockerInspect(a.Target))
+		var a struct {
+			Target string `json:"target"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDockerInspect(a.Target))
 	case "docker_stats":
 		return mcpToolJSON(mcpDockerStats())
 	case "docker_build":
-		var a struct { Dir string `json:"directory"`; Tag string `json:"tag"`; Dockerfile string `json:"dockerfile"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDockerBuild(a.Dir, a.Tag, a.Dockerfile))
+		var a struct {
+			Dir        string `json:"directory"`
+			Tag        string `json:"tag"`
+			Dockerfile string `json:"dockerfile"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDockerBuild(a.Dir, a.Tag, a.Dockerfile))
 	case "docker_pull":
-		var a struct { Image string `json:"image"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDockerPull(a.Image))
+		var a struct {
+			Image string `json:"image"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDockerPull(a.Image))
 	case "docker_push":
-		var a struct { Image string `json:"image"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDockerPush(a.Image))
+		var a struct {
+			Image string `json:"image"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDockerPush(a.Image))
 	case "docker_stop":
-		var a struct { Container string `json:"container"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDockerStop(a.Container))
+		var a struct {
+			Container string `json:"container"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDockerStop(a.Container))
 	case "docker_start":
-		var a struct { Container string `json:"container"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDockerStart(a.Container))
+		var a struct {
+			Container string `json:"container"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDockerStart(a.Container))
 	case "docker_restart":
-		var a struct { Container string `json:"container"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDockerRestart(a.Container))
+		var a struct {
+			Container string `json:"container"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDockerRestart(a.Container))
 	case "docker_rm":
-		var a struct { Container string `json:"container"`; Force bool `json:"force"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDockerRm(a.Container, a.Force))
+		var a struct {
+			Container string `json:"container"`
+			Force     bool   `json:"force"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDockerRm(a.Container, a.Force))
 	case "docker_rmi":
-		var a struct { Image string `json:"image"`; Force bool `json:"force"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDockerRmi(a.Image, a.Force))
+		var a struct {
+			Image string `json:"image"`
+			Force bool   `json:"force"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDockerRmi(a.Image, a.Force))
 	case "docker_top":
-		var a struct { Container string `json:"container"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDockerTop(a.Container))
+		var a struct {
+			Container string `json:"container"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDockerTop(a.Container))
 	case "docker_port":
-		var a struct { Container string `json:"container"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDockerPort(a.Container))
+		var a struct {
+			Container string `json:"container"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDockerPort(a.Container))
 	case "docker_cp":
-		var a struct { Src string `json:"source"`; Dst string `json:"destination"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDockerCp(a.Src, a.Dst))
+		var a struct {
+			Src string `json:"source"`
+			Dst string `json:"destination"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDockerCp(a.Src, a.Dst))
 	case "docker_history":
-		var a struct { Image string `json:"image"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDockerHistory(a.Image))
+		var a struct {
+			Image string `json:"image"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDockerHistory(a.Image))
 
 	// --- Git Extended ---
 	case "git_stash":
-		var a struct { Action string `json:"action"`; Message string `json:"message"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGitStash(a.Action, a.Message))
+		var a struct {
+			Action  string `json:"action"`
+			Message string `json:"message"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitStash(a.Action, a.Message))
 	case "git_blame_file":
-		var a struct { File string `json:"file"`; Lines string `json:"lines"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGitBlame(a.File, a.Lines))
+		var a struct {
+			File  string `json:"file"`
+			Lines string `json:"lines"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitBlame(a.File, a.Lines))
 	case "git_log_advanced":
-		var a struct { Dir string `json:"directory"`; Author string `json:"author"`; Since string `json:"since"`; Until string `json:"until"`; Path string `json:"path"`; Count int `json:"count"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGitLogAdvanced(a.Dir, a.Author, a.Since, a.Until, a.Path, a.Count))
+		var a struct {
+			Dir    string `json:"directory"`
+			Author string `json:"author"`
+			Since  string `json:"since"`
+			Until  string `json:"until"`
+			Path   string `json:"path"`
+			Count  int    `json:"count"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitLogAdvanced(a.Dir, a.Author, a.Since, a.Until, a.Path, a.Count))
 	case "git_branches":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGitBranches(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitBranches(a.Dir))
 	case "git_tags":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGitTags(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitTags(a.Dir))
 	case "git_remotes":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGitRemotes(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitRemotes(a.Dir))
 	case "git_reflog":
-		var a struct { Dir string `json:"directory"`; Count int `json:"count"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGitReflog(a.Dir, a.Count))
+		var a struct {
+			Dir   string `json:"directory"`
+			Count int    `json:"count"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitReflog(a.Dir, a.Count))
 	case "git_shortlog":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGitShortlog(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitShortlog(a.Dir))
 
 	// --- Helm ---
 	case "helm_list":
-		var a struct { NS string `json:"namespace"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpHelmList(a.NS))
+		var a struct {
+			NS string `json:"namespace"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpHelmList(a.NS))
 	case "helm_status":
-		var a struct { Release string `json:"release"`; NS string `json:"namespace"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpHelmStatus(a.Release, a.NS))
+		var a struct {
+			Release string `json:"release"`
+			NS      string `json:"namespace"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpHelmStatus(a.Release, a.NS))
 	case "helm_values":
-		var a struct { Release string `json:"release"`; NS string `json:"namespace"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpHelmValues(a.Release, a.NS))
+		var a struct {
+			Release string `json:"release"`
+			NS      string `json:"namespace"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpHelmValues(a.Release, a.NS))
 	case "helm_search":
-		var a struct { Query string `json:"query"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpHelmSearch(a.Query))
+		var a struct {
+			Query string `json:"query"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpHelmSearch(a.Query))
 	case "helm_repos":
 		return mcpToolJSON(mcpHelmRepos())
 	case "helm_history":
-		var a struct { Release string `json:"release"`; NS string `json:"namespace"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpHelmHistory(a.Release, a.NS))
+		var a struct {
+			Release string `json:"release"`
+			NS      string `json:"namespace"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpHelmHistory(a.Release, a.NS))
 
 	// --- System Extended ---
 	case "free_memory":
@@ -6308,81 +6977,209 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	case "listen_ports":
 		return mcpToolJSON(mcpListenPorts())
 	case "find_large_files":
-		var a struct { Dir string `json:"directory"`; SizeMB int `json:"size_mb"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpFindLargeFiles(a.Dir, a.SizeMB))
+		var a struct {
+			Dir    string `json:"directory"`
+			SizeMB int    `json:"size_mb"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpFindLargeFiles(a.Dir, a.SizeMB))
 	case "tree_dir":
-		var a struct { Dir string `json:"directory"`; Depth int `json:"depth"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpTreeDir(a.Dir, a.Depth))
+		var a struct {
+			Dir   string `json:"directory"`
+			Depth int    `json:"depth"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpTreeDir(a.Dir, a.Depth))
 	case "lines_of_code":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpLinesOfCode(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpLinesOfCode(a.Dir))
 
 	// --- Network & Packet Capture ---
 	case "tcpdump":
-		var a struct { Iface string `json:"interface"`; Count int `json:"count"`; Filter string `json:"filter"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpTcpdump(a.Iface, a.Count, a.Filter))
+		var a struct {
+			Iface  string `json:"interface"`
+			Count  int    `json:"count"`
+			Filter string `json:"filter"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpTcpdump(a.Iface, a.Count, a.Filter))
 	case "tcpdump_http":
-		var a struct { Iface string `json:"interface"`; Count int `json:"count"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpTcpdumpHTTP(a.Iface, a.Count))
+		var a struct {
+			Iface string `json:"interface"`
+			Count int    `json:"count"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpTcpdumpHTTP(a.Iface, a.Count))
 	case "tcpdump_dns":
-		var a struct { Iface string `json:"interface"`; Count int `json:"count"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpTcpdumpDNS(a.Iface, a.Count))
+		var a struct {
+			Iface string `json:"interface"`
+			Count int    `json:"count"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpTcpdumpDNS(a.Iface, a.Count))
 	case "tshark":
-		var a struct { Iface string `json:"interface"`; Count int `json:"count"`; Filter string `json:"filter"`; Fields string `json:"fields"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpTshark(a.Iface, a.Count, a.Filter, a.Fields))
+		var a struct {
+			Iface  string `json:"interface"`
+			Count  int    `json:"count"`
+			Filter string `json:"filter"`
+			Fields string `json:"fields"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpTshark(a.Iface, a.Count, a.Filter, a.Fields))
 	case "pcap_analyze":
-		var a struct { File string `json:"file"`; Filter string `json:"filter"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpPcapAnalyze(a.File, a.Filter))
+		var a struct {
+			File   string `json:"file"`
+			Filter string `json:"filter"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpPcapAnalyze(a.File, a.Filter))
 	case "pcap_stats":
-		var a struct { File string `json:"file"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpPcapStats(a.File))
+		var a struct {
+			File string `json:"file"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpPcapStats(a.File))
 	case "netcat":
-		var a struct { Host string `json:"host"`; Port int `json:"port"`; Data string `json:"data"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpNetcat(a.Host, a.Port, a.Data))
+		var a struct {
+			Host string `json:"host"`
+			Port int    `json:"port"`
+			Data string `json:"data"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpNetcat(a.Host, a.Port, a.Data))
 	case "port_scan":
-		var a struct { Host string `json:"host"`; Ports string `json:"ports"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpPortScan(a.Host, a.Ports))
+		var a struct {
+			Host  string `json:"host"`
+			Ports string `json:"ports"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpPortScan(a.Host, a.Ports))
 	case "arp_table":
 		return mcpToolJSON(mcpArpTable())
 	case "arp_scan":
-		var a struct { Subnet string `json:"subnet"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpArpScan(a.Subnet))
+		var a struct {
+			Subnet string `json:"subnet"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpArpScan(a.Subnet))
 	case "nmap_scan":
-		var a struct { Target string `json:"target"`; Type string `json:"type"`; Ports string `json:"ports"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpNmapScan(a.Target, a.Type, a.Ports))
+		var a struct {
+			Target string `json:"target"`
+			Type   string `json:"type"`
+			Ports  string `json:"ports"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpNmapScan(a.Target, a.Type, a.Ports))
 	case "traceroute_host":
-		var a struct { Host string `json:"host"`; MaxHops int `json:"max_hops"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpTraceroute(a.Host, a.MaxHops))
+		var a struct {
+			Host    string `json:"host"`
+			MaxHops int    `json:"max_hops"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpTraceroute(a.Host, a.MaxHops))
 	case "mtr_report":
-		var a struct { Host string `json:"host"`; Count int `json:"count"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpMtr(a.Host, a.Count))
+		var a struct {
+			Host  string `json:"host"`
+			Count int    `json:"count"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpMtr(a.Host, a.Count))
 	case "network_interfaces":
 		return mcpToolJSON(mcpNetworkInterfaces())
 	case "ip_route":
 		return mcpToolJSON(mcpIPRoute())
 	case "network_connections":
-		var a struct { State string `json:"state"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpNetworkConnections(a.State))
+		var a struct {
+			State string `json:"state"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpNetworkConnections(a.State))
 	case "bandwidth_test":
-		var a struct { Host string `json:"host"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpBandwidthTest(a.Host))
+		var a struct {
+			Host string `json:"host"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpBandwidthTest(a.Host))
 	case "curl_timings":
-		var a struct { URL string `json:"url"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCurlTimings(a.URL))
+		var a struct {
+			URL string `json:"url"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCurlTimings(a.URL))
 
 	// --- Linux System ---
 	case "dmesg":
-		var a struct { Level string `json:"level"`; Lines int `json:"lines"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDmesg(a.Level, a.Lines))
+		var a struct {
+			Level string `json:"level"`
+			Lines int    `json:"lines"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDmesg(a.Level, a.Lines))
 	case "lsmod":
 		return mcpToolJSON(mcpLsmod())
 	case "modinfo":
-		var a struct { Module string `json:"module"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpModinfo(a.Module))
+		var a struct {
+			Module string `json:"module"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpModinfo(a.Module))
 	case "insmod":
-		var a struct { Module string `json:"module"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpInsmod(a.Module))
+		var a struct {
+			Module string `json:"module"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpInsmod(a.Module))
 	case "rmmod":
-		var a struct { Module string `json:"module"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpRmmod(a.Module))
+		var a struct {
+			Module string `json:"module"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpRmmod(a.Module))
 	case "uname":
 		return mcpToolJSON(mcpUname())
 	case "sysctl":
-		var a struct { Key string `json:"key"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSysctl(a.Key))
+		var a struct {
+			Key string `json:"key"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSysctl(a.Key))
 	case "top_snapshot":
 		return mcpToolJSON(mcpTopSnapshot())
 	case "ps_aux":
-		var a struct { Sort string `json:"sort"`; Filter string `json:"filter"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpPsAux(a.Sort, a.Filter))
+		var a struct {
+			Sort   string `json:"sort"`
+			Filter string `json:"filter"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpPsAux(a.Sort, a.Filter))
 	case "ps_tree":
 		return mcpToolJSON(mcpPsTree())
 	case "load_average":
 		return mcpToolJSON(mcpLoadAverage())
 	case "vmstat":
-		var a struct { Count int `json:"count"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpVmstat(a.Count))
+		var a struct {
+			Count int `json:"count"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpVmstat(a.Count))
 	case "swap_info":
 		return mcpToolJSON(mcpSwap())
 	case "df":
-		var a struct { Path string `json:"path"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDf(a.Path))
+		var a struct {
+			Path string `json:"path"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDf(a.Path))
 	case "du":
-		var a struct { Path string `json:"path"`; Depth int `json:"depth"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpDu(a.Path, a.Depth))
+		var a struct {
+			Path  string `json:"path"`
+			Depth int    `json:"depth"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDu(a.Path, a.Depth))
 	case "lsblk":
 		return mcpToolJSON(mcpLsblk())
 	case "fdisk_list":
@@ -6392,7 +7189,14 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	case "iostat":
 		return mcpToolJSON(mcpIostat())
 	case "tree":
-		var a struct { Path string `json:"path"`; Depth int `json:"depth"`; All bool `json:"all"`; DirsOnly bool `json:"dirs_only"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpTree(a.Path, a.Depth, a.All, a.DirsOnly))
+		var a struct {
+			Path     string `json:"path"`
+			Depth    int    `json:"depth"`
+			All      bool   `json:"all"`
+			DirsOnly bool   `json:"dirs_only"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpTree(a.Path, a.Depth, a.All, a.DirsOnly))
 	case "cpu_info":
 		return mcpToolJSON(mcpCpuInfo())
 	case "lspci":
@@ -6402,13 +7206,22 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	case "sensors":
 		return mcpToolJSON(mcpSensors())
 	case "ufw":
-		var a struct { Action string `json:"action"`; Rule string `json:"rule"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpUfw(a.Action, a.Rule))
+		var a struct {
+			Action string `json:"action"`
+			Rule   string `json:"rule"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpUfw(a.Action, a.Rule))
 	case "iptables_list":
 		return mcpToolJSON(mcpIptables())
 	case "who_is_logged_in":
 		return mcpToolJSON(mcpWho())
 	case "last_logins":
-		var a struct { Count int `json:"count"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpLastLogins(a.Count))
+		var a struct {
+			Count int `json:"count"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpLastLogins(a.Count))
 	case "timedate_info":
 		return mcpToolJSON(mcpTimeDateInfo())
 	case "hostname_info":
@@ -6416,185 +7229,601 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	// --- Compilers & Language Suites ---
 	case "make_targets":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpMakeTargets(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpMakeTargets(a.Dir))
 	case "make_run":
-		var a struct { Dir string `json:"directory"`; Target string `json:"target"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpMakeRun(a.Dir, a.Target))
+		var a struct {
+			Dir    string `json:"directory"`
+			Target string `json:"target"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpMakeRun(a.Dir, a.Target))
 	case "make_clean":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpMakeClean(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpMakeClean(a.Dir))
 	case "cmake_configure":
-		var a struct { Dir string `json:"directory"`; BuildDir string `json:"build_dir"`; Gen string `json:"generator"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCMakeConfigure(a.Dir, a.BuildDir, a.Gen))
+		var a struct {
+			Dir      string `json:"directory"`
+			BuildDir string `json:"build_dir"`
+			Gen      string `json:"generator"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCMakeConfigure(a.Dir, a.BuildDir, a.Gen))
 	case "cmake_build":
-		var a struct { Dir string `json:"directory"`; BuildDir string `json:"build_dir"`; Parallel int `json:"parallel"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCMakeBuild(a.Dir, a.BuildDir, a.Parallel))
+		var a struct {
+			Dir      string `json:"directory"`
+			BuildDir string `json:"build_dir"`
+			Parallel int    `json:"parallel"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCMakeBuild(a.Dir, a.BuildDir, a.Parallel))
 	case "cmake_test":
-		var a struct { Dir string `json:"directory"`; BuildDir string `json:"build_dir"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCMakeTest(a.Dir, a.BuildDir))
+		var a struct {
+			Dir      string `json:"directory"`
+			BuildDir string `json:"build_dir"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCMakeTest(a.Dir, a.BuildDir))
 	case "cmake_install":
-		var a struct { Dir string `json:"directory"`; BuildDir string `json:"build_dir"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCMakeInstall(a.Dir, a.BuildDir))
+		var a struct {
+			Dir      string `json:"directory"`
+			BuildDir string `json:"build_dir"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCMakeInstall(a.Dir, a.BuildDir))
 	case "gcc_compile":
-		var a struct { File string `json:"file"`; Output string `json:"output"`; Flags []string `json:"flags"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGCCCompile(a.File, a.Output, a.Flags))
+		var a struct {
+			File   string   `json:"file"`
+			Output string   `json:"output"`
+			Flags  []string `json:"flags"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGCCCompile(a.File, a.Output, a.Flags))
 	case "clang_compile":
-		var a struct { File string `json:"file"`; Output string `json:"output"`; Flags []string `json:"flags"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpClangCompile(a.File, a.Output, a.Flags))
+		var a struct {
+			File   string   `json:"file"`
+			Output string   `json:"output"`
+			Flags  []string `json:"flags"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpClangCompile(a.File, a.Output, a.Flags))
 	case "clang_tidy_check":
-		var a struct { File string `json:"file"`; Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpClangTidy(a.File, a.Dir))
+		var a struct {
+			File string `json:"file"`
+			Dir  string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpClangTidy(a.File, a.Dir))
 	case "clang_format_file":
-		var a struct { File string `json:"file"`; InPlace bool `json:"in_place"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpClangFormat(a.File, a.InPlace))
+		var a struct {
+			File    string `json:"file"`
+			InPlace bool   `json:"in_place"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpClangFormat(a.File, a.InPlace))
 	case "objdump":
-		var a struct { File string `json:"file"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpLLVMObjdump(a.File))
+		var a struct {
+			File string `json:"file"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpLLVMObjdump(a.File))
 	case "binary_size":
-		var a struct { File string `json:"file"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpLLVMSize(a.File))
+		var a struct {
+			File string `json:"file"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpLLVMSize(a.File))
 	case "nm_symbols":
-		var a struct { File string `json:"file"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpLLVMNM(a.File))
+		var a struct {
+			File string `json:"file"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpLLVMNM(a.File))
 	case "compiler_version":
-		var a struct { Compiler string `json:"compiler"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCompilerVersion(a.Compiler))
+		var a struct {
+			Compiler string `json:"compiler"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCompilerVersion(a.Compiler))
 	// Cargo (Rust)
 	case "cargo_build":
-		var a struct { Dir string `json:"directory"`; Release bool `json:"release"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCargoBuild(a.Dir, a.Release))
+		var a struct {
+			Dir     string `json:"directory"`
+			Release bool   `json:"release"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCargoBuild(a.Dir, a.Release))
 	case "cargo_test_suite":
-		var a struct { Dir string `json:"directory"`; TestName string `json:"test_name"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCargoTest(a.Dir, a.TestName))
+		var a struct {
+			Dir      string `json:"directory"`
+			TestName string `json:"test_name"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCargoTest(a.Dir, a.TestName))
 	case "cargo_clippy":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCargoClippy(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCargoClippy(a.Dir))
 	case "cargo_fmt":
-		var a struct { Dir string `json:"directory"`; Check bool `json:"check"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCargoFmt(a.Dir, a.Check))
+		var a struct {
+			Dir   string `json:"directory"`
+			Check bool   `json:"check"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCargoFmt(a.Dir, a.Check))
 	case "cargo_doc":
-		var a struct { Dir string `json:"directory"`; Open bool `json:"open"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCargoDoc(a.Dir, a.Open))
+		var a struct {
+			Dir  string `json:"directory"`
+			Open bool   `json:"open"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCargoDoc(a.Dir, a.Open))
 	case "cargo_bench_suite":
-		var a struct { Dir string `json:"directory"`; Bench string `json:"bench"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCargoBench(a.Dir, a.Bench))
+		var a struct {
+			Dir   string `json:"directory"`
+			Bench string `json:"bench"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCargoBench(a.Dir, a.Bench))
 	case "cargo_tree_deps":
-		var a struct { Dir string `json:"directory"`; Depth int `json:"depth"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCargoTree(a.Dir, a.Depth))
+		var a struct {
+			Dir   string `json:"directory"`
+			Depth int    `json:"depth"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCargoTree(a.Dir, a.Depth))
 	case "cargo_update_deps":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCargoUpdate(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCargoUpdate(a.Dir))
 	case "cargo_audit_deps":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCargoAudit(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCargoAudit(a.Dir))
 	case "cargo_check_only":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCargoCheck(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCargoCheck(a.Dir))
 	case "cargo_clean":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCargoClean(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCargoClean(a.Dir))
 	case "cargo_add_crate":
-		var a struct { Dir string `json:"directory"`; Crate string `json:"crate"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCargoAdd(a.Dir, a.Crate))
+		var a struct {
+			Dir   string `json:"directory"`
+			Crate string `json:"crate"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCargoAdd(a.Dir, a.Crate))
 	case "cargo_remove_crate":
-		var a struct { Dir string `json:"directory"`; Crate string `json:"crate"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCargoRemove(a.Dir, a.Crate))
+		var a struct {
+			Dir   string `json:"directory"`
+			Crate string `json:"crate"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCargoRemove(a.Dir, a.Crate))
 	// Go
 	case "go_build":
-		var a struct { Dir string `json:"directory"`; Output string `json:"output"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGoBuild(a.Dir, a.Output))
+		var a struct {
+			Dir    string `json:"directory"`
+			Output string `json:"output"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGoBuild(a.Dir, a.Output))
 	case "go_test_suite":
-		var a struct { Dir string `json:"directory"`; Verbose bool `json:"verbose"`; Race bool `json:"race"`; Cover bool `json:"cover"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGoTest(a.Dir, a.Verbose, a.Race, a.Cover))
+		var a struct {
+			Dir     string `json:"directory"`
+			Verbose bool   `json:"verbose"`
+			Race    bool   `json:"race"`
+			Cover   bool   `json:"cover"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGoTest(a.Dir, a.Verbose, a.Race, a.Cover))
 	case "go_vet_check":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGoVet(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGoVet(a.Dir))
 	case "go_mod_tidy":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGoModTidy(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGoModTidy(a.Dir))
 	case "go_mod_graph":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGoModGraph(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGoModGraph(a.Dir))
 	case "go_mod_why":
-		var a struct { Dir string `json:"directory"`; Module string `json:"module"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGoModWhy(a.Dir, a.Module))
+		var a struct {
+			Dir    string `json:"directory"`
+			Module string `json:"module"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGoModWhy(a.Dir, a.Module))
 	case "go_generate":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGoGenerate(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGoGenerate(a.Dir))
 	case "go_fmt_check":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGoFmt(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGoFmt(a.Dir))
 	case "go_staticcheck":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGoStaticcheck(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGoStaticcheck(a.Dir))
 	case "go_vulncheck":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGoVulncheck(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGoVulncheck(a.Dir))
 	// Python
 	case "pytest_suite":
-		var a struct { Dir string `json:"directory"`; Verbose bool `json:"verbose"`; Coverage bool `json:"coverage"`; Marker string `json:"marker"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpPytest(a.Dir, a.Verbose, a.Coverage, a.Marker))
+		var a struct {
+			Dir      string `json:"directory"`
+			Verbose  bool   `json:"verbose"`
+			Coverage bool   `json:"coverage"`
+			Marker   string `json:"marker"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpPytest(a.Dir, a.Verbose, a.Coverage, a.Marker))
 	case "ruff_suite":
-		var a struct { Dir string `json:"directory"`; Action string `json:"action"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpRuff(a.Dir, a.Action))
+		var a struct {
+			Dir    string `json:"directory"`
+			Action string `json:"action"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpRuff(a.Dir, a.Action))
 	case "mypy_check":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpMypy(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpMypy(a.Dir))
 	case "black_format":
-		var a struct { Dir string `json:"directory"`; Check bool `json:"check"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpBlack(a.Dir, a.Check))
+		var a struct {
+			Dir   string `json:"directory"`
+			Check bool   `json:"check"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpBlack(a.Dir, a.Check))
 	case "pip_compile":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpPipCompile(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpPipCompile(a.Dir))
 	case "uv_install":
-		var a struct { Dir string `json:"directory"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpUVInstall(a.Dir))
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpUVInstall(a.Dir))
 	// Node.js/TypeScript
 	case "npm_run_script":
-		var a struct { Dir string `json:"directory"`; Script string `json:"script"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpNPMRun(a.Dir, a.Script))
+		var a struct {
+			Dir    string `json:"directory"`
+			Script string `json:"script"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpNPMRun(a.Dir, a.Script))
 	case "tsc_check":
-		var a struct { Dir string `json:"directory"`; NoEmit bool `json:"no_emit"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpTSC(a.Dir, a.NoEmit))
+		var a struct {
+			Dir    string `json:"directory"`
+			NoEmit bool   `json:"no_emit"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpTSC(a.Dir, a.NoEmit))
 	case "eslint_check":
-		var a struct { Dir string `json:"directory"`; Fix bool `json:"fix"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpESLint(a.Dir, a.Fix))
+		var a struct {
+			Dir string `json:"directory"`
+			Fix bool   `json:"fix"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpESLint(a.Dir, a.Fix))
 	case "prettier_check":
-		var a struct { Dir string `json:"directory"`; Check bool `json:"check"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpPrettier(a.Dir, a.Check))
+		var a struct {
+			Dir   string `json:"directory"`
+			Check bool   `json:"check"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpPrettier(a.Dir, a.Check))
 	case "biome_suite":
-		var a struct { Dir string `json:"directory"`; Action string `json:"action"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpBiome(a.Dir, a.Action))
+		var a struct {
+			Dir    string `json:"directory"`
+			Action string `json:"action"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpBiome(a.Dir, a.Action))
 
 	// --- Static Analysis ---
 	case "cppcheck":
-		var a struct { Dir string `json:"directory"`; File string `json:"file"`; Severity string `json:"severity"`; EnableAll bool `json:"enable_all"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCppcheck(a.Dir, a.File, a.Severity, a.EnableAll))
+		var a struct {
+			Dir       string `json:"directory"`
+			File      string `json:"file"`
+			Severity  string `json:"severity"`
+			EnableAll bool   `json:"enable_all"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCppcheck(a.Dir, a.File, a.Severity, a.EnableAll))
 	case "shellcheck":
-		var a struct { File string `json:"file"`; Shell string `json:"shell"`; Severity string `json:"severity"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpShellcheck(a.File, a.Shell, a.Severity))
+		var a struct {
+			File     string `json:"file"`
+			Shell    string `json:"shell"`
+			Severity string `json:"severity"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpShellcheck(a.File, a.Shell, a.Severity))
 	case "hadolint":
-		var a struct { File string `json:"file"`; TrustedRegistries []string `json:"trusted_registries"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpHadolint(a.File, a.TrustedRegistries))
+		var a struct {
+			File              string   `json:"file"`
+			TrustedRegistries []string `json:"trusted_registries"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpHadolint(a.File, a.TrustedRegistries))
 	case "semgrep":
-		var a struct { Dir string `json:"directory"`; Config string `json:"config"`; AutoConfig bool `json:"auto_config"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSemgrep(a.Dir, a.Config, a.AutoConfig))
+		var a struct {
+			Dir        string `json:"directory"`
+			Config     string `json:"config"`
+			AutoConfig bool   `json:"auto_config"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSemgrep(a.Dir, a.Config, a.AutoConfig))
 	case "sonarscanner":
-		var a struct { Dir string `json:"directory"`; ProjectKey string `json:"project_key"`; HostURL string `json:"host_url"`; Token string `json:"token"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSonarScanner(a.Dir, a.ProjectKey, a.HostURL, a.Token))
+		var a struct {
+			Dir        string `json:"directory"`
+			ProjectKey string `json:"project_key"`
+			HostURL    string `json:"host_url"`
+			Token      string `json:"token"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSonarScanner(a.Dir, a.ProjectKey, a.HostURL, a.Token))
 	case "bandit":
-		var a struct { Dir string `json:"directory"`; File string `json:"file"`; Severity string `json:"severity"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpBandit(a.Dir, a.File, a.Severity))
+		var a struct {
+			Dir      string `json:"directory"`
+			File     string `json:"file"`
+			Severity string `json:"severity"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpBandit(a.Dir, a.File, a.Severity))
 	case "gosec":
-		var a struct { Dir string `json:"directory"`; NoFail bool `json:"no_fail"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGosec(a.Dir, a.NoFail))
+		var a struct {
+			Dir    string `json:"directory"`
+			NoFail bool   `json:"no_fail"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGosec(a.Dir, a.NoFail))
 	case "brakeman":
-		var a struct { Dir string `json:"directory"`; Confidence int `json:"confidence"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpBrakeman(a.Dir, a.Confidence))
+		var a struct {
+			Dir        string `json:"directory"`
+			Confidence int    `json:"confidence"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpBrakeman(a.Dir, a.Confidence))
 	case "safety_check":
-		var a struct { Dir string `json:"directory"`; File string `json:"file"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSafetyCheck(a.Dir, a.File))
+		var a struct {
+			Dir  string `json:"directory"`
+			File string `json:"file"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSafetyCheck(a.Dir, a.File))
 	case "trivy_fs_scan":
-		var a struct { Dir string `json:"directory"`; Severity string `json:"severity"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpTrivyFSScan(a.Dir, a.Severity))
+		var a struct {
+			Dir      string `json:"directory"`
+			Severity string `json:"severity"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpTrivyFSScan(a.Dir, a.Severity))
 	// --- Profiling & Debugging ---
 	case "valgrind_memcheck":
-		var a struct { Binary string `json:"binary"`; Args []string `json:"args"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpValgrindMemcheck(a.Binary, a.Args))
+		var a struct {
+			Binary string   `json:"binary"`
+			Args   []string `json:"args"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpValgrindMemcheck(a.Binary, a.Args))
 	case "valgrind_callgrind":
-		var a struct { Binary string `json:"binary"`; Args []string `json:"args"`; OutputFile string `json:"output_file"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpValgrindCallgrind(a.Binary, a.Args, a.OutputFile))
+		var a struct {
+			Binary     string   `json:"binary"`
+			Args       []string `json:"args"`
+			OutputFile string   `json:"output_file"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpValgrindCallgrind(a.Binary, a.Args, a.OutputFile))
 	case "valgrind_massif":
-		var a struct { Binary string `json:"binary"`; Args []string `json:"args"`; OutputFile string `json:"output_file"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpValgrindMassif(a.Binary, a.Args, a.OutputFile))
+		var a struct {
+			Binary     string   `json:"binary"`
+			Args       []string `json:"args"`
+			OutputFile string   `json:"output_file"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpValgrindMassif(a.Binary, a.Args, a.OutputFile))
 	case "gdb_backtrace":
-		var a struct { PID int `json:"pid"`; Binary string `json:"binary"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGDBBacktrace(a.PID, a.Binary))
+		var a struct {
+			PID    int    `json:"pid"`
+			Binary string `json:"binary"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGDBBacktrace(a.PID, a.Binary))
 	case "lldb_backtrace":
-		var a struct { PID int `json:"pid"`; Binary string `json:"binary"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpLLDBBacktrace(a.PID, a.Binary))
+		var a struct {
+			PID    int    `json:"pid"`
+			Binary string `json:"binary"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpLLDBBacktrace(a.PID, a.Binary))
 	case "strace_trace":
-		var a struct { PID int `json:"pid"`; Binary string `json:"binary"`; SyscallFilter string `json:"syscall_filter"`; Args []string `json:"args"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpStraceTrace(a.PID, a.Binary, a.SyscallFilter, a.Args))
+		var a struct {
+			PID           int      `json:"pid"`
+			Binary        string   `json:"binary"`
+			SyscallFilter string   `json:"syscall_filter"`
+			Args          []string `json:"args"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpStraceTrace(a.PID, a.Binary, a.SyscallFilter, a.Args))
 	case "ltrace_trace":
-		var a struct { PID int `json:"pid"`; Binary string `json:"binary"`; Args []string `json:"args"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpLtraceTrace(a.PID, a.Binary, a.Args))
+		var a struct {
+			PID    int      `json:"pid"`
+			Binary string   `json:"binary"`
+			Args   []string `json:"args"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpLtraceTrace(a.PID, a.Binary, a.Args))
 	case "perf_record":
-		var a struct { Binary string `json:"binary"`; Args []string `json:"args"`; Duration int `json:"duration"`; OutputFile string `json:"output_file"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpPerfRecord(a.Binary, a.Args, a.Duration, a.OutputFile))
+		var a struct {
+			Binary     string   `json:"binary"`
+			Args       []string `json:"args"`
+			Duration   int      `json:"duration"`
+			OutputFile string   `json:"output_file"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpPerfRecord(a.Binary, a.Args, a.Duration, a.OutputFile))
 	case "perf_stat":
-		var a struct { Binary string `json:"binary"`; Args []string `json:"args"`; Events string `json:"events"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpPerfStat(a.Binary, a.Args, a.Events))
+		var a struct {
+			Binary string   `json:"binary"`
+			Args   []string `json:"args"`
+			Events string   `json:"events"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpPerfStat(a.Binary, a.Args, a.Events))
 	case "go_pprof_cpu":
-		var a struct { Dir string `json:"directory"`; Duration int `json:"duration"`; Binary string `json:"binary"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGoPprofCPU(a.Dir, a.Duration, a.Binary))
+		var a struct {
+			Dir      string `json:"directory"`
+			Duration int    `json:"duration"`
+			Binary   string `json:"binary"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGoPprofCPU(a.Dir, a.Duration, a.Binary))
 	case "go_pprof_heap":
-		var a struct { Dir string `json:"directory"`; URL string `json:"url"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGoPprofHeap(a.Dir, a.URL))
+		var a struct {
+			Dir string `json:"directory"`
+			URL string `json:"url"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGoPprofHeap(a.Dir, a.URL))
 	case "heaptrack":
-		var a struct { Binary string `json:"binary"`; Args []string `json:"args"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpHeaptrack(a.Binary, a.Args))
+		var a struct {
+			Binary string   `json:"binary"`
+			Args   []string `json:"args"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpHeaptrack(a.Binary, a.Args))
 	// --- Code Metrics ---
 	case "cyclomatic_complexity":
-		var a struct { Dir string `json:"directory"`; Language string `json:"language"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCyclomaticComplexity(a.Dir, a.Language))
+		var a struct {
+			Dir      string `json:"directory"`
+			Language string `json:"language"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCyclomaticComplexity(a.Dir, a.Language))
 	case "lizard":
-		var a struct { Dir string `json:"directory"`; Threshold int `json:"threshold"`; Languages string `json:"languages"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpLizard(a.Dir, a.Threshold, a.Languages))
+		var a struct {
+			Dir       string `json:"directory"`
+			Threshold int    `json:"threshold"`
+			Languages string `json:"languages"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpLizard(a.Dir, a.Threshold, a.Languages))
 	case "loc_count":
-		var a struct { Dir string `json:"directory"`; Tool string `json:"tool"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpLOCCount(a.Dir, a.Tool))
+		var a struct {
+			Dir  string `json:"directory"`
+			Tool string `json:"tool"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpLOCCount(a.Dir, a.Tool))
 
 	// --- System Logs & Debugging ---
 	case "journalctl":
-		var a struct { Unit string `json:"unit"`; Priority string `json:"priority"`; Lines int `json:"lines"`; Boot bool `json:"boot"`; Since string `json:"since"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpJournalctl(a.Unit, a.Priority, a.Lines, a.Boot, a.Since))
+		var a struct {
+			Unit     string `json:"unit"`
+			Priority string `json:"priority"`
+			Lines    int    `json:"lines"`
+			Boot     bool   `json:"boot"`
+			Since    string `json:"since"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpJournalctl(a.Unit, a.Priority, a.Lines, a.Boot, a.Since))
 	case "journalctl_errors":
 		return mcpToolJSON(mcpJournalctlErrors())
 	case "journalctl_disk_usage":
 		return mcpToolJSON(mcpJournalctlDiskUsage())
 	case "systemctl":
-		var a struct { Action string `json:"action"`; Unit string `json:"unit"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSystemctl(a.Action, a.Unit))
+		var a struct {
+			Action string `json:"action"`
+			Unit   string `json:"unit"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSystemctl(a.Action, a.Unit))
 	case "gdb_attach":
-		var a struct { PID int `json:"pid"`; Commands string `json:"commands"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGDBAttach(a.PID, a.Commands))
+		var a struct {
+			PID      int    `json:"pid"`
+			Commands string `json:"commands"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGDBAttach(a.PID, a.Commands))
 	case "gdb_core_dump":
-		var a struct { Binary string `json:"binary"`; Core string `json:"corefile"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpGDBCoreDump(a.Binary, a.Core))
+		var a struct {
+			Binary string `json:"binary"`
+			Core   string `json:"corefile"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGDBCoreDump(a.Binary, a.Core))
 	case "lldb_attach":
-		var a struct { PID int `json:"pid"`; Commands string `json:"commands"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpLLDBAttach(a.PID, a.Commands))
+		var a struct {
+			PID      int    `json:"pid"`
+			Commands string `json:"commands"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpLLDBAttach(a.PID, a.Commands))
 	case "coredump_list":
 		return mcpToolJSON(mcpCoredumpList())
 	case "coredump_info":
-		var a struct { PID string `json:"pid"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpCoredumpInfo(a.PID))
+		var a struct {
+			PID string `json:"pid"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCoredumpInfo(a.PID))
 	case "syslog":
-		var a struct { File string `json:"file"`; Lines int `json:"lines"`; Filter string `json:"filter"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpSyslog(a.File, a.Lines, a.Filter))
+		var a struct {
+			File   string `json:"file"`
+			Lines  int    `json:"lines"`
+			Filter string `json:"filter"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpSyslog(a.File, a.Lines, a.Filter))
 	case "auth_log":
-		var a struct { Lines int `json:"lines"` }; json.Unmarshal(call.Arguments, &a); return mcpToolJSON(mcpAuthLog(a.Lines))
+		var a struct {
+			Lines int `json:"lines"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpAuthLog(a.Lines))
 
 	// --- Guest Access ---
 	case "guest_invite":
@@ -7056,12 +8285,16 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolJSON(map[string]interface{}{"form": f, "submitUrl": "/forms/" + f.ID + "/submit"})
 	case "form_submissions":
-		var args struct{ ID string `json:"id"` }
+		var args struct {
+			ID string `json:"id"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		subs, _ := readSubmissions(args.ID, 100)
 		return mcpToolJSON(map[string]interface{}{"submissions": subs})
 	case "form_delete":
-		var args struct{ ID string `json:"id"` }
+		var args struct {
+			ID string `json:"id"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		forms, _ := loadForms()
 		out := forms[:0]
@@ -7097,7 +8330,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		_ = saveCampaigns(append(loadCampaigns(), c))
 		return mcpToolJSON(map[string]interface{}{"campaign": c})
 	case "newsletter_send":
-		var args struct{ ID string `json:"id"` }
+		var args struct {
+			ID string `json:"id"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		camps := loadCampaigns()
 		found := false
@@ -7170,7 +8405,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolJSON(map[string]interface{}{"job": j})
 	case "jobs_retry":
-		var args struct{ ID string `json:"id"` }
+		var args struct {
+			ID string `json:"id"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		dlq, _ := listJobs("dlq")
 		for _, j := range dlq {
@@ -7185,7 +8422,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolError("job not in dlq")
 	case "jobs_cancel":
-		var args struct{ ID string `json:"id"` }
+		var args struct {
+			ID string `json:"id"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		_ = removeJob("queue", args.ID)
 		return mcpToolResult("cancelled")
@@ -8552,7 +9791,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolJSON(s.pipelineRunner.Status())
 	case "pipeline_list":
-		var args struct{ Dir string `json:"dir"` }
+		var args struct {
+			Dir string `json:"dir"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		if args.Dir == "" {
 			args.Dir = s.taskMgr.workDir
@@ -8571,7 +9812,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolResult("Pipeline cancelled.")
 	case "pipeline_cancel_cloud":
-		var args struct{ Provider string `json:"provider"` }
+		var args struct {
+			Provider string `json:"provider"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		if s.pipelineRunner == nil {
 			s.pipelineRunner = NewPipelineRunner()
@@ -8588,7 +9831,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	// --- Analytics (self-hosted) ---
 	case "analytics_start":
-		var args struct{ Engine string `json:"engine"` }
+		var args struct {
+			Engine string `json:"engine"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		if s.analyticsMgr == nil {
 			s.analyticsMgr = NewAnalyticsManager()
@@ -8639,7 +9884,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolJSON(dash)
 	case "analytics_setup":
-		var args struct{ Framework string `json:"framework"` }
+		var args struct {
+			Framework string `json:"framework"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		if s.analyticsMgr == nil {
 			s.analyticsMgr = NewAnalyticsManager()
@@ -8648,7 +9895,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	// --- Auth dev server ---
 	case "auth_dev_start":
-		var args struct{ Engine string `json:"engine"` }
+		var args struct {
+			Engine string `json:"engine"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		if s.authDevMgr == nil {
 			s.authDevMgr = NewAuthDevManager()
@@ -8691,7 +9940,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolJSON(result)
 	case "auth_dev_setup":
-		var args struct{ Framework string `json:"framework"` }
+		var args struct {
+			Framework string `json:"framework"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		if s.authDevMgr == nil {
 			s.authDevMgr = NewAuthDevManager()
@@ -8755,7 +10006,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolJSON(msgs)
 	case "mail_dev_read":
-		var args struct{ ID string `json:"id"` }
+		var args struct {
+			ID string `json:"id"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		if s.mailDevMgr == nil {
 			return mcpToolError("Mail server not started.")
@@ -8798,7 +10051,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolJSON(tunnel)
 	case "expose_stop":
-		var args struct{ Port int `json:"port"` }
+		var args struct {
+			Port int `json:"port"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		if s.exposeMgr == nil {
 			return mcpToolResult("No active tunnels.")
@@ -8843,7 +10098,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolResult("Stripe listener stopped.")
 	case "stripe_trigger":
-		var args struct{ Event string `json:"event"` }
+		var args struct {
+			Event string `json:"event"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		if s.stripeDevMgr == nil {
 			s.stripeDevMgr = NewStripeDevManager()
@@ -8881,7 +10138,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolResult(fmt.Sprintf("Monitoring %s (%s) every %ds.", args.Name, args.URL, args.IntervalSec))
 	case "uptime_monitor_remove":
-		var args struct{ Name string `json:"name"` }
+		var args struct {
+			Name string `json:"name"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		if s.uptimeMonitor == nil {
 			return mcpToolError("No monitors configured.")
@@ -8926,7 +10185,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolJSON(models)
 	case "models_pull":
-		var args struct{ Name string `json:"name"` }
+		var args struct {
+			Name string `json:"name"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		if s.modelMgr == nil {
 			s.modelMgr = NewModelManager()
@@ -8945,7 +10206,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolResult(fmt.Sprintf("Pulled %s. %s", args.Name, lastMsg))
 	case "models_remove":
-		var args struct{ Name string `json:"name"` }
+		var args struct {
+			Name string `json:"name"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		if s.modelMgr == nil {
 			s.modelMgr = NewModelManager()
@@ -9016,7 +10279,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolJSON(st)
 	case "lemonsqueezy_products":
-		var args struct{ Limit int `json:"limit"` }
+		var args struct {
+			Limit int `json:"limit"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		if s.lemonMgr == nil {
 			s.lemonMgr = NewLemonSqueezyManager()
@@ -9078,7 +10343,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolJSON(rev)
 	case "lemonsqueezy_discounts":
-		var args struct{ Limit int `json:"limit"` }
+		var args struct {
+			Limit int `json:"limit"`
+		}
 		json.Unmarshal(call.Arguments, &args)
 		if s.lemonMgr == nil {
 			s.lemonMgr = NewLemonSqueezyManager()
@@ -9368,28 +10635,28 @@ func (s *HTTPServer) mcpStatus() interface{} {
 // remote AI agent doesn't need to round-trip 20 questions.
 func (s *HTTPServer) mcpProjectNewQuick(raw json.RawMessage) interface{} {
 	var args struct {
-		Name            string `json:"name"`
-		Slug            string `json:"slug"`
-		Description     string `json:"description"`
-		Tagline         string `json:"tagline"`
-		Domain          string `json:"domain"`
-		PrimaryColor    string `json:"primaryColor"`
-		AccentColor     string `json:"accentColor"`
-		IncludeWeb      *bool  `json:"includeWeb"`
-		IncludeLanding  *bool  `json:"includeLanding"`
-		IncludeMobile   *bool  `json:"includeMobile"`
-		IncludeBackend  *bool  `json:"includeBackend"`
-		WebHost         string `json:"webHost"`
-		Backend         string `json:"backend"`
-		OauthApple      *bool  `json:"oauthApple"`
-		OauthGoogle     *bool  `json:"oauthGoogle"`
-		OauthMicrosoft  *bool  `json:"oauthMicrosoft"`
-		IosBundleID     string `json:"iosBundleId"`
-		AndroidPackage  string `json:"androidPackage"`
-		GitProvider     string `json:"gitProvider"`
-		GitVisibility   string `json:"gitVisibility"`
-		GitOrg          string `json:"gitOrg"`
-		ParentDir       string `json:"parentDir"`
+		Name           string `json:"name"`
+		Slug           string `json:"slug"`
+		Description    string `json:"description"`
+		Tagline        string `json:"tagline"`
+		Domain         string `json:"domain"`
+		PrimaryColor   string `json:"primaryColor"`
+		AccentColor    string `json:"accentColor"`
+		IncludeWeb     *bool  `json:"includeWeb"`
+		IncludeLanding *bool  `json:"includeLanding"`
+		IncludeMobile  *bool  `json:"includeMobile"`
+		IncludeBackend *bool  `json:"includeBackend"`
+		WebHost        string `json:"webHost"`
+		Backend        string `json:"backend"`
+		OauthApple     *bool  `json:"oauthApple"`
+		OauthGoogle    *bool  `json:"oauthGoogle"`
+		OauthMicrosoft *bool  `json:"oauthMicrosoft"`
+		IosBundleID    string `json:"iosBundleId"`
+		AndroidPackage string `json:"androidPackage"`
+		GitProvider    string `json:"gitProvider"`
+		GitVisibility  string `json:"gitVisibility"`
+		GitOrg         string `json:"gitOrg"`
+		ParentDir      string `json:"parentDir"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return mcpToolError("invalid arguments: " + err.Error())

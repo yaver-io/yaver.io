@@ -135,6 +135,47 @@ export interface Task {
   autoRetryMax?: number;
 }
 
+export type AgentGraphStatus = "queued" | "running" | "completed" | "failed" | "stopped";
+export type AgentNodeStatus = "pending" | "running" | "completed" | "failed" | "blocked" | "stopped";
+export type AgentNodeKind = "chat" | "autodev" | "autoideas" | "autotest";
+
+export interface AgentGraphNode {
+  spec: {
+    id: string;
+    title: string;
+    kind: AgentNodeKind;
+    prompt?: string;
+    dependsOn?: string[];
+    runner?: string;
+    model?: string;
+    workDir?: string;
+    project?: string;
+  };
+  status: AgentNodeStatus;
+  taskId?: string;
+  summary?: string;
+  error?: string;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
+export interface AgentGraphRun {
+  id: string;
+  name: string;
+  workDir: string;
+  template?: string;
+  prompt?: string;
+  runner?: string;
+  model?: string;
+  maxParallel: number;
+  status: AgentGraphStatus;
+  summary?: string;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  nodes: AgentGraphNode[];
+}
+
 export interface TmuxSession {
   name: string;
   windows: number;
@@ -3851,6 +3892,62 @@ export class QuicClient {
       return { ok: true, title: data.title };
     } catch (e: any) {
       return { ok: false, reason: e?.message ?? "network error" };
+    }
+  }
+
+  async agentGraphs(): Promise<AgentGraphRun[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/agent/graphs`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.runs || [];
+    } catch {
+      return [];
+    }
+  }
+
+  async createAgentGraph(params: {
+    name?: string;
+    workDir: string;
+    prompt: string;
+    runner?: string;
+    model?: string;
+    template?: "full" | "ship";
+    maxParallel?: number;
+  }): Promise<{ ok: boolean; run?: AgentGraphRun; error?: string }> {
+    try {
+      const res = await fetch(`${this.baseUrl}/agent/graphs`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: params.name ?? "",
+          workDir: params.workDir,
+          prompt: params.prompt,
+          runner: params.runner ?? "",
+          model: params.model ?? "",
+          template: params.template ?? "full",
+          maxParallel: params.maxParallel ?? 2,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
+      return { ok: true, run: data.run };
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? "network error" };
+    }
+  }
+
+  async stopAgentGraph(id: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/agent/graphs/${encodeURIComponent(id)}/stop`, {
+        method: "POST",
+        headers: this.authHeaders,
+      });
+      return res.ok;
+    } catch {
+      return false;
     }
   }
 }

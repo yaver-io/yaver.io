@@ -81,10 +81,10 @@ type IterationResult struct {
 // develop-mode iteration. Stored on the final IterationResult so
 // the dev can see what each step of a feature prompt produced.
 type KickRecap struct {
-	Index       int    `json:"index"`
-	Status      string `json:"status"`
-	Summary     string `json:"summary"`
-	CommitSHA   string `json:"commitSha,omitempty"`
+	Index        int      `json:"index"`
+	Status       string   `json:"status"`
+	Summary      string   `json:"summary"`
+	CommitSHA    string   `json:"commitSha,omitempty"`
 	FilesTouched []string `json:"filesTouched,omitempty"`
 }
 
@@ -93,24 +93,24 @@ type KickRecap struct {
 // small — every field is consumed by the `autofix-hardening.md` /
 // `genz-fixer.md` prompts.
 type HeuristicReport struct {
-	StartedAt       time.Time        `json:"startedAt"`
-	Target          string           `json:"target"`
-	URL             string           `json:"url"`
-	PageTitle       string           `json:"pageTitle,omitempty"`
-	Persona         string           `json:"persona,omitempty"`
-	RadicalnessUI   int              `json:"radicalnessUi"`
-	RadicalnessFeat int              `json:"radicalnessFeatures"`
-	Tone            string           `json:"tone"`
-	Findings        []Finding        `json:"findings"`
-	ConsoleMessages []string         `json:"consoleMessages,omitempty"`
-	VisibleText     string           `json:"visibleTextSnippet,omitempty"`
-	ScreenshotPath  string           `json:"screenshotPath,omitempty"`
-	Summary         string           `json:"summary"`
+	StartedAt       time.Time `json:"startedAt"`
+	Target          string    `json:"target"`
+	URL             string    `json:"url"`
+	PageTitle       string    `json:"pageTitle,omitempty"`
+	Persona         string    `json:"persona,omitempty"`
+	RadicalnessUI   int       `json:"radicalnessUi"`
+	RadicalnessFeat int       `json:"radicalnessFeatures"`
+	Tone            string    `json:"tone"`
+	Findings        []Finding `json:"findings"`
+	ConsoleMessages []string  `json:"consoleMessages,omitempty"`
+	VisibleText     string    `json:"visibleTextSnippet,omitempty"`
+	ScreenshotPath  string    `json:"screenshotPath,omitempty"`
+	Summary         string    `json:"summary"`
 }
 
 // Finding is one issue the heuristic scan noticed.
 type Finding struct {
-	Kind     string `json:"kind"`     // "console_error" | "undefined_in_ui" | "turkish_diacritic_missing" | "blank_screen" | "low_contrast" | ...
+	Kind     string `json:"kind"` // "console_error" | "undefined_in_ui" | "turkish_diacritic_missing" | "blank_screen" | "low_contrast" | ...
 	Detail   string `json:"detail"`
 	Severity string `json:"severity"` // "critical" | "major" | "minor"
 	Hint     string `json:"hint,omitempty"`
@@ -285,10 +285,10 @@ func runDevelopLoop(ctx context.Context, l *LoopState, saveState func(*LoopState
 		kickResult := runSingleKick(ctx, l, nudge)
 
 		recap := &KickRecap{
-			Index:       kickIndex,
-			Status:      kickResult.Status,
-			Summary:     kickResult.Summary,
-			CommitSHA:   kickResult.PatchCommit,
+			Index:        kickIndex,
+			Status:       kickResult.Status,
+			Summary:      kickResult.Summary,
+			CommitSHA:    kickResult.PatchCommit,
 			FilesTouched: kickResult.FilesChanged,
 		}
 		aggregate.Kicks = append(aggregate.Kicks, recap)
@@ -1401,6 +1401,9 @@ func spawnClaudeCode(ctx context.Context, l *LoopState, workDir string, report *
 	if _, err := exec.LookPath("claude"); err != nil {
 		return nil, fmt.Errorf("`claude` CLI not on PATH — install Claude Code from https://claude.com/product/claude-code")
 	}
+	if err := CheckRunnerReady(GetRunnerConfig("claude"), workDir); err != nil {
+		return nil, err
+	}
 	fullPrompt, err := buildLoopPrompt(l, workDir, report, nudge)
 	if err != nil {
 		return nil, err
@@ -1681,6 +1684,9 @@ func spawnCodex(ctx context.Context, l *LoopState, workDir string, report *Heuri
 	if _, err := exec.LookPath("codex"); err != nil {
 		return nil, fmt.Errorf("`codex` CLI not on PATH — install OpenAI Codex to use this runner")
 	}
+	if err := CheckRunnerReady(GetRunnerConfig("codex"), workDir); err != nil {
+		return nil, err
+	}
 	fullPrompt, err := buildLoopPrompt(l, workDir, report, nudge)
 	if err != nil {
 		return nil, err
@@ -1767,15 +1773,15 @@ func loadPromptFile(workDir, path string) (string, error) {
 // effectivePrompt resolves the actual text the AI runner should see for
 // this iteration. Precedence, highest to lowest:
 //
-//   1. LoopState.PromptInline — set at runtime via `yaver loop prompt
-//      set <name> "<msg>"` (or the mobile Auto Dev tab once wired).
-//      This is how the dev writes a one-off feature prompt from their
-//      phone and kicks the loop without editing any files.
-//   2. LoopSpec.Think.PromptInline — inline prompt embedded in the
-//      .loop.yaml spec itself. Useful for short, version-controlled
-//      prompts that do not warrant a separate .md file.
-//   3. LoopSpec.Think.Prompt — path to a markdown prompt file on disk.
-//      The traditional approach for long / reusable prompts.
+//  1. LoopState.PromptInline — set at runtime via `yaver loop prompt
+//     set <name> "<msg>"` (or the mobile Auto Dev tab once wired).
+//     This is how the dev writes a one-off feature prompt from their
+//     phone and kicks the loop without editing any files.
+//  2. LoopSpec.Think.PromptInline — inline prompt embedded in the
+//     .loop.yaml spec itself. Useful for short, version-controlled
+//     prompts that do not warrant a separate .md file.
+//  3. LoopSpec.Think.Prompt — path to a markdown prompt file on disk.
+//     The traditional approach for long / reusable prompts.
 //
 // The effective prompt is always wrapped with an instruction reminding
 // the AI about the output JSON contract if none of the sources already
@@ -1871,7 +1877,7 @@ func runTypecheck(ctx context.Context, workDir string) error {
 
 func phaseCommit(ctx context.Context, l *LoopState, workDir string, aiResp *AIResponse) (string, error) {
 	// git add -A in the workDir. The AI may have created new files.
-	if err := runGitCtx(ctx, workDir,"add", "-A"); err != nil {
+	if err := runGitCtx(ctx, workDir, "add", "-A"); err != nil {
 		return "", fmt.Errorf("git add: %w", err)
 	}
 
@@ -1887,7 +1893,7 @@ func phaseCommit(ctx context.Context, l *LoopState, workDir string, aiResp *AIRe
 		"Auto-generated by `yaver loop run " + l.Spec.Name + "`.\n" +
 		"Mode: " + string(l.Spec.Mode) + "\n"
 
-	if err := runGitCtx(ctx, workDir,"commit", "-m", fullMsg); err != nil {
+	if err := runGitCtx(ctx, workDir, "commit", "-m", fullMsg); err != nil {
 		return "", fmt.Errorf("git commit: %w", err)
 	}
 	sha := gitHeadSHA(workDir)
