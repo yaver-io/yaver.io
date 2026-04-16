@@ -1,5 +1,8 @@
 # Yaver.io — Claude Code Project Guide
 
+## Read This First
+- Start with [`AI_ARCH.md`](AI_ARCH.md) before changing auth, bootstrap, relay, mobile discovery, or remote-recovery behavior. It documents the real runtime architecture and the current reboot/unauthenticated recovery path.
+
 ## Important Rules
 - **Never push or commit without explicit user permission.**
 - **Cloudflare deploy size guard**: `web/` must stay under 10 MB (currently ~2.5 MB). The deploy script enforces this. Do not add large assets to `web/`. The biggest file is `web/public/demo.mp4` (~1.2 MB, compressed from 8 MB original). If adding videos, compress aggressively first: `ffmpeg -i input.mp4 -vcodec libx264 -crf 32 -preset veryslow -vf "scale=720:-2" -an output.mp4`. Prefer external hosting (YouTube embed, GitHub releases CDN) for anything over 1 MB.

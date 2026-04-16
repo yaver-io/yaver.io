@@ -4696,8 +4696,15 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 	ticker := time.NewTicker(2 * time.Minute)
 	defer ticker.Stop()
 
+	currentToken := func() string {
+		if cfg, err := LoadConfig(); err == nil && cfg != nil && strings.TrimSpace(cfg.AuthToken) != "" {
+			return cfg.AuthToken
+		}
+		return token
+	}
+
 	// Refresh token on startup (extends expiry by 30 days)
-	if err := RefreshToken(baseURL, token); err != nil {
+	if err := RefreshToken(baseURL, currentToken()); err != nil {
 		log.Printf("[auth] Token refresh failed: %v", err)
 	} else {
 		log.Println("[auth] Token refreshed (extended 30 days).")
@@ -4712,7 +4719,7 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 
 	// Send first heartbeat immediately (don't wait 2 min for ticker)
 	runners := taskMgr.GetRunnerInfos()
-	if err := SendHeartbeat(baseURL, token, deviceID, runners, lastIP); err != nil {
+	if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, lastIP); err != nil {
 		if errors.Is(err, ErrAuthExpired) {
 			log.Println("[auth] WARNING: Auth token expired! Run 'yaver auth' to re-authenticate.")
 			authExpiredLogged = true
@@ -4731,7 +4738,7 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 		case <-ctx.Done():
 			return
 		case <-refreshTicker.C:
-			if err := RefreshToken(baseURL, token); err != nil {
+			if err := RefreshToken(baseURL, currentToken()); err != nil {
 				log.Printf("[auth] Weekly token refresh failed: %v", err)
 			} else {
 				log.Println("[auth] Token refreshed (extended 30 days).")
@@ -4749,10 +4756,10 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 				lastIP = currentIP
 			}
 
-			if err := SendHeartbeat(baseURL, token, deviceID, runners, currentIP); err != nil {
+			if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP); err != nil {
 				if errors.Is(err, ErrAuthExpired) {
 					// Try to refresh token first
-					if refreshErr := RefreshToken(baseURL, token); refreshErr != nil {
+					if refreshErr := RefreshToken(baseURL, currentToken()); refreshErr != nil {
 						if !authExpiredLogged {
 							log.Println("[auth] WARNING: Auth token expired or revoked.")
 							log.Println("[auth] This can happen if you signed out from all devices or your session expired.")
@@ -4769,7 +4776,7 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 							httpServer.authExpired.Store(false)
 						}
 						// Retry heartbeat
-						if retryErr := SendHeartbeat(baseURL, token, deviceID, runners, currentIP); retryErr != nil {
+						if retryErr := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP); retryErr != nil {
 							log.Printf("heartbeat retry failed: %v", retryErr)
 						}
 					}

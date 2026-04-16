@@ -66,13 +66,58 @@ type RecoveryRequest struct {
 
 // RecoveryResponse is the per-mode return shape.
 type RecoveryResponse struct {
-	OK             bool   `json:"ok"`
-	Mode           string `json:"mode"`
-	PairCode       string `json:"pairCode,omitempty"`
-	PairSubmitURL  string `json:"pairSubmitUrl,omitempty"`
-	DeviceCodeURL  string `json:"deviceCodeUrl,omitempty"`
-	UserCode       string `json:"userCode,omitempty"`
-	ExpiresAt      string `json:"expiresAt,omitempty"`
+	OK            bool   `json:"ok"`
+	Mode          string `json:"mode"`
+	PairCode      string `json:"pairCode,omitempty"`
+	PairSubmitURL string `json:"pairSubmitUrl,omitempty"`
+	DeviceCodeURL string `json:"deviceCodeUrl,omitempty"`
+	UserCode      string `json:"userCode,omitempty"`
+	ExpiresAt     string `json:"expiresAt,omitempty"`
+}
+
+// applyRecoveredAuthToken persists a newly recovered auth token and updates
+// in-memory state so the running daemon can recover without requiring manual
+// intervention from the user.
+func applyRecoveredAuthToken(token, convexURL string, s *HTTPServer) {
+	cfg, _ := LoadConfig()
+	if cfg == nil {
+		cfg = &Config{}
+	}
+	cfg.AuthToken = token
+	if convexURL != "" {
+		cfg.ConvexSiteURL = convexURL
+	}
+	if cfg.ConvexSiteURL == "" {
+		cfg.ConvexSiteURL = defaultConvexSiteURL
+	}
+	_ = SaveConfig(cfg)
+
+	if s != nil {
+		s.token = token
+		s.authExpired.Store(false)
+		if s.taskMgr != nil {
+			s.taskMgr.AuthToken = token
+			s.taskMgr.ConvexURL = cfg.ConvexSiteURL
+		}
+	}
+}
+
+// completePairRecoveryInBackground waits for a recovery-initiated pairing
+// session to receive a token, then persists it so the daemon actually exits
+// the degraded auth-expired state.
+func completePairRecoveryInBackground(session *pairingSession, s *HTTPServer) {
+	if session == nil {
+		return
+	}
+	select {
+	case <-session.done:
+		if strings.TrimSpace(session.ReceivedToken) == "" {
+			return
+		}
+		applyRecoveredAuthToken(session.ReceivedToken, session.ReceivedURL, s)
+	case <-time.After(time.Until(session.ExpiresAt) + 5*time.Second):
+		return
+	}
 }
 
 // recoveryRateLimiter tracks last-attempt timestamps per
@@ -197,6 +242,7 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		go completePairRecoveryInBackground(session, s)
 		resp := RecoveryResponse{
 			OK:            true,
 			Mode:          "pair",
@@ -334,13 +380,7 @@ func completeDeviceCodeInBackground(convexURL, deviceCode string) {
 			continue
 		}
 		if done && token != "" {
-			cfg, _ := LoadConfig()
-			if cfg == nil {
-				cfg = &Config{}
-			}
-			cfg.AuthToken = token
-			cfg.ConvexSiteURL = convexURL
-			_ = SaveConfig(cfg)
+			applyRecoveredAuthToken(token, convexURL, nil)
 			return
 		}
 		if done {

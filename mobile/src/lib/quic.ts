@@ -3692,14 +3692,14 @@ export class QuicClient {
   // keychain (see DeviceContext) rather than over the wire every call.
 
   async recoverAgent(
-    secret: string,
+    secret?: string,
     mode: "pair" | "device-code" = "pair",
   ): Promise<RecoveryResult | null> {
     try {
       const res = await fetch(`${this.baseUrl}/auth/recover`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ secret, mode }),
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(secret ? { secret, mode } : { mode }),
       });
       if (!res.ok) {
         return { ok: false, error: `HTTP ${res.status}` } as RecoveryResult;

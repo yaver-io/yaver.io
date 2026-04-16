@@ -161,6 +161,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/summary", s.auth(s.handleSummary))
 	mux.HandleFunc("/info", s.auth(s.handleInfo))
 	mux.HandleFunc("/agent/status", s.auth(s.handleAgentStatus))
+	mux.HandleFunc("/agent/capabilities", s.auth(s.handleAgentCapabilities))
 	mux.HandleFunc("/agent/graphs", s.auth(s.handleAgentGraphs))
 	mux.HandleFunc("/agent/graphs/", s.auth(s.handleAgentGraphByID))
 	mux.HandleFunc("/agent/runners", s.auth(s.handleRunners))
