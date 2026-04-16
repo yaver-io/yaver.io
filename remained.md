@@ -41,3 +41,9 @@
 - Run `./scripts/run-ci-local.sh anthropic-local` for a manual local-only Claude-backed validation path.
 - It drives real Yaver HTTP endpoints instead of GitHub Actions and never uses repository secrets.
 - It currently covers `autoinit` through the daemon; extend it to `autoideas` or `autodev` once the local spend profile is acceptable.
+
+## Local Yaver-To-Yaver Path
+
+- Run `./scripts/run-ci-local.sh peer-local` for a local controller→target Yaver harness.
+- It starts two local agents with separate homes, puts the target on port `18080`, and exercises real `yaver ... --to <device>` flows.
+- Use environment overrides like `RUNNER_SPEC`, `MODEL_SPEC`, `PLANNER_SPEC`, and `IMPLEMENTER_SPEC` to validate non-Anthropic runners or hybrid splits.

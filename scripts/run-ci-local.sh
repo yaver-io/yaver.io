@@ -21,6 +21,9 @@
 #   anthropic-local
 #                 → local-only real Claude run via Yaver HTTP
 #                   (manual; uses your local Claude auth / API key)
+#   peer-local
+#                 → local yaver-to-yaver controller→target harness
+#                   (manual; runner-agnostic)
 #
 # Each section is a bash function whose body is the precise command set
 # from the workflow. We run steps sequentially, collect pass/fail into
@@ -33,6 +36,7 @@
 #   ./scripts/run-ci-local.sh ci                # just the CI workflow
 #   ./scripts/run-ci-local.sh ci e2e            # several sections
 #   ./scripts/run-ci-local.sh anthropic-local   # real Claude local test via Yaver
+#   ./scripts/run-ci-local.sh peer-local        # real yaver-to-yaver local harness
 #   ./scripts/run-ci-local.sh --list            # enumerate sections
 #   ./scripts/run-ci-local.sh --help            # this help
 #
@@ -197,6 +201,12 @@ run_anthropic_local() {
   step "anthropic-local autoinit" bash "$REPO_ROOT/scripts/test-anthropic-local.sh" autoinit
 }
 
+run_peer_local() {
+  header "peer-local (manual yaver-to-yaver local harness)"
+  if ! need go; then skip "peer-local" "go missing"; return 0; fi
+  step "peer-local autoinit" bash "$REPO_ROOT/scripts/test-yaver-to-yaver-local.sh" autoinit
+}
+
 # ── Dispatch ────────────────────────────────────────────────────────
 usage() {
   sed -n '1,50p' "$0"
@@ -211,6 +221,7 @@ list_sections() {
   printf "  ${BOLD}test-suite${NC}    scripts/test-suite.sh --unit --lan --relay\n"
   printf "  ${BOLD}hybrid-local${NC}  Aider + Ollama + Qwen calculator E2E (requires local deps)\n"
   printf "  ${BOLD}anthropic-local${NC} local-only real Claude run via Yaver HTTP (manual, burns local credits)\n"
+  printf "  ${BOLD}peer-local${NC}    local yaver-to-yaver controller→target harness (manual)\n"
   exit 0
 }
 
@@ -219,12 +230,12 @@ for arg in "$@"; do
   case "$arg" in
     --help|-h) usage ;;
     --list)    list_sections ;;
-    ci|e2e|bento-e2e|bento|test-suite|hybrid-local|anthropic-local) sections+=("$arg") ;;
+    ci|e2e|bento-e2e|bento|test-suite|hybrid-local|anthropic-local|peer-local) sections+=("$arg") ;;
     *) echo "Unknown section: $arg" >&2; exit 2 ;;
   esac
 done
 if [[ ${#sections[@]} -eq 0 ]]; then
-  sections=(ci e2e bento-e2e test-suite hybrid-local anthropic-local)
+  sections=(ci e2e bento-e2e test-suite hybrid-local anthropic-local peer-local)
 fi
 
 started=$(date +%s)
@@ -241,6 +252,7 @@ for s in "${sections[@]}"; do
     test-suite)   run_test_suite ;;
     hybrid-local) run_hybrid_local ;;
     anthropic-local) run_anthropic_local ;;
+    peer-local) run_peer_local ;;
   esac
 done
 
