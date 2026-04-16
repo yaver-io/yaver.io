@@ -19,7 +19,11 @@ type Config struct {
 	AutoStart     bool                `json:"auto_start,omitempty"`
 	AutoUpdate    bool                `json:"auto_update,omitempty"`
 	RelayPassword string              `json:"relay_password,omitempty"`
-	RelayServers      []RelayServerConfig    `json:"relay_servers,omitempty"`
+	RelayServers  []RelayServerConfig `json:"relay_servers,omitempty"`
+	// Cached relay settings come from Convex/user settings and are used as a
+	// reboot-safe fallback when the agent's auth token has expired.
+	CachedRelayPassword string              `json:"cached_relay_password,omitempty"`
+	CachedRelayServers  []RelayServerConfig `json:"cached_relay_servers,omitempty"`
 	CloudflareTunnels []CloudflareTunnelConfig `json:"cloudflare_tunnels,omitempty"`
 	Sandbox       *SandboxConfig      `json:"sandbox,omitempty"`
 	Exec          *ExecConfig         `json:"exec,omitempty"`

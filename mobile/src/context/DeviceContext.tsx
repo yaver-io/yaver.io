@@ -775,7 +775,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         }
         const pairRes = await submitPair({
           code: recovery.pairCode,
-          targetUrl: quicClient.baseUrl,
+          targetUrl: recovery.targetUrl || quicClient.baseUrl,
           token,
           userId: user.id,
         });

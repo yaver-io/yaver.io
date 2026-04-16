@@ -206,6 +206,14 @@ export interface MachineCapabilities {
   supportsTestFlight?: boolean;
   supportsPlayStore?: boolean;
   lowPower?: boolean;
+  maxTaskSlots?: number;
+  profile?: {
+    path?: string;
+    summary?: string;
+    tags?: string[];
+    signatures?: string[];
+    preferredFor?: string[];
+  };
   runners?: MachineRunnerCapability[];
 }
 
@@ -454,6 +462,64 @@ export class QuicClient {
   /** Public accessor for auth headers (for use by builds, vault, etc.). */
   getAuthHeaders(): Record<string, string> {
     return this.authHeaders;
+  }
+
+  /** Reachability candidates for recovery. Keep the successful target URL so
+   *  /auth/pair/submit can follow the same path instead of falling back to a
+   *  stale relay URL. */
+  private recoveryTargets(): Array<{ baseUrl: string; headers: Record<string, string> }> {
+    const seen = new Set<string>();
+    const targets: Array<{ baseUrl: string; headers: Record<string, string> }> = [];
+    const push = (baseUrl: string | null | undefined, headers: Record<string, string>) => {
+      const normalized = (baseUrl || "").replace(/\/+$/, "");
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      targets.push({ baseUrl: normalized, headers });
+    };
+
+    push(this.baseUrl, this.authHeaders);
+
+    const lanInfo = this.deviceId ? beaconListener.getLocalIP(this.deviceId) : null;
+    if (lanInfo) {
+      push(`http://${lanInfo.ip}:${lanInfo.port}`, {
+        Authorization: `Bearer ${this.token}`,
+        "X-Client-Platform": Platform.OS,
+      });
+    }
+
+    if (this.host && this.port) {
+      push(`http://${this.host}:${this.port}`, {
+        Authorization: `Bearer ${this.token}`,
+        "X-Client-Platform": Platform.OS,
+      });
+    }
+
+    for (const tunnel of this.tunnelServers) {
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${this.token}`,
+        "X-Client-Platform": Platform.OS,
+      };
+      if (tunnel.cfAccessClientId) {
+        headers["CF-Access-Client-Id"] = tunnel.cfAccessClientId;
+        headers["CF-Access-Client-Secret"] = tunnel.cfAccessClientSecret || "";
+      }
+      push(tunnel.url, headers);
+    }
+
+    if (this.deviceId) {
+      for (const relay of this.relayServers) {
+        const headers: Record<string, string> = {
+          Authorization: `Bearer ${this.token}`,
+          "X-Client-Platform": Platform.OS,
+        };
+        if (relay.password) {
+          headers["X-Relay-Password"] = relay.password;
+        }
+        push(`${relay.httpUrl}/d/${this.deviceId}`, headers);
+      }
+    }
+
+    return targets;
   }
 
   /** Get health status for all relay servers. */
@@ -3741,19 +3807,26 @@ export class QuicClient {
     secret?: string,
     mode: "pair" | "device-code" = "pair",
   ): Promise<RecoveryResult | null> {
-    try {
-      const res = await fetch(`${this.baseUrl}/auth/recover`, {
-        method: "POST",
-        headers: { ...this.authHeaders, "Content-Type": "application/json" },
-        body: JSON.stringify(secret ? { secret, mode } : { mode }),
-      });
-      if (!res.ok) {
-        return { ok: false, error: `HTTP ${res.status}` } as RecoveryResult;
+    const body = JSON.stringify(secret ? { secret, mode } : { mode });
+    let lastError = "network error";
+    for (const target of this.recoveryTargets()) {
+      try {
+        const res = await this.fetchWithTimeout(`${target.baseUrl}/auth/recover`, {
+          method: "POST",
+          headers: { ...target.headers, "Content-Type": "application/json" },
+          body,
+        }, 8000);
+        if (!res.ok) {
+          lastError = `HTTP ${res.status}`;
+          continue;
+        }
+        const data = (await res.json()) as RecoveryResult;
+        return { ...data, targetUrl: target.baseUrl };
+      } catch (e: any) {
+        lastError = e?.message ?? "network error";
       }
-      return (await res.json()) as RecoveryResult;
-    } catch (e: any) {
-      return { ok: false, error: e?.message ?? "network error" } as RecoveryResult;
     }
+    return { ok: false, error: lastError } as RecoveryResult;
   }
 
   // ---- Log aggregation (E cross-device) ---------------------------------
@@ -3963,6 +4036,7 @@ export class QuicClient {
     template?: "full" | "ship";
     maxParallel?: number;
     preferredDevice?: string;
+    allowedDevices?: string[];
   }): Promise<{ ok: boolean; run?: AgentGraphRun; error?: string }> {
     try {
       const res = await fetch(`${this.baseUrl}/agent/graphs`, {
@@ -3977,6 +4051,7 @@ export class QuicClient {
           template: params.template ?? "full",
           maxParallel: params.maxParallel ?? 2,
           preferredDevice: params.preferredDevice ?? "",
+          allowedDevices: params.allowedDevices ?? [],
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -4245,6 +4320,7 @@ export interface RecoveryResult {
   userCode?: string;
   expiresAt?: string;
   error?: string;
+  targetUrl?: string;
 }
 
 /** Feature flag — one entry in the ledger. */
