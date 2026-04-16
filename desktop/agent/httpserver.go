@@ -3303,14 +3303,70 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			NoAutotest        bool   `json:"no_autotest"`
 			AutoIdeas         int    `json:"auto_ideas"`
 			RemainedFile      string `json:"remained_file"`
+			Harden            string `json:"harden"`
+			Model             string `json:"model"`
+			Planner           string `json:"planner"`
+			Implementer       string `json:"implementer"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		stopSource := true
 		if args.StopSource != nil {
 			stopSource = *args.StopSource
 		}
+		// Remote handoff: export the source bundle locally, ship it to
+		// the named device's daemon, return the result. Lets a Claude
+		// Code session running on the user's laptop hand its work
+		// over to a remote yaver agent (e.g. the dev's Mac mini)
+		// without leaving the MCP-wrapped tool call.
 		if args.Target != "" {
-			return mcpToolError("remote handoff (target!=local) is not supported via MCP — use `yaver handoff --to <device>` from a CLI")
+			cfg, _ := LoadConfig()
+			if cfg == nil || cfg.AuthToken == "" {
+				return mcpToolError("remote handoff: agent not authenticated — run `yaver auth`")
+			}
+			body := map[string]interface{}{
+				"sourceTaskId":      args.SourceTaskID,
+				"sourceSessionFile": args.SourceSessionFile,
+				"engine":            args.Engine,
+				"runner":            args.Runner,
+				"workDir":           args.WorkDir,
+				"maxKicks":          args.MaxKicks,
+				"deadlineSec":       args.DeadlineSec,
+				"extraPrompt":       args.Message,
+				"stopSource":        stopSource,
+				"autodev":           args.Autodev,
+				"hours":             args.Hours,
+				"load":              args.Load,
+				"prompt":            args.Prompt,
+				"loopTarget":        args.LoopTarget,
+				"branch":            args.Branch,
+				"autoBranch":        args.AutoBranch,
+				"deploy":            args.Deploy,
+				"notify":            args.Notify,
+				"noAutotest":        args.NoAutotest,
+				"autoIdeas":         args.AutoIdeas,
+				"remainedFile":      args.RemainedFile,
+				"harden":            args.Harden,
+				"model":             args.Model,
+				"planner":           args.Planner,
+				"implementer":       args.Implementer,
+			}
+			target := resolveDeviceURL(cfg, args.Target, true)
+			payload, _ := json.Marshal(body)
+			req, _ := http.NewRequest("POST", target+"/session/handoff", bytes.NewReader(payload))
+			req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
+			req.Header.Set("Content-Type", "application/json")
+			httpc := &http.Client{Timeout: 60 * time.Second}
+			resp, err := httpc.Do(req)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("remote handoff: %v", err))
+			}
+			defer resp.Body.Close()
+			var out map[string]interface{}
+			json.NewDecoder(resp.Body).Decode(&out)
+			if ok, _ := out["ok"].(bool); !ok {
+				return mcpToolError(fmt.Sprintf("remote handoff failed: %v", out["error"]))
+			}
+			return mcpToolJSON(out)
 		}
 		spec := HandoffSpec{
 			SourceTaskID:      args.SourceTaskID,
@@ -3335,6 +3391,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			NoAutotest:        args.NoAutotest,
 			AutoIdeas:         args.AutoIdeas,
 			RemainedFile:      args.RemainedFile,
+			Harden:            args.Harden,
+			Model:             args.Model,
+			Planner:           args.Planner,
+			Implementer:       args.Implementer,
 		}
 		res, err := RunHandoff(s, spec)
 		if err != nil {

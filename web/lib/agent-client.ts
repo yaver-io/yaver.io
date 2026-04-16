@@ -597,6 +597,106 @@ class AgentClient {
     return () => es.close();
   }
 
+  /**
+   * Subscribe to a daemon-hosted log stream (e.g. "autodev:sfmg-autodev").
+   * Yields one parsed structured event per onEvent call. Backwards-
+   * compatible with legacy "line" frames. Returns an abort function.
+   *
+   * Event shapes (`type`):
+   *   yaver_say     {text}
+   *   runner_action {runner, tool, detail}
+   *   runner_text   {runner, text}
+   *   runner_result {runner, status, duration_ms, cost_usd}
+   *   line          {text}                    — legacy
+   *
+   * Uses fetch-based SSE so the auth header survives (unlike
+   * EventSource which can't carry custom headers in the browser).
+   */
+  streamLog(streamName: string, onEvent: (ev: any) => void): () => void {
+    const controller = new AbortController();
+    const url = `${this.baseUrl}/streams/${encodeURIComponent(streamName)}`;
+    (async () => {
+      try {
+        const res = await fetch(url, {
+          method: "GET",
+          headers: { ...this.authHeaders, Accept: "text/event-stream" },
+          signal: controller.signal,
+        });
+        if (!res.ok || !res.body) return;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              onEvent(JSON.parse(line.slice(6)));
+            } catch {
+              // ignore malformed frame
+            }
+          }
+        }
+      } catch {
+        // aborted or network error
+      }
+    })();
+    return () => controller.abort();
+  }
+
+  /** GET /autoinit/status?work_dir=… */
+  async autoinitStatus(workDir: string): Promise<{
+    done: boolean;
+    path: string;
+    bytes: number;
+    updated_at?: string;
+    has_generated_section: boolean;
+    has_history_section: boolean;
+  }> {
+    const url = `${this.baseUrl}/autoinit/status?work_dir=${encodeURIComponent(workDir)}`;
+    const res = await fetch(url, { headers: this.authHeaders });
+    return await res.json();
+  }
+
+  /** GET /autoideas/file?work_dir=…&output=… */
+  async autoideasFile(
+    workDir: string,
+    output = "ideas.md",
+  ): Promise<{
+    ok: boolean;
+    items: { line: number; checked: boolean; title: string }[];
+    raw: string;
+    path: string;
+  }> {
+    const url = `${this.baseUrl}/autoideas/file?work_dir=${encodeURIComponent(workDir)}&output=${encodeURIComponent(output)}`;
+    const res = await fetch(url, { headers: this.authHeaders });
+    return await res.json();
+  }
+
+  /** POST /autoideas/select — picks → autodev kick */
+  async autoideasSelect(body: {
+    work_dir: string;
+    output?: string;
+    project?: string;
+    lines: number[];
+    engine?: string;
+    hours?: string;
+    load?: string;
+    auto_branch?: boolean;
+    deploy?: string;
+  }): Promise<{ ok: boolean; loop_name?: string; stream_name?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/autoideas/select`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return await res.json();
+  }
+
   // ── EventEmitter ───────────────────────────────────────────────────
 
   on(event: "output", callback: OutputCallback): () => void;

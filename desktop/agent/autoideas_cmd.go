@@ -50,6 +50,7 @@ func runAutoIdeas(args []string) {
 	maxBatches := fs.Int("max-batches", 0, "Hard cap on idea batches (0 = no cap; deadline still applies)")
 	tickSec := fs.Int("tick", 0, "Seconds between generation batches (0 = lite=300s, high=60s)")
 	showPlan := fs.Bool("plan", false, "Print plan and exit (dry-run)")
+	to := fs.String("to", "", "Run on a remote yaver agent (device id / hostname / Tailscale alias). Routes via P2P or relay using existing handoff transport.")
 	fs.Usage = printAutoIdeasHelp
 
 	positional, flagArgs := splitAutodevArgs(args)
@@ -74,6 +75,29 @@ func runAutoIdeas(args []string) {
 	}
 	if project == "" {
 		project = filepath.Base(wd)
+	}
+
+	// --to <device>: ship the request to a remote yaver agent and
+	// exit. The remote daemon spawns the autoideas loop; the user
+	// can later `yaver stream autodev:<project>-autoideas --to <device>`
+	// to tail it.
+	if strings.TrimSpace(*to) != "" {
+		body := map[string]interface{}{
+			"project":     project,
+			"work_dir":    wd,
+			"hours":       *hours,
+			"load":        *load,
+			"prompt":      *prompt,
+			"harden":      *harden,
+			"engine":      *engine,
+			"output":      *output,
+			"max_batches": *maxBatches,
+			"tick":        *tickSec,
+		}
+		out := remoteYaverPOST(*to, "/autoideas/start", body)
+		fmt.Printf("autoideas: started on %s — loop=%v stream=%v\n",
+			*to, out["loop_name"], out["stream_name"])
+		return
 	}
 
 	// Roof theme: --harden preset prepends to --prompt, same rules

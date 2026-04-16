@@ -56,6 +56,7 @@ func runAutoInit(args []string) {
 	output := fs.String("output", autoinitFile, "Output file inside the project (default init.md)")
 	force := fs.Bool("force", false, "Regenerate the entire generated section even if init.md exists")
 	showPlan := fs.Bool("plan", false, "Print plan and exit (dry-run)")
+	to := fs.String("to", "", "Run on a remote yaver agent (device id / hostname). Routes via P2P or relay.")
 	fs.Usage = printAutoInitHelp
 	positional, flagArgs := splitAutodevArgs(args)
 	_ = fs.Parse(flagArgs)
@@ -74,6 +75,21 @@ func runAutoInit(args []string) {
 	outPath := *output
 	if !filepath.IsAbs(outPath) {
 		outPath = filepath.Join(wd, outPath)
+	}
+
+	if strings.TrimSpace(*to) != "" {
+		body := map[string]interface{}{
+			"project":  project,
+			"work_dir": wd,
+			"prompt":   *prompt,
+			"engine":   *engine,
+			"output":   *output,
+			"force":    *force,
+		}
+		out := remoteYaverPOST(*to, "/autoinit/start", body)
+		fmt.Printf("autoinit: started on %s — loop=%v stream=%v output=%v\n",
+			*to, out["loop_name"], out["stream_name"], out["output"])
+		return
 	}
 
 	if *showPlan {

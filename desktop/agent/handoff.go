@@ -124,6 +124,24 @@ type HandoffSpec struct {
 	// the loop pulls work items from (one per kick). Relative paths
 	// are resolved against WorkDir.
 	RemainedFile string `json:"remainedFile,omitempty"`
+
+	// Harden — autodev hardening preset (security|memory|perf|
+	// quality|all). When set, the autodev plan that wraps the
+	// resumed session uses the curated focus prompt for that area
+	// (layered on top of Prompt if both are given).
+	Harden string `json:"harden,omitempty"`
+
+	// Model — Claude model alias (sonnet|opus|haiku) or full id.
+	// Threaded through YAVER_CLAUDE_MODEL so spawnClaudeCode adds
+	// --model <id>. Sonnet is the cheap-default (~5x slower bucket
+	// burn than Opus on Max plans).
+	Model string `json:"model,omitempty"`
+
+	// Planner / Implementer — hybrid layering (agent[:model]).
+	// Either one set forces engine=hybrid. Same shape as autodev's
+	// --planner / --implementer (e.g. "claude:opus" + "codex").
+	Planner     string `json:"planner,omitempty"`
+	Implementer string `json:"implementer,omitempty"`
 }
 
 // HandoffResult is what the orchestrator returns to the caller (CLI/MCP/HTTP).
@@ -311,6 +329,26 @@ func RunHandoff(s *HTTPServer, spec HandoffSpec) (*HandoffResult, error) {
 	}
 	if dir := operatingDirectives(spec); dir != "" {
 		prompt += dir
+	}
+
+	// Autodev parity: thread Harden / Model / Planner / Implementer
+	// from the handoff spec into the same env vars autodev_cmd uses,
+	// so the resumed loop honours every slicing/cost knob the user
+	// would have on the local autodev CLI.
+	if hp := autodevHardenPrompt(spec.Harden); hp != "" {
+		prompt = hp + "\n\n" + prompt
+	}
+	if strings.TrimSpace(spec.Model) != "" {
+		os.Setenv("YAVER_CLAUDE_MODEL", spec.Model)
+	}
+	if strings.TrimSpace(spec.Planner) != "" || strings.TrimSpace(spec.Implementer) != "" {
+		runnerID = "hybrid"
+		if spec.Planner != "" {
+			os.Setenv("YAVER_HYBRID_PLANNER", spec.Planner)
+		}
+		if spec.Implementer != "" {
+			os.Setenv("YAVER_HYBRID_IMPLEMENTER", spec.Implementer)
+		}
 	}
 
 	target := spec.LoopTarget

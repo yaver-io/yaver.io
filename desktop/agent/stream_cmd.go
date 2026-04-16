@@ -24,6 +24,31 @@ import (
 )
 
 func runStream(args []string) {
+	// --to <device> tails a stream on a remote yaver agent. Recognised
+	// before the help/list parsing so `yaver stream --to <dev> <name>`
+	// works as expected.
+	to := ""
+	filtered := []string{}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--to":
+			if i+1 < len(args) {
+				to = args[i+1]
+				i++
+			}
+		case "-h", "--help", "help":
+			filtered = append(filtered, args[i])
+		default:
+			filtered = append(filtered, args[i])
+		}
+	}
+	args = filtered
+
+	if to != "" && len(args) > 0 && args[0] != "help" && args[0] != "--help" && args[0] != "-h" {
+		tailRemoteStream(to, resolveStreamName(args[0]))
+		return
+	}
+
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		listStreams()
 		fmt.Println()
@@ -133,6 +158,52 @@ func resolveStreamName(name string) string {
 		return "autodev:" + name
 	}
 	return name
+}
+
+// tailRemoteStream attaches to a stream on a remote yaver agent
+// over the existing P2P / relay transport. Same SSE parsing as
+// the local tail; just hits resolveDeviceURL'd base instead of
+// localhost.
+func tailRemoteStream(deviceHint, name string) {
+	cfg := mustLoadAuthConfig()
+	base := resolveDeviceURL(cfg, deviceHint, true)
+	url := fmt.Sprintf("%s/streams/%s", base, name)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "stream remote: %v\n", err)
+		os.Exit(1)
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
+	req.Header.Set("Accept", "text/event-stream")
+	client := &http.Client{Timeout: 0}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "stream remote: %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		fmt.Fprintf(os.Stderr, "stream remote: server returned %d\n", resp.StatusCode)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "── tailing %s on %s (Ctrl-C to exit) ──\n", name, deviceHint)
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		var ev map[string]interface{}
+		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
+			continue
+		}
+		renderStreamEvent(ev)
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "stream remote: connection closed: %v\n", err)
+	}
 }
 
 func tailStream(name string) {
