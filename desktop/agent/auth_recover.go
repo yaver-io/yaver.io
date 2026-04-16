@@ -128,6 +128,8 @@ type recoveryRateLimiter struct {
 }
 
 var recoveryLimiter = &recoveryRateLimiter{attempts: map[string]time.Time{}}
+var verifyHostTokenFn = verifyHostToken
+var requestDeviceCodeFn = requestDeviceCode
 
 // SetBootstrapSecret stores the hash of a newly-minted
 // bootstrap secret into config.json. Called from
@@ -183,6 +185,12 @@ func (r *recoveryRateLimiter) allow(ip string) bool {
 	return true
 }
 
+func (r *recoveryRateLimiter) reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.attempts = map[string]time.Time{}
+}
+
 // --- HTTP ---------------------------------------------------------------
 
 // handleAuthRecover is the unauthenticated recovery endpoint.
@@ -217,7 +225,7 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 	//      was set up at install time.
 	authedAsHost := false
 	if bearer := extractBearerToken(r); bearer != "" {
-		if ok, hostErr := verifyHostToken(bearer); hostErr == nil && ok {
+		if ok, hostErr := verifyHostTokenFn(bearer); hostErr == nil && ok {
 			authedAsHost = true
 		}
 	}
@@ -233,6 +241,10 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Mode == "" {
 		body.Mode = "pair"
+	}
+	if body.Mode == "device-code" && !authedAsHost {
+		jsonError(w, http.StatusForbidden, "device-code recovery requires verified host authentication")
+		return
 	}
 
 	switch body.Mode {
@@ -263,7 +275,7 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, http.StatusInternalServerError, "no convex URL configured")
 			return
 		}
-		dc, err := requestDeviceCode(cfg.ConvexSiteURL)
+		dc, err := requestDeviceCodeFn(cfg.ConvexSiteURL)
 		if err != nil {
 			jsonError(w, http.StatusBadGateway, "device-code request failed: "+err.Error())
 			return
