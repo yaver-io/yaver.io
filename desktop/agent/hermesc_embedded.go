@@ -19,13 +19,13 @@ var hermescLinuxX64 []byte
 
 var (
 	hermescPath     string
+	hermescPathErr  error
 	hermescPathOnce sync.Once
 )
 
 // GetEmbeddedHermesc extracts the embedded hermesc binary to a temp file
 // and returns its path. Extraction happens only once per process lifetime.
 func GetEmbeddedHermesc() (string, error) {
-	var err error
 	hermescPathOnce.Do(func() {
 		var binary []byte
 		switch runtime.GOOS + "/" + runtime.GOARCH {
@@ -36,28 +36,28 @@ func GetEmbeddedHermesc() (string, error) {
 		case "linux/amd64":
 			binary = hermescLinuxX64
 		default:
-			err = fmt.Errorf("unsupported platform for embedded hermesc: %s/%s", runtime.GOOS, runtime.GOARCH)
+			hermescPathErr = fmt.Errorf("unsupported platform for embedded hermesc: %s/%s", runtime.GOOS, runtime.GOARCH)
 			return
 		}
 
 		tmp, tmpErr := os.CreateTemp("", "yaver-hermesc-*")
 		if tmpErr != nil {
-			err = tmpErr
+			hermescPathErr = tmpErr
 			return
 		}
 
 		if _, writeErr := tmp.Write(binary); writeErr != nil {
-			err = writeErr
+			hermescPathErr = writeErr
 			return
 		}
 
 		if chmodErr := tmp.Chmod(0755); chmodErr != nil {
-			err = chmodErr
+			hermescPathErr = chmodErr
 			return
 		}
 
 		tmp.Close()
 		hermescPath = tmp.Name()
 	})
-	return hermescPath, err
+	return hermescPath, hermescPathErr
 }

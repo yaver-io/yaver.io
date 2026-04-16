@@ -274,13 +274,13 @@ func nextQuestion(sess *WizardSession) *WizardQuestion {
 // ProjectGenerationResult is what GenerateProject returns — the
 // target directory + a bulleted list of manual follow-up steps.
 type ProjectGenerationResult struct {
-	OK             bool     `json:"ok"`
-	Directory      string   `json:"directory"`
-	Files          []string `json:"files"`
-	NextSteps      []string `json:"nextSteps"`
-	ServicesLog    string   `json:"servicesLog,omitempty"`
-	ServicesError  string   `json:"servicesError,omitempty"`
-	ServicesStarted bool    `json:"servicesStarted,omitempty"`
+	OK              bool     `json:"ok"`
+	Directory       string   `json:"directory"`
+	Files           []string `json:"files"`
+	NextSteps       []string `json:"nextSteps"`
+	ServicesLog     string   `json:"servicesLog,omitempty"`
+	ServicesError   string   `json:"servicesError,omitempty"`
+	ServicesStarted bool     `json:"servicesStarted,omitempty"`
 }
 
 // GenerateProject materialises the scaffold described by the
@@ -422,6 +422,9 @@ func GenerateProject(id, parentDir string) (*ProjectGenerationResult, error) {
 			return nil, err
 		}
 		if err := write("apps/mobile/package.json", expoPackageJSON(a)); err != nil {
+			return nil, err
+		}
+		if err := write("apps/mobile/index.js", expoIndexJS()); err != nil {
 			return nil, err
 		}
 		if err := write("apps/mobile/App.tsx", expoAppTSX(a)); err != nil {
@@ -1029,6 +1032,17 @@ func manualNextSteps(a map[string]string) []string {
 // --- file bodies -----------------------------------------------------------
 
 func nextjsPackageJSON(a map[string]string) string {
+	deployScript := "echo 'self-host deploy not configured yet'"
+	devDeps := []string{
+		`"typescript": "^5.5.0"`,
+	}
+	if a["web_host"] == "cloudflare" {
+		deployScript = "opennextjs-cloudflare && wrangler deploy"
+		devDeps = append([]string{
+			`"@opennextjs/cloudflare": "^0.5.0"`,
+			`"wrangler": "^3.80.0"`,
+		}, devDeps...)
+	}
 	return fmt.Sprintf(`{
   "name": "%s-web",
   "version": "0.0.1",
@@ -1037,7 +1051,7 @@ func nextjsPackageJSON(a map[string]string) string {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "deploy": "opennextjs-cloudflare && wrangler deploy"
+    "deploy": %q
   },
   "dependencies": {
     "next": "^14.2.0",
@@ -1045,12 +1059,10 @@ func nextjsPackageJSON(a map[string]string) string {
     "react-dom": "^18.3.0"
   },
   "devDependencies": {
-    "@opennextjs/cloudflare": "^0.5.0",
-    "typescript": "^5.5.0",
-    "wrangler": "^3.80.0"
+    %s
   }
 }
-`, a["slug"])
+`, a["slug"], deployScript, strings.Join(devDeps, ",\n    "))
 }
 
 func nextjsConfig(a map[string]string) string {
@@ -1184,6 +1196,7 @@ func expoAppJSON(a map[string]string) string {
   "expo": {
     "name": "%s",
     "slug": "%s",
+    "entryPoint": "./index.js",
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "%s",
@@ -1210,6 +1223,7 @@ func expoPackageJSON(a map[string]string) string {
   "name": "@%s/mobile",
   "version": "0.0.1",
   "private": true,
+  "main": "./index.js",
   "scripts": {
     "prebuild": "expo prebuild",
     "start": "expo start",
@@ -1218,11 +1232,20 @@ func expoPackageJSON(a map[string]string) string {
   },
   "dependencies": {
     "expo": "~52.0.0",
+    "expo-status-bar": "~2.0.0",
     "react": "18.3.1",
     "react-native": "0.76.3"
   }
 }
 `, a["slug"], a["app_name"])
+}
+
+func expoIndexJS() string {
+	return `import { registerRootComponent } from "expo";
+import App from "./App";
+
+registerRootComponent(App);
+`
 }
 
 func expoAppTSX(a map[string]string) string {

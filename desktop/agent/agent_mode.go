@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
@@ -984,6 +985,7 @@ func (gm *AgentGraphManager) executeRemoteLoopNode(ctx context.Context, runID st
 			"load":        firstGraphNonEmpty(node.Spec.Load, "lite"),
 			"prompt":      firstGraphNonEmpty(strings.TrimSpace(node.Spec.Prompt), node.Spec.Title) + formatTaskSliceContract(contract),
 			"engine":      graphAutoIdeasEngine(firstGraphNonEmpty(node.Placement.Runner, node.Spec.Runner)),
+			"runner":      firstGraphNonEmpty(node.Placement.Runner, node.Spec.Runner),
 			"max_batches": max(1, node.Spec.MaxIterations),
 		}
 	case AgentNodeAutotest:
@@ -995,6 +997,8 @@ func (gm *AgentGraphManager) executeRemoteLoopNode(ctx context.Context, runID st
 	var createResp struct {
 		OK       bool   `json:"ok"`
 		LoopName string `json:"loop_name"`
+		Output   string `json:"output"`
+		WorkDir  string `json:"work_dir"`
 	}
 	if err := remoteAgentJSON(ctx, base, token, http.MethodPost, path, body, &createResp); err != nil {
 		return "", err
@@ -1002,6 +1006,9 @@ func (gm *AgentGraphManager) executeRemoteLoopNode(ctx context.Context, runID st
 	loopName := createResp.LoopName
 	if loopName == "" {
 		loopName = graphRemoteProjectName(runID, node.Spec) + "-" + kind
+	}
+	if node.Spec.Kind == AgentNodeAutoIdeas {
+		return waitForRemoteAutoIdeas(ctx, base, token, firstGraphNonEmpty(createResp.WorkDir, workDir), createResp.Output)
 	}
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
@@ -1040,6 +1047,39 @@ func (gm *AgentGraphManager) executeRemoteLoopNode(ctx context.Context, runID st
 				}
 			}
 		waitNext:
+		}
+	}
+}
+
+func waitForRemoteAutoIdeas(ctx context.Context, base, token, workDir, outputName string) (string, error) {
+	outputName = strings.TrimSpace(outputName)
+	if outputName == "" {
+		outputName = "ideas.md"
+	}
+	fileTicker := time.NewTicker(3 * time.Second)
+	defer fileTicker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-fileTicker.C:
+			var ideasResp struct {
+				OK    bool `json:"ok"`
+				Items []struct {
+					Title string `json:"title"`
+				} `json:"items"`
+				Raw string `json:"raw"`
+			}
+			queryPath := fmt.Sprintf("/autoideas/file?work_dir=%s&output=%s", url.QueryEscape(workDir), url.QueryEscape(outputName))
+			if err := remoteAgentJSON(ctx, base, token, http.MethodGet, queryPath, nil, &ideasResp); err != nil {
+				continue
+			}
+			if len(ideasResp.Items) > 0 {
+				return strings.TrimSpace(ideasResp.Items[0].Title), nil
+			}
+			if strings.TrimSpace(ideasResp.Raw) != "" {
+				return "ideas generated", nil
+			}
 		}
 	}
 }

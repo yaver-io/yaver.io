@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -47,11 +48,14 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 	}
 
 	var req struct {
-		Framework string `json:"framework"` // "expo", "flutter", "vite", "nextjs", "" (auto-detect)
-		WorkDir   string `json:"workDir"`
-		Platform  string `json:"platform"` // "ios", "android", "web"
-		Port      int    `json:"port"`
-		Rebuild   bool   `json:"rebuild"`  // force rebuild (clear build marker)
+		Framework         string `json:"framework"` // "expo", "flutter", "vite", "nextjs", "" (auto-detect)
+		WorkDir           string `json:"workDir"`
+		Platform          string `json:"platform"` // "ios", "android", "web"
+		Port              int    `json:"port"`
+		Rebuild           bool   `json:"rebuild"` // force rebuild (clear build marker)
+		TargetDeviceID    string `json:"targetDeviceId"`
+		TargetDeviceName  string `json:"targetDeviceName"`
+		TargetDeviceClass string `json:"targetDeviceClass"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -72,7 +76,11 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 		log.Printf("[dev] Cleared build marker for %s (rebuild requested)", projectHash)
 	}
 
-	if err := s.devServerMgr.Start(req.Framework, req.WorkDir, req.Platform, req.Port); err != nil {
+	if err := s.devServerMgr.Start(req.Framework, req.WorkDir, req.Platform, req.Port, DevServerTarget{
+		DeviceID:    req.TargetDeviceID,
+		DeviceName:  req.TargetDeviceName,
+		DeviceClass: req.TargetDeviceClass,
+	}); err != nil {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -375,16 +383,15 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	// ── Hermes compile ──
 	s.devServerMgr.EmitLog("Compiling Hermes bytecode...")
 
-	// Use embedded hermesc (matches Yaver app's exact Hermes version) — never user's local one
-	hermescPath, hermescErr := GetEmbeddedHermesc()
+	info := detectHermesRuntimeInfo(workDir)
+	hermescPath, hermescErr := resolveHermesc(workDir)
 	if hermescErr != nil {
-		log.Printf("[super-host] embedded hermesc not available: %v — falling back to project hermesc", hermescErr)
-		hermescPath = findHermesc(workDir)
+		log.Printf("[super-host] hermesc resolve failed: %v", hermescErr)
 	}
 
 	if hermescPath == "" {
-		log.Printf("[super-host] hermesc not found — serving plain JS bundle")
-		s.devServerMgr.EmitLog("hermesc not found — serving plain JS bundle (slower but works)")
+		log.Printf("[super-host] hermesc not found — cannot produce Hermes bundle")
+		s.devServerMgr.EmitLog("hermesc not found — cannot produce Hermes bundle")
 	} else {
 		log.Printf("[super-host] using hermesc at: %s", hermescPath)
 		tmpPath := bundlePath + ".tmp"
@@ -411,8 +418,13 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	log.Printf("[super-host] detected module name: %s", moduleName)
 
 	// ── Validate bundle integrity (magic, BC version, size, MD5) ──
-	// expectedBCVersion 96 = Yaver's embedded Hermes from RN 0.81.5
-	meta, valErr := ValidateHBC(bundlePath, 96)
+	expectedBCVersion := 0
+	if hermescPath != "" {
+		if bc, err := hermescBytecodeVersion(hermescPath); err == nil {
+			expectedBCVersion = bc
+		}
+	}
+	meta, valErr := ValidateHBC(bundlePath, expectedBCVersion)
 	if valErr != nil {
 		errMsg := fmt.Sprintf("Bundle validation failed: %v", valErr)
 		log.Printf("[super-host] %s", errMsg)
@@ -424,6 +436,12 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	meta.ModuleName = moduleName
+	meta.TargetPlatform = req.Platform
+	meta.BuilderPlatform = runtime.GOOS
+	meta.BuilderArch = runtime.GOARCH
+	meta.ReactNativeVersion = info.ReactNativeVersion
+	meta.ExpoSDKVersion = info.ExpoSDKVersion
+	meta.HermesRef = info.HermesRef
 	log.Printf("[super-host] bundle validated: %d bytes, MD5=%s, BC%d, module=%s",
 		meta.Size, meta.MD5, meta.HermesBCVersion, meta.ModuleName)
 
@@ -579,18 +597,42 @@ func (s *HTTPServer) handleServeNativeAssets(w http.ResponseWriter, r *http.Requ
 
 // findHermesc looks for hermesc in the project's react-native installation.
 func findHermesc(workDir string) string {
-	candidates := []string{
-		filepath.Join(workDir, "node_modules", "react-native", "sdks", "hermesc", "osx-bin", "hermesc"),
-		filepath.Join(workDir, "node_modules", "react-native", "sdks", "hermesc", "linux64-bin", "hermesc"),
-		filepath.Join(workDir, "node_modules", "hermes-engine", "osx-bin", "hermesc"),
+	return findProjectHermesc(workDir)
+}
+
+func hermescSearchRoots(workDir string) []string {
+	var roots []string
+	seen := map[string]struct{}{}
+	cur := filepath.Clean(workDir)
+	for {
+		if _, ok := seen[cur]; !ok {
+			roots = append(roots, cur)
+			seen[cur] = struct{}{}
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			break
+		}
+		cur = parent
 	}
-	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
-			os.Chmod(c, 0o755)
-			return c
+	return roots
+}
+
+func hermescCandidates(root string) []string {
+	if runtime.GOOS == "linux" {
+		return []string{
+			filepath.Join(root, "node_modules", "react-native", "sdks", "hermesc", "linux64-bin", "hermesc"),
+			filepath.Join(root, "node_modules", "hermes-engine", "linux64-bin", "hermesc"),
+			filepath.Join(root, "node_modules", "react-native", "sdks", "hermesc", "osx-bin", "hermesc"),
+			filepath.Join(root, "node_modules", "hermes-engine", "osx-bin", "hermesc"),
 		}
 	}
-	return ""
+	return []string{
+		filepath.Join(root, "node_modules", "react-native", "sdks", "hermesc", "osx-bin", "hermesc"),
+		filepath.Join(root, "node_modules", "hermes-engine", "osx-bin", "hermesc"),
+		filepath.Join(root, "node_modules", "react-native", "sdks", "hermesc", "linux64-bin", "hermesc"),
+		filepath.Join(root, "node_modules", "hermes-engine", "linux64-bin", "hermesc"),
+	}
 }
 
 // handleDevServerBuilds lists or clears build markers.

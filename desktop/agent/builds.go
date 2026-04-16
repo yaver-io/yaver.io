@@ -32,17 +32,17 @@ const (
 type BuildPlatform string
 
 const (
-	PlatformFlutterAPK BuildPlatform = "flutter-apk"
-	PlatformFlutterAAB BuildPlatform = "flutter-aab"
-	PlatformFlutterIPA BuildPlatform = "flutter-ipa"
-	PlatformGradleAPK  BuildPlatform = "gradle-apk"
-	PlatformGradleAAB  BuildPlatform = "gradle-aab"
-	PlatformXcodeIPA   BuildPlatform = "xcode-ipa"
-	PlatformXcodeBuild BuildPlatform = "xcode-build"
-	PlatformRNAndroid  BuildPlatform = "rn-android"
-	PlatformRNIOS      BuildPlatform = "rn-ios"
-	PlatformExpoAndroid BuildPlatform = "expo-android"
-	PlatformExpoIOS     BuildPlatform = "expo-ios"
+	PlatformFlutterAPK         BuildPlatform = "flutter-apk"
+	PlatformFlutterAAB         BuildPlatform = "flutter-aab"
+	PlatformFlutterIPA         BuildPlatform = "flutter-ipa"
+	PlatformGradleAPK          BuildPlatform = "gradle-apk"
+	PlatformGradleAAB          BuildPlatform = "gradle-aab"
+	PlatformXcodeIPA           BuildPlatform = "xcode-ipa"
+	PlatformXcodeBuild         BuildPlatform = "xcode-build"
+	PlatformRNAndroid          BuildPlatform = "rn-android"
+	PlatformRNIOS              BuildPlatform = "rn-ios"
+	PlatformExpoAndroid        BuildPlatform = "expo-android"
+	PlatformExpoIOS            BuildPlatform = "expo-ios"
 	PlatformXcodeDeviceInstall BuildPlatform = "xcode-device-install"
 	PlatformHermesBundlePush   BuildPlatform = "hermes-bundle-push"
 	PlatformCustom             BuildPlatform = "custom"
@@ -50,24 +50,24 @@ const (
 
 // Build represents a build job with optional artifact.
 type Build struct {
-	ID           string        `json:"id"`
-	Platform     BuildPlatform `json:"platform"`
-	Command      string        `json:"command"`
-	WorkDir      string        `json:"workDir"`
-	Status       BuildStatus   `json:"status"`
-	ExecID       string        `json:"execId,omitempty"`
-	ArtifactPath string        `json:"artifactPath,omitempty"`
-	ArtifactName string        `json:"artifactName,omitempty"`
-	ArtifactSize int64         `json:"artifactSize,omitempty"`
-	ArtifactHash string        `json:"artifactHash,omitempty"` // SHA256
-	StartedAt      string        `json:"startedAt"`
-	FinishedAt     string        `json:"finishedAt,omitempty"`
-	ExitCode       *int          `json:"exitCode,omitempty"`
-	Error          string        `json:"error,omitempty"`
-	InstallOnDevice bool         `json:"installOnDevice,omitempty"`
-	InstallStatus   string       `json:"installStatus,omitempty"` // "", "installing", "installed", "install_failed"
-	InstallError    string       `json:"installError,omitempty"`
-	DeviceUDID      string       `json:"deviceUDID,omitempty"`
+	ID              string        `json:"id"`
+	Platform        BuildPlatform `json:"platform"`
+	Command         string        `json:"command"`
+	WorkDir         string        `json:"workDir"`
+	Status          BuildStatus   `json:"status"`
+	ExecID          string        `json:"execId,omitempty"`
+	ArtifactPath    string        `json:"artifactPath,omitempty"`
+	ArtifactName    string        `json:"artifactName,omitempty"`
+	ArtifactSize    int64         `json:"artifactSize,omitempty"`
+	ArtifactHash    string        `json:"artifactHash,omitempty"` // SHA256
+	StartedAt       string        `json:"startedAt"`
+	FinishedAt      string        `json:"finishedAt,omitempty"`
+	ExitCode        *int          `json:"exitCode,omitempty"`
+	Error           string        `json:"error,omitempty"`
+	InstallOnDevice bool          `json:"installOnDevice,omitempty"`
+	InstallStatus   string        `json:"installStatus,omitempty"` // "", "installing", "installed", "install_failed"
+	InstallError    string        `json:"installError,omitempty"`
+	DeviceUDID      string        `json:"deviceUDID,omitempty"`
 }
 
 // BuildSummary is returned by list (no large fields).
@@ -253,7 +253,9 @@ func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []str
 				buildDir, bundlePath, assetsDir)
 		} else {
 			entryFile := "index.js"
-			var pkg struct{ Main string `json:"main"` }
+			var pkg struct {
+				Main string `json:"main"`
+			}
 			json.Unmarshal(pkgData, &pkg)
 			if pkg.Main != "" {
 				entryFile = pkg.Main
@@ -609,13 +611,9 @@ func (bm *BuildManager) WatchDir(dir string, patterns []string, platform BuildPl
 // Falls back to project-local hermesc if embedded is unavailable.
 // Returns nil if hermesc is not available (plain JS bundle still works).
 func compileHermesBundle(bundlePath string) error {
-	hermescPath, err := GetEmbeddedHermesc()
+	hermescPath, err := resolveHermesc(filepath.Dir(filepath.Dir(bundlePath)))
 	if err != nil {
-		// Try project-local hermesc
-		hermescPath = findHermescInProject(filepath.Dir(filepath.Dir(bundlePath)))
-		if hermescPath == "" {
-			return fmt.Errorf("hermesc not available: %w", err)
-		}
+		return fmt.Errorf("hermesc not available: %w", err)
 	}
 
 	tmpPath := bundlePath + ".tmp"
@@ -638,16 +636,5 @@ func compileHermesBundle(bundlePath string) error {
 
 // findHermescInProject looks for hermesc in the project's react-native installation.
 func findHermescInProject(workDir string) string {
-	candidates := []string{
-		filepath.Join(workDir, "node_modules", "react-native", "sdks", "hermesc", "osx-bin", "hermesc"),
-		filepath.Join(workDir, "node_modules", "react-native", "sdks", "hermesc", "linux64-bin", "hermesc"),
-		filepath.Join(workDir, "node_modules", "hermes-engine", "osx-bin", "hermesc"),
-	}
-	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
-			os.Chmod(c, 0o755)
-			return c
-		}
-	}
-	return ""
+	return findProjectHermesc(workDir)
 }
