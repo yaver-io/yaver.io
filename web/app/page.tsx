@@ -870,12 +870,8 @@ export default function HomePage() {
             <span className="bg-gradient-to-r from-indigo-400 to-emerald-400 bg-clip-text text-transparent">phone.</span>
           </h1>
 
-          <p className="mx-auto max-w-xl text-base leading-relaxed text-surface-400 md:text-lg">
-            Local first. Move to your machine or cloud later.
-          </p>
-
-          <p className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-surface-500">
-            Hermes reload runs through the Go agent on macOS, Linux, WSL, and remote hosts.
+          <p className="mx-auto max-w-2xl text-base leading-relaxed text-surface-400 md:text-lg">
+            Vibe code full-stack apps locally. Move to your machine or cloud later.
           </p>
 
           <p className="mx-auto mt-3 text-[11px] uppercase tracking-[0.18em] text-surface-600">
