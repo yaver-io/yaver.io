@@ -24,18 +24,18 @@ services:
     expose:
       - "18080"
     environment:
-      - HOME=/home/yaver
       - YAVER_HOSTNAME=${CLOUD_DOMAIN:-cloud.yaver.io}
     volumes:
-      - yaver-data:/home/yaver/.yaver
+      - yaver-data:/root/.yaver
     command:
       - /bin/sh
       - -lc
       - |
-        mkdir -p /home/yaver/.yaver
-        cat > /home/yaver/.yaver/config.json <<EOF
+        mkdir -p /root/.yaver
+        cat > /root/.yaver/config.json <<EOF
         {
           "auth_token": "${CLOUD_OWNER_TOKEN:?set CLOUD_OWNER_TOKEN in .env}",
+          "convex_site_url": "https://shocking-echidna-394.eu-west-1.convex.site",
           "device_id": "cloud-agent",
           "containerize_host": true
         }
