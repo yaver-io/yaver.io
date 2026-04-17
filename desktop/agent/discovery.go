@@ -39,6 +39,67 @@ func projectsFilePath() (string, error) {
 	return filepath.Join(dir, projectsFileName), nil
 }
 
+func isWSLHost() bool {
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	if os.Getenv("WSL_DISTRO_NAME") != "" || os.Getenv("WSL_INTEROP") != "" {
+		return true
+	}
+	data, err := os.ReadFile("/proc/version")
+	if err != nil {
+		return false
+	}
+	lower := strings.ToLower(string(data))
+	return strings.Contains(lower, "microsoft") || strings.Contains(lower, "wsl")
+}
+
+func projectDiscoveryRoots() []string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return nil
+	}
+
+	candidates := []string{
+		home,
+		filepath.Join(home, "Workspace"),
+		filepath.Join(home, "Projects"),
+		filepath.Join(home, "Code"),
+		filepath.Join(home, "src"),
+		filepath.Join(home, "work"),
+		filepath.Join(home, "dev"),
+	}
+
+	if isWSLHost() {
+		user := filepath.Base(home)
+		winHome := filepath.Join("/mnt/c/Users", user)
+		candidates = append(candidates,
+			winHome,
+			filepath.Join(winHome, "Desktop"),
+			filepath.Join(winHome, "source"),
+			filepath.Join(winHome, "src"),
+			filepath.Join(winHome, "Code"),
+			filepath.Join(winHome, "Projects"),
+			filepath.Join(winHome, "Workspace"),
+		)
+	}
+
+	seen := map[string]bool{}
+	var roots []string
+	for _, root := range candidates {
+		if root == "" || seen[root] {
+			continue
+		}
+		info, err := os.Stat(root)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		seen[root] = true
+		roots = append(roots, root)
+	}
+	return roots
+}
+
 // ensureProjectDiscovery checks if PROJECTS.md exists and is less than 24h old.
 // If not, it runs discoverProjects() in a goroutine (non-blocking).
 func ensureProjectDiscovery() {
@@ -266,24 +327,29 @@ func writeAvailableTools(sb *strings.Builder) bool {
 
 // writeProjects discovers git repos and writes project info.
 func writeProjects(sb *strings.Builder) {
-	home, err := os.UserHomeDir()
-	if err != nil {
+	roots := projectDiscoveryRoots()
+	if len(roots) == 0 {
 		sb.WriteString("_Could not determine home directory._\n")
 		return
 	}
 
-	// Run find with 30s timeout — deeper scan to catch nested monorepo projects
+	// Run find with 30s timeout — deeper scan to catch nested monorepo projects.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "find", home, "-name", ".git", "-maxdepth", "6", "-type", "d",
+	args := append([]string{}, roots...)
+	args = append(args,
+		"-name", ".git", "-maxdepth", "6", "-type", "d",
 		"-not", "-path", "*/node_modules/*",
 		"-not", "-path", "*/.cache/*",
 		"-not", "-path", "*/Library/*",
 		"-not", "-path", "*/.local/*",
 		"-not", "-path", "*/.cargo/*",
 		"-not", "-path", "*/Pods/*",
+		"-not", "-path", "*/.Trash/*",
+		"-not", "-path", "*/AppData/*",
 	)
+	cmd := exec.CommandContext(ctx, "find", args...)
 	out, err := cmd.Output()
 	if err != nil {
 		// find may return non-zero if some dirs are inaccessible — that's OK
@@ -296,6 +362,7 @@ func writeProjects(sb *strings.Builder) {
 
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	var projects []projectInfo
+	seenRepos := map[string]bool{}
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -303,6 +370,10 @@ func writeProjects(sb *strings.Builder) {
 		}
 		// line is /path/to/project/.git — get parent
 		repoDir := filepath.Dir(line)
+		if seenRepos[repoDir] {
+			continue
+		}
+		seenRepos[repoDir] = true
 		info := gatherProjectInfo(repoDir)
 		projects = append(projects, info)
 	}

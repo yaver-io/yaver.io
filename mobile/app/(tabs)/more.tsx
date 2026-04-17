@@ -2377,70 +2377,98 @@ export default function MoreScreen() {
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <ScrollView contentContainerStyle={s.list}>
+        <View style={s.heroHeader}>
+          <Text style={[s.pageTitle, { color: c.textPrimary }]}>More</Text>
+          <Text style={[s.pageSubtitle, { color: c.textMuted }]}>
+            Tools, pairing, sandbox, and contributor workflows.
+          </Text>
+        </View>
+
         <Pressable
-          style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+          style={[
+            s.heroCard,
+            {
+              backgroundColor: c.bgCard,
+              borderColor: c.border,
+              shadowColor: c.accent,
+            },
+          ]}
           onPress={() => router.navigate("/phone-projects" as any)}
         >
-          <Text style={[s.icon, { color: c.textMuted }]}>{"\u26A1"}</Text>
+          <View style={[s.heroIconWrap, { backgroundColor: c.accent + "18", borderColor: c.accent + "35" }]}>
+            <Text style={[s.heroIcon, { color: c.accent }]}>{"\u26A1"}</Text>
+          </View>
           <View style={{ flex: 1 }}>
-            <Text style={[s.label, { color: c.textPrimary }]}>Mobile Sandbox</Text>
-            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
-              Start a local app on your phone
+            <Text style={[s.eyebrow, { color: c.accent }]}>Start here</Text>
+            <Text style={[s.heroLabel, { color: c.textPrimary }]}>Mobile Sandbox</Text>
+            <Text style={[s.heroDesc, { color: c.textMuted }]} numberOfLines={2}>
+              Create a phone-first app, then move it to your agent or cloud later.
             </Text>
           </View>
-          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          <Text style={{ color: c.accent, fontSize: 20, fontWeight: "700" }}>{"\u203A"}</Text>
         </Pressable>
 
-        <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleTodos}>
-          <Text style={[s.icon, { color: c.textMuted }]}>{"\u2610"}</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={[s.label, { color: c.textPrimary }]}>Todos</Text>
-            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Task queue</Text>
-          </View>
-          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-        </Pressable>
+        <View style={s.quickGrid}>
+          <Pressable
+            style={[s.quickCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={handleTodos}
+          >
+            <Text style={[s.quickIcon, { color: c.textMuted }]}>{"\u2610"}</Text>
+            <Text style={[s.quickLabel, { color: c.textPrimary }]}>Todos</Text>
+            <Text style={[s.quickDesc, { color: c.textMuted }]} numberOfLines={2}>Task queue</Text>
+          </Pressable>
 
-        <Pressable
-          style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-          onPress={openPair}
-        >
-          <Text style={[s.icon, { color: c.textMuted }]}>{"\u2194"}</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={[s.label, { color: c.textPrimary }]}>Pair a device</Text>
-            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Connect another machine</Text>
-          </View>
-          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-        </Pressable>
+          <Pressable
+            style={[s.quickCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={openPair}
+          >
+            <Text style={[s.quickIcon, { color: c.textMuted }]}>{"\u2194"}</Text>
+            <Text style={[s.quickLabel, { color: c.textPrimary }]}>Pair Device</Text>
+            <Text style={[s.quickDesc, { color: c.textMuted }]} numberOfLines={2}>Connect a machine</Text>
+          </Pressable>
 
-        <Pressable
-          style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-          onPress={() => router.navigate("/(tabs)/guests" as any)}
-        >
-          <Text style={[s.icon, { color: c.textMuted }]}>{"\u2192"}</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={[s.label, { color: c.textPrimary }]}>Guest Access</Text>
-            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Invite others</Text>
-          </View>
-          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-        </Pressable>
+          <Pressable
+            style={[s.quickCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={connected ? (() => router.navigate("/(tabs)/guests" as any)) : handleTutorials}
+          >
+            <Text style={[s.quickIcon, { color: c.textMuted }]}>{connected ? "\u2192" : "\u2302"}</Text>
+            <Text style={[s.quickLabel, { color: c.textPrimary }]}>{connected ? "Guests" : "Tutorials"}</Text>
+            <Text style={[s.quickDesc, { color: c.textMuted }]} numberOfLines={2}>
+              {connected ? "Invite others" : "Setup and guides"}
+            </Text>
+          </Pressable>
 
-        <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleTutorials}>
-          <Text style={[s.icon, { color: c.textMuted }]}>{"\u2302"}</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={[s.label, { color: c.textPrimary }]}>Tutorials</Text>
-            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Setup and guides</Text>
-          </View>
-          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-        </Pressable>
+          <Pressable
+            style={[s.quickCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={handleSettings}
+          >
+            <Text style={[s.quickIcon, { color: c.textMuted }]}>{"\u2699"}</Text>
+            <Text style={[s.quickLabel, { color: c.textPrimary }]}>Settings</Text>
+            <Text style={[s.quickDesc, { color: c.textMuted }]} numberOfLines={2}>Preferences</Text>
+          </Pressable>
+        </View>
 
-        <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleSettings}>
-          <Text style={[s.icon, { color: c.textMuted }]}>{"\u2699"}</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={[s.label, { color: c.textPrimary }]}>Settings</Text>
-            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Theme and preferences</Text>
+        {!connected ? (
+          <View style={[s.emptyStateCard, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+            <Text style={[s.emptyStateTitle, { color: c.textPrimary }]}>No remote machine connected</Text>
+            <Text style={[s.emptyStateText, { color: c.textMuted }]}>
+              Start on this phone now with Mobile Sandbox, or pair a Yaver machine when you want remote coding, builds, and infra tools.
+            </Text>
           </View>
-          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-        </Pressable>
+        ) : null}
+
+        {connected ? <Text style={[s.inlineSectionTitle, { color: c.textMuted }]}>Developer Tools</Text> : null}
+
+        {connected ? (
+          <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleTutorials}>
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u2302"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Tutorials</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Setup and guides</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        ) : null}
 
         {/* Quality Gates — navigate to dedicated screen */}
         {connected && (
@@ -3032,7 +3060,68 @@ export default function MoreScreen() {
 
 const s = StyleSheet.create({
   safe: { flex: 1 },
-  list: { padding: 16, gap: 8 },
+  list: { padding: 16, paddingTop: 12, paddingBottom: 28, gap: 10 },
+  heroHeader: {
+    marginBottom: 2,
+    gap: 4,
+  },
+  pageTitle: {
+    fontSize: 28,
+    fontWeight: "700",
+    letterSpacing: -0.4,
+  },
+  pageSubtitle: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  quickGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  quickCard: {
+    width: "48.5%",
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    minHeight: 112,
+  },
+  quickIcon: {
+    fontSize: 18,
+    marginBottom: 14,
+  },
+  quickLabel: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  quickDesc: {
+    fontSize: 12,
+    marginTop: 4,
+    lineHeight: 16,
+  },
+  inlineSectionTitle: {
+    marginTop: 8,
+    marginBottom: 2,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+  },
+  emptyStateCard: {
+    borderWidth: 1,
+    borderRadius: 18,
+    padding: 16,
+    gap: 6,
+  },
+  emptyStateTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  emptyStateText: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
   sectionHeader: {
     gap: 3,
     marginTop: 12,
@@ -3050,13 +3139,52 @@ const s = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     padding: 14,
-    borderRadius: 10,
+    borderRadius: 16,
     borderWidth: 1,
     gap: 12,
   },
-  icon: { fontSize: 22 },
+  heroCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 18,
+    borderRadius: 20,
+    borderWidth: 1,
+    gap: 14,
+    shadowOpacity: 0.14,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
+    marginBottom: 2,
+  },
+  heroIconWrap: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  icon: {
+    fontSize: 18,
+    width: 34,
+    height: 34,
+    lineHeight: 34,
+    textAlign: "center",
+    borderRadius: 10,
+    overflow: "hidden",
+  },
+  heroIcon: { fontSize: 24 },
+  eyebrow: {
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: 3,
+  },
+  heroLabel: { fontSize: 18, fontWeight: "700" },
+  heroDesc: { fontSize: 13, marginTop: 4, lineHeight: 18 },
   label: { fontSize: 15, fontWeight: "600" },
-  desc: { fontSize: 12, marginTop: 2 },
+  desc: { fontSize: 12, marginTop: 3 },
   modalHeader: {
     flexDirection: "row",
     alignItems: "center",
