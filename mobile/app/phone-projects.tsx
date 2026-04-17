@@ -16,15 +16,33 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useColors } from "../src/context/ThemeContext";
-import { useDevice } from "../src/context/DeviceContext";
+import { useDevice, type Device } from "../src/context/DeviceContext";
+import { quicClient } from "../src/lib/quic";
 import {
   PhoneProject,
+  PhonePushTarget,
   PhoneTemplate,
   createPhoneProject,
+  createPhoneProjectAt,
   deletePhoneProject,
   listPhoneProjects,
   listPhoneTemplates,
 } from "../src/lib/phoneProjects";
+
+type StartMode = "this-device" | "dev-hw" | "yaver-cloud";
+
+const YAVER_CLOUD_BASE = "https://cloud.yaver.io";
+
+function pickDevMachines(all: Device[], currentId: string | undefined): Device[] {
+  return all.filter(
+    (d) =>
+      d.online &&
+      !d.isGuest &&
+      !d.needsAuth &&
+      d.id !== currentId &&
+      d.deviceClass !== "edge-mobile",
+  );
+}
 
 // Phone-first mini-backend list + inline wizard. See MOBILE_WORKER.md §213-419
 // and desktop/agent/phone_backend.go.
@@ -33,7 +51,7 @@ export default function PhoneProjectsScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { connectionStatus } = useDevice();
+  const { connectionStatus, devices, activeDevice } = useDevice();
   const connected = connectionStatus === "connected";
 
   const [projects, setProjects] = useState<PhoneProject[]>([]);
@@ -46,6 +64,27 @@ export default function PhoneProjectsScreen() {
   const [name, setName] = useState("");
   const [template, setTemplate] = useState("todos");
   const [creating, setCreating] = useState(false);
+
+  // yc.md §Wedge Demo — user picks where the mini-backend lives at creation
+  // time. "this-device" is the pragmatic default (lives on whichever agent
+  // the phone is currently connected to; in practice that's the user's Mac).
+  // The three-tier continuum per MOBILE_WORKER.md §Portability Contract:
+  // phone → user's own hardware → Yaver managed cloud.
+  const [startMode, setStartMode] = useState<StartMode>("this-device");
+  const devMachines = useMemo(
+    () => pickDevMachines(devices, activeDevice?.id),
+    [devices, activeDevice?.id],
+  );
+  const [selectedDevMachineId, setSelectedDevMachineId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!selectedDevMachineId && devMachines.length) {
+      setSelectedDevMachineId(devMachines[0].id);
+    }
+  }, [devMachines, selectedDevMachineId]);
+  const selectedDevMachine = useMemo(
+    () => devMachines.find((d) => d.id === selectedDevMachineId) ?? null,
+    [devMachines, selectedDevMachineId],
+  );
 
   const load = useCallback(async () => {
     if (!connected) return;
@@ -77,17 +116,75 @@ export default function PhoneProjectsScreen() {
     }
     setCreating(true);
     try {
-      const p = await createPhoneProject({ name: name.trim(), template });
-      if (!p) throw new Error("agent returned no project");
+      const spec = { name: name.trim(), template };
+      let p: PhoneProject | null = null;
+      let where = "";
+
+      if (startMode === "this-device") {
+        p = await createPhoneProject(spec);
+        where = "on this device";
+      } else if (startMode === "dev-hw") {
+        if (!selectedDevMachine) {
+          throw new Error("No dev machine online. Sign in with Yaver on your Mac/Pi/Linux.");
+        }
+        const relayHttpUrl = quicClient.activeRelayHttpUrl;
+        if (!relayHttpUrl) {
+          throw new Error(
+            "This phone is connected directly to the current agent, not via relay. Cross-device create needs a relay route.",
+          );
+        }
+        const target: PhonePushTarget = {
+          kind: "dev-hw",
+          deviceId: selectedDevMachine.id,
+          relayHttpUrl,
+        };
+        p = await createPhoneProjectAt(target, spec);
+        where = `on ${selectedDevMachine.name}`;
+      } else {
+        // yaver-cloud
+        const target: PhonePushTarget = { kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE };
+        p = await createPhoneProjectAt(target, spec);
+        where = "on Yaver Cloud";
+      }
+
+      if (!p) throw new Error("target returned no project");
       setName("");
       setShowForm(false);
-      await load();
-      router.navigate(`/phone-project/${p.slug}` as any);
+      // Only refresh the local list — remote projects aren't in the user's
+      // connected-agent list, so jumping straight to the detail screen for
+      // a local project is the useful UX. For remote, show a toast.
+      if (startMode === "this-device") {
+        await load();
+        router.navigate(`/phone-project/${p.slug}` as any);
+      } else {
+        Alert.alert(
+          "Created",
+          `"${p.name}" is now running ${where}. Slug: ${p.slug}. It'll show up here once you connect to that agent.`,
+        );
+        await load();
+      }
     } catch (e: any) {
       Alert.alert("Phone Backend", e?.message ?? "failed to create");
     } finally {
       setCreating(false);
     }
+  }
+
+  function pickDevMachine() {
+    if (!devMachines.length) {
+      Alert.alert(
+        "No dev machines online",
+        "Install Yaver on your Mac / Pi / Linux and sign in with the same account.",
+      );
+      return;
+    }
+    Alert.alert("Pick a dev machine", "Where should this project live?", [
+      ...devMachines.map((d) => ({
+        text: `${d.name}${d.local ? " (LAN)" : ""}`,
+        onPress: () => setSelectedDevMachineId(d.id),
+      })),
+      { text: "Cancel", style: "cancel" as const },
+    ]);
   }
 
   async function remove(p: PhoneProject) {
@@ -135,6 +232,61 @@ export default function PhoneProjectsScreen() {
               placeholderTextColor={c.textMuted}
               style={[styles.input, { color: c.textPrimary, borderColor: c.border }]}
             />
+            <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Where should it live?</Text>
+            {(
+              [
+                {
+                  id: "this-device" as StartMode,
+                  label: "This device",
+                  sub: activeDevice?.name ? `→ ${activeDevice.name}` : "The agent you're currently connected to",
+                },
+                {
+                  id: "dev-hw" as StartMode,
+                  label: "Your Dev Machine",
+                  sub: selectedDevMachine
+                    ? `→ ${selectedDevMachine.name}${devMachines.length > 1 ? " (tap to change)" : ""}`
+                    : devMachines.length
+                      ? "Pick a paired Mac / Pi / Linux box"
+                      : "No other devices paired yet",
+                  disabled: devMachines.length === 0,
+                  onLongPress: pickDevMachine,
+                },
+                {
+                  id: "yaver-cloud" as StartMode,
+                  label: "Yaver Cloud",
+                  sub: YAVER_CLOUD_BASE.replace(/^https?:\/\//, "") + " · managed Hetzner tenant",
+                },
+              ] as const
+            ).map((opt) => (
+              <Pressable
+                key={opt.id}
+                onPress={() => {
+                  if ((opt as any).disabled) {
+                    (opt as any).onLongPress?.();
+                    return;
+                  }
+                  setStartMode(opt.id);
+                  if (opt.id === "dev-hw" && devMachines.length > 1) {
+                    pickDevMachine();
+                  }
+                }}
+                onLongPress={(opt as any).onLongPress}
+                style={[
+                  styles.templateRow,
+                  {
+                    backgroundColor: startMode === opt.id ? c.accent + "22" : "transparent",
+                    borderColor: startMode === opt.id ? c.accent : c.border,
+                    opacity: (opt as any).disabled ? 0.5 : 1,
+                  },
+                ]}
+              >
+                <Text style={[styles.templateLabel, { color: c.textPrimary }]}>{opt.label}</Text>
+                <Text style={[styles.muted, { color: c.textMuted }]} numberOfLines={2}>
+                  {opt.sub}
+                </Text>
+              </Pressable>
+            ))}
+
             <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Template</Text>
             {templates.map((t) => (
               <Pressable
@@ -180,7 +332,20 @@ export default function PhoneProjectsScreen() {
         ) : null}
       </View>
     ),
-    [c, connected, creating, err, name, showForm, template, templates],
+    [
+      c,
+      connected,
+      creating,
+      err,
+      name,
+      showForm,
+      template,
+      templates,
+      startMode,
+      activeDevice,
+      selectedDevMachine,
+      devMachines.length,
+    ],
   );
 
   if (!connected) {
