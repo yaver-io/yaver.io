@@ -357,6 +357,10 @@ function BlobsTab() {
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
   const [total, setTotal] = useState<number>(0);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [prefix, setPrefix] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [sharing, setSharing] = useState<{ key: string; url: string; expiresIn: number } | null>(null);
+  const [ttlSec, setTtlSec] = useState<number>(300);
   const [err, setErr] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadLabel, setUploadLabel] = useState("");
@@ -446,10 +450,69 @@ function BlobsTab() {
       await agentClient.blobsDelete(active, k);
       const data = await agentClient.blobsListKeys(active);
       setKeys(data.keys || []);
+      setSelected((prev) => {
+        const next = new Set(prev);
+        next.delete(k);
+        return next;
+      });
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
   }
+
+  async function removeSelected() {
+    if (!active || selected.size === 0) return;
+    if (!window.confirm(`Delete ${selected.size} selected key(s)?`)) return;
+    const failures: string[] = [];
+    await Promise.all(
+      Array.from(selected).map(async (k) => {
+        try {
+          await agentClient.blobsDelete(active, k);
+        } catch {
+          failures.push(k);
+        }
+      }),
+    );
+    setSelected(new Set());
+    const data = await agentClient.blobsListKeys(active, { limit: 200 });
+    setKeys(data.keys || []);
+    setNextCursor(data.nextCursor);
+    if (failures.length > 0) {
+      setErr(`failed to delete: ${failures.slice(0, 5).join(", ")}${failures.length > 5 ? "…" : ""}`);
+    }
+  }
+
+  async function download(k: string) {
+    if (!active) return;
+    try {
+      await agentClient.blobsDownload(active, k);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function sign(k: string) {
+    if (!active) return;
+    try {
+      const res = await agentClient.blobsSignUrl(active, k, ttlSec);
+      setSharing({ key: k, url: res.url, expiresIn: res.expiresIn });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  function toggleSelect(k: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  }
+
+  const filteredKeys = prefix.trim()
+    ? keys.filter((k) => k.key.toLowerCase().includes(prefix.toLowerCase()))
+    : keys;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
@@ -491,11 +554,15 @@ function BlobsTab() {
       )}
       {buckets.length > 0 && (
         <>
-          <div className="flex items-center gap-2 text-xs">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
             <select
               className="rounded border border-surface-700 bg-surface-900 px-2 py-1 text-sm"
               value={active ?? ""}
-              onChange={(e) => setActive(e.target.value)}
+              onChange={(e) => {
+                setActive(e.target.value);
+                setSelected(new Set());
+                setPrefix("");
+              }}
             >
               {buckets.map((b) => (
                 <option key={b} value={b}>
@@ -503,18 +570,101 @@ function BlobsTab() {
                 </option>
               ))}
             </select>
+            <input
+              className="w-40 rounded border border-surface-700 bg-surface-900 px-2 py-1 text-sm"
+              placeholder="filter keys…"
+              value={prefix}
+              onChange={(e) => setPrefix(e.target.value)}
+            />
             <span className="text-surface-500">
-              {keys.length}
+              {filteredKeys.length}
               {total > keys.length ? ` / ${total}` : ""} key(s)
             </span>
+            {selected.size > 0 && (
+              <button
+                type="button"
+                className="ml-auto rounded bg-red-900/40 px-2 py-0.5 text-red-200 hover:bg-red-900/70"
+                onClick={() => void removeSelected()}
+              >
+                Delete {selected.size}
+              </button>
+            )}
+          </div>
+          {sharing && (
+            <div className="rounded border border-indigo-500/40 bg-indigo-950/30 p-3 text-sm">
+              <p className="text-indigo-200">
+                Signed URL for <code className="text-indigo-100">{sharing.key}</code> — expires in {sharing.expiresIn}s
+              </p>
+              <div className="mt-2 flex gap-2">
+                <input
+                  className="flex-1 rounded border border-surface-700 bg-surface-900 px-2 py-1 font-mono text-xs"
+                  readOnly
+                  value={sharing.url}
+                  onFocus={(e) => e.currentTarget.select()}
+                />
+                <button
+                  type="button"
+                  className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold"
+                  onClick={() => void navigator.clipboard.writeText(sharing.url).catch(() => {})}
+                >
+                  Copy
+                </button>
+                <button
+                  type="button"
+                  className="rounded bg-surface-800 px-3 py-1 text-xs"
+                  onClick={() => setSharing(null)}
+                >
+                  Close
+                </button>
+              </div>
+              <p className="mt-1 text-[11px] text-surface-500">
+                Anyone with this link can read the blob until it expires. Never share a URL whose agent is on a private LAN if the recipient is outside that network.
+              </p>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-surface-500">
+            <span>share TTL:</span>
+            {[300, 3600, 86400].map((sec) => (
+              <button
+                key={sec}
+                type="button"
+                className={`rounded px-2 py-0.5 ${
+                  ttlSec === sec ? "bg-indigo-900/60 text-indigo-100" : "bg-surface-900 hover:text-surface-200"
+                }`}
+                onClick={() => setTtlSec(sec)}
+              >
+                {sec === 300 ? "5 min" : sec === 3600 ? "1 hour" : "1 day"}
+              </button>
+            ))}
           </div>
           <ul className="min-h-0 flex-1 overflow-auto rounded border border-surface-700 text-sm">
-            {keys.map((k) => (
-              <li key={k.key} className="flex items-center justify-between px-3 py-1 hover:bg-surface-800">
-                <span className="truncate font-mono">{k.key}</span>
+            {filteredKeys.map((k) => (
+              <li key={k.key} className="flex items-center gap-2 px-3 py-1 hover:bg-surface-800">
+                <input
+                  type="checkbox"
+                  className="accent-indigo-500"
+                  checked={selected.has(k.key)}
+                  onChange={() => toggleSelect(k.key)}
+                />
+                <button
+                  type="button"
+                  className="flex-1 truncate text-left font-mono hover:text-indigo-300"
+                  onClick={() => void download(k.key)}
+                  title="Click to download"
+                >
+                  {k.key}
+                </button>
                 <span className="flex items-center gap-2 text-xs text-surface-500">
                   {k.contentType && <code className="text-surface-400">{k.contentType}</code>}
                   {typeof k.size === "number" && <span>{k.size}B</span>}
+                  <button
+                    type="button"
+                    onClick={() => void sign(k.key)}
+                    className="rounded bg-surface-800 px-2 py-0.5 hover:bg-surface-700"
+                    title="Generate a signed share URL"
+                  >
+                    Share
+                  </button>
                   <button
                     type="button"
                     onClick={() => void remove(k.key)}

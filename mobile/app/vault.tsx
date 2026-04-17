@@ -49,6 +49,7 @@ export default function VaultScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [filter, setFilter] = useState<Set<VaultCategory>>(new Set(CATEGORIES));
+  const [masks, setMasks] = useState<Record<string, string>>({});
 
   // Add form state
   const [draftName, setDraftName] = useState("");
@@ -96,6 +97,36 @@ export default function VaultScreen() {
   async function copy(value: string) {
     await Clipboard.setStringAsync(value);
     Alert.alert("Vault", "Copied to clipboard");
+  }
+
+  // Quick-copy: fetch + copy + throw away the plaintext (never rendered).
+  async function quickCopy(name: string) {
+    try {
+      const entry = await quicClient.vaultGet(name);
+      await Clipboard.setStringAsync(entry.value);
+      Alert.alert("Vault", `${name} copied`);
+    } catch (e: any) {
+      Alert.alert("Vault", e?.message ?? "failed");
+    }
+  }
+
+  async function toggleMask(name: string) {
+    if (masks[name]) {
+      setMasks((prev) => {
+        const next = { ...prev };
+        delete next[name];
+        return next;
+      });
+      return;
+    }
+    try {
+      const entry = await quicClient.vaultGet(name);
+      const v = entry.value;
+      const hint = v.length <= 10 ? `${v.slice(0, 1)}…${v.slice(-1)}` : `${v.slice(0, 4)}…${v.slice(-4)}`;
+      setMasks((prev) => ({ ...prev, [name]: hint }));
+    } catch (e: any) {
+      Alert.alert("Vault", e?.message ?? "failed");
+    }
   }
 
   async function remove(name: string) {
@@ -163,6 +194,23 @@ export default function VaultScreen() {
         {item.notes ? (
           <Text style={{ color: c.textMuted, marginTop: 4 }}>{item.notes}</Text>
         ) : null}
+        {!value && masks[item.name] ? (
+          <Text
+            style={{
+              color: c.textMuted,
+              fontFamily: "monospace",
+              backgroundColor: c.bg,
+              paddingHorizontal: 6,
+              paddingVertical: 2,
+              alignSelf: "flex-start",
+              marginTop: 4,
+              borderRadius: 2,
+              fontSize: 11,
+            }}
+          >
+            {masks[item.name]}
+          </Text>
+        ) : null}
         {value ? (
           <View style={[s.valueBox, { backgroundColor: c.bg }]}>
             <Text style={{ color: c.textPrimary, fontFamily: "monospace" }} selectable>
@@ -170,7 +218,19 @@ export default function VaultScreen() {
             </Text>
           </View>
         ) : null}
-        <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+          <Pressable
+            style={[s.btn, { backgroundColor: c.bg, borderColor: c.border }]}
+            onPress={() => quickCopy(item.name)}
+          >
+            <Text style={{ color: c.textPrimary }}>Copy</Text>
+          </Pressable>
+          <Pressable
+            style={[s.btn, { backgroundColor: c.bg, borderColor: c.border }]}
+            onPress={() => toggleMask(item.name)}
+          >
+            <Text style={{ color: c.textPrimary }}>{masks[item.name] ? "Hide mask" : "Preview"}</Text>
+          </Pressable>
           <Pressable
             style={[s.btn, { backgroundColor: c.bg, borderColor: c.border }]}
             onPress={() => toggleReveal(item.name)}
@@ -182,7 +242,7 @@ export default function VaultScreen() {
               style={[s.btn, { backgroundColor: c.bg, borderColor: c.border }]}
               onPress={() => copy(value)}
             >
-              <Text style={{ color: c.textPrimary }}>Copy</Text>
+              <Text style={{ color: c.textPrimary }}>Copy shown</Text>
             </Pressable>
           ) : null}
           <Pressable

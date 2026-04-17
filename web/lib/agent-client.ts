@@ -2501,6 +2501,44 @@ class AgentClient {
     if (!res.ok) throw new Error(`blob delete: HTTP ${res.status}`);
   }
 
+  // Generate a time-limited HMAC-signed URL anyone can open (the
+  // agent's /blobs/public handler verifies the signature). TTL in
+  // seconds; default 300 (5 min). Returned URL is fully qualified
+  // against the agent's base — careful when sharing if the agent is
+  // on a LAN-only IP.
+  async blobsSignUrl(bucket: string, key: string, ttlSeconds = 300): Promise<{ url: string; expiresIn: number }> {
+    this.assertConnected();
+    const p = new URLSearchParams({ ttl: String(ttlSeconds) });
+    const res = await fetch(
+      `${this.baseUrl}/blobs/url/${encodeURIComponent(bucket)}/${encodeURIComponent(key)}?${p}`,
+      { headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`blob sign: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  // Authenticated fetch + trigger a browser download. Bytes stay
+  // between agent and this tab — no redirect or public URL generated
+  // unless the caller explicitly uses blobsSignUrl.
+  async blobsDownload(bucket: string, key: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/blobs/${encodeURIComponent(bucket)}/${encodeURIComponent(key)}`,
+      { headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`blob download: HTTP ${res.status}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = key.split("/").pop() || key;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Free the object URL after the click has kicked off.
+    setTimeout(() => URL.revokeObjectURL(url), 5_000);
+  }
+
   // PUT a File straight into a bucket. The agent persists it to
   // ~/.yaver/blobs/<bucket>/<key> and returns metadata. Bytes never
   // transit Convex. `onProgress` receives (loaded, total) pairs so
