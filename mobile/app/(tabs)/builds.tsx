@@ -225,12 +225,13 @@ export default function BuildsScreen() {
     let mounted = true;
     const poll = async () => {
       try {
-        const [list, ds] = await Promise.all([
-          quicClient.listProjects(),
+        const [projectData, ds] = await Promise.all([
+          quicClient.listProjectsDetailed(),
           quicClient.getDevServerStatus(),
         ]);
         if (mounted) {
-          setProjects(list);
+          setProjects(projectData.projects);
+          setDiscovering(!!projectData.discovery?.discovering);
           setDevStatus(ds?.running ? ds : null);
         }
       } catch {}
@@ -243,13 +244,8 @@ export default function BuildsScreen() {
   const handleDiscover = useCallback(async () => {
     setDiscovering(true);
     try {
-      // Trigger fresh project discovery via a task
-      await quicClient.sendTask(
-        "Discover all projects on this machine",
-        "Run yaver discover to scan for git repositories and update the project list.",
-      );
+      await quicClient.refreshProjects();
     } catch {}
-    setTimeout(() => setDiscovering(false), 3000);
   }, []);
 
   const handleStartProject = useCallback(async (name: string, path: string) => {

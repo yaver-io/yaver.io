@@ -1322,15 +1322,45 @@ export class QuicClient {
 
   // ── Projects (discovery + switching) ────────────────────────────
 
-  /** List discovered projects on the machine. */
-  async listProjects(): Promise<{ name: string; path: string; branch?: string; framework?: string; gitRemote?: string; tags?: string[] }[]> {
+  /** List discovered projects on the machine, with discovery-state metadata. */
+  async listProjectsDetailed(): Promise<{
+    projects: { name: string; path: string; branch?: string; framework?: string; gitRemote?: string; tags?: string[] }[];
+    discovery?: {
+      status?: "idle" | "discovering" | "partial" | "ready";
+      discovering?: boolean;
+      partiallyReady?: boolean;
+      lastStartedAt?: string;
+      lastCompletedAt?: string;
+      lastError?: string;
+    };
+  }> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/projects`, {
       headers: this.authHeaders,
     });
     if (!res.ok) throw new Error(`Failed to list projects: ${res.status}`);
     const data = await res.json();
-    return data.projects ?? [];
+    return {
+      projects: data.projects ?? [],
+      discovery: data.discovery,
+    };
+  }
+
+  /** List discovered projects on the machine. */
+  async listProjects(): Promise<{ name: string; path: string; branch?: string; framework?: string; gitRemote?: string; tags?: string[] }[]> {
+    const data = await this.listProjectsDetailed();
+    return data.projects;
+  }
+
+  /** Trigger a fresh machine-wide repo discovery. */
+  async refreshProjects(): Promise<{ ok?: boolean; message?: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/projects/refresh`, {
+      method: "POST",
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to refresh projects: ${res.status}`);
+    return res.json();
   }
 
   /** Switch agent to a different project (by fuzzy name or path). Optionally start dev server. */

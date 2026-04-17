@@ -102,6 +102,7 @@ export default function AppsScreen() {
   const [deepShuffleActive, setDeepShuffleActive] = useState(false);
   const [deepShuffleText, setDeepShuffleText] = useState("");
   const [deepShuffleStep, setDeepShuffleStep] = useState("");
+  const [projectsDiscovering, setProjectsDiscovering] = useState(false);
   const webViewRef = useRef<WebView>(null);
 
   // Poll dev server status + all projects
@@ -125,17 +126,19 @@ export default function AppsScreen() {
 
     const fetchProjects = async () => {
       try {
-        const list = await quicClient.listProjects();
-        if (mounted) setProjects(list);
+        const data = await quicClient.listProjectsDetailed();
+        if (!mounted) return;
+        setProjects(data.projects);
+        setProjectsDiscovering(!!data.discovery?.discovering);
       } catch {}
     };
 
     pollStatus();
     fetchProjects();
     const statusInterval = setInterval(pollStatus, 3000);
-    const projectInterval = setInterval(fetchProjects, 30000);
+    const projectInterval = setInterval(fetchProjects, projectsDiscovering ? 2500 : 15000);
     return () => { mounted = false; clearInterval(statusInterval); clearInterval(projectInterval); };
-  }, [isConnected]);
+  }, [isConnected, projectsDiscovering]);
 
   // SSE auto-reload
   useEffect(() => {
@@ -805,8 +808,23 @@ export default function AppsScreen() {
           ListEmptyComponent={
             <View style={s.emptyList}>
               <Text style={[s.emptySubtitle, { color: c.textMuted }]}>
-                No projects discovered yet.{"\n"}The agent scans your home directory automatically.
+                {projectsDiscovering
+                  ? "Discovering projects on your machine…"
+                  : "No projects discovered yet.\nThe agent scans your home directory automatically."}
               </Text>
+              <Pressable
+                style={[s.emptyCta, { borderColor: c.border, backgroundColor: c.bgCard }]}
+                onPress={async () => {
+                  try {
+                    setProjectsDiscovering(true);
+                    await quicClient.refreshProjects();
+                  } catch {}
+                }}
+              >
+                <Text style={[s.emptyCtaText, { color: c.textPrimary }]}>
+                  {projectsDiscovering ? "Discovering..." : "Rediscover"}
+                </Text>
+              </Pressable>
             </View>
           }
         />
@@ -1322,6 +1340,8 @@ const s = StyleSheet.create({
   emptyTitle: { fontSize: 18, fontWeight: "700", marginBottom: 4 },
   emptySubtitle: { fontSize: 13, textAlign: "center", lineHeight: 20 },
   emptyList: { padding: 40, alignItems: "center" },
+  emptyCta: { marginTop: 14, borderWidth: 1, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10 },
+  emptyCtaText: { fontSize: 14, fontWeight: "600" },
 
   // WebView header
   webViewHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 12, paddingBottom: 10, borderBottomWidth: 1 },

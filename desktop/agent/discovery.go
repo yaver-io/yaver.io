@@ -12,10 +12,73 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 const projectsFileName = "PROJECTS.md"
+
+type projectDiscoveryStatus struct {
+	mu              sync.RWMutex
+	inProgress      bool
+	lastStartedAt   string
+	lastCompletedAt string
+	lastError       string
+}
+
+type projectDiscoverySnapshot struct {
+	Status          string `json:"status"`
+	Discovering     bool   `json:"discovering"`
+	PartiallyReady  bool   `json:"partiallyReady"`
+	LastStartedAt   string `json:"lastStartedAt,omitempty"`
+	LastCompletedAt string `json:"lastCompletedAt,omitempty"`
+	LastError       string `json:"lastError,omitempty"`
+}
+
+var discoveryStatusState = &projectDiscoveryStatus{}
+
+func markProjectDiscoveryStarted() {
+	discoveryStatusState.mu.Lock()
+	defer discoveryStatusState.mu.Unlock()
+	discoveryStatusState.inProgress = true
+	discoveryStatusState.lastStartedAt = time.Now().UTC().Format(time.RFC3339)
+	discoveryStatusState.lastError = ""
+}
+
+func markProjectDiscoveryFinished(err error) {
+	discoveryStatusState.mu.Lock()
+	defer discoveryStatusState.mu.Unlock()
+	discoveryStatusState.inProgress = false
+	if err != nil {
+		discoveryStatusState.lastError = err.Error()
+		return
+	}
+	discoveryStatusState.lastCompletedAt = time.Now().UTC().Format(time.RFC3339)
+	discoveryStatusState.lastError = ""
+}
+
+func currentProjectDiscoverySnapshot() projectDiscoverySnapshot {
+	discoveryStatusState.mu.RLock()
+	defer discoveryStatusState.mu.RUnlock()
+	snap := projectDiscoverySnapshot{
+		Discovering:     discoveryStatusState.inProgress,
+		LastStartedAt:   discoveryStatusState.lastStartedAt,
+		LastCompletedAt: discoveryStatusState.lastCompletedAt,
+		LastError:       discoveryStatusState.lastError,
+	}
+	switch {
+	case discoveryStatusState.inProgress && discoveryStatusState.lastCompletedAt != "":
+		snap.Status = "partial"
+		snap.PartiallyReady = true
+	case discoveryStatusState.inProgress:
+		snap.Status = "discovering"
+	case discoveryStatusState.lastCompletedAt != "":
+		snap.Status = "ready"
+	default:
+		snap.Status = "idle"
+	}
+	return snap
+}
 
 // yaverDir returns ~/.yaver, creating it if necessary.
 func yaverDir() (string, error) {
@@ -139,6 +202,12 @@ func getProjectContext() string {
 // discoverProjects scans the user's home directory for git repos,
 // collects system info and available tools, and writes ~/.yaver/PROJECTS.md.
 func discoverProjects() {
+	markProjectDiscoveryStarted()
+	var finishErr error
+	defer func() {
+		markProjectDiscoveryFinished(finishErr)
+	}()
+
 	var sb strings.Builder
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -173,10 +242,12 @@ func discoverProjects() {
 	fp, err := projectsFilePath()
 	if err != nil {
 		log.Printf("[discovery] could not determine file path: %v", err)
+		finishErr = err
 		return
 	}
 	if err := os.WriteFile(fp, []byte(sb.String()), 0600); err != nil {
 		log.Printf("[discovery] could not write %s: %v", fp, err)
+		finishErr = err
 	}
 }
 

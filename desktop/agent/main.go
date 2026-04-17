@@ -1801,9 +1801,11 @@ func runServe(args []string) {
 	}
 	log.Printf("Runner: %s (command=%s, mode=%s)", runner.Name, runner.Command, runner.OutputMode)
 
-	// Discover local projects in background (scans home dir for git repos, system info, tools)
-	log.Printf("Scanning for local projects (stored in ~/.yaver/PROJECTS.md, never uploaded)...")
-	go ensureProjectDiscovery()
+	// Refresh machine-wide project discovery on every serve start so the
+	// agent sees repos across home/workspace roots regardless of which repo
+	// the user launched `yaver serve` from.
+	log.Printf("Refreshing local projects cache (stored in ~/.yaver/PROJECTS.md, never uploaded)...")
+	go discoverProjects()
 
 	// Scan mobile projects + pre-build dev clients for Expo/RN (background)
 	go PrewarmMobileProjects()
