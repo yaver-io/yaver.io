@@ -2538,21 +2538,27 @@ func (s *HTTPServer) handleDoctor(w http.ResponseWriter, r *http.Request) {
 		{"amp", "Amp", "amp", "npm install -g @anthropic/amp"},
 		{"opencode", "OpenCode", "opencode", "go install github.com/mbreithecker/opencode@latest"},
 	}
-	for _, r := range runners {
-		p, err := osexec.LookPath(r.cmd)
+	for _, runner := range runners {
+		p, err := osexec.LookPath(runner.cmd)
 		if err != nil {
-			addCheck("runners", r.name, "warn", "Not installed — "+r.install)
-		} else {
-			out, verr := osexec.Command(r.cmd, "--version").CombinedOutput()
-			if verr == nil {
-				ver := strings.TrimSpace(strings.Split(string(out), "\n")[0])
-				if len(ver) > 60 {
-					ver = ver[:60]
-				}
-				addCheck("runners", r.name, "pass", fmt.Sprintf("%s (%s)", p, ver))
-			} else {
-				addCheck("runners", r.name, "pass", p)
+			addCheck("runners", runner.name, "warn", "Not installed — "+runner.install)
+			continue
+		}
+		// Cap each runner --version probe at 800ms. Some runners
+		// (claude, codex) open a network socket on first run and
+		// would otherwise stall the whole /agent/doctor response
+		// past the caller's read timeout.
+		probeCtx, cancel := context.WithTimeout(r.Context(), 800*time.Millisecond)
+		out, verr := osexec.CommandContext(probeCtx, runner.cmd, "--version").CombinedOutput()
+		cancel()
+		if verr == nil {
+			ver := strings.TrimSpace(strings.Split(string(out), "\n")[0])
+			if len(ver) > 60 {
+				ver = ver[:60]
 			}
+			addCheck("runners", runner.name, "pass", fmt.Sprintf("%s (%s)", p, ver))
+		} else {
+			addCheck("runners", runner.name, "pass", p)
 		}
 	}
 

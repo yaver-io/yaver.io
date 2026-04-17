@@ -382,6 +382,40 @@ verify_auth_rejection() {
 # ═══════════════════════════════════════════════════════════════════
 
 # ── Unit Tests ─────────────────────────────────────────────────────
+run_feature_tests() {
+    header "Feature Tests (vault + blobs + schedules + apikeys + wipe + two-agent)"
+
+    # Scoped Go test run — covers every focused HTTP integration the
+    # user can hit from web + mobile. No creds, no network, all
+    # loopback. Runs in ~5s on a laptop.
+    local patterns=(
+        TestVaultHTTP          # full /vault/* CRUD, support-bearer blocked
+        TestSchedulesHTTP      # CRUD + run-now + deadlock repro
+        TestScheduleRunNow
+        TestBlobsHTTP          # PUT/GET/DELETE, pagination, signed URL
+        TestBlobsList
+        TestAPIKeys            # registry list + disable + label cap
+        TestWipe               # selective + all + --including-auth
+        TestTwoAgent           # cross-agent support + cross-token isolation
+        TestSupport            # support session unit + integration
+        TestGuestAllowlist     # privacy-allowlist tripwires
+        TestSupportAllowlist
+        TestConvex             # convex payload privacy tripwires
+    )
+    local regex
+    regex=$(IFS='|'; echo "${patterns[*]}")
+
+    info "Running feature test pack (pattern: ${regex}) ..."
+    if (cd "$ROOT_DIR/desktop/agent" && go test -v -count=1 -timeout 120s -run "${regex}" ./... > "$TEST_DIR/feature-test.log" 2>&1); then
+        local passed
+        passed=$(grep -c '^--- PASS' "$TEST_DIR/feature-test.log" || true)
+        pass "Feature tests passed (${passed} subtests)"
+    else
+        fail "Feature tests failed — log at $TEST_DIR/feature-test.log"
+        tail -30 "$TEST_DIR/feature-test.log"
+    fi
+}
+
 run_unit_tests() {
     header "Unit Tests"
 
@@ -2356,10 +2390,12 @@ run_ollama_ci_test() {
     local run_ollama=false
     local run_ollama_ci=false
     local run_hybrid_local=false
+    local run_features=false
 
     for arg in "$@"; do
         case "$arg" in
             --unit)           run_unit=true; run_all=false ;;
+            --features)       run_features=true; run_all=false ;;
             --builds)         run_builds=true; run_all=false ;;
             --lan)            run_lan=true; run_all=false ;;
             --relay)          run_relay=true; run_all=false ;;
@@ -2402,6 +2438,9 @@ Flags:
   --ollama          Ollama integration test — local (requires ollama + qwen2.5-coder:1.5b)
   --ollama-ci       Ollama CI test — installs ollama + model, runs on any Linux runner
   --hybrid-local    Hybrid mode end-to-end: aider+ollama+qwen builds a calculator, assert it works
+  --features        Feature-focused test pack: vault CRUD, blobs HTTP, schedules,
+                    API keys, wipe, two-agent support connect, privacy tripwires.
+                    No credentials needed — all over loopback.
 
 Environment:
   Credentials loaded from: env vars > .env.test > ../talos/.env.test
@@ -2419,6 +2458,10 @@ HELP
 
     if $run_all || $run_unit; then
         run_unit_tests
+    fi
+
+    if $run_all || $run_features; then
+        run_feature_tests
     fi
 
     if $run_all || $run_builds; then
