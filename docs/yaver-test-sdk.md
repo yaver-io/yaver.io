@@ -206,6 +206,37 @@ The macro expands in place. Depth-guarded (max 8) and cycle-safe.
 | Safari (macOS)  | Local  | `safaridriver` (W3C)                     | Opt-in: `sudo safaridriver --enable` once.             |
 | Firefox         | Yes    | `geckodriver` (W3C)                      | Ships built-in.                                        |
 
+For mobile smoke specs in CI, keep the spec committed and pass the
+build output in via env vars:
+
+```yaml
+# yaver-tests/mobile-ios-smoke.test.yaml
+name: ${YAVER_TEST_IOS_SIM_DEVICE} local-first smoke
+target: ios-sim
+url: ${YAVER_TEST_IOS_SIM_DEVICE}
+app: ${YAVER_TEST_IOS_APP}
+steps:
+  - goto: ${YAVER_TEST_IOS_BUNDLE_ID}
+  - sleep_ms: 3000
+  - screenshot: true
+```
+
+```bash
+export YAVER_TEST_IOS_SIM_DEVICE="iPhone 17 Pro"
+export YAVER_TEST_IOS_APP="/tmp/Derived/Build/Products/Debug-iphonesimulator/Yaver.app"
+export YAVER_TEST_IOS_BUNDLE_ID="io.yaver.mobile"
+yaver test run yaver-tests/mobile-ios-smoke.test.yaml
+```
+
+Same shape for Android:
+
+```bash
+export YAVER_TEST_ANDROID_AVD="Pixel_6_API_34"
+export YAVER_TEST_ANDROID_APK="$PWD/mobile/android/app/build/outputs/apk/debug/app-debug.apk"
+export YAVER_TEST_ANDROID_PACKAGE="io.yaver.mobile"
+yaver test run yaver-tests/mobile-android-smoke.test.yaml
+```
+
 ---
 
 ## CLI surface

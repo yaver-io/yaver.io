@@ -1,0 +1,8 @@
+name: ${YAVER_TEST_ANDROID_AVD} local-first smoke
+target: android-emu
+url: ${YAVER_TEST_ANDROID_AVD}
+app: ${YAVER_TEST_ANDROID_APK}
+steps:
+  - goto: ${YAVER_TEST_ANDROID_PACKAGE}
+  - sleep_ms: 3000
+  - screenshot: true

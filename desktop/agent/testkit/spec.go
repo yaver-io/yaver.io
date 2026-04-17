@@ -259,6 +259,7 @@ func loadSpecDepth(path string, depth int) (*Spec, error) {
 	if s.Target == "" {
 		s.Target = TargetWeb
 	}
+	s.expandEnv()
 	if s.TimeoutMS == 0 {
 		s.TimeoutMS = 7000
 	}
@@ -313,6 +314,50 @@ func loadSpecDepth(path string, depth int) (*Spec, error) {
 	s.Teardown = expanded
 
 	return &s, nil
+}
+
+func (s *Spec) expandEnv() {
+	s.Name = os.ExpandEnv(s.Name)
+	s.URL = os.ExpandEnv(s.URL)
+	s.App = os.ExpandEnv(s.App)
+	for i := range s.Include {
+		s.Include[i] = os.ExpandEnv(s.Include[i])
+	}
+	for i := range s.Setup {
+		expandEnvStep(&s.Setup[i])
+	}
+	for i := range s.Steps {
+		expandEnvStep(&s.Steps[i])
+	}
+	for i := range s.Teardown {
+		expandEnvStep(&s.Teardown[i])
+	}
+}
+
+func expandEnvStep(step *Step) {
+	step.Goto = os.ExpandEnv(step.Goto)
+	step.Click = os.ExpandEnv(step.Click)
+	step.WaitFor = os.ExpandEnv(step.WaitFor)
+	step.WaitForURL = os.ExpandEnv(step.WaitForURL)
+	step.AssertVisible = os.ExpandEnv(step.AssertVisible)
+	step.AssertText = os.ExpandEnv(step.AssertText)
+	step.AssertTitle = os.ExpandEnv(step.AssertTitle)
+	step.AssertURL = os.ExpandEnv(step.AssertURL)
+	step.Snapshot = os.ExpandEnv(step.Snapshot)
+	step.Inspect = os.ExpandEnv(step.Inspect)
+	step.SaveHAR = os.ExpandEnv(step.SaveHAR)
+	step.Eval = os.ExpandEnv(step.Eval)
+	step.Include = os.ExpandEnv(step.Include)
+	if step.Fill != nil {
+		step.Fill.Selector = os.ExpandEnv(step.Fill.Selector)
+		step.Fill.Text = os.ExpandEnv(step.Fill.Text)
+	}
+	if step.A11y != nil {
+		step.A11y.MinImpact = os.ExpandEnv(step.A11y.MinImpact)
+		for i := range step.A11y.Tags {
+			step.A11y.Tags[i] = os.ExpandEnv(step.A11y.Tags[i])
+		}
+	}
 }
 
 // loadIncludeBody resolves a single include path (relative to baseDir)
