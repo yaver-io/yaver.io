@@ -64,6 +64,84 @@ func TestCreatePhoneProject_DuplicateSlug(t *testing.T) {
 	}
 }
 
+func TestCreatePhoneProject_FromPromptUsesGeneratedSpec(t *testing.T) {
+	setupPhoneTestHome(t)
+	old := runPhonePromptGenerator
+	t.Cleanup(func() { runPhonePromptGenerator = old })
+	runPhonePromptGenerator = func(spec AIGeneratorSpec) (string, error) {
+		return `{
+  "name": "Prompt Todos",
+  "schema": {
+    "tables": [
+      {
+        "name": "users",
+        "columns": [
+          {"name":"id","type":"text","primary":true},
+          {"name":"email","type":"text","required":true,"unique":true}
+        ]
+      },
+      {
+        "name": "todos",
+        "columns": [
+          {"name":"id","type":"text","primary":true,"default":"uuid"},
+          {"name":"title","type":"text","required":true},
+          {"name":"done","type":"bool","default":"false"},
+          {"name":"owner_id","type":"text"}
+        ]
+      }
+    ],
+    "relations": [{"from":"todos.owner_id","to":"users.id","onDelete":"cascade"}]
+  },
+  "auth": {
+    "personas": [{"id":"owner","email":"owner@example.com","name":"Owner","role":"owner"}]
+  },
+  "seed": {
+    "todos": [{"id":"welcome","title":"Welcome","done":false,"owner_id":"owner"}]
+  },
+  "app": {
+    "summary": "A compact todo app for phone-first capture.",
+    "primaryEntity": "todos",
+    "screens": [
+      {
+        "id": "todo_list",
+        "title": "Todos",
+        "kind": "list",
+        "table": "todos",
+        "actions": [{"label":"Add task","kind":"create","table":"todos"}]
+      }
+    ]
+  }
+}`, nil
+	}
+
+	p, err := CreatePhoneProject(PhoneCreateSpec{
+		Name:   "prompt-app",
+		Prompt: "todo app with login",
+	})
+	if err != nil {
+		t.Fatalf("create from prompt: %v", err)
+	}
+	if p.Template != "prompt" {
+		t.Fatalf("template = %q, want prompt", p.Template)
+	}
+	if p.Schema == nil || len(p.Schema.Tables) != 2 {
+		t.Fatalf("expected generated schema, got %+v", p.Schema)
+	}
+	if p.Stats == nil || p.Stats.PerTable["todos"] != 1 {
+		t.Fatalf("expected generated seed row, got %+v", p.Stats)
+	}
+	if p.App == nil || p.App.PrimaryEntity != "todos" || len(p.App.Screens) != 1 {
+		t.Fatalf("expected generated app spec, got %+v", p.App)
+	}
+}
+
+func TestExtractJSONObject_StripsFences(t *testing.T) {
+	got := extractJSONObject("```json\n{\"name\":\"demo\"}\n```")
+	if got != "{\"name\":\"demo\"}" {
+		t.Fatalf("unexpected extracted JSON: %q", got)
+	}
+}
+
 func TestTodosTemplate_EndToEnd(t *testing.T) {
 	setupPhoneTestHome(t)
 
@@ -239,6 +317,7 @@ func TestExportPhoneProject_TarRoundTrip(t *testing.T) {
 		"schema.yaml",
 		"auth.yaml",
 		"seed.json",
+		"app.yaml",
 		"schema.sql",
 		"schema.postgres.sql",
 		"README.md",
@@ -246,6 +325,32 @@ func TestExportPhoneProject_TarRoundTrip(t *testing.T) {
 		if !have[must] {
 			t.Errorf("export missing %s (got %v)", must, names)
 		}
+	}
+}
+
+func TestImportPhoneProject_PreservesAppSpec(t *testing.T) {
+	setupPhoneTestHome(t)
+
+	src, err := CreatePhoneProject(PhoneCreateSpec{Name: "Import App", Template: "todos"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	data, err := ExportPhoneProject(src.Slug)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	imported, err := ImportPhoneProject(data, PhoneImportOptions{SlugOverride: "imported-app"})
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if imported.App == nil {
+		t.Fatalf("expected imported app spec")
+	}
+	if imported.App.PrimaryEntity != "todos" {
+		t.Fatalf("primaryEntity = %q, want todos", imported.App.PrimaryEntity)
+	}
+	if len(imported.App.Screens) == 0 || imported.App.Screens[0].ID != "todo_list" {
+		t.Fatalf("unexpected app screens: %+v", imported.App.Screens)
 	}
 }
 

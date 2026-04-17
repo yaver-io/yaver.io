@@ -26,22 +26,22 @@ import (
 // Stored locally in ~/.yaver/git-providers.json — never sent to Convex.
 type GitProvider struct {
 	Host       string `json:"host"`                 // "github.com" or "gitlab.com" or custom
-	Provider   string `json:"provider"`              // "github" or "gitlab"
-	Username   string `json:"username"`              // verified username from API
-	Token      string `json:"token"`                 // Personal Access Token
-	AvatarURL  string `json:"avatarUrl,omitempty"`   // profile avatar
-	SSHKeyPath string `json:"sshKeyPath,omitempty"`  // path to generated SSH private key
-	SSHKeyName string `json:"sshKeyName,omitempty"`  // name used when adding to provider
-	SetupAt    string `json:"setupAt"`               // ISO 8601
+	Provider   string `json:"provider"`             // "github" or "gitlab"
+	Username   string `json:"username"`             // verified username from API
+	Token      string `json:"token"`                // Personal Access Token
+	AvatarURL  string `json:"avatarUrl,omitempty"`  // profile avatar
+	SSHKeyPath string `json:"sshKeyPath,omitempty"` // path to generated SSH private key
+	SSHKeyName string `json:"sshKeyName,omitempty"` // name used when adding to provider
+	SetupAt    string `json:"setupAt"`              // ISO 8601
 }
 
 // RemoteRepo represents a repository from a git provider's API.
 type RemoteRepo struct {
 	Name        string `json:"name"`
-	FullName    string `json:"fullName"`    // "owner/repo"
+	FullName    string `json:"fullName"` // "owner/repo"
 	Description string `json:"description"`
-	CloneURL    string `json:"cloneUrl"`    // HTTPS URL
-	SSHURL      string `json:"sshUrl"`      // SSH URL
+	CloneURL    string `json:"cloneUrl"` // HTTPS URL
+	SSHURL      string `json:"sshUrl"`   // SSH URL
 	Private     bool   `json:"private"`
 	Fork        bool   `json:"fork"`
 	Language    string `json:"language"`
@@ -315,15 +315,15 @@ func listGitLabRepos(host, token string, page, perPage int) ([]RemoteRepo, error
 	}
 
 	var glRepos []struct {
-		Name            string `json:"name"`
-		PathWithNS      string `json:"path_with_namespace"`
-		Description     string `json:"description"`
-		HTTPCloneURL    string `json:"http_url_to_repo"`
-		SSHCloneURL     string `json:"ssh_url_to_repo"`
-		Visibility      string `json:"visibility"`
-		ForkedFrom      *struct{} `json:"forked_from_project"`
-		Star            int    `json:"star_count"`
-		LastActivityAt  string `json:"last_activity_at"`
+		Name           string    `json:"name"`
+		PathWithNS     string    `json:"path_with_namespace"`
+		Description    string    `json:"description"`
+		HTTPCloneURL   string    `json:"http_url_to_repo"`
+		SSHCloneURL    string    `json:"ssh_url_to_repo"`
+		Visibility     string    `json:"visibility"`
+		ForkedFrom     *struct{} `json:"forked_from_project"`
+		Star           int       `json:"star_count"`
+		LastActivityAt string    `json:"last_activity_at"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&glRepos); err != nil {
 		return nil, err
@@ -495,9 +495,9 @@ func configureSSHForProvider(host, keyPath string) error {
 // generateRepoMetadata runs after a successful clone to gather project info.
 func generateRepoMetadata(repoPath string) map[string]interface{} {
 	meta := map[string]interface{}{
-		"path":      repoPath,
-		"name":      filepath.Base(repoPath),
-		"clonedAt":  time.Now().UTC().Format(time.RFC3339),
+		"path":     repoPath,
+		"name":     filepath.Base(repoPath),
+		"clonedAt": time.Now().UTC().Format(time.RFC3339),
 	}
 
 	// Branch
@@ -520,6 +520,10 @@ func generateRepoMetadata(repoPath string) map[string]interface{} {
 	if info.Framework != "" {
 		meta["framework"] = info.Framework
 	}
+	if info.Stack.Type != "" {
+		meta["stackType"] = info.Stack.Type
+	}
+	meta["stack"] = info.Stack
 
 	// Count files
 	if out, err := runGit(repoPath, "ls-files"); err == nil {
@@ -541,8 +545,161 @@ func generateRepoMetadata(repoPath string) map[string]interface{} {
 		}
 	}
 	meta["buildFiles"] = configs
+	if ci := detectRepoCIProviders(repoPath); len(ci) > 0 {
+		meta["ciProviders"] = ci
+	}
+	if integrations := detectRepoIntegrations(repoPath, info); len(integrations) > 0 {
+		meta["integrations"] = integrations
+	}
+	meta["topology"] = detectRepoTopology(repoPath, info)
+	meta["autoinit"] = computeAutoInitStatus(repoPath)
 
 	return meta
+}
+
+func detectRepoCIProviders(repoPath string) []string {
+	var out []string
+	if _, err := os.Stat(filepath.Join(repoPath, ".github", "workflows")); err == nil {
+		out = append(out, "github-actions")
+	}
+	for _, name := range []string{".gitlab-ci.yml", ".gitlab-ci.yaml"} {
+		if _, err := os.Stat(filepath.Join(repoPath, name)); err == nil {
+			out = append(out, "gitlab-ci")
+			break
+		}
+	}
+	return out
+}
+
+func detectRepoIntegrations(repoPath string, info ProjectInfo) []string {
+	seen := map[string]bool{}
+	add := func(name string) {
+		if name != "" && !seen[name] {
+			seen[name] = true
+		}
+	}
+
+	if strings.Contains(info.GitRemote, "github.com") {
+		add("github")
+	}
+	if strings.Contains(info.GitRemote, "gitlab.com") {
+		add("gitlab")
+	}
+	for _, ci := range detectRepoCIProviders(repoPath) {
+		switch ci {
+		case "github-actions":
+			add("github")
+		case "gitlab-ci":
+			add("gitlab")
+		}
+	}
+	if hasOpenAIIntegration(repoPath) {
+		add("openai")
+	}
+
+	if hasYaverBackendIntegration(repoPath) {
+		add("yaver-backend")
+	}
+
+	out := make([]string, 0, len(seen))
+	for _, name := range []string{"yaver-backend", "github", "gitlab", "openai"} {
+		if seen[name] {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+func hasOpenAIIntegration(repoPath string) bool {
+	candidates := []string{
+		".env",
+		".env.example",
+		"package.json",
+		"requirements.txt",
+		"pyproject.toml",
+		"go.mod",
+	}
+	for _, name := range candidates {
+		path := filepath.Join(repoPath, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		body := strings.ToLower(string(data))
+		if strings.Contains(body, "openai") || strings.Contains(body, "openai_api_key") {
+			return true
+		}
+	}
+	return false
+}
+
+func hasYaverBackendIntegration(repoPath string) bool {
+	if _, err := os.Stat(filepath.Join(repoPath, ".yaver", "config.yaml")); err == nil {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(repoPath, ".yaver", "services.yaml")); err == nil {
+		return true
+	}
+	for _, name := range []string{"schema.yaml", "auth.yaml", "seed.json"} {
+		if _, err := os.Stat(filepath.Join(repoPath, name)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func detectRepoTopology(repoPath string, info ProjectInfo) map[string]interface{} {
+	topology := map[string]interface{}{
+		"projectStartsFrom": []string{"phone", "dev-machine"},
+		"codingRunsOn":      []string{"phone", "dev-machine", "yaver-cloud"},
+		"codingDefault":     "user-choice",
+	}
+
+	runners := detectCodingRunners(repoPath)
+	topology["codingRunners"] = runners
+	topology["supportsPhoneCoding"] = true
+	topology["supportsRemoteCoding"] = true
+	if len(runners) > 0 {
+		topology["preferredCodingTargets"] = []string{"dev-machine", "yaver-cloud", "phone"}
+	} else {
+		topology["preferredCodingTargets"] = []string{"phone", "dev-machine", "yaver-cloud"}
+	}
+
+	if hasYaverBackendIntegration(repoPath) {
+		topology["backendRunsOn"] = []string{"phone", "dev-machine", "yaver-cloud"}
+		topology["backendDefault"] = "yaver-backend"
+	} else {
+		topology["backendRunsOn"] = []string{"project-defined"}
+	}
+
+	if info.Stack.Type == "monorepo" {
+		topology["monorepo"] = true
+	}
+	return topology
+}
+
+func detectCodingRunners(workDir string) []map[string]interface{} {
+	var out []map[string]interface{}
+	for _, id := range []string{"claude", "codex", "opencode", "aider", "aider-ollama", "ollama"} {
+		cfg := GetRunnerConfig(id)
+		if cfg.RunnerID == "" || cfg.Command == "" {
+			continue
+		}
+		if err := CheckRunnerBinary(cfg.Command); err != nil {
+			continue
+		}
+		status := DetectRunnerRuntimeStatus(cfg, workDir)
+		out = append(out, map[string]interface{}{
+			"id":             cfg.RunnerID,
+			"name":           cfg.Name,
+			"ready":          status.Ready,
+			"authConfigured": status.AuthConfigured,
+			"authSource":     status.AuthSource,
+			"warning":        status.Warning,
+			"error":          status.Error,
+		})
+	}
+	return out
 }
 
 // detectLanguages is defined in discovery.go — reused here for metadata generation.
@@ -941,9 +1098,11 @@ func (s *HTTPServer) handleRepoCloneWithMetadata(w http.ResponseWriter, r *http.
 	}
 
 	var req struct {
-		URL    string `json:"url"`
-		Dir    string `json:"dir"`
-		Branch string `json:"branch"`
+		URL            string `json:"url"`
+		Dir            string `json:"dir"`
+		Branch         string `json:"branch"`
+		AutoInit       bool   `json:"autoInit"`
+		AutoInitRunner string `json:"autoInitRunner"`
 	}
 
 	// Read body for both clone and metadata
@@ -973,11 +1132,29 @@ func (s *HTTPServer) handleRepoCloneWithMetadata(w http.ResponseWriter, r *http.
 	// Check if already cloned
 	if _, err := os.Stat(filepath.Join(clonePath, ".git")); err == nil {
 		meta := generateRepoMetadata(clonePath)
+		var autoinitResp map[string]interface{}
+		if req.AutoInit {
+			resp, err := startAutoInitBackground(AutoInitStart{
+				Project: filepath.Base(clonePath),
+				WorkDir: clonePath,
+				Runner:  req.AutoInitRunner,
+			})
+			if err != nil {
+				autoinitResp = map[string]interface{}{
+					"ok":      false,
+					"started": false,
+					"error":   err.Error(),
+				}
+			} else {
+				autoinitResp = resp
+			}
+		}
 		jsonReply(w, http.StatusOK, map[string]interface{}{
-			"ok":              true,
-			"path":            clonePath,
-			"alreadyExisted":  true,
-			"metadata":        meta,
+			"ok":             true,
+			"path":           clonePath,
+			"alreadyExisted": true,
+			"metadata":       meta,
+			"autoinit":       autoinitResp,
 		})
 		return
 	}
@@ -1026,6 +1203,23 @@ func (s *HTTPServer) handleRepoCloneWithMetadata(w http.ResponseWriter, r *http.
 
 	// Generate metadata
 	meta := generateRepoMetadata(clonePath)
+	var autoinitResp map[string]interface{}
+	if req.AutoInit {
+		resp, err := startAutoInitBackground(AutoInitStart{
+			Project: filepath.Base(clonePath),
+			WorkDir: clonePath,
+			Runner:  req.AutoInitRunner,
+		})
+		if err != nil {
+			autoinitResp = map[string]interface{}{
+				"ok":      false,
+				"started": false,
+				"error":   err.Error(),
+			}
+		} else {
+			autoinitResp = resp
+		}
+	}
 
 	// Trigger project discovery refresh
 	go func() {
@@ -1040,6 +1234,7 @@ func (s *HTTPServer) handleRepoCloneWithMetadata(w http.ResponseWriter, r *http.
 		"path":     clonePath,
 		"output":   strings.ReplaceAll(output, cloneURL, req.URL),
 		"metadata": meta,
+		"autoinit": autoinitResp,
 	})
 }
 

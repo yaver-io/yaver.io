@@ -39,6 +39,15 @@ const FRAMEWORK_ICONS: Record<string, string> = {
 
 const PREVIEW_TARGET_KEY = "@yaver/hotreload_preview_target";
 
+function isHermesMobileFramework(framework?: string): boolean {
+  return framework === "expo" || framework === "react-native";
+}
+
+function agentFlowGuidance(framework?: string): string | null {
+  if (!isHermesMobileFramework(framework)) return null;
+  return "Hermes reload to Yaver on iPhone/Android should work from Linux, WSL, macOS, or a remote host. No project injection is required for this path. Use yaver-cli only for direct push/watch workflows. Add the Feedback SDK only for in-app bug reports or remote reload inside your own app.";
+}
+
 // ── Hot Reload Tab ────────────────────────────────────────────────
 
 export default function HotReloadScreen() {
@@ -140,6 +149,7 @@ export default function HotReloadScreen() {
 
 
   const [nativeLoading, setNativeLoading] = useState(false);
+  const runningGuidance = agentFlowGuidance(devStatus?.framework);
 
   const handleOpen = useCallback(async () => {
     const baseUrl = (quicClient as any).baseUrl as string;
@@ -351,6 +361,19 @@ export default function HotReloadScreen() {
                     ? `${devStatus.framework} · port ${devStatus.port} · hot reload ${devStatus.hotReload ? "on" : "off"}`
                     : `${devStatus.framework} · starting...`}
                 </Text>
+                <Text style={[s.cardMeta, { color: "#86efac" }]}>
+                  mode · {devStatus.iosInstallMethod === "native" ? "native install" : "Hermes bundle in Yaver"}
+                </Text>
+                {devStatus.iosInstallReason ? (
+                  <Text style={[s.cardMeta, { color: "#d1d5db" }]}>
+                    {devStatus.iosInstallReason}
+                  </Text>
+                ) : null}
+                {runningGuidance ? (
+                  <Text style={[s.cardMeta, { color: "#cbd5e1" }]}>
+                    {runningGuidance}
+                  </Text>
+                ) : null}
                 {(devStatus.targetDeviceName || selectedTarget?.name) && (
                   <Text style={[s.cardMeta, { color: "#7dd3fc" }]}>
                     target · {devStatus.targetDeviceName || selectedTarget?.name}
@@ -379,7 +402,7 @@ export default function HotReloadScreen() {
                     {nativeLoading ? (
                       <ActivityIndicator size="small" color="#000" />
                     ) : (
-                      <Text style={s.openBtnText}>Open App</Text>
+                      <Text style={s.openBtnText}>Open in Yaver</Text>
                     )}
                   </Pressable>
                   <Pressable style={[s.actionBtn, s.reloadBtn]} onPress={handleReload}>

@@ -62,6 +62,29 @@ export interface PhoneStats {
   dbBytes: number;
 }
 
+export interface PhoneScreenAction {
+  label: string;
+  kind: string;
+  target?: string;
+  table?: string;
+  description?: string;
+}
+
+export interface PhoneScreenSpec {
+  id: string;
+  title: string;
+  kind: string;
+  table?: string;
+  emptyState?: string;
+  actions?: PhoneScreenAction[];
+}
+
+export interface PhoneAppSpec {
+  summary?: string;
+  primaryEntity?: string;
+  screens?: PhoneScreenSpec[];
+}
+
 export interface PhoneProject {
   slug: string;
   name: string;
@@ -72,6 +95,7 @@ export interface PhoneProject {
   schema?: PhoneSchema | null;
   auth?: PhoneAuth | null;
   seed?: PhoneSeed | null;
+  app?: PhoneAppSpec | null;
   stats?: PhoneStats | null;
 }
 
@@ -88,6 +112,7 @@ export interface PhoneCreateSpec {
   schema?: PhoneSchema;
   auth?: PhoneAuth;
   seed?: PhoneSeed;
+  app?: PhoneAppSpec;
   prompt?: string;
   runner?: string;
 }
@@ -448,6 +473,61 @@ export async function deleteCloudflareRecord(token: string, zoneId: string, reco
   const params = new URLSearchParams({ zoneId, recordId });
   const res = await fetch(`${url}/dns/cloudflare/records?${params}`, { method: "DELETE", headers: h });
   return res.ok;
+}
+
+// ---- Escape routes (pair with desktop/agent/phone_escape.go) ----
+//
+// Trust signal, not headline feature. Curated "I'm on X, get me to Y" rows
+// that power the Advanced collapsible on the phone-project detail screen.
+
+export interface EscapeRoute {
+  id: string;
+  fromBackend: string;
+  fromLabel: string;
+  toTargetId: string;
+  toLabel: string;
+  label: string;
+  blurb: string;
+  complexity?: "trivial" | "easy" | "medium" | "hard" | "";
+  highlight?: boolean;
+}
+
+export async function listEscapeRoutes(opts: { from?: string; to?: string } = {}): Promise<EscapeRoute[]> {
+  const params = new URLSearchParams();
+  if (opts.from) params.set("from", opts.from);
+  if (opts.to) params.set("to", opts.to);
+  const r = await get<{ routes?: EscapeRoute[] }>(
+    `/escape/routes${params.toString() ? "?" + params.toString() : ""}`,
+  );
+  return r?.routes ?? [];
+}
+
+export interface EscapePlanResult {
+  route?: EscapeRoute;
+  state?: {
+    id: string;
+    fromBackend: string;
+    to: string;
+    complexity: string;
+    status: string;
+    steps: Array<{ id: string; title: string; status: string; error?: string }>;
+    rollbackExpiresAt?: string;
+  };
+  warning?: string;
+  error?: string;
+}
+
+export async function planEscapeRoute(
+  routeId: string,
+  projectDir: string,
+  opts: { run?: boolean; dryRun?: boolean } = {},
+): Promise<EscapePlanResult | null> {
+  return post<EscapePlanResult>("/escape/plan", {
+    routeId,
+    projectDir,
+    run: !!opts.run,
+    dryRun: !!opts.dryRun,
+  });
 }
 
 export function phoneExportUrl(slug: string): { uri: string; headers: Record<string, string> } | null {

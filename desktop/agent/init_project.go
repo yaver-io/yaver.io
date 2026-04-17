@@ -12,15 +12,15 @@ import (
 // InitProjectOpts is the full parameter set for the `init_project` MCP tool.
 // All fields are optional — sensible defaults fire in.
 type InitProjectOpts struct {
-	Name     string `json:"name"`
-	ParentDir string `json:"parentDir"`
-	Stack    string `json:"stack"`    // nextjs | vite | remix | sveltekit | expo | hono
-	DB       string `json:"db"`       // postgres | supabase | convex | sqlite | pocketbase | none
-	Auth     string `json:"auth"`     // better-auth | supabase-auth | convex-auth | none
-	Payments string `json:"payments"` // stripe | lemonsqueezy | none
-	Template string `json:"template"` // saas-starter | landing | dashboard | api | mobile
-	ORM      string `json:"orm"`      // drizzle | prisma | none (auto-picked)
-	Services []string `json:"services"` // extra Docker services: redis, mailpit, minio
+	Name      string   `json:"name"`
+	ParentDir string   `json:"parentDir"`
+	Stack     string   `json:"stack"`    // nextjs | vite | remix | sveltekit | expo | hono
+	DB        string   `json:"db"`       // sqlite | postgres | supabase | convex | pocketbase | appwrite | none
+	Auth      string   `json:"auth"`     // better-auth | supabase-auth | convex-auth | none
+	Payments  string   `json:"payments"` // stripe | lemonsqueezy | none
+	Template  string   `json:"template"` // saas-starter | landing | dashboard | api | mobile
+	ORM       string   `json:"orm"`      // drizzle | prisma | none (auto-picked)
+	Services  []string `json:"services"` // extra Docker services: redis, mailpit, minio
 }
 
 // InitProjectResult summarizes what was scaffolded.
@@ -59,7 +59,7 @@ func InitProject(opts InitProjectOpts) (*InitProjectResult, error) {
 		opts.Stack = "nextjs"
 	}
 	if opts.DB == "" {
-		opts.DB = "postgres"
+		opts.DB = "sqlite"
 	}
 	if opts.Auth == "" {
 		opts.Auth = "better-auth"

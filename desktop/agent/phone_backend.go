@@ -80,18 +80,45 @@ type PhoneAuth struct {
 // PhoneSeed is rows keyed by table name.
 type PhoneSeed map[string][]map[string]interface{}
 
+// PhoneScreenAction is a minimal portable UI intent for the scaffolded app.
+type PhoneScreenAction struct {
+	Label       string `yaml:"label" json:"label"`
+	Kind        string `yaml:"kind" json:"kind"` // list|create|update|delete|navigate|filter|auth
+	Target      string `yaml:"target,omitempty" json:"target,omitempty"`
+	Table       string `yaml:"table,omitempty" json:"table,omitempty"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+}
+
+// PhoneScreenSpec describes one mobile screen in the generated app plan.
+type PhoneScreenSpec struct {
+	ID         string              `yaml:"id" json:"id"`
+	Title      string              `yaml:"title" json:"title"`
+	Kind       string              `yaml:"kind" json:"kind"` // list|detail|form|auth|settings
+	Table      string              `yaml:"table,omitempty" json:"table,omitempty"`
+	EmptyState string              `yaml:"emptyState,omitempty" json:"emptyState,omitempty"`
+	Actions    []PhoneScreenAction `yaml:"actions,omitempty" json:"actions,omitempty"`
+}
+
+// PhoneAppSpec is a portable app-layer outline that can move with the backend.
+type PhoneAppSpec struct {
+	Summary       string            `yaml:"summary,omitempty" json:"summary,omitempty"`
+	PrimaryEntity string            `yaml:"primaryEntity,omitempty" json:"primaryEntity,omitempty"`
+	Screens       []PhoneScreenSpec `yaml:"screens,omitempty" json:"screens,omitempty"`
+}
+
 // PhoneProject is the full metadata of a mini-backend project.
 type PhoneProject struct {
-	Slug      string       `yaml:"slug" json:"slug"`
-	Name      string       `yaml:"name" json:"name"`
-	Template  string       `yaml:"template,omitempty" json:"template,omitempty"`
-	Dir       string       `yaml:"dir" json:"dir"`
-	CreatedAt string       `yaml:"createdAt" json:"createdAt"`
-	UpdatedAt string       `yaml:"updatedAt" json:"updatedAt"`
-	Schema    *PhoneSchema `yaml:"-" json:"schema,omitempty"`
-	Auth      *PhoneAuth   `yaml:"-" json:"auth,omitempty"`
-	Seed      PhoneSeed    `yaml:"-" json:"seed,omitempty"`
-	Stats     *PhoneStats  `yaml:"-" json:"stats,omitempty"`
+	Slug      string        `yaml:"slug" json:"slug"`
+	Name      string        `yaml:"name" json:"name"`
+	Template  string        `yaml:"template,omitempty" json:"template,omitempty"`
+	Dir       string        `yaml:"dir" json:"dir"`
+	CreatedAt string        `yaml:"createdAt" json:"createdAt"`
+	UpdatedAt string        `yaml:"updatedAt" json:"updatedAt"`
+	Schema    *PhoneSchema  `yaml:"-" json:"schema,omitempty"`
+	Auth      *PhoneAuth    `yaml:"-" json:"auth,omitempty"`
+	Seed      PhoneSeed     `yaml:"-" json:"seed,omitempty"`
+	App       *PhoneAppSpec `yaml:"-" json:"app,omitempty"`
+	Stats     *PhoneStats   `yaml:"-" json:"stats,omitempty"`
 }
 
 // PhoneStats are live counts from the SQLite file.
@@ -104,13 +131,18 @@ type PhoneStats struct {
 
 // PhoneCreateSpec is the payload for creating a new project.
 type PhoneCreateSpec struct {
-	Slug     string       `json:"slug"`
-	Name     string       `json:"name"`
-	Template string       `json:"template,omitempty"`
-	Schema   *PhoneSchema `json:"schema,omitempty"`
-	Auth     *PhoneAuth   `json:"auth,omitempty"`
-	Seed     PhoneSeed    `json:"seed,omitempty"`
+	Slug     string        `json:"slug"`
+	Name     string        `json:"name"`
+	Template string        `json:"template,omitempty"`
+	Schema   *PhoneSchema  `json:"schema,omitempty"`
+	Auth     *PhoneAuth    `json:"auth,omitempty"`
+	Seed     PhoneSeed     `json:"seed,omitempty"`
+	App      *PhoneAppSpec `json:"app,omitempty"`
+	Prompt   string        `json:"prompt,omitempty"`
+	Runner   string        `json:"runner,omitempty"`
 }
+
+var runPhonePromptGenerator = RunAIGenerator
 
 var slugRE = regexp.MustCompile(`[^a-z0-9-]+`)
 
@@ -153,6 +185,22 @@ func PhoneProjectDir(slug string) (string, error) {
 var ErrPhoneProjectExists = fmt.Errorf("phone project already exists")
 
 func CreatePhoneProject(spec PhoneCreateSpec) (*PhoneProject, error) {
+	if strings.TrimSpace(spec.Prompt) != "" && spec.Schema == nil && spec.Auth == nil && spec.Seed == nil {
+		gen, err := generatePhoneProjectFromPrompt(spec)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(spec.Name) == "" {
+			spec.Name = gen.Name
+		}
+		if strings.TrimSpace(spec.Template) == "" {
+			spec.Template = "prompt"
+		}
+		spec.Schema = gen.Schema
+		spec.Auth = gen.Auth
+		spec.Seed = gen.Seed
+		spec.App = gen.App
+	}
 	slug := Slugify(spec.Slug)
 	if slug == "" {
 		slug = Slugify(spec.Name)
@@ -211,6 +259,9 @@ func CreatePhoneProject(spec PhoneCreateSpec) (*PhoneProject, error) {
 	if spec.Seed == nil {
 		spec.Seed = templateSeed(spec.Template)
 	}
+	if spec.App == nil {
+		spec.App = templateApp(spec.Template)
+	}
 
 	if spec.Schema != nil {
 		if err := ApplyPhoneSchema(slug, spec.Schema); err != nil {
@@ -227,6 +278,11 @@ func CreatePhoneProject(spec PhoneCreateSpec) (*PhoneProject, error) {
 			return nil, fmt.Errorf("apply seed: %w", err)
 		}
 	}
+	if spec.App != nil {
+		if err := savePhoneApp(dir, spec.App); err != nil {
+			return nil, fmt.Errorf("apply app: %w", err)
+		}
+	}
 
 	// Also drop a minimal ProjectManifest so /manifest/* works.
 	_ = SaveManifest(dir, &ProjectManifest{
@@ -238,6 +294,115 @@ func CreatePhoneProject(spec PhoneCreateSpec) (*PhoneProject, error) {
 	})
 
 	return LoadPhoneProject(slug)
+}
+
+type generatedPhoneProjectSpec struct {
+	Name   string        `json:"name"`
+	Schema *PhoneSchema  `json:"schema"`
+	Auth   *PhoneAuth    `json:"auth"`
+	Seed   PhoneSeed     `json:"seed"`
+	App    *PhoneAppSpec `json:"app"`
+}
+
+func generatePhoneProjectFromPrompt(spec PhoneCreateSpec) (*generatedPhoneProjectSpec, error) {
+	wd, _ := os.Getwd()
+	body, err := runPhonePromptGenerator(AIGeneratorSpec{
+		Runner:  spec.Runner,
+		WorkDir: wd,
+		Prompt: fmt.Sprintf(`You are generating a phone-first Yaver mini-backend project.
+
+User project name: %s
+User prompt: %s
+
+Return ONLY one JSON object, no markdown fences, no commentary.
+
+Shape:
+{
+  "name": "short project name",
+  "schema": {
+    "tables": [
+      {
+        "name": "table_name",
+        "columns": [
+          {"name":"id","type":"text","primary":true,"default":"uuid"},
+          {"name":"title","type":"text","required":true}
+        ],
+        "indexes": [{"columns":["owner_id"]}]
+      }
+    ],
+    "relations": [
+      {"from":"todos.owner_id","to":"users.id","onDelete":"cascade"}
+    ]
+  },
+  "auth": {
+    "personas": [
+      {"id":"owner","email":"owner@example.com","name":"Owner","role":"owner"}
+    ]
+  },
+  "seed": {
+    "todos": [
+      {"id":"welcome","title":"Welcome","done":false,"owner_id":"owner"}
+    ]
+  },
+  "app": {
+    "summary": "short description of the mobile UX",
+    "primaryEntity": "todos",
+    "screens": [
+      {
+        "id": "home",
+        "title": "Inbox",
+        "kind": "list",
+        "table": "todos",
+        "emptyState": "No tasks yet.",
+        "actions": [
+          {"label":"Add task","kind":"create","table":"todos"},
+          {"label":"View task","kind":"navigate","target":"todo_detail"}
+        ]
+      }
+    ]
+  }
+}
+
+Rules:
+- Use only supported column types: text, int, bool, real, timestamp, json, uuid.
+- Prefer 1-3 tables, phone-first, SQLite-friendly.
+- If auth is useful, include a users table and personas. If not useful, return an empty personas array.
+- Seed should include a few realistic starter rows when helpful.
+- Include a compact app plan with 1-4 screens that a phone user could ship first.
+- Keep names ASCII and snake_case.
+- Do not include fields outside this shape.
+`, strings.TrimSpace(spec.Name), strings.TrimSpace(spec.Prompt)),
+		Timeout: 2 * time.Minute,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("generate phone project from prompt: %w", err)
+	}
+	payload := extractJSONObject(body)
+	var out generatedPhoneProjectSpec
+	if err := json.Unmarshal([]byte(payload), &out); err != nil {
+		return nil, fmt.Errorf("parse generated phone project JSON: %w", err)
+	}
+	if strings.TrimSpace(out.Name) == "" {
+		out.Name = strings.TrimSpace(spec.Name)
+	}
+	if out.Schema == nil {
+		return nil, fmt.Errorf("generated phone project missing schema")
+	}
+	return &out, nil
+}
+
+func extractJSONObject(s string) string {
+	body := strings.TrimSpace(s)
+	body = strings.TrimPrefix(body, "```json")
+	body = strings.TrimPrefix(body, "```")
+	body = strings.TrimSuffix(body, "```")
+	body = strings.TrimSpace(body)
+	start := strings.IndexByte(body, '{')
+	end := strings.LastIndexByte(body, '}')
+	if start >= 0 && end > start {
+		return body[start : end+1]
+	}
+	return body
 }
 
 func phoneMetaPath(dir string) string {
@@ -279,6 +444,7 @@ func LoadPhoneProject(slug string) (*PhoneProject, error) {
 	meta.Schema, _ = loadPhoneSchema(dir)
 	meta.Auth, _ = loadPhoneAuth(dir)
 	meta.Seed, _ = loadPhoneSeed(dir)
+	meta.App, _ = loadPhoneApp(dir)
 	meta.Stats, _ = computePhoneStats(dir)
 	return meta, nil
 }
@@ -326,6 +492,7 @@ func DeletePhoneProject(slug string) error {
 func schemaPath(dir string) string { return filepath.Join(dir, "schema.yaml") }
 func authPath(dir string) string   { return filepath.Join(dir, "auth.yaml") }
 func seedPath(dir string) string   { return filepath.Join(dir, "seed.json") }
+func appPath(dir string) string    { return filepath.Join(dir, "app.yaml") }
 func dbFilePath(dir string) string { return filepath.Join(dir, "local.db") }
 
 func loadPhoneSchema(dir string) (*PhoneSchema, error) {
@@ -386,6 +553,26 @@ func savePhoneSeed(dir string, s PhoneSeed) error {
 		return err
 	}
 	return os.WriteFile(seedPath(dir), data, 0o644)
+}
+
+func loadPhoneApp(dir string) (*PhoneAppSpec, error) {
+	data, err := os.ReadFile(appPath(dir))
+	if err != nil {
+		return nil, err
+	}
+	var a PhoneAppSpec
+	if err := yaml.Unmarshal(data, &a); err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+func savePhoneApp(dir string, a *PhoneAppSpec) error {
+	data, err := yaml.Marshal(a)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(appPath(dir), data, 0o644)
 }
 
 // ---- Schema → SQLite DDL ----
@@ -789,6 +976,9 @@ func ExportPhoneProjectWithOptions(slug string, opts PhoneExportOptions) ([]byte
 	if b, err := os.ReadFile(seedPath(p.Dir)); err == nil {
 		_ = add("seed.json", b, 0o644)
 	}
+	if b, err := os.ReadFile(appPath(p.Dir)); err == nil {
+		_ = add("app.yaml", b, 0o644)
+	}
 	if opts.IncludeData {
 		if b, err := os.ReadFile(dbFilePath(p.Dir)); err == nil {
 			_ = add("local.db", b, 0o600)
@@ -830,6 +1020,7 @@ func phoneReadme(p *PhoneProject, opts PhoneExportOptions) string {
 	b.WriteString("- `schema.yaml` — portable schema DSL\n")
 	b.WriteString("- `auth.yaml` — persona list\n")
 	b.WriteString("- `seed.json` — fixture rows\n")
+	b.WriteString("- `app.yaml` — portable phone UI plan\n")
 	b.WriteString("- `schema.sql` / `schema.postgres.sql` — generated DDL for non-Yaver imports\n\n")
 	if opts.IncludeData {
 		b.WriteString("- `local.db` — live SQLite runtime rows for zero-loss promotion\n\n")
@@ -1028,6 +1219,70 @@ func templateSeed(name string) PhoneSeed {
 	return nil
 }
 
+func templateApp(name string) *PhoneAppSpec {
+	switch name {
+	case "todos":
+		return &PhoneAppSpec{
+			Summary:       "Simple shared todo list with a quick capture flow.",
+			PrimaryEntity: "todos",
+			Screens: []PhoneScreenSpec{
+				{
+					ID:         "todo_list",
+					Title:      "Todos",
+					Kind:       "list",
+					Table:      "todos",
+					EmptyState: "No tasks yet. Add one from your phone.",
+					Actions: []PhoneScreenAction{
+						{Label: "Add task", Kind: "create", Table: "todos"},
+						{Label: "Toggle done", Kind: "update", Table: "todos"},
+					},
+				},
+			},
+		}
+	case "notes":
+		return &PhoneAppSpec{
+			Summary:       "Lightweight notes app with a notes list and editor.",
+			PrimaryEntity: "notes",
+			Screens: []PhoneScreenSpec{
+				{
+					ID:         "notes_list",
+					Title:      "Notes",
+					Kind:       "list",
+					Table:      "notes",
+					EmptyState: "Start with a quick note.",
+					Actions: []PhoneScreenAction{
+						{Label: "New note", Kind: "create", Table: "notes"},
+						{Label: "Open note", Kind: "navigate", Target: "note_detail"},
+					},
+				},
+			},
+		}
+	case "crud", "":
+		return &PhoneAppSpec{
+			Summary:       "Generic CRUD app with a collection list and editor.",
+			PrimaryEntity: "items",
+			Screens: []PhoneScreenSpec{
+				{
+					ID:         "items_list",
+					Title:      "Items",
+					Kind:       "list",
+					Table:      "items",
+					EmptyState: "Create the first item.",
+					Actions: []PhoneScreenAction{
+						{Label: "Create item", Kind: "create", Table: "items"},
+						{Label: "View item", Kind: "navigate", Target: "item_detail"},
+					},
+				},
+			},
+		}
+	case "blank":
+		return &PhoneAppSpec{
+			Summary: "Blank app. Define screens after shaping the schema.",
+		}
+	}
+	return nil
+}
+
 // ListPhoneTemplates is used by the mobile/web wizards.
 func ListPhoneTemplates() []map[string]string {
 	return []map[string]string{
@@ -1162,6 +1417,14 @@ func ImportPhoneProject(tgz []byte, opts PhoneImportOptions) (*PhoneProject, err
 			}
 		}
 	}
+	var app *PhoneAppSpec
+	if b, ok := parts["app.yaml"]; ok {
+		var a PhoneAppSpec
+		if err := yaml.Unmarshal(b, &a); err != nil {
+			return nil, fmt.Errorf("app.yaml: %w", err)
+		}
+		app = &a
+	}
 	var liveDB []byte
 	if !opts.SkipSeed {
 		liveDB = parts["local.db"]
@@ -1184,6 +1447,7 @@ func ImportPhoneProject(tgz []byte, opts PhoneImportOptions) (*PhoneProject, err
 		Schema: schema,
 		Auth:   auth,
 		Seed:   seed,
+		App:    app,
 	})
 	if err != nil {
 		return nil, err

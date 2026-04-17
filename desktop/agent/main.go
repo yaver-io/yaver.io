@@ -1802,7 +1802,8 @@ func runServe(args []string) {
 		iosMethod = IOSInstallAuto
 	}
 	httpServer.iosInstallMethod = iosMethod
-	log.Printf("iOS install method: %s (resolved: %s)", iosMethod, resolveIOSInstallMethod(iosMethod))
+	resolvedIOSMethod, resolvedIOSReason := resolveIOSInstallMethodWithReason(iosMethod)
+	log.Printf("iOS install method: %s (resolved: %s, reason: %s)", iosMethod, resolvedIOSMethod, resolvedIOSReason)
 
 	// IP allowlist (from flag or config)
 	allowIPsList := *allowIPs

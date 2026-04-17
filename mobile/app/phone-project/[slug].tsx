@@ -20,6 +20,7 @@ import { useColors } from "../../src/context/ThemeContext";
 import { useDevice, type Device } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
 import {
+  EscapeRoute,
   PhoneBrowseResult,
   PhoneProject,
   PhonePushResult,
@@ -29,23 +30,17 @@ import {
   deletePhoneRow,
   getPhoneProject,
   insertPhoneRow,
+  listEscapeRoutes,
   listPhoneTables,
   phoneExportUrl,
   promotePhoneProject,
   pushPhoneProject,
 } from "../../src/lib/phoneProjects";
 
-// Advanced: the 6 curated switch-engine targets. Hidden behind a collapsible
-// so the primary pitch surface (yc.md §Wedge Demo) stays focused on the two
-// buttons that matter: [Your Dev Machine] and [Yaver Cloud].
-const ADVANCED_PROMOTE_TARGETS: Array<{ id: string; label: string; sub: string }> = [
-  { id: "sqlite-local", label: "SQLite file", sub: "Copy to a real project dir" },
-  { id: "sqlite-turso", label: "Turso", sub: "Managed LibSQL on the edge" },
-  { id: "postgres-local", label: "Postgres (Docker)", sub: "Local Postgres 16" },
-  { id: "supabase-cloud", label: "Supabase Cloud", sub: "Managed Postgres + auth" },
-  { id: "postgres-neon", label: "Neon", sub: "Serverless Postgres" },
-  { id: "convex-cloud", label: "Convex Cloud", sub: "Reactive backend (AI-rewrite)" },
-];
+// Advanced escape-route rows are fetched live from /escape/routes so the
+// curated catalog in desktop/agent/phone_escape.go is the single source of
+// truth. Positioning (per user): trust signal, not headline — shown behind
+// the existing "Advanced" collapsible, never in the primary Deploy surface.
 
 const YAVER_CLOUD_BASE = "https://cloud.yaver.io";
 
@@ -94,6 +89,30 @@ export default function PhoneProjectDetailScreen() {
   const [deploying, setDeploying] = useState<"dev-hw" | "yaver-cloud" | null>(null);
   const [lastDeploy, setLastDeploy] = useState<{ kind: "dev-hw" | "yaver-cloud"; url: string; via?: string } | null>(null);
   const [showAdvancedPromote, setShowAdvancedPromote] = useState(false);
+  const [escapeRoutes, setEscapeRoutes] = useState<EscapeRoute[]>([]);
+
+  // Pull curated escape routes once the user opens the Advanced collapsible.
+  // Phone projects are SQLite-backed, so we ask for "yaver"-origin routes
+  // plus cross-family inbound routes (Convex/Supabase → Yaver) that explain
+  // the continuum to a potential migrator.
+  useEffect(() => {
+    if (!showAdvancedPromote || escapeRoutes.length) return;
+    void (async () => {
+      const outbound = await listEscapeRoutes({ from: "yaver" });
+      const inbound = await listEscapeRoutes({ to: "yaver-cloud" });
+      // De-dupe by id; outbound first (this is primarily what the user can
+      // actually execute from a phone project — the "switch to X" story).
+      const seen = new Set<string>();
+      const merged: EscapeRoute[] = [];
+      for (const r of [...outbound, ...inbound]) {
+        if (!seen.has(r.id)) {
+          seen.add(r.id);
+          merged.push(r);
+        }
+      }
+      setEscapeRoutes(merged);
+    })();
+  }, [showAdvancedPromote, escapeRoutes.length]);
 
   // Auto-select the first dev machine so the primary button is a one-tap action.
   useEffect(() => {
@@ -409,6 +428,51 @@ export default function PhoneProjectDetailScreen() {
         </Pressable>
       </View>
 
+      {project.app ? (
+        <>
+          <Text style={[styles.section, { color: c.textPrimary }]}>App plan</Text>
+          <View style={{ paddingHorizontal: 16 }}>
+            <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+              {project.app.summary ? (
+                <Text style={{ color: c.textPrimary, fontSize: 14, lineHeight: 20 }}>
+                  {project.app.summary}
+                </Text>
+              ) : null}
+              {project.app.primaryEntity ? (
+                <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 6 }}>
+                  Primary entity: {project.app.primaryEntity}
+                </Text>
+              ) : null}
+              {(project.app.screens ?? []).map((screen) => (
+                <View key={screen.id} style={styles.appScreen}>
+                  <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600" }}>
+                    {screen.title}
+                  </Text>
+                  <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 2 }}>
+                    {screen.kind}
+                    {screen.table ? ` · ${screen.table}` : ""}
+                  </Text>
+                  {screen.emptyState ? (
+                    <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 4 }}>
+                      Empty: {screen.emptyState}
+                    </Text>
+                  ) : null}
+                  {(screen.actions ?? []).length ? (
+                    <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 6 }}>
+                      Actions:{" "}
+                      {(screen.actions ?? [])
+                        .map((action) => action.label)
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </Text>
+                  ) : null}
+                </View>
+              ))}
+            </View>
+          </View>
+        </>
+      ) : null}
+
       <Text style={[styles.section, { color: c.textPrimary }]}>Tables</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }}>
         {tables.map((t) => (
@@ -584,40 +648,69 @@ export default function PhoneProjectDetailScreen() {
           </Pressable>
         ) : null}
 
-        {/* Advanced: switch-engine promote (tucked away) */}
+        {/* Advanced: escape routes (trust signal — not the headline). The
+            curated list is served by the agent so it stays in sync with the
+            SwitchEngine target set. Phone projects are SQLite-backed, so we
+            ask for "yaver"-origin rows (where the user can actually execute
+            an escape today) plus a few highlight inbound cases for context. */}
         <Pressable
           onPress={() => setShowAdvancedPromote((v) => !v)}
           style={{ marginTop: 20, paddingVertical: 8 }}
         >
           <Text style={{ color: c.textMuted, fontSize: 12 }}>
-            {showAdvancedPromote ? "▾" : "▸"} Advanced — promote to a switch-engine target
+            {showAdvancedPromote ? "▾" : "▸"} Advanced — escape to another backend (no lock-in)
           </Text>
         </Pressable>
         {showAdvancedPromote ? (
           <View>
             <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 8 }}>
-              Plan a step-by-step migration with a 7-day rollback snapshot.
+              Same manifest, different backend. Plans go through the switch engine with a 7-day rollback snapshot.
             </Text>
-            {ADVANCED_PROMOTE_TARGETS.map((t) => (
-              <Pressable
-                key={t.id}
-                onPress={() => doPromote(t.id, t.label)}
-                disabled={promoting === t.id}
-                style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginBottom: 8 }]}
-              >
-                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.promoteLabel, { color: c.textPrimary }]}>{t.label}</Text>
-                    <Text style={{ color: c.textMuted, fontSize: 12 }}>{t.sub}</Text>
-                  </View>
-                  {promoting === t.id ? (
-                    <ActivityIndicator color={c.accent} />
-                  ) : (
-                    <Text style={{ color: c.accent, fontSize: 18 }}>›</Text>
-                  )}
-                </View>
-              </Pressable>
-            ))}
+            {escapeRoutes.length === 0 ? (
+              <ActivityIndicator color={c.textMuted} style={{ marginTop: 4 }} />
+            ) : (
+              escapeRoutes.map((r) => {
+                const tag = r.complexity || "";
+                const tagColor =
+                  tag === "hard"
+                    ? "#f97316"
+                    : tag === "medium"
+                      ? "#eab308"
+                      : tag === "easy"
+                        ? c.accent
+                        : c.textMuted;
+                return (
+                  <Pressable
+                    key={r.id}
+                    onPress={() => doPromote(r.toTargetId, r.label)}
+                    disabled={promoting === r.toTargetId}
+                    style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginBottom: 8 }]}
+                  >
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                          <Text style={[styles.promoteLabel, { color: c.textPrimary }]}>{r.label}</Text>
+                          {r.highlight ? (
+                            <Text style={{ color: c.accent, fontSize: 10, fontWeight: "700" }}>· PITCH</Text>
+                          ) : null}
+                          {tag ? (
+                            <Text style={{ color: tagColor, fontSize: 10, fontWeight: "600", textTransform: "uppercase" }}>
+                              · {tag}
+                            </Text>
+                          ) : null}
+                        </View>
+                        <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 2 }}>{r.blurb}</Text>
+                      </View>
+                      {promoting === r.toTargetId ? (
+                        <ActivityIndicator color={c.accent} />
+                      ) : (
+                        <Text style={{ color: c.accent, fontSize: 18, marginLeft: 8 }}>›</Text>
+                      )}
+                    </View>
+                  </Pressable>
+                );
+              })
+            )}
           </View>
         ) : null}
       </View>
@@ -673,6 +766,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   card: { borderWidth: 1, borderRadius: 10, padding: 12 },
+  appScreen: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(127,127,127,0.25)",
+  },
   kv: { marginBottom: 4 },
   k: { fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5 },
   v: { fontSize: 14 },

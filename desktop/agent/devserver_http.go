@@ -12,7 +12,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
+
+	"golang.org/x/mod/semver"
 )
 
 // handleDevServerStatus returns the current dev server status.
@@ -23,6 +26,7 @@ func (s *HTTPServer) handleDevServerStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	resolvedIOSMethod, resolvedIOSReason := resolveIOSInstallMethodWithReason(s.iosInstallMethod)
 	target := s.devServerMgr.PreferredTarget()
 	status := s.devServerMgr.Status()
 	if status == nil {
@@ -31,10 +35,14 @@ func (s *HTTPServer) handleDevServerStatus(w http.ResponseWriter, r *http.Reques
 			"targetDeviceId":    target.DeviceID,
 			"targetDeviceName":  target.DeviceName,
 			"targetDeviceClass": target.DeviceClass,
+			"iosInstallMethod":  resolvedIOSMethod,
+			"iosInstallReason":  resolvedIOSReason,
 		})
 		return
 	}
 
+	status.IOSInstallMethod = resolvedIOSMethod
+	status.IOSInstallReason = resolvedIOSReason
 	jsonReply(w, http.StatusOK, status)
 }
 
@@ -786,72 +794,267 @@ func (s *HTTPServer) handleDevServerCompatibility(w http.ResponseWriter, r *http
 
 	var req struct {
 		AvailableModules []string `json:"availableModules"`
+		WorkDir          string   `json:"workDir"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
 
-	// Get the work dir from dev server or task manager
-	workDir := ""
-	if s.devServerMgr != nil {
-		if status := s.devServerMgr.Status(); status != nil {
-			workDir = status.WorkDir
+	workDir := strings.TrimSpace(req.WorkDir)
+	// Fall back to the current dev-server/task context for older callers.
+	if workDir == "" {
+		if s.devServerMgr != nil {
+			if status := s.devServerMgr.Status(); status != nil {
+				workDir = status.WorkDir
+			}
 		}
-	}
-	if workDir == "" && s.taskMgr != nil {
-		workDir = s.taskMgr.workDir
+		if workDir == "" && s.taskMgr != nil {
+			workDir = s.taskMgr.workDir
+		}
 	}
 	if workDir == "" {
 		jsonReply(w, http.StatusOK, map[string]interface{}{
-			"compatible": true, "missingModules": []string{},
+			"compatible":         true,
+			"missingModules":     []string{},
+			"availableModules":   []string{},
+			"warnings":           []string{},
+			"needsYaverCLI":      false,
+			"needsFeedbackSDK":   false,
+			"recommendedFlow":    "agent-open-in-yaver",
+			"guidance":           "No project selected yet. Open in Yaver does not require yaver-cli or the Feedback SDK.",
 		})
 		return
 	}
 
-	// Read user project's package.json to find native dependencies
 	pkgPath := workDir + "/package.json"
 	data, err := os.ReadFile(pkgPath)
 	if err != nil {
 		jsonReply(w, http.StatusOK, map[string]interface{}{
-			"compatible": true, "missingModules": []string{},
+			"compatible":         true,
+			"missingModules":     []string{},
+			"availableModules":   []string{},
+			"warnings":           []string{fmt.Sprintf("package.json not found at %s", pkgPath)},
+			"needsYaverCLI":      false,
+			"needsFeedbackSDK":   false,
+			"recommendedFlow":    "agent-open-in-yaver",
+			"guidance":           "Open in Yaver does not require yaver-cli or the Feedback SDK, but compatibility could not be checked because package.json was not found.",
 		})
 		return
 	}
+
+	var pkg struct {
+		Dependencies     map[string]string      `json:"dependencies"`
+		PeerDependencies map[string]string      `json:"peerDependencies"`
+		DevDependencies  map[string]string      `json:"devDependencies"`
+		ReactNative      map[string]interface{} `json:"reactNative"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"compatible":         true,
+			"missingModules":     []string{},
+			"availableModules":   []string{},
+			"warnings":           []string{"package.json could not be parsed for compatibility analysis"},
+			"needsYaverCLI":      false,
+			"needsFeedbackSDK":   false,
+			"recommendedFlow":    "agent-open-in-yaver",
+			"guidance":           "Open in Yaver does not require yaver-cli or the Feedback SDK. Compatibility analysis failed, so missing native modules may still block runtime behavior.",
+		})
+		return
+	}
+
+	manifest, manifestErr := loadSDKManifest()
 
 	available := make(map[string]bool)
 	for _, m := range req.AvailableModules {
 		available[m] = true
 	}
 
-	// Check which native deps the user project needs that Yaver doesn't have
-	var missing []string
-	nativeDeps := []string{
-		"expo-camera", "expo-location", "expo-sensors", "expo-haptics",
-		"expo-brightness", "expo-battery", "expo-device", "expo-constants",
-		"expo-barcode-scanner", "expo-notifications", "expo-file-system",
-		"expo-asset", "expo-font", "expo-clipboard", "expo-linking",
-		"expo-secure-store", "expo-av", "expo-image-picker", "expo-speech",
-		"expo-web-browser", "expo-apple-authentication",
-		"react-native-maps", "react-native-ble-plx",
-		"react-native-reanimated", "react-native-gesture-handler",
-		"react-native-screens", "react-native-safe-area-context",
-		"react-native-webview", "@react-native-async-storage/async-storage",
-		"@react-native-community/netinfo",
+	allDeps := map[string]string{}
+	for name, version := range pkg.PeerDependencies {
+		allDeps[name] = version
+	}
+	for name, version := range pkg.Dependencies {
+		allDeps[name] = version
 	}
 
-	content := string(data)
-	for _, dep := range nativeDeps {
-		// If the user's project uses this dep but Yaver doesn't have it
-		if strings.Contains(content, `"`+dep+`"`) && !available[dep] {
-			missing = append(missing, dep)
+	var missing []string
+	var present []string
+	var warnings []string
+	var errors []string
+
+	projectRN := cleanCompatVersion(allDeps["react-native"])
+	sdkRN := ""
+	if manifest != nil {
+		sdkRN = cleanCompatVersion(manifest.ReactNative)
+		if projectRN != "" && sdkRN != "" {
+			projSemver := toSemver(projectRN)
+			sdkSemver := toSemver(sdkRN)
+			if projSemver != "" && sdkSemver != "" {
+				if semver.Major(projSemver) != semver.Major(sdkSemver) {
+					errors = append(errors, fmt.Sprintf("React Native major version mismatch: project %s, yaver %s.", projectRN, sdkRN))
+				} else if semver.MajorMinor(projSemver) != semver.MajorMinor(sdkSemver) {
+					warnings = append(warnings, fmt.Sprintf("React Native %s vs yaver %s. Minor version differs and may or may not work.", projectRN, sdkRN))
+				}
+			}
 		}
+		if newArch, _ := pkg.ReactNative["newArchEnabled"].(bool); newArch && !manifest.Arch.NewArch {
+			errors = append(errors, "Project uses New Architecture but the Yaver app manifest reports classic bridge only.")
+		}
+	} else if manifestErr != nil {
+		warnings = append(warnings, fmt.Sprintf("sdk-manifest.json unavailable: %v", manifestErr))
+	}
+
+	for dep := range allDeps {
+		if dep == "react" || dep == "react-native" || dep == "expo" {
+			continue
+		}
+		if pkg.DevDependencies != nil && pkg.DevDependencies[dep] != "" && pkg.Dependencies[dep] == "" {
+			continue
+		}
+		if isPureJSPackage(dep) || isFalsePositiveNative(dep) {
+			continue
+		}
+		if looksLikeNativeModule(dep) {
+			if available[dep] {
+				present = append(present, dep)
+				if manifest != nil {
+					if sdkVersion, ok := manifest.NativeModules[dep]; ok {
+						localVersion := cleanCompatVersion(allDeps[dep])
+						localSemver := toSemver(localVersion)
+						sdkSemver := toSemver(cleanCompatVersion(sdkVersion))
+						if localSemver != "" && sdkSemver != "" && semver.Major(localSemver) != semver.Major(sdkSemver) {
+							warnings = append(warnings, fmt.Sprintf("%s major version differs: project %s, yaver %s.", dep, localVersion, sdkVersion))
+						}
+					}
+				}
+			} else {
+				missing = append(missing, dep)
+				errors = append(errors, fmt.Sprintf("%s requires native code but is not present in the Yaver app.", dep))
+			}
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(present)
+
+	needsFeedbackSDK := false
+	needsYaverCLI := false
+	recommendedFlow := "agent-open-in-yaver"
+	guidance := "Open in Yaver should work from Linux, WSL, macOS, or a remote host. No project injection is required. yaver-cli is optional for direct CLI push/watch workflows. Add the Feedback SDK only for in-app bug reports or remote reload inside your own app."
+	if len(errors) > 0 {
+		needsYaverCLI = true
+		guidance = strings.Join(errors, " ") + " yaver-cli is not required for the agent flow, but its compatibility check/watch workflow may help. The Feedback SDK is still optional."
+	} else if len(warnings) > 0 {
+		guidance = warnings[0] + " Open in Yaver should still be the default path. yaver-cli remains optional."
 	}
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{
-		"compatible":     len(missing) == 0,
-		"missingModules": missing,
+		"compatible":       len(errors) == 0,
+		"missingModules":   missing,
+		"availableModules": present,
+		"warnings":         warnings,
+		"errors":           errors,
+		"projectReactNative": projectRN,
+		"sdkReactNative":     sdkRN,
+		"needsYaverCLI":    needsYaverCLI,
+		"needsFeedbackSDK": needsFeedbackSDK,
+		"recommendedFlow":  recommendedFlow,
+		"guidance":         guidance,
 	})
+}
+
+type sdkManifestCompat struct {
+	ReactNative    string            `json:"reactNative"`
+	SupportedRange string            `json:"supportedRNRange"`
+	NativeModules  map[string]string `json:"nativeModules"`
+	Arch           struct {
+		NewArch bool `json:"newArch"`
+	} `json:"arch"`
+}
+
+func loadSDKManifest() (*sdkManifestCompat, error) {
+	candidates := []string{
+		"mobile/sdk-manifest.json",
+		"sdk-manifest.json",
+		filepath.Join("..", "..", "mobile", "sdk-manifest.json"),
+		filepath.Join("..", "..", "cli", "sdk-manifest.json"),
+	}
+	for _, candidate := range candidates {
+		data, err := os.ReadFile(candidate)
+		if err != nil {
+			continue
+		}
+		var manifest sdkManifestCompat
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", candidate, err)
+		}
+		return &manifest, nil
+	}
+	return nil, fmt.Errorf("sdk-manifest.json not found")
+}
+
+func cleanCompatVersion(v string) string {
+	return strings.TrimLeft(strings.TrimSpace(v), "^~<>= ")
+}
+
+func toSemver(v string) string {
+	if v == "" {
+		return ""
+	}
+	if strings.HasPrefix(v, "v") {
+		if semver.IsValid(v) {
+			return v
+		}
+		v = strings.TrimPrefix(v, "v")
+	}
+	parts := strings.Split(v, ".")
+	switch len(parts) {
+	case 1:
+		v = v + ".0.0"
+	case 2:
+		v = v + ".0"
+	}
+	if semver.IsValid("v" + v) {
+		return "v" + v
+	}
+	return ""
+}
+
+func isPureJSPackage(name string) bool {
+	switch name {
+	case "axios", "lodash", "moment", "date-fns", "uuid", "dayjs",
+		"zustand", "jotai", "redux", "@reduxjs/toolkit", "mobx", "mobx-react",
+		"react-query", "@tanstack/react-query", "formik", "yup", "zod", "react-hook-form",
+		"i18next", "react-i18next", "nativewind", "twrnc", "styled-components", "@emotion/native",
+		"swr", "immer", "@react-navigation/native", "@react-navigation/stack",
+		"@react-navigation/bottom-tabs", "@react-navigation/drawer", "@react-navigation/native-stack",
+		"@react-navigation/material-top-tabs", "react-native-web", "react-dom",
+		"@expo/metro-runtime", "expo-router", "expo-splash-screen", "expo-status-bar":
+		return true
+	default:
+		return false
+	}
+}
+
+func isFalsePositiveNative(name string) bool {
+	switch name {
+	case "react-native-paper", "react-native-elements", "react-native-size-matters",
+		"react-native-responsive-screen", "react-native-toast-message",
+		"react-native-responsive-fontsize", "react-native-iphone-x-helper",
+		"react-native-status-bar-height", "react-native-markdown-display":
+		return true
+	default:
+		return false
+	}
+}
+
+func looksLikeNativeModule(name string) bool {
+	return strings.HasPrefix(name, "react-native-") ||
+		strings.HasPrefix(name, "@react-native-") ||
+		strings.HasPrefix(name, "@react-native/") ||
+		strings.HasPrefix(name, "rn") ||
+		strings.HasPrefix(name, "expo-") ||
+		strings.HasPrefix(name, "@shopify/react-native-")
 }
 
 func isWebSocketUpgrade(r *http.Request) bool {

@@ -11,6 +11,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // AutoInitStart is the request body for POST /autoinit/start.
@@ -19,6 +20,7 @@ type AutoInitStart struct {
 	WorkDir string `json:"work_dir"`
 	Prompt  string `json:"prompt"`
 	Engine  string `json:"engine"`
+	Runner  string `json:"runner"`
 	Output  string `json:"output"`
 	Force   bool   `json:"force"`
 }
@@ -41,48 +43,12 @@ func (s *HTTPServer) handleAutoInitStart(w http.ResponseWriter, r *http.Request)
 		jsonError(w, http.StatusBadRequest, "work_dir does not exist: "+body.WorkDir)
 		return
 	}
-	project := body.Project
-	if project == "" {
-		project = filepath.Base(body.WorkDir)
-	}
-
-	exe, err := os.Executable()
+	resp, err := startAutoInitBackground(body)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "find yaver binary: "+err.Error())
-		return
-	}
-	args := []string{"autoinit", project}
-	if body.Prompt != "" {
-		args = append(args, "--prompt", body.Prompt)
-	}
-	if body.Engine != "" {
-		args = append(args, "--engine", body.Engine)
-	}
-	if body.Output != "" {
-		args = append(args, "--output", body.Output)
-	}
-	if body.Force {
-		args = append(args, "--force")
-	}
-	cmd := osexec.Command(exe, args...)
-	cmd.Dir = body.WorkDir
-	cmd.Stdin = nil
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Start(); err != nil {
 		jsonError(w, http.StatusInternalServerError, "spawn autoinit: "+err.Error())
 		return
 	}
-	go func() { _ = cmd.Wait() }()
-
-	streamName := "autodev:" + project + "-autoinit"
-	jsonReply(w, http.StatusAccepted, map[string]interface{}{
-		"ok":          true,
-		"loop_name":   project + "-autoinit",
-		"stream_name": streamName,
-		"output":      autoinitOutputPath(body),
-		"work_dir":    body.WorkDir,
-	})
+	jsonReply(w, http.StatusAccepted, resp)
 }
 
 func autoinitOutputPath(body AutoInitStart) string {
@@ -94,6 +60,60 @@ func autoinitOutputPath(body AutoInitStart) string {
 		out = filepath.Join(body.WorkDir, out)
 	}
 	return out
+}
+
+func autoinitProjectName(body AutoInitStart) string {
+	if strings.TrimSpace(body.Project) != "" {
+		return strings.TrimSpace(body.Project)
+	}
+	return filepath.Base(body.WorkDir)
+}
+
+func buildAutoInitArgs(body AutoInitStart) []string {
+	project := autoinitProjectName(body)
+	args := []string{"autoinit", project}
+	if body.Prompt != "" {
+		args = append(args, "--prompt", body.Prompt)
+	}
+	if body.Engine != "" {
+		args = append(args, "--engine", body.Engine)
+	}
+	if body.Runner != "" {
+		args = append(args, "--runner", body.Runner)
+	}
+	if body.Output != "" {
+		args = append(args, "--output", body.Output)
+	}
+	if body.Force {
+		args = append(args, "--force")
+	}
+	return args
+}
+
+func startAutoInitBackground(body AutoInitStart) (map[string]interface{}, error) {
+	project := autoinitProjectName(body)
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	cmd := osexec.Command(exe, buildAutoInitArgs(body)...)
+	cmd.Dir = body.WorkDir
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	go func() { _ = cmd.Wait() }()
+	streamName := "autodev:" + project + "-autoinit"
+	return map[string]interface{}{
+		"ok":          true,
+		"started":     true,
+		"loop_name":   project + "-autoinit",
+		"stream_name": streamName,
+		"output":      autoinitOutputPath(body),
+		"work_dir":    body.WorkDir,
+	}, nil
 }
 
 // handleAutoInitStatus answers GET /autoinit/status?work_dir=…

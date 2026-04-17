@@ -33,20 +33,43 @@ func canDoNativeInstall() bool {
 	return true
 }
 
+func nativeInstallUnavailableReason() string {
+	if runtime.GOOS != "darwin" {
+		if isWSL() {
+			return "bundle: WSL cannot run Xcode; using Hermes push into Yaver on iPhone"
+		}
+		return fmt.Sprintf("bundle: host OS is %s; native iOS install requires macOS + Xcode", runtime.GOOS)
+	}
+	if _, err := exec.LookPath("xcodebuild"); err != nil {
+		return "bundle: xcodebuild not found; install Xcode to enable native iOS device install"
+	}
+	if _, err := exec.LookPath("xcrun"); err != nil {
+		return "bundle: xcrun not found; install Xcode command line tools to enable native iOS device install"
+	}
+	return ""
+}
+
 // resolveIOSInstallMethod decides whether to use native (xcode) or bundle (hermes push)
 // based on the config preference and platform capabilities.
 // Returns "native" or "bundle".
 func resolveIOSInstallMethod(preference string) string {
+	method, _ := resolveIOSInstallMethodWithReason(preference)
+	return method
+}
+
+// resolveIOSInstallMethodWithReason returns the resolved install method plus a short explanation.
+func resolveIOSInstallMethodWithReason(preference string) (method string, reason string) {
 	switch preference {
 	case IOSInstallNative:
-		return IOSInstallNative
+		return IOSInstallNative, "native requested explicitly"
 	case IOSInstallBundle:
-		return IOSInstallBundle
+		return IOSInstallBundle, "bundle requested explicitly"
 	default: // "auto" or ""
-		if canDoNativeInstall() {
-			return IOSInstallNative
+		if why := nativeInstallUnavailableReason(); why == "" {
+			return IOSInstallNative, "auto: macOS + Xcode detected"
+		} else {
+			return IOSInstallBundle, why
 		}
-		return IOSInstallBundle
 	}
 }
 
