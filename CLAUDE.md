@@ -35,14 +35,14 @@ curl -s -X POST http://localhost:18080/dev/start \
   -H "Content-Type: application/json" \
   -d '{"framework":"expo","workDir":"/absolute/path/to/app"}'
 ```
-3. The Yaver mobile app **automatically detects** the dev server and shows a green "Open App" banner.
-4. The user taps the banner → app loads in a full-screen WebView through the P2P/relay channel.
+3. The Yaver mobile app **automatically detects** the dev server and shows a green "Open in Yaver" banner.
+4. For Expo / React Native, the user taps the banner and Yaver loads the app through the native Hermes bundle path inside the Yaver app. WebView is only for web frameworks.
 5. **After fixing code**, trigger hot reload:
 ```bash
 curl -s -X POST http://localhost:18080/dev/reload \
   -H "Authorization: Bearer $TOKEN"
 ```
-6. The WebView auto-refreshes with the updated code.
+6. Expo / React Native refresh through the native Hermes path; web frameworks refresh through the proxied WebView path.
 7. **Never output raw `exp://` URLs, QR codes, or tell the user to run terminal commands.** Everything flows through the Yaver P2P channel automatically.
 8. When done: `curl -s -X POST http://localhost:18080/dev/stop -H "Authorization: Bearer $TOKEN"`
 
@@ -50,7 +50,7 @@ curl -s -X POST http://localhost:18080/dev/reload \
 
 | Framework | Detection | Dev Server Command | Hot Reload | Bundle URL |
 |-----------|-----------|-------------------|------------|------------|
-| **Expo / React Native** | `expo` in package.json | `npx expo start --web --lan` | Auto (Metro watches files) + `/dev/reload` | `/dev/` (web version) |
+| **Expo / React Native** | `expo` in package.json | `npx expo start --lan` or Metro via agent | Auto (Metro watches files) + `/dev/reload` | Hermes bundle / native load path |
 | **Flutter** | `pubspec.yaml` | `flutter run -d web --web-port N` | `r` keystroke to stdin | `/dev/` |
 | **Vite** | `vite.config.{ts,js}` | `npx vite --port N --host 0.0.0.0` | Auto (Vite HMR) | `/dev/` |
 | **Next.js** | `next.config.{ts,js}` | `npx next dev --port N --hostname 0.0.0.0` | Auto (Fast Refresh) | `/dev/` |
@@ -60,10 +60,10 @@ curl -s -X POST http://localhost:18080/dev/reload \
 ```
 Phone (Yaver app)                    Relay                     Dev Machine
 ┌──────────────┐              ┌──────────────┐             ┌──────────────┐
-│  WebView     │──GET /dev/──►│  QUIC relay  │──forward───►│  Agent :18080│
-│  loads app   │              │  (pass-thru) │             │    │         │
-│  through     │◄─HTML/JS────│              │◄─response───│    ▼         │
-│  relay URL   │              └──────────────┘             │  /dev/* proxy│
+│  Native RN   │──control/API►│  QUIC relay  │──forward───►│  Agent :18080│
+│  bundle load │              │  (pass-thru) │             │    │         │
+│  or webview  │◄─bundle/meta─│              │◄─response───│    ▼         │
+│  for web only│              └──────────────┘             │  /dev/* proxy│
 └──────────────┘                                          │    │         │
                                                           │    ▼         │
                                                           │  Metro :8081 │
@@ -72,7 +72,7 @@ Phone (Yaver app)                    Relay                     Dev Machine
                                                           └──────────────┘
 ```
 
-The agent's `/dev/*` endpoint reverse-proxies to the local dev server. The relay forwards HTTP requests transparently. The phone loads the web version of the app in a WebView — works through captive portals, 4G, any network.
+The agent's `/dev/*` endpoint reverse-proxies to the local dev server. The relay forwards HTTP requests transparently. React Native / Expo should load through the native Hermes path, while Vite / Next.js and other web stacks still use WebView.
 
 ### Dev Server — Key Files
 
@@ -81,7 +81,7 @@ The agent's `/dev/*` endpoint reverse-proxies to the local dev server. The relay
 | `desktop/agent/devserver.go` | DevServer interface, manager, 4 framework implementations |
 | `desktop/agent/devserver_http.go` | HTTP handlers: /dev/start, /dev/stop, /dev/status, /dev/events (SSE), /dev/* proxy |
 | `desktop/agent/dev_cmd.go` | CLI: `yaver dev start\|stop\|status\|reload` |
-| `mobile/src/components/DevPreview.tsx` | Banner + WebView + SSE auto-reload |
+| `mobile/src/components/DevPreview.tsx` | Banner + native Hermes load path + web fallback |
 | `mobile/src/lib/quic.ts` | `getDevServerStatus()`, `startDevServer()`, `reloadDevServer()` |
 | `relay/tunnel.go` | SSE detection for /dev/events, 200MB body limit for /dev/ paths |
 

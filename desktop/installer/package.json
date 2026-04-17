@@ -7,6 +7,7 @@
     "email": "kivanc.cakmak@simkab.com"
   },
   "homepage": "https://yaver.io",
+  "license": "AGPL-3.0-only",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",

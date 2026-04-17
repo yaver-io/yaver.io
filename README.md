@@ -1,7 +1,7 @@
 # Yaver
 
 [![Tests](https://github.com/kivanccakmak/yaver.io/actions/workflows/test-suite.yml/badge.svg)](https://github.com/kivanccakmak/yaver.io/actions/workflows/test-suite.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![License: AGPL%20v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0.en.html)
 
 Docs: [CI setup](CI.md) · [Test SDK](docs/yaver-test-sdk.md)
 
@@ -1758,11 +1758,12 @@ Contact: kivanc.cakmak@simkab.com
 
 ## License
 
-Current repo license: `MIT`.
+This repo is licensed under `AGPL-3.0-only`.
 
-If the goal stays "open source, but don't make it trivial for a hosted `yaver2` clone to appear", `BSD` is not the answer. The realistic next licensing move would be:
+Reason:
 
-- `AGPL` for the core runtime if you want strong anti-hosted-fork pressure while staying open source
-- dual licensing if you want open source distribution plus commercial terms for companies that do not want copyleft obligations
+- `BSD` would not materially slow down a hosted `yaver2` fork
+- `AGPL` is the open-source option that creates real pressure for network-deployed forks to publish their changes
+- managed cloud, hosted distribution, and other commercial surfaces can still be monetized on top
 
-For now the repo stays truthful about the current state: MIT today, monetized managed surfaces later.
+If the business later needs a cleaner commercial carve-out, the next step would be dual licensing rather than a return to a permissive license.
