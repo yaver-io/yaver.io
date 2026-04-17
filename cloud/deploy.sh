@@ -35,11 +35,21 @@ if [ ! -f "$ENV_FILE_REMOTE" ]; then
   fi
 fi
 
-docker compose --env-file "$ENV_FILE_REMOTE" -f cloud/docker-compose.yml up -d --build
+SERVICES="yaver-agent"
+if ss -ltn '( sport = :80 or sport = :443 )' | grep -q LISTEN; then
+  echo "[deploy] host ports 80/443 already in use — deploying agent only on CLOUD_AGENT_PORT"
+else
+  SERVICES="yaver-agent caddy"
+fi
+
+docker compose --env-file "$ENV_FILE_REMOTE" -f cloud/docker-compose.yml up -d --build $SERVICES
 
 echo
 echo "[deploy] done. once DNS for $DOMAIN points at this box, try:"
 echo "  curl https://$DOMAIN/health"
+echo
+echo "direct host-port health:"
+echo "  curl http://$(hostname -I | awk '{print $1}'):${CLOUD_AGENT_PORT:-18081}/health"
 echo
 echo "to push a phone project from your laptop:"
 echo "  yaver phone push <slug> --to https://$DOMAIN"
