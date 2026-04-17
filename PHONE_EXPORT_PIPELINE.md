@@ -341,24 +341,24 @@ Context: the mobile → Mac and mobile → Hetzner paths work end-to-end. Wire f
 
 ### 1. Demo-blockers (ship before Apr 29 HN launch)
 
-#### 1.1 `--include-data` flag on the export/push path
+#### 1.1 `--include-data` flag on the export/push path — ✅ SHIPPED (with one 10-min polish left)
 
-**Why:** For the HN/YC demo narrative ("I added a todo on my phone, look — it's on cloud now"), runtime rows have to survive promotion. Today only `schema.yaml` + `auth.yaml` + `seed.json` ship. The `local.db` SQLite file is deliberately excluded per §"The wire format".
+Landed in a parallel thread: `ExportPhoneProjectWithOptions` + `PhoneExportOptions{IncludeData: true}` in `phone_backend.go`, `TestExportIncludeDataBundlesSQLiteFile` + `TestImportWithIncludedDataPreservesRuntimeRows` in `phone_export_test.go`, and the `includeData` query-string branch in `handlePhoneExport`. Runtime rows now survive the promote hop when opt-in.
 
-**Where to cut in:**
+**Remaining:** `mobile/src/lib/phoneProjects.ts :: pushPhoneProject` does not yet forward `includeData` to `/phone/projects/export`. Add an `opts.includeData?: boolean` param, append `&includeData=true` when set, and expose a checkbox in the mobile Deploy UI. Same for `web/lib/agent-client.ts :: pushPhoneProject`.
 
-- `desktop/agent/phone_backend.go :: ExportPhoneProject(slug)` — currently `(slug string) []byte, error`. Change signature to `(slug string, opts PhoneExportOptions) ([]byte, error)` where `PhoneExportOptions{ IncludeData bool }`. When `IncludeData`, `add()` the `local.db` file under `<slug>/local.db` (mode 0644).
-- `desktop/agent/phone_backend.go :: ImportPhoneProject` — already tolerates unknown files (extracts under project dir). Add a pass after schema-apply that, if `<slug>/local.db` exists in the tar, **copies it over `dbFilePath(dir)` instead of running seed**. Skip seed whenever a db was shipped.
-- `desktop/agent/phone_backend_http.go :: handlePhoneExport` — read `includeData=true` from query string, pass through.
-- `desktop/agent/phone_cmd.go :: runPhonePush` — add `--include-data` flag, forward to the multipart post under form field `includeData=true`.
-- `desktop/agent/phone_backend_http.go :: handlePhoneReceive` — read `includeData` form field, pass to `ImportPhoneProject`.
-- `mobile/src/lib/phoneProjects.ts :: pushPhoneProject` — add `opts.includeData` bool, forward as form field.
-- Mobile Deploy UI (`mobile/app/phone-project/[slug].tsx`): add a small toggle above the two Deploy buttons — `□ Include live rows` (default ON for demo). Same on web.
-- Regression tests: add a sibling to `TestExportImportRoundtrip` in `phone_export_test.go` that sets `IncludeData: true`, inserts a row runtime-side before export, and asserts the row is present after import. Also update `TestImportSkipSeed` to verify SkipSeed+IncludeData behavior (db wins, seed is ignored).
+#### 1.2 OAuth providers per phone-project — ✅ SHIPPED
 
-**Acceptance:** dogfood run — create project, insert row `demo-1`, push with include-data to Hetzner, browse Hetzner, see `demo-1`. Timing should stay in-budget (db for the `todos` template is ~32 KB so we're still well under the 128 MB cap in `Caddyfile`).
+User asked for Apple / Google / Microsoft OAuth setup guidance from the phone. Shipped as:
+- `desktop/agent/phone_oauth.go` — `PhoneOAuthConfig` (apple / google / microsoft sub-structs), per-project `oauth-providers.yaml` at 0600 perms, validated `GET`+`POST /phone/projects/oauth`. Partial patches (nil = leave alone, empty struct = clear). Per-provider validators (Apple Team/Key IDs are 10 upper-alnum, Services ID is reverse-DNS, private key is PEM; Google Client ID ends with `.apps.googleusercontent.com`; Microsoft tenant is GUID or common/organizations/consumers).
+- `phone_backend.go :: ExportPhoneProject` — bundles `oauth-providers.yaml` into the tgz so the config travels with the push.
+- `mobile/app/phone-project/oauth.tsx` — three collapsible provider cards. Each shows the console URL (deep link to developer.apple.com / console.cloud.google.com / portal.azure.com), numbered step-by-step, paste-back inputs with format hints + `secureTextEntry` on secrets, per-provider Save. Green dot when configured.
+- `mobile/src/lib/phoneProjects.ts` — `getPhoneOAuth` / `setPhoneOAuth` helpers + type mirrors.
+- `phone_oauth_test.go` — 11 tests covering all of the above.
 
-#### 1.2 Voice/text prompt → project scaffold
+**Remaining:** a `NoSecrets` flag on `ExportPhoneProjectWithOptions` so the switch-engine promote path (to Supabase, Convex, Firebase, etc. — third parties we don't want leaking secrets into) can strip `oauth-providers.yaml` before the tgz goes out. Add to the existing `PhoneExportOptions` struct; gate the `os.ReadFile(phoneOAuthPath(p.Dir))` branch in `ExportPhoneProject` on `!opts.NoSecrets`.
+
+#### 1.3 Voice/text prompt → project scaffold
 
 **Why:** yc.md Apr 20 core deliverable — "Voice/text prompt on phone produces a running RN project on the dev Mac." Today the user manually picks a template; we need the AI half of the loop.
 
@@ -371,7 +371,7 @@ Context: the mobile → Mac and mobile → Hetzner paths work end-to-end. Wire f
 
 **Acceptance:** `curl -X POST /phone/projects/scaffold -d '{"name":"Habit Tracker","prompt":"habit tracker with streak count and daily reminders"}'` returns a PhoneProject whose schema has at least a `habits` table with sensible columns. Keep it bounded: one prompt, one scaffold pass, no follow-up turns. Failures return a clear error; user falls back to manual template.
 
-#### 1.3 `cloud.yaver.io` DNS + TLS
+#### 1.4 `cloud.yaver.io` DNS + TLS
 
 **Why:** yc.md Apr 24. Today the mobile app and CLI point at `https://cloud.yaver.io` but nothing listens there. For the demo video we need a real URL.
 
