@@ -137,6 +137,14 @@ function normalizedDeviceName(name: string | undefined): string {
     .replace(/\.local$/i, "");
 }
 
+function deviceAliasKey(device: Pick<Device, "name" | "os" | "isGuest">): string | null {
+  if (device.isGuest) return null;
+  const normalizedName = normalizedDeviceName(device.name);
+  const normalizedOs = String(device.os || "").trim().toLowerCase();
+  if (!normalizedName || !normalizedOs) return null;
+  return `${normalizedOs}:${normalizedName}`;
+}
+
 function deviceIdentityKey(device: Pick<Device, "id" | "hwid" | "publicKey" | "name" | "os" | "isGuest" | "hostEmail" | "hostName">): string {
   if (device.hwid) return `hwid:${device.hwid}`;
   if (device.publicKey) return `pub:${device.publicKey}`;
@@ -150,6 +158,72 @@ function deviceIdentityKey(device: Pick<Device, "id" | "hwid" | "publicKey" | "n
   }
   if (device.id) return `id:${device.id}`;
   return `name:${device.name}`;
+}
+
+function mergeDeviceEntries(existing: Device, incoming: Device): Device {
+  const incomingWins =
+    incoming.lastSeen > existing.lastSeen ||
+    (!!incoming.online && !existing.online) ||
+    (!!incoming.local && !existing.local);
+
+  if (incomingWins) {
+    return {
+      ...existing,
+      ...incoming,
+      runners: incoming.runners?.length ? incoming.runners : existing.runners,
+      publicKey: incoming.publicKey || existing.publicKey,
+      hwid: incoming.hwid || existing.hwid,
+      host: incoming.host || existing.host,
+      port: incoming.port || existing.port,
+      lastSeen: Math.max(existing.lastSeen || 0, incoming.lastSeen || 0),
+    };
+  }
+
+  return {
+    ...incoming,
+    ...existing,
+    host: existing.host || incoming.host,
+    port: existing.port || incoming.port,
+    online: existing.online || incoming.online,
+    local: existing.local || incoming.local,
+    runners: existing.runners?.length ? existing.runners : incoming.runners,
+    publicKey: existing.publicKey || incoming.publicKey,
+    hwid: existing.hwid || incoming.hwid,
+    lastSeen: Math.max(existing.lastSeen || 0, incoming.lastSeen || 0),
+  };
+}
+
+function collapseAliasDevices(devices: Device[]): Device[] {
+  const byIdentity = new Map<string, Device>();
+  for (const device of devices) {
+    const key = deviceIdentityKey(device);
+    const existing = byIdentity.get(key);
+    byIdentity.set(key, existing ? mergeDeviceEntries(existing, device) : device);
+  }
+
+  const byAlias = new Map<string, Device>();
+  for (const device of byIdentity.values()) {
+    const alias = deviceAliasKey(device);
+    if (!alias) {
+      byAlias.set(`id:${device.id}`, device);
+      continue;
+    }
+    const existing = byAlias.get(alias);
+    if (!existing) {
+      byAlias.set(alias, device);
+      continue;
+    }
+    const hasStrongIdentity =
+      (!!existing.hwid && !!device.hwid && existing.hwid !== device.hwid) ||
+      (!!existing.publicKey && !!device.publicKey && existing.publicKey !== device.publicKey);
+    if (hasStrongIdentity) {
+      byAlias.set(`id:${device.id}`, device);
+      continue;
+    }
+    byAlias.set(alias, mergeDeviceEntries(existing, device));
+  }
+
+  return [...byAlias.values()];
 }
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
@@ -309,44 +383,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         // Deduplicate by stable device identity. Guest devices must include
         // host context so two different hosts with the same machine name
         // cannot collapse into one visible entry.
-        const seen = new Map<string, Device>();
-        for (const d of mapped) {
-          const key = deviceIdentityKey(d);
-          const existing = seen.get(key);
-          if (!existing) {
-            seen.set(key, d);
-            continue;
-          }
-          const shouldReplace =
-            d.lastSeen > existing.lastSeen ||
-            (!!d.online && !existing.online) ||
-            (!!d.local && !existing.local);
-          if (shouldReplace) {
-            seen.set(key, {
-              ...existing,
-              ...d,
-              runners: d.runners?.length ? d.runners : existing.runners,
-              publicKey: d.publicKey || existing.publicKey,
-              hwid: d.hwid || existing.hwid,
-            });
-            continue;
-          }
-          seen.set(key, {
-            ...d,
-            ...existing,
-            host: existing.host || d.host,
-            port: existing.port || d.port,
-            online: existing.online || d.online,
-            local: existing.local || d.local,
-            runners: existing.runners?.length ? existing.runners : d.runners,
-            publicKey: existing.publicKey || d.publicKey,
-            hwid: existing.hwid || d.hwid,
-            lastSeen: Math.max(existing.lastSeen || 0, d.lastSeen || 0),
-          });
-        }
+        const collapsed = collapseAliasDevices(mapped);
         // Filter out detached devices
         const detached = await getDetachedDevices();
-        const finalDevices = [...seen.values()].filter(d => {
+        const finalDevices = collapsed.filter(d => {
           const key = deviceIdentityKey(d);
           return !detached.has(key);
         });
@@ -669,7 +709,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const unsubDiscover = beaconListener.onDiscovered((discovered) => {
       setDevices((prev) =>
-        prev.map((d) => {
+        collapseAliasDevices(prev.map((d) => {
           if (
             d.id.startsWith(discovered.deviceId) ||
             (!!discovered.hwid && d.hwid === discovered.hwid) ||
@@ -678,7 +718,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             return { ...d, host: discovered.ip, port: discovered.port, online: true, local: true, hwid: discovered.hwid || d.hwid };
           }
           return d;
-        })
+        }))
       );
       sendTelemetry(token, "peer-matched", `${discovered.name} at ${discovered.ip}:${discovered.port}`, discovered.deviceId);
     });
