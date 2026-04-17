@@ -362,7 +362,11 @@ func (s *HTTPServer) handlePhoneExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	includeData := r.URL.Query().Get("includeData") == "true" || r.URL.Query().Get("includeData") == "1"
-	data, err := ExportPhoneProjectWithOptions(slug, PhoneExportOptions{IncludeData: includeData})
+	containerize := r.URL.Query().Get("containerize") == "true" || r.URL.Query().Get("containerize") == "1"
+	data, err := ExportPhoneProjectWithOptions(slug, PhoneExportOptions{
+		IncludeData:  includeData,
+		Containerize: containerize,
+	})
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return

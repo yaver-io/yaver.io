@@ -4,6 +4,7 @@ import {
   browseLocalPhoneTable,
   deleteLocalPhoneProject,
   deleteLocalPhoneRow,
+  dumpLocalPhoneProjectRows,
   ensureLocalPhoneProject,
   getLocalPhoneProjectMeta,
   insertLocalPhoneRow,
@@ -139,6 +140,28 @@ export interface PhoneProjectAccess {
   label: string;
   baseUrl?: string;
   boundAt?: string;
+}
+
+async function syncLocalPhoneProjectToConnectedAgent(slug: string): Promise<void> {
+  const local = await getLocalPhoneProjectMeta(slug);
+  if (!local) return;
+  const rowsByTable = await dumpLocalPhoneProjectRows(local);
+  await post<{ ok?: boolean }>("/phone/projects/delete", { slug }).catch(() => null);
+  const created = await createPhoneProject({
+    slug: local.slug,
+    name: local.name,
+    template: local.template,
+    schema: local.schema ?? undefined,
+    auth: local.auth ?? undefined,
+    seed: local.seed ?? undefined,
+    app: local.app ?? undefined,
+  });
+  if (!created) return;
+  for (const [table, rows] of Object.entries(rowsByTable)) {
+    for (const row of rows) {
+      await post<{ id: string }>("/phone/projects/insert", { slug, table, doc: row });
+    }
+  }
 }
 
 interface StoredPhoneProjectBinding {
@@ -788,6 +811,7 @@ export async function phoneBundleSize(slug: string, opts: { includeData?: boolea
   const h = headers();
   const url = baseUrl();
   if (!h || !url) return null;
+  await syncLocalPhoneProjectToConnectedAgent(slug).catch(() => undefined);
   const q = new URLSearchParams({ slug });
   if (opts.includeData) q.set("includeData", "true");
   const target = `${url}/phone/projects/export?${q.toString()}`;
@@ -863,16 +887,23 @@ export async function planEscapeRoute(
   });
 }
 
-export function phoneExportUrl(
+export async function preparePhoneProjectExport(
   slug: string,
   access?: PhoneProjectAccess | null,
-): { uri: string; headers: Record<string, string> } | null {
+  opts: { includeData?: boolean; containerize?: boolean } = {},
+): Promise<{ uri: string; headers: Record<string, string> } | null> {
   const h = headers();
   const url = access?.baseUrl ?? baseUrl();
   const effectiveSlug = access?.slug ?? slug;
   if (!h || !url) return null;
+  if (!access || access.kind === "local") {
+    await syncLocalPhoneProjectToConnectedAgent(slug).catch(() => undefined);
+  }
+  const q = new URLSearchParams({ slug: effectiveSlug });
+  if (opts.includeData) q.set("includeData", "true");
+  if (opts.containerize) q.set("containerize", "true");
   return {
-    uri: `${url}/phone/projects/export?slug=${encodeURIComponent(effectiveSlug)}`,
+    uri: `${url}/phone/projects/export?${q.toString()}`,
     headers: h,
   };
 }
@@ -943,17 +974,21 @@ function resolveTargetBase(target: PhonePushTarget): string {
 export async function pushPhoneProject(
   slug: string,
   target: PhonePushTarget,
-  opts: { onConflict?: "reject" | "rename" | "overwrite"; skipSeed?: boolean; includeData?: boolean } = {},
+  opts: { onConflict?: "reject" | "rename" | "overwrite"; skipSeed?: boolean; includeData?: boolean; containerize?: boolean } = {},
 ): Promise<PhonePushResult> {
   const h = headers();
   const srcBase = baseUrl();
   if (!h || !srcBase) {
     throw new Error("no source agent connected");
   }
+  await syncLocalPhoneProjectToConnectedAgent(slug).catch(() => undefined);
 
   // 1. Pull the bundle from the source (the phone-backend we're connected to).
+  const exportParams = new URLSearchParams({ slug });
+  if (opts.includeData) exportParams.set("includeData", "true");
+  if (opts.containerize) exportParams.set("containerize", "true");
   const exportRes = await fetch(
-    `${srcBase}/phone/projects/export?slug=${encodeURIComponent(slug)}${opts.includeData ? "&includeData=true" : ""}`,
+    `${srcBase}/phone/projects/export?${exportParams.toString()}`,
     { headers: h },
   );
   if (!exportRes.ok) {

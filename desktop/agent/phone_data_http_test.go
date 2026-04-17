@@ -176,6 +176,19 @@ func TestPhoneData_QueryParamAuthFallback(t *testing.T) {
 	}
 }
 
+func TestPhoneData_OwnerBearerFallback(t *testing.T) {
+	setupPhoneTestHome(t)
+	slug, _ := setupDataProjectWithToken(t, "owner-bearer")
+	srv := &HTTPServer{token: "owner-token"}
+	req := httptest.NewRequest(http.MethodGet, "/data/"+slug+"/todos", nil)
+	req.Header.Set("Authorization", "Bearer owner-token")
+	w := httptest.NewRecorder()
+	srv.phoneDataRouter(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("owner bearer should work, got %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestPhoneData_BadPath(t *testing.T) {
 	setupPhoneTestHome(t)
 	srv := &HTTPServer{}

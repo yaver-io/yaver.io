@@ -83,13 +83,17 @@ func runPhoneExport(args []string) {
 	fs := flag.NewFlagSet("phone export", flag.ExitOnError)
 	out := fs.String("out", "", "output path (default: <slug>.tgz)")
 	includeData := fs.Bool("include-data", false, "bundle the live SQLite file so runtime rows survive import")
+	containerize := fs.Bool("containerize", false, "include Docker/compose scaffold for Yaver-lite backend deploys")
 	_ = fs.Parse(args)
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: yaver phone export <slug> [--out <path>] [--include-data]")
+		fmt.Fprintln(os.Stderr, "Usage: yaver phone export <slug> [--out <path>] [--include-data] [--containerize]")
 		os.Exit(1)
 	}
 	slug := fs.Arg(0)
-	data, err := ExportPhoneProjectWithOptions(slug, PhoneExportOptions{IncludeData: *includeData})
+	data, err := ExportPhoneProjectWithOptions(slug, PhoneExportOptions{
+		IncludeData:  *includeData,
+		Containerize: *containerize,
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "export failed: %v\n", err)
 		os.Exit(1)
@@ -142,15 +146,19 @@ func runPhonePush(args []string) {
 	conflict := fs.String("conflict", "reject", "reject|rename|overwrite")
 	skipSeed := fs.Bool("skip-seed", false, "push schema+auth but no seed rows")
 	includeData := fs.Bool("include-data", false, "bundle local.db so runtime rows survive promotion")
+	containerize := fs.Bool("containerize", false, "include Docker/compose scaffold on the target project")
 	_ = fs.Parse(args)
 	if fs.NArg() < 1 || *to == "" {
-		fmt.Fprintln(os.Stderr, "Usage: yaver phone push <slug> --to <base-url> [--as-slug NAME] [--conflict reject|rename|overwrite] [--include-data]")
+		fmt.Fprintln(os.Stderr, "Usage: yaver phone push <slug> --to <base-url> [--as-slug NAME] [--conflict reject|rename|overwrite] [--include-data] [--containerize]")
 		os.Exit(1)
 	}
 	slug := fs.Arg(0)
 
 	// Export locally — bypass HTTP to avoid needing a running local server.
-	bundle, err := ExportPhoneProjectWithOptions(slug, PhoneExportOptions{IncludeData: *includeData})
+	bundle, err := ExportPhoneProjectWithOptions(slug, PhoneExportOptions{
+		IncludeData:  *includeData,
+		Containerize: *containerize,
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "export: %v\n", err)
 		os.Exit(1)
