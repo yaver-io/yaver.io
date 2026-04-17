@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Stack, useRouter } from "expo-router";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice, type Device } from "../src/context/DeviceContext";
+import { AppBackButton } from "../src/components/AppBackButton";
 import { getLocalSecret, LOCAL_KEYS, saveLocalSecret } from "../src/lib/auth";
 import { quicClient } from "../src/lib/quic";
 import {
@@ -303,7 +304,7 @@ export default function PhoneProjectsScreen() {
         ) : (
           <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginTop: 12 }]}>
             <View style={styles.stepDots}>
-              {[0, 1, 2].map((value) => (
+              {[0, 1, 2, 3].map((value) => (
                 <View
                   key={value}
                   style={[
@@ -326,7 +327,15 @@ export default function PhoneProjectsScreen() {
                   placeholderTextColor={c.textMuted}
                   style={[styles.input, { color: c.textPrimary, borderColor: c.border }]}
                 />
-                <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Prompt (optional)</Text>
+                <Text style={[styles.muted, { color: c.textMuted, marginTop: 8 }]}>
+                  Start with a simple name. You can describe the app on the next step.
+                </Text>
+              </>
+            ) : null}
+
+            {step === 1 ? (
+              <>
+                <Text style={[styles.label, { color: c.textMuted }]}>Describe the app</Text>
                 <TextInput
                   value={prompt}
                   onChangeText={setPrompt}
@@ -357,7 +366,7 @@ export default function PhoneProjectsScreen() {
               </>
             ) : null}
 
-            {step === 1 ? (
+            {step === 2 ? (
               <>
                 <Text style={[styles.label, { color: c.textMuted }]}>Who will code?</Text>
                 {(
@@ -449,7 +458,7 @@ export default function PhoneProjectsScreen() {
               </>
             ) : null}
 
-            {step === 2 ? (
+            {step === 3 ? (
               <>
                 <Text style={[styles.label, { color: c.textMuted }]}>Where should it live?</Text>
                 {(
@@ -546,9 +555,9 @@ export default function PhoneProjectsScreen() {
               >
                 <Text style={[styles.btnText, { color: c.textPrimary }]}>{step === 0 ? "Cancel" : "Back"}</Text>
               </Pressable>
-              {step < 2 ? (
+              {step < 3 ? (
                 <Pressable
-                  onPress={() => setStep((prev) => Math.min(2, prev + 1))}
+                  onPress={() => setStep((prev) => Math.min(3, prev + 1))}
                   style={[styles.btn, { backgroundColor: c.accent, flex: 1 }]}
                 >
                   <Text style={[styles.btnText, { color: c.bg }]}>Next</Text>
@@ -603,11 +612,11 @@ export default function PhoneProjectsScreen() {
         options={{
           headerShown: true,
           title: "Mobile Sandbox",
-          headerBackTitle: "Back",
           headerShadowVisible: false,
           headerStyle: { backgroundColor: c.bg },
           headerTintColor: c.accent,
           headerTitleStyle: { color: c.textPrimary, fontWeight: "700" },
+          headerLeft: () => <AppBackButton onPress={() => router.back()} label="Back" />,
         }}
       />
       <FlatList

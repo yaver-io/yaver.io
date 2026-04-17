@@ -130,11 +130,23 @@ export interface Device {
   };
 }
 
-function deviceIdentityKey(device: Pick<Device, "id" | "hwid" | "name" | "isGuest" | "hostEmail" | "hostName">): string {
+function normalizedDeviceName(name: string | undefined): string {
+  return String(name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\.local$/i, "");
+}
+
+function deviceIdentityKey(device: Pick<Device, "id" | "hwid" | "publicKey" | "name" | "os" | "isGuest" | "hostEmail" | "hostName">): string {
   if (device.hwid) return `hwid:${device.hwid}`;
+  if (device.publicKey) return `pub:${device.publicKey}`;
   if (device.isGuest) {
     const hostScope = device.hostEmail || device.hostName || "guest";
     return `guest:${hostScope}:${device.id || device.name}`;
+  }
+  const normalizedName = normalizedDeviceName(device.name);
+  if (normalizedName && device.os) {
+    return `host:${device.os}:${normalizedName}`;
   }
   if (device.id) return `id:${device.id}`;
   return `name:${device.name}`;
@@ -280,6 +292,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             os: d.platform || d.os || "",
             runners: d.runners ?? [],
             publicKey: d.publicKey,
+            hwid: d.hardwareId || d.hwid,
             needsAuth: d.needsAuth ?? false,
             isGuest: d.isGuest || false,
             hostName: d.hostName,
@@ -300,9 +313,36 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         for (const d of mapped) {
           const key = deviceIdentityKey(d);
           const existing = seen.get(key);
-          if (!existing || d.lastSeen > existing.lastSeen) {
+          if (!existing) {
             seen.set(key, d);
+            continue;
           }
+          const shouldReplace =
+            d.lastSeen > existing.lastSeen ||
+            (!!d.online && !existing.online) ||
+            (!!d.local && !existing.local);
+          if (shouldReplace) {
+            seen.set(key, {
+              ...existing,
+              ...d,
+              runners: d.runners?.length ? d.runners : existing.runners,
+              publicKey: d.publicKey || existing.publicKey,
+              hwid: d.hwid || existing.hwid,
+            });
+            continue;
+          }
+          seen.set(key, {
+            ...d,
+            ...existing,
+            host: existing.host || d.host,
+            port: existing.port || d.port,
+            online: existing.online || d.online,
+            local: existing.local || d.local,
+            runners: existing.runners?.length ? existing.runners : d.runners,
+            publicKey: existing.publicKey || d.publicKey,
+            hwid: existing.hwid || d.hwid,
+            lastSeen: Math.max(existing.lastSeen || 0, d.lastSeen || 0),
+          });
         }
         // Filter out detached devices
         const detached = await getDetachedDevices();
@@ -630,7 +670,11 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     const unsubDiscover = beaconListener.onDiscovered((discovered) => {
       setDevices((prev) =>
         prev.map((d) => {
-          if (d.id.startsWith(discovered.deviceId)) {
+          if (
+            d.id.startsWith(discovered.deviceId) ||
+            (!!discovered.hwid && d.hwid === discovered.hwid) ||
+            normalizedDeviceName(d.name) === normalizedDeviceName(discovered.name)
+          ) {
             return { ...d, host: discovered.ip, port: discovered.port, online: true, local: true, hwid: discovered.hwid || d.hwid };
           }
           return d;
