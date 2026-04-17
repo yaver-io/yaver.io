@@ -18,15 +18,29 @@ services:
       dockerfile: cloud/Dockerfile
     container_name: yaver-cloud-agent
     restart: unless-stopped
+    user: "0:0"
+    ports:
+      - "${CLOUD_AGENT_PORT:-18081}:18080"
     expose:
       - "18080"
     environment:
-      # Forwarded to `yaver serve` via env — see desktop/agent/config.go.
-      - YAVER_AUTH_TOKEN=${CLOUD_OWNER_TOKEN:?set CLOUD_OWNER_TOKEN in .env}
-      - YAVER_OWNER_USER_ID=${CLOUD_OWNER_USER_ID:-cloud-owner}
+      - HOME=/home/yaver
       - YAVER_HOSTNAME=${CLOUD_DOMAIN:-cloud.yaver.io}
     volumes:
       - yaver-data:/home/yaver/.yaver
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        mkdir -p /home/yaver/.yaver
+        cat > /home/yaver/.yaver/config.json <<EOF
+        {
+          "auth_token": "${CLOUD_OWNER_TOKEN:?set CLOUD_OWNER_TOKEN in .env}",
+          "device_id": "cloud-agent",
+          "containerize_host": true
+        }
+        EOF
+        exec yaver serve --debug --no-tls --no-relay --no-quic --port 18080
     logging:
       driver: "json-file"
       options:
