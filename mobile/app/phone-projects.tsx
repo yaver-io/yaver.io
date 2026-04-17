@@ -22,6 +22,7 @@ import {
   PhoneProject,
   PhonePushTarget,
   PhoneTemplate,
+  createLocalPhoneProject,
   createPhoneProject,
   createPhoneProjectAt,
   deletePhoneProject,
@@ -30,6 +31,7 @@ import {
 } from "../src/lib/phoneProjects";
 
 type StartMode = "this-device" | "dev-hw" | "yaver-cloud";
+type GitMode = "skip" | "later" | "providers-now";
 
 const YAVER_CLOUD_BASE = "https://cloud.yaver.io";
 
@@ -66,6 +68,7 @@ export default function PhoneProjectsScreen() {
   const [prompt, setPrompt] = useState("");
   const [runner, setRunner] = useState<string>("");
   const [creating, setCreating] = useState(false);
+  const [gitMode, setGitMode] = useState<GitMode>("skip");
 
   // yc.md §Wedge Demo — user picks where the mini-backend lives at creation
   // time. "this-device" is the pragmatic default (lives on whichever agent
@@ -98,7 +101,6 @@ export default function PhoneProjectsScreen() {
   }, [availableRunners, runner]);
 
   const load = useCallback(async () => {
-    if (!connected) return;
     setErr(null);
     try {
       const [rows, tpls] = await Promise.all([
@@ -137,8 +139,8 @@ export default function PhoneProjectsScreen() {
       let where = "";
 
       if (startMode === "this-device") {
-        p = await createPhoneProject(spec);
-        where = "on this device";
+        p = connected ? await createPhoneProject(spec) : await createLocalPhoneProject(spec);
+        where = connected ? "on this device" : "in the phone sandbox";
       } else if (startMode === "dev-hw") {
         if (!selectedDevMachine) {
           throw new Error("No dev machine online. Sign in with Yaver on your Mac/Pi/Linux.");
@@ -167,13 +169,31 @@ export default function PhoneProjectsScreen() {
       setName("");
       setPrompt("");
       setRunner(availableRunners[0]?.runnerId ?? "");
+      setGitMode("skip");
       setShowForm(false);
       // Only refresh the local list — remote projects aren't in the user's
       // connected-agent list, so jumping straight to the detail screen for
       // a local project is the useful UX. For remote, show a toast.
       if (startMode === "this-device") {
         await load();
-        router.navigate(`/phone-project/workspace/${p.slug}` as any);
+        router.navigate(`/phone-project/${p.slug}` as any);
+        if (!connected && prompt.trim()) {
+          Alert.alert(
+            "Sandbox project created",
+            "The local phone sandbox is ready. Prompt-driven first-draft generation still needs a connected Yaver runner, but you can run the app, shape the schema, and export later from this phone.",
+          );
+        }
+        if (gitMode !== "skip") {
+          Alert.alert(
+            "Git is optional",
+            connected
+              ? "This project was created as a monorepo-oriented sandbox workspace. Git setup is optional; when you are ready, open Git Providers and connect the host you want Yaver to push from."
+              : "This project was created locally on your phone. Git remains optional. Connect a Yaver dev machine later if you want provider-backed monorepo export and push.",
+          );
+          if (gitMode === "providers-now" && connected) {
+            router.navigate("/(tabs)/gitproviders" as any);
+          }
+        }
       } else {
         Alert.alert(
           "Created",
@@ -228,15 +248,31 @@ export default function PhoneProjectsScreen() {
       <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
         <Text style={[styles.h1, { color: c.textPrimary }]}>Mobile Sandbox</Text>
         <Text style={[styles.muted, { color: c.textMuted, marginTop: 4 }]}>
-          Build from your phone. Describe the app, let Yaver vibe-code the first
-          version, run it in the mobile sandbox, then grow it to your own machine
-          or Yaver Cloud later.
+          Build from your phone. Run the app against on-device SQLite now, then
+          grow it into a monorepo workspace on your own machine or Yaver Cloud later.
         </Text>
+        {!connected ? (
+          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginTop: 12 }]}>
+            <Text style={[styles.templateLabel, { color: c.textPrimary }]}>Phone-only mode</Text>
+            <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
+              You can create and run local sandbox projects without any active Yaver agent.
+              Connect a runner later for prompt generation, remote vibe coding, deploy, export,
+              OAuth secret sync, and hosted API-key minting.
+            </Text>
+          </View>
+        ) : null}
+        <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginTop: 12 }]}>
+          <Text style={[styles.templateLabel, { color: c.textPrimary }]}>Monorepo only</Text>
+          <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
+            New git-connected projects are monorepo-oriented by design. Keep the mobile app,
+            portable backend, web/admin surfaces, and deploy/export wiring in one workspace.
+            Git is optional; when used, Yaver only supports the monorepo path.
+          </Text>
+        </View>
         {!showForm ? (
           <Pressable
             onPress={() => setShowForm(true)}
             style={[styles.btn, { backgroundColor: c.accent, marginTop: 12 }]}
-            disabled={!connected}
           >
             <Text style={[styles.btnText, { color: c.bg }]}>+ New mobile app</Text>
           </Pressable>
@@ -260,7 +296,9 @@ export default function PhoneProjectsScreen() {
               style={[styles.input, styles.promptInput, { color: c.textPrimary, borderColor: c.border }]}
             />
             <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
-              Prompt mode generates the first app + backend plan for the mobile sandbox.
+              {connected
+                ? "Prompt mode generates the first app + backend plan for the mobile sandbox."
+                : "Prompt text is saved into the project brief. Connect a runner later to have Yaver generate the first draft from it."}
             </Text>
             {prompt.trim() ? (
               <>
@@ -277,7 +315,7 @@ export default function PhoneProjectsScreen() {
                     return (
                       <Pressable
                         key={item.id}
-                        onPress={() => setRunner(item.id)}
+                        onPress={() => connected && setRunner(item.id)}
                         style={[
                           styles.modeChip,
                           {
@@ -285,6 +323,7 @@ export default function PhoneProjectsScreen() {
                             borderColor: c.border,
                             marginRight: 8,
                             marginTop: 8,
+                            opacity: connected ? 1 : 0.55,
                           },
                         ]}
                       >
@@ -296,7 +335,9 @@ export default function PhoneProjectsScreen() {
                   })}
                 </ScrollView>
                 <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
-                  Coding can stay on this device, your dev machine, or Yaver Cloud. Pick the runner you want steering the first draft.
+                  {connected
+                    ? "Coding can stay on this device, your dev machine, or Yaver Cloud. Pick the runner you want steering the first draft."
+                    : "Runner selection unlocks once a Yaver agent is connected."}
                 </Text>
               </>
             ) : null}
@@ -315,14 +356,17 @@ export default function PhoneProjectsScreen() {
                     ? `→ ${selectedDevMachine.name}${devMachines.length > 1 ? " (tap to change)" : ""}`
                     : devMachines.length
                       ? "Pick a paired Mac / Pi / Linux box"
-                      : "No other devices paired yet",
-                  disabled: devMachines.length === 0,
+                      : connected
+                        ? "No other devices paired yet"
+                        : "Connect a Yaver device to start here",
+                  disabled: !connected || devMachines.length === 0,
                   onLongPress: pickDevMachine,
                 },
                 {
                   id: "yaver-cloud" as StartMode,
                   label: "Yaver Cloud",
                   sub: YAVER_CLOUD_BASE.replace(/^https?:\/\//, "") + " · managed Hetzner tenant",
+                  disabled: !connected,
                 },
               ] as const
             ).map((opt) => (
@@ -379,6 +423,58 @@ export default function PhoneProjectsScreen() {
                 </Text>
               </Pressable>
             ))}
+            <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Git integration (optional)</Text>
+            {(
+              [
+                {
+                  id: "skip" as GitMode,
+                  label: "Skip for now",
+                  sub: "Stay local first. You can wire git later.",
+                },
+                {
+                  id: "later" as GitMode,
+                  label: "Monorepo later",
+                  sub: connected
+                    ? "Create now, then export/push this monorepo workspace from your Yaver machine later."
+                    : "Create now. Connect a dev machine later to push the monorepo.",
+                },
+                {
+                  id: "providers-now" as GitMode,
+                  label: "Open providers",
+                  sub: connected
+                    ? "Configure GitHub / GitLab / Bitbucket credentials now. Repo setup is still optional."
+                    : "Provider setup unlocks once a Yaver dev machine is connected.",
+                  disabled: !connected,
+                },
+              ] as const
+            ).map((opt) => (
+              <Pressable
+                key={opt.id}
+                onPress={() => {
+                  if ((opt as any).disabled) return;
+                  setGitMode(opt.id);
+                  if (opt.id === "providers-now" && connected) {
+                    router.navigate("/(tabs)/gitproviders" as any);
+                  }
+                }}
+                style={[
+                  styles.templateRow,
+                  {
+                    backgroundColor: gitMode === opt.id ? c.accent + "22" : "transparent",
+                    borderColor: gitMode === opt.id ? c.accent : c.border,
+                    opacity: (opt as any).disabled ? 0.5 : 1,
+                  },
+                ]}
+              >
+                <Text style={[styles.templateLabel, { color: c.textPrimary }]}>{opt.label}</Text>
+                <Text style={[styles.muted, { color: c.textMuted }]} numberOfLines={2}>
+                  {opt.sub}
+                </Text>
+              </Pressable>
+            ))}
+            <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
+              Git is never required to start. When you do use git, Yaver expects one monorepo workspace rather than split repos.
+            </Text>
             <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
               <Pressable
                 onPress={() => setShowForm(false)}
@@ -421,14 +517,6 @@ export default function PhoneProjectsScreen() {
       devMachines.length,
     ],
   );
-
-  if (!connected) {
-    return (
-      <View style={[styles.empty, { backgroundColor: c.bg }]}>
-        <Text style={{ color: c.textMuted }}>Connect to a device to use the phone backend.</Text>
-      </View>
-    );
-  }
 
   return (
     <KeyboardAvoidingView

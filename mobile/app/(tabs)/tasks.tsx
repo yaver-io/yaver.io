@@ -1438,6 +1438,30 @@ export default function TasksScreen() {
                   <Text style={[s.emptySubtitle, { color: c.textSecondary, marginTop: 8 }]}>
                     Install the Yaver agent on your computer to start sending tasks from your phone.
                   </Text>
+                  <View
+                    style={{
+                      width: "100%",
+                      marginTop: 16,
+                      padding: 14,
+                      borderRadius: 12,
+                      borderWidth: 1,
+                      borderColor: c.border,
+                      backgroundColor: c.bg,
+                    }}
+                  >
+                    <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600" }}>
+                      Mobile sandbox still works without a device
+                    </Text>
+                    <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 6, lineHeight: 18 }}>
+                      Start a local SQLite-backed project from this phone now. Git is optional, and if you use git Yaver only supports a monorepo workspace.
+                    </Text>
+                    <Pressable
+                      style={[s.discoverBtn, { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, marginTop: 14, alignSelf: "stretch" }]}
+                      onPress={() => taskRouter.navigate("/phone-projects" as any)}
+                    >
+                      <Text style={[s.discoverBtnText, { color: c.textPrimary }]}>Open Mobile Sandbox</Text>
+                    </Pressable>
+                  </View>
                   <View style={s.discoverSteps}>
                     <View style={s.discoverStep}>
                       <View style={[s.discoverStepDot, { backgroundColor: c.accent }]}>

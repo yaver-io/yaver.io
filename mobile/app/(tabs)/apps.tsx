@@ -201,12 +201,13 @@ export default function AppsScreen() {
         }
       }
       // Always prepend "Vibing" + orchestration surfaces as the first options.
+      const projectAction = { label: "Project Overview", target: ".", type: "project", icon: "\u{1F4CB}", framework: "", platform: "", command: "" };
       const vibingAction = { label: "Vibing", target: ".", type: "vibing", icon: "\u{1F3B5}", framework: "", platform: "", command: "" };
       const agentAction = { label: "Agent Mode", target: ".", type: "agent", icon: "\u{1F9E0}", framework: "", platform: "", command: "" };
       const autoDevAction = { label: "Auto Dev", target: ".", type: "autodev", icon: "\u{1F916}", framework: "", platform: "", command: "" };
       const autoTestAction = { label: "Auto Test", target: ".", type: "autotest", icon: "\u{1F9EA}", framework: "", platform: "", command: "" };
       const gitSyncAction = { label: "Git Sync", target: ".", type: "git-sync", icon: "\u{1F504}", framework: "", platform: "", command: "" };
-      result.actions = [vibingAction, agentAction, autoDevAction, autoTestAction, gitSyncAction, ...result.actions];
+      result.actions = [projectAction, vibingAction, agentAction, autoDevAction, autoTestAction, gitSyncAction, ...result.actions];
       setActionSheet({ ...result, compatibility });
     } catch {
       // Fallback
@@ -235,6 +236,11 @@ export default function AppsScreen() {
         `cd ${path} && Sync this repository with its remote. Pull the latest changes. If there are merge conflicts, resolve them intelligently. If the local branch is behind, rebase or merge as appropriate. If there are uncommitted local changes, stash them first, pull, then re-apply. Show me a summary of what changed.`,
       ).catch(() => {});
       router.navigate("/(tabs)/tasks");
+      return;
+    }
+
+    if (action.type === "project") {
+      router.navigate({ pathname: "/(tabs)/project", params: { dir: path } } as any);
       return;
     }
 

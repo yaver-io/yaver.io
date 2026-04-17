@@ -17,6 +17,9 @@ export default function IndexScreen() {
   }
 
   if (isAuthenticated) {
+    if (!surveyCompleted) {
+      return <Redirect href="/survey" />;
+    }
     return <Redirect href="/(tabs)/tasks" />;
   }
 
