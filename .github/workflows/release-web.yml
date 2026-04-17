@@ -41,6 +41,7 @@ jobs:
       VERSION: ${{ needs.validate.outputs.version }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -64,9 +65,7 @@ jobs:
         run: cd web && npm run deploy
 
       - name: Update Convex web version
-        if: ${{ secrets.CONVEX_DEPLOY_KEY != '' }}
-        env:
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        if: ${{ env.CONVEX_DEPLOY_KEY != '' }}
         run: |
           cd backend && npm ci
           ../scripts/update-convex-version.sh web "$VERSION"
