@@ -732,6 +732,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Phone-first mini backend (in-app SQLite projects, portable to switch-engine targets)
 	s.registerPhoneRoutes(mux)
 
+	// DNS helpers — Cloudflare first (others later). Used by the phone-first
+	// "Custom domain" flow to CNAME <sub>.<zone> to cloud.yaver.io in one tap.
+	s.registerDNSRoutes(mux)
+
 	// Embedded SPA (when console_static is populated by the build)
 	s.mountConsoleEmbed(mux)
 
@@ -4115,9 +4119,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolResult(fmt.Sprintf("Working directory changed to: %s", args.Path))
 
 	case "get_ios_install_method":
-		resolved := resolveIOSInstallMethod(s.iosInstallMethod)
-		return mcpToolResult(fmt.Sprintf("iOS install method: %s\nResolved: %s\nPlatform: %s\nXcode available: %v",
-			s.iosInstallMethod, resolved, runtime.GOOS, canDoNativeInstall()))
+		resolved, reason := resolveIOSInstallMethodWithReason(s.iosInstallMethod)
+		return mcpToolResult(fmt.Sprintf("iOS install method: %s\nResolved: %s\nReason: %s\nPlatform: %s\nXcode available: %v",
+			s.iosInstallMethod, resolved, reason, runtime.GOOS, canDoNativeInstall()))
 
 	case "set_ios_install_method":
 		var args struct {
@@ -4129,8 +4133,8 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolError("method must be auto, native, or bundle")
 		}
 		s.iosInstallMethod = args.Method
-		resolved := resolveIOSInstallMethod(args.Method)
-		log.Printf("[MCP] iOS install method set to %s (resolved: %s)", args.Method, resolved)
+		resolved, reason := resolveIOSInstallMethodWithReason(args.Method)
+		log.Printf("[MCP] iOS install method set to %s (resolved: %s, reason: %s)", args.Method, resolved, reason)
 
 		// Persist to config by default
 		shouldPersist := args.Persist == nil || *args.Persist
@@ -4141,7 +4145,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 				SaveConfig(cfg)
 			}
 		}
-		return mcpToolResult(fmt.Sprintf("iOS install method set to: %s (resolved: %s)", args.Method, resolved))
+		return mcpToolResult(fmt.Sprintf("iOS install method set to: %s (resolved: %s)\nReason: %s", args.Method, resolved, reason))
 
 	case "list_projects":
 		fp, err := projectsFilePath()

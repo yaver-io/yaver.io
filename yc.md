@@ -26,7 +26,7 @@
 **What's still on the critical path for the YC video (ordered by leverage):**
 1. **Voice/text-prompt-to-scaffold** (yc.md Apr 20 core; 1–2 days) — the AI-writes-code half of the wedge. Currently the user creates an empty phone project and adds tables manually; we need a prompt field that produces a real schema + a working RN screen. See `PHONE_EXPORT_PIPELINE.md §Handoff 1.3`.
 2. **Cloud tenant DNS + TLS** (yc.md Apr 24; 30 min runbook) — point `cloud.yaver.io` at a Hetzner box with the `cloud/` stack + Caddy wildcard. Details in `PHONE_EXPORT_PIPELINE.md §Handoff 1.4`.
-3. **`pushPhoneProject` include-data plumb-through** (10 min) — core `--include-data` is shipped; mobile + web client libs still need the opt-in param. `PHONE_EXPORT_PIPELINE.md §Handoff 1.1`.
+3. **Deploy-state rebinding** (1 day) — after a push, the phone app still needs to treat the promoted target as the active backend instead of just surfacing a success URL.
 4. **GitHub/GitLab monorepo scaffolding** (1 day) — user-requested. Auth + clone + mono-repo layout + push. Can defer; the phone-only path is already demoable.
 5. **OpenAI key onboarding helper** (1 hour) — paste-with-validate + in-app link to platform.openai.com. OpenAI has no one-click OAuth-to-API-key. `PHONE_EXPORT_PIPELINE.md §Handoff 2.2`.
 6. **True on-device SQLite runtime (`expo-sqlite`)** (2–3 days) — so "Phone only" mode is literal, not "lives on the currently-connected agent". Not a demo-blocker; pragmatic today.
@@ -36,6 +36,7 @@
 **Recently shipped (moved off critical path):**
 - `--include-data` flag on export + receive — runtime rows can now travel with the push when opt-in.
 - OAuth providers per phone project — Apple / Google / Microsoft setup guided from the mobile app, IDs + secrets stored at 0600 per-project, carried with the push. See `PHONE_EXPORT_PIPELINE.md §Handoff 1.2`.
+- Cloudflare DNS helpers — per-project "Custom Domain" screen on mobile, agent-side CF API wrapper with 14 tests. Paste scoped token → verify → CNAME/A/TXT with proxy toggle → one-tap create. Token never persisted by the agent. See `PHONE_EXPORT_PIPELINE.md §Handoff 2.4`.
 
 **Key invariants a Codex handoff must preserve:**
 - The three tiers run the **same binary** (`yaver serve`). No cloud-only code path.
@@ -105,7 +106,7 @@ CLAUDE.md is 3× too big for the pitch. It stays in the repo — but the applica
 | Apr 20 (Mon) | "Create project from phone" flow: prompt → agent scaffolds RN + mini-backend on user's Mac. | Voice/text prompt on phone produces a running RN project on the dev Mac. | 🟡 partial — 3-mode picker ships (`mobile/app/phone-projects.tsx`); AI-prompt-to-scaffold still pending (see §Handoff items 1.2) |
 | Apr 21 (Tue) | Deploy toggle UI: `[Your Dev Machine]` / `[Yaver Cloud]`. Dev-machine path = push-to-device. Cloud path = stub returning fake URL. | UI ships; dev-machine branch actually works. | ✅ shipped (`phone-project/[slug].tsx`, `PhoneProjectsView.tsx`). Cloud path is NOT a stub — it's a real Hetzner box. |
 | Apr 22 (Wed) | Promote flow: one-tap export phone → user's dev machine (tar + git init + push via agent). | `yaver projects promote <id>` works from mobile. | ✅ shipped (`yaver phone push`, `pushPhoneProject` in mobile+web, dogfood 17 ms local / 196 ms Hetzner) |
-| Apr 23 (Thu) | Dogfood: build a real app (todo or habit tracker) end-to-end from phone. Fix every friction. | You built it from your phone only, no MacBook touch. | ⏳ pending — blocked on AI-prompt-to-scaffold (Apr 20 remainder) + `--include-data` flag |
+| Apr 23 (Thu) | Dogfood: build a real app (todo or habit tracker) end-to-end from phone. Fix every friction. | You built it from your phone only, no MacBook touch. | ⏳ pending — `--include-data` path now works; remaining blocker is AI-prompt-to-scaffold (Apr 20 remainder) |
 
 ### Week 2 — Polish + Proof (Apr 24–30)
 

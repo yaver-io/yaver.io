@@ -88,6 +88,8 @@ export interface PhoneCreateSpec {
   schema?: PhoneSchema;
   auth?: PhoneAuth;
   seed?: PhoneSeed;
+  prompt?: string;
+  runner?: string;
 }
 
 export type PhonePromoteTarget = string;
@@ -341,6 +343,111 @@ export async function setPhoneOAuth(
   patch: PhoneOAuthConfig,
 ): Promise<PhoneOAuthResponse | null> {
   return post<PhoneOAuthResponse>("/phone/projects/oauth", { slug, config: patch });
+}
+
+// ---- Cloudflare DNS helpers (pair with desktop/agent/cloudflare_dns.go) ----
+//
+// All three endpoints take the user's Cloudflare API token via X-CF-Token —
+// the agent never persists it. Mobile caches the token in the vault on the
+// phone side so the user pastes it once.
+
+export interface CFZone {
+  id: string;
+  name: string;
+  status?: string;
+}
+
+export interface CFRecord {
+  id: string;
+  type: string;
+  name: string;
+  content: string;
+  ttl?: number;
+  proxied?: boolean;
+  comment?: string;
+}
+
+export interface CFRecordInput {
+  type: string;
+  name: string;
+  content: string;
+  ttl?: number;
+  proxied?: boolean;
+  comment?: string;
+}
+
+export interface CFTokenStatus {
+  valid: boolean;
+  status?: string;
+  message?: string;
+}
+
+function cfHeaders(token: string): Record<string, string> | null {
+  const base = headers();
+  if (!base) return null;
+  return { ...base, "X-CF-Token": token };
+}
+
+export async function verifyCloudflareToken(token: string): Promise<CFTokenStatus | null> {
+  const url = baseUrl();
+  const h = cfHeaders(token);
+  if (!url || !h) return null;
+  try {
+    const res = await fetch(`${url}/dns/cloudflare/verify`, {
+      method: "POST",
+      headers: { ...h, "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) return { valid: false, message: `HTTP ${res.status}` };
+    return (await res.json()) as CFTokenStatus;
+  } catch (e) {
+    return { valid: false, message: String(e) };
+  }
+}
+
+export async function listCloudflareZones(token: string): Promise<CFZone[]> {
+  const url = baseUrl();
+  const h = cfHeaders(token);
+  if (!url || !h) return [];
+  const res = await fetch(`${url}/dns/cloudflare/zones`, { headers: h });
+  if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
+  const data = (await res.json()) as { zones?: CFZone[] };
+  return data.zones ?? [];
+}
+
+export async function listCloudflareRecords(token: string, zoneId: string): Promise<CFRecord[]> {
+  const url = baseUrl();
+  const h = cfHeaders(token);
+  if (!url || !h) return [];
+  const params = new URLSearchParams({ zoneId });
+  const res = await fetch(`${url}/dns/cloudflare/records?${params}`, { headers: h });
+  if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
+  const data = (await res.json()) as { records?: CFRecord[] };
+  return data.records ?? [];
+}
+
+export async function createCloudflareRecord(token: string, zoneId: string, record: CFRecordInput): Promise<CFRecord> {
+  const url = baseUrl();
+  const h = cfHeaders(token);
+  if (!url || !h) throw new Error("agent not reachable");
+  const res = await fetch(`${url}/dns/cloudflare/records`, {
+    method: "POST",
+    headers: { ...h, "Content-Type": "application/json" },
+    body: JSON.stringify({ zoneId, record }),
+  });
+  const text = await res.text().catch(() => "");
+  if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
+  const body = JSON.parse(text) as { record: CFRecord };
+  return body.record;
+}
+
+export async function deleteCloudflareRecord(token: string, zoneId: string, recordId: string): Promise<boolean> {
+  const url = baseUrl();
+  const h = cfHeaders(token);
+  if (!url || !h) return false;
+  const params = new URLSearchParams({ zoneId, recordId });
+  const res = await fetch(`${url}/dns/cloudflare/records?${params}`, { method: "DELETE", headers: h });
+  return res.ok;
 }
 
 export function phoneExportUrl(slug: string): { uri: string; headers: Record<string, string> } | null {
