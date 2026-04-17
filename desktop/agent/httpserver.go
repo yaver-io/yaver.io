@@ -742,6 +742,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// phone-first wedge. See phone_escape.go.
 	s.registerEscapeRoutes(mux)
 
+	// Public data API — /data/<slug>/<table>[/<id>] with per-project API
+	// tokens + CORS. The surface a third-party RN/web app's runtime hits
+	// from the end-user's device. See phone_data_http.go + phone_tokens.go.
+	s.registerPhoneDataRoutes(mux)
+
 	// Embedded SPA (when console_static is populated by the build)
 	s.mountConsoleEmbed(mux)
 

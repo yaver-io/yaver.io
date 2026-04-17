@@ -479,6 +479,9 @@ export default function PhoneProjectDetailScreen() {
         <Pressable onPress={() => router.back()}>
           <Text style={{ color: c.accent, marginBottom: 8 }}>‹ Back</Text>
         </Pressable>
+        <Pressable onPress={() => router.navigate(`/phone-project/workspace/${slugStr}` as any)}>
+          <Text style={{ color: c.accent, marginBottom: 8 }}>Workspace ›</Text>
+        </Pressable>
         <Text style={[styles.h1, { color: c.textPrimary }]}>{project.name}</Text>
         <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 2 }}>
           {project.slug} · {project.template ?? "custom"}
@@ -577,6 +580,20 @@ export default function PhoneProjectDetailScreen() {
         >
           <Text style={[styles.btnText, { color: c.textPrimary }]}>
             Custom domain (Cloudflare DNS) ›
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() =>
+            router.navigate({
+              pathname: "/phone-project/api-keys" as any,
+              params: { slug: slugStr },
+            })
+          }
+          style={[styles.btnSecondary, { borderColor: c.border, marginTop: 8 }]}
+        >
+          <Text style={[styles.btnText, { color: c.textPrimary }]}>
+            API keys (for your third-party apps) ›
           </Text>
         </Pressable>
       </View>

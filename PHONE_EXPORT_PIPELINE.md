@@ -445,6 +445,30 @@ Uses:
 - **Route 53 / DigitalOcean / Google Cloud DNS adapters** — same interface shape, swap the `CloudflareClient`. The mobile screen would become a single "DNS provider" picker with per-provider paste-back. ~1 day each.
 - **Auto-inject yaver.cloud apex records** so paying users who own a domain can point it at Yaver Cloud with one tap (Yaver asks for the Cloudflare token once, creates both the apex A record + the wildcard CNAME, saves a "domain linked" flag in the user's settings). ~2 hours once Route 53 is done.
 
+#### 2.4d Runtime data API + per-project API keys + TS SDK — ✅ SHIPPED
+
+User: "make sure that all inbounds and outbounds of yaver backend works perfect for mobile we dont have export since its just react native and same for web (for third party apps that developers will develop with yaver)."
+
+The phone-projects surface until today was owner-managed (`/phone/projects/*` behind the agent's owner bearer). A third-party RN / web app the developer ships to end users needed scoped tokens + a clean runtime API + an SDK. All three shipped:
+
+- **Agent: per-project tokens.** `desktop/agent/phone_tokens.go` — `pp_<slug>_<64hex>` format, stored as SHA-256 in `<project-dir>/tokens.yaml` (0600), raw returned once on mint. `POST /phone/projects/tokens` mint, `GET /phone/projects/tokens?slug=X` list (summaries only, no hash), `DELETE ?slug=X&tokenId=Y` revoke. `ValidatePhoneProjectToken(raw)` returns the summary + bound slug or `ErrInvalidPhoneProjectToken`. **Scope is per-project, hard-enforced** — a forged cross-project token (same raw hex, swapped slug prefix) fails the hash check. 8 tests.
+
+- **Agent: public data routes.** `desktop/agent/phone_data_http.go` — `GET /data/{slug}/{table}[/{id}]` list + get-one, `POST /data/{slug}/{table}` insert, `PATCH /data/{slug}/{table}/{id}` update, `DELETE /data/{slug}/{table}/{id}` remove. CORS preflight with permissive defaults (origin echoed, credentials off — tokens flow explicitly through `Authorization`/`X-API-Key`/`?api_key=`). Request body capped at 1 MB per row. Cross-project token access returns 403 even when the slug guess is valid. 8 tests.
+
+- **SDK: `createYaverBackendClient({ baseUrl, slug, apiKey }).collection(name)`** — new `sdk/js/src/backend.ts` in the existing `yaver-sdk` npm package. Zero dependencies (uses global `fetch`). Works in RN + browser + Node ≥18. Typed per-row `YaverCollection<Row>`: `list`, `get` (returns null on 404, not throw), `insert`, `update`, `remove`. `YaverBackendError` with `.status` for non-2xx. `raw fetch` escape hatch for unsupported endpoints without bypassing the token. Re-exported from `sdk/js/src/index.ts`.
+
+- **Mobile UI: API Keys screen.** `mobile/app/phone-project/api-keys.tsx` — mint (label-required), shows raw plaintext ONCE with big copy-to-clipboard + dismiss buttons, lists active keys with `createdAt` + `lastUsed`, instant-effect revoke. Entry point from the project detail screen next to OAuth + DNS. Bottom of the screen has a copy-pasteable `yaver-sdk` snippet pre-filled with the current slug so a developer can ship a working integration in 30 seconds.
+
+Use cases this fills:
+- **RN app** the developer ships: `import { createYaverBackendClient } from "yaver-sdk"`, store key in `react-native-config`, `yaver.collection("todos").list()` works on the user's device.
+- **Web app** (Next.js / Vite / plain `<script>`): same import, server-side routes read the key from env, browser SPAs also work thanks to CORS.
+- **Node script / serverless function**: same import, same contract, no extra runtime config.
+
+**Codex follow-ups flagged in §3 below:**
+- Per-project CORS origin allowlist (mobile UI: text input for comma-separated origins, agent-side gate before the permissive default).
+- Rate limit per-token so a buggy app or leaked key can't drain an agent.
+- Typed schema codegen — run through `schema.yaml` to emit `type Todo = { id: string; title: string; done: boolean }` for the SDK so `collection<Todo>("todos")` inference becomes free. Ship as `yaver codegen` CLI + a Next.js plugin.
+
 #### 2.4c Cost guardrails — ✅ SHIPPED
 
 User concern: "make sure to not make me poor etc. with cloudflare convex vercel deploys of tons of bytes etc."
