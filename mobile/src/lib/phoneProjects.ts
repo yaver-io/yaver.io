@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { quicClient } from "./quic";
 
 // Mirrors desktop/agent/phone_backend.go. Keep these types in sync.
@@ -119,6 +120,28 @@ export interface PhoneCreateSpec {
 
 export type PhonePromoteTarget = string;
 
+export type PhoneBackendKind = "local" | "dev-hw" | "yaver-cloud" | "custom";
+
+export interface PhoneProjectAccess {
+  sourceSlug: string;
+  slug: string;
+  kind: PhoneBackendKind;
+  label: string;
+  baseUrl?: string;
+  boundAt?: string;
+}
+
+interface StoredPhoneProjectBinding {
+  version: 1;
+  slug: string;
+  kind: Exclude<PhoneBackendKind, "local">;
+  label: string;
+  baseUrl: string;
+  boundAt: string;
+}
+
+const PHONE_BACKEND_BINDING_PREFIX = "@yaver/phone_backend_binding/";
+
 function headers(): Record<string, string> | null {
   if (!quicClient.isConnected) return null;
   return quicClient.morningAuthHeaders();
@@ -159,6 +182,89 @@ async function post<T>(path: string, body: unknown): Promise<T | null> {
   } catch (err) {
     throw err;
   }
+}
+
+async function getFromBase<T>(base: string, path: string): Promise<T | null> {
+  const h = headers();
+  if (!h) return null;
+  try {
+    const res = await fetch(`${base}${path}`, { headers: h });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(text || `HTTP ${res.status}`);
+    }
+    return (await res.json()) as T;
+  } catch (err) {
+    throw err;
+  }
+}
+
+async function postToBase<T>(base: string, path: string, body: unknown): Promise<T | null> {
+  const h = headers();
+  if (!h) return null;
+  try {
+    const res = await fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { ...h, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(text || `HTTP ${res.status}`);
+    }
+    return (await res.json()) as T;
+  } catch (err) {
+    throw err;
+  }
+}
+
+function bindingKey(sourceSlug: string): string {
+  return `${PHONE_BACKEND_BINDING_PREFIX}${encodeURIComponent(sourceSlug)}`;
+}
+
+export async function getPhoneProjectAccess(sourceSlug: string): Promise<PhoneProjectAccess> {
+  try {
+    const raw = await AsyncStorage.getItem(bindingKey(sourceSlug));
+    if (!raw) {
+      return { sourceSlug, slug: sourceSlug, kind: "local", label: "This device" };
+    }
+    const parsed = JSON.parse(raw) as StoredPhoneProjectBinding;
+    if (!parsed?.baseUrl || !parsed?.slug || !parsed?.kind) {
+      return { sourceSlug, slug: sourceSlug, kind: "local", label: "This device" };
+    }
+    return {
+      sourceSlug,
+      slug: parsed.slug,
+      kind: parsed.kind,
+      label: parsed.label,
+      baseUrl: parsed.baseUrl,
+      boundAt: parsed.boundAt,
+    };
+  } catch {
+    return { sourceSlug, slug: sourceSlug, kind: "local", label: "This device" };
+  }
+}
+
+export async function bindPhoneProjectToTarget(
+  sourceSlug: string,
+  target: PhonePushTarget,
+  result: PhonePushResult,
+  label: string,
+): Promise<void> {
+  const baseUrl = resolveTargetBase(target);
+  const value: StoredPhoneProjectBinding = {
+    version: 1,
+    slug: result.slug,
+    kind: target.kind,
+    label,
+    baseUrl,
+    boundAt: new Date().toISOString(),
+  };
+  await AsyncStorage.setItem(bindingKey(sourceSlug), JSON.stringify(value));
+}
+
+export async function clearPhoneProjectBinding(sourceSlug: string): Promise<void> {
+  await AsyncStorage.removeItem(bindingKey(sourceSlug));
 }
 
 export async function listPhoneProjects(): Promise<PhoneProject[]> {
@@ -223,12 +329,28 @@ function resolvePhonePushTargetBase(target: PhonePushTarget): string {
   }
 }
 
-export async function getPhoneProject(slug: string): Promise<PhoneProject | null> {
-  return get<PhoneProject>(`/phone/projects/get?slug=${encodeURIComponent(slug)}`);
+export async function getPhoneProject(
+  slug: string,
+  access?: PhoneProjectAccess | null,
+): Promise<PhoneProject | null> {
+  const effectiveSlug = access?.slug ?? slug;
+  const path = `/phone/projects/get?slug=${encodeURIComponent(effectiveSlug)}`;
+  if (access?.baseUrl) {
+    return getFromBase<PhoneProject>(access.baseUrl, path);
+  }
+  return get<PhoneProject>(path);
 }
 
-export async function deletePhoneProject(slug: string): Promise<boolean> {
-  const r = await post<{ ok?: boolean }>("/phone/projects/delete", { slug });
+export async function deletePhoneProject(
+  slug: string,
+  access?: PhoneProjectAccess | null,
+): Promise<boolean> {
+  const effectiveSlug = access?.slug ?? slug;
+  const r = access?.baseUrl
+    ? await postToBase<{ ok?: boolean }>(access.baseUrl, "/phone/projects/delete", {
+        slug: effectiveSlug,
+      })
+    : await post<{ ok?: boolean }>("/phone/projects/delete", { slug: effectiveSlug });
   return !!r?.ok;
 }
 
@@ -250,9 +372,18 @@ export async function setPhoneSeed(slug: string, seed: PhoneSeed): Promise<boole
 }
 
 export async function listPhoneTables(slug: string): Promise<Array<{ name: string; rowCount?: number }>> {
-  const r = await get<{ tables?: Array<{ name: string; rowCount?: number }>; error?: string }>(
-    `/phone/projects/tables?slug=${encodeURIComponent(slug)}`,
-  );
+  return listPhoneTablesAt(slug);
+}
+
+export async function listPhoneTablesAt(
+  slug: string,
+  access?: PhoneProjectAccess | null,
+): Promise<Array<{ name: string; rowCount?: number }>> {
+  const effectiveSlug = access?.slug ?? slug;
+  const path = `/phone/projects/tables?slug=${encodeURIComponent(effectiveSlug)}`;
+  const r = access?.baseUrl
+    ? await getFromBase<{ tables?: Array<{ name: string; rowCount?: number }>; error?: string }>(access.baseUrl, path)
+    : await get<{ tables?: Array<{ name: string; rowCount?: number }>; error?: string }>(path);
   if (!r) return [];
   if (r.error) throw new Error(r.error);
   return r.tables ?? [];
@@ -269,22 +400,34 @@ export async function browsePhoneTable(
   table: string,
   cursor = "",
   limit = 50,
+  access?: PhoneProjectAccess | null,
 ): Promise<PhoneBrowseResult | null> {
   const params = new URLSearchParams({
-    slug,
+    slug: access?.slug ?? slug,
     table,
     cursor,
     limit: String(limit),
   });
-  return get<PhoneBrowseResult>(`/phone/projects/browse?${params.toString()}`);
+  const path = `/phone/projects/browse?${params.toString()}`;
+  return access?.baseUrl
+    ? getFromBase<PhoneBrowseResult>(access.baseUrl, path)
+    : get<PhoneBrowseResult>(path);
 }
 
 export async function insertPhoneRow(
   slug: string,
   table: string,
   doc: Record<string, unknown>,
+  access?: PhoneProjectAccess | null,
 ): Promise<string | null> {
-  const r = await post<{ id: string }>("/phone/projects/insert", { slug, table, doc });
+  const effectiveSlug = access?.slug ?? slug;
+  const r = access?.baseUrl
+    ? await postToBase<{ id: string }>(access.baseUrl, "/phone/projects/insert", {
+        slug: effectiveSlug,
+        table,
+        doc,
+      })
+    : await post<{ id: string }>("/phone/projects/insert", { slug: effectiveSlug, table, doc });
   return r?.id ?? null;
 }
 
@@ -293,13 +436,43 @@ export async function updatePhoneRow(
   table: string,
   id: string,
   fields: Record<string, unknown>,
+  access?: PhoneProjectAccess | null,
 ): Promise<boolean> {
-  const r = await post<{ ok?: boolean }>("/phone/projects/update", { slug, table, id, fields });
+  const effectiveSlug = access?.slug ?? slug;
+  const r = access?.baseUrl
+    ? await postToBase<{ ok?: boolean }>(access.baseUrl, "/phone/projects/update", {
+        slug: effectiveSlug,
+        table,
+        id,
+        fields,
+      })
+    : await post<{ ok?: boolean }>("/phone/projects/update", {
+        slug: effectiveSlug,
+        table,
+        id,
+        fields,
+      });
   return !!r?.ok;
 }
 
-export async function deletePhoneRow(slug: string, table: string, id: string): Promise<boolean> {
-  const r = await post<{ ok?: boolean }>("/phone/projects/delete-row", { slug, table, id });
+export async function deletePhoneRow(
+  slug: string,
+  table: string,
+  id: string,
+  access?: PhoneProjectAccess | null,
+): Promise<boolean> {
+  const effectiveSlug = access?.slug ?? slug;
+  const r = access?.baseUrl
+    ? await postToBase<{ ok?: boolean }>(access.baseUrl, "/phone/projects/delete-row", {
+        slug: effectiveSlug,
+        table,
+        id,
+      })
+    : await post<{ ok?: boolean }>("/phone/projects/delete-row", {
+        slug: effectiveSlug,
+        table,
+        id,
+      });
   return !!r?.ok;
 }
 
@@ -307,8 +480,16 @@ export async function queryPhoneProject(
   slug: string,
   query: string,
   args?: Record<string, unknown>,
+  access?: PhoneProjectAccess | null,
 ): Promise<unknown> {
-  const r = await post<{ result: unknown }>("/phone/projects/query", { slug, query, args });
+  const effectiveSlug = access?.slug ?? slug;
+  const r = access?.baseUrl
+    ? await postToBase<{ result: unknown }>(access.baseUrl, "/phone/projects/query", {
+        slug: effectiveSlug,
+        query,
+        args,
+      })
+    : await post<{ result: unknown }>("/phone/projects/query", { slug: effectiveSlug, query, args });
   return r?.result ?? null;
 }
 
@@ -475,6 +656,67 @@ export async function deleteCloudflareRecord(token: string, zoneId: string, reco
   return res.ok;
 }
 
+// ---- Cost guardrails (pair with desktop/agent/phone_cost.go) ----
+//
+// The agent refuses to export OR receive a bundle over its configured cap
+// (default 50 MB). The mobile UI fetches the cap + the per-target cost
+// advisories so the user sees what a tap will cost BEFORE they commit.
+// Same shape on both sides to keep drift low.
+
+export type PhoneDeployTargetKind =
+  | "this-device"
+  | "dev-hw"
+  | "yaver-cloud"
+  | "cloudflare-workers"
+  | "custom";
+
+export interface PhoneDeployCostHint {
+  targetKind: PhoneDeployTargetKind;
+  label: string;
+  free: string;
+  overage: string;
+  budget: string;
+  advice: string;
+}
+
+export interface PhoneDeployCostHints {
+  hints: PhoneDeployCostHint[];
+  bundleCapBytes: number;
+  bundleCapMB: number;
+}
+
+export async function phoneDeployCostHints(): Promise<PhoneDeployCostHints | null> {
+  return get<PhoneDeployCostHints>("/phone/projects/cost-hint");
+}
+
+/** Fetch the project's bundle size (without downloading the body) via a
+ *  HEAD request. Falls back to a GET-and-measure if HEAD isn't supported.
+ *  Used by the mobile Deploy confirm so the user sees "About to upload
+ *  1.2 MB to cloud.yaver.io" before they commit. */
+export async function phoneBundleSize(slug: string, opts: { includeData?: boolean } = {}): Promise<number | null> {
+  const h = headers();
+  const url = baseUrl();
+  if (!h || !url) return null;
+  const q = new URLSearchParams({ slug });
+  if (opts.includeData) q.set("includeData", "true");
+  const target = `${url}/phone/projects/export?${q.toString()}`;
+  try {
+    const head = await fetch(target, { method: "HEAD", headers: h });
+    const cl = head.headers.get("content-length");
+    if (cl) {
+      const n = Number(cl);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    // Fallback — cheap on this pipeline since bundles are tiny.
+    const res = await fetch(target, { headers: h });
+    if (!res.ok) return null;
+    const buf = await res.arrayBuffer();
+    return buf.byteLength;
+  } catch {
+    return null;
+  }
+}
+
 // ---- Escape routes (pair with desktop/agent/phone_escape.go) ----
 //
 // Trust signal, not headline feature. Curated "I'm on X, get me to Y" rows
@@ -530,12 +772,16 @@ export async function planEscapeRoute(
   });
 }
 
-export function phoneExportUrl(slug: string): { uri: string; headers: Record<string, string> } | null {
+export function phoneExportUrl(
+  slug: string,
+  access?: PhoneProjectAccess | null,
+): { uri: string; headers: Record<string, string> } | null {
   const h = headers();
-  const url = baseUrl();
+  const url = access?.baseUrl ?? baseUrl();
+  const effectiveSlug = access?.slug ?? slug;
   if (!h || !url) return null;
   return {
-    uri: `${url}/phone/projects/export?slug=${encodeURIComponent(slug)}`,
+    uri: `${url}/phone/projects/export?slug=${encodeURIComponent(effectiveSlug)}`,
     headers: h,
   };
 }

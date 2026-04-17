@@ -929,6 +929,11 @@ type PhoneExportOptions struct {
 	// IncludeData bundles the live SQLite file (`local.db`) so runtime rows
 	// survive promotion. Default false keeps the portable-manifest behavior.
 	IncludeData bool
+	// MaxBundleBytes overrides the default PhoneDeployBudgetBytes cap. Zero
+	// or negative means "use the default". Keeps runaway uploads from
+	// silently pushing 100 MB of SQLite over a paid data plan — see
+	// phone_cost.go for the guardrail rationale.
+	MaxBundleBytes int64
 }
 
 // ExportPhoneProject returns the portable-manifest bundle for a project.
@@ -1004,6 +1009,13 @@ func ExportPhoneProjectWithOptions(slug string, opts PhoneExportOptions) ([]byte
 		return nil, err
 	}
 	if err := gz.Close(); err != nil {
+		return nil, err
+	}
+	// Producer-side budget guard — refuses to even return the bundle if the
+	// user would spend more than they should on a deploy. Consumer side
+	// (handlePhoneReceive) enforces again so a malicious client can't bypass
+	// it by building the tgz themselves.
+	if err := EnforcePhoneDeployBudget(int64(buf.Len()), opts.MaxBundleBytes); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil

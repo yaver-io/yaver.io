@@ -31,6 +31,7 @@ func (s *HTTPServer) registerPhoneRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/phone/projects/promote", s.auth(s.handlePhonePromote))
 	mux.HandleFunc("/phone/projects/receive", s.auth(s.handlePhoneReceive))
 	mux.HandleFunc("/phone/projects/oauth", s.auth(s.handlePhoneOAuth))
+	mux.HandleFunc("/phone/projects/cost-hint", s.auth(s.handlePhoneCostHint))
 }
 
 func (s *HTTPServer) handlePhoneList(w http.ResponseWriter, r *http.Request) {
@@ -428,6 +429,14 @@ func (s *HTTPServer) handlePhoneReceive(w http.ResponseWriter, r *http.Request) 
 			jsonError(w, http.StatusBadRequest, "read body: "+err.Error())
 			return
 		}
+	}
+
+	if err := EnforcePhoneDeployBudget(int64(len(bundle)), 0); err != nil {
+		// 413 Payload Too Large is the right status, but a descriptive body
+		// matters more — this is what a cost-worried user sees when they
+		// tried to push a 100 MB SQLite.
+		jsonError(w, http.StatusRequestEntityTooLarge, err.Error())
+		return
 	}
 
 	if len(bundle) == 0 {
