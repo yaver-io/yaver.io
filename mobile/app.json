@@ -109,7 +109,8 @@
       ],
       "expo-localization",
       "expo-mail-composer",
-      "expo-video"
+      "expo-video",
+      "expo-sqlite"
     ]
   }
 }

@@ -40,7 +40,7 @@ import {
   listPhoneTablesAt,
   phoneBundleSize,
   phoneDeployCostHints,
-  phoneExportUrl,
+  preparePhoneProjectExport,
   promotePhoneProject,
   pushPhoneProject,
 } from "../../src/lib/phoneProjects";
@@ -217,21 +217,52 @@ export default function PhoneProjectDetailScreen() {
   }
 
   async function doExport() {
-    const ref = phoneExportUrl(slugStr, access);
-    if (!ref) {
-      Alert.alert("Export", "Agent not reachable");
-      return;
-    }
-    // Share the URL — the user's system share sheet can save it, hand it to a
-    // HTTP client, etc. The agent streams tgz bytes with proper headers.
-    try {
-      await Share.share({
-        message: `Yaver phone-project export:\n${ref.uri}\n\n(Authenticated URL — paste into curl with X-Relay-Password / Authorization headers.)`,
-        url: ref.uri,
-      });
-    } catch (e: any) {
-      Alert.alert("Export", e?.message ?? "share failed");
-    }
+    Alert.alert(
+      "Export backend",
+      "Portable export is git + SQLite friendly. Containerized export also adds Docker / compose files for remote dev or Yaver Cloud.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Portable",
+          onPress: async () => {
+            const ref = await preparePhoneProjectExport(slugStr, access, { includeData: true });
+            if (!ref) {
+              Alert.alert("Export", "Agent not reachable");
+              return;
+            }
+            try {
+              await Share.share({
+                message: `Yaver phone-project export:\n${ref.uri}\n\nPortable git + SQLite bundle with live data.\n(Authenticated URL — paste into curl with X-Relay-Password / Authorization headers.)`,
+                url: ref.uri,
+              });
+            } catch (e: any) {
+              Alert.alert("Export", e?.message ?? "share failed");
+            }
+          },
+        },
+        {
+          text: "Containerized",
+          onPress: async () => {
+            const ref = await preparePhoneProjectExport(slugStr, access, {
+              includeData: true,
+              containerize: true,
+            });
+            if (!ref) {
+              Alert.alert("Export", "Agent not reachable");
+              return;
+            }
+            try {
+              await Share.share({
+                message: `Yaver containerized export:\n${ref.uri}\n\nIncludes local.db plus Docker / compose scaffold for Yaver-lite backend deploys.\n(Authenticated URL — paste into curl with X-Relay-Password / Authorization headers.)`,
+                url: ref.uri,
+              });
+            } catch (e: any) {
+              Alert.alert("Export", e?.message ?? "share failed");
+            }
+          },
+        },
+      ],
+    );
   }
 
   async function doPromote(targetID: string, label: string) {
@@ -327,6 +358,7 @@ export default function PhoneProjectDetailScreen() {
       const result: PhonePushResult = await pushPhoneProject(slugStr, target, {
         onConflict: "overwrite",
         includeData: true,
+        containerize: true,
       });
       const via =
         target.kind === "dev-hw" ? selectedDevMachine?.name ?? "dev machine" : "Yaver Cloud";

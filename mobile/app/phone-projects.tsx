@@ -64,6 +64,7 @@ export default function PhoneProjectsScreen() {
   const [name, setName] = useState("");
   const [template, setTemplate] = useState("todos");
   const [prompt, setPrompt] = useState("");
+  const [runner, setRunner] = useState<string>("");
   const [creating, setCreating] = useState(false);
 
   // yc.md §Wedge Demo — user picks where the mini-backend lives at creation
@@ -86,6 +87,15 @@ export default function PhoneProjectsScreen() {
     () => devMachines.find((d) => d.id === selectedDevMachineId) ?? null,
     [devMachines, selectedDevMachineId],
   );
+  const availableRunners = useMemo(() => {
+    const runners = activeDevice?.runners ?? [];
+    return runners.filter((item) => item.status === "running" || item.status === "queued" || item.status === "completed");
+  }, [activeDevice?.runners]);
+  useEffect(() => {
+    if (!runner && availableRunners.length) {
+      setRunner(availableRunners[0].runnerId);
+    }
+  }, [availableRunners, runner]);
 
   const load = useCallback(async () => {
     if (!connected) return;
@@ -121,6 +131,7 @@ export default function PhoneProjectsScreen() {
         name: name.trim(),
         template: prompt.trim() ? undefined : template,
         prompt: prompt.trim() || undefined,
+        runner: prompt.trim() ? runner || undefined : undefined,
       };
       let p: PhoneProject | null = null;
       let where = "";
@@ -155,13 +166,14 @@ export default function PhoneProjectsScreen() {
       if (!p) throw new Error("target returned no project");
       setName("");
       setPrompt("");
+      setRunner(availableRunners[0]?.runnerId ?? "");
       setShowForm(false);
       // Only refresh the local list — remote projects aren't in the user's
       // connected-agent list, so jumping straight to the detail screen for
       // a local project is the useful UX. For remote, show a toast.
       if (startMode === "this-device") {
         await load();
-        router.navigate(`/phone-project/${p.slug}` as any);
+        router.navigate(`/phone-project/workspace/${p.slug}` as any);
       } else {
         Alert.alert(
           "Created",
@@ -214,11 +226,11 @@ export default function PhoneProjectsScreen() {
   const header = useMemo(
     () => (
       <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
-        <Text style={[styles.h1, { color: c.textPrimary }]}>Phone Backend</Text>
+        <Text style={[styles.h1, { color: c.textPrimary }]}>Mobile Sandbox</Text>
         <Text style={[styles.muted, { color: c.textMuted, marginTop: 4 }]}>
-          Create a mini-backend on your phone. Tables, auth personas, and seed data
-          live locally as a portable manifest — promote it to Convex, Supabase,
-          Postgres, or Pi/VPS when you're ready.
+          Build from your phone. Describe the app, let Yaver vibe-code the first
+          version, run it in the mobile sandbox, then grow it to your own machine
+          or Yaver Cloud later.
         </Text>
         {!showForm ? (
           <Pressable
@@ -226,7 +238,7 @@ export default function PhoneProjectsScreen() {
             style={[styles.btn, { backgroundColor: c.accent, marginTop: 12 }]}
             disabled={!connected}
           >
-            <Text style={[styles.btnText, { color: c.bg }]}>+ New phone project</Text>
+            <Text style={[styles.btnText, { color: c.bg }]}>+ New mobile app</Text>
           </Pressable>
         ) : (
           <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginTop: 12 }]}>
@@ -248,8 +260,46 @@ export default function PhoneProjectsScreen() {
               style={[styles.input, styles.promptInput, { color: c.textPrimary, borderColor: c.border }]}
             />
             <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
-              Fill this in to generate the phone backend from your prompt instead of using a fixed starter template.
+              Prompt mode generates the first app + backend plan for the mobile sandbox.
             </Text>
+            {prompt.trim() ? (
+              <>
+                <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Coding runner</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  {(availableRunners.length
+                    ? availableRunners.map((item) => ({
+                        id: item.runnerId,
+                        label: item.title || item.runnerId,
+                      }))
+                    : [{ id: "codex", label: "Codex" }, { id: "claude", label: "Claude" }, { id: "ollama", label: "Ollama" }]
+                  ).map((item) => {
+                    const active = runner === item.id;
+                    return (
+                      <Pressable
+                        key={item.id}
+                        onPress={() => setRunner(item.id)}
+                        style={[
+                          styles.modeChip,
+                          {
+                            backgroundColor: active ? c.accent : c.bgCard,
+                            borderColor: c.border,
+                            marginRight: 8,
+                            marginTop: 8,
+                          },
+                        ]}
+                      >
+                        <Text style={{ color: active ? c.bg : c.textPrimary, fontWeight: "600" }}>
+                          {item.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+                <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
+                  Coding can stay on this device, your dev machine, or Yaver Cloud. Pick the runner you want steering the first draft.
+                </Text>
+              </>
+            ) : null}
             <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Where should it live?</Text>
             {(
               [
@@ -468,6 +518,12 @@ const styles = StyleSheet.create({
   promptInput: {
     minHeight: 84,
     textAlignVertical: "top",
+  },
+  modeChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
   },
   templateRow: {
     borderWidth: 1,

@@ -327,8 +327,20 @@ export default function TasksScreen() {
   // When present, we pass it as workDir on new tasks so the runner executes
   // inside the project instead of the agent's global cwd. Used by the
   // unified project screen's [Chat] button.
-  const taskParams = useLocalSearchParams<{ dir?: string }>();
+  const taskParams = useLocalSearchParams<{
+    dir?: string;
+    prompt?: string;
+    title?: string;
+    runner?: string;
+    openNew?: string;
+  }>();
   const projectDir = typeof taskParams.dir === "string" ? taskParams.dir : "";
+  const initialPrompt = typeof taskParams.prompt === "string" ? taskParams.prompt : "";
+  const initialTitle = typeof taskParams.title === "string" ? taskParams.title : "";
+  const initialRunner = typeof taskParams.runner === "string" ? taskParams.runner : "";
+  const shouldOpenNew =
+    typeof taskParams.openNew === "string" &&
+    (taskParams.openNew === "1" || taskParams.openNew === "true");
   const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, selectDevice, disconnect, isLoadingDevices, refreshDevices } = useDevice();
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>(getLogEntries());
@@ -372,6 +384,7 @@ export default function TasksScreen() {
   const [isAdopting, setIsAdopting] = useState<string | null>(null); // session name being adopted
   const chatScrollRef = useRef<ScrollView>(null);
   const pendingOpenTaskRef = useRef<Task | null>(null);
+  const didApplyRouteSeedRef = useRef(false);
 
   // Project + Todo state
   const [projectName, setProjectName] = useState<string>("");
@@ -469,6 +482,15 @@ export default function TasksScreen() {
       setSelectedModel("");
     }
   }, [selectedRunner, availableRunners]);
+
+  useEffect(() => {
+    if (didApplyRouteSeedRef.current) return;
+    if (!shouldOpenNew && !initialPrompt && !initialRunner) return;
+    didApplyRouteSeedRef.current = true;
+    if (initialPrompt) setNewTaskText(initialPrompt);
+    if (initialRunner) setSelectedRunner(initialRunner);
+    setShowNewTask(true);
+  }, [initialPrompt, initialRunner, shouldOpenNew]);
 
   // Ping agent every 10s when connected
   useEffect(() => {
@@ -906,8 +928,9 @@ export default function TasksScreen() {
         ttsProvider: "device",
         verbosity,
       } : undefined;
+      const title = initialTitle || newTaskText.trim();
       const task = await quicClient.sendTask(
-        newTaskText.trim(), "",
+        title, "",
         selectedRunner === "custom" ? undefined : (selectedModel || undefined),
         selectedRunner === "custom" ? "custom" : (selectedRunner || undefined),
         selectedRunner === "custom" ? customCommand.trim() || undefined : undefined,

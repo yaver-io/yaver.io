@@ -60,8 +60,10 @@ func TestSchedulesHTTPFlow(t *testing.T) {
 		t.Fatalf("run-now: expected 202, got %d", status)
 	}
 	// Scheduler.executeScheduled runs in a goroutine, so we wait
-	// briefly for LastTaskID to populate.
-	deadline := time.Now().Add(2 * time.Second)
+	// for LastTaskID to populate. 5s because remote machines
+	// (Hetzner arm64) have slower disk IO and `taskMgr.CreateTask`
+	// persists a file — a 2s budget has flaked in practice.
+	deadline := time.Now().Add(5 * time.Second)
 	var st *ScheduledTask
 	for time.Now().Before(deadline) {
 		var ok bool
@@ -88,7 +90,7 @@ func TestSchedulesHTTPFlow(t *testing.T) {
 	}
 
 	// Eventually gone.
-	deadline = time.Now().Add(2 * time.Second)
+	deadline = time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		_, ok := currentTestHTTPServer.scheduler.GetSchedule(id)
 		if !ok {

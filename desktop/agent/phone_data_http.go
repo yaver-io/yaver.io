@@ -67,19 +67,22 @@ func (s *HTTPServer) phoneDataRouter(w http.ResponseWriter, r *http.Request) {
 	// Auth: either Bearer pp_... header or ?api_key= query.
 	raw := extractPhoneProjectToken(r)
 	if raw == "" {
-		jsonError(w, http.StatusUnauthorized, "API key required — mint one in the Yaver app under the project's API Keys tab")
-		return
-	}
-	_, boundSlug, err := ValidatePhoneProjectToken(raw)
-	if err != nil {
-		jsonError(w, http.StatusUnauthorized, "invalid API key")
-		return
-	}
-	// Hard scope: a token can ONLY access its own project's rows. No
-	// cross-project reads via a guessed slug.
-	if boundSlug != slug {
-		jsonError(w, http.StatusForbidden, "this API key does not authorize that project")
-		return
+		if !s.phoneDataOwnerAuthorized(r) {
+			jsonError(w, http.StatusUnauthorized, "API key or owner bearer required")
+			return
+		}
+	} else {
+		_, boundSlug, err := ValidatePhoneProjectToken(raw)
+		if err != nil {
+			jsonError(w, http.StatusUnauthorized, "invalid API key")
+			return
+		}
+		// Hard scope: a token can ONLY access its own project's rows. No
+		// cross-project reads via a guessed slug.
+		if boundSlug != slug {
+			jsonError(w, http.StatusForbidden, "this API key does not authorize that project")
+			return
+		}
 	}
 
 	adapter, err := PhoneAdapter(slug)
@@ -132,6 +135,28 @@ func extractPhoneProjectToken(r *http.Request) string {
 		return q
 	}
 	return ""
+}
+
+func (s *HTTPServer) phoneDataOwnerAuthorized(r *http.Request) bool {
+	authHeader := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return false
+	}
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	if token == "" {
+		return false
+	}
+	if token == s.token {
+		return true
+	}
+	if strings.HasPrefix(token, "yv_supp_") && supportTokenValidFor(token, r.URL.Path) {
+		return true
+	}
+	if IsPairedToken(token) {
+		TouchPairedToken(token)
+		return true
+	}
+	return false
 }
 
 // writePhoneDataCORS stamps permissive CORS headers. Simple MVP: allow any
