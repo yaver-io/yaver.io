@@ -2272,6 +2272,23 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
   );
 }
 
+function MoreSectionHeader({
+  c,
+  title,
+  subtitle,
+}: {
+  c: ReturnType<typeof useColors>;
+  title: string;
+  subtitle: string;
+}) {
+  return (
+    <View style={s.sectionHeader}>
+      <Text style={[s.sectionTitle, { color: c.textPrimary }]}>{title}</Text>
+      <Text style={[s.sectionSubtitle, { color: c.textMuted }]}>{subtitle}</Text>
+    </View>
+  );
+}
+
 export default function MoreScreen() {
   const c = useColors();
   const router = useRouter();
@@ -2377,6 +2394,11 @@ export default function MoreScreen() {
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <ScrollView contentContainerStyle={s.list}>
+        <MoreSectionHeader
+          c={c}
+          title="Automation"
+          subtitle="Runs, planning, builds, and machine-driven development loops"
+        />
         {/* Quality Gates — navigate to dedicated screen */}
         {connected && (
           <Pressable
@@ -2407,6 +2429,66 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
+        {/* Agent Mode — graph-style project runs */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/agent" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F9E0}"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Agent Mode</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Project-wide graph runs, placement, and coordinated execution</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
+        {/* Auto Dev — scheduled loop UI */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/autodev" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F916}"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Auto Dev</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Kick off scheduled development loops against a project workspace</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
+        {/* Builds — artifact history + downloads */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/builds" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F4E6}"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Builds</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Artifacts, installs, and cached downloads from your machine</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
+        {/* Morning — overnight match reports */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/morning" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u2600"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Morning Report</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Overnight autodev summaries, video, and rollback cards</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
         {/* Monitor — errors + releases + uptime + events + flags */}
         {connected && (
           <Pressable
@@ -2424,6 +2506,26 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
+        {/* Hybrid — planner/implementer split runs */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/hybrid" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u2697"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Hybrid</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Planner + implementer runs for deeper multi-step project work</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
+        <MoreSectionHeader
+          c={c}
+          title="Infra"
+          subtitle="Machine control, operations, observability, and scheduled work"
+        />
         {/* Home — AWS-style overview dashboard */}
         {connected && (
           <Pressable
@@ -2469,6 +2571,11 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
+        <MoreSectionHeader
+          c={c}
+          title="Data & Storage"
+          subtitle="Databases, files, shared storage, and local project assets"
+        />
         {/* Data browser — tables, query, schema, storage, jobs */}
         {connected && (
           <Pressable
@@ -2529,80 +2636,6 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
-        {/* Storage — unified files + shared-storage + blobs */}
-        {connected && (
-          <Pressable
-            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-            onPress={() => router.navigate("/storage" as any)}
-          >
-            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F4C2}"}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={[s.label, { color: c.textPrimary }]}>Storage</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Project files · NAS · blob buckets — all local to your machine</Text>
-            </View>
-            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-          </Pressable>
-        )}
-
-        {/* Files (classic) — rich preview, kept for back-compat */}
-        {connected && (
-          <Pressable
-            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-            onPress={() => router.navigate("/(tabs)/files" as any)}
-          >
-            <Text style={[s.icon, { color: c.textMuted }]}>{"\u25A1"}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={[s.label, { color: c.textPrimary }]}>Files (classic)</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Read-only file browser with rich previews</Text>
-            </View>
-            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-          </Pressable>
-        )}
-
-        {connected && (
-          <Pressable
-            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-            onPress={() => router.navigate("/shared-storage" as any)}
-          >
-            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F5C4}"}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={[s.label, { color: c.textPrimary }]}>Shared Storage</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Browse NAS, SMB, WebDAV, Storage Box</Text>
-            </View>
-            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-          </Pressable>
-        )}
-
-        {/* Vault — encrypted secrets stored on host (AES-GCM + Argon2id). */}
-        {connected && (
-          <Pressable
-            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-            onPress={() => router.navigate("/vault" as any)}
-          >
-            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F512}"}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={[s.label, { color: c.textPrimary }]}>Vault</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Encrypted secrets, API keys, SSH keys — never leaves your machine</Text>
-            </View>
-            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-          </Pressable>
-        )}
-
-        {/* API keys — labeled SDK tokens with usage tracking */}
-        {connected && (
-          <Pressable
-            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-            onPress={() => router.navigate("/apikeys" as any)}
-          >
-            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F511}"}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={[s.label, { color: c.textPrimary }]}>API Keys</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>SDK tokens — create, scope, disable</Text>
-            </View>
-            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-          </Pressable>
-        )}
-
         {/* Exec — run shell commands on the connected machine */}
         {connected && (
           <Pressable
@@ -2648,20 +2681,104 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
-        {/* Phone Backend — mini backend lives inside the app, promotable to real infra */}
+        {/* Storage — unified files + shared-storage + blobs */}
         {connected && (
           <Pressable
             style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-            onPress={() => router.navigate("/phone-projects" as any)}
+            onPress={() => router.navigate("/storage" as any)}
           >
-            <Text style={[s.icon, { color: c.textMuted }]}>{"\u26A1"}</Text>
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F4C2}"}</Text>
             <View style={{ flex: 1 }}>
-              <Text style={[s.label, { color: c.textPrimary }]}>Phone Backend</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Create a mini backend from your phone — portable to Convex / Supabase</Text>
+              <Text style={[s.label, { color: c.textPrimary }]}>Storage</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Project files · NAS · blob buckets — all local to your machine</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
         )}
+
+        {/* Files (classic) — rich preview, kept for back-compat */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/files" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u25A1"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Files (classic)</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Read-only file browser with rich previews</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/shared-storage" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F5C4}"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Shared Storage</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Browse NAS, SMB, WebDAV, Storage Box</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
+        <MoreSectionHeader
+          c={c}
+          title="Secrets & Access"
+          subtitle="Credentials, API tokens, machine pairing, and guest access"
+        />
+        {/* Vault — encrypted secrets stored on host (AES-GCM + Argon2id). */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/vault" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F512}"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Vault</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Encrypted secrets, API keys, SSH keys — never leaves your machine</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
+        {/* API keys — labeled SDK tokens with usage tracking */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/apikeys" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F511}"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>API Keys</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>SDK tokens — create, scope, disable</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
+        <MoreSectionHeader
+          c={c}
+          title="Projects"
+          subtitle="Phone-first sandboxes, monorepo setup, and optional git-backed starts"
+        />
+        {/* Phone Backend — mini backend lives inside the app, promotable to real infra */}
+        <Pressable
+          style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+          onPress={() => router.navigate("/phone-projects" as any)}
+        >
+          <Text style={[s.icon, { color: c.textMuted }]}>{"\u26A1"}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[s.label, { color: c.textPrimary }]}>Mobile Sandbox</Text>
+            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={2}>
+              Build a local SQLite app from your phone now, then connect a runner later for remote coding, deploy, and export
+            </Text>
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+        </Pressable>
 
         {/* New Project — fullstack wizard (web + mobile + backend + DNS + OAuth) */}
         {connected && (
@@ -2738,6 +2855,11 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
+        <MoreSectionHeader
+          c={c}
+          title="Workspace"
+          subtitle="Daily queue, device setup, guides, and app preferences"
+        />
         {/* Existing cards */}
         <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleTodos}>
           <Text style={[s.icon, { color: c.textMuted }]}>{"\u2610"}</Text>
@@ -2952,6 +3074,19 @@ export default function MoreScreen() {
 const s = StyleSheet.create({
   safe: { flex: 1 },
   list: { padding: 16, gap: 8 },
+  sectionHeader: {
+    gap: 3,
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+  },
+  sectionSubtitle: {
+    fontSize: 12,
+    lineHeight: 17,
+  },
   card: {
     flexDirection: "row",
     alignItems: "center",

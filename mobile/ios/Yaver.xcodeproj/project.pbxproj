@@ -396,7 +396,7 @@
 				CODE_SIGN_ENTITLEMENTS = Yaver/Yaver.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 193;
 				DEVELOPMENT_TEAM = 5SJZ4KA39A;
 				ENABLE_BITCODE = NO;
 				GCC_PREPROCESSOR_DEFINITIONS = (
@@ -409,7 +409,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.17.5;
+				MARKETING_VERSION = 1.17.6;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -435,7 +435,7 @@
 				CODE_SIGN_ENTITLEMENTS = Yaver/Yaver.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 193;
 				DEVELOPMENT_TEAM = 5SJZ4KA39A;
 				INFOPLIST_FILE = Yaver/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
@@ -443,7 +443,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.17.5;
+				MARKETING_VERSION = 1.17.6;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
