@@ -934,6 +934,9 @@ type PhoneExportOptions struct {
 	// silently pushing 100 MB of SQLite over a paid data plan — see
 	// phone_cost.go for the guardrail rationale.
 	MaxBundleBytes int64
+	// Containerize includes Dockerfile + compose scaffold so the exported
+	// Yaver-lite backend can run on remote hardware or Yaver Cloud via Docker.
+	Containerize bool
 }
 
 // ExportPhoneProject returns the portable-manifest bundle for a project.
@@ -1003,6 +1006,13 @@ func ExportPhoneProjectWithOptions(slug string, opts PhoneExportOptions) ([]byte
 	if ddl, err := generateSchemaSQL(p.Schema, "postgres"); err == nil && ddl != "" {
 		_ = add("schema.postgres.sql", []byte(ddl), 0o644)
 	}
+	if opts.Containerize {
+		_ = add("Dockerfile", []byte(phoneContainerDockerfile()), 0o644)
+		_ = add("docker-compose.yml", []byte(phoneContainerCompose()), 0o644)
+		_ = add(".env.example", []byte(phoneContainerEnvExample(p)), 0o644)
+		_ = add(".dockerignore", []byte(phoneDockerIgnore()), 0o644)
+	}
+	_ = add(".gitignore", []byte(phoneGitIgnore()), 0o644)
 	_ = add("README.md", []byte(phoneReadme(p, opts)), 0o644)
 
 	if err := tw.Close(); err != nil {
@@ -1037,10 +1047,74 @@ func phoneReadme(p *PhoneProject, opts PhoneExportOptions) string {
 	if opts.IncludeData {
 		b.WriteString("- `local.db` — live SQLite runtime rows for zero-loss promotion\n\n")
 	}
+	if opts.Containerize {
+		b.WriteString("- `Dockerfile` / `docker-compose.yml` — containerized Yaver-lite backend export\n")
+		b.WriteString("- `.env.example` / `.dockerignore` — container deploy helpers\n\n")
+	}
+	b.WriteString("- `.gitignore` — short-path git repo hygiene for exported sandboxes\n\n")
 	b.WriteString("## Promoting to a real backend\n\n")
 	b.WriteString("```\nyaver switch plan --to supabase-cloud\nyaver switch plan --to convex-cloud\nyaver switch plan --to postgres-neon\n```\n\n")
 	b.WriteString("Or open the project in the Yaver desktop app and pick a target from the switch engine UI.\n")
+	b.WriteString("\n## Git + SQLite short path\n\n")
+	b.WriteString("```bash\ngit init\ngit add .\ngit commit -m \"Import Yaver mobile sandbox\"\n```\n\n")
+	b.WriteString("If `local.db` is included, this is enough to move the same SQLite-backed sandbox onto your laptop or server.\n")
+	if opts.Containerize {
+		b.WriteString("\n## Containerized short path\n\n")
+		b.WriteString("```bash\ndocker compose up -d --build\n```\n\n")
+		b.WriteString("This runs the exported Yaver-lite backend in a container on your remote hardware or a Hetzner VM.\n")
+	}
 	return b.String()
+}
+
+func phoneContainerDockerfile() string {
+	return `FROM golang:1.26-bookworm AS builder
+RUN go install github.com/yaver-io/agent@latest
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /go/bin/agent /usr/local/bin/yaver
+WORKDIR /workspace
+EXPOSE 18080
+CMD ["yaver","serve","--debug","--no-quic","--no-relay","--no-tls","--port","18080","--work-dir","/workspace","--containerize-host"]
+`
+}
+
+func phoneContainerCompose() string {
+	return `services:
+  yaver-lite:
+    build: .
+    image: yaver-phone-backend:latest
+    restart: unless-stopped
+    ports:
+      - "18080:18080"
+    environment:
+      - YAVER_NO_BOOTSTRAP=1
+    volumes:
+      - ./:/workspace
+`
+}
+
+func phoneContainerEnvExample(p *PhoneProject) string {
+	return fmt.Sprintf("YAVER_PHONE_PROJECT=%s\nPORT=18080\n", p.Slug)
+}
+
+func phoneGitIgnore() string {
+	return `.DS_Store
+.env
+*.log
+storage/
+tmp/
+`
+}
+
+func phoneDockerIgnore() string {
+	return `.git
+.gitignore
+.env
+*.log
+storage/
+tmp/
+`
 }
 
 func generateSchemaSQL(s *PhoneSchema, dialect string) (string, error) {
@@ -1441,6 +1515,7 @@ func ImportPhoneProject(tgz []byte, opts PhoneImportOptions) (*PhoneProject, err
 	if !opts.SkipSeed {
 		liveDB = parts["local.db"]
 	}
+	oauthProviders := parts["oauth-providers.yaml"]
 
 	// Recover the project display name from project.yaml if it's in the bundle.
 	name := slug
@@ -1467,6 +1542,29 @@ func ImportPhoneProject(tgz []byte, opts PhoneImportOptions) (*PhoneProject, err
 	if len(liveDB) > 0 {
 		if err := os.WriteFile(dbFilePath(p.Dir), liveDB, 0o600); err != nil {
 			return nil, fmt.Errorf("restore local.db: %w", err)
+		}
+	}
+	if len(oauthProviders) > 0 {
+		if err := os.WriteFile(phoneOAuthPath(p.Dir), oauthProviders, 0o600); err != nil {
+			return nil, fmt.Errorf("restore oauth-providers.yaml: %w", err)
+		}
+	}
+	for name, content := range parts {
+		switch name {
+		case "schema.yaml", "auth.yaml", "seed.json", "app.yaml", "local.db",
+			"oauth-providers.yaml", ".yaver/config.yaml", ".yaver/project.yaml":
+			continue
+		}
+		clean := filepath.Clean(name)
+		if clean == "." || clean == "" || strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
+			return nil, fmt.Errorf("unsafe extra file: %s", name)
+		}
+		dst := filepath.Join(p.Dir, clean)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return nil, fmt.Errorf("mkdir extra file dir: %w", err)
+		}
+		if err := os.WriteFile(dst, content, 0o644); err != nil {
+			return nil, fmt.Errorf("restore extra file %s: %w", name, err)
 		}
 	}
 	return p, nil
