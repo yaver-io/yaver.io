@@ -3253,6 +3253,41 @@ class AgentClient {
     return await res.blob();
   }
 
+  /** Relay we're currently routed through, if any. The web dashboard is
+   *  always relay-routed (browsers can't talk to localhost:18080 directly)
+   *  so this is usually populated — but we still guard it. */
+  get activeRelayHttpUrl(): string | null {
+    return this.activeRelayUrl;
+  }
+
+  /** Pull the project .tgz from the currently-connected agent and POST it to
+   *  the target's /phone/projects/receive. Mirrors mobile's pushPhoneProject
+   *  so mobile + web share the wedge-demo contract. */
+  async pushPhoneProject(
+    slug: string,
+    target: PhonePushTarget,
+    opts: { onConflict?: "reject" | "rename" | "overwrite"; skipSeed?: boolean } = {},
+  ): Promise<PhonePushResult> {
+    this.assertConnected();
+    const blob = await this.exportPhoneProjectBlob(slug);
+    if (!blob) throw new Error("export failed — agent not reachable");
+
+    const form = new FormData();
+    form.append("bundle", blob, `${slug}.tgz`);
+    if (opts.onConflict) form.append("onConflict", opts.onConflict);
+    if (opts.skipSeed) form.append("skipSeed", "true");
+
+    const base = resolvePhonePushBase(target);
+    const res = await fetch(`${base}/phone/projects/receive`, {
+      method: "POST",
+      headers: this.authHeaders, // let fetch set the multipart boundary
+      body: form,
+    });
+    const text = await res.text().catch(() => "");
+    if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
+    return JSON.parse(text) as PhonePushResult;
+  }
+
   async promotePhoneProject(slug: string, target: string, opts: { run?: boolean; dryRun?: boolean } = {}): Promise<PhonePromoteResult> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/phone/projects/promote`, {
@@ -3403,6 +3438,33 @@ export interface RecordingDriverStatus {
   target: string;
   available: boolean;
   reason?: string;
+}
+
+// ── Deploy target shapes (mirror mobile/src/lib/phoneProjects.ts) ──
+
+export type PhonePushTarget =
+  | { kind: "dev-hw"; deviceId: string; relayHttpUrl: string }
+  | { kind: "yaver-cloud"; cloudBaseUrl?: string }
+  | { kind: "custom"; baseUrl: string };
+
+export interface PhonePushResult {
+  slug: string;
+  localUrl: string;
+  browseUrl: string;
+  project: PhoneProject;
+}
+
+const DEFAULT_YAVER_CLOUD_BASE = "https://cloud.yaver.io";
+
+function resolvePhonePushBase(target: PhonePushTarget): string {
+  switch (target.kind) {
+    case "dev-hw":
+      return `${target.relayHttpUrl.replace(/\/$/, "")}/d/${target.deviceId}`;
+    case "yaver-cloud":
+      return (target.cloudBaseUrl ?? DEFAULT_YAVER_CLOUD_BASE).replace(/\/$/, "");
+    case "custom":
+      return target.baseUrl.replace(/\/$/, "");
+  }
 }
 
 /** Singleton client instance. */

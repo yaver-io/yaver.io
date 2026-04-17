@@ -1,17 +1,22 @@
 "use client";
 
 // PhoneProjectsView — UI over desktop/agent/phone_backend.go. A phone project
-// is a SQLite-backed Yaver project with a portable schema + auth-personas +
-// seed manifest, promotable to any of the 19 switch-engine targets.
+// is a SQLite-backed Yaver project. Top-level Deploy section matches
+// yc.md §Wedge Demo — [Your Dev Machine] + [Yaver Cloud]. Legacy 6-target
+// switch-engine promote is tucked under an "Advanced" toggle.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   agentClient,
   type PhoneProject,
+  type PhonePushResult,
+  type PhonePushTarget,
   type PhoneTemplate,
 } from "@/lib/agent-client";
+import { useDevices, type Device } from "@/lib/use-devices";
+import { useAuth } from "@/lib/use-auth";
 
-const PROMOTE_TARGETS: Array<{ id: string; label: string; sub: string }> = [
+const ADVANCED_PROMOTE_TARGETS: Array<{ id: string; label: string; sub: string }> = [
   { id: "sqlite-local", label: "SQLite file", sub: "Copy to a real project dir" },
   { id: "sqlite-turso", label: "Turso", sub: "Managed LibSQL on the edge" },
   { id: "postgres-local", label: "Postgres (Docker)", sub: "Local Postgres 16" },
@@ -19,6 +24,30 @@ const PROMOTE_TARGETS: Array<{ id: string; label: string; sub: string }> = [
   { id: "postgres-neon", label: "Neon", sub: "Serverless Postgres" },
   { id: "convex-cloud", label: "Convex Cloud", sub: "AI-rewrite complexity" },
 ];
+
+const YAVER_CLOUD_BASE = "https://cloud.yaver.io";
+
+function pickDevMachines(all: Device[], currentId: string | undefined): Device[] {
+  return all.filter(
+    (d) =>
+      d.online &&
+      !d.isGuest &&
+      d.id !== currentId &&
+      d.deviceClass !== "edge-mobile",
+  );
+}
+
+function deriveTargetUrl(target: PhonePushTarget, result: PhonePushResult): string {
+  const slug = encodeURIComponent(result.slug);
+  switch (target.kind) {
+    case "dev-hw":
+      return `${target.relayHttpUrl.replace(/\/$/, "")}/d/${target.deviceId}/phone/projects/browse?slug=${slug}`;
+    case "yaver-cloud":
+      return `${(target.cloudBaseUrl ?? YAVER_CLOUD_BASE).replace(/\/$/, "")}/phone/projects/browse?slug=${slug}`;
+    case "custom":
+      return `${target.baseUrl.replace(/\/$/, "")}/phone/projects/browse?slug=${slug}`;
+  }
+}
 
 function formatBytes(n: number): string {
   if (!n) return "0 B";
@@ -44,6 +73,28 @@ export default function PhoneProjectsView() {
   const [rows, setRows] = useState<Array<Record<string, unknown>>>([]);
   const [insertJSON, setInsertJSON] = useState("{}");
   const [promoting, setPromoting] = useState<string | null>(null);
+
+  // Deploy state (yc.md §Wedge Demo)
+  const { token } = useAuth();
+  const { devices } = useDevices(token);
+  const [currentDeviceId] = useState<string | undefined>(undefined);
+  const devMachines = useMemo(
+    () => pickDevMachines(devices, currentDeviceId),
+    [devices, currentDeviceId],
+  );
+  const [selectedDevMachineId, setSelectedDevMachineId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!selectedDevMachineId && devMachines.length) {
+      setSelectedDevMachineId(devMachines[0].id);
+    }
+  }, [devMachines, selectedDevMachineId]);
+  const selectedDevMachine = useMemo(
+    () => devMachines.find((d) => d.id === selectedDevMachineId) ?? null,
+    [devMachines, selectedDevMachineId],
+  );
+  const [deploying, setDeploying] = useState<"dev-hw" | "yaver-cloud" | null>(null);
+  const [lastDeploy, setLastDeploy] = useState<{ kind: "dev-hw" | "yaver-cloud"; url: string; via: string } | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -164,6 +215,43 @@ export default function PhoneProjectsView() {
     } finally {
       setPromoting(null);
     }
+  }
+
+  // ── Deploy (yc.md §Wedge Demo) ─────────────────────────────────────
+
+  async function runPush(target: PhonePushTarget, kind: "dev-hw" | "yaver-cloud", via: string) {
+    if (!selected) return;
+    setDeploying(kind);
+    try {
+      const res = await agentClient.pushPhoneProject(selected.slug, target, { onConflict: "overwrite" });
+      const url = res.browseUrl?.startsWith("http") ? res.browseUrl : deriveTargetUrl(target, res);
+      setLastDeploy({ kind, url, via });
+    } catch (e) {
+      alert(`Deploy failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDeploying(null);
+    }
+  }
+
+  async function deployToDevMachine() {
+    if (!selectedDevMachine) {
+      alert("No dev machine paired. Install Yaver on your Mac/Linux/Pi and sign in with the same account.");
+      return;
+    }
+    const relayHttpUrl = agentClient.activeRelayHttpUrl;
+    if (!relayHttpUrl) {
+      alert("Web dashboard is not relay-routed. Cannot deploy to a sibling device from here.");
+      return;
+    }
+    await runPush(
+      { kind: "dev-hw", deviceId: selectedDevMachine.id, relayHttpUrl },
+      "dev-hw",
+      selectedDevMachine.name,
+    );
+  }
+
+  async function deployToCloud() {
+    await runPush({ kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE }, "yaver-cloud", "Yaver Cloud");
   }
 
   return (
@@ -400,34 +488,109 @@ export default function PhoneProjectsView() {
               ) : null}
 
               <div>
-                <div className="mb-2 text-xs uppercase tracking-wide text-surface-500">Promote</div>
-                <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                  {PROMOTE_TARGETS.map((t) => (
-                    <div
-                      key={t.id}
-                      className="rounded border border-surface-800 bg-surface-950 p-3"
-                    >
-                      <div className="text-sm font-medium text-surface-100">{t.label}</div>
-                      <div className="mt-0.5 text-xs text-surface-400">{t.sub}</div>
-                      <div className="mt-2 flex gap-2">
-                        <button
-                          disabled={promoting === t.id}
-                          onClick={() => void doPromote(t.id, t.label, true)}
-                          className="rounded border border-surface-700 px-2 py-1 text-xs text-surface-200 hover:bg-surface-800 disabled:opacity-50"
-                        >
-                          Dry run
-                        </button>
-                        <button
-                          disabled={promoting === t.id}
-                          onClick={() => void doPromote(t.id, t.label, false)}
-                          className="rounded bg-indigo-600 px-2 py-1 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-                        >
-                          Plan
-                        </button>
-                      </div>
+                <div className="mb-2 text-xs uppercase tracking-wide text-surface-500">Deploy</div>
+                <p className="mb-3 text-xs text-surface-400">
+                  Ship this mini-backend in one tap. Your dev machine is free; Yaver Cloud is a managed Hetzner tenant.
+                </p>
+
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {/* [Your Dev Machine] */}
+                  <div className="rounded-lg border-2 border-indigo-500 bg-indigo-500/10 p-4">
+                    <div className="text-base font-semibold text-indigo-100">Your Dev Machine</div>
+                    <div className="mt-0.5 text-xs text-indigo-200/70">
+                      {selectedDevMachine
+                        ? `→ ${selectedDevMachine.name} · via relay`
+                        : "No dev machine online yet."}
                     </div>
-                  ))}
+                    <div className="mt-3 flex items-center gap-2">
+                      <button
+                        disabled={deploying !== null || !selectedDevMachine}
+                        onClick={() => void deployToDevMachine()}
+                        className="rounded bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+                      >
+                        {deploying === "dev-hw" ? "Deploying…" : "Deploy →"}
+                      </button>
+                      {devMachines.length > 1 ? (
+                        <select
+                          value={selectedDevMachineId ?? ""}
+                          onChange={(e) => setSelectedDevMachineId(e.target.value || null)}
+                          className="rounded border border-surface-700 bg-surface-950 px-2 py-1 text-xs text-surface-200"
+                        >
+                          {devMachines.map((d) => (
+                            <option key={d.id} value={d.id}>
+                              {d.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {/* [Yaver Cloud] */}
+                  <div className="rounded-lg border-2 border-surface-700 bg-surface-950 p-4">
+                    <div className="text-base font-semibold text-surface-100">Yaver Cloud</div>
+                    <div className="mt-0.5 text-xs text-surface-400">
+                      Managed — shareable URL at {YAVER_CLOUD_BASE.replace(/^https?:\/\//, "")}
+                    </div>
+                    <div className="mt-3">
+                      <button
+                        disabled={deploying !== null}
+                        onClick={() => void deployToCloud()}
+                        className="rounded border border-indigo-500 px-3 py-1.5 text-xs font-medium text-indigo-200 hover:bg-indigo-500/10 disabled:opacity-50"
+                      >
+                        {deploying === "yaver-cloud" ? "Deploying…" : "Deploy →"}
+                      </button>
+                    </div>
+                  </div>
                 </div>
+
+                {lastDeploy ? (
+                  <a
+                    href={lastDeploy.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-3 block rounded border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs text-emerald-200 hover:bg-emerald-500/15"
+                  >
+                    ✓ Running on {lastDeploy.via} — <span className="underline">{lastDeploy.url}</span>
+                  </a>
+                ) : null}
+
+                <button
+                  onClick={() => setShowAdvanced((v) => !v)}
+                  className="mt-4 text-xs text-surface-400 hover:text-surface-200"
+                >
+                  {showAdvanced ? "▾" : "▸"} Advanced — promote to a switch-engine target
+                </button>
+
+                {showAdvanced ? (
+                  <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
+                    {ADVANCED_PROMOTE_TARGETS.map((t) => (
+                      <div
+                        key={t.id}
+                        className="rounded border border-surface-800 bg-surface-950 p-3"
+                      >
+                        <div className="text-sm font-medium text-surface-100">{t.label}</div>
+                        <div className="mt-0.5 text-xs text-surface-400">{t.sub}</div>
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            disabled={promoting === t.id}
+                            onClick={() => void doPromote(t.id, t.label, true)}
+                            className="rounded border border-surface-700 px-2 py-1 text-xs text-surface-200 hover:bg-surface-800 disabled:opacity-50"
+                          >
+                            Dry run
+                          </button>
+                          <button
+                            disabled={promoting === t.id}
+                            onClick={() => void doPromote(t.id, t.label, false)}
+                            className="rounded bg-indigo-600 px-2 py-1 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+                          >
+                            Plan
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             </div>
           )}
