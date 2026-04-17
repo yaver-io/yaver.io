@@ -293,10 +293,11 @@ func (s *SyncStore) Latest() int64 {
 // arbitrary kind names shouldn't be able to create arbitrary
 // files under ~/.yaver/sync.
 var syncKindAllowList = map[string]bool{
-	"env":      true,
-	"flags":    true,
-	"monitors": true,
-	"presets":  true,
+	"env":           true,
+	"flags":         true,
+	"monitors":      true,
+	"presets":       true,
+	"provider-keys": true,
 }
 
 // handleSyncList serves GET /sync/<kind>?since=<ts>.

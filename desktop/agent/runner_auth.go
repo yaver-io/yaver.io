@@ -60,15 +60,27 @@ func normalizeRunnerID(id string) string {
 func detectClaudeStatus() RunnerRuntimeStatus {
 	status := RunnerRuntimeStatus{Ready: true}
 	switch {
-	case strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "":
+	case func() bool {
+		value, _ := hostSecretValue("ANTHROPIC_API_KEY")
+		return value != ""
+	}():
 		status.AuthConfigured = true
-		status.AuthSource = "ANTHROPIC_API_KEY"
-	case strings.TrimSpace(os.Getenv("ANTHROPIC_AUTH_TOKEN")) != "":
+		_, source := hostSecretValue("ANTHROPIC_API_KEY")
+		status.AuthSource = source
+	case func() bool {
+		value, _ := hostSecretValue("ANTHROPIC_AUTH_TOKEN")
+		return value != ""
+	}():
 		status.AuthConfigured = true
-		status.AuthSource = "ANTHROPIC_AUTH_TOKEN"
-	case strings.TrimSpace(os.Getenv("CLAUDE_CODE_OAUTH_TOKEN")) != "":
+		_, source := hostSecretValue("ANTHROPIC_AUTH_TOKEN")
+		status.AuthSource = source
+	case func() bool {
+		value, _ := hostSecretValue("CLAUDE_CODE_OAUTH_TOKEN")
+		return value != ""
+	}():
 		status.AuthConfigured = true
-		status.AuthSource = "CLAUDE_CODE_OAUTH_TOKEN"
+		_, source := hostSecretValue("CLAUDE_CODE_OAUTH_TOKEN")
+		status.AuthSource = source
 	default:
 		if path, ok := claudeCredentialsPath(); ok {
 			status.AuthConfigured = true
@@ -105,9 +117,13 @@ func claudeCredentialsPath() (string, bool) {
 func detectCodexStatus() RunnerRuntimeStatus {
 	status := RunnerRuntimeStatus{Ready: true}
 	switch {
-	case strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != "":
+	case func() bool {
+		value, _ := hostSecretValue("OPENAI_API_KEY")
+		return value != ""
+	}():
 		status.AuthConfigured = true
-		status.AuthSource = "OPENAI_API_KEY"
+		_, source := hostSecretValue("OPENAI_API_KEY")
+		status.AuthSource = source
 	case runnerFileExists(codexAuthPath()):
 		status.AuthConfigured = true
 		status.AuthSource = codexAuthPath()
@@ -136,11 +152,13 @@ func detectOpenCodeStatus(workDir string) RunnerRuntimeStatus {
 
 	authLower := strings.ToLower(authText)
 	cfgLower := strings.ToLower(cfgText)
+	openAIValue, _ := hostSecretValue("OPENAI_API_KEY")
+	anthropicValue, _ := hostSecretValue("ANTHROPIC_API_KEY")
 
 	hasOpenAIOAuth := strings.Contains(authLower, "openai")
 	hasAnthropicOAuth := strings.Contains(authLower, "anthropic")
-	hasOpenAIAPI := strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != "" || strings.Contains(cfgLower, "openai_api_key")
-	hasAnthropicAPI := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "" || strings.Contains(cfgLower, "anthropic_api_key")
+	hasOpenAIAPI := openAIValue != "" || strings.Contains(cfgLower, "openai_api_key")
+	hasAnthropicAPI := anthropicValue != "" || strings.Contains(cfgLower, "anthropic_api_key")
 	hasLocalProvider := strings.Contains(cfgLower, "ollama") ||
 		strings.Contains(cfgLower, "lmstudio") ||
 		strings.Contains(cfgLower, "llama.cpp") ||

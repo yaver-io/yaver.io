@@ -1076,27 +1076,55 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 func taskEnv(task *Task) []string {
 	env := append([]string{}, os.Environ()...)
 	env = append(env, "PATH="+expandedPath())
-	if task == nil || task.GuestUserID == "" || task.GuestUseHostAPIKeys {
-		return env
-	}
-	filtered := make([]string, 0, len(env))
-	for _, entry := range env {
-		name := entry
-		if i := strings.IndexByte(entry, '='); i >= 0 {
-			name = entry[:i]
+	if task != nil && task.GuestUserID != "" && !task.GuestUseHostAPIKeys {
+		filtered := make([]string, 0, len(env))
+		for _, entry := range env {
+			name := entry
+			if i := strings.IndexByte(entry, '='); i >= 0 {
+				name = entry[:i]
+			}
+			blocked := false
+			for _, secret := range sharedSecretEnvVars {
+				if name == secret {
+					blocked = true
+					break
+				}
+			}
+			if !blocked {
+				filtered = append(filtered, entry)
+			}
 		}
-		blocked := false
-		for _, secret := range sharedSecretEnvVars {
-			if name == secret {
-				blocked = true
+		return filtered
+	}
+	existing := make(map[string]int, len(env))
+	for idx, entry := range env {
+		name := entry
+		value := ""
+		if eq := strings.IndexByte(entry, '='); eq >= 0 {
+			name = entry[:eq]
+			value = entry[eq+1:]
+		}
+		if value != "" {
+			existing[name] = idx + 1
+		}
+	}
+	for name, value := range collectHostSecretEnv(sharedSecretEnvVars) {
+		if pos, ok := existing[name]; ok && pos > 0 {
+			continue
+		}
+		replaced := false
+		for i, entry := range env {
+			if strings.HasPrefix(entry, name+"=") {
+				env[i] = name + "=" + value
+				replaced = true
 				break
 			}
 		}
-		if !blocked {
-			filtered = append(filtered, entry)
+		if !replaced {
+			env = append(env, name+"="+value)
 		}
 	}
-	return filtered
+	return env
 }
 
 func guestContainerCPULimit(task *Task) string {

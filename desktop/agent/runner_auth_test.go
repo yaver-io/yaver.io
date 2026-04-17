@@ -43,6 +43,32 @@ func TestDetectRunnerRuntimeStatusCodexAuthFile(t *testing.T) {
 	}
 }
 
+func TestDetectRunnerRuntimeStatusCodexVaultKey(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("CODEX_HOME", t.TempDir())
+	vs, err := NewVaultStore("test-passphrase")
+	if err != nil {
+		t.Fatalf("NewVaultStore: %v", err)
+	}
+	if err := vs.Set(VaultEntry{Name: "OPENAI_API_KEY", Category: "api-key", Value: "vault-openai-key"}); err != nil {
+		t.Fatalf("vault set: %v", err)
+	}
+	setRuntimeVaultStore(vs)
+	defer setRuntimeVaultStore(nil)
+
+	status := DetectRunnerRuntimeStatus(GetRunnerConfig("codex"), t.TempDir())
+	if !status.Ready {
+		t.Fatalf("expected codex vault auth to make runner ready, got error: %s", status.Error)
+	}
+	if !status.AuthConfigured {
+		t.Fatalf("expected codex vault auth to be detected")
+	}
+	if status.AuthSource != "vault:OPENAI_API_KEY" {
+		t.Fatalf("expected vault OPENAI_API_KEY auth source, got %q", status.AuthSource)
+	}
+}
+
 func TestDetectRunnerRuntimeStatusOpenCodeAllowsOpenAIOAuth(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	xdgData := filepath.Join(t.TempDir(), "data")
