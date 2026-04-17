@@ -157,6 +157,45 @@ export async function createPhoneProject(
   return r;
 }
 
+/** Create a new phone-backend project on a *different* agent than the one
+ *  we're currently connected to. Used by the "Create project" flow in
+ *  mobile/app/phone-projects.tsx when the user picks [Your Dev Machine] or
+ *  [Yaver Cloud] as the start-point (yc.md §Wedge Demo). Goes through the
+ *  same auth headers as the local agent; the three tiers in the Yaver-native
+ *  continuum share the same owner-token model.
+ *
+ *  Use `pushPhoneProject` when you already have a local project and want to
+ *  replicate it — this is the greenfield case. */
+export async function createPhoneProjectAt(
+  target: PhonePushTarget,
+  spec: PhoneCreateSpec,
+): Promise<PhoneProject> {
+  const h = headers();
+  if (!h) throw new Error("no source agent connected");
+  const base = resolvePhonePushTargetBase(target);
+  const res = await fetch(`${base}/phone/projects/create`, {
+    method: "POST",
+    headers: { ...h, "Content-Type": "application/json" },
+    body: JSON.stringify(spec),
+  });
+  const body = await res.text().catch(() => "");
+  if (!res.ok) {
+    throw new Error(body || `HTTP ${res.status}`);
+  }
+  return JSON.parse(body) as PhoneProject;
+}
+
+function resolvePhonePushTargetBase(target: PhonePushTarget): string {
+  switch (target.kind) {
+    case "dev-hw":
+      return `${target.relayHttpUrl.replace(/\/$/, "")}/d/${target.deviceId}`;
+    case "yaver-cloud":
+      return (target.cloudBaseUrl ?? "https://cloud.yaver.io").replace(/\/$/, "");
+    case "custom":
+      return target.baseUrl.replace(/\/$/, "");
+  }
+}
+
 export async function getPhoneProject(slug: string): Promise<PhoneProject | null> {
   return get<PhoneProject>(`/phone/projects/get?slug=${encodeURIComponent(slug)}`);
 }
