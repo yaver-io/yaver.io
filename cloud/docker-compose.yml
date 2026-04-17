@@ -1,0 +1,56 @@
+# Yaver Cloud — managed Hetzner tenant for phone-backend projects.
+#
+#   docker compose up -d
+#
+# After `docker compose up`, mobile/CLI can:
+#   yaver phone push <slug> --to https://${CLOUD_DOMAIN:-cloud.yaver.io}
+# and /phone/projects/receive on this box materialises the project in the
+# persistent /data/yaver volume.
+#
+# Multi-tenancy is enforced by the agent's existing owner-auth middleware:
+# each user's projects land under their own SQLite files keyed by slug. For
+# a single-tenant beta box, set CLOUD_OWNER_TOKEN to one known token.
+
+services:
+  yaver-agent:
+    build:
+      context: ..
+      dockerfile: cloud/Dockerfile
+    container_name: yaver-cloud-agent
+    restart: unless-stopped
+    expose:
+      - "18080"
+    environment:
+      # Forwarded to `yaver serve` via env — see desktop/agent/config.go.
+      - YAVER_AUTH_TOKEN=${CLOUD_OWNER_TOKEN:?set CLOUD_OWNER_TOKEN in .env}
+      - YAVER_OWNER_USER_ID=${CLOUD_OWNER_USER_ID:-cloud-owner}
+      - YAVER_HOSTNAME=${CLOUD_DOMAIN:-cloud.yaver.io}
+    volumes:
+      - yaver-data:/home/yaver/.yaver
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: yaver-cloud-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - CLOUD_DOMAIN=${CLOUD_DOMAIN:-cloud.yaver.io}
+      - CLOUD_TLS_EMAIL=${CLOUD_TLS_EMAIL:-admin@yaver.io}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - yaver-agent
+
+volumes:
+  yaver-data:      # ~/.yaver on the agent — phone-projects, tasks, config
+  caddy-data:      # Let's Encrypt certs
+  caddy-config:
