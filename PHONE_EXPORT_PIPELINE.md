@@ -445,6 +445,42 @@ Uses:
 - **Route 53 / DigitalOcean / Google Cloud DNS adapters** — same interface shape, swap the `CloudflareClient`. The mobile screen would become a single "DNS provider" picker with per-provider paste-back. ~1 day each.
 - **Auto-inject yaver.cloud apex records** so paying users who own a domain can point it at Yaver Cloud with one tap (Yaver asks for the Cloudflare token once, creates both the apex A record + the wildcard CNAME, saves a "domain linked" flag in the user's settings). ~2 hours once Route 53 is done.
 
+#### 2.4c Cost guardrails — ✅ SHIPPED
+
+User concern: "make sure to not make me poor etc. with cloudflare convex vercel deploys of tons of bytes etc."
+
+Two guardrails shipped today:
+
+1. **Hard byte-cap on export + receive.** `desktop/agent/phone_cost.go` defines `PhoneDeployBudgetBytes` (default 50 MB) and `EnforcePhoneDeployBudget`. `ExportPhoneProjectWithOptions` refuses to return a tgz that exceeds the cap (with a descriptive error that mentions the `--include-data` remedy). `handlePhoneReceive` enforces again server-side (413 Payload Too Large with the same descriptive body), so a malicious client can't bypass by building the tgz themselves. `PhoneExportOptions` gains `MaxBundleBytes` for per-call overrides. 5 new tests.
+
+2. **Pre-flight cost hint.** `GET /phone/projects/cost-hint` returns advisory strings per target kind (this-device / dev-hw / yaver-cloud / cloudflare-workers / custom). Mobile `runPush` now HEADs the export URL to get bundle size, then shows a confirm alert: `"Uploading ~X.Y MB (cap: 50 MB). Plan: <free line>. <advice>."` User hits Deploy or Cancel with full transparency.
+
+**What this rules out:**
+- Accidentally shipping a 2 GB SQLite to Yaver Cloud on a cellular data plan.
+- A Cloudflare Workers accidental bill from pushing a 500 MB D1 database.
+- Repeated deploys that silently balloon — each one is gated behind an explicit confirm.
+
+**What this doesn't solve yet (Codex follow-ups):**
+- **Cumulative byte accounting.** No "this month: 120 MB pushed to Yaver Cloud" yet. Needs a per-target ledger in `~/.yaver/deploy-ledger.json` + a `/phone/projects/usage` endpoint.
+- **Deploy rate limiting.** A double-tap still sends two bundles; should debounce server-side with a 30-second min interval per (slug, target).
+- **Convex / Supabase per-call metering.** When using the escape paths we have no insight into the destination's actual cost — just into our own upload. Would need to pull quota data from the destination's admin API after deploy.
+- **Hard-budget kill switch.** Configurable `cost_budget_usd_per_month` that refuses deploys after N dollars. Requires the ledger above + a rough byte→$ conversion table per target.
+
+#### 2.4b Curated escape routes — ✅ SHIPPED (behind the existing Advanced collapsible)
+
+**Positioning clarification (user-stated 2026-04-17 pm):** the primary use case for Yaver is a **vibe coder working from a phone on a monorepo** — chatting, prompting, deploying to their own dev hw or Yaver Cloud. **Escape routes are a trust signal, not a headline feature.** They reassure the user "no lock-in" so they commit to the Yaver-native continuum; they're never fronted in the main UI.
+
+Shipped as:
+- `desktop/agent/phone_escape.go` — `EscapeRoute` struct + `escapeRouteCatalog` (curated list: inbound "X → Yaver Cloud" with `highlight=true`, outbound "Yaver → X" for no-lock-in reassurance, and third-party-to-third-party routes that use Yaver-as-transit). Handlers: `GET /escape/routes?from=&to=` + `POST /escape/plan`. The plan endpoint is a thin wrapper over `SwitchEngine.Plan` — we don't add migration code, we just map friendly (from,to) pairs to switch-target IDs.
+- `phone_escape_test.go` — 11 tests, including a catalog-drift guard that asserts every curated route points at a real SwitchEngine target id.
+- `mobile/src/lib/phoneProjects.ts` — `listEscapeRoutes({from, to})` + `planEscapeRoute(routeId, projectDir, opts)`.
+- `mobile/app/phone-project/[slug].tsx` — the existing Advanced collapsible now fetches the curated list on open and renders friendly rows ("Yaver → Neon", "Supabase → Yaver Cloud · PITCH · hard"). No new screen, no top-level entry point. Reuses the existing `doPromote` handler so the switch engine runs the migration the same way a power-user would via `/switch/plan`.
+
+When Codex extends this:
+- Adding a route = append to `escapeRouteCatalog`. Ensure `toTargetID` exists in `SwitchTargets()` (test covers this).
+- For sources Yaver doesn't know yet (Firebase, PlanetScale, DynamoDB): add a new `BackendKind` + inferer in `backend_adapter.go :: inferBackend`, then the catalog row lights up automatically.
+- Connection-string-only source ("I don't have the code on disk, here's my Supabase URL + service key") is the next logical step — not shipped today. Add a `POST /escape/inspect` that takes a URL + creds, uses the existing `backend_sql.go` / `backend_convex.go` adapters to pull the schema, and returns a synthetic projectDir the plan endpoint can then use.
+
 #### 2.5 Yaver Lite backend on Cloudflare Workers — ⏳ NOT YET STARTED
 
 User also asked: "if possible integrate so user may deploy yaver lite backend to Cloudflare as well." Workers is a real tier to add to the continuum — free for low traffic, global edge, D1 as the SQLite substrate. Not a few-hours feature though; this is a ~2-3 day port.

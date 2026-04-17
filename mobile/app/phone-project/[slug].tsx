@@ -21,17 +21,25 @@ import { useDevice, type Device } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
 import {
   EscapeRoute,
+  PhoneProjectAccess,
   PhoneBrowseResult,
   PhoneProject,
   PhonePushResult,
   PhonePushTarget,
+  PhoneDeployCostHint,
+  PhoneDeployCostHints,
+  bindPhoneProjectToTarget,
   browsePhoneTable,
+  clearPhoneProjectBinding,
   deletePhoneProject,
   deletePhoneRow,
+  getPhoneProjectAccess,
   getPhoneProject,
   insertPhoneRow,
   listEscapeRoutes,
-  listPhoneTables,
+  listPhoneTablesAt,
+  phoneBundleSize,
+  phoneDeployCostHints,
   phoneExportUrl,
   promotePhoneProject,
   pushPhoneProject,
@@ -68,6 +76,7 @@ export default function PhoneProjectDetailScreen() {
   const slugStr = String(slug ?? "");
 
   const [project, setProject] = useState<PhoneProject | null>(null);
+  const [access, setAccess] = useState<PhoneProjectAccess | null>(null);
   const [tables, setTables] = useState<Array<{ name: string; rowCount?: number }>>([]);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [rows, setRows] = useState<PhoneBrowseResult["rows"]>([]);
@@ -90,6 +99,17 @@ export default function PhoneProjectDetailScreen() {
   const [lastDeploy, setLastDeploy] = useState<{ kind: "dev-hw" | "yaver-cloud"; url: string; via?: string } | null>(null);
   const [showAdvancedPromote, setShowAdvancedPromote] = useState(false);
   const [escapeRoutes, setEscapeRoutes] = useState<EscapeRoute[]>([]);
+  const [costHints, setCostHints] = useState<PhoneDeployCostHints | null>(null);
+
+  // Pull the agent's advisory cost map + bundle-cap once on mount. Used by
+  // the deploy confirm to show "About to upload X.Y MB — <advice>" before
+  // the user taps OK. Keeps the user from a surprise data-plan hit.
+  useEffect(() => {
+    void (async () => {
+      const h = await phoneDeployCostHints();
+      if (h) setCostHints(h);
+    })();
+  }, []);
 
   // Pull curated escape routes once the user opens the Advanced collapsible.
   // Phone projects are SQLite-backed, so we ask for "yaver"-origin routes
@@ -130,7 +150,12 @@ export default function PhoneProjectDetailScreen() {
     if (!slugStr) return;
     try {
       setErr(null);
-      const [p, ts] = await Promise.all([getPhoneProject(slugStr), listPhoneTables(slugStr)]);
+      const resolved = await getPhoneProjectAccess(slugStr);
+      setAccess(resolved);
+      const [p, ts] = await Promise.all([
+        getPhoneProject(slugStr, resolved),
+        listPhoneTablesAt(slugStr, resolved),
+      ]);
       setProject(p);
       setTables(ts);
       if (!selectedTable && ts.length) setSelectedTable(ts[0].name);
@@ -145,12 +170,14 @@ export default function PhoneProjectDetailScreen() {
   const loadRows = useCallback(async () => {
     if (!slugStr || !selectedTable) return;
     try {
-      const r = await browsePhoneTable(slugStr, selectedTable);
+      const resolved = access ?? (await getPhoneProjectAccess(slugStr));
+      if (!access) setAccess(resolved);
+      const r = await browsePhoneTable(slugStr, selectedTable, "", 50, resolved);
       setRows(r?.rows ?? []);
     } catch (e: any) {
       setErr(e?.message ?? "browse failed");
     }
-  }, [slugStr, selectedTable]);
+  }, [access, slugStr, selectedTable]);
 
   useEffect(() => {
     void load();
@@ -165,7 +192,7 @@ export default function PhoneProjectDetailScreen() {
     try {
       const doc = JSON.parse(insertJSON || "{}");
       if (!doc || typeof doc !== "object") throw new Error("JSON must be an object");
-      await insertPhoneRow(slugStr, selectedTable, doc);
+      await insertPhoneRow(slugStr, selectedTable, doc, access);
       setInsertJSON("{}");
       setShowInsert(false);
       await loadRows();
@@ -182,7 +209,7 @@ export default function PhoneProjectDetailScreen() {
         text: "Delete",
         style: "destructive",
         onPress: async () => {
-          await deletePhoneRow(slugStr, selectedTable, String(id));
+          await deletePhoneRow(slugStr, selectedTable, String(id), access);
           await loadRows();
         },
       },
@@ -190,7 +217,7 @@ export default function PhoneProjectDetailScreen() {
   }
 
   async function doExport() {
-    const ref = phoneExportUrl(slugStr);
+    const ref = phoneExportUrl(slugStr, access);
     if (!ref) {
       Alert.alert("Export", "Agent not reachable");
       return;
@@ -250,7 +277,51 @@ export default function PhoneProjectDetailScreen() {
 
   // ── Deploy (yc.md §Wedge Demo) ──────────────────────────────────────
 
+  // Pre-flight guard for runPush — fetches the bundle size + cost hint and
+  // asks the user to confirm BEFORE any bytes hit the wire. Keeps a
+  // surprise Hetzner/Cloudflare/Convex bill off the table. Server side
+  // enforces the cap again in handlePhoneReceive so this is transparency
+  // not security.
+  function costHintFor(kind: "dev-hw" | "yaver-cloud"): PhoneDeployCostHint | null {
+    if (!costHints) return null;
+    return costHints.hints.find((h) => h.targetKind === kind) ?? null;
+  }
+
+  async function confirmDeploySize(target: PhonePushTarget, kind: "dev-hw" | "yaver-cloud"): Promise<boolean> {
+    const bytes = await phoneBundleSize(slugStr, { includeData: true });
+    const capMB = costHints?.bundleCapMB ?? 50;
+    const mb = bytes ? (bytes / (1024 * 1024)).toFixed(2) : "?";
+    const hint = costHintFor(kind);
+    const sizeLine = bytes
+      ? `Uploading ~${mb} MB (cap: ${capMB} MB).`
+      : `Bundle size unknown — cap: ${capMB} MB.`;
+    if (bytes && bytes > (costHints?.bundleCapBytes ?? 50 * 1024 * 1024)) {
+      Alert.alert(
+        "Bundle too large",
+        `${mb} MB exceeds the ${capMB} MB cap. Deploy without --include-data, or drop some rows first.`,
+      );
+      return false;
+    }
+    const label = kind === "dev-hw" ? selectedDevMachine?.name ?? "your dev machine" : "Yaver Cloud";
+    const advice = hint?.advice ?? "";
+    const budget = hint?.free ?? "";
+    const message = [sizeLine, "", budget ? `Plan: ${budget}` : "", advice].filter(Boolean).join("\n");
+    return new Promise<boolean>((resolve) => {
+      Alert.alert(
+        `Deploy to ${label}?`,
+        message,
+        [
+          { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+          { text: "Deploy", style: "default", onPress: () => resolve(true) },
+        ],
+        { cancelable: true, onDismiss: () => resolve(false) },
+      );
+    });
+  }
+
   async function runPush(target: PhonePushTarget, kindLabel: "dev-hw" | "yaver-cloud") {
+    const ok = await confirmDeploySize(target, kindLabel);
+    if (!ok) return;
     setDeploying(kindLabel);
     try {
       const result: PhonePushResult = await pushPhoneProject(slugStr, target, {
@@ -259,11 +330,17 @@ export default function PhoneProjectDetailScreen() {
       });
       const via =
         target.kind === "dev-hw" ? selectedDevMachine?.name ?? "dev machine" : "Yaver Cloud";
+      await bindPhoneProjectToTarget(slugStr, target, result, via);
+      const rebound = await getPhoneProjectAccess(slugStr);
+      setAccess(rebound);
       const url = result.browseUrl?.startsWith("http")
         ? result.browseUrl
         : deriveTargetUrl(target, result);
       setLastDeploy({ kind: kindLabel, url, via });
+      await load();
+      await loadRows();
     } catch (e: any) {
+      // Agent returns a descriptive message on 413 — surface it verbatim.
       Alert.alert("Deploy failed", e?.message ?? "push failed");
     } finally {
       setDeploying(null);
@@ -322,17 +399,47 @@ export default function PhoneProjectDetailScreen() {
         text: "Delete",
         style: "destructive",
         onPress: async () => {
-          await deletePhoneProject(slugStr);
+          await deletePhoneProject(slugStr, access);
           router.back();
         },
       },
     ]);
   }
 
+  async function useLocalBackend() {
+    await clearPhoneProjectBinding(slugStr);
+    const localAccess: PhoneProjectAccess = {
+      sourceSlug: slugStr,
+      slug: slugStr,
+      kind: "local",
+      label: "This device",
+    };
+    setAccess(localAccess);
+    await load();
+    await loadRows();
+  }
+
   const rowIdKey = useMemo(() => {
     if (!rows.length) return "id";
     return Object.keys(rows[0]).find((k) => k === "id") ?? Object.keys(rows[0])[0];
   }, [rows]);
+
+  function openVibeCoding() {
+    if (!project?.dir) {
+      Alert.alert("Vibe coding", "Project directory is not available yet.");
+      return;
+    }
+    const prompt = buildSandboxPrompt(project);
+    router.navigate({
+      pathname: "/(tabs)/tasks" as any,
+      params: {
+        dir: project.dir,
+        prompt,
+        title: `Vibe ${project.name}`,
+        openNew: "1",
+      },
+    });
+  }
 
   if (loading) {
     return (
@@ -383,8 +490,54 @@ export default function PhoneProjectDetailScreen() {
             {formatBytes(project.stats.dbBytes)} on disk
           </Text>
         ) : null}
+        <View
+          style={[
+            styles.deployResult,
+            {
+              backgroundColor: c.bgCard,
+              borderColor: access?.kind === "local" ? c.border : c.accent,
+              marginTop: 10,
+            },
+          ]}
+        >
+          <Text
+            style={{
+              color: access?.kind === "local" ? c.textPrimary : c.accent,
+              fontSize: 12,
+              fontWeight: "600",
+            }}
+          >
+            Active backend: {access?.label ?? "This device"}
+          </Text>
+          <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 2 }}>
+            {access?.kind === "local"
+              ? "Reads and writes stay on the currently connected agent."
+              : `Reads and writes are rebound to ${access?.label}.`}
+          </Text>
+          {access?.kind !== "local" ? (
+            <Pressable onPress={useLocalBackend} style={{ marginTop: 8 }}>
+              <Text style={{ color: c.accent, fontSize: 12, fontWeight: "600" }}>
+                Use local backend again
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
 
         <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+          <Pressable
+            onPress={() => router.navigate(`/phone-project/run/${slugStr}` as any)}
+            style={[styles.btn, { backgroundColor: c.accent, flex: 1 }]}
+          >
+            <Text style={{ color: c.bg, fontWeight: "700" }}>Open app</Text>
+          </Pressable>
+          <Pressable
+            onPress={openVibeCoding}
+            style={[styles.btnSecondary, { borderColor: c.border, flex: 1 }]}
+          >
+            <Text style={[styles.btnText, { color: c.textPrimary }]}>Vibe code</Text>
+          </Pressable>
+        </View>
+        <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
           <Pressable
             onPress={doExport}
             style={[styles.btnSecondary, { borderColor: c.border, flex: 1 }]}
@@ -743,6 +896,21 @@ function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function buildSandboxPrompt(project: PhoneProject): string {
+  const primaryEntity = project.app?.primaryEntity || project.schema?.tables?.find((table) => table.name !== "users")?.name || "items";
+  const screenTitles = (project.app?.screens ?? []).map((screen) => screen.title).join(", ");
+  return [
+    `You are vibe-coding inside Yaver's mobile sandbox for the project "${project.name}".`,
+    `Keep the implementation mobile-first, SQLite-backed, and exportable to the user's hardware or Yaver Cloud later.`,
+    `Primary entity: ${primaryEntity}.`,
+    screenTitles ? `Current screens: ${screenTitles}.` : "",
+    `Improve the sandbox app directly. Prefer concrete edits that make the app feel closer to a polished solo-dev mobile product.`,
+    `After changes, explain what changed in the sandbox and what the next best prompt is.`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 const styles = StyleSheet.create({
