@@ -20,6 +20,36 @@ Yaver connects your phone to your MacBook, Linux box, or VPS. No cloud accounts 
 No infrastructure to set up. Run AI agents, start Convex or Supabase locally, test on real
 devices, deploy — all from your pocket. Your code never touches someone else's server.
 
+## The Clear Story
+
+Yaver's primary loop is:
+
+1. Start on the phone.
+2. Vibe-code the app and backend from the phone.
+3. Run the first backend tier in the phone sandbox.
+4. Grow the same project onto your dev machine, your own server, or Yaver Cloud.
+5. Keep Supabase, Convex, Postgres, Turso, Firebase, and similar systems as escape hatches, not the default destination.
+
+What is first-class today:
+
+- **Hermes reload from Linux / WSL / remote host to iPhone** through the Yaver mobile app
+- **Mobile-first backend sandbox** with schema, auth personas, seed data, CRUD, and local persistence
+- **Promotion to your own hardware** via `yaver serve` on a Mac, Linux box, Pi, VPS, or other reachable machine
+- **Promotion to Yaver Cloud** via the same portable bundle and the same `yaver serve` binary
+- **Containerized export** for running the promoted backend on your own cloud with Docker
+- **Escape routes** to systems like Supabase and Convex for no-lock-in reassurance
+
+What is not fully finished yet:
+
+- **Phone-first monorepo scaffolding** as the default one-tap `init` path
+- **Prompt scaffold quality polish** for the phone-created full-stack starter
+
+The headline path is Yaver-native:
+
+`phone sandbox -> your dev machine / your cloud / Yaver Cloud`
+
+Everything else is there so the user knows they can leave later.
+
 ## The Four Pieces of Yaver
 
 Yaver is built for solo developers and small teams who ship from anywhere. It has four distinct pieces — each exists for a specific reason:
@@ -798,6 +828,69 @@ What does not need macOS:
 - relay / Tailscale / remote-box workflows
 
 If you are on Linux or WSL, Yaver should use the Hermes bundle path for iPhone work rather than `xcodebuild`.
+
+### Mobile-First Backend Continuum
+
+Yaver is not just a phone-to-screen bridge. For the phone-project flow, the
+phone can be the first backend tier.
+
+The same portable project bundle can move across three targets:
+
+| Tier | What runs it | Typical use |
+|------|---------------|-------------|
+| **Phone sandbox** | Yaver mobile app | first CRUD loop, offline prototyping, quick demos |
+| **Your dev machine / your own host** | `yaver serve` on Mac, Linux, WSL-adjacent box, Pi, VPS, or remote machine | real-device testing, staging, privacy-sensitive self-hosting |
+| **Yaver Cloud** | the same `yaver serve` behind the `cloud/` stack | managed deployment with zero-ops setup |
+
+The promotion unit is the same portable manifest every time:
+
+- schema
+- auth personas
+- seed data
+- optional live SQLite rows
+- generated SQL
+- app spec and related metadata
+
+This is the intended full-stack vibe-coding loop:
+
+1. Create the project from the phone.
+2. Prompt or edit the app and backend from the phone.
+3. Run it locally in the phone sandbox.
+4. Promote it to your own machine or cloud when it needs to grow.
+5. Export or migrate only if you want an escape hatch later.
+
+### Containerized Backend Export
+
+If you want the phone-created backend to land on your own server with Docker,
+use the phone export / push containerization path:
+
+```bash
+yaver phone export --containerize --include-data my-todos
+yaver phone push --to https://your-box.example.com --containerize my-todos
+```
+
+The exported bundle can include:
+
+- `Dockerfile`
+- `docker-compose.yml`
+- `.env.example`
+- `.dockerignore`
+
+That gives you a short path from phone sandbox to your own VM, Hetzner box, or
+other Docker-capable host without changing runtimes.
+
+### Monorepo Position
+
+The product direction is phone-first full-stack development with a monorepo:
+
+- mobile app
+- backend
+- shared schema/types
+- deploy/export path from the same project root
+
+That monorepo bootstrap story is a priority, but the one-tap repo scaffolder is
+still in progress. Today the core backend continuum and promote/export path
+exist first; monorepo automation sits on top of that.
 
 ### Do I Need To Modify My Project?
 

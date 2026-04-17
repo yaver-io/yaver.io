@@ -1,6 +1,6 @@
 # Phone Backend Export Pipeline — Implementation Log
 
-Status: **shipped** (April 17, 2026). All 11 new Go tests pass. Agent compiles clean.
+Status: **shipped** (April 17, 2026). Core export / receive / promote flow is in place. Follow-up work is mostly polish, monorepo bootstrap, and deploy ergonomics.
 
 This is the dump of what actually got written. Pairs with
 [`MOBILE_BACKEND_EXPORT.md`](MOBILE_BACKEND_EXPORT.md) (the design) and
@@ -8,7 +8,7 @@ This is the dump of what actually got written. Pairs with
 
 ## What this thread delivers
 
-**Same endpoint, two targets.** The mobile app — or the `yaver phone push`
+**Same endpoint, multiple targets.** The mobile app — or the `yaver phone push`
 CLI — exports a phone-backend project and POSTs the tarball to
 `/phone/projects/receive` on any reachable `yaver serve`. That agent can be:
 
@@ -16,6 +16,15 @@ CLI — exports a phone-backend project and POSTs the tarball to
    (free, reachable via direct LAN or the existing relay fallback).
 2. A Hetzner box running the bundled Docker compose stack (the paid
    Yaver-cloud tier in MVP).
+3. The developer's own cloud box running `yaver serve` directly or via the
+   containerized export scaffold.
+
+This is the intended continuum for the phone-first backend:
+
+`phone sandbox -> dev machine / own host -> Yaver Cloud`
+
+Supabase, Convex, Neon, Turso, Firebase, and similar systems remain escape
+hatches. They matter for trust, not because they replace the default Yaver path.
 
 No branching logic in the client. The target agent doesn't know or care
 whether it's running on the developer's closet Mac mini or a rented VPS.
@@ -63,7 +72,7 @@ Mobile / CLI
 | `deploy.sh` | Fresh-box bootstrap (installs Docker, clones repo, generates owner token, `docker compose up -d --build`). |
 | `README.md` | Operator runbook. |
 
-## The wire format (unchanged from the existing export)
+## The wire format
 
 The tarball produced by `ExportPhoneProject()` is the promotion unit:
 
@@ -77,6 +86,11 @@ The tarball produced by `ExportPhoneProject()` is the promotion unit:
 ├── local.db              # optional live SQLite rows when include-data is on
 ├── schema.sql            # generated DDL (SQLite)
 ├── schema.postgres.sql   # generated DDL (Postgres)
+├── Dockerfile            # optional containerized Yaver-lite runtime
+├── docker-compose.yml    # optional compose scaffold
+├── .env.example          # optional deploy scaffold
+├── .dockerignore         # optional container hygiene
+├── .gitignore            # exported-project git hygiene
 └── README.md             # embedded how-to-promote
 ```
 
@@ -84,6 +98,10 @@ The tarball produced by `ExportPhoneProject()` is the promotion unit:
 `.yaver/project.yaml` — everything else is advisory. By default the target
 rebuilds from schema + seed. When `include-data` is requested, `local.db`
 is bundled and restored verbatim so runtime rows survive promotion.
+
+When `containerize` is requested, the bundle also includes a Docker / compose
+scaffold so the same project can be started on the developer's own remote box
+or fed into the Yaver Cloud runtime with less manual setup.
 
 ## Endpoints
 
@@ -99,10 +117,10 @@ the same `s.auth(…)` middleware as every other phone route.
 
 ```
 yaver phone list                                # list local projects
-yaver phone export <slug> [--out <path>] [--include-data]
+yaver phone export [--out <path>] [--include-data] [--containerize] <slug>
 yaver phone import <path> [--slug …]            # inverse of export
-yaver phone push <slug> --to <base-url>         # the main event
-       [--as-slug NAME] [--conflict reject|rename|overwrite] [--skip-seed] [--include-data]
+yaver phone push --to <base-url>                # the main event
+       [--as-slug NAME] [--conflict reject|rename|overwrite] [--skip-seed] [--include-data] [--containerize] <slug>
 ```
 
 `push` reads `~/.yaver/config.json` for the bearer token, POSTs multipart to
@@ -111,13 +129,22 @@ Target can be any reachable agent:
 
 ```bash
 # Another laptop on the same LAN:
-yaver phone push my-todos --to http://192.168.1.42:18080
+yaver phone push --to http://192.168.1.42:18080 my-todos
 
 # Via relay (developer's Mac mini):
-yaver phone push my-todos --to https://relay.yaver.io/d/dev_mac_mini
+yaver phone push --to https://relay.yaver.io/d/dev_mac_mini my-todos
+
+# Your own cloud box with Docker scaffold included:
+yaver phone push --to https://my-box.example.com --include-data --containerize my-todos
 
 # Yaver cloud (paid tier):
-yaver phone push my-todos --to https://cloud.yaver.io
+yaver phone push --to https://cloud.yaver.io my-todos
+```
+
+If you want the exported project on disk first instead of pushing directly:
+
+```bash
+yaver phone export --include-data --containerize --out my-todos.tgz my-todos
 ```
 
 ## Mobile surface
@@ -143,6 +170,20 @@ await pushPhoneProject("my-todos", {
 ```
 
 Optional third arg: `{ onConflict: 'reject' | 'rename' | 'overwrite', skipSeed: boolean }`.
+
+## Product position
+
+This thread is part of the phone-first full-stack story:
+
+- build from the phone
+- keep the first backend tier on the phone
+- promote to your own machine or your own cloud
+- use Yaver Cloud when you want managed hosting
+- keep third-party migrations available as escape routes
+
+The still-missing piece for the ideal vibe-coding story is one-tap monorepo
+bootstrap. The transport, runtime continuity, and containerized/exported backend
+path already exist underneath it.
 
 ## Tests (all passing)
 

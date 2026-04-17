@@ -8,6 +8,14 @@ The same binary the developer runs on their own Mac/Pi/Linux/VPS runs here
 — the only difference is Caddy in front and a persistent Docker volume
 underneath. That's the whole managed-cloud tier for MVP.
 
+This is the managed version of the same phone-backend continuum:
+
+`phone sandbox -> your dev machine / your own host -> Yaver Cloud`
+
+If you do not want the managed tier, the same project can also land on your
+own box by running `yaver serve` directly or by using the exported
+`Dockerfile` + `docker-compose.yml` scaffold from `yaver phone export --containerize`.
+
 ## One-time setup on a fresh Hetzner VPS
 
 ```bash
@@ -36,12 +44,19 @@ flat token post-MVP (tracked against the `sdkTokens` table).
 ## Push a phone project from a laptop
 
 ```bash
-yaver phone push my-todos --to https://cloud.yaver.io
+yaver phone push --to https://cloud.yaver.io my-todos
 ```
 
 `/phone/projects/receive` materialises the bundle into
 `/home/yaver/.yaver/phone-projects/<slug>/` inside the container (backed by
 the `yaver-data` volume, so redeploys don't wipe tenant data).
+
+If you want the target project to arrive with Docker helpers included in the
+bundle as well:
+
+```bash
+yaver phone push --to https://cloud.yaver.io --include-data --containerize my-todos
+```
 
 ## Push from the mobile app
 
