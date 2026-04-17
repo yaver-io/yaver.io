@@ -164,8 +164,10 @@ func forkBootstrapToBackground(httpPort int, workDir string) bool {
 		lf.Close()
 		return false
 	}
-	if err := os.WriteFile(pidFilePath(), []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0644); err != nil {
-		log.Printf("bootstrap: warning: could not write PID file: %v", err)
+	if shouldTrackPrimaryAgent(httpPort) {
+		if err := os.WriteFile(pidFilePath(), []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0644); err != nil {
+			log.Printf("bootstrap: warning: could not write PID file: %v", err)
+		}
 	}
 	lf.Close()
 	fmt.Printf("Yaver agent started in bootstrap mode (PID %d, port %d).\n", cmd.Process.Pid, httpPort)
@@ -585,7 +587,7 @@ func corsWrap(h http.Handler) http.Handler {
 // auth exists. It broadcasts the same protocol but with:
 //
 //   - `th` = "" (we don't have a userId yet — the mobile app
-//              uses `na:true` to decide whether to show it)
+//     uses `na:true` to decide whether to show it)
 //   - `na` = true (needs auth)
 //   - `pk` = passkey (unless YAVER_BOOTSTRAP_NO_BEACON_PK=1)
 //
