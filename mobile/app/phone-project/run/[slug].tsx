@@ -219,7 +219,10 @@ export default function PhoneProjectRuntimeScreen() {
 
   function openVibeCoding() {
     if (!project?.dir) {
-      Alert.alert("Vibe coding", "Project directory is not available yet.");
+      Alert.alert(
+        "Coding loop unavailable",
+        "This phone sandbox runs locally in-app. Move it to a Yaver agent or Yaver Cloud before opening the coding loop.",
+      );
       return;
     }
     const prompt = [

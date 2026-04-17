@@ -445,7 +445,7 @@ export default function PhoneProjectDetailScreen() {
       sourceSlug: slugStr,
       slug: slugStr,
       kind: "local",
-      label: "This device",
+      label: "This phone",
     };
     setAccess(localAccess);
     await load();
@@ -459,7 +459,10 @@ export default function PhoneProjectDetailScreen() {
 
   function openVibeCoding() {
     if (!project?.dir) {
-      Alert.alert("Vibe coding", "Project directory is not available yet.");
+      Alert.alert(
+        "Coding loop unavailable",
+        "This phone sandbox runs locally in-app. Move it to a Yaver agent or Yaver Cloud before opening the coding loop.",
+      );
       return;
     }
     const prompt = buildSandboxPrompt(project);
@@ -539,17 +542,19 @@ export default function PhoneProjectDetailScreen() {
               fontWeight: "600",
             }}
           >
-            Active backend: {access?.label ?? "This device"}
+            Active backend: {access?.label ?? "This phone"}
           </Text>
           <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 2 }}>
             {access?.kind === "local"
-              ? "Reads and writes stay on the currently connected agent."
-              : `Reads and writes are rebound to ${access?.label}.`}
+              ? "Reads and writes stay in the local phone sandbox."
+              : access?.kind === "current-agent"
+                ? `Reads and writes go through ${access?.label}.`
+                : `Reads and writes are rebound to ${access?.label}.`}
           </Text>
           {access?.kind !== "local" ? (
             <Pressable onPress={useLocalBackend} style={{ marginTop: 8 }}>
               <Text style={{ color: c.accent, fontSize: 12, fontWeight: "600" }}>
-                Use local backend again
+                Use this phone again
               </Text>
             </Pressable>
           ) : null}
@@ -583,6 +588,15 @@ export default function PhoneProjectDetailScreen() {
             <Text style={[styles.btnText, { color: "#ff6b6b" }]}>Delete</Text>
           </Pressable>
         </View>
+
+        <Pressable
+          onPress={() => router.navigate("/(tabs)/gitproviders" as any)}
+          style={[styles.btnSecondary, { borderColor: c.border, marginTop: 8 }]}
+        >
+          <Text style={[styles.btnText, { color: c.textPrimary }]}>
+            Git providers ›
+          </Text>
+        </Pressable>
 
         <Pressable
           onPress={() =>
