@@ -35,6 +35,7 @@ export default function VaultView() {
   const [revealing, setRevealing] = useState<string | null>(null);
   const [filter, setFilter] = useState<Set<VaultCategory>>(new Set(CATEGORIES));
   const [q, setQ] = useState("");
+  const [masks, setMasks] = useState<Record<string, string>>({});
 
   // Compose form
   const [draftName, setDraftName] = useState("");
@@ -42,6 +43,9 @@ export default function VaultView() {
   const [draftValue, setDraftValue] = useState("");
   const [draftNotes, setDraftNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  // When set, the add form is in "edit mode": name is locked, value
+  // is pre-loaded, and Save becomes Update.
+  const [editingName, setEditingName] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -109,6 +113,7 @@ export default function VaultView() {
       setDraftName("");
       setDraftValue("");
       setDraftNotes("");
+      setEditingName(null);
       await load();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -117,11 +122,134 @@ export default function VaultView() {
     }
   }
 
+  async function beginEdit(name: string) {
+    try {
+      const entry = await agentClient.vaultGet(name);
+      setEditingName(entry.name);
+      setDraftName(entry.name);
+      setDraftCategory(entry.category);
+      setDraftValue(entry.value);
+      setDraftNotes(entry.notes ?? "");
+      // Scroll-to-top isn't available in a server-rendered context;
+      // the form is at the top so it's already visible.
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  function cancelEdit() {
+    setEditingName(null);
+    setDraftName("");
+    setDraftValue("");
+    setDraftNotes("");
+  }
+
+  // .env import state
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importCategory, setImportCategory] = useState<VaultCategory>("api-key");
+  const [importing, setImporting] = useState(false);
+
+  // parseEnv tolerates most .env flavours:
+  //   - `#` comments (line and trailing)
+  //   - leading `export `
+  //   - `KEY=VAL`, `KEY="VAL"`, `KEY='VAL'`
+  //   - blank lines
+  // Returns {name, value} pairs in document order. Duplicates win-last.
+  function parseEnv(text: string): { name: string; value: string }[] {
+    const out = new Map<string, string>();
+    for (const rawLine of text.split(/\r?\n/)) {
+      let line = rawLine.trim();
+      if (!line || line.startsWith("#")) continue;
+      if (line.startsWith("export ")) line = line.slice("export ".length).trim();
+      const eq = line.indexOf("=");
+      if (eq < 1) continue; // no `=` or line starts with `=`
+      let name = line.slice(0, eq).trim();
+      let value = line.slice(eq + 1).trim();
+      // Strip matching outer quotes.
+      if (
+        (value.startsWith('"') && value.endsWith('"') && value.length >= 2) ||
+        (value.startsWith("'") && value.endsWith("'") && value.length >= 2)
+      ) {
+        value = value.slice(1, -1);
+      }
+      if (!/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(name)) continue;
+      out.set(name, value);
+    }
+    return Array.from(out.entries()).map(([name, value]) => ({ name, value }));
+  }
+
+  const importPreview = importText.trim() ? parseEnv(importText) : [];
+
+  async function runImport() {
+    if (importPreview.length === 0) return;
+    setImporting(true);
+    let ok = 0;
+    let failed: string[] = [];
+    for (const pair of importPreview) {
+      try {
+        await agentClient.vaultSet({
+          name: pair.name,
+          category: importCategory,
+          value: pair.value,
+          notes: "imported from .env",
+        });
+        ok += 1;
+      } catch {
+        failed.push(pair.name);
+      }
+    }
+    setImporting(false);
+    if (failed.length === 0) {
+      setImportText("");
+      setImportOpen(false);
+    } else {
+      setErr(`imported ${ok}/${importPreview.length} — failed: ${failed.slice(0, 5).join(", ")}${failed.length > 5 ? "…" : ""}`);
+    }
+    await load();
+  }
+
   async function copyToClipboard(text: string) {
     try {
       await navigator.clipboard.writeText(text);
     } catch {
       // silent — some browsers block in non-secure contexts
+    }
+  }
+
+  // Fetches the value, copies it, and throws the plaintext away —
+  // never renders it. Useful when the user just wants to paste
+  // into another app without leaving the secret on screen.
+  async function quickCopy(name: string) {
+    try {
+      const entry: VaultEntry = await agentClient.vaultGet(name);
+      await copyToClipboard(entry.value);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  // "sk-xxxx…abcd" — enough to recognise which key it is without
+  // revealing it. Used as an inline preview when the entry is hidden.
+  async function toggleMask(name: string) {
+    if (masks[name]) {
+      setMasks((prev) => {
+        const next = { ...prev };
+        delete next[name];
+        return next;
+      });
+      return;
+    }
+    try {
+      const entry: VaultEntry = await agentClient.vaultGet(name);
+      const v = entry.value;
+      const hint =
+        v.length <= 10
+          ? v.slice(0, 1) + "…" + v.slice(-1)
+          : v.slice(0, 4) + "…" + v.slice(-4);
+      setMasks((prev) => ({ ...prev, [name]: hint }));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -141,13 +269,80 @@ export default function VaultView() {
       )}
 
       <section className="rounded border border-surface-700 bg-surface-950/30 p-3">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-surface-400">Add entry</h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-surface-400">
+            {editingName ? `Edit entry: ${editingName}` : "Add entry"}
+          </h3>
+          {!editingName && (
+            <button
+              type="button"
+              className="ml-auto rounded border border-surface-700 bg-surface-900 px-2 py-0.5 text-xs text-surface-400 hover:text-surface-100"
+              onClick={() => setImportOpen((v) => !v)}
+            >
+              {importOpen ? "Close .env import" : "Import from .env"}
+            </button>
+          )}
+        </div>
+        {importOpen && !editingName && (
+          <div className="mt-2 rounded border border-surface-800 bg-surface-950 p-2">
+            <p className="text-[11px] text-surface-500">
+              Paste a <code className="rounded bg-surface-900 px-1">.env</code> file. KEY=VALUE lines are parsed; comments and blanks are skipped. Values land in your local vault — nothing leaves this machine.
+            </p>
+            <textarea
+              className="mt-2 w-full rounded border border-surface-700 bg-surface-900 px-2 py-1.5 font-mono text-xs"
+              rows={6}
+              placeholder={`OPENAI_API_KEY=sk-...\nSTRIPE_SECRET=sk_live_...`}
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+            />
+            <div className="mt-2 flex items-center gap-2 text-xs">
+              <select
+                className="rounded border border-surface-700 bg-surface-900 px-2 py-1 text-xs"
+                value={importCategory}
+                onChange={(e) => setImportCategory(e.target.value as VaultCategory)}
+              >
+                {CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+              <span className="text-surface-500">
+                {importPreview.length} entr{importPreview.length === 1 ? "y" : "ies"} parsed
+              </span>
+              <button
+                type="button"
+                className="ml-auto rounded bg-indigo-600 px-3 py-1 text-xs font-semibold disabled:opacity-40"
+                disabled={importing || importPreview.length === 0}
+                onClick={() => void runImport()}
+              >
+                {importing ? "Importing…" : "Import all"}
+              </button>
+            </div>
+            {importPreview.length > 0 && (
+              <ul className="mt-2 max-h-40 overflow-auto text-[11px] text-surface-400">
+                {importPreview.map((p) => (
+                  <li key={p.name} className="flex gap-2">
+                    <code className="text-surface-200">{p.name}</code>
+                    <span className="truncate">
+                      =
+                      {p.value.length > 20
+                        ? `${p.value.slice(0, 8)}…${p.value.slice(-4)}`
+                        : p.value}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
         <div className="mt-2 grid gap-2 md:grid-cols-2">
           <input
-            className="rounded border border-surface-700 bg-surface-900 px-2 py-1.5 font-mono text-sm"
+            className="rounded border border-surface-700 bg-surface-900 px-2 py-1.5 font-mono text-sm disabled:opacity-60"
             placeholder="name (e.g. OPENAI_API_KEY)"
             value={draftName}
             onChange={(e) => setDraftName(e.target.value)}
+            disabled={editingName !== null}
           />
           <select
             className="rounded border border-surface-700 bg-surface-900 px-2 py-1.5 text-sm"
@@ -175,14 +370,23 @@ export default function VaultView() {
             onChange={(e) => setDraftNotes(e.target.value)}
           />
         </div>
-        <div className="mt-3 flex justify-end">
+        <div className="mt-3 flex justify-end gap-2">
+          {editingName && (
+            <button
+              type="button"
+              className="rounded bg-surface-800 px-3 py-1.5 text-sm"
+              onClick={cancelEdit}
+            >
+              Cancel
+            </button>
+          )}
           <button
             type="button"
             className="rounded bg-indigo-600 px-4 py-1.5 text-sm font-semibold disabled:opacity-40"
             disabled={saving || !draftName.trim() || !draftValue.trim()}
             onClick={() => void save()}
           >
-            {saving ? "Saving…" : "Save"}
+            {saving ? (editingName ? "Updating…" : "Saving…") : editingName ? "Update" : "Save"}
           </button>
         </div>
       </section>
@@ -255,20 +459,35 @@ export default function VaultView() {
                     <button
                       type="button"
                       className="rounded bg-surface-800 px-2 py-0.5 hover:bg-surface-700"
+                      onClick={() => void quickCopy(e.name)}
+                      title="Copy value without displaying it"
+                    >
+                      Copy
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded bg-surface-800 px-2 py-0.5 hover:bg-surface-700"
+                      onClick={() => void toggleMask(e.name)}
+                      title="Show a masked preview (first+last 4 chars)"
+                    >
+                      {masks[e.name] ? "Hide" : "Preview"}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded bg-surface-800 px-2 py-0.5 hover:bg-surface-700"
                       onClick={() => void reveal(e.name)}
                       disabled={revealing === e.name}
                     >
                       {value ? "Hide" : revealing === e.name ? "…" : "Reveal"}
                     </button>
-                    {value && (
-                      <button
-                        type="button"
-                        className="rounded bg-surface-800 px-2 py-0.5 hover:bg-surface-700"
-                        onClick={() => void copyToClipboard(value)}
-                      >
-                        Copy
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className="rounded bg-surface-800 px-2 py-0.5 hover:bg-surface-700"
+                      onClick={() => void beginEdit(e.name)}
+                      title="Edit value / notes (name stays fixed)"
+                    >
+                      Edit
+                    </button>
                     <button
                       type="button"
                       className="rounded bg-red-900/40 px-2 py-0.5 text-red-200 hover:bg-red-900/70"
@@ -279,6 +498,11 @@ export default function VaultView() {
                   </span>
                 </div>
                 {e.notes && <p className="text-xs text-surface-400">{e.notes}</p>}
+                {!value && masks[e.name] && (
+                  <code className="mt-1 inline-block rounded bg-black/30 px-1 text-xs text-surface-300">
+                    {masks[e.name]}
+                  </code>
+                )}
                 {value && (
                   <pre className="mt-1 overflow-x-auto rounded bg-black/40 p-2 font-mono text-xs">
                     {value}
