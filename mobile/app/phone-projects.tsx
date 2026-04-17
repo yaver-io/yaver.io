@@ -303,8 +303,20 @@ export default function PhoneProjectsScreen() {
           </>
         ) : (
           <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginTop: 12 }]}>
+            <Text style={[styles.stepTitle, { color: c.textPrimary }]}>
+              {["Name your app", "Describe the app", "Who will code?", "Where should it live?", "Git setup"][step]}
+            </Text>
+            <Text style={[styles.stepSubtitle, { color: c.textMuted }]}>
+              {[
+                "Start with a short project name.",
+                "Add a short brief and pick a starting template.",
+                "Choose phone-side kickoff or a remote runner.",
+                "Pick the backend location for the sandbox.",
+                "Git is optional. Connect it now or skip it.",
+              ][step]}
+            </Text>
             <View style={styles.stepDots}>
-              {[0, 1, 2, 3].map((value) => (
+              {[0, 1, 2, 3, 4].map((value) => (
                 <View
                   key={value}
                   style={[
@@ -345,24 +357,28 @@ export default function PhoneProjectsScreen() {
                   style={[styles.input, styles.promptInput, { color: c.textPrimary, borderColor: c.border }]}
                 />
                 <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Template</Text>
-                {templates.map((t) => (
-                  <Pressable
-                    key={t.id}
-                    onPress={() => setTemplate(t.id)}
-                    style={[
-                      styles.templateRow,
-                      {
-                        backgroundColor: template === t.id ? c.accent + "22" : "transparent",
-                        borderColor: template === t.id ? c.accent : c.border,
-                      },
-                    ]}
-                  >
-                    <Text style={[styles.templateLabel, { color: c.textPrimary }]}>{t.label}</Text>
-                    <Text style={[styles.muted, { color: c.textMuted }]} numberOfLines={1}>
-                      {t.description}
-                    </Text>
-                  </Pressable>
-                ))}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingTop: 6 }}>
+                  {templates.map((t) => (
+                    <Pressable
+                      key={t.id}
+                      onPress={() => setTemplate(t.id)}
+                      style={[
+                        styles.choiceCard,
+                        {
+                          width: 168,
+                          marginRight: 10,
+                          backgroundColor: template === t.id ? c.accent + "18" : c.bg,
+                          borderColor: template === t.id ? c.accent : c.border,
+                        },
+                      ]}
+                    >
+                      <Text style={[styles.templateLabel, { color: c.textPrimary }]}>{t.label}</Text>
+                      <Text style={[styles.muted, { color: c.textMuted }]} numberOfLines={3}>
+                        {t.description}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
               </>
             ) : null}
 
@@ -388,7 +404,7 @@ export default function PhoneProjectsScreen() {
                     key={opt.id}
                     onPress={() => !(opt as any).disabled && setCodingMode(opt.id)}
                     style={[
-                      styles.templateRow,
+                      styles.choiceCard,
                       {
                         backgroundColor: codingMode === opt.id ? c.accent + "22" : "transparent",
                         borderColor: codingMode === opt.id ? c.accent : c.border,
@@ -503,7 +519,7 @@ export default function PhoneProjectsScreen() {
                     }}
                     onLongPress={(opt as any).onLongPress}
                     style={[
-                      styles.templateRow,
+                      styles.choiceCard,
                       {
                         backgroundColor: startMode === opt.id ? c.accent + "22" : "transparent",
                         borderColor: startMode === opt.id ? c.accent : c.border,
@@ -515,20 +531,27 @@ export default function PhoneProjectsScreen() {
                     <Text style={[styles.muted, { color: c.textMuted }]} numberOfLines={1}>{opt.sub}</Text>
                   </Pressable>
                 ))}
+                <Text style={[styles.muted, { color: c.textMuted, marginTop: 8 }]}>
+                  Phone-first works immediately. Agent, machine, and cloud targets can take over later for remote coding.
+                </Text>
+              </>
+            ) : null}
 
-                <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Git</Text>
+            {step === 4 ? (
+              <>
+                <Text style={[styles.label, { color: c.textMuted }]}>Git</Text>
                 {(
                   [
-                    { id: "skip" as GitMode, label: "No Git" },
-                    { id: "later" as GitMode, label: "Later" },
-                    { id: "providers-now" as GitMode, label: "Connect now", disabled: !connected },
+                    { id: "skip" as GitMode, label: "Skip Git", sub: "Create the sandbox first" },
+                    { id: "later" as GitMode, label: "Later", sub: "Connect providers when ready" },
+                    { id: "providers-now" as GitMode, label: "Connect now", sub: "Open Git Providers after create", disabled: !connected },
                   ] as const
                 ).map((opt) => (
                   <Pressable
                     key={opt.id}
                     onPress={() => !(opt as any).disabled && setGitMode(opt.id)}
                     style={[
-                      styles.templateRow,
+                      styles.choiceCard,
                       {
                         backgroundColor: gitMode === opt.id ? c.accent + "22" : "transparent",
                         borderColor: gitMode === opt.id ? c.accent : c.border,
@@ -537,8 +560,22 @@ export default function PhoneProjectsScreen() {
                     ]}
                   >
                     <Text style={[styles.templateLabel, { color: c.textPrimary }]}>{opt.label}</Text>
+                    <Text style={[styles.muted, { color: c.textMuted }]}>{opt.sub}</Text>
                   </Pressable>
                 ))}
+                <View style={[styles.reviewCard, { backgroundColor: c.bg, borderColor: c.border }]}>
+                  <Text style={[styles.reviewTitle, { color: c.textPrimary }]}>Ready to create</Text>
+                  <Text style={[styles.muted, { color: c.textMuted }]}>
+                    {name.trim() || "Untitled"} · {codingMode === "phone" ? "Phone AI" : "Remote runner"} ·{" "}
+                    {startMode === "this-phone"
+                      ? "This phone"
+                      : startMode === "current-agent"
+                        ? "Current agent"
+                        : startMode === "dev-hw"
+                          ? (selectedDevMachine?.name || "Dev machine")
+                          : "Yaver Cloud"}
+                  </Text>
+                </View>
               </>
             ) : null}
 
@@ -555,9 +592,9 @@ export default function PhoneProjectsScreen() {
               >
                 <Text style={[styles.btnText, { color: c.textPrimary }]}>{step === 0 ? "Cancel" : "Back"}</Text>
               </Pressable>
-              {step < 3 ? (
+              {step < 4 ? (
                 <Pressable
-                  onPress={() => setStep((prev) => Math.min(3, prev + 1))}
+                  onPress={() => setStep((prev) => Math.min(4, prev + 1))}
                   style={[styles.btn, { backgroundColor: c.accent, flex: 1 }]}
                 >
                   <Text style={[styles.btnText, { color: c.bg }]}>Next</Text>
@@ -679,10 +716,21 @@ function formatBytes(n: number): string {
 const styles = StyleSheet.create({
   h1: { fontSize: 24, fontWeight: "700" },
   muted: { fontSize: 13 },
+  stepTitle: {
+    fontSize: 22,
+    fontWeight: "700",
+    letterSpacing: -0.3,
+  },
+  stepSubtitle: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 6,
+  },
   stepDots: {
     flexDirection: "row",
     gap: 8,
-    marginBottom: 14,
+    marginTop: 14,
+    marginBottom: 18,
   },
   stepDot: {
     flex: 1,
@@ -713,6 +761,12 @@ const styles = StyleSheet.create({
     minHeight: 84,
     textAlignVertical: "top",
   },
+  choiceCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 8,
+  },
   modeChip: {
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -726,6 +780,17 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   templateLabel: { fontWeight: "600", fontSize: 14 },
+  reviewCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 14,
+  },
+  reviewTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    marginBottom: 4,
+  },
   projectName: { fontSize: 17, fontWeight: "600" },
   stats: { fontSize: 12, marginTop: 6 },
   empty: { flex: 1, alignItems: "center", justifyContent: "center" },
