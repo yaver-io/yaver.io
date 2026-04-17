@@ -30,6 +30,7 @@ func (s *HTTPServer) registerPhoneRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/phone/projects/export", s.auth(s.handlePhoneExport))
 	mux.HandleFunc("/phone/projects/promote", s.auth(s.handlePhonePromote))
 	mux.HandleFunc("/phone/projects/receive", s.auth(s.handlePhoneReceive))
+	mux.HandleFunc("/phone/projects/oauth", s.auth(s.handlePhoneOAuth))
 }
 
 func (s *HTTPServer) handlePhoneList(w http.ResponseWriter, r *http.Request) {
@@ -359,7 +360,8 @@ func (s *HTTPServer) handlePhoneExport(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "slug required")
 		return
 	}
-	data, err := ExportPhoneProject(slug)
+	includeData := r.URL.Query().Get("includeData") == "true" || r.URL.Query().Get("includeData") == "1"
+	data, err := ExportPhoneProjectWithOptions(slug, PhoneExportOptions{IncludeData: includeData})
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -451,9 +453,9 @@ func (s *HTTPServer) handlePhoneReceive(w http.ResponseWriter, r *http.Request) 
 	// immediately. The URL is relative; the client knows its own agent base.
 	base := fmt.Sprintf("/phone/projects/get?slug=%s", proj.Slug)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"project":  proj,
-		"slug":     proj.Slug,
-		"localUrl": base,
+		"project":   proj,
+		"slug":      proj.Slug,
+		"localUrl":  base,
 		"browseUrl": fmt.Sprintf("/phone/projects/browse?slug=%s", proj.Slug),
 	})
 }
