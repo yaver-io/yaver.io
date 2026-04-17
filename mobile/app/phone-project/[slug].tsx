@@ -393,6 +393,20 @@ export default function PhoneProjectDetailScreen() {
             OAuth providers (Apple · Google · Microsoft) ›
           </Text>
         </Pressable>
+
+        <Pressable
+          onPress={() =>
+            router.navigate({
+              pathname: "/phone-project/dns" as any,
+              params: { slug: slugStr },
+            })
+          }
+          style={[styles.btnSecondary, { borderColor: c.border, marginTop: 8 }]}
+        >
+          <Text style={[styles.btnText, { color: c.textPrimary }]}>
+            Custom domain (Cloudflare DNS) ›
+          </Text>
+        </Pressable>
       </View>
 
       <Text style={[styles.section, { color: c.textPrimary }]}>Tables</Text>

@@ -74,22 +74,23 @@ The tarball produced by `ExportPhoneProject()` is the promotion unit:
 ├── schema.yaml           # portable schema DSL
 ├── auth.yaml             # persona list
 ├── seed.json             # fixture rows
+├── local.db              # optional live SQLite rows when include-data is on
 ├── schema.sql            # generated DDL (SQLite)
 ├── schema.postgres.sql   # generated DDL (Postgres)
 └── README.md             # embedded how-to-promote
 ```
 
 `ImportPhoneProject` reads `schema.yaml`, `auth.yaml`, `seed.json`, and
-`.yaver/project.yaml` — everything else is advisory. The SQLite file is
-**not** shipped; the target rebuilds it from schema + seed. This keeps the
-bundle tiny and makes dialect portability the default.
+`.yaver/project.yaml` — everything else is advisory. By default the target
+rebuilds from schema + seed. When `include-data` is requested, `local.db`
+is bundled and restored verbatim so runtime rows survive promotion.
 
 ## Endpoints
 
 | Method + path | Auth | Source of caller |
 |---|---|---|
 | `POST /phone/projects/receive` | owner bearer token | mobile `pushPhoneProject()` • `yaver phone push` CLI |
-| `POST /phone/projects/export?slug=…` | owner bearer token | (existing) — producer side of the pipe |
+| `POST /phone/projects/export?slug=…[&includeData=true]` | owner bearer token | (existing) — producer side of the pipe |
 
 Nothing else in `phone_backend_http.go` changed. The receive handler reuses
 the same `s.auth(…)` middleware as every other phone route.
@@ -98,10 +99,10 @@ the same `s.auth(…)` middleware as every other phone route.
 
 ```
 yaver phone list                                # list local projects
-yaver phone export <slug> [--out <path>]        # write .tgz locally
+yaver phone export <slug> [--out <path>] [--include-data]
 yaver phone import <path> [--slug …]            # inverse of export
 yaver phone push <slug> --to <base-url>         # the main event
-       [--as-slug NAME] [--conflict reject|rename|overwrite] [--skip-seed]
+       [--as-slug NAME] [--conflict reject|rename|overwrite] [--skip-seed] [--include-data]
 ```
 
 `push` reads `~/.yaver/config.json` for the bearer token, POSTs multipart to
@@ -425,6 +426,66 @@ User asked for Apple / Google / Microsoft OAuth setup guidance from the phone. S
 - Deploy flow: when pushing from the on-device runtime to Mac/Cloud, upload the local bundle directly instead of going through `/phone/projects/export` on an agent.
 
 **Acceptance:** enable the feature flag, disconnect the phone from the agent, create a project offline, add rows, reconnect to a Mac agent, deploy → rows appear on Mac. Proves the data lived on the phone.
+
+#### 2.4 Cloudflare DNS helpers — ✅ SHIPPED
+
+User asked: "make DNS helpers for Cloudflare etc. so user may deploy yaver lite backend to Cloudflare as well with DNS settings."
+
+DNS half is **shipped** as of 2026-04-17:
+- `desktop/agent/cloudflare_dns.go` — typed `CloudflareClient` (VerifyToken, ListZones, ListRecords, CreateRecord, DeleteRecord). 14 tests cover envelope parsing, error surfacing, pagination, validation.
+- `desktop/agent/httpserver.go` — `registerDNSRoutes` with `/dns/cloudflare/{verify,zones,records}`. Owner-auth only. Token via `X-CF-Token` header (never persisted by the agent).
+- `mobile/src/lib/phoneProjects.ts` — `verifyCloudflareToken`, `listCloudflareZones`, `listCloudflareRecords`, `createCloudflareRecord`, `deleteCloudflareRecord` helpers.
+- `mobile/app/phone-project/dns.tsx` — "Custom Domain" screen. Paste token → verify → list zones → pick zone → CNAME/A/TXT form with proxy toggle → one-tap create. Long-press a record to delete. Token cached in AsyncStorage on-device (keyed `yaver.cloudflare.token`).
+
+Uses:
+- Tap `[Yaver Cloud]`, then head into **Custom domain (Cloudflare DNS)** to CNAME `myapp.example.com → cloud.yaver.io`. Caddy's on-demand TLS on the Hetzner box picks up the new hostname automatically — no redeploy needed.
+- Works for bring-your-own-infra too: CNAME to your dev-hw agent's tunnel URL, or A-record straight to a Hetzner IP.
+
+**Remaining for full "DNS etc." parity with the user's note:**
+- **Route 53 / DigitalOcean / Google Cloud DNS adapters** — same interface shape, swap the `CloudflareClient`. The mobile screen would become a single "DNS provider" picker with per-provider paste-back. ~1 day each.
+- **Auto-inject yaver.cloud apex records** so paying users who own a domain can point it at Yaver Cloud with one tap (Yaver asks for the Cloudflare token once, creates both the apex A record + the wildcard CNAME, saves a "domain linked" flag in the user's settings). ~2 hours once Route 53 is done.
+
+#### 2.5 Yaver Lite backend on Cloudflare Workers — ⏳ NOT YET STARTED
+
+User also asked: "if possible integrate so user may deploy yaver lite backend to Cloudflare as well." Workers is a real tier to add to the continuum — free for low traffic, global edge, D1 as the SQLite substrate. Not a few-hours feature though; this is a ~2-3 day port.
+
+**Target shape:** `{ kind: "cloudflare-workers", accountId: string, scriptName: string, domain?: string }` as a new `PhonePushTarget` variant. `pushPhoneProject` unchanged on the client; `resolvePhonePushTargetBase` maps the target to the Worker's public URL and uploads the tgz to a receive endpoint that the Worker implements.
+
+**Scope (fits in 2-3 days if done cold):**
+
+1. **`cloud/workers/` directory** — new wrangler-based project. `wrangler.toml` declares:
+   - `name = "yaver-lite-<user-slug>"`
+   - `main = "src/worker.ts"`
+   - `compatibility_date = "2026-03-01"`
+   - `[[d1_databases]]` binding `DB` (one per deployed phone-project — deploy script creates it)
+   - `[[r2_buckets]]` binding `STORAGE` (optional, for the `storage/` blob bucket)
+   - Route: `${YAVER_PUBLIC_DOMAIN}/phone/*`
+
+2. **`cloud/workers/src/worker.ts`** — TypeScript port of the `/phone/projects/*` HTTP surface backed by D1. The Worker implements:
+   - `GET /phone/projects/list` / `get` / `tables` / `browse` — all read-only against D1.
+   - `POST /phone/projects/{create,insert,update,delete-row,schema,auth,seed}` — write-throughs.
+   - `POST /phone/projects/receive` — multipart, unpack tgz, ingest `schema.yaml` → D1 DDL, `seed.json` → INSERT OR REPLACE, `local.db` (if included) → streamed into D1 via `batch()`.
+   
+   The pure-Go `phone_backend.go` is the spec. Port verbatim.
+
+3. **`desktop/agent/cloudflare_workers.go`** — agent-side deploy helper. Uses the Cloudflare API:
+   - `POST /accounts/{accountId}/workers/scripts/{scriptName}` (multipart, `metadata` + `index.js` + modules) to publish the Worker.
+   - `POST /accounts/{accountId}/d1/database` + migrations.
+   - `POST /zones/{zoneId}/dns_records` for the custom domain (reuse `CloudflareClient.CreateRecord`).
+   
+   Trigger from `POST /phone/projects/deploy-workers` with `{ slug, accountId, zoneId?, subdomain? }`.
+
+4. **Mobile UI:** in the Deploy section of `[slug].tsx`, add a third primary button `[Cloudflare Workers]` alongside `[Your Dev Machine]` + `[Yaver Cloud]`. Once a phone-project has a Cloudflare API token configured (reuse the token from the DNS screen), the button lights up.
+
+5. **Caveats to flag in the UI:**
+   - **Size ceiling.** Workers free tier caps the script at 1 MB; paid at 10 MB. Tgz + runtime is tiny, but D1-free caps at 500 MB / 5M rows per database. Adequate for the phone-first cohort; surface the limit in the success Alert.
+   - **SQLite-compat, not identical.** D1 supports most SQLite features but some pragmas are unavailable. The PhoneSchema DSL is conservative enough that existing templates (blank/crud/todos/notes) all work unchanged — confirm with a dogfood run.
+   - **No persistent sockets / long-running tasks.** Fine for phone-projects (all CRUD, no background jobs in MVP).
+   - **Worker subdomain shape.** By default the Worker is at `<scriptName>.<accountId>.workers.dev`. Custom domain requires a Cloudflare zone — which the DNS screen above already handles via CNAME.
+
+6. **Acceptance:** create a phone project on iPhone → tap `[Cloudflare Workers]` → paste Account ID + pick zone → 30-60s later, `myapp.example.com` serves the project's `/phone/projects/browse` over Workers + D1. Runtime rows survive promotion when `--include-data` is on. Tear-down from the mobile UI removes the Worker + D1.
+
+**Why defer past HN:** Workers port is a green-field TypeScript codebase that has to stay in lockstep with `phone_backend.go`'s wire shape. Worth it for the three-icon Deploy row (`[dev hw] / [yaver cloud] / [workers]`) but not worth blocking HN launch on — `[Yaver Cloud]` + the DNS helper already deliver the "deploy from phone" story.
 
 ### 3. Housekeeping follow-ups (do whenever)
 
