@@ -4,6 +4,41 @@
 **Today:** April 17, 2026. **17 days.**
 **Decision date:** June 5, 2026.
 
+## Current Status — end of Apr 17, 2026
+
+**Shipped so far (all pushed to `github/main`):**
+- Mini-backend runtime on the agent side — SQLite + schema DSL + auth personas + seed + CRUD. Templates: blank / crud / todos / notes. Portable tgz export with generated SQLite + Postgres DDL. Covers yc.md Apr 18–19 + Apr 22.
+- `POST /phone/projects/receive` on every `yaver serve` agent — the single receive endpoint used by dev-hw AND Yaver Cloud targets. 11 receive-side tests + 1 regression test (ErrPhoneProjectNotFound) all green.
+- `yaver phone <list|export|import|push>` CLI — the phone emulator used for dogfood. `push --to <base-url>` posts any local project to any reachable agent.
+- Mobile Deploy section (`mobile/app/phone-project/[slug].tsx`) — two primary buttons `[Your Dev Machine]` + `[Yaver Cloud]`; 6 switch-engine targets hidden under "Advanced". yc.md Apr 21 shipped.
+- Web dashboard mirror (`web/components/dashboard/PhoneProjectsView.tsx`) — same two-button Deploy UI for demo recording parity.
+- 3-mode picker at project creation (`mobile/app/phone-projects.tsx`) — user picks `[This device]` / `[Your Dev Machine]` / `[Yaver Cloud]` at project birth instead of create-then-promote. yc.md Apr 20 partial (AI-scaffold pending).
+- Hetzner cloud stack (`cloud/`) — static Go binary + Caddy compose, `deploy.sh` fresh-box bootstrap. Dogfooded on `37.27.184.85` — deploy → push → teardown works.
+
+**Dogfood numbers (real runs, 2026-04-17):**
+| Hop | Bundle | Latency |
+|---|---|---|
+| Create project on agent | — | 15 ms |
+| Cross-agent create (simulates `[Your Dev Machine]`) | — | 14 ms |
+| Push to Mac target (`[Your Dev Machine]`) | 1.3 KB | 17 ms |
+| Push to Hetzner (`[Yaver Cloud]`) | 1.3 KB | 196 ms |
+
+**What's still on the critical path for the YC video (ordered by leverage):**
+1. **`--include-data` flag** (half a day) — currently only schema + auth + seed ship; runtime rows don't. For the demo narrative "I added a todo on my phone → here it is on cloud" we need to optionally bundle the SQLite file. Details in `PHONE_EXPORT_PIPELINE.md §"Handoff notes for Codex"`.
+2. **Voice/text-prompt-to-scaffold** (yc.md Apr 20 core; 1–2 days) — the AI-writes-code half of the wedge. Currently the user creates an empty phone project and adds tables manually; we need a prompt field that produces a real schema + a working RN screen.
+3. **GitHub/GitLab monorepo scaffolding** (1 day) — user-requested. Auth + clone + mono-repo layout + push. Can defer if we can't fit in 17 days; the phone-only path is already demoable.
+4. **OpenAI key onboarding helper** (1 hour) — paste-with-validate + in-app link to platform.openai.com. OpenAI has no one-click OAuth-to-API-key.
+5. **True on-device SQLite runtime (`expo-sqlite`)** (2–3 days) — so "Phone only" mode is literal, not "lives on the currently-connected agent". Not a demo-blocker; pragmatic today.
+6. **Cloud tenant DNS + TLS** (yc.md Apr 24) — point `cloud.yaver.io` at a Hetzner box with the `cloud/` stack + Caddy wildcard for per-project subdomains.
+7. **Landing page rewrite** (yc.md Apr 27) — "Build mobile apps from your phone" one-CTA.
+8. **HN launch** (yc.md Apr 29), video (May 1), application (May 4).
+
+**Key invariants a Codex handoff must preserve:**
+- The three tiers run the **same binary** (`yaver serve`). No cloud-only code path.
+- Convex is identity + peer discovery + deployment metadata only. **No payloads.** See `CLAUDE.md §"Privacy Contract"` + `desktop/agent/convex_privacy_test.go`.
+- Wire format = tgz with `schema.yaml` + `auth.yaml` + `seed.json` + `.yaver/config.yaml` + `.yaver/project.yaml` + generated DDL + README. Do not change the filename set without updating `phone_backend.go::ExportPhoneProject` AND `phone_backend.go::ImportPhoneProject` together — both sides have tests.
+- `/phone/projects/receive` is owner-auth only. Don't expose to guests.
+
 ## The One-Line Pitch
 
 > Yaver is the **backend that moves with you** — build it on your phone, grow it
@@ -58,21 +93,21 @@ CLAUDE.md is 3× too big for the pitch. It stays in the repo — but the applica
 
 ### Week 1 — Build the Wedge (Apr 17–23)
 
-| Date | Ship | Done when |
-|---|---|---|
-| Apr 17 (Fri) | Scope + `remained.md` for mini-backend MVP (collections, CRUD, auth personas, seed data). | Checklist exists, autodev kicks first item. |
-| Apr 18 (Sat) | Mini-backend runtime in Yaver mobile app — SQLite + schema DSL + query/mutation API. Local-only. | Phone app can define a collection and CRUD it. |
-| Apr 19 (Sun) | Mini-backend persistence + fixtures. Portable project manifest (schema.json). | Project manifest round-trips import/export on phone. |
-| Apr 20 (Mon) | "Create project from phone" flow: prompt → agent scaffolds RN + mini-backend on user's Mac. | Voice/text prompt on phone produces a running RN project on the dev Mac. |
-| Apr 21 (Tue) | Deploy toggle UI: `[Your Dev Machine]` / `[Yaver Cloud]`. Dev-machine path = push-to-device. Cloud path = stub returning fake URL. | UI ships; dev-machine branch actually works. |
-| Apr 22 (Wed) | Promote flow: one-tap export phone → user's dev machine (tar + git init + push via agent). | `yaver projects promote <id>` works from mobile. |
-| Apr 23 (Thu) | Dogfood: build a real app (todo or habit tracker) end-to-end from phone. Fix every friction. | You built it from your phone only, no MacBook touch. |
+| Date | Ship | Done when | Status |
+|---|---|---|---|
+| Apr 17 (Fri) | Scope + `remained.md` for mini-backend MVP (collections, CRUD, auth personas, seed data). | Checklist exists, autodev kicks first item. | ✅ shipped (`MOBILE_BACKEND_EXPORT.md` + `PHONE_EXPORT_PIPELINE.md` + `MOBILE_WORKER.md §"Mini Backend"`) |
+| Apr 18 (Sat) | Mini-backend runtime in Yaver mobile app — SQLite + schema DSL + query/mutation API. Local-only. | Phone app can define a collection and CRUD it. | ✅ shipped agent-side (`desktop/agent/phone_backend.go`, `PhoneAdapter`, 12 tests) — true on-device `expo-sqlite` still pending, not a demo-blocker |
+| Apr 19 (Sun) | Mini-backend persistence + fixtures. Portable project manifest (schema.json). | Project manifest round-trips import/export on phone. | ✅ shipped (`ExportPhoneProject` + `ImportPhoneProject`, round-trip test green) |
+| Apr 20 (Mon) | "Create project from phone" flow: prompt → agent scaffolds RN + mini-backend on user's Mac. | Voice/text prompt on phone produces a running RN project on the dev Mac. | 🟡 partial — 3-mode picker ships (`mobile/app/phone-projects.tsx`); AI-prompt-to-scaffold still pending (see §Handoff items 1.2) |
+| Apr 21 (Tue) | Deploy toggle UI: `[Your Dev Machine]` / `[Yaver Cloud]`. Dev-machine path = push-to-device. Cloud path = stub returning fake URL. | UI ships; dev-machine branch actually works. | ✅ shipped (`phone-project/[slug].tsx`, `PhoneProjectsView.tsx`). Cloud path is NOT a stub — it's a real Hetzner box. |
+| Apr 22 (Wed) | Promote flow: one-tap export phone → user's dev machine (tar + git init + push via agent). | `yaver projects promote <id>` works from mobile. | ✅ shipped (`yaver phone push`, `pushPhoneProject` in mobile+web, dogfood 17 ms local / 196 ms Hetzner) |
+| Apr 23 (Thu) | Dogfood: build a real app (todo or habit tracker) end-to-end from phone. Fix every friction. | You built it from your phone only, no MacBook touch. | ⏳ pending — blocked on AI-prompt-to-scaffold (Apr 20 remainder) + `--include-data` flag |
 
 ### Week 2 — Polish + Proof (Apr 24–30)
 
-| Date | Ship | Done when |
-|---|---|---|
-| Apr 24 (Fri) | Yaver Cloud path deploys to **one Hetzner box**. Single staging target, no autoscale, no SLA. | Cloud-deploy button works in demo. |
+| Date | Ship | Done when | Status |
+|---|---|---|---|
+| Apr 24 (Fri) | Yaver Cloud path deploys to **one Hetzner box**. Single staging target, no autoscale, no SLA. | Cloud-deploy button works in demo. | 🟡 brought forward — `cloud/` stack + dogfood done (37.27.184.85). Still need: DNS `cloud.yaver.io` → box, Caddy Let's Encrypt live, `CLOUD_OWNER_TOKEN` minted. |
 | Apr 25 (Sat) | Recruit 3 beta users (RN devs via Twitter/Reddit/Bluesky DM). Watch them use it on a call. | 3 users, 3 recordings, written notes. |
 | Apr 26 (Sun) | Fix top 5 crashes/confusions from beta feedback. No new features. | Beta users successfully ship one screen each. |
 | Apr 27 (Mon) | Landing page rewrite: `yaver.io` → "Build mobile apps from your phone. Deploy to your Mac or our cloud." One CTA. | Live on yaver.io; old feature grid gone. |

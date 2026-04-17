@@ -329,8 +329,135 @@ This thread finishes **Apr 19 – Apr 21** items in the 17-day sprint:
 - [x] Apr 22 (brought forward) — Cloud tenant Docker stack.
 
 Next on the critical path for the YC demo video:
-1. Mobile UI deploy sheet in `apps.tsx` (target picker + progress).
+1. Mobile UI deploy sheet in `apps.tsx` (target picker + progress). **[Shipped 2026-04-17 — see Dogfood log above]**
 2. Stand up one Hetzner box with DNS + TLS so `https://cloud.yaver.io` is
    real by Apr 23.
 3. Record the 2-minute "phone → Mac → cloud" flow for the HN launch
    (Apr 29) and the YC application video (May 1).
+
+## Handoff notes for Codex — 2026-04-17 EOD
+
+Context: the mobile → Mac and mobile → Hetzner paths work end-to-end. Wire format is locked, endpoints are stable, tests cover both sides. This section lists the remaining pieces with enough specificity that Codex can pick them up without rediscovering the architecture. Each item is scoped to ship in ≤ 1 day.
+
+### 1. Demo-blockers (ship before Apr 29 HN launch)
+
+#### 1.1 `--include-data` flag on the export/push path
+
+**Why:** For the HN/YC demo narrative ("I added a todo on my phone, look — it's on cloud now"), runtime rows have to survive promotion. Today only `schema.yaml` + `auth.yaml` + `seed.json` ship. The `local.db` SQLite file is deliberately excluded per §"The wire format".
+
+**Where to cut in:**
+
+- `desktop/agent/phone_backend.go :: ExportPhoneProject(slug)` — currently `(slug string) []byte, error`. Change signature to `(slug string, opts PhoneExportOptions) ([]byte, error)` where `PhoneExportOptions{ IncludeData bool }`. When `IncludeData`, `add()` the `local.db` file under `<slug>/local.db` (mode 0644).
+- `desktop/agent/phone_backend.go :: ImportPhoneProject` — already tolerates unknown files (extracts under project dir). Add a pass after schema-apply that, if `<slug>/local.db` exists in the tar, **copies it over `dbFilePath(dir)` instead of running seed**. Skip seed whenever a db was shipped.
+- `desktop/agent/phone_backend_http.go :: handlePhoneExport` — read `includeData=true` from query string, pass through.
+- `desktop/agent/phone_cmd.go :: runPhonePush` — add `--include-data` flag, forward to the multipart post under form field `includeData=true`.
+- `desktop/agent/phone_backend_http.go :: handlePhoneReceive` — read `includeData` form field, pass to `ImportPhoneProject`.
+- `mobile/src/lib/phoneProjects.ts :: pushPhoneProject` — add `opts.includeData` bool, forward as form field.
+- Mobile Deploy UI (`mobile/app/phone-project/[slug].tsx`): add a small toggle above the two Deploy buttons — `□ Include live rows` (default ON for demo). Same on web.
+- Regression tests: add a sibling to `TestExportImportRoundtrip` in `phone_export_test.go` that sets `IncludeData: true`, inserts a row runtime-side before export, and asserts the row is present after import. Also update `TestImportSkipSeed` to verify SkipSeed+IncludeData behavior (db wins, seed is ignored).
+
+**Acceptance:** dogfood run — create project, insert row `demo-1`, push with include-data to Hetzner, browse Hetzner, see `demo-1`. Timing should stay in-budget (db for the `todos` template is ~32 KB so we're still well under the 128 MB cap in `Caddyfile`).
+
+#### 1.2 Voice/text prompt → project scaffold
+
+**Why:** yc.md Apr 20 core deliverable — "Voice/text prompt on phone produces a running RN project on the dev Mac." Today the user manually picks a template; we need the AI half of the loop.
+
+**Scope that fits in a day:**
+
+- Add `POST /phone/projects/scaffold` to `phone_backend_http.go`. Body: `{ name, prompt, mode: "text"|"voice-transcript", template?: string }`. Calls a new `desktop/agent/phone_scaffold.go` that wraps the existing `autodev`/Claude Code runner but with a fixed system prompt: "produce a `PhoneSchema` JSON + an optional `PhoneSeed` for this app idea". Parse the runner's response → `ApplyPhoneSchema` + `ApplyPhoneSeed`.
+- Mobile UI: in the existing create form (`phone-projects.tsx`), add a new top option above the Template rows: a `TextInput` + microphone button. Filled prompt → call `scaffold` instead of `create`. Leave the manual template flow as fallback.
+- Voice input already exists (`desktop/agent/voice.go` with PersonaPlex / Whisper). The mobile side should hit `/voice/transcribe` first, then feed the transcript into the scaffold call.
+- The agent's auto-ideas loop already knows how to run Claude Code (`desktop/agent/autodev_ideas.go::autodevRefillIdeas` is the closest pattern). Mirror it.
+
+**Acceptance:** `curl -X POST /phone/projects/scaffold -d '{"name":"Habit Tracker","prompt":"habit tracker with streak count and daily reminders"}'` returns a PhoneProject whose schema has at least a `habits` table with sensible columns. Keep it bounded: one prompt, one scaffold pass, no follow-up turns. Failures return a clear error; user falls back to manual template.
+
+#### 1.3 `cloud.yaver.io` DNS + TLS
+
+**Why:** yc.md Apr 24. Today the mobile app and CLI point at `https://cloud.yaver.io` but nothing listens there. For the demo video we need a real URL.
+
+**Runbook (fits in 30 minutes if the Hetzner box is already up):**
+
+1. Provision or reuse a Hetzner VPS (recommended: CX22 or similar, €4–€8/mo).
+2. `scp cloud/deploy.sh root@<IP>:/tmp/ && ssh root@<IP> bash /tmp/deploy.sh` — see `cloud/README.md`.
+3. Set `cloud.yaver.io` A record to the VPS IP (Cloudflare → yaver.io zone → new A record, proxy OFF for Let's Encrypt).
+4. Set `cloud/.env` on the box — `CLOUD_DOMAIN=cloud.yaver.io`, `CLOUD_TLS_EMAIL=admin@yaver.io`, `CLOUD_OWNER_TOKEN=$(openssl rand -hex 32)` (stash in team vault).
+5. `docker compose up -d` on the box — Caddy will fetch the cert in ~30s.
+6. Smoke test: `curl -sf https://cloud.yaver.io/health` → 200, then `yaver phone push --to https://cloud.yaver.io <slug>` with the owner token.
+
+**Don't commit the token anywhere.** The mobile app will need it too — simplest is to surface it through the user's vault (`yaver vault set yaver-cloud-token <token>` then pull in the mobile client). Long-term: swap for per-user tokens via the existing `sdkTokens` table.
+
+### 2. User-requested, lower demo-criticality
+
+#### 2.1 GitHub / GitLab monorepo scaffolding
+
+**Why:** user wants the phone-first flow to result in a real git repo on their account, so they can vibe-code against it from any surface. Monorepo = mobile + backend + shared schema in one repo.
+
+**Scope:**
+
+- New `desktop/agent/phone_git.go`: functions `CreateRepo(provider, name)`, `PushManifest(projectSlug, remoteURL)`. Uses existing OAuth infra (`desktop/agent/github_oauth.go` if it exists — check `accounts.go` and the Convex `accounts` table).
+- New CLI: `yaver phone git-init <slug> --provider github --name my-repo`. Creates the repo, seeds it with: `/backend/` (symlink or copy of the phone-project tarball contents), `/mobile/` (Expo scaffold), `/package.json` (monorepo), `/.github/workflows/deploy.yml` (runs `yaver phone push --to $YAVER_CLOUD_URL` on main).
+- Mobile UI: in the project detail screen, add an "Open in GitHub" section after Deploy — link existing repo, or one-tap "Create new repo from this project".
+
+**Defer until 1.1 + 1.2 are shipped.** The phone-only demo works without this; HN audience doesn't need to see a GitHub repo creation in the 2-minute video.
+
+#### 2.2 OpenAI key onboarding helper
+
+**Why:** user wants "easier way to get the key — OAuth via OpenAI SDK". Pragmatic reality: **OpenAI does not expose one-click OAuth for API key issuance.** Their OAuth-for-ChatGPT-Apps grants scopes for ChatGPT (not the API). Third-party integrations paste the key.
+
+**Ship this instead (1 hour):**
+
+- New mobile screen: `mobile/app/ai-keys.tsx`. Listen to paste, auto-detect key format (`sk-...`), validate live via `fetch("https://api.openai.com/v1/models", {Authorization: Bearer ...})`. Green check if 200, red cross with error body on 401.
+- A big "Open platform.openai.com/api-keys" button that opens in-app WebView / system browser and pre-focuses on the API keys page.
+- Save into the existing vault via `POST /vault/set` with category `api-key` and name `openai-default`.
+- Same for Anthropic (`sk-ant-...`, validate via `/v1/messages` with a 1-token test). Same for Google Gemini.
+
+**Optional polish:** "Sign in with ChatGPT" button that authenticates against OpenAI's OAuth to confirm the user has a ChatGPT Plus subscription, then suggest "now paste your API key from platform.openai.com" — but this is theater, not real OAuth-to-key.
+
+#### 2.3 True on-device SQLite runtime (`expo-sqlite`)
+
+**Why:** MOBILE_WORKER.md §"iPhone and Android Expectations" — "iPhone is viable if the runtime stays inside the app sandbox". Today "Phone only" mode in the create form actually stores the project on the currently-connected agent (usually the user's Mac). For the pitch to be literally true, we need on-device.
+
+**Scope (2–3 days — don't start until demo-blockers are in):**
+
+- New `mobile/src/lib/phoneLocal.ts` backed by `expo-sqlite` — same API surface as the HTTP wrappers in `phoneProjects.ts` (`listPhoneProjects`, `browsePhoneTable`, etc.), but against a local DB at `FileSystem.documentDirectory + 'phone-projects/<slug>/local.db'`.
+- `exportLocalBundle(slug)`: builds the same tgz shape as agent-side `ExportPhoneProject`. Use `expo-tar` or a JS-only gzip + tar writer (the tarball is tiny so perf doesn't matter).
+- In the create form's "This device" path, branch: if the user has pulled a new `useLocalMiniBackend()` feature flag, use `phoneLocal` instead of `createPhoneProject`. Otherwise fall through to the current agent-hosted path.
+- Deploy flow: when pushing from the on-device runtime to Mac/Cloud, upload the local bundle directly instead of going through `/phone/projects/export` on an agent.
+
+**Acceptance:** enable the feature flag, disconnect the phone from the agent, create a project offline, add rows, reconnect to a Mac agent, deploy → rows appear on Mac. Proves the data lived on the phone.
+
+### 3. Housekeeping follow-ups (do whenever)
+
+- **`--no-autostart` flag on `yaver serve`** so automation / CI doesn't register a LaunchAgent / systemd unit per HOME. See § "Observations" in the morning dogfood log.
+- **Flag convention** on `yaver phone push`: Go's `flag` package requires flags before positional args, which is unfriendly. Either switch this specific subcommand to a hand-rolled parser or document the order explicitly in the help text.
+- **`cloud/.env.example`** has `CLOUD_OWNER_TOKEN=` blank — the `deploy.sh` currently fails if you forget to fill it in. Add a "generate a random one for you?" prompt.
+- **Privacy regression coverage** for the new `/phone/projects/create` and `/phone/projects/receive` payloads — extend `desktop/agent/convex_privacy_test.go` with a payload fixture that asserts none of the forbidden keys leak into Convex sync calls.
+
+### Where to find things
+
+| Concern | File |
+|---|---|
+| Runtime (Go) | `desktop/agent/phone_backend.go`, `phone_backend_http.go`, `mcp_phone.go` |
+| CLI | `desktop/agent/phone_cmd.go` |
+| Tests | `desktop/agent/phone_backend_test.go`, `phone_export_test.go` |
+| Mobile deploy UI | `mobile/app/phone-project/[slug].tsx`, `mobile/app/phone-projects.tsx` |
+| Mobile client lib | `mobile/src/lib/phoneProjects.ts` |
+| Web deploy UI | `web/components/dashboard/PhoneProjectsView.tsx` |
+| Web client lib | `web/lib/agent-client.ts` (look for `pushPhoneProject`, `PhonePushTarget`) |
+| Hetzner cloud stack | `cloud/` — Dockerfile, docker-compose.yml, Caddyfile, deploy.sh, README.md |
+| Spec | `MOBILE_WORKER.md §"Mini Backend"` |
+| Design notes | `MOBILE_BACKEND_EXPORT.md` |
+| Sprint plan + current status | `yc.md` |
+
+### Commit trail (end of 2026-04-17)
+
+```
+4960c31a yc.md §Apr 20: 3-mode picker at phone-project creation
+8e7a8c69 yc.md §Wedge Demo: two-button Deploy + Hetzner cloud stack + dogfood log
+b6d06165 Phone project push: cross-device deploy + relay-aware target resolution
+dbf75d61 Dogfood phone push pipeline + fix missing-slug 500 → 404
+39e40740 Ship phone-first mini backend runtime
+47040150 Ship phone-first mini backend + export pipeline
+```
+
+Run `git log --oneline -10 -- desktop/agent/phone_backend.go mobile/src/lib/phoneProjects.ts web/components/dashboard/PhoneProjectsView.tsx` for the full context any time.
