@@ -33,3 +33,12 @@ export type {
   ExecSession,
   ExecOptions,
 } from './types';
+
+// Phone-backend runtime — what a third-party RN/web app uses to hit the
+// developer's Yaver-hosted project.
+export { createYaverBackendClient, YaverBackendError } from './backend';
+export type {
+  YaverBackendClient,
+  YaverBackendClientOptions,
+  YaverCollection,
+} from './backend';

@@ -1,5 +1,15 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { quicClient } from "./quic";
+import {
+  browseLocalPhoneTable,
+  deleteLocalPhoneProject,
+  deleteLocalPhoneRow,
+  ensureLocalPhoneProject,
+  getLocalPhoneProjectMeta,
+  insertLocalPhoneRow,
+  listLocalPhoneProjectsMeta,
+  updateLocalPhoneRow,
+} from "./phoneSandboxLocal";
 
 // Mirrors desktop/agent/phone_backend.go. Keep these types in sync.
 
@@ -226,11 +236,11 @@ export async function getPhoneProjectAccess(sourceSlug: string): Promise<PhonePr
   try {
     const raw = await AsyncStorage.getItem(bindingKey(sourceSlug));
     if (!raw) {
-      return { sourceSlug, slug: sourceSlug, kind: "local", label: "This device" };
+      return { sourceSlug, slug: sourceSlug, kind: "local", label: "On-device SQLite" };
     }
     const parsed = JSON.parse(raw) as StoredPhoneProjectBinding;
     if (!parsed?.baseUrl || !parsed?.slug || !parsed?.kind) {
-      return { sourceSlug, slug: sourceSlug, kind: "local", label: "This device" };
+      return { sourceSlug, slug: sourceSlug, kind: "local", label: "On-device SQLite" };
     }
     return {
       sourceSlug,
@@ -241,7 +251,7 @@ export async function getPhoneProjectAccess(sourceSlug: string): Promise<PhonePr
       boundAt: parsed.boundAt,
     };
   } catch {
-    return { sourceSlug, slug: sourceSlug, kind: "local", label: "This device" };
+    return { sourceSlug, slug: sourceSlug, kind: "local", label: "On-device SQLite" };
   }
 }
 
@@ -268,12 +278,17 @@ export async function clearPhoneProjectBinding(sourceSlug: string): Promise<void
 }
 
 export async function listPhoneProjects(): Promise<PhoneProject[]> {
+  const local = await listLocalPhoneProjectsMeta().catch(() => []);
   const r = await get<{ projects?: PhoneProject[]; error?: string }>(
     "/phone/projects/list",
   );
-  if (!r) return [];
+  if (!r) return local;
   if (r.error) throw new Error(r.error);
-  return r.projects ?? [];
+  const remote = r.projects ?? [];
+  const merged = new Map<string, PhoneProject>();
+  local.forEach((project) => merged.set(project.slug, project));
+  remote.forEach((project) => merged.set(project.slug, project));
+  return Array.from(merged.values());
 }
 
 export async function listPhoneTemplates(): Promise<PhoneTemplate[]> {
@@ -287,6 +302,9 @@ export async function createPhoneProject(
   spec: PhoneCreateSpec,
 ): Promise<PhoneProject | null> {
   const r = await post<PhoneProject>("/phone/projects/create", spec);
+  if (r) {
+    await ensureLocalPhoneProject(r).catch(() => undefined);
+  }
   return r;
 }
 
@@ -333,18 +351,29 @@ export async function getPhoneProject(
   slug: string,
   access?: PhoneProjectAccess | null,
 ): Promise<PhoneProject | null> {
+  if (!access || access.kind === "local") {
+    const local = await getLocalPhoneProjectMeta(slug).catch(() => null);
+    if (local) return local;
+  }
   const effectiveSlug = access?.slug ?? slug;
   const path = `/phone/projects/get?slug=${encodeURIComponent(effectiveSlug)}`;
   if (access?.baseUrl) {
     return getFromBase<PhoneProject>(access.baseUrl, path);
   }
-  return get<PhoneProject>(path);
+  const project = await get<PhoneProject>(path);
+  if (project && (!access || access.kind === "local")) {
+    await ensureLocalPhoneProject(project).catch(() => undefined);
+  }
+  return project;
 }
 
 export async function deletePhoneProject(
   slug: string,
   access?: PhoneProjectAccess | null,
 ): Promise<boolean> {
+  if (!access || access.kind === "local") {
+    await deleteLocalPhoneProject(slug).catch(() => undefined);
+  }
   const effectiveSlug = access?.slug ?? slug;
   const r = access?.baseUrl
     ? await postToBase<{ ok?: boolean }>(access.baseUrl, "/phone/projects/delete", {
@@ -402,6 +431,10 @@ export async function browsePhoneTable(
   limit = 50,
   access?: PhoneProjectAccess | null,
 ): Promise<PhoneBrowseResult | null> {
+  if (!access || access.kind === "local") {
+    const rows = await browseLocalPhoneTable(slug, table, limit).catch(() => null);
+    if (rows) return { rows, total: rows.length };
+  }
   const params = new URLSearchParams({
     slug: access?.slug ?? slug,
     table,
@@ -420,6 +453,10 @@ export async function insertPhoneRow(
   doc: Record<string, unknown>,
   access?: PhoneProjectAccess | null,
 ): Promise<string | null> {
+  if (!access || access.kind === "local") {
+    const id = await insertLocalPhoneRow(slug, table, doc).catch(() => null);
+    if (id) return id;
+  }
   const effectiveSlug = access?.slug ?? slug;
   const r = access?.baseUrl
     ? await postToBase<{ id: string }>(access.baseUrl, "/phone/projects/insert", {
@@ -438,6 +475,12 @@ export async function updatePhoneRow(
   fields: Record<string, unknown>,
   access?: PhoneProjectAccess | null,
 ): Promise<boolean> {
+  if (!access || access.kind === "local") {
+    const ok = await updateLocalPhoneRow(slug, table, id, fields)
+      .then(() => true)
+      .catch(() => false);
+    if (ok) return true;
+  }
   const effectiveSlug = access?.slug ?? slug;
   const r = access?.baseUrl
     ? await postToBase<{ ok?: boolean }>(access.baseUrl, "/phone/projects/update", {
@@ -461,6 +504,12 @@ export async function deletePhoneRow(
   id: string,
   access?: PhoneProjectAccess | null,
 ): Promise<boolean> {
+  if (!access || access.kind === "local") {
+    const ok = await deleteLocalPhoneRow(slug, table, id)
+      .then(() => true)
+      .catch(() => false);
+    if (ok) return true;
+  }
   const effectiveSlug = access?.slug ?? slug;
   const r = access?.baseUrl
     ? await postToBase<{ ok?: boolean }>(access.baseUrl, "/phone/projects/delete-row", {
@@ -536,6 +585,48 @@ export interface PhoneOAuthStatus {
 export interface PhoneOAuthResponse {
   config: PhoneOAuthConfig;
   status: PhoneOAuthStatus;
+}
+
+// ---- Per-project API tokens (pair with desktop/agent/phone_tokens.go) ----
+
+export interface PhoneProjectTokenSummary {
+  id: string;
+  label: string;
+  createdAt: string;
+  lastUsed?: string;
+}
+
+export interface PhoneProjectTokenMint {
+  token: PhoneProjectTokenSummary;
+  raw: string;
+}
+
+export async function listPhoneProjectTokens(slug: string): Promise<PhoneProjectTokenSummary[]> {
+  const r = await get<{ tokens?: PhoneProjectTokenSummary[]; error?: string }>(
+    `/phone/projects/tokens?slug=${encodeURIComponent(slug)}`,
+  );
+  if (!r) return [];
+  if (r.error) throw new Error(r.error);
+  return r.tokens ?? [];
+}
+
+export async function mintPhoneProjectToken(
+  slug: string,
+  label: string,
+): Promise<PhoneProjectTokenMint | null> {
+  return post<PhoneProjectTokenMint>("/phone/projects/tokens", { slug, label });
+}
+
+export async function revokePhoneProjectToken(slug: string, tokenId: string): Promise<boolean> {
+  const h = headers();
+  const url = baseUrl();
+  if (!h || !url) return false;
+  const params = new URLSearchParams({ slug, tokenId });
+  const res = await fetch(
+    `${url}/phone/projects/tokens?${params.toString()}`,
+    { method: "DELETE", headers: h },
+  );
+  return res.ok;
 }
 
 export async function getPhoneOAuth(slug: string): Promise<PhoneOAuthResponse | null> {
