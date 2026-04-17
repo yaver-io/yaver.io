@@ -866,31 +866,22 @@ export default function HomePage() {
       <section className="px-6 pb-12 pt-20 md:pt-32">
         <div className="mx-auto max-w-4xl text-center">
           <h1 className="mb-6 text-5xl font-bold leading-[1.05] tracking-tight text-surface-50 sm:text-6xl md:text-7xl lg:text-8xl">
-            Build mobile apps
-            <br />
-            <span className="bg-gradient-to-r from-indigo-400 to-emerald-400 bg-clip-text text-transparent">from your phone.</span>
+            Start on your{" "}
+            <span className="bg-gradient-to-r from-indigo-400 to-emerald-400 bg-clip-text text-transparent">phone.</span>
           </h1>
 
-          <p className="mx-auto max-w-2xl text-base leading-relaxed text-surface-400 md:text-lg">
-            Start in a local phone sandbox.
-            <br className="hidden sm:block" />
-            Grow the same backend onto your own dev machine.
-            <br className="hidden sm:block" />
-            Move it to Yaver Cloud only when you choose.{" "}
-            <span className="text-surface-300">
-              Same project, same data model, no forced migration.
-            </span>
+          <p className="mx-auto max-w-xl text-base leading-relaxed text-surface-400 md:text-lg">
+            Local first. Move to your machine or cloud later.
           </p>
 
-          <p className="mx-auto mt-4 max-w-2xl text-sm leading-relaxed text-surface-500">
-            The hot-reload path is explicit: run the Go agent on macOS, Linux, WSL, or a remote host,
-            build Hermes there, and load the app into Yaver on your phone.
+          <p className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-surface-500">
+            Hermes reload runs through the Go agent on macOS, Linux, WSL, and remote hosts.
           </p>
 
-          <p className="mx-auto mt-4 text-xs uppercase tracking-[0.2em] text-surface-500">
-            Phone sandbox &middot; your machine &middot; Yaver Cloud
+          <p className="mx-auto mt-3 text-[11px] uppercase tracking-[0.18em] text-surface-600">
+            Phone &middot; machine &middot; cloud
           </p>
-          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+          <div className="mt-7 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <a href="#get-started" className="btn-primary inline-flex items-center gap-2 px-10 py-3.5 text-base font-semibold">
               See the flow {"\u2192"}
             </a>
@@ -898,7 +889,7 @@ export default function HomePage() {
               Install Yaver
             </Link>
           </div>
-          <p className="mt-8 text-xs text-surface-500">
+          <p className="mt-6 text-xs text-surface-500">
             Works with Codex, Claude Code, Aider, Ollama, and other terminal-first agents
           </p>
         </div>
