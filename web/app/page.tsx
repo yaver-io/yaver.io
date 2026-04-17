@@ -866,43 +866,40 @@ export default function HomePage() {
       <section className="px-6 pb-12 pt-20 md:pt-32">
         <div className="mx-auto max-w-4xl text-center">
           <h1 className="mb-6 text-5xl font-bold leading-[1.05] tracking-tight text-surface-50 sm:text-6xl md:text-7xl lg:text-8xl">
-            Your infra.
+            Build mobile apps
             <br />
-            <span className="bg-gradient-to-r from-indigo-400 to-emerald-400 bg-clip-text text-transparent">Your cloud.</span>
+            <span className="bg-gradient-to-r from-indigo-400 to-emerald-400 bg-clip-text text-transparent">from your phone.</span>
           </h1>
 
-          {/* Explainer — weaves in simplicity leg */}
           <p className="mx-auto max-w-2xl text-base leading-relaxed text-surface-400 md:text-lg">
-            Yaver connects your phone to your MacBook, Linux box, or VPS.
+            Start in a local phone sandbox.
             <br className="hidden sm:block" />
-            No cloud accounts to configure. No infrastructure to set up.
+            Grow the same backend onto your own dev machine.
             <br className="hidden sm:block" />
-            Run AI agents, start Convex or Supabase locally, test on real devices, deploy &mdash;
-            all from your pocket.{" "}
+            Move it to Yaver Cloud only when you choose.{" "}
             <span className="text-surface-300">
-              Your code never touches someone else&apos;s server.
+              Same project, same data model, no forced migration.
             </span>
           </p>
 
+          <p className="mx-auto mt-4 max-w-2xl text-sm leading-relaxed text-surface-500">
+            The hot-reload path is explicit: run the Go agent on macOS, Linux, WSL, or a remote host,
+            build Hermes there, and load the app into Yaver on your phone.
+          </p>
+
           <p className="mx-auto mt-4 text-xs uppercase tracking-[0.2em] text-surface-500">
-            Open source &middot; P2P encrypted &middot; Free forever
+            Phone sandbox &middot; your machine &middot; Yaver Cloud
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <a href="#get-started" className="btn-primary inline-flex items-center gap-2 px-10 py-3.5 text-base font-semibold">
-              Start free {"\u2192"}
+              See the flow {"\u2192"}
             </a>
-            <a
-              href="https://github.com/kivanccakmak/yaver.io"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn-secondary inline-flex items-center gap-2 px-10 py-3.5 text-base font-semibold"
-            >
-              <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.405.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-              GitHub
-            </a>
+            <Link href="/download" className="btn-secondary inline-flex items-center gap-2 px-10 py-3.5 text-base font-semibold">
+              Install Yaver
+            </Link>
           </div>
           <p className="mt-8 text-xs text-surface-500">
-            Works with Claude Code &middot; Codex &middot; Aider &middot; Ollama &middot; Goose &middot; any terminal
+            Works with Codex, Claude Code, Aider, Ollama, and other terminal-first agents
           </p>
         </div>
       </section>
@@ -914,14 +911,14 @@ export default function HomePage() {
       <section id="get-started" className="border-t border-surface-800/60 px-6 py-16">
         <div className="mx-auto max-w-5xl">
           <h2 className="mb-10 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Get started in 60 seconds
+            The short-term product path
           </h2>
           <div className="grid gap-6 md:grid-cols-3">
             {/* Column 1 */}
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
               <div className="mb-3 flex items-center gap-2">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">1</span>
-                <span className="text-sm font-semibold text-surface-100">Install &amp; connect</span>
+                <span className="text-sm font-semibold text-surface-100">Install the agent</span>
               </div>
               <div className="terminal">
                 <div className="terminal-header">
@@ -936,9 +933,11 @@ export default function HomePage() {
                 </div>
               </div>
               <p className="mt-3 text-[11px] text-surface-500">
-                Works with: Claude Code, Codex, Aider, Ollama, Goose, or any tmux session.
-                {" "}<Link href="/download" className="underline hover:text-surface-300">All install methods</Link>.
-                {" "}Linux: <code>apt</code>, <code>dnf</code>, <code>dpkg</code>, AppImage, <code>.rpm</code>, tarball, or <code>curl | sh</code>.
+                The Go agent is available as Homebrew CLI, Linux `apt` package, AppImage, `.deb`, `.rpm`, tarball, and install script.
+                {" "}<Link href="/download" className="underline hover:text-surface-300">See install methods</Link>.
+              </p>
+              <p className="mt-2 text-[11px] text-surface-500">
+                WSL is supported through the same Linux/Hermes bundle path when the phone uses the Yaver mobile app as the container.
               </p>
             </div>
 
@@ -946,7 +945,7 @@ export default function HomePage() {
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
               <div className="mb-3 flex items-center gap-2">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">2</span>
-                <span className="text-sm font-semibold text-surface-100">Get the app</span>
+                <span className="text-sm font-semibold text-surface-100">Use the mobile app</span>
               </div>
               <div className="mt-1 flex flex-col gap-2">
                 <a href="https://testflight.apple.com/join/yaver" target="_blank" rel="noopener noreferrer"
@@ -961,7 +960,10 @@ export default function HomePage() {
                 </a>
               </div>
               <p className="mt-3 text-[11px] text-surface-500">
-                Sign in with Apple, Google, or Microsoft. Your machine appears on your phone.
+                The mobile app is the control surface for the sandbox, deploy targets, and remote agent.
+              </p>
+              <p className="mt-2 text-[11px] text-surface-500">
+                For React Native projects, the normal WSL/Linux flow is Hermes bundle reload into Yaver on the phone, not a native Xcode install.
               </p>
             </div>
 
@@ -969,7 +971,7 @@ export default function HomePage() {
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
               <div className="mb-3 flex items-center gap-2">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">3</span>
-                <span className="text-sm font-semibold text-surface-100">Create your first project</span>
+                <span className="text-sm font-semibold text-surface-100">Start local, then grow</span>
               </div>
               <div className="terminal">
                 <div className="terminal-header">
@@ -980,28 +982,27 @@ export default function HomePage() {
                 <div className="terminal-body space-y-1 text-[12px]">
                   <div className="text-surface-500"># From your phone or yaver.io:</div>
                   <div className="text-surface-500"># Tap [+ New Project]</div>
-                  <div className="text-surface-500"># Pick a template + backend</div>
+                  <div className="text-surface-500"># Pick [This device], [Your Dev Machine], or [Yaver Cloud]</div>
                   <div className="my-1 h-px bg-surface-800/60" />
-                  <div className="text-surface-500"># Or from CLI:</div>
-                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver init my-app --stack nextjs --backend convex</span></div>
-                  <div className="text-[11px] text-green-400/80">{"\uD83D\uDE80 Full stack running in 60s"}</div>
+                  <div className="text-surface-500"># Then later:</div>
+                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver phone push my-app --to http://your-machine-or-cloud</span></div>
+                  <div className="text-[11px] text-green-400/80">{"\u2192 Same project promoted without changing backend shape"}</div>
                 </div>
               </div>
               <p className="mt-3 text-[11px] text-surface-500">
-                Database, auth, email, HTTPS &mdash; all on your machine. $0.
+                Local-first is the default. Cloud is a promotion step, not the starting requirement.
               </p>
             </div>
           </div>
 
           <div className="mt-6 rounded-xl border border-surface-800 bg-surface-900/30 p-5">
             <p className="mb-2 text-sm font-medium text-surface-200">
-              Optional: Add the Feedback SDK for shake-to-report + AI bug fixing
+              Today&apos;s wedge is narrower than the whole repo
             </p>
-            <div className="flex flex-wrap gap-2 text-xs">
-              <code className="rounded bg-surface-800 px-2 py-1 text-surface-300 select-all">npm install yaver-feedback-react-native</code>
-              <code className="rounded bg-surface-800 px-2 py-1 text-surface-300 select-all">flutter pub add yaver_feedback</code>
-              <code className="rounded bg-surface-800 px-2 py-1 text-surface-300 select-all">npm install @yaver/feedback-web</code>
-            </div>
+            <p className="text-xs leading-relaxed text-surface-400">
+              Yaver has broader features in the repo, but the near-term product story stays focused on one flow:
+              create on the phone, keep it local, promote to your own machine, then optionally promote to Yaver Cloud.
+            </p>
           </div>
         </div>
       </section>
@@ -1013,22 +1014,22 @@ export default function HomePage() {
             <span className="inline-block rounded-full bg-[#6366f1]/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#a5b4fc]">New Project</span>
           </div>
           <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Start a full-stack project from your phone
+            One backend continuum, three tiers
           </h2>
           <p className="mx-auto mb-12 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
-            Pick a template. Choose your backend. Yaver scaffolds everything on your machine &mdash;
-            database, auth, email server, HTTPS certs. 60 seconds. $0.
+            The same phone project can stay on the device, move to your own hardware, or move to Yaver Cloud.
+            The point is continuity, not forcing a cloud account on day one.
           </p>
 
           <div className="grid gap-10 lg:grid-cols-2 lg:items-start">
             {/* Left: numbered list */}
             <ol className="space-y-6">
               {[
-                { n: 1, t: "Pick a template", d: "SaaS Starter \u00B7 Landing Page \u00B7 Dashboard \u00B7 API Only \u00B7 Mobile App (Expo)" },
-                { n: 2, t: "Choose your backend (all run locally on YOUR machine)", d: "Convex (SQLite, real-time) \u00B7 Supabase (Postgres + Auth + Storage) \u00B7 Postgres + Drizzle \u00B7 SQLite + Drizzle \u00B7 PocketBase" },
-                { n: 3, t: "Add auth (optional)", d: "Better Auth \u00B7 Convex Auth \u00B7 Supabase Auth \u00B7 Auth.js" },
-                { n: 4, t: "One-click services (Docker containers on your machine)", d: "Email (Mailpit) \u00B7 HTTPS (mkcert) \u00B7 Redis \u00B7 S3 (MinIO) \u00B7 AI Models (Ollama) \u00B7 Stripe CLI \u00B7 Analytics (Umami)" },
-                { n: 5, t: "Everything starts automatically", d: "Dev server, backend, email, HTTPS, git repo, tunnel for phone preview. Ready in ~60 seconds." },
+                { n: 1, t: "Phone sandbox first", d: "Create a phone project with schema, auth personas, seed data, CRUD, and local persistence." },
+                { n: 2, t: "Run the same project on your hardware", d: "Push it to `yaver serve` on macOS, Linux, WSL, a Pi, or a VPS without changing the backend shape." },
+                { n: 3, t: "Promote to Yaver Cloud", d: "Use the same portable project bundle and the same agent binary when you want a managed target." },
+                { n: 4, t: "Wire in third-party apps", d: "Mint per-project tokens and let a React Native, web, or Node app call the Yaver runtime API while the project stays local-first." },
+                { n: 5, t: "Keep exports as escape hatches", d: "Supabase, Convex, and other systems remain optional exits, not the default destination." },
               ].map((s) => (
                 <li key={s.n} className="flex gap-4">
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">{s.n}</span>
@@ -1045,8 +1046,7 @@ export default function HomePage() {
           </div>
 
           <div className="mt-12 rounded-xl border-l-2 border-[#6366f1]/60 bg-surface-900/50 p-5 text-sm leading-relaxed text-surface-300">
-            All backends run <strong className="text-surface-100">locally</strong> on your machine. No cloud accounts needed.
-            When you&apos;re ready to go live, deploy to your VPS, Vercel, Cloudflare, or anywhere.
+            The YC wedge is this continuum, not a giant feature grid. Local-first stays the default until the developer explicitly promotes the project.
           </div>
         </div>
       </section>
@@ -1279,14 +1279,14 @@ return (
         </div>
       </section>
 
-      {/* ── Section 9: Free Forever ── */}
+      {/* ── Section 9: Local First Pricing ── */}
       <section className="border-t border-surface-800/60 px-6 py-24">
         <div className="mx-auto max-w-4xl">
           <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Free forever. No catch.
+            Start local. Pay when you need more.
           </h2>
           <p className="mx-auto mb-10 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
-            Self-host everything. Your code never leaves your machine.
+            The default path is still the cheapest one: phone sandbox first, then your own machine. Managed cloud and heavier release surfaces are optional upgrades, not the entry ticket.
           </p>
 
           <div className="overflow-hidden rounded-xl border border-surface-800">
@@ -1303,10 +1303,12 @@ return (
                   ["Yaver CLI + Agent", "Your dev machine", "$0"],
                   ["Yaver Mobile App", "Your phone", "$0"],
                   ["Web UI (yaver.io)", "Browser", "$0"],
-                  ["Local backends (Convex, Supabase, Postgres)", "Docker on your machine", "$0"],
+                  ["Local phone sandbox backend", "Inside the mobile app", "$0"],
+                  ["Promoted backend on your own machine", "Your Mac / Linux / WSL / VPS", "$0 + your hardware"],
                   ["Relay server", "Self-host on any VPS", "$0"],
                   ["AI models (Ollama)", "Your GPU or CPU", "$0"],
-                  ["Feedback SDK", "Inside your app", "$0"],
+                  ["Managed Yaver Cloud", "Yaver-hosted", "Paid when enabled"],
+                  ["Store / CI release plumbing", "Hosted distribution surfaces", "Can become paid"],
                 ].map((row) => (
                   <tr key={row[0]} className="bg-surface-900/30">
                     <td className="px-4 py-3 text-surface-200">{row[0]}</td>
@@ -1319,10 +1321,10 @@ return (
           </div>
 
           <div className="mt-8 space-y-2 text-center text-sm leading-relaxed text-surface-400">
-            <p><strong className="text-surface-100">Total for development: $0/month.</strong></p>
-            <p>Production costs are between you and your hosting provider.</p>
-            <p>Free tiers (Vercel, Cloudflare, Convex, Supabase) cover most solo projects. A $5/mo VPS handles the rest.</p>
-            <p className="mt-4 text-surface-500">MIT licensed. Fork it. Self-host everything. No telemetry. No vendor lock-in.</p>
+            <p><strong className="text-surface-100">A solo developer can start at $0.</strong></p>
+            <p>The wedge is local-first: phone sandbox, then your own machine, then optional cloud.</p>
+            <p>Open source and self-hosting matter. So does having a paid path for managed cloud, CI, and release distribution.</p>
+            <p className="mt-4 text-surface-500">Current repo is MIT today. If clone pressure matters, the right next move is AGPL or dual licensing, not BSD.</p>
           </div>
         </div>
       </section>
@@ -1339,7 +1341,7 @@ return (
           <div>
             <FAQItem
               question="How is this different from AWS or Vercel?"
-              answer="Yaver doesn't host anything. It doesn't run your code in someone else's data center and it doesn't charge you for compute. Yaver is a remote control for machines you already own — your MacBook, a $5 VPS, a Raspberry Pi. You bring the hardware, Yaver makes it accessible and orchestrable from your phone."
+              answer="Yaver starts one step earlier. The first backend tier can live in the mobile app itself, then move to your own machine, then later to Yaver Cloud. AWS and Vercel start with cloud infrastructure; Yaver starts with the phone and your own hardware."
             />
             <FAQItem
               question="Do I need a powerful machine?"
@@ -1359,11 +1361,11 @@ return (
             />
             <FAQItem
               question="Does Yaver manage my servers?"
-              answer="No. Yaver doesn't manage, provision, or host any infrastructure. If you have a VPS, Yaver can deploy to it — but the server is yours. You set it up, you maintain it, you pay for it directly. Yaver is the control plane, not the compute."
+              answer="Today the main local-first path is still your server, your dev box, or your phone sandbox. Yaver Cloud is the optional managed target when you want that convenience instead of operating your own hardware."
             />
             <FAQItem
               question="Is this really free?"
-              answer="Yes. MIT licensed. Self-host everything. There is no paid tier, no premium plan, no contact sales. If you want production hosting, that's between you and your hosting provider (Hetzner, Vercel, Cloudflare, etc.). Yaver itself is and will remain free."
+              answer="The local-first path can start at $0: mobile app, your own machine, and self-hosted flows. The business model is managed surfaces when you want them, like Yaver Cloud, release distribution, and heavier automation. The repo is MIT today, but BSD would not protect against hosted clones; AGPL or dual licensing is the more realistic direction if clone pressure becomes the problem."
             />
           </div>
         </div>
@@ -1388,7 +1390,7 @@ return (
             </div>
           </div>
           <p className="mt-6 text-center text-xs text-surface-600">
-            MIT Licensed &middot; Free Forever &middot;{" "}
+            Open Source Today &middot; Local First &middot;{" "}
             <a href="https://github.com/kivanccakmak/yaver.io" target="_blank" rel="noopener noreferrer" className="hover:text-surface-300">Source Code</a>
           </p>
         </div>

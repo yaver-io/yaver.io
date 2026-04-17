@@ -2,23 +2,31 @@
 
 [![Tests](https://github.com/kivanccakmak/yaver.io/actions/workflows/test-suite.yml/badge.svg)](https://github.com/kivanccakmak/yaver.io/actions/workflows/test-suite.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![GitHub stars](https://img.shields.io/github/stars/kivanccakmak/yaver.io?style=social)](https://github.com/kivanccakmak/yaver.io)
 
 Docs: [CI setup](CI.md) · [Test SDK](docs/yaver-test-sdk.md)
 
-**AI writes the code. Yaver tests it on your real device.**
+**Build mobile apps from your phone. Keep the backend local until you decide otherwise.**
 
-Push your app to a real iPhone in 4 seconds. Shake to report a bug — AI sees your screen,
-writes the fix, and hot reloads. Test suites that grow themselves.
+Yaver's short-term product target is the one in [yc.md](yc.md): phone-first app and backend creation, then promotion to your own dev machine, then optional promotion to Yaver Cloud. The core claim is narrow on purpose:
 
-Works with any AI coding agent: Claude Code, Codex, Aider, Ollama, Goose, Amp, OpenCode.
-P2P encrypted — your code never leaves your machine. MIT licensed. Free forever.
+`phone sandbox -> your dev machine -> Yaver Cloud`
 
-Your infra. Your cloud.
+What is real in the repo today:
 
-Yaver connects your phone to your MacBook, Linux box, or VPS. No cloud accounts to configure.
-No infrastructure to set up. Run AI agents, start Convex or Supabase locally, test on real
-devices, deploy — all from your pocket. Your code never touches someone else's server.
+- Hermes reload from Linux, WSL, macOS, or a remote host into the Yaver mobile app
+- local phone-project sandboxing with SQLite-backed data, schema, auth personas, seed data, and CRUD
+- portable export/import/push of a phone project to another `yaver serve` agent
+- MCP and CLI surfaces for phone project export, import, and push
+- local-first runtime API for third-party apps using per-project tokens
+- Linux install surfaces including `apt`, AppImage, tarballs, `.deb`, `.rpm`, and Homebrew CLI
+
+What is still incomplete:
+
+- the default one-tap monorepo scaffold for phone-created projects
+- more polish on the AI prompt-to-project scaffold
+- a fully proven end-to-end App Store / TestFlight release loop from this machine
+
+This repo contains more than the YC wedge. The README leads with the wedge anyway, because that is the product story we can defend.
 
 ## The Clear Story
 
@@ -32,12 +40,12 @@ Yaver's primary loop is:
 
 What is first-class today:
 
-- **Hermes reload from Linux / WSL / remote host to iPhone** through the Yaver mobile app
+- **Hermes reload from Linux / WSL / remote host to iPhone or Android** through the Yaver mobile app
 - **Mobile-first backend sandbox** with schema, auth personas, seed data, CRUD, and local persistence
 - **Promotion to your own hardware** via `yaver serve` on a Mac, Linux box, Pi, VPS, or other reachable machine
 - **Promotion to Yaver Cloud** via the same portable bundle and the same `yaver serve` binary
 - **Containerized export** for running the promoted backend on your own cloud with Docker
-- **Escape routes** to systems like Supabase and Convex for no-lock-in reassurance
+- **Escape routes** to systems like Supabase and Convex as secondary trust signals
 
 What is not fully finished yet:
 
@@ -49,6 +57,13 @@ The headline path is Yaver-native:
 `phone sandbox -> your dev machine / your cloud / Yaver Cloud`
 
 Everything else is there so the user knows they can leave later.
+
+For a WSL-based developer, that means:
+
+1. Run `yaver serve` or the Go agent tooling on WSL/Linux.
+2. Build the Hermes bundle on that host.
+3. Open the app inside the Yaver mobile app on the phone.
+4. Use native-install paths only when you actually need a full store/native build.
 
 ## The Four Pieces of Yaver
 
@@ -892,6 +907,63 @@ That monorepo bootstrap story is a priority, but the one-tap repo scaffolder is
 still in progress. Today the core backend continuum and promote/export path
 exist first; monorepo automation sits on top of that.
 
+### WSL To iPhone Quickstart
+
+If your code lives in WSL and you want real iPhone reload, the daily loop is:
+
+1. Install Yaver mobile on the phone.
+2. Run `yaver serve` inside WSL.
+3. Pair the phone with that agent.
+4. Open the Expo / React Native project from Yaver.
+5. Tap `Open in Yaver`.
+6. Let Yaver build Metro + Hermes on the WSL host and load the bundle inside the phone app.
+
+The important rule is:
+
+- **WSL iPhone reload = Hermes bundle into Yaver mobile**
+- **WSL iPhone reload != `xcodebuild`**
+
+Command-first version:
+
+```bash
+brew install kivanccakmak/yaver/yaver
+yaver auth
+yaver serve
+```
+
+Optional: force iPhone work to stay on bundle mode explicitly:
+
+```bash
+yaver mcp call set_ios_install_method '{"method":"bundle"}'
+```
+
+Then from the phone:
+
+- select the paired machine
+- select the project
+- tap `Open in Yaver`
+
+What should happen:
+
+- Metro runs on the WSL host
+- Hermes bundle builds on the WSL host
+- the bundle is pushed to the phone
+- the app runs inside Yaver on the iPhone
+
+If your cousin only remembers one line, make it this:
+
+> **WSL -> Hermes bundle -> Yaver mobile app**
+
+This is the intended path for projects like `sfmg` when they are Expo / React Native apps.
+
+Troubleshooting shortcut:
+
+- if the system tries to do a native iOS install on WSL, the mode is wrong
+- on WSL the resolved iOS install method should be `bundle`
+- missing native-module support is a container compatibility issue, not a WSL issue
+
+Full guide: [docs/wsl-ios-hermes-quickstart.md](docs/wsl-ios-hermes-quickstart.md)
+
 ### Do I Need To Modify My Project?
 
 Usually, no.
@@ -1686,4 +1758,11 @@ Contact: kivanc.cakmak@simkab.com
 
 ## License
 
-MIT — Free and open source.
+Current repo license: `MIT`.
+
+If the goal stays "open source, but don't make it trivial for a hosted `yaver2` clone to appear", `BSD` is not the answer. The realistic next licensing move would be:
+
+- `AGPL` for the core runtime if you want strong anti-hosted-fork pressure while staying open source
+- dual licensing if you want open source distribution plus commercial terms for companies that do not want copyleft obligations
+
+For now the repo stays truthful about the current state: MIT today, monetized managed surfaces later.

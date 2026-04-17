@@ -193,16 +193,14 @@ export default async function DownloadPage() {
                 </span>
               </div>
               <h1 className="max-w-3xl text-4xl font-bold tracking-tight text-surface-50 md:text-5xl">
-                Download Yaver for Linux without guessing.
+                Install the Yaver agent without guessing.
               </h1>
               <p className="mt-4 max-w-2xl text-sm leading-6 text-surface-400 md:text-base">
-                Use the packaged desktop app, the portable AppImage, or the CLI.
-                The direct buttons below resolve to storage-backed artifacts first,
-                with GitHub releases as fallback.
+                This page is about the desktop and server-side agent that backs the mobile sandbox flow.
+                Use the package-manager path if you want upgrades, or grab a direct artifact if you want a single-file install.
               </p>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-surface-500">
-                Current direct artifacts are published for ARM64 Linux and ARM64 macOS.
-                x64 links stay available but fall back to the release page until those installers are published.
+                Current direct artifacts are published selectively. When a direct file is not available, the link falls back to GitHub Releases rather than pretending the artifact exists.
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <DownloadButton href={`/download/${appImageSlug}`} primary>
@@ -237,7 +235,7 @@ export default async function DownloadPage() {
                 <div className="rounded-xl border border-surface-800 bg-surface-900/80 p-4">
                   <p className="text-sm font-semibold text-surface-100">CLI only</p>
                   <p className="mt-1 text-sm text-surface-400">
-                    Homebrew on Linux still works if you only need the `yaver` command.
+                    Homebrew works when you only need the `yaver` command and not a desktop app bundle.
                   </p>
                 </div>
               </div>
