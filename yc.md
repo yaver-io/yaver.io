@@ -24,14 +24,18 @@
 | Push to Hetzner (`[Yaver Cloud]`) | 1.3 KB | 196 ms |
 
 **What's still on the critical path for the YC video (ordered by leverage):**
-1. **`--include-data` flag** (half a day) — currently only schema + auth + seed ship; runtime rows don't. For the demo narrative "I added a todo on my phone → here it is on cloud" we need to optionally bundle the SQLite file. Details in `PHONE_EXPORT_PIPELINE.md §"Handoff notes for Codex"`.
-2. **Voice/text-prompt-to-scaffold** (yc.md Apr 20 core; 1–2 days) — the AI-writes-code half of the wedge. Currently the user creates an empty phone project and adds tables manually; we need a prompt field that produces a real schema + a working RN screen.
-3. **GitHub/GitLab monorepo scaffolding** (1 day) — user-requested. Auth + clone + mono-repo layout + push. Can defer if we can't fit in 17 days; the phone-only path is already demoable.
-4. **OpenAI key onboarding helper** (1 hour) — paste-with-validate + in-app link to platform.openai.com. OpenAI has no one-click OAuth-to-API-key.
-5. **True on-device SQLite runtime (`expo-sqlite`)** (2–3 days) — so "Phone only" mode is literal, not "lives on the currently-connected agent". Not a demo-blocker; pragmatic today.
-6. **Cloud tenant DNS + TLS** (yc.md Apr 24) — point `cloud.yaver.io` at a Hetzner box with the `cloud/` stack + Caddy wildcard for per-project subdomains.
+1. **Voice/text-prompt-to-scaffold** (yc.md Apr 20 core; 1–2 days) — the AI-writes-code half of the wedge. Currently the user creates an empty phone project and adds tables manually; we need a prompt field that produces a real schema + a working RN screen. See `PHONE_EXPORT_PIPELINE.md §Handoff 1.3`.
+2. **Cloud tenant DNS + TLS** (yc.md Apr 24; 30 min runbook) — point `cloud.yaver.io` at a Hetzner box with the `cloud/` stack + Caddy wildcard. Details in `PHONE_EXPORT_PIPELINE.md §Handoff 1.4`.
+3. **`pushPhoneProject` include-data plumb-through** (10 min) — core `--include-data` is shipped; mobile + web client libs still need the opt-in param. `PHONE_EXPORT_PIPELINE.md §Handoff 1.1`.
+4. **GitHub/GitLab monorepo scaffolding** (1 day) — user-requested. Auth + clone + mono-repo layout + push. Can defer; the phone-only path is already demoable.
+5. **OpenAI key onboarding helper** (1 hour) — paste-with-validate + in-app link to platform.openai.com. OpenAI has no one-click OAuth-to-API-key. `PHONE_EXPORT_PIPELINE.md §Handoff 2.2`.
+6. **True on-device SQLite runtime (`expo-sqlite`)** (2–3 days) — so "Phone only" mode is literal, not "lives on the currently-connected agent". Not a demo-blocker; pragmatic today.
 7. **Landing page rewrite** (yc.md Apr 27) — "Build mobile apps from your phone" one-CTA.
 8. **HN launch** (yc.md Apr 29), video (May 1), application (May 4).
+
+**Recently shipped (moved off critical path):**
+- `--include-data` flag on export + receive — runtime rows can now travel with the push when opt-in.
+- OAuth providers per phone project — Apple / Google / Microsoft setup guided from the mobile app, IDs + secrets stored at 0600 per-project, carried with the push. See `PHONE_EXPORT_PIPELINE.md §Handoff 1.2`.
 
 **Key invariants a Codex handoff must preserve:**
 - The three tiers run the **same binary** (`yaver serve`). No cloud-only code path.
