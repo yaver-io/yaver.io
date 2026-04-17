@@ -449,6 +449,10 @@ export interface UserSettings {
   tunnelUrl?: string;
   speechProvider?: SpeechProvider;
   speechApiKey?: string;
+  openAiApiKey?: string;
+  glmApiKey?: string;
+  anthropicApiKey?: string;
+  mobileCodingProvider?: "openai" | "glm";
   ttsEnabled?: boolean;
   verbosity?: number; // 0-10: response detail level
   keyStorage?: KeyStorage; // "local" = device Keychain only, "cloud" = sync to Convex
@@ -463,6 +467,9 @@ const LOCAL_KEY_PREFIX = "yaver_key_";
 export const LOCAL_KEYS = {
   speechApiKey: `${LOCAL_KEY_PREFIX}speech`,
   openAiApiKey: `${LOCAL_KEY_PREFIX}openai_api_key`,
+  glmApiKey: `${LOCAL_KEY_PREFIX}glm_api_key`,
+  anthropicApiKey: `${LOCAL_KEY_PREFIX}anthropic_api_key`,
+  mobileCodingProvider: `${LOCAL_KEY_PREFIX}mobile_coding_provider`,
   relayPassword: `${LOCAL_KEY_PREFIX}relay_password`,
   relayUrl: `${LOCAL_KEY_PREFIX}relay_url`,
   tunnelUrl: `${LOCAL_KEY_PREFIX}tunnel_url`,
