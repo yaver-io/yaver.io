@@ -596,6 +596,15 @@ export class QuicClient {
     return this.authHeaders;
   }
 
+  /** Relay base URL we're currently routed through, if any. Needed by the
+   *  "Deploy to another of my devices" flow (pushPhoneProject's `dev-hw`
+   *  target) so the push can walk the same relay back to the sibling agent
+   *  instead of trying the phone's LAN-local IP. Null when we have a direct
+   *  connection (Tailscale, same Wi-Fi, Cloudflare tunnel). */
+  get activeRelayHttpUrl(): string | null {
+    return this.activeRelayUrl;
+  }
+
   /** Reachability candidates for recovery. Keep the successful target URL so
    *  /auth/pair/submit can follow the same path instead of falling back to a
    *  stale relay URL. */

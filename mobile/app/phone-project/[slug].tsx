@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Linking,
   Platform,
   Pressable,
   RefreshControl,
@@ -16,9 +17,13 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
+import { useDevice, type Device } from "../../src/context/DeviceContext";
+import { quicClient } from "../../src/lib/quic";
 import {
   PhoneBrowseResult,
   PhoneProject,
+  PhonePushResult,
+  PhonePushTarget,
   browsePhoneTable,
   deletePhoneProject,
   deletePhoneRow,
@@ -27,12 +32,13 @@ import {
   listPhoneTables,
   phoneExportUrl,
   promotePhoneProject,
+  pushPhoneProject,
 } from "../../src/lib/phoneProjects";
 
-// Promote targets — a curated subset of the 19 SwitchEngine targets that make
-// sense for a mini-backend promotion. The agent still exposes all 19 via
-// /switch/targets for power users.
-const PROMOTE_TARGETS: Array<{ id: string; label: string; sub: string }> = [
+// Advanced: the 6 curated switch-engine targets. Hidden behind a collapsible
+// so the primary pitch surface (yc.md §Wedge Demo) stays focused on the two
+// buttons that matter: [Your Dev Machine] and [Yaver Cloud].
+const ADVANCED_PROMOTE_TARGETS: Array<{ id: string; label: string; sub: string }> = [
   { id: "sqlite-local", label: "SQLite file", sub: "Copy to a real project dir" },
   { id: "sqlite-turso", label: "Turso", sub: "Managed LibSQL on the edge" },
   { id: "postgres-local", label: "Postgres (Docker)", sub: "Local Postgres 16" },
@@ -40,6 +46,24 @@ const PROMOTE_TARGETS: Array<{ id: string; label: string; sub: string }> = [
   { id: "postgres-neon", label: "Neon", sub: "Serverless Postgres" },
   { id: "convex-cloud", label: "Convex Cloud", sub: "Reactive backend (AI-rewrite)" },
 ];
+
+const YAVER_CLOUD_BASE = "https://cloud.yaver.io";
+
+// A "dev machine" target is an owned, online Yaver-running device that is
+// not the currently-connected source (the phone itself). This is the yc.md
+// [Your Dev Machine] button's candidate pool.
+function pickDevMachines(all: Device[], currentId: string | undefined): Device[] {
+  return all.filter(
+    (d) =>
+      d.online &&
+      !d.isGuest &&
+      !d.needsAuth &&
+      d.id !== currentId &&
+      // Filter out mobile-only devices — they can't accept /phone/projects/receive
+      // uploads (they don't run `yaver serve` on a reachable port).
+      d.deviceClass !== "edge-mobile",
+  );
+}
 
 export default function PhoneProjectDetailScreen() {
   const c = useColors();
@@ -59,6 +83,29 @@ export default function PhoneProjectDetailScreen() {
   const [showInsert, setShowInsert] = useState(false);
   const [insertJSON, setInsertJSON] = useState("{}");
   const [promoting, setPromoting] = useState<string | null>(null);
+
+  // Deploy state (yc.md §Wedge Demo)
+  const { devices, activeDevice } = useDevice();
+  const devMachines = useMemo(
+    () => pickDevMachines(devices, activeDevice?.id),
+    [devices, activeDevice?.id],
+  );
+  const [selectedDevMachineId, setSelectedDevMachineId] = useState<string | null>(null);
+  const [deploying, setDeploying] = useState<"dev-hw" | "yaver-cloud" | null>(null);
+  const [lastDeploy, setLastDeploy] = useState<{ kind: "dev-hw" | "yaver-cloud"; url: string; via?: string } | null>(null);
+  const [showAdvancedPromote, setShowAdvancedPromote] = useState(false);
+
+  // Auto-select the first dev machine so the primary button is a one-tap action.
+  useEffect(() => {
+    if (!selectedDevMachineId && devMachines.length) {
+      setSelectedDevMachineId(devMachines[0].id);
+    }
+  }, [devMachines, selectedDevMachineId]);
+
+  const selectedDevMachine = useMemo(
+    () => devMachines.find((d) => d.id === selectedDevMachineId) ?? null,
+    [devMachines, selectedDevMachineId],
+  );
 
   const load = useCallback(async () => {
     if (!slugStr) return;
@@ -180,6 +227,72 @@ export default function PhoneProjectDetailScreen() {
         },
       ],
     );
+  }
+
+  // ── Deploy (yc.md §Wedge Demo) ──────────────────────────────────────
+
+  async function runPush(target: PhonePushTarget, kindLabel: "dev-hw" | "yaver-cloud") {
+    setDeploying(kindLabel);
+    try {
+      const result: PhonePushResult = await pushPhoneProject(slugStr, target, {
+        onConflict: "overwrite",
+      });
+      const via =
+        target.kind === "dev-hw" ? selectedDevMachine?.name ?? "dev machine" : "Yaver Cloud";
+      const url = result.browseUrl?.startsWith("http")
+        ? result.browseUrl
+        : deriveTargetUrl(target, result);
+      setLastDeploy({ kind: kindLabel, url, via });
+    } catch (e: any) {
+      Alert.alert("Deploy failed", e?.message ?? "push failed");
+    } finally {
+      setDeploying(null);
+    }
+  }
+
+  async function deployToDevMachine() {
+    if (!slugStr) return;
+    if (!selectedDevMachine) {
+      Alert.alert(
+        "No dev machine paired",
+        "Install Yaver on your Mac/Linux/Pi and sign in with the same account. It'll appear here.",
+      );
+      return;
+    }
+    const relayHttpUrl = quicClient.activeRelayHttpUrl;
+    if (!relayHttpUrl) {
+      Alert.alert(
+        "No relay in use",
+        "Your phone is connected directly to this device. Switch to a relay-routed connection to deploy to a different machine, or use Yaver Cloud.",
+      );
+      return;
+    }
+    await runPush(
+      { kind: "dev-hw", deviceId: selectedDevMachine.id, relayHttpUrl },
+      "dev-hw",
+    );
+  }
+
+  async function deployToCloud() {
+    if (!slugStr) return;
+    await runPush({ kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE }, "yaver-cloud");
+  }
+
+  function pickDevMachine() {
+    if (devMachines.length === 0) {
+      Alert.alert(
+        "No dev machines online",
+        "Install Yaver on your Mac/Linux/Pi and sign in with the same account.",
+      );
+      return;
+    }
+    Alert.alert("Pick a dev machine", "Choose the target for this deploy.", [
+      ...devMachines.map((d) => ({
+        text: `${d.name}${d.local ? " (LAN)" : ""}`,
+        onPress: () => setSelectedDevMachineId(d.id),
+      })),
+      { text: "Cancel", style: "cancel" as const },
+    ]);
   }
 
   async function doDelete() {
@@ -357,35 +470,144 @@ export default function PhoneProjectDetailScreen() {
         </View>
       ) : null}
 
-      <Text style={[styles.section, { color: c.textPrimary }]}>Promote</Text>
+      <Text style={[styles.section, { color: c.textPrimary }]}>Deploy</Text>
       <View style={{ paddingHorizontal: 16 }}>
-        <Text style={{ color: c.textMuted, fontSize: 13, marginBottom: 8 }}>
-          Take this mini-backend to a real target. The switch engine creates a snapshot,
-          runs the 7-layer plan, and keeps 7 days of rollback.
+        <Text style={{ color: c.textMuted, fontSize: 13, marginBottom: 12 }}>
+          Ship this mini-backend in one tap. Your dev machine is free; Yaver Cloud is
+          a managed Hetzner tenant.
         </Text>
-        {PROMOTE_TARGETS.map((t) => (
+
+        {/* [Your Dev Machine] */}
+        <Pressable
+          onPress={deployToDevMachine}
+          onLongPress={pickDevMachine}
+          disabled={deploying !== null}
+          style={[
+            styles.deployCard,
+            {
+              backgroundColor: c.accent,
+              borderColor: c.accent,
+              opacity: deploying !== null && deploying !== "dev-hw" ? 0.5 : 1,
+            },
+          ]}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.deployLabel, { color: c.bg }]}>Your Dev Machine</Text>
+            <Text style={[styles.deploySub, { color: c.bg, opacity: 0.8 }]}>
+              {selectedDevMachine
+                ? `→ ${selectedDevMachine.name}${selectedDevMachine.local ? " · LAN" : " · via relay"}`
+                : "No dev machine online. Long-press to pick one."}
+            </Text>
+            {devMachines.length > 1 ? (
+              <Text style={[styles.deploySub, { color: c.bg, opacity: 0.6, fontSize: 11 }]}>
+                Long-press to switch target ({devMachines.length} available)
+              </Text>
+            ) : null}
+          </View>
+          {deploying === "dev-hw" ? (
+            <ActivityIndicator color={c.bg} />
+          ) : (
+            <Text style={[styles.deployArrow, { color: c.bg }]}>→</Text>
+          )}
+        </Pressable>
+
+        {/* [Yaver Cloud] */}
+        <Pressable
+          onPress={deployToCloud}
+          disabled={deploying !== null}
+          style={[
+            styles.deployCard,
+            {
+              backgroundColor: c.bgCard,
+              borderColor: c.accent,
+              opacity: deploying !== null && deploying !== "yaver-cloud" ? 0.5 : 1,
+              marginTop: 8,
+            },
+          ]}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.deployLabel, { color: c.textPrimary }]}>Yaver Cloud</Text>
+            <Text style={[styles.deploySub, { color: c.textMuted }]}>
+              Managed — shareable URL at {YAVER_CLOUD_BASE.replace(/^https?:\/\//, "")}
+            </Text>
+          </View>
+          {deploying === "yaver-cloud" ? (
+            <ActivityIndicator color={c.accent} />
+          ) : (
+            <Text style={[styles.deployArrow, { color: c.accent }]}>→</Text>
+          )}
+        </Pressable>
+
+        {lastDeploy ? (
           <Pressable
-            key={t.id}
-            onPress={() => doPromote(t.id, t.label)}
-            disabled={promoting === t.id}
-            style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginBottom: 8 }]}
+            onPress={() => Linking.openURL(lastDeploy.url).catch(() => undefined)}
+            style={[
+              styles.deployResult,
+              { backgroundColor: c.bgCard, borderColor: c.success ?? "#22c55e" },
+            ]}
           >
-            <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.promoteLabel, { color: c.textPrimary }]}>{t.label}</Text>
-                <Text style={{ color: c.textMuted, fontSize: 12 }}>{t.sub}</Text>
-              </View>
-              {promoting === t.id ? (
-                <ActivityIndicator color={c.accent} />
-              ) : (
-                <Text style={{ color: c.accent, fontSize: 18 }}>›</Text>
-              )}
-            </View>
+            <Text style={{ color: c.success ?? "#22c55e", fontSize: 12, fontWeight: "600" }}>
+              ✓ Running on {lastDeploy.via ?? lastDeploy.kind}
+            </Text>
+            <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 2 }} numberOfLines={1}>
+              {lastDeploy.url}
+            </Text>
           </Pressable>
-        ))}
+        ) : null}
+
+        {/* Advanced: switch-engine promote (tucked away) */}
+        <Pressable
+          onPress={() => setShowAdvancedPromote((v) => !v)}
+          style={{ marginTop: 20, paddingVertical: 8 }}
+        >
+          <Text style={{ color: c.textMuted, fontSize: 12 }}>
+            {showAdvancedPromote ? "▾" : "▸"} Advanced — promote to a switch-engine target
+          </Text>
+        </Pressable>
+        {showAdvancedPromote ? (
+          <View>
+            <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 8 }}>
+              Plan a step-by-step migration with a 7-day rollback snapshot.
+            </Text>
+            {ADVANCED_PROMOTE_TARGETS.map((t) => (
+              <Pressable
+                key={t.id}
+                onPress={() => doPromote(t.id, t.label)}
+                disabled={promoting === t.id}
+                style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginBottom: 8 }]}
+              >
+                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.promoteLabel, { color: c.textPrimary }]}>{t.label}</Text>
+                    <Text style={{ color: c.textMuted, fontSize: 12 }}>{t.sub}</Text>
+                  </View>
+                  {promoting === t.id ? (
+                    <ActivityIndicator color={c.accent} />
+                  ) : (
+                    <Text style={{ color: c.accent, fontSize: 18 }}>›</Text>
+                  )}
+                </View>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
       </View>
     </ScrollView>
   );
+}
+
+// deriveTargetUrl falls back to a sensible "view it on the target" URL when
+// the target agent didn't return a ready-made one in PhonePushResult.
+function deriveTargetUrl(target: PhonePushTarget, result: PhonePushResult): string {
+  const slug = encodeURIComponent(result.slug);
+  switch (target.kind) {
+    case "dev-hw":
+      return `${target.relayHttpUrl.replace(/\/$/, "")}/d/${target.deviceId}/phone/projects/browse?slug=${slug}`;
+    case "yaver-cloud":
+      return `${(target.cloudBaseUrl ?? YAVER_CLOUD_BASE).replace(/\/$/, "")}/phone/projects/browse?slug=${slug}`;
+    case "custom":
+      return `${target.baseUrl.replace(/\/$/, "")}/phone/projects/browse?slug=${slug}`;
+  }
 }
 
 function formatValue(v: unknown): string {
@@ -438,5 +660,22 @@ const styles = StyleSheet.create({
   btnSecondary: { paddingVertical: 10, borderRadius: 8, alignItems: "center", borderWidth: 1 },
   btnText: { fontWeight: "600", fontSize: 14 },
   promoteLabel: { fontWeight: "600", fontSize: 14 },
+  deployCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 2,
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+  },
+  deployLabel: { fontSize: 17, fontWeight: "700" },
+  deploySub: { fontSize: 12, marginTop: 2 },
+  deployArrow: { fontSize: 22, fontWeight: "700", marginLeft: 12 },
+  deployResult: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 10,
+  },
   empty: { flex: 1, alignItems: "center", justifyContent: "center" },
 });
