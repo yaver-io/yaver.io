@@ -16,6 +16,7 @@ import * as DocumentPicker from "expo-document-picker";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice } from "../src/context/DeviceContext";
 import { quicClient } from "../src/lib/quic";
+import { AppBackButton } from "../src/components/AppBackButton";
 
 // Mobile parity with web StorageView — three sub-tabs over the three
 // owner-local storage surfaces on the agent:
@@ -39,9 +40,7 @@ export default function StorageScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top }}>
       <View style={[s.header, { borderColor: c.border }]}>
-        <Pressable onPress={() => router.back()}>
-          <Text style={{ color: c.textMuted, fontSize: 20 }}>{"\u2039"}</Text>
-        </Pressable>
+        <AppBackButton onPress={() => router.back()} />
         <Text style={[s.title, { color: c.textPrimary }]}>Storage</Text>
         <View style={{ width: 20 }} />
       </View>

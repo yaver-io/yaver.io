@@ -18,6 +18,7 @@ import { useRouter } from "expo-router";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice } from "../src/context/DeviceContext";
 import { quicClient } from "../src/lib/quic";
+import { AppBackButton } from "../src/components/AppBackButton";
 
 // Mobile screen for /accounts — cloud-provider credential vault on
 // the host. Credentials are stored encrypted under ~/.yaver; the agent
@@ -154,9 +155,7 @@ export default function AccountsScreen() {
       style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top }}
     >
       <View style={[s.header, { borderColor: c.border }]}>
-        <Pressable onPress={() => router.back()}>
-          <Text style={{ color: c.textMuted, fontSize: 20 }}>{"\u2039"}</Text>
-        </Pressable>
+        <AppBackButton onPress={() => router.back()} />
         <Text style={[s.title, { color: c.textPrimary }]}>Accounts</Text>
         <View style={{ width: 20 }} />
       </View>

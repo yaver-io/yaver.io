@@ -2272,23 +2272,6 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
   );
 }
 
-function MoreSectionHeader({
-  c,
-  title,
-  subtitle,
-}: {
-  c: ReturnType<typeof useColors>;
-  title: string;
-  subtitle: string;
-}) {
-  return (
-    <View style={s.sectionHeader}>
-      <Text style={[s.sectionTitle, { color: c.textPrimary }]}>{title}</Text>
-      <Text style={[s.sectionSubtitle, { color: c.textMuted }]}>{subtitle}</Text>
-    </View>
-  );
-}
-
 export default function MoreScreen() {
   const c = useColors();
   const router = useRouter();
@@ -2394,11 +2377,71 @@ export default function MoreScreen() {
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <ScrollView contentContainerStyle={s.list}>
-        <MoreSectionHeader
-          c={c}
-          title="Automation"
-          subtitle="Runs, planning, builds, and machine-driven development loops"
-        />
+        <Pressable
+          style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+          onPress={() => router.navigate("/phone-projects" as any)}
+        >
+          <Text style={[s.icon, { color: c.textMuted }]}>{"\u26A1"}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[s.label, { color: c.textPrimary }]}>Mobile Sandbox</Text>
+            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+              Start a local app on your phone
+            </Text>
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+        </Pressable>
+
+        <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleTodos}>
+          <Text style={[s.icon, { color: c.textMuted }]}>{"\u2610"}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[s.label, { color: c.textPrimary }]}>Todos</Text>
+            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Task queue</Text>
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+        </Pressable>
+
+        <Pressable
+          style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+          onPress={openPair}
+        >
+          <Text style={[s.icon, { color: c.textMuted }]}>{"\u2194"}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[s.label, { color: c.textPrimary }]}>Pair a device</Text>
+            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Connect another machine</Text>
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+        </Pressable>
+
+        <Pressable
+          style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+          onPress={() => router.navigate("/(tabs)/guests" as any)}
+        >
+          <Text style={[s.icon, { color: c.textMuted }]}>{"\u2192"}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[s.label, { color: c.textPrimary }]}>Guest Access</Text>
+            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Invite others</Text>
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+        </Pressable>
+
+        <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleTutorials}>
+          <Text style={[s.icon, { color: c.textMuted }]}>{"\u2302"}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[s.label, { color: c.textPrimary }]}>Tutorials</Text>
+            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Setup and guides</Text>
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+        </Pressable>
+
+        <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleSettings}>
+          <Text style={[s.icon, { color: c.textMuted }]}>{"\u2699"}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[s.label, { color: c.textPrimary }]}>Settings</Text>
+            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Theme and preferences</Text>
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+        </Pressable>
+
         {/* Quality Gates — navigate to dedicated screen */}
         {connected && (
           <Pressable
@@ -2408,7 +2451,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u2714"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Quality Gates</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Run tests, lint, typecheck, format</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Tests and checks</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2423,7 +2466,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u25B6"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Local CI</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Run yaver-tests/* on your own machine — $0</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Run local test jobs</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2438,7 +2481,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F9E0}"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Agent Mode</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Project-wide graph runs, placement, and coordinated execution</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Project graph runs</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2453,7 +2496,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F916}"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Auto Dev</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Kick off scheduled development loops against a project workspace</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Scheduled dev loops</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2468,7 +2511,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F4E6}"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Builds</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Artifacts, installs, and cached downloads from your machine</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Artifacts and installs</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2483,7 +2526,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u2600"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Morning Report</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Overnight autodev summaries, video, and rollback cards</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Overnight summaries</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2498,9 +2541,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u2261"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Monitor</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
-                Errors, OTA releases, uptime, events, feature flags
-              </Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Errors, uptime, releases</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2515,17 +2556,12 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u2697"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Hybrid</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Planner + implementer runs for deeper multi-step project work</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Planner + implementer runs</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
         )}
 
-        <MoreSectionHeader
-          c={c}
-          title="Infra"
-          subtitle="Machine control, operations, observability, and scheduled work"
-        />
         {/* Home — AWS-style overview dashboard */}
         {connected && (
           <Pressable
@@ -2535,7 +2571,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\uD83C\uDFE0"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Home</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Machines · Projects · Services · Alerts · Cost · Uptime</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Overview</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2550,7 +2586,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\uD83D\uDEE0\uFE0F"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Infra</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Machine health · services · relay · sharing · power</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Machine health and services</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2565,17 +2601,12 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\uD83D\uDE80"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Ops</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Deploy · Backups · Domains · Uptime · CI · Alerts · Errors</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Deploy and backups</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
         )}
 
-        <MoreSectionHeader
-          c={c}
-          title="Data & Storage"
-          subtitle="Databases, files, shared storage, and local project assets"
-        />
         {/* Data browser — tables, query, schema, storage, jobs */}
         {connected && (
           <Pressable
@@ -2585,7 +2616,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\uD83D\uDDC4\uFE0F"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Data</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Tables · Query · Schema · Storage · Jobs</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Tables and queries</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2600,7 +2631,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\uD83D\uDCBB"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Console</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Machines · Containers · Services catalog</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Machines and containers</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2615,7 +2646,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u2328\uFE0F"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Terminal</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Native shell · WebSocket PTY · no WebView</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Remote shell</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2630,7 +2661,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u2661"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Health Monitor</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Monitor production URLs</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Check production URLs</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2645,7 +2676,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u2699"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Exec</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Run shell commands on this machine, stream output back</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Run shell commands</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2660,7 +2691,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u23F0"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Schedules</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Cron, one-shot, or interval tasks on this machine</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Cron and timed jobs</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2675,7 +2706,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u2601"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Accounts</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Connect AWS / GCP / Stripe / LemonSqueezy — creds stay local</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Cloud and payment accounts</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2690,7 +2721,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F4C2}"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Storage</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Project files · NAS · blob buckets — all local to your machine</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Project files and blobs</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2705,7 +2736,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u25A1"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Files (classic)</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Read-only file browser with rich previews</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Classic file browser</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2719,17 +2750,12 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F5C4}"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Shared Storage</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Browse NAS, SMB, WebDAV, Storage Box</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>NAS and shared drives</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
         )}
 
-        <MoreSectionHeader
-          c={c}
-          title="Secrets & Access"
-          subtitle="Credentials, API tokens, machine pairing, and guest access"
-        />
         {/* Vault — encrypted secrets stored on host (AES-GCM + Argon2id). */}
         {connected && (
           <Pressable
@@ -2739,7 +2765,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F512}"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Vault</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Encrypted secrets, API keys, SSH keys — never leaves your machine</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Encrypted secrets</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2754,31 +2780,11 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F511}"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>API Keys</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>SDK tokens — create, scope, disable</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>SDK tokens</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
         )}
-
-        <MoreSectionHeader
-          c={c}
-          title="Projects"
-          subtitle="Phone-first sandboxes, monorepo setup, and optional git-backed starts"
-        />
-        {/* Phone Backend — mini backend lives inside the app, promotable to real infra */}
-        <Pressable
-          style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-          onPress={() => router.navigate("/phone-projects" as any)}
-        >
-          <Text style={[s.icon, { color: c.textMuted }]}>{"\u26A1"}</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={[s.label, { color: c.textPrimary }]}>Mobile Sandbox</Text>
-            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={2}>
-              Build a local SQLite app from your phone now, then connect a runner later for remote coding, deploy, and export
-            </Text>
-          </View>
-          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-        </Pressable>
 
         {/* New Project — fullstack wizard (web + mobile + backend + DNS + OAuth) */}
         {connected && (
@@ -2789,7 +2795,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u2728"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>New Project</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Fullstack wizard — web, mobile, DNS, OAuth</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Create a fullstack app</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2804,7 +2810,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u2630"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Solo Stack</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Forms, newsletter, job queue</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Forms and jobs</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2819,7 +2825,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u25CE"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Studio</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Screen clips, chat, invoices, A/B, affiliates, casts</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Clips, chat, invoices</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2834,7 +2840,7 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u2709"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Mail</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Gmail / O365 inbox, smart classifier, AI drafts</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Inbox and drafts</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
@@ -2849,64 +2855,17 @@ export default function MoreScreen() {
             <Text style={[s.icon, { color: c.textMuted }]}>{"\u2387"}</Text>
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Git Providers</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>GitHub / GitLab — browse repos, clone to machine</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Repos and clones</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>
         )}
 
-        <MoreSectionHeader
-          c={c}
-          title="Workspace"
-          subtitle="Daily queue, device setup, guides, and app preferences"
-        />
-        {/* Existing cards */}
-        <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleTodos}>
-          <Text style={[s.icon, { color: c.textMuted }]}>{"\u2610"}</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={[s.label, { color: c.textPrimary }]}>Todos</Text>
-            <Text style={[s.desc, { color: c.textMuted }]}>Task queue — Run All for sleep mode</Text>
-          </View>
-          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-        </Pressable>
-        {/* Pair a device — send this phone's auth to a headless machine */}
-        <Pressable
-          style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-          onPress={openPair}
-        >
-          <Text style={[s.icon, { color: c.textMuted }]}>{"\u2194"}</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={[s.label, { color: c.textPrimary }]}>Pair a device</Text>
-            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Push auth to a headless machine via passkey</Text>
-          </View>
-          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-        </Pressable>
-        {/* Guest Access — dedicated screen */}
-        <Pressable
-          style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-          onPress={() => router.navigate("/(tabs)/guests" as any)}
-        >
-          <Text style={[s.icon, { color: c.textMuted }]}>{"\u2192"}</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={[s.label, { color: c.textPrimary }]}>Guest Access</Text>
-            <Text style={[s.desc, { color: c.textMuted }]}>Invite others to use your machine</Text>
-          </View>
-          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-        </Pressable>
-
-        <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleTutorials}>
-          <Text style={[s.icon, { color: c.textMuted }]}>{"\u2302"}</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={[s.label, { color: c.textPrimary }]}>Tutorials</Text>
-            <Text style={[s.desc, { color: c.textMuted }]}>Guides for setup, deploy, voice AI</Text>
-          </View>
-          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-        </Pressable>
         <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleSettings}>
           <Text style={[s.icon, { color: c.textMuted }]}>{"\u2699"}</Text>
           <View style={{ flex: 1 }}>
             <Text style={[s.label, { color: c.textPrimary }]}>Settings</Text>
-            <Text style={[s.desc, { color: c.textMuted }]}>Theme, speech, preferences</Text>
+            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Theme and preferences</Text>
           </View>
           <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
         </Pressable>

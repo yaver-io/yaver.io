@@ -14,6 +14,7 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "../../../src/context/ThemeContext";
+import { AppBackButton } from "../../../src/components/AppBackButton";
 import {
   PhoneColumn,
   PhonePersona,
@@ -278,9 +279,7 @@ export default function PhoneProjectRuntimeScreen() {
       }
     >
       <View style={{ paddingHorizontal: 16 }}>
-        <Pressable onPress={() => router.back()}>
-          <Text style={{ color: c.accent, marginBottom: 8 }}>‹ Back</Text>
-        </Pressable>
+        <AppBackButton onPress={() => router.back()} style={{ marginBottom: 8 }} />
         <Pressable onPress={() => router.navigate(`/phone-project/workspace/${slugStr}` as any)}>
           <Text style={{ color: c.accent, marginBottom: 8 }}>Workspace ›</Text>
         </Pressable>

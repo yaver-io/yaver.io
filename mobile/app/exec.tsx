@@ -17,6 +17,7 @@ import { useRouter } from "expo-router";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice } from "../src/context/DeviceContext";
 import { quicClient } from "../src/lib/quic";
+import { AppBackButton } from "../src/components/AppBackButton";
 
 // Mobile parity with the web ExecView. Runs shell commands on the
 // connected agent via /exec and polls /exec/{id} for output. Nothing
@@ -138,9 +139,7 @@ export default function ExecScreen() {
       style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top }}
     >
       <View style={[s.header, { borderColor: c.border }]}>
-        <Pressable onPress={() => router.back()}>
-          <Text style={{ color: c.textMuted, fontSize: 20 }}>{"\u2039"}</Text>
-        </Pressable>
+        <AppBackButton onPress={() => router.back()} />
         <Text style={[s.title, { color: c.textPrimary }]}>Exec</Text>
         <View style={{ width: 20 }} />
       </View>

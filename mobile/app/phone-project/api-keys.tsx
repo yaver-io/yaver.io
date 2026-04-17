@@ -13,6 +13,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
+import { AppBackButton } from "../../src/components/AppBackButton";
 import {
   PhoneProjectTokenMint,
   PhoneProjectTokenSummary,
@@ -115,9 +116,7 @@ export default function PhoneAPIKeysScreen() {
       contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: 60 + insets.bottom }}
     >
       <View style={{ paddingHorizontal: 16 }}>
-        <Pressable onPress={() => router.back()}>
-          <Text style={{ color: c.accent, marginBottom: 8 }}>‹ Back</Text>
-        </Pressable>
+        <AppBackButton onPress={() => router.back()} style={{ marginBottom: 8 }} />
         <Text style={[styles.h1, { color: c.textPrimary }]}>API keys</Text>
         <Text style={{ color: c.textMuted, fontSize: 13, marginTop: 4 }}>
           Scoped tokens for the apps you ship to your users. Each key only unlocks{" "}

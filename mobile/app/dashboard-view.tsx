@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useColors } from "../src/context/ThemeContext";
 import { quicClient } from "../src/lib/quic";
+import { AppBackButton } from "../src/components/AppBackButton";
 
 // Renders the *real* dashboard UI for Convex / Supabase / PocketBase /
 // Drizzle / Mailpit by tunnelling `/proxy/{id}/*` through the agent's
@@ -45,9 +46,7 @@ export default function DashboardViewScreen() {
   return (
     <View style={[styles.container, { backgroundColor: c.bg }]}>
       <View style={[styles.header, { borderBottomColor: c.border, paddingTop: insets.top + 12 }]}>
-        <Pressable onPress={() => router.back()} style={{ paddingVertical: 8 }}>
-          <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
-        </Pressable>
+        <AppBackButton onPress={() => router.back()} />
         <Text style={{ fontSize: 15, fontWeight: "700", color: c.textPrimary }} numberOfLines={1}>
           {label}
         </Text>

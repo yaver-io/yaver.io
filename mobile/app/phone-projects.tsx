@@ -14,9 +14,10 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice, type Device } from "../src/context/DeviceContext";
+import { getLocalSecret, LOCAL_KEYS, saveLocalSecret } from "../src/lib/auth";
 import { quicClient } from "../src/lib/quic";
 import {
   PhoneProject,
@@ -32,6 +33,7 @@ import {
 
 type StartMode = "this-device" | "dev-hw" | "yaver-cloud";
 type GitMode = "skip" | "later" | "providers-now";
+type CodingMode = "phone" | "runner";
 
 const YAVER_CLOUD_BASE = "https://cloud.yaver.io";
 
@@ -69,6 +71,9 @@ export default function PhoneProjectsScreen() {
   const [runner, setRunner] = useState<string>("");
   const [creating, setCreating] = useState(false);
   const [gitMode, setGitMode] = useState<GitMode>("skip");
+  const [step, setStep] = useState(0);
+  const [codingMode, setCodingMode] = useState<CodingMode>(connected ? "runner" : "phone");
+  const [openAiKey, setOpenAiKey] = useState("");
 
   // yc.md §Wedge Demo — user picks where the mini-backend lives at creation
   // time. "this-device" is the pragmatic default (lives on whichever agent
@@ -99,6 +104,16 @@ export default function PhoneProjectsScreen() {
       setRunner(availableRunners[0].runnerId);
     }
   }, [availableRunners, runner]);
+  useEffect(() => {
+    void getLocalSecret(LOCAL_KEYS.openAiApiKey).then((value) => {
+      if (value) setOpenAiKey(value);
+    });
+  }, []);
+  useEffect(() => {
+    if (!connected && codingMode === "runner") {
+      setCodingMode("phone");
+    }
+  }, [codingMode, connected]);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -127,13 +142,24 @@ export default function PhoneProjectsScreen() {
       Alert.alert("Phone Backend", "Project name is required");
       return;
     }
+    if (codingMode === "phone" && !openAiKey.trim()) {
+      Alert.alert("OpenAI key required", "On-phone coding needs your OpenAI API key.");
+      return;
+    }
+    if (codingMode === "runner" && !connected) {
+      Alert.alert("Connect a runner", "Remote coding needs a connected Yaver runner.");
+      return;
+    }
     setCreating(true);
     try {
+      if (codingMode === "phone" && openAiKey.trim()) {
+        await saveLocalSecret(LOCAL_KEYS.openAiApiKey, openAiKey.trim());
+      }
       const spec = {
         name: name.trim(),
         template: prompt.trim() ? undefined : template,
         prompt: prompt.trim() || undefined,
-        runner: prompt.trim() ? runner || undefined : undefined,
+        runner: prompt.trim() && codingMode === "runner" ? runner || undefined : undefined,
       };
       let p: PhoneProject | null = null;
       let where = "";
@@ -170,6 +196,7 @@ export default function PhoneProjectsScreen() {
       setPrompt("");
       setRunner(availableRunners[0]?.runnerId ?? "");
       setGitMode("skip");
+      setStep(0);
       setShowForm(false);
       // Only refresh the local list — remote projects aren't in the user's
       // connected-agent list, so jumping straight to the detail screen for
@@ -246,253 +273,281 @@ export default function PhoneProjectsScreen() {
   const header = useMemo(
     () => (
       <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
-        <Text style={[styles.h1, { color: c.textPrimary }]}>Mobile Sandbox</Text>
-        <Text style={[styles.muted, { color: c.textMuted, marginTop: 4 }]}>
-          Build from your phone. Run the app against on-device SQLite now, then
-          grow it into a monorepo workspace on your own machine or Yaver Cloud later.
-        </Text>
-        {!connected ? (
-          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginTop: 12 }]}>
-            <Text style={[styles.templateLabel, { color: c.textPrimary }]}>Phone-only mode</Text>
-            <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
-              You can create and run local sandbox projects without any active Yaver agent.
-              Connect a runner later for prompt generation, remote vibe coding, deploy, export,
-              OAuth secret sync, and hosted API-key minting.
-            </Text>
-          </View>
-        ) : null}
-        <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginTop: 12 }]}>
-          <Text style={[styles.templateLabel, { color: c.textPrimary }]}>Monorepo only</Text>
-          <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
-            New git-connected projects are monorepo-oriented by design. Keep the mobile app,
-            portable backend, web/admin surfaces, and deploy/export wiring in one workspace.
-            Git is optional; when used, Yaver only supports the monorepo path.
-          </Text>
-        </View>
         {!showForm ? (
-          <Pressable
-            onPress={() => setShowForm(true)}
-            style={[styles.btn, { backgroundColor: c.accent, marginTop: 12 }]}
-          >
-            <Text style={[styles.btnText, { color: c.bg }]}>+ New mobile app</Text>
-          </Pressable>
+          <>
+            <Pressable
+              onPress={() => {
+                setStep(0);
+                setShowForm(true);
+              }}
+              style={[styles.btn, { backgroundColor: c.accent, marginTop: 12 }]}
+            >
+              <Text style={[styles.btnText, { color: c.bg }]}>+ New mobile app</Text>
+            </Pressable>
+            <Text style={[styles.muted, { color: c.textMuted, marginTop: 8 }]}>
+              {connected ? "Phone or runner. You choose at the next step." : "Runs locally on this phone."}
+            </Text>
+          </>
         ) : (
           <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginTop: 12 }]}>
-            <Text style={[styles.label, { color: c.textMuted }]}>Project name</Text>
-            <TextInput
-              value={name}
-              onChangeText={setName}
-              placeholder="My app"
-              placeholderTextColor={c.textMuted}
-              style={[styles.input, { color: c.textPrimary, borderColor: c.border }]}
-            />
-            <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Describe the app (optional)</Text>
-            <TextInput
-              value={prompt}
-              onChangeText={setPrompt}
-              placeholder="todo app with login, tags, and a simple dashboard"
-              placeholderTextColor={c.textMuted}
-              multiline
-              style={[styles.input, styles.promptInput, { color: c.textPrimary, borderColor: c.border }]}
-            />
-            <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
-              {connected
-                ? "Prompt mode generates the first app + backend plan for the mobile sandbox."
-                : "Prompt text is saved into the project brief. Connect a runner later to have Yaver generate the first draft from it."}
-            </Text>
-            {prompt.trim() ? (
+            <View style={styles.stepDots}>
+              {[0, 1, 2].map((value) => (
+                <View
+                  key={value}
+                  style={[
+                    styles.stepDot,
+                    {
+                      backgroundColor: step === value ? c.accent : c.border,
+                    },
+                  ]}
+                />
+              ))}
+            </View>
+
+            {step === 0 ? (
               <>
-                <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Coding runner</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {(availableRunners.length
-                    ? availableRunners.map((item) => ({
-                        id: item.runnerId,
-                        label: item.title || item.runnerId,
-                      }))
-                    : [{ id: "codex", label: "Codex" }, { id: "claude", label: "Claude" }, { id: "ollama", label: "Ollama" }]
-                  ).map((item) => {
-                    const active = runner === item.id;
-                    return (
-                      <Pressable
-                        key={item.id}
-                        onPress={() => connected && setRunner(item.id)}
-                        style={[
-                          styles.modeChip,
-                          {
-                            backgroundColor: active ? c.accent : c.bgCard,
-                            borderColor: c.border,
-                            marginRight: 8,
-                            marginTop: 8,
-                            opacity: connected ? 1 : 0.55,
-                          },
-                        ]}
-                      >
-                        <Text style={{ color: active ? c.bg : c.textPrimary, fontWeight: "600" }}>
-                          {item.label}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
-                <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
-                  {connected
-                    ? "Coding can stay on this device, your dev machine, or Yaver Cloud. Pick the runner you want steering the first draft."
-                    : "Runner selection unlocks once a Yaver agent is connected."}
-                </Text>
+                <Text style={[styles.label, { color: c.textMuted }]}>Project name</Text>
+                <TextInput
+                  value={name}
+                  onChangeText={setName}
+                  placeholder="My app"
+                  placeholderTextColor={c.textMuted}
+                  style={[styles.input, { color: c.textPrimary, borderColor: c.border }]}
+                />
+                <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Prompt (optional)</Text>
+                <TextInput
+                  value={prompt}
+                  onChangeText={setPrompt}
+                  placeholder="Todo app with login"
+                  placeholderTextColor={c.textMuted}
+                  multiline
+                  style={[styles.input, styles.promptInput, { color: c.textPrimary, borderColor: c.border }]}
+                />
+                <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Template</Text>
+                {templates.map((t) => (
+                  <Pressable
+                    key={t.id}
+                    onPress={() => setTemplate(t.id)}
+                    style={[
+                      styles.templateRow,
+                      {
+                        backgroundColor: template === t.id ? c.accent + "22" : "transparent",
+                        borderColor: template === t.id ? c.accent : c.border,
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.templateLabel, { color: c.textPrimary }]}>{t.label}</Text>
+                    <Text style={[styles.muted, { color: c.textMuted }]} numberOfLines={1}>
+                      {t.description}
+                    </Text>
+                  </Pressable>
+                ))}
               </>
             ) : null}
-            <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Where should it live?</Text>
-            {(
-              [
-                {
-                  id: "this-device" as StartMode,
-                  label: "This device",
-                  sub: activeDevice?.name ? `→ ${activeDevice.name}` : "The agent you're currently connected to",
-                },
-                {
-                  id: "dev-hw" as StartMode,
-                  label: "Your Dev Machine",
-                  sub: selectedDevMachine
-                    ? `→ ${selectedDevMachine.name}${devMachines.length > 1 ? " (tap to change)" : ""}`
-                    : devMachines.length
-                      ? "Pick a paired Mac / Pi / Linux box"
-                      : connected
-                        ? "No other devices paired yet"
-                        : "Connect a Yaver device to start here",
-                  disabled: !connected || devMachines.length === 0,
-                  onLongPress: pickDevMachine,
-                },
-                {
-                  id: "yaver-cloud" as StartMode,
-                  label: "Yaver Cloud",
-                  sub: YAVER_CLOUD_BASE.replace(/^https?:\/\//, "") + " · managed Hetzner tenant",
-                  disabled: !connected,
-                },
-              ] as const
-            ).map((opt) => (
-              <Pressable
-                key={opt.id}
-                onPress={() => {
-                  if ((opt as any).disabled) {
-                    (opt as any).onLongPress?.();
-                    return;
-                  }
-                  setStartMode(opt.id);
-                  if (opt.id === "dev-hw" && devMachines.length > 1) {
-                    pickDevMachine();
-                  }
-                }}
-                onLongPress={(opt as any).onLongPress}
-                style={[
-                  styles.templateRow,
-                  {
-                    backgroundColor: startMode === opt.id ? c.accent + "22" : "transparent",
-                    borderColor: startMode === opt.id ? c.accent : c.border,
-                    opacity: (opt as any).disabled ? 0.5 : 1,
-                  },
-                ]}
-              >
-                <Text style={[styles.templateLabel, { color: c.textPrimary }]}>{opt.label}</Text>
-                <Text style={[styles.muted, { color: c.textMuted }]} numberOfLines={2}>
-                  {opt.sub}
-                </Text>
-              </Pressable>
-            ))}
 
-            <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Template</Text>
-            {prompt.trim() ? (
-              <Text style={[styles.muted, { color: c.textMuted }]}>
-                Prompt mode is active. The template below will be ignored unless the prompt is empty.
-              </Text>
+            {step === 1 ? (
+              <>
+                <Text style={[styles.label, { color: c.textMuted }]}>Who will code?</Text>
+                {(
+                  [
+                    {
+                      id: "phone" as CodingMode,
+                      label: "This phone",
+                      sub: "Uses your OpenAI key",
+                    },
+                    {
+                      id: "runner" as CodingMode,
+                      label: "Remote runner",
+                      sub: connected ? "Use a connected Yaver runner" : "Connect a runner first",
+                      disabled: !connected,
+                    },
+                  ] as const
+                ).map((opt) => (
+                  <Pressable
+                    key={opt.id}
+                    onPress={() => !(opt as any).disabled && setCodingMode(opt.id)}
+                    style={[
+                      styles.templateRow,
+                      {
+                        backgroundColor: codingMode === opt.id ? c.accent + "22" : "transparent",
+                        borderColor: codingMode === opt.id ? c.accent : c.border,
+                        opacity: (opt as any).disabled ? 0.5 : 1,
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.templateLabel, { color: c.textPrimary }]}>{opt.label}</Text>
+                    <Text style={[styles.muted, { color: c.textMuted }]} numberOfLines={1}>{opt.sub}</Text>
+                  </Pressable>
+                ))}
+
+                {codingMode === "phone" ? (
+                  <>
+                    <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>OpenAI API key</Text>
+                    <TextInput
+                      value={openAiKey}
+                      onChangeText={setOpenAiKey}
+                      placeholder="sk-..."
+                      placeholderTextColor={c.textMuted}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      spellCheck={false}
+                      style={[styles.input, { color: c.textPrimary, borderColor: c.border }]}
+                    />
+                    <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
+                      Required for on-phone coding.
+                    </Text>
+                  </>
+                ) : null}
+
+                {codingMode === "runner" && prompt.trim() ? (
+                  <>
+                    <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Runner</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                      {(availableRunners.length
+                        ? availableRunners.map((item) => ({
+                            id: item.runnerId,
+                            label: item.title || item.runnerId,
+                          }))
+                        : [{ id: "codex", label: "Codex" }, { id: "claude", label: "Claude" }, { id: "ollama", label: "Ollama" }]
+                      ).map((item) => {
+                        const active = runner === item.id;
+                        return (
+                          <Pressable
+                            key={item.id}
+                            onPress={() => connected && setRunner(item.id)}
+                            style={[
+                              styles.modeChip,
+                              {
+                                backgroundColor: active ? c.accent : c.bgCard,
+                                borderColor: active ? c.accent : c.border,
+                                marginRight: 8,
+                                marginTop: 8,
+                              },
+                            ]}
+                          >
+                            <Text style={{ color: active ? c.bg : c.textPrimary, fontWeight: "600" }}>
+                              {item.label}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                  </>
+                ) : null}
+              </>
             ) : null}
-            {templates.map((t) => (
-              <Pressable
-                key={t.id}
-                onPress={() => setTemplate(t.id)}
-                style={[
-                  styles.templateRow,
-                  {
-                    backgroundColor: template === t.id ? c.accent + "22" : "transparent",
-                    borderColor: template === t.id ? c.accent : c.border,
-                  },
-                ]}
-              >
-                <Text style={[styles.templateLabel, { color: c.textPrimary }]}>{t.label}</Text>
-                <Text style={[styles.muted, { color: c.textMuted }]} numberOfLines={2}>
-                  {t.description}
-                </Text>
-              </Pressable>
-            ))}
-            <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Git integration (optional)</Text>
-            {(
-              [
-                {
-                  id: "skip" as GitMode,
-                  label: "Skip for now",
-                  sub: "Stay local first. You can wire git later.",
-                },
-                {
-                  id: "later" as GitMode,
-                  label: "Monorepo later",
-                  sub: connected
-                    ? "Create now, then export/push this monorepo workspace from your Yaver machine later."
-                    : "Create now. Connect a dev machine later to push the monorepo.",
-                },
-                {
-                  id: "providers-now" as GitMode,
-                  label: "Open providers",
-                  sub: connected
-                    ? "Configure GitHub / GitLab / Bitbucket credentials now. Repo setup is still optional."
-                    : "Provider setup unlocks once a Yaver dev machine is connected.",
-                  disabled: !connected,
-                },
-              ] as const
-            ).map((opt) => (
-              <Pressable
-                key={opt.id}
-                onPress={() => {
-                  if ((opt as any).disabled) return;
-                  setGitMode(opt.id);
-                  if (opt.id === "providers-now" && connected) {
-                    router.navigate("/(tabs)/gitproviders" as any);
-                  }
-                }}
-                style={[
-                  styles.templateRow,
-                  {
-                    backgroundColor: gitMode === opt.id ? c.accent + "22" : "transparent",
-                    borderColor: gitMode === opt.id ? c.accent : c.border,
-                    opacity: (opt as any).disabled ? 0.5 : 1,
-                  },
-                ]}
-              >
-                <Text style={[styles.templateLabel, { color: c.textPrimary }]}>{opt.label}</Text>
-                <Text style={[styles.muted, { color: c.textMuted }]} numberOfLines={2}>
-                  {opt.sub}
-                </Text>
-              </Pressable>
-            ))}
-            <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
-              Git is never required to start. When you do use git, Yaver expects one monorepo workspace rather than split repos.
-            </Text>
+
+            {step === 2 ? (
+              <>
+                <Text style={[styles.label, { color: c.textMuted }]}>Where should it live?</Text>
+                {(
+                  [
+                    {
+                      id: "this-device" as StartMode,
+                      label: connected ? "Current device" : "This phone",
+                      sub: connected ? activeDevice?.name || "Connected device" : "Local sandbox",
+                    },
+                    {
+                      id: "dev-hw" as StartMode,
+                      label: "Your dev machine",
+                      sub: selectedDevMachine ? selectedDevMachine.name : "Pick a paired machine",
+                      disabled: !connected || devMachines.length === 0,
+                      onLongPress: pickDevMachine,
+                    },
+                    {
+                      id: "yaver-cloud" as StartMode,
+                      label: "Yaver Cloud",
+                      sub: "Managed cloud",
+                      disabled: !connected,
+                    },
+                  ] as const
+                ).map((opt) => (
+                  <Pressable
+                    key={opt.id}
+                    onPress={() => {
+                      if ((opt as any).disabled) {
+                        (opt as any).onLongPress?.();
+                        return;
+                      }
+                      setStartMode(opt.id);
+                      if (opt.id === "dev-hw" && devMachines.length > 1) {
+                        pickDevMachine();
+                      }
+                    }}
+                    onLongPress={(opt as any).onLongPress}
+                    style={[
+                      styles.templateRow,
+                      {
+                        backgroundColor: startMode === opt.id ? c.accent + "22" : "transparent",
+                        borderColor: startMode === opt.id ? c.accent : c.border,
+                        opacity: (opt as any).disabled ? 0.5 : 1,
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.templateLabel, { color: c.textPrimary }]}>{opt.label}</Text>
+                    <Text style={[styles.muted, { color: c.textMuted }]} numberOfLines={1}>{opt.sub}</Text>
+                  </Pressable>
+                ))}
+
+                <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Git</Text>
+                {(
+                  [
+                    { id: "skip" as GitMode, label: "Not now" },
+                    { id: "later" as GitMode, label: "Later" },
+                    { id: "providers-now" as GitMode, label: "Providers", disabled: !connected },
+                  ] as const
+                ).map((opt) => (
+                  <Pressable
+                    key={opt.id}
+                    onPress={() => !(opt as any).disabled && setGitMode(opt.id)}
+                    style={[
+                      styles.templateRow,
+                      {
+                        backgroundColor: gitMode === opt.id ? c.accent + "22" : "transparent",
+                        borderColor: gitMode === opt.id ? c.accent : c.border,
+                        opacity: (opt as any).disabled ? 0.5 : 1,
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.templateLabel, { color: c.textPrimary }]}>{opt.label}</Text>
+                  </Pressable>
+                ))}
+              </>
+            ) : null}
+
             <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
               <Pressable
-                onPress={() => setShowForm(false)}
+                onPress={() => {
+                  if (step === 0) {
+                    setShowForm(false);
+                    return;
+                  }
+                  setStep((prev) => Math.max(0, prev - 1));
+                }}
                 style={[styles.btnSecondary, { borderColor: c.border, flex: 1 }]}
               >
-                <Text style={[styles.btnText, { color: c.textPrimary }]}>Cancel</Text>
+                <Text style={[styles.btnText, { color: c.textPrimary }]}>{step === 0 ? "Cancel" : "Back"}</Text>
               </Pressable>
-              <Pressable
-                onPress={create}
-                disabled={creating}
-                style={[styles.btn, { backgroundColor: c.accent, flex: 1, opacity: creating ? 0.6 : 1 }]}
-              >
-                {creating ? (
-                  <ActivityIndicator color={c.bg} />
-                ) : (
-                  <Text style={[styles.btnText, { color: c.bg }]}>Create</Text>
-                )}
-              </Pressable>
+              {step < 2 ? (
+                <Pressable
+                  onPress={() => setStep((prev) => Math.min(2, prev + 1))}
+                  style={[styles.btn, { backgroundColor: c.accent, flex: 1 }]}
+                >
+                  <Text style={[styles.btnText, { color: c.bg }]}>Next</Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  onPress={create}
+                  disabled={creating}
+                  style={[styles.btn, { backgroundColor: c.accent, flex: 1, opacity: creating ? 0.6 : 1 }]}
+                >
+                  {creating ? (
+                    <ActivityIndicator color={c.bg} />
+                  ) : (
+                    <Text style={[styles.btnText, { color: c.bg }]}>Create</Text>
+                  )}
+                </Pressable>
+              )}
             </View>
           </View>
         )}
@@ -511,7 +566,10 @@ export default function PhoneProjectsScreen() {
       showForm,
       template,
       templates,
+      step,
       startMode,
+      codingMode,
+      openAiKey,
       activeDevice,
       selectedDevMachine,
       devMachines.length,
@@ -523,10 +581,21 @@ export default function PhoneProjectsScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       style={{ flex: 1, backgroundColor: c.bg }}
     >
+      <Stack.Screen
+        options={{
+          headerShown: true,
+          title: "Mobile Sandbox",
+          headerBackTitle: "Back",
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: c.bg },
+          headerTintColor: c.accent,
+          headerTitleStyle: { color: c.textPrimary, fontWeight: "700" },
+        }}
+      />
       <FlatList
         data={projects}
         keyExtractor={(p) => p.slug}
-        contentContainerStyle={{ paddingBottom: 80 + insets.bottom, paddingTop: insets.top }}
+        contentContainerStyle={{ paddingBottom: 80 + insets.bottom, paddingTop: 12 }}
         ListHeaderComponent={header}
         refreshControl={
           <RefreshControl
@@ -583,6 +652,16 @@ function formatBytes(n: number): string {
 const styles = StyleSheet.create({
   h1: { fontSize: 24, fontWeight: "700" },
   muted: { fontSize: 13 },
+  stepDots: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 14,
+  },
+  stepDot: {
+    flex: 1,
+    height: 6,
+    borderRadius: 999,
+  },
   btn: { paddingVertical: 12, borderRadius: 8, alignItems: "center" },
   btnSecondary: {
     paddingVertical: 12,

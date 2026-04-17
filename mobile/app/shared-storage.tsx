@@ -14,6 +14,7 @@ import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "../src/context/ThemeContext";
 import { quicClient } from "../src/lib/quic";
+import { AppBackButton } from "../src/components/AppBackButton";
 
 type SharedProfile = {
   id: string;
@@ -162,9 +163,7 @@ export default function SharedStorageScreen() {
   return (
     <View style={[styles.container, { backgroundColor: c.bg }]}>
       <View style={[styles.header, { borderBottomColor: c.border, paddingTop: insets.top + 12 }]}>
-        <Pressable onPress={() => router.back()} style={{ paddingVertical: 8 }}>
-          <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
-        </Pressable>
+        <AppBackButton onPress={() => router.back()} />
         <Text style={{ fontSize: 17, fontWeight: "700", color: c.textPrimary }}>Shared Storage</Text>
         <Pressable onPress={() => { setCurrentProfile(null); setCurrentPath(""); setEntries([]); setHits([]); setFileContent(null); setBinary(false); }} style={{ paddingVertical: 8 }}>
           <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>Home</Text>

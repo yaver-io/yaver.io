@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice, type Device } from "../../src/context/DeviceContext";
+import { AppBackButton } from "../../src/components/AppBackButton";
 import { quicClient } from "../../src/lib/quic";
 import {
   EscapeRoute,
@@ -485,9 +486,7 @@ export default function PhoneProjectDetailScreen() {
     return (
       <View style={[styles.empty, { backgroundColor: c.bg }]}>
         <Text style={{ color: c.textMuted }}>{err ?? "Project not found"}</Text>
-        <Pressable onPress={() => router.back()} style={{ marginTop: 12 }}>
-          <Text style={{ color: c.accent }}>Back</Text>
-        </Pressable>
+        <AppBackButton onPress={() => router.back()} style={{ marginTop: 12 }} />
       </View>
     );
   }
@@ -508,9 +507,7 @@ export default function PhoneProjectDetailScreen() {
       }
     >
       <View style={{ paddingHorizontal: 16 }}>
-        <Pressable onPress={() => router.back()}>
-          <Text style={{ color: c.accent, marginBottom: 8 }}>‹ Back</Text>
-        </Pressable>
+        <AppBackButton onPress={() => router.back()} style={{ marginBottom: 8 }} />
         <Pressable onPress={() => router.navigate(`/phone-project/workspace/${slugStr}` as any)}>
           <Text style={{ color: c.accent, marginBottom: 8 }}>Workspace ›</Text>
         </Pressable>

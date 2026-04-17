@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useColors } from "../../src/context/ThemeContext";
+import { AppBackButton } from "../../src/components/AppBackButton";
 import {
   CFRecord,
   CFRecordInput,
@@ -173,9 +174,7 @@ export default function PhoneDNSScreen() {
       contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: 60 + insets.bottom }}
     >
       <View style={{ paddingHorizontal: 16 }}>
-        <Pressable onPress={() => router.back()}>
-          <Text style={{ color: c.accent, marginBottom: 8 }}>‹ Back</Text>
-        </Pressable>
+        <AppBackButton onPress={() => router.back()} style={{ marginBottom: 8 }} />
         <Text style={[styles.h1, { color: c.textPrimary }]}>Custom Domain</Text>
         <Text style={{ color: c.textMuted, fontSize: 13, marginTop: 4 }}>
           Point a domain at <Text style={{ color: c.textPrimary }}>{slugStr}</Text> via

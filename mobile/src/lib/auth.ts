@@ -462,6 +462,7 @@ const LOCAL_KEY_PREFIX = "yaver_key_";
 /** Known local key names */
 export const LOCAL_KEYS = {
   speechApiKey: `${LOCAL_KEY_PREFIX}speech`,
+  openAiApiKey: `${LOCAL_KEY_PREFIX}openai_api_key`,
   relayPassword: `${LOCAL_KEY_PREFIX}relay_password`,
   relayUrl: `${LOCAL_KEY_PREFIX}relay_url`,
   tunnelUrl: `${LOCAL_KEY_PREFIX}tunnel_url`,
