@@ -64,6 +64,7 @@ jobs:
         run: cd web && npm run deploy
 
       - name: Update Convex web version
+        if: ${{ secrets.CONVEX_DEPLOY_KEY != '' }}
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
         run: |
