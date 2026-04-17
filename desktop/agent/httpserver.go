@@ -1540,6 +1540,11 @@ func (s *HTTPServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	projects := listDiscoveredProjects()
+	if len(projects) == 0 {
+		log.Printf("[projects] Discovery cache empty; rescanning local roots now")
+		discoverProjects()
+		projects = listDiscoveredProjects()
+	}
 	type projectResp struct {
 		Name      string   `json:"name"`
 		Path      string   `json:"path"`

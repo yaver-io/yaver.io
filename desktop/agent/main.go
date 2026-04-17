@@ -31,7 +31,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.95.3"
+const version = "1.95.4"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
@@ -1045,6 +1045,96 @@ func pidFilePath() string {
 	return filepath.Join(dir, "agent.pid")
 }
 
+func shouldTrackPrimaryAgent(httpPort int) bool {
+	return httpPort == 18080
+}
+
+type localAgentHealthInfo struct {
+	OK          bool   `json:"ok"`
+	Hostname    string `json:"hostname"`
+	Version     string `json:"version"`
+	AuthExpired bool   `json:"authExpired"`
+}
+
+type localAgentInfo struct {
+	OK       bool   `json:"ok"`
+	Hostname string `json:"hostname"`
+	Version  string `json:"version"`
+	WorkDir  string `json:"workDir"`
+	Project  string `json:"project"`
+}
+
+func probeLocalAgentHealthInfo(port int) *localAgentHealthInfo {
+	client := &http.Client{Timeout: 800 * time.Millisecond}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/health", port))
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil
+	}
+	var out localAgentHealthInfo
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil
+	}
+	if !out.OK {
+		return nil
+	}
+	return &out
+}
+
+func probeAuthedLocalAgentInfo(port int, authToken string) *localAgentInfo {
+	if strings.TrimSpace(authToken) == "" {
+		return nil
+	}
+	req, err := newBearerRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/info", port), authToken, nil)
+	if err != nil {
+		return nil
+	}
+	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil
+	}
+	var out localAgentInfo
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil
+	}
+	if !out.OK {
+		return nil
+	}
+	return &out
+}
+
+func refreshExistingLocalAgent(authToken string, httpPort int, workDir string) {
+	if strings.TrimSpace(authToken) == "" {
+		return
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	if strings.TrimSpace(workDir) != "" {
+		body, _ := json.Marshal(map[string]string{"workDir": workDir})
+		req, err := newBearerRequest(http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/agent/workdir", httpPort), authToken, bytes.NewReader(body))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/json")
+			if resp, err := client.Do(req); err == nil {
+				resp.Body.Close()
+			}
+		}
+	}
+	req, err := newBearerRequest(http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/projects/refresh", httpPort), authToken, nil)
+	if err != nil {
+		return
+	}
+	if resp, err := client.Do(req); err == nil {
+		resp.Body.Close()
+	}
+}
+
 // logFilePath returns the path to the log file.
 func logFilePath() string {
 	dir, err := ConfigDir()
@@ -1061,6 +1151,10 @@ func logFilePath() string {
 // never aborts the caller — the user can always run `yaver serve`
 // manually.
 func startServeIfStopped() {
+	if probeLocalAgentHealthInfo(18080) != nil {
+		fmt.Println("Agent is already running.")
+		return
+	}
 	if _, running := isAgentRunning(); running {
 		fmt.Println("Agent is already running.")
 		return
@@ -1229,12 +1323,27 @@ func runServe(args []string) {
 
 	maybeRunMacOSPermissionOnboarding("serve")
 
-	// If already running, stop the old instance and restart with new binary
-	if !*debug {
+	cfgForReuse, _ := LoadConfig()
+	authTokenForReuse := ""
+	if cfgForReuse != nil {
+		authTokenForReuse = cfgForReuse.AuthToken
+	}
+
+	// Primary local agent port should be reused instead of blindly forking
+	// another daemon that collides on the same control-plane sockets.
+	if !*debug && shouldTrackPrimaryAgent(*httpPort) {
+		if health := probeLocalAgentHealthInfo(*httpPort); health != nil {
+			refreshExistingLocalAgent(authTokenForReuse, *httpPort, *workDir)
+			fmt.Printf("Yaver agent already running on :%d", *httpPort)
+			if health.Version != "" {
+				fmt.Printf(" (v%s)", health.Version)
+			}
+			fmt.Println(". Reusing the live process.")
+			return
+		}
 		if pid, running := isAgentRunning(); running {
-			fmt.Printf("Restarting Yaver agent (stopping PID %d)...\n", pid)
+			fmt.Printf("Restarting stale Yaver agent (stopping PID %d)...\n", pid)
 			runStop()
-			// Brief pause to let the port be released
 			time.Sleep(500 * time.Millisecond)
 		}
 	}
@@ -1364,8 +1473,10 @@ func runServe(args []string) {
 		}
 
 		// Write PID file
-		if err := os.WriteFile(pidFilePath(), []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0644); err != nil {
-			log.Printf("warning: could not write PID file: %v", err)
+		if shouldTrackPrimaryAgent(*httpPort) {
+			if err := os.WriteFile(pidFilePath(), []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0644); err != nil {
+				log.Printf("warning: could not write PID file: %v", err)
+			}
 		}
 
 		lf.Close()
@@ -1590,8 +1701,10 @@ func runServe(args []string) {
 	}
 
 	// Write PID file (for debug mode too, so stop/status work)
-	if err := os.WriteFile(pidFilePath(), []byte(fmt.Sprintf("%d", os.Getpid())), 0644); err != nil {
-		log.Printf("warning: could not write PID file: %v", err)
+	if shouldTrackPrimaryAgent(*httpPort) {
+		if err := os.WriteFile(pidFilePath(), []byte(fmt.Sprintf("%d", os.Getpid())), 0644); err != nil {
+			log.Printf("warning: could not write PID file: %v", err)
+		}
 	}
 
 	// Resolve runner config (fetch user settings, fall back to auto-detect)
@@ -2186,6 +2299,11 @@ func runLogs(args []string) {
 func runStop() {
 	pid, running := isAgentRunning()
 	if !running {
+		cfg, err := LoadConfig()
+		if err == nil && cfg != nil && cfg.AuthToken != "" && probeLocalAgentHealthInfo(18080) != nil {
+			runShutdown()
+			return
+		}
 		fmt.Println("Yaver agent is not running.")
 		return
 	}
@@ -2240,16 +2358,21 @@ func killOrphanRunners() {
 // ---------------------------------------------------------------------------
 
 func runShutdown() {
-	pid, running := isAgentRunning()
-	if !running {
+	cfg, err := LoadConfig()
+	if err != nil || cfg.AuthToken == "" {
+		_, running := isAgentRunning()
+		if running {
+			fmt.Println("Not signed in — using kill instead.")
+			runStop()
+			return
+		}
 		fmt.Println("Yaver agent is not running.")
 		return
 	}
 
-	cfg, err := LoadConfig()
-	if err != nil || cfg.AuthToken == "" {
-		fmt.Println("Not signed in — using kill instead.")
-		runStop()
+	pid, running := isAgentRunning()
+	if !running && probeLocalAgentHealthInfo(18080) == nil {
+		fmt.Println("Yaver agent is not running.")
 		return
 	}
 
@@ -2268,9 +2391,13 @@ func runShutdown() {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 200 {
-		fmt.Printf("Shutdown signal sent to agent (PID %d) — stopping gracefully.\n", pid)
+		if running {
+			fmt.Printf("Shutdown signal sent to agent (PID %d) — stopping gracefully.\n", pid)
+		} else {
+			fmt.Println("Shutdown signal sent to running agent — stopping gracefully.")
+		}
 		// Wait for process to exit
-		for i := 0; i < 50; i++ {
+		for i := 0; i < 50 && running; i++ {
 			time.Sleep(100 * time.Millisecond)
 			if !isProcessAlive(pid) {
 				break
@@ -2280,7 +2407,9 @@ func runShutdown() {
 		fmt.Println("Agent stopped.")
 	} else {
 		fmt.Printf("Shutdown API returned %d — falling back to kill\n", resp.StatusCode)
-		runStop()
+		if running {
+			runStop()
+		}
 	}
 }
 
@@ -3432,14 +3561,27 @@ func runStatus() {
 	// Check agent first (local, instant). Prefix with a green dot
 	// for running, red dot for stopped so terminals with color
 	// show intent at a glance.
+	liveHealth := probeLocalAgentHealthInfo(18080)
+	liveInfo := probeAuthedLocalAgentInfo(18080, cfg.AuthToken)
 	agentStatus := "\033[31m●\033[0m stopped"
-	if pid, running := isAgentRunning(); running {
-		agentStatus = fmt.Sprintf("\033[32m●\033[0m running (PID %d)", pid)
+	if liveHealth != nil {
+		agentStatus = "\033[32m●\033[0m running (port 18080)"
+		if pid, running := isAgentRunning(); running {
+			agentStatus = fmt.Sprintf("\033[32m●\033[0m running (PID %d, port 18080)", pid)
+		}
+	} else if pid, running := isAgentRunning(); running {
+		agentStatus = fmt.Sprintf("\033[33m●\033[0m pidfile says running (PID %d, port 18080 unreachable)", pid)
 	}
 	fmt.Printf("Yaver:    v%s\n", version)
 
 	// Print local info immediately
 	fmt.Printf("Agent:    %s\n", agentStatus)
+	if liveInfo != nil && liveInfo.WorkDir != "" {
+		fmt.Printf("Workdir:  %s\n", liveInfo.WorkDir)
+	}
+	if liveHealth != nil && liveHealth.Version != "" {
+		fmt.Printf("Binary:   v%s\n", liveHealth.Version)
+	}
 	if cfg.DeviceID != "" {
 		fmt.Printf("Device:   %s\n", cfg.DeviceID[:8]+"...")
 	}
