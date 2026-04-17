@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "../../../src/context/ThemeContext";
@@ -7,7 +7,6 @@ import { AppBackButton } from "../../../src/components/AppBackButton";
 import { getPhoneProject, getPhoneProjectAccess, type PhoneProject, type PhoneProjectAccess } from "../../../src/lib/phoneProjects";
 
 type WorkspaceTab = "app" | "backend" | "code";
-type CodingMode = "mobile" | "remote-dev" | "yaver-cloud";
 
 export default function PhoneProjectWorkspaceScreen() {
   const c = useColors();
@@ -20,7 +19,6 @@ export default function PhoneProjectWorkspaceScreen() {
   const [access, setAccess] = useState<PhoneProjectAccess | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [tab, setTab] = useState<WorkspaceTab>("app");
-  const [codingMode, setCodingMode] = useState<CodingMode>("mobile");
 
   async function load() {
     if (!slugStr) return;
@@ -46,11 +44,13 @@ export default function PhoneProjectWorkspaceScreen() {
   const workspacePrompt = useMemo(() => {
     if (!project?.dir) return "";
     const location =
-      codingMode === "mobile"
-        ? "inside the mobile phone sandbox"
-        : codingMode === "remote-dev"
+      access?.kind === "current-agent"
+        ? "on the currently connected Yaver agent"
+        : access?.kind === "dev-hw"
           ? "on the user's remote dev machine through Yaver"
-          : "on Yaver Cloud";
+          : access?.kind === "yaver-cloud"
+            ? "on Yaver Cloud"
+            : "in the mobile sandbox";
     return [
       `You are coding for the Yaver mobile sandbox project "${project.name}".`,
       `Primary entity: ${primaryEntity}.`,
@@ -59,10 +59,16 @@ export default function PhoneProjectWorkspaceScreen() {
       `Work like a solo developer using a monorepo-style mobile/web/backend workspace, but prioritize the mobile sandbox experience first.`,
       `Show concrete progress in the task stream and suggest the next follow-up prompt.`,
     ].join("\n");
-  }, [codingMode, primaryEntity, project]);
+  }, [access?.kind, primaryEntity, project]);
 
   function openCodeLoop() {
-    if (!project?.dir) return;
+    if (!project?.dir) {
+      Alert.alert(
+        "Coding loop unavailable",
+        "Phone-local projects run in-app first. Export or bind this project to a Yaver agent or Yaver Cloud before opening the coding loop.",
+      );
+      return;
+    }
     router.navigate({
       pathname: "/(tabs)/tasks" as any,
       params: {
@@ -108,40 +114,30 @@ export default function PhoneProjectWorkspaceScreen() {
       <View style={[styles.panel, { backgroundColor: c.bgCard, borderColor: c.border }]}>
         <Text style={[styles.panelTitle, { color: c.textPrimary }]}>Code slice</Text>
         <Text style={[styles.panelText, { color: c.textMuted }]}>
-          Use the live task stream like Claude Code / Codex. Same project, same workspace, different runner location.
+          Use the task stream after this project is on a backend with a real workspace directory.
         </Text>
-        <Text style={[styles.panelMeta, { color: c.textMuted }]}>
-          Coding mode: {codingMode === "mobile" ? "on-phone" : codingMode === "remote-dev" ? "remote dev" : "Yaver Cloud"}
-        </Text>
-        <View style={styles.modeRow}>
-          {[
-            { id: "mobile" as CodingMode, label: "On-phone" },
-            { id: "remote-dev" as CodingMode, label: "Remote dev" },
-            { id: "yaver-cloud" as CodingMode, label: "Yaver Cloud" },
-          ].map((mode) => {
-            const active = codingMode === mode.id;
-            return (
-              <Pressable
-                key={mode.id}
-                onPress={() => setCodingMode(mode.id)}
-                style={[
-                  styles.modeChip,
-                  {
-                    backgroundColor: active ? c.accent : c.bg,
-                    borderColor: c.border,
-                  },
-                ]}
-              >
-                <Text style={{ color: active ? c.bg : c.textPrimary, fontWeight: "700" }}>
-                  {mode.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-        <Pressable onPress={openCodeLoop} style={[styles.primaryBtn, { backgroundColor: c.accent }]}>
-          <Text style={{ color: c.bg, fontWeight: "700" }}>Open coding loop</Text>
-        </Pressable>
+        {project?.dir ? (
+          <>
+            <Text style={[styles.panelMeta, { color: c.textMuted }]}>
+              Backend: {access?.label ?? "Connected backend"}
+            </Text>
+            <Pressable onPress={openCodeLoop} style={[styles.primaryBtn, { backgroundColor: c.accent }]}>
+              <Text style={{ color: c.bg, fontWeight: "700" }}>Open coding loop</Text>
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <Text style={[styles.panelMeta, { color: c.textMuted }]}>
+              Phone-local init is ready. Remote coding starts after export or backend binding.
+            </Text>
+            <Pressable
+              onPress={() => router.navigate(`/phone-project/${slugStr}` as any)}
+              style={[styles.secondaryBtn, { borderColor: c.border }]}
+            >
+              <Text style={{ color: c.textPrimary, fontWeight: "700" }}>Open backend controls</Text>
+            </Pressable>
+          </>
+        )}
       </View>
     );
 
@@ -171,10 +167,10 @@ export default function PhoneProjectWorkspaceScreen() {
             Local runtime: on-device SQLite
           </Text>
           <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 4 }}>
-            Active backend: {access?.label ?? "On-device SQLite"}
+            Active backend: {access?.label ?? "This phone"}
           </Text>
           <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 2 }}>
-            Export path: developer hardware → Yaver Cloud → optional Convex/Supabase reassurance
+            Export path: phone → Yaver agent → Yaver Cloud
           </Text>
         </View>
         <View style={styles.tabRow}>
@@ -249,17 +245,5 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     alignItems: "center",
     marginTop: 14,
-  },
-  modeRow: {
-    flexDirection: "row",
-    gap: 8,
-    marginTop: 12,
-    flexWrap: "wrap",
-  },
-  modeChip: {
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
   },
 });

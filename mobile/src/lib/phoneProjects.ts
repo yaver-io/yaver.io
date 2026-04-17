@@ -131,7 +131,7 @@ export interface PhoneCreateSpec {
 
 export type PhonePromoteTarget = string;
 
-export type PhoneBackendKind = "local" | "dev-hw" | "yaver-cloud" | "custom";
+export type PhoneBackendKind = "local" | "current-agent" | "dev-hw" | "yaver-cloud" | "custom";
 
 export interface PhoneProjectAccess {
   sourceSlug: string;
@@ -464,15 +464,115 @@ function bindingKey(sourceSlug: string): string {
   return `${PHONE_BACKEND_BINDING_PREFIX}${encodeURIComponent(sourceSlug)}`;
 }
 
+export interface PhoneProjectDraft {
+  template?: string;
+  schema?: PhoneSchema;
+  auth?: PhoneAuth;
+  seed?: PhoneSeed;
+  app?: PhoneAppSpec;
+}
+
+function extractJsonObject(text: string): string {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) return fenced[1].trim();
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start >= 0 && end > start) return text.slice(start, end + 1);
+  return text.trim();
+}
+
+function sanitizePhoneProjectDraft(value: unknown): PhoneProjectDraft {
+  if (!value || typeof value !== "object") return {};
+  const raw = value as Record<string, unknown>;
+  const next: PhoneProjectDraft = {};
+  if (typeof raw.template === "string" && raw.template.trim()) {
+    next.template = raw.template.trim();
+  }
+  if (raw.schema && typeof raw.schema === "object") {
+    next.schema = cloneSchema(raw.schema as PhoneSchema);
+  }
+  if (raw.auth && typeof raw.auth === "object") {
+    next.auth = cloneAuth(raw.auth as PhoneAuth);
+  }
+  if (raw.seed && typeof raw.seed === "object") {
+    next.seed = cloneSeed(raw.seed as PhoneSeed);
+  }
+  if (raw.app && typeof raw.app === "object") {
+    next.app = cloneApp(raw.app as PhoneAppSpec);
+  }
+  return next;
+}
+
+export async function generatePhoneProjectDraftFromPrompt(args: {
+  apiKey: string;
+  name: string;
+  prompt: string;
+  template?: string;
+}): Promise<PhoneProjectDraft> {
+  const key = args.apiKey.trim();
+  const prompt = args.prompt.trim();
+  if (!key) throw new Error("OpenAI API key is required");
+  if (!prompt) return {};
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-4.1-mini",
+      temperature: 0.3,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "Return compact JSON only. Design a simple mobile-first monorepo-ready app skeleton for a local SQLite sandbox. Use tables with basic primary keys, lightweight personas, small seed data, and app screens that are easy to run from a phone. Prefer clear, minimal schemas.",
+        },
+        {
+          role: "user",
+          content: [
+            `Project name: ${args.name.trim()}.`,
+            `Fallback template: ${args.template ?? "todos"}.`,
+            `Prompt: ${prompt}`,
+            'Return JSON with optional keys: "template", "schema", "auth", "seed", "app".',
+            'The "schema" must use { tables: [{ name, columns, indexes? }], relations? }.',
+            'The "auth" must use { personas: [{ id, email, name?, role? }] }.',
+            'The "app" may use { summary, primaryEntity, screens: [{ id, title, kind, table?, emptyState?, actions? }] }.',
+            "Keep the output small and practical.",
+          ].join("\n"),
+        },
+      ],
+    }),
+  });
+  const text = await res.text().catch(() => "");
+  if (!res.ok) {
+    throw new Error(text || `OpenAI HTTP ${res.status}`);
+  }
+  const json = JSON.parse(text) as {
+    choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;
+  };
+  const content = json.choices?.[0]?.message?.content;
+  const rawText = Array.isArray(content)
+    ? content
+        .map((item) => (typeof item?.text === "string" ? item.text : ""))
+        .join("")
+    : typeof content === "string"
+      ? content
+      : "";
+  const parsed = JSON.parse(extractJsonObject(rawText || "{}")) as unknown;
+  return sanitizePhoneProjectDraft(parsed);
+}
+
 export async function getPhoneProjectAccess(sourceSlug: string): Promise<PhoneProjectAccess> {
   try {
     const raw = await AsyncStorage.getItem(bindingKey(sourceSlug));
     if (!raw) {
-      return { sourceSlug, slug: sourceSlug, kind: "local", label: "On-device SQLite" };
+      return { sourceSlug, slug: sourceSlug, kind: "local", label: "This phone" };
     }
     const parsed = JSON.parse(raw) as StoredPhoneProjectBinding;
     if (!parsed?.baseUrl || !parsed?.slug || !parsed?.kind) {
-      return { sourceSlug, slug: sourceSlug, kind: "local", label: "On-device SQLite" };
+      return { sourceSlug, slug: sourceSlug, kind: "local", label: "This phone" };
     }
     return {
       sourceSlug,
@@ -483,8 +583,26 @@ export async function getPhoneProjectAccess(sourceSlug: string): Promise<PhonePr
       boundAt: parsed.boundAt,
     };
   } catch {
-    return { sourceSlug, slug: sourceSlug, kind: "local", label: "On-device SQLite" };
+    return { sourceSlug, slug: sourceSlug, kind: "local", label: "This phone" };
   }
+}
+
+export async function bindPhoneProjectToCurrentAgent(
+  sourceSlug: string,
+  slug = sourceSlug,
+  label = "Current Yaver Agent",
+): Promise<void> {
+  const url = baseUrl();
+  if (!url) throw new Error("no agent connected");
+  const value: StoredPhoneProjectBinding = {
+    version: 1,
+    slug,
+    kind: "current-agent",
+    label,
+    baseUrl: url,
+    boundAt: new Date().toISOString(),
+  };
+  await AsyncStorage.setItem(bindingKey(sourceSlug), JSON.stringify(value));
 }
 
 export async function bindPhoneProjectToTarget(

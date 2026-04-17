@@ -94,6 +94,12 @@ export default function SettingsScreen() {
   // Key storage preference: "local" = device Keychain only, "cloud" = sync to Convex
   const [keyStorage, setKeyStorage] = useState<KeyStorage>("local");
 
+  // Contributor dogfood
+  const [dogfoodRepoDir, setDogfoodRepoDir] = useState("");
+  const [dogfoodPrompt, setDogfoodPrompt] = useState(
+    "Refresh Yaver using Yaver. Use the Go agent for code changes, keep the mobile app loadable in Yaver, and prefer Hermes/mobile-safe workflows.",
+  );
+
 
   // Test App
   const [showTestApp, setShowTestApp] = useState(false);
@@ -136,6 +142,7 @@ export default function SettingsScreen() {
   const RELAYS_KEY = customRelaysKey(user?.id);
   const TUNNELS_KEY = customTunnelsKey(user?.id);
   const SYNC_KEY = user?.id ? `@yaver/u/${user.id}/relay_sync_enabled` : "@yaver/relay_sync_enabled";
+  const DOGFOOD_KEY = user?.id ? `@yaver/u/${user.id}/dogfood_yaver` : "@yaver/dogfood_yaver";
 
   // Load custom relay servers and sync preference from AsyncStorage
   useEffect(() => {
@@ -163,6 +170,14 @@ export default function SettingsScreen() {
         } catch {}
       }
     });
+    AsyncStorage.getItem(DOGFOOD_KEY).then((raw) => {
+      if (!raw) return;
+      try {
+        const cfg = JSON.parse(raw);
+        if (typeof cfg.repoDir === "string") setDogfoodRepoDir(cfg.repoDir);
+        if (typeof cfg.prompt === "string" && cfg.prompt.trim()) setDogfoodPrompt(cfg.prompt);
+      } catch {}
+    });
     // Load feedback SDK config
     const fbKey = user?.id ? `@yaver/u/${user.id}/feedback_config` : "@yaver/feedback_config";
     AsyncStorage.getItem(fbKey).then((raw) => {
@@ -178,7 +193,63 @@ export default function SettingsScreen() {
         } catch {}
       }
     });
-  }, []);
+  }, [DOGFOOD_KEY, RELAYS_KEY, SYNC_KEY, TUNNELS_KEY, user?.id]);
+
+  const saveDogfoodConfig = async (patch: { repoDir?: string; prompt?: string }) => {
+    const next = {
+      repoDir: patch.repoDir ?? dogfoodRepoDir,
+      prompt: patch.prompt ?? dogfoodPrompt,
+    };
+    await AsyncStorage.setItem(DOGFOOD_KEY, JSON.stringify(next));
+  };
+
+  const openDogfoodTask = (mode: "code" | "hermes") => {
+    const dir = dogfoodRepoDir.trim();
+    if (!dir) {
+      Alert.alert("Dogfood Yaver", "Set the Yaver repository path first.");
+      return;
+    }
+    if (connectionStatus !== "connected" || !activeDevice) {
+      Alert.alert("Dogfood Yaver", "Connect a Yaver agent first.");
+      return;
+    }
+    const prompt =
+      mode === "code"
+        ? [
+            dogfoodPrompt.trim() || "Refresh Yaver using Yaver.",
+            "Repository: Yaver.",
+            "Use the connected Go agent as the execution backend.",
+            "Keep changes compatible with the mobile app, the Go agent, and contributor dogfooding flows.",
+            "If Hermes/mobile refresh is needed later, keep Metro/Hermes steps ready but do not start unnecessary native builds.",
+          ].join("\n")
+        : [
+            "Refresh the Yaver mobile app inside Yaver using the connected Go agent.",
+            `Work directory: ${dir}`,
+            "Start the JS dev flow needed for Hermes/mobile refresh.",
+            "Use Metro/dev-server style workflows only.",
+            "Do not run expo run:ios, xcodebuild, gradlew, or other native build/install commands unless explicitly required.",
+            "Prepare the app so it can be loaded back into the Yaver mobile shell.",
+          ].join("\n");
+    router.navigate({
+      pathname: "/(tabs)/tasks" as any,
+      params: {
+        dir,
+        prompt,
+        runner: selectedRunner || undefined,
+        title: mode === "code" ? "Dogfood Yaver" : "Dogfood Hermes",
+        openNew: "1",
+      },
+    } as any);
+  };
+
+  const openDogfoodProject = () => {
+    const dir = dogfoodRepoDir.trim();
+    if (!dir) {
+      Alert.alert("Dogfood Yaver", "Set the Yaver repository path first.");
+      return;
+    }
+    router.navigate({ pathname: "/(tabs)/project", params: { dir } } as any);
+  };
 
   const saveCustomRelays = async (relays: RelayServer[]) => {
     setCustomRelays(relays);
@@ -2333,6 +2404,102 @@ export default function SettingsScreen() {
             >
               <Text style={{ fontSize: 13, color: c.accent }}>
                 Learn more {"\u203A"}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Dogfood Yaver</Text>
+          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+            <Text style={[styles.aboutLabel, { color: c.textPrimary, marginBottom: 4 }]}>
+              Develop Yaver with Yaver
+            </Text>
+            <Text style={{ color: c.textMuted, fontSize: 11, marginBottom: 12, lineHeight: 16 }}>
+              Point this at the Yaver monorepo on your dev machine, then launch coding or Hermes refresh through the connected Go agent.
+            </Text>
+
+            <Text style={[styles.sectionLabel, { color: c.textMuted, marginBottom: 8 }]}>Repo path</Text>
+            <TextInput
+              value={dogfoodRepoDir}
+              onChangeText={(text) => {
+                setDogfoodRepoDir(text);
+                saveDogfoodConfig({ repoDir: text }).catch(() => {});
+              }}
+              placeholder="/Users/you/Workspace/yaver.io"
+              placeholderTextColor={c.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              spellCheck={false}
+              style={[styles.editNameInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
+            />
+
+            <Text style={[styles.sectionLabel, { color: c.textMuted, marginTop: 12, marginBottom: 8 }]}>Bootstrap prompt</Text>
+            <TextInput
+              value={dogfoodPrompt}
+              onChangeText={(text) => {
+                setDogfoodPrompt(text);
+                saveDogfoodConfig({ prompt: text }).catch(() => {});
+              }}
+              placeholder="Refresh Yaver using Yaver..."
+              placeholderTextColor={c.textMuted}
+              multiline
+              style={[
+                styles.editNameInput,
+                {
+                  color: c.textPrimary,
+                  borderColor: c.border,
+                  backgroundColor: c.bg,
+                  minHeight: 84,
+                  textAlignVertical: "top",
+                },
+              ]}
+            />
+
+            <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 10 }}>
+              Backend: {connectionStatus === "connected" && activeDevice ? activeDevice.name : "No connected Go agent"}
+            </Text>
+
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.editNameButton,
+                  { flex: 1, backgroundColor: c.accent, alignItems: "center" },
+                  pressed && { opacity: 0.7 },
+                ]}
+                onPress={() => openDogfoodTask("code")}
+              >
+                <Text style={styles.editNameButtonText}>Open coding loop</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.editNameButton,
+                  { flex: 1, backgroundColor: c.bg, borderWidth: 1, borderColor: c.border, alignItems: "center" },
+                  pressed && { opacity: 0.7 },
+                ]}
+                onPress={() => openDogfoodTask("hermes")}
+              >
+                <Text style={[styles.editNameButtonText, { color: c.textPrimary }]}>Kick Hermes refresh</Text>
+              </Pressable>
+            </View>
+
+            <Pressable
+              style={({ pressed }) => [
+                {
+                  marginTop: 10,
+                  paddingVertical: 10,
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  borderColor: c.border,
+                  alignItems: "center",
+                  backgroundColor: c.bg,
+                },
+                pressed && { opacity: 0.7 },
+              ]}
+              onPress={openDogfoodProject}
+            >
+              <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13 }}>
+                Open Yaver workspace
               </Text>
             </Pressable>
           </View>

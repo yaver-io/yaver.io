@@ -23,15 +23,18 @@ import {
   PhoneProject,
   PhonePushTarget,
   PhoneTemplate,
+  bindPhoneProjectToCurrentAgent,
+  bindPhoneProjectToTarget,
   createLocalPhoneProject,
   createPhoneProject,
   createPhoneProjectAt,
   deletePhoneProject,
+  generatePhoneProjectDraftFromPrompt,
   listPhoneProjects,
   listPhoneTemplates,
 } from "../src/lib/phoneProjects";
 
-type StartMode = "this-device" | "dev-hw" | "yaver-cloud";
+type StartMode = "this-phone" | "current-agent" | "dev-hw" | "yaver-cloud";
 type GitMode = "skip" | "later" | "providers-now";
 type CodingMode = "phone" | "runner";
 
@@ -75,12 +78,7 @@ export default function PhoneProjectsScreen() {
   const [codingMode, setCodingMode] = useState<CodingMode>(connected ? "runner" : "phone");
   const [openAiKey, setOpenAiKey] = useState("");
 
-  // yc.md §Wedge Demo — user picks where the mini-backend lives at creation
-  // time. "this-device" is the pragmatic default (lives on whichever agent
-  // the phone is currently connected to; in practice that's the user's Mac).
-  // The three-tier continuum per MOBILE_WORKER.md §Portability Contract:
-  // phone → user's own hardware → Yaver managed cloud.
-  const [startMode, setStartMode] = useState<StartMode>("this-device");
+  const [startMode, setStartMode] = useState<StartMode>("this-phone");
   const devMachines = useMemo(
     () => pickDevMachines(devices, activeDevice?.id),
     [devices, activeDevice?.id],
@@ -114,6 +112,11 @@ export default function PhoneProjectsScreen() {
       setCodingMode("phone");
     }
   }, [codingMode, connected]);
+  useEffect(() => {
+    if (!connected && startMode !== "this-phone") {
+      setStartMode("this-phone");
+    }
+  }, [connected, startMode]);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -150,23 +153,49 @@ export default function PhoneProjectsScreen() {
       Alert.alert("Connect a runner", "Remote coding needs a connected Yaver runner.");
       return;
     }
+    if (codingMode === "runner" && startMode === "this-phone") {
+      Alert.alert(
+        "Pick a backend",
+        "Remote runner coding starts after you create this project on a Yaver agent, your dev machine, or Yaver Cloud.",
+      );
+      return;
+    }
     setCreating(true);
     try {
       if (codingMode === "phone" && openAiKey.trim()) {
         await saveLocalSecret(LOCAL_KEYS.openAiApiKey, openAiKey.trim());
       }
+      const draft =
+        codingMode === "phone" && prompt.trim()
+          ? await generatePhoneProjectDraftFromPrompt({
+              apiKey: openAiKey.trim(),
+              name: name.trim(),
+              prompt: prompt.trim(),
+              template,
+            })
+          : {};
       const spec = {
         name: name.trim(),
-        template: prompt.trim() ? undefined : template,
+        template: draft.template ?? (prompt.trim() ? undefined : template),
+        schema: draft.schema,
+        auth: draft.auth,
+        seed: draft.seed,
+        app: draft.app,
         prompt: prompt.trim() || undefined,
         runner: prompt.trim() && codingMode === "runner" ? runner || undefined : undefined,
       };
       let p: PhoneProject | null = null;
-      let where = "";
 
-      if (startMode === "this-device") {
-        p = connected ? await createPhoneProject(spec) : await createLocalPhoneProject(spec);
-        where = connected ? "on this device" : "in the phone sandbox";
+      if (startMode === "this-phone") {
+        p = await createLocalPhoneProject(spec);
+      } else if (startMode === "current-agent") {
+        if (!connected) {
+          throw new Error("Connect a Yaver agent first.");
+        }
+        p = await createPhoneProject(spec);
+        if (p) {
+          await bindPhoneProjectToCurrentAgent(p.slug, p.slug, activeDevice?.name || "Current Yaver Agent");
+        }
       } else if (startMode === "dev-hw") {
         if (!selectedDevMachine) {
           throw new Error("No dev machine online. Sign in with Yaver on your Mac/Pi/Linux.");
@@ -183,12 +212,11 @@ export default function PhoneProjectsScreen() {
           relayHttpUrl,
         };
         p = await createPhoneProjectAt(target, spec);
-        where = `on ${selectedDevMachine.name}`;
+        await bindPhoneProjectToTarget(p.slug, target, { slug: p.slug, localUrl: "", browseUrl: "", project: p }, selectedDevMachine.name);
       } else {
-        // yaver-cloud
         const target: PhonePushTarget = { kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE };
         p = await createPhoneProjectAt(target, spec);
-        where = "on Yaver Cloud";
+        await bindPhoneProjectToTarget(p.slug, target, { slug: p.slug, localUrl: "", browseUrl: "", project: p }, "Yaver Cloud");
       }
 
       if (!p) throw new Error("target returned no project");
@@ -198,35 +226,18 @@ export default function PhoneProjectsScreen() {
       setGitMode("skip");
       setStep(0);
       setShowForm(false);
-      // Only refresh the local list — remote projects aren't in the user's
-      // connected-agent list, so jumping straight to the detail screen for
-      // a local project is the useful UX. For remote, show a toast.
-      if (startMode === "this-device") {
-        await load();
-        router.navigate(`/phone-project/${p.slug}` as any);
-        if (!connected && prompt.trim()) {
-          Alert.alert(
-            "Sandbox project created",
-            "The local phone sandbox is ready. Prompt-driven first-draft generation still needs a connected Yaver runner, but you can run the app, shape the schema, and export later from this phone.",
-          );
-        }
-        if (gitMode !== "skip") {
-          Alert.alert(
-            "Git is optional",
-            connected
-              ? "This project was created as a monorepo-oriented sandbox workspace. Git setup is optional; when you are ready, open Git Providers and connect the host you want Yaver to push from."
-              : "This project was created locally on your phone. Git remains optional. Connect a Yaver dev machine later if you want provider-backed monorepo export and push.",
-          );
-          if (gitMode === "providers-now" && connected) {
-            router.navigate("/(tabs)/gitproviders" as any);
-          }
-        }
-      } else {
+      await load();
+      router.navigate(`/phone-project/${p.slug}` as any);
+      if (gitMode !== "skip") {
         Alert.alert(
-          "Created",
-          `"${p.name}" is now running ${where}. Slug: ${p.slug}. It'll show up here once you connect to that agent.`,
+          "Git is optional",
+          connected
+            ? "Connect Git Providers when you want Yaver to export or push this monorepo."
+            : "Git setup is optional. Connect a Yaver machine later if you want provider-backed export or push.",
         );
-        await load();
+        if (gitMode === "providers-now" && connected) {
+          router.navigate("/(tabs)/gitproviders" as any);
+        }
       }
     } catch (e: any) {
       Alert.alert("Phone Backend", e?.message ?? "failed to create");
@@ -278,6 +289,7 @@ export default function PhoneProjectsScreen() {
             <Pressable
               onPress={() => {
                 setStep(0);
+                setStartMode("this-phone");
                 setShowForm(true);
               }}
               style={[styles.btn, { backgroundColor: c.accent, marginTop: 12 }]}
@@ -285,7 +297,7 @@ export default function PhoneProjectsScreen() {
               <Text style={[styles.btnText, { color: c.bg }]}>+ New mobile app</Text>
             </Pressable>
             <Text style={[styles.muted, { color: c.textMuted, marginTop: 8 }]}>
-              {connected ? "Phone or runner. You choose at the next step." : "Runs locally on this phone."}
+              {connected ? "Start on your phone or a Yaver backend." : "Runs locally on this phone."}
             </Text>
           </>
         ) : (
@@ -394,7 +406,7 @@ export default function PhoneProjectsScreen() {
                       style={[styles.input, { color: c.textPrimary, borderColor: c.border }]}
                     />
                     <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
-                      Required for on-phone coding.
+                      Required for phone-side AI kickoff.
                     </Text>
                   </>
                 ) : null}
@@ -443,9 +455,15 @@ export default function PhoneProjectsScreen() {
                 {(
                   [
                     {
-                      id: "this-device" as StartMode,
-                      label: connected ? "Current device" : "This phone",
-                      sub: connected ? activeDevice?.name || "Connected device" : "Local sandbox",
+                      id: "this-phone" as StartMode,
+                      label: "This phone",
+                      sub: "Local SQLite sandbox",
+                    },
+                    {
+                      id: "current-agent" as StartMode,
+                      label: "Current Yaver Agent",
+                      sub: activeDevice?.name || "Connected agent",
+                      disabled: !connected,
                     },
                     {
                       id: "dev-hw" as StartMode,
@@ -492,9 +510,9 @@ export default function PhoneProjectsScreen() {
                 <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Git</Text>
                 {(
                   [
-                    { id: "skip" as GitMode, label: "Not now" },
+                    { id: "skip" as GitMode, label: "No Git" },
                     { id: "later" as GitMode, label: "Later" },
-                    { id: "providers-now" as GitMode, label: "Providers", disabled: !connected },
+                    { id: "providers-now" as GitMode, label: "Connect now", disabled: !connected },
                   ] as const
                 ).map((opt) => (
                   <Pressable
