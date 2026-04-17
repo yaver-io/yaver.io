@@ -504,6 +504,7 @@ function sanitizePhoneProjectDraft(value: unknown): PhoneProjectDraft {
 }
 
 export async function generatePhoneProjectDraftFromPrompt(args: {
+  provider?: "openai" | "glm";
   apiKey: string;
   name: string;
   prompt: string;
@@ -511,16 +512,25 @@ export async function generatePhoneProjectDraftFromPrompt(args: {
 }): Promise<PhoneProjectDraft> {
   const key = args.apiKey.trim();
   const prompt = args.prompt.trim();
-  if (!key) throw new Error("OpenAI API key is required");
+  const provider = args.provider === "glm" ? "glm" : "openai";
+  if (!key) {
+    throw new Error(provider === "glm" ? "GLM API key is required" : "OpenAI API key is required");
+  }
   if (!prompt) return {};
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  const endpoint =
+    provider === "glm"
+      ? "https://api.z.ai/api/paas/v4/chat/completions"
+      : "https://api.openai.com/v1/chat/completions";
+  const model = provider === "glm" ? "glm-4.5-air" : "gpt-4.1-mini";
+  const providerName = provider === "glm" ? "GLM" : "OpenAI";
+  const res = await fetch(endpoint, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "gpt-4.1-mini",
+      model,
       temperature: 0.3,
       response_format: { type: "json_object" },
       messages: [
@@ -547,7 +557,7 @@ export async function generatePhoneProjectDraftFromPrompt(args: {
   });
   const text = await res.text().catch(() => "");
   if (!res.ok) {
-    throw new Error(text || `OpenAI HTTP ${res.status}`);
+    throw new Error(text || `${providerName} HTTP ${res.status}`);
   }
   const json = JSON.parse(text) as {
     choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;

@@ -86,10 +86,16 @@ export default function SettingsScreen() {
   // Speech settings
   const [speechProvider, setSpeechProvider] = useState<SpeechProvider | null>("on-device");
   const [speechApiKey, setSpeechApiKey] = useState("");
+  const [openAiApiKey, setOpenAiApiKey] = useState("");
+  const [glmApiKey, setGlmApiKey] = useState("");
+  const [anthropicApiKey, setAnthropicApiKey] = useState("");
+  const [mobileCodingProvider, setMobileCodingProvider] = useState<"openai" | "glm">("openai");
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [verbosity, setVerbosity] = useState(10);
   const [showSpeechConfig, setShowSpeechConfig] = useState(false);
   const [isSavingSpeech, setIsSavingSpeech] = useState(false);
+  const [isSavingAiProviders, setIsSavingAiProviders] = useState(false);
+  const [isSyncingAiVault, setIsSyncingAiVault] = useState(false);
 
   // Key storage preference: "local" = device Keychain only, "cloud" = sync to Convex
   const [keyStorage, setKeyStorage] = useState<KeyStorage>("local");
@@ -452,6 +458,21 @@ export default function SettingsScreen() {
       } else if (s.speechApiKey) {
         setSpeechApiKey(s.speechApiKey);
       }
+      const localOpenAi = await getLocalSecret(LOCAL_KEYS.openAiApiKey);
+      if (localOpenAi) setOpenAiApiKey(localOpenAi);
+      else if (typeof s.openAiApiKey === "string") setOpenAiApiKey(s.openAiApiKey);
+      const localGlm = await getLocalSecret(LOCAL_KEYS.glmApiKey);
+      if (localGlm) setGlmApiKey(localGlm);
+      else if (typeof s.glmApiKey === "string") setGlmApiKey(s.glmApiKey);
+      const localAnthropic = await getLocalSecret(LOCAL_KEYS.anthropicApiKey);
+      if (localAnthropic) setAnthropicApiKey(localAnthropic);
+      else if (typeof s.anthropicApiKey === "string") setAnthropicApiKey(s.anthropicApiKey);
+      const localMobileProvider = await getLocalSecret(LOCAL_KEYS.mobileCodingProvider);
+      if (localMobileProvider === "glm" || localMobileProvider === "openai") {
+        setMobileCodingProvider(localMobileProvider);
+      } else if (s.mobileCodingProvider === "glm" || s.mobileCodingProvider === "openai") {
+        setMobileCodingProvider(s.mobileCodingProvider);
+      }
     });
     getAiRunners().then(setRunners);
     getUsageSummary(token).then(setUsageSummary);
@@ -535,6 +556,81 @@ export default function SettingsScreen() {
         },
       ]
     );
+  };
+
+  const saveAiProviderSettings = async () => {
+    if (!token) return;
+    setIsSavingAiProviders(true);
+    try {
+      const cloudSettings: Record<string, any> = {
+        mobileCodingProvider,
+      };
+      const secrets: Array<[string, string]> = [
+        [LOCAL_KEYS.openAiApiKey, openAiApiKey],
+        [LOCAL_KEYS.glmApiKey, glmApiKey],
+        [LOCAL_KEYS.anthropicApiKey, anthropicApiKey],
+        [LOCAL_KEYS.mobileCodingProvider, mobileCodingProvider],
+      ];
+      if (keyStorage === "cloud") {
+        cloudSettings.openAiApiKey = openAiApiKey || "";
+        cloudSettings.glmApiKey = glmApiKey || "";
+        cloudSettings.anthropicApiKey = anthropicApiKey || "";
+        cloudSettings.mobileCodingProvider = mobileCodingProvider;
+        for (const [key] of secrets) {
+          await deleteLocalSecret(key);
+        }
+      } else {
+        for (const [key, value] of secrets) {
+          if (value) await saveLocalSecret(key, value);
+          else await deleteLocalSecret(key);
+        }
+        cloudSettings.openAiApiKey = "";
+        cloudSettings.glmApiKey = "";
+        cloudSettings.anthropicApiKey = "";
+        cloudSettings.mobileCodingProvider = "";
+      }
+      await saveUserSettings(token, cloudSettings);
+      Alert.alert("Saved", "AI provider settings saved.");
+    } catch {
+      Alert.alert("Error", "Failed to save AI provider settings.");
+    } finally {
+      setIsSavingAiProviders(false);
+    }
+  };
+
+  const syncAiProvidersToVault = async () => {
+    if (connectionStatus !== "connected") {
+      Alert.alert("Connect a device", "Connect to your own Yaver machine to sync provider keys into its vault.");
+      return;
+    }
+    if (activeDevice?.isGuest) {
+      Alert.alert("Guest machine", "Vault sync is disabled on guest connections. Connect to your own host machine instead.");
+      return;
+    }
+    setIsSyncingAiVault(true);
+    try {
+      const entries = [
+        { name: "OPENAI_API_KEY", value: openAiApiKey, notes: "Owner-only AI provider key synced from Yaver mobile." },
+        { name: "GLM_API_KEY", value: glmApiKey, notes: "Owner-only AI provider key synced from Yaver mobile." },
+        { name: "ANTHROPIC_API_KEY", value: anthropicApiKey, notes: "Owner-only AI provider key synced from Yaver mobile." },
+      ];
+      let changed = 0;
+      for (const entry of entries) {
+        if (!entry.value.trim()) continue;
+        await quicClient.vaultSet({
+          name: entry.name,
+          category: "api-key",
+          value: entry.value.trim(),
+          notes: entry.notes,
+        });
+        changed += 1;
+      }
+      Alert.alert("Vault synced", changed > 0 ? `Synced ${changed} provider key${changed === 1 ? "" : "s"} to the connected machine vault.` : "No non-empty provider keys to sync.");
+    } catch {
+      Alert.alert("Error", "Failed to sync AI provider keys to the connected machine vault.");
+    } finally {
+      setIsSyncingAiVault(false);
+    }
   };
 
   // Fetch device metrics every 60s when connected
@@ -2566,10 +2662,131 @@ export default function SettingsScreen() {
 
           {showIntegrations && (
             <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginTop: 4, padding: 16 }]}>
+              <Text style={{ color: c.textPrimary, fontWeight: "700", fontSize: 15 }}>AI Providers</Text>
+              <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 4 }}>
+                Save API keys for phone-side vibe coding. OpenAI and GLM work directly on mobile. Claude Code stays a runner on your connected machine.
+              </Text>
+
+              <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 14 }}>Preferred mobile coding provider</Text>
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                {(["openai", "glm"] as const).map((provider) => {
+                  const active = mobileCodingProvider === provider;
+                  return (
+                    <Pressable
+                      key={provider}
+                      onPress={() => setMobileCodingProvider(provider)}
+                      style={({ pressed }) => [
+                        {
+                          flex: 1,
+                          paddingVertical: 10,
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          alignItems: "center",
+                          backgroundColor: active ? c.accent : c.bg,
+                          borderColor: active ? c.accent : c.border,
+                        },
+                        pressed && { opacity: 0.7 },
+                      ]}
+                    >
+                      <Text style={{ color: active ? "#fff" : c.textPrimary, fontWeight: "600", fontSize: 13 }}>
+                        {provider === "openai" ? "OpenAI" : "GLM"}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 14 }}>OpenAI</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: c.bgInput, color: c.textPrimary, borderColor: c.border }]}
+                placeholder="sk-..."
+                placeholderTextColor={c.textMuted}
+                value={openAiApiKey}
+                onChangeText={setOpenAiApiKey}
+                autoCapitalize="none"
+                autoCorrect={false}
+                secureTextEntry
+              />
+
+              <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 12 }}>GLM / Z.ai</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: c.bgInput, color: c.textPrimary, borderColor: c.border }]}
+                placeholder="zai_..."
+                placeholderTextColor={c.textMuted}
+                value={glmApiKey}
+                onChangeText={setGlmApiKey}
+                autoCapitalize="none"
+                autoCorrect={false}
+                secureTextEntry
+              />
+
+              <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 12 }}>Anthropic / Claude API</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: c.bgInput, color: c.textPrimary, borderColor: c.border }]}
+                placeholder="sk-ant-..."
+                placeholderTextColor={c.textMuted}
+                value={anthropicApiKey}
+                onChangeText={setAnthropicApiKey}
+                autoCapitalize="none"
+                autoCorrect={false}
+                secureTextEntry
+              />
+              <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 6 }}>
+                Yaver account signup still uses Apple, Google, Microsoft, or email. OpenAI and Claude are connected as tooling providers, not Yaver login providers.
+              </Text>
+              <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 6 }}>
+                Host vault sync is owner-only. Guest sessions do not get raw provider secrets unless the host explicitly enables host-managed key usage.
+              </Text>
+
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 14 }}>
+                <Pressable
+                  onPress={saveAiProviderSettings}
+                  disabled={isSavingAiProviders}
+                  style={({ pressed }) => [
+                    {
+                      flex: 1,
+                      paddingVertical: 10,
+                      borderRadius: 8,
+                      backgroundColor: c.accent,
+                      alignItems: "center",
+                    },
+                    pressed && { opacity: 0.7 },
+                    isSavingAiProviders && { opacity: 0.5 },
+                  ]}
+                >
+                  <Text style={{ color: "#fff", fontWeight: "600", fontSize: 14 }}>
+                    {isSavingAiProviders ? "Saving..." : "Save AI Providers"}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={syncAiProvidersToVault}
+                  disabled={isSyncingAiVault || connectionStatus !== "connected" || !!activeDevice?.isGuest}
+                  style={({ pressed }) => [
+                    {
+                      flex: 1,
+                      paddingVertical: 10,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: c.border,
+                      backgroundColor: c.bg,
+                      alignItems: "center",
+                      opacity: (isSyncingAiVault || connectionStatus !== "connected" || !!activeDevice?.isGuest) ? 0.5 : 1,
+                    },
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 14 }}>
+                    {isSyncingAiVault ? "Syncing..." : "Sync To Host Vault"}
+                  </Text>
+                </Pressable>
+              </View>
+
+              <View style={[styles.separator, { backgroundColor: c.borderSubtle, marginVertical: 16 }]} />
+
               {intgLoading ? (
                 <ActivityIndicator color={c.accent} />
               ) : connectionStatus !== "connected" ? (
-                <Text style={{ color: c.textMuted, fontSize: 13 }}>Connect to a device to configure integrations.</Text>
+                <Text style={{ color: c.textMuted, fontSize: 13 }}>Connect to a device to configure host-side notifications.</Text>
               ) : (
                 <>
                   <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 12 }}>
@@ -2780,6 +2997,9 @@ export default function SettingsScreen() {
                           await saveUserSettings(token, {
                             speechProvider: undefined,
                             speechApiKey: undefined,
+                            openAiApiKey: undefined,
+                            glmApiKey: undefined,
+                            mobileCodingProvider: undefined,
                             ttsEnabled: undefined,
                             verbosity: undefined,
                             runnerId: undefined,

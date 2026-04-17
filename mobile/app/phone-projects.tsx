@@ -18,7 +18,8 @@ import { Stack, useRouter } from "expo-router";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice, type Device } from "../src/context/DeviceContext";
 import { AppBackButton } from "../src/components/AppBackButton";
-import { getLocalSecret, LOCAL_KEYS, saveLocalSecret } from "../src/lib/auth";
+import { useAuth } from "../src/context/AuthContext";
+import { getLocalSecret, getUserSettings, LOCAL_KEYS, saveLocalSecret } from "../src/lib/auth";
 import { quicClient } from "../src/lib/quic";
 import {
   PhoneProject,
@@ -38,6 +39,7 @@ import {
 type StartMode = "this-phone" | "current-agent" | "dev-hw" | "yaver-cloud";
 type GitMode = "skip" | "later" | "providers-now";
 type CodingMode = "phone" | "runner";
+type MobileAiProvider = "openai" | "glm";
 
 const YAVER_CLOUD_BASE = "https://cloud.yaver.io";
 
@@ -59,6 +61,7 @@ export default function PhoneProjectsScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { token } = useAuth();
   const { connectionStatus, devices, activeDevice } = useDevice();
   const connected = connectionStatus === "connected";
 
@@ -77,7 +80,9 @@ export default function PhoneProjectsScreen() {
   const [gitMode, setGitMode] = useState<GitMode>("skip");
   const [step, setStep] = useState(0);
   const [codingMode, setCodingMode] = useState<CodingMode>(connected ? "runner" : "phone");
+  const [mobileAiProvider, setMobileAiProvider] = useState<MobileAiProvider>("openai");
   const [openAiKey, setOpenAiKey] = useState("");
+  const [glmKey, setGlmKey] = useState("");
 
   const [startMode, setStartMode] = useState<StartMode>("this-phone");
   const devMachines = useMemo(
@@ -104,10 +109,32 @@ export default function PhoneProjectsScreen() {
     }
   }, [availableRunners, runner]);
   useEffect(() => {
-    void getLocalSecret(LOCAL_KEYS.openAiApiKey).then((value) => {
-      if (value) setOpenAiKey(value);
-    });
-  }, []);
+    let cancelled = false;
+    const loadMobileAi = async () => {
+      const [localOpenAi, localGlm, localProvider, cloud] = await Promise.all([
+        getLocalSecret(LOCAL_KEYS.openAiApiKey),
+        getLocalSecret(LOCAL_KEYS.glmApiKey),
+        getLocalSecret(LOCAL_KEYS.mobileCodingProvider),
+        token ? getUserSettings(token).catch(() => ({})) : Promise.resolve({}),
+      ]);
+      if (cancelled) return;
+      if (localOpenAi) setOpenAiKey(localOpenAi);
+      else if (typeof (cloud as any).openAiApiKey === "string") setOpenAiKey((cloud as any).openAiApiKey);
+      if (localGlm) setGlmKey(localGlm);
+      else if (typeof (cloud as any).glmApiKey === "string") setGlmKey((cloud as any).glmApiKey);
+      const savedProvider =
+        localProvider === "glm" || localProvider === "openai"
+          ? localProvider
+          : (cloud as any).mobileCodingProvider === "glm"
+            ? "glm"
+            : "openai";
+      setMobileAiProvider(savedProvider);
+    };
+    void loadMobileAi();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
   useEffect(() => {
     if (!connected && codingMode === "runner") {
       setCodingMode("phone");
@@ -146,8 +173,12 @@ export default function PhoneProjectsScreen() {
       Alert.alert("Phone Backend", "Project name is required");
       return;
     }
-    if (codingMode === "phone" && !openAiKey.trim()) {
-      Alert.alert("OpenAI key required", "On-phone coding needs your OpenAI API key.");
+    const activePhoneKey = mobileAiProvider === "glm" ? glmKey.trim() : openAiKey.trim();
+    if (codingMode === "phone" && !activePhoneKey) {
+      Alert.alert(
+        `${mobileAiProvider === "glm" ? "GLM" : "OpenAI"} key required`,
+        `On-phone coding needs your ${mobileAiProvider === "glm" ? "GLM" : "OpenAI"} API key.`,
+      );
       return;
     }
     if (codingMode === "runner" && !connected) {
@@ -166,10 +197,17 @@ export default function PhoneProjectsScreen() {
       if (codingMode === "phone" && openAiKey.trim()) {
         await saveLocalSecret(LOCAL_KEYS.openAiApiKey, openAiKey.trim());
       }
+      if (codingMode === "phone" && glmKey.trim()) {
+        await saveLocalSecret(LOCAL_KEYS.glmApiKey, glmKey.trim());
+      }
+      if (codingMode === "phone") {
+        await saveLocalSecret(LOCAL_KEYS.mobileCodingProvider, mobileAiProvider);
+      }
       const draft =
         codingMode === "phone" && prompt.trim()
           ? await generatePhoneProjectDraftFromPrompt({
-              apiKey: openAiKey.trim(),
+              provider: mobileAiProvider,
+              apiKey: activePhoneKey,
               name: name.trim(),
               prompt: prompt.trim(),
               template,
@@ -419,11 +457,39 @@ export default function PhoneProjectsScreen() {
 
                 {codingMode === "phone" ? (
                   <>
-                    <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>OpenAI API key</Text>
+                    <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>AI provider</Text>
+                    <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+                      {([
+                        { id: "openai" as MobileAiProvider, label: "OpenAI" },
+                        { id: "glm" as MobileAiProvider, label: "GLM" },
+                      ]).map((provider) => {
+                        const active = mobileAiProvider === provider.id;
+                        return (
+                          <Pressable
+                            key={provider.id}
+                            onPress={() => setMobileAiProvider(provider.id)}
+                            style={[
+                              styles.modeChip,
+                              {
+                                backgroundColor: active ? c.accent : c.bgCard,
+                                borderColor: active ? c.accent : c.border,
+                              },
+                            ]}
+                          >
+                            <Text style={{ color: active ? c.bg : c.textPrimary, fontWeight: "600" }}>
+                              {provider.label}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                    <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>
+                      {mobileAiProvider === "glm" ? "GLM API key" : "OpenAI API key"}
+                    </Text>
                     <TextInput
-                      value={openAiKey}
-                      onChangeText={setOpenAiKey}
-                      placeholder="sk-..."
+                      value={mobileAiProvider === "glm" ? glmKey : openAiKey}
+                      onChangeText={mobileAiProvider === "glm" ? setGlmKey : setOpenAiKey}
+                      placeholder={mobileAiProvider === "glm" ? "zai_..." : "sk-..."}
                       placeholderTextColor={c.textMuted}
                       autoCapitalize="none"
                       autoCorrect={false}
@@ -431,7 +497,7 @@ export default function PhoneProjectsScreen() {
                       style={[styles.input, { color: c.textPrimary, borderColor: c.border }]}
                     />
                     <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
-                      Required for phone-side AI kickoff.
+                      Required for phone-side AI kickoff. Save longer-term keys in Settings → Integrations.
                     </Text>
                   </>
                 ) : null}
