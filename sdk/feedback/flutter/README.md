@@ -401,4 +401,4 @@ The SDK provides the UI and timeline infrastructure for voice notes, but does no
 
 ## License
 
-MIT
+AGPL-3.0-only

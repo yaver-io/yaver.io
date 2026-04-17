@@ -1324,7 +1324,7 @@ return (
             <p><strong className="text-surface-100">A solo developer can start at $0.</strong></p>
             <p>The wedge is local-first: phone sandbox, then your own machine, then optional cloud.</p>
             <p>Open source and self-hosting matter. So does having a paid path for managed cloud, CI, and release distribution.</p>
-            <p className="mt-4 text-surface-500">Current repo is MIT today. If clone pressure matters, the right next move is AGPL or dual licensing, not BSD.</p>
+            <p className="mt-4 text-surface-500">The open-source repo is now AGPL-3.0-only. BSD would not have protected against a hosted clone.</p>
           </div>
         </div>
       </section>
@@ -1365,7 +1365,7 @@ return (
             />
             <FAQItem
               question="Is this really free?"
-              answer="The local-first path can start at $0: mobile app, your own machine, and self-hosted flows. The business model is managed surfaces when you want them, like Yaver Cloud, release distribution, and heavier automation. The repo is MIT today, but BSD would not protect against hosted clones; AGPL or dual licensing is the more realistic direction if clone pressure becomes the problem."
+              answer="The local-first path can start at $0: mobile app, your own machine, and self-hosted flows. The business model is managed surfaces when you want them, like Yaver Cloud, release distribution, and heavier automation. The open-source repo is AGPL-3.0-only because BSD would not protect against a fast hosted clone."
             />
           </div>
         </div>
@@ -1390,7 +1390,7 @@ return (
             </div>
           </div>
           <p className="mt-6 text-center text-xs text-surface-600">
-            Open Source Today &middot; Local First &middot;{" "}
+            AGPL-3.0-only &middot; Local First &middot;{" "}
             <a href="https://github.com/kivanccakmak/yaver.io" target="_blank" rel="noopener noreferrer" className="hover:text-surface-300">Source Code</a>
           </p>
         </div>

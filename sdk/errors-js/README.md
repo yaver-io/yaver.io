@@ -45,4 +45,4 @@ Events land in your Yaver agent's **Errors** tab (dashboard or mobile Ops screen
 
 ## License
 
-MIT. Part of [Yaver](https://yaver.io).
+AGPL-3.0-only. Part of [Yaver](https://yaver.io).
