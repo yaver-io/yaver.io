@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -49,7 +49,7 @@ func (d *androidEmuDriver) Start(ctx context.Context, outPath, runID, taskID str
 	}
 	args = append(args, "shell", "screenrecord", "--bit-rate", "2000000", tmpPath)
 	cmd := exec.Command("adb", args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setProcGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		return driverState{}, err
 	}
@@ -59,7 +59,7 @@ func (d *androidEmuDriver) Start(ctx context.Context, outPath, runID, taskID str
 
 func (d *androidEmuDriver) Stop(state driverState) error {
 	if state.Cmd != nil && state.Cmd.Process != nil {
-		_ = state.Cmd.Process.Signal(syscall.SIGINT)
+		_ = state.Cmd.Process.Signal(os.Interrupt)
 		done := make(chan error, 1)
 		go func() { done <- state.Cmd.Wait() }()
 		select {
