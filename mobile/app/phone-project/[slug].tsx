@@ -236,6 +236,7 @@ export default function PhoneProjectDetailScreen() {
     try {
       const result: PhonePushResult = await pushPhoneProject(slugStr, target, {
         onConflict: "overwrite",
+        includeData: true,
       });
       const via =
         target.kind === "dev-hw" ? selectedDevMachine?.name ?? "dev machine" : "Yaver Cloud";
@@ -378,6 +379,20 @@ export default function PhoneProjectDetailScreen() {
             <Text style={[styles.btnText, { color: "#ff6b6b" }]}>Delete</Text>
           </Pressable>
         </View>
+
+        <Pressable
+          onPress={() =>
+            router.navigate({
+              pathname: "/phone-project/oauth" as any,
+              params: { slug: slugStr },
+            })
+          }
+          style={[styles.btnSecondary, { borderColor: c.border, marginTop: 8 }]}
+        >
+          <Text style={[styles.btnText, { color: c.textPrimary }]}>
+            OAuth providers (Apple · Google · Microsoft) ›
+          </Text>
+        </Pressable>
       </View>
 
       <Text style={[styles.section, { color: c.textPrimary }]}>Tables</Text>

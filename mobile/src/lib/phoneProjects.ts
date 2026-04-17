@@ -285,6 +285,64 @@ export async function queryPhoneProject(
   return r?.result ?? null;
 }
 
+// ---- OAuth provider config (per-project) ----
+//
+// Mirrors desktop/agent/phone_oauth.go. The developer's OWN OAuth
+// credentials for Sign in with Apple / Google / Microsoft so end-users of
+// THEIR app can sign in. Secrets are stored in plaintext in the project
+// directory (0600 file perms) and travel with the push/promote path.
+
+export interface PhoneOAuthApple {
+  teamId?: string;
+  servicesId?: string;
+  keyId?: string;
+  privateKey?: string;
+  redirectURIs?: string[];
+}
+
+export interface PhoneOAuthGoogle {
+  clientId?: string;
+  clientSecret?: string;
+  redirectURIs?: string[];
+}
+
+export interface PhoneOAuthMicrosoft {
+  tenantId?: string;
+  clientId?: string;
+  clientSecret?: string;
+  redirectURIs?: string[];
+}
+
+export interface PhoneOAuthConfig {
+  apple?: PhoneOAuthApple;
+  google?: PhoneOAuthGoogle;
+  microsoft?: PhoneOAuthMicrosoft;
+}
+
+export interface PhoneOAuthStatus {
+  apple: boolean;
+  google: boolean;
+  microsoft: boolean;
+}
+
+export interface PhoneOAuthResponse {
+  config: PhoneOAuthConfig;
+  status: PhoneOAuthStatus;
+}
+
+export async function getPhoneOAuth(slug: string): Promise<PhoneOAuthResponse | null> {
+  return get<PhoneOAuthResponse>(`/phone/projects/oauth?slug=${encodeURIComponent(slug)}`);
+}
+
+/** Merge a partial patch into the project's OAuth config. Omitted providers
+ *  are left alone; an explicit empty object clears a provider. */
+export async function setPhoneOAuth(
+  slug: string,
+  patch: PhoneOAuthConfig,
+): Promise<PhoneOAuthResponse | null> {
+  return post<PhoneOAuthResponse>("/phone/projects/oauth", { slug, config: patch });
+}
+
 export function phoneExportUrl(slug: string): { uri: string; headers: Record<string, string> } | null {
   const h = headers();
   const url = baseUrl();
@@ -361,7 +419,7 @@ function resolveTargetBase(target: PhonePushTarget): string {
 export async function pushPhoneProject(
   slug: string,
   target: PhonePushTarget,
-  opts: { onConflict?: "reject" | "rename" | "overwrite"; skipSeed?: boolean } = {},
+  opts: { onConflict?: "reject" | "rename" | "overwrite"; skipSeed?: boolean; includeData?: boolean } = {},
 ): Promise<PhonePushResult> {
   const h = headers();
   const srcBase = baseUrl();
@@ -371,7 +429,7 @@ export async function pushPhoneProject(
 
   // 1. Pull the bundle from the source (the phone-backend we're connected to).
   const exportRes = await fetch(
-    `${srcBase}/phone/projects/export?slug=${encodeURIComponent(slug)}`,
+    `${srcBase}/phone/projects/export?slug=${encodeURIComponent(slug)}${opts.includeData ? "&includeData=true" : ""}`,
     { headers: h },
   );
   if (!exportRes.ok) {

@@ -96,10 +96,10 @@ type PhoneProject struct {
 
 // PhoneStats are live counts from the SQLite file.
 type PhoneStats struct {
-	TableCount int            `json:"tableCount"`
-	RowCount   int64          `json:"rowCount"`
+	TableCount int              `json:"tableCount"`
+	RowCount   int64            `json:"rowCount"`
 	PerTable   map[string]int64 `json:"perTable"`
-	DBBytes    int64          `json:"dbBytes"`
+	DBBytes    int64            `json:"dbBytes"`
 }
 
 // PhoneCreateSpec is the payload for creating a new project.
@@ -323,10 +323,10 @@ func DeletePhoneProject(slug string) error {
 
 // ---- Schema + auth + seed persistence ----
 
-func schemaPath(dir string) string  { return filepath.Join(dir, "schema.yaml") }
-func authPath(dir string) string    { return filepath.Join(dir, "auth.yaml") }
-func seedPath(dir string) string    { return filepath.Join(dir, "seed.json") }
-func dbFilePath(dir string) string  { return filepath.Join(dir, "local.db") }
+func schemaPath(dir string) string { return filepath.Join(dir, "schema.yaml") }
+func authPath(dir string) string   { return filepath.Join(dir, "auth.yaml") }
+func seedPath(dir string) string   { return filepath.Join(dir, "seed.json") }
+func dbFilePath(dir string) string { return filepath.Join(dir, "local.db") }
 
 func loadPhoneSchema(dir string) (*PhoneSchema, error) {
 	data, err := os.ReadFile(schemaPath(dir))
@@ -738,10 +738,20 @@ func PhoneAdapter(slug string) (BackendAdapter, error) {
 
 // ---- Export ----
 
-// ExportPhoneProject returns a tgz bundle of the project (sans local.db binary —
-// schema + seed are the portable representation). The bundle is a drop-in for
-// `yaver apply` on any machine.
+type PhoneExportOptions struct {
+	// IncludeData bundles the live SQLite file (`local.db`) so runtime rows
+	// survive promotion. Default false keeps the portable-manifest behavior.
+	IncludeData bool
+}
+
+// ExportPhoneProject returns the portable-manifest bundle for a project.
 func ExportPhoneProject(slug string) ([]byte, error) {
+	return ExportPhoneProjectWithOptions(slug, PhoneExportOptions{})
+}
+
+// ExportPhoneProjectWithOptions returns a tgz bundle of the project. By
+// default only the portable manifest ships; IncludeData also bundles local.db.
+func ExportPhoneProjectWithOptions(slug string, opts PhoneExportOptions) ([]byte, error) {
 	p, err := LoadPhoneProject(slug)
 	if err != nil {
 		return nil, err
@@ -779,6 +789,18 @@ func ExportPhoneProject(slug string) ([]byte, error) {
 	if b, err := os.ReadFile(seedPath(p.Dir)); err == nil {
 		_ = add("seed.json", b, 0o644)
 	}
+	if opts.IncludeData {
+		if b, err := os.ReadFile(dbFilePath(p.Dir)); err == nil {
+			_ = add("local.db", b, 0o600)
+		}
+	}
+	// OAuth provider config (Apple / Google / Microsoft client IDs + secrets).
+	// Travels with the project — the target agent will need these to serve
+	// OAuth from the deployed instance. Perms 0600 to keep the extracted
+	// file secret-grade even after untar. See phone_oauth.go.
+	if b, err := os.ReadFile(phoneOAuthPath(p.Dir)); err == nil {
+		_ = add("oauth-providers.yaml", b, 0o600)
+	}
 	// Generate CREATE TABLE statements so non-Yaver environments can import.
 	if ddl, err := generateSchemaSQL(p.Schema, "sqlite"); err == nil && ddl != "" {
 		_ = add("schema.sql", []byte(ddl), 0o644)
@@ -786,7 +808,7 @@ func ExportPhoneProject(slug string) ([]byte, error) {
 	if ddl, err := generateSchemaSQL(p.Schema, "postgres"); err == nil && ddl != "" {
 		_ = add("schema.postgres.sql", []byte(ddl), 0o644)
 	}
-	_ = add("README.md", []byte(phoneReadme(p)), 0o644)
+	_ = add("README.md", []byte(phoneReadme(p, opts)), 0o644)
 
 	if err := tw.Close(); err != nil {
 		return nil, err
@@ -797,7 +819,7 @@ func ExportPhoneProject(slug string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func phoneReadme(p *PhoneProject) string {
+func phoneReadme(p *PhoneProject, opts PhoneExportOptions) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s\n\n", p.Name)
 	fmt.Fprintf(&b, "Yaver phone-first mini-backend project (slug: `%s`).\n\n", p.Slug)
@@ -809,6 +831,9 @@ func phoneReadme(p *PhoneProject) string {
 	b.WriteString("- `auth.yaml` — persona list\n")
 	b.WriteString("- `seed.json` — fixture rows\n")
 	b.WriteString("- `schema.sql` / `schema.postgres.sql` — generated DDL for non-Yaver imports\n\n")
+	if opts.IncludeData {
+		b.WriteString("- `local.db` — live SQLite runtime rows for zero-loss promotion\n\n")
+	}
 	b.WriteString("## Promoting to a real backend\n\n")
 	b.WriteString("```\nyaver switch plan --to supabase-cloud\nyaver switch plan --to convex-cloud\nyaver switch plan --to postgres-neon\n```\n\n")
 	b.WriteString("Or open the project in the Yaver desktop app and pick a target from the switch engine UI.\n")
@@ -1137,6 +1162,10 @@ func ImportPhoneProject(tgz []byte, opts PhoneImportOptions) (*PhoneProject, err
 			}
 		}
 	}
+	var liveDB []byte
+	if !opts.SkipSeed {
+		liveDB = parts["local.db"]
+	}
 
 	// Recover the project display name from project.yaml if it's in the bundle.
 	name := slug
@@ -1158,6 +1187,11 @@ func ImportPhoneProject(tgz []byte, opts PhoneImportOptions) (*PhoneProject, err
 	})
 	if err != nil {
 		return nil, err
+	}
+	if len(liveDB) > 0 {
+		if err := os.WriteFile(dbFilePath(p.Dir), liveDB, 0o600); err != nil {
+			return nil, fmt.Errorf("restore local.db: %w", err)
+		}
 	}
 	return p, nil
 }
