@@ -382,6 +382,94 @@ verify_auth_rejection() {
 # ═══════════════════════════════════════════════════════════════════
 
 # ── Unit Tests ─────────────────────────────────────────────────────
+run_feature_auth_tests() {
+    header "Feature Tests — Convex Auth Path (in-process mock)"
+
+    # This used to stand up a real agent + real Convex CI account over
+    # HTTP, but fighting with the first-run "pick your AI agent" prompt
+    # and the auto-cache around `yaver serve` made it flaky. The
+    # Convex-validated path is now covered by a Go test
+    # (`TestAgentAuthConvexValidationPath`) that wires the agent at an
+    # httptest.Server mock — same code path, deterministic, no creds.
+
+    info "Running Convex-auth-path Go test ..."
+    if (cd "$ROOT_DIR/desktop/agent" && go test -v -count=1 -timeout 30s \
+        -run 'TestAgentAuthConvexValidationPath' ./... > "$TEST_DIR/feature-auth.log" 2>&1); then
+        pass "Convex auth path (mock) — slow path + cache + rejection"
+    else
+        fail "Convex auth path test failed — log at $TEST_DIR/feature-auth.log"
+        tail -30 "$TEST_DIR/feature-auth.log"
+    fi
+}
+
+run_feature_remote_tests() {
+    header "Feature Tests — Remote Hetzner"
+
+    if ! check_remote_server; then
+        skip "Remote feature tests (REMOTE_SERVER_IP not set or SSH unreachable)"
+        return
+    fi
+
+    # Strategy: compile the Go test pack as a standalone binary,
+    # scp it to a dedicated /tmp directory on Hetzner, run it there,
+    # capture the exit code + output, then nuke ONLY that directory.
+    # We never touch any pre-existing file on the server.
+
+    local arch
+    arch=$(detect_remote_arch)
+    local goarch="amd64"
+    [ "$arch" = "aarch64" ] || [ "$arch" = "arm64" ] && goarch="arm64"
+
+    local test_bin="$TEST_DIR/yaver-feature.test"
+    info "Cross-compiling feature-test binary (linux/$goarch) ..."
+    if ! (cd "$ROOT_DIR/desktop/agent" && \
+        GOOS=linux GOARCH="$goarch" CGO_ENABLED=0 go test -c -o "$test_bin" . \
+        > "$TEST_DIR/feature-remote-build.log" 2>&1); then
+        fail "cross-compile failed — log at $TEST_DIR/feature-remote-build.log"
+        tail -20 "$TEST_DIR/feature-remote-build.log"
+        return
+    fi
+
+    # Everything we touch on the remote lives under this prefix. The
+    # cleanup trap removes only this path.
+    local remote_dir="/tmp/yaver-feature-remote-$$-$(date +%s)"
+    REMOTE_CLEANUP_CMDS+=("remote_ssh 'rm -rf ${remote_dir}'")
+
+    info "Staging binary at ${REMOTE_SERVER_IP}:${remote_dir} ..."
+    if ! remote_ssh "mkdir -p ${remote_dir} && chmod 700 ${remote_dir}" > "$TEST_DIR/feature-remote-mkdir.log" 2>&1; then
+        fail "could not create remote staging dir"
+        return
+    fi
+    if ! remote_scp "$test_bin" "${remote_dir}/feature.test" > "$TEST_DIR/feature-remote-scp.log" 2>&1; then
+        fail "scp failed — log at $TEST_DIR/feature-remote-scp.log"
+        return
+    fi
+    remote_ssh "chmod +x ${remote_dir}/feature.test" > /dev/null 2>&1
+
+    # Run the same focused pattern we use locally. HOME is pinned
+    # inside the remote dir so vault.enc + blobs land in the sandbox.
+    local pattern='TestVault|TestSchedules|TestBlobs|TestAPIKeys|TestWipe|TestTwoAgent|TestSupport|TestConvex|TestGuestAllowlist|TestSupportAllowlist|TestAgentAuthConvexValidationPath|TestPhoneProjectExportReceive'
+    info "Running feature tests on ${REMOTE_SERVER_IP} ..."
+    local remote_log="$TEST_DIR/feature-remote.log"
+    if remote_ssh "cd ${remote_dir} && HOME=${remote_dir}/home mkdir -p home && HOME=${remote_dir}/home ./feature.test -test.v -test.timeout=120s -test.run='${pattern}'" \
+        > "$remote_log" 2>&1; then
+        local passed
+        passed=$(grep -c '^--- PASS' "$remote_log" || true)
+        pass "Remote feature tests passed (${passed} subtests on ${arch})"
+    else
+        local passed failed
+        passed=$(grep -c '^--- PASS' "$remote_log" 2>/dev/null || true)
+        failed=$(grep -c '^--- FAIL' "$remote_log" 2>/dev/null || true)
+        fail "Remote feature tests failed (${passed} passed / ${failed} failed on ${arch}) — log at $remote_log"
+        echo "    first failures:"
+        grep -E '^--- FAIL|^\s+[^:]*:[0-9]+: ' "$remote_log" | head -20 | sed 's/^/    /'
+    fi
+
+    # Explicit cleanup now (the trap will also run, but belt & braces).
+    info "Cleaning up ${remote_dir} ..."
+    remote_ssh "rm -rf ${remote_dir}" > /dev/null 2>&1 || true
+}
+
 run_feature_tests() {
     header "Feature Tests (vault + blobs + schedules + apikeys + wipe + two-agent)"
 
@@ -2391,11 +2479,15 @@ run_ollama_ci_test() {
     local run_ollama_ci=false
     local run_hybrid_local=false
     local run_features=false
+    local run_features_auth=false
+    local run_features_remote=false
 
     for arg in "$@"; do
         case "$arg" in
             --unit)           run_unit=true; run_all=false ;;
             --features)       run_features=true; run_all=false ;;
+            --features-auth)  run_features_auth=true; run_all=false ;;
+            --features-remote) run_features_remote=true; run_all=false ;;
             --builds)         run_builds=true; run_all=false ;;
             --lan)            run_lan=true; run_all=false ;;
             --relay)          run_relay=true; run_all=false ;;
@@ -2441,6 +2533,13 @@ Flags:
   --features        Feature-focused test pack: vault CRUD, blobs HTTP, schedules,
                     API keys, wipe, two-agent support connect, privacy tripwires.
                     No credentials needed — all over loopback.
+  --features-auth   Convex slow-path auth smoke via an in-process httptest
+                    mock — proves ValidateTokenUser + token cache + owner/
+                    non-owner/missing-header branches.
+  --features-remote Cross-compile the feature test binary, scp it to
+                    \$REMOTE_SERVER_IP:/tmp/yaver-feature-remote-\$TS/,
+                    run it there, remove only that directory afterwards.
+                    Needs REMOTE_SERVER_IP + SSH key.
 
 Environment:
   Credentials loaded from: env vars > .env.test > ../talos/.env.test
@@ -2462,6 +2561,16 @@ HELP
 
     if $run_all || $run_features; then
         run_feature_tests
+    fi
+
+    if $run_all || $run_features_auth; then
+        run_feature_auth_tests
+    fi
+
+    # Remote feature tests are NOT in --all (they need REMOTE_SERVER_IP
+    # + SSH). Always opt-in via --features-remote.
+    if $run_features_remote; then
+        run_feature_remote_tests
     fi
 
     if $run_all || $run_builds; then

@@ -1247,6 +1247,7 @@ export class QuicClient {
     project?: string;
     prompt?: string;
     engine?: string;
+    runner?: string;
     output?: string;
     force?: boolean;
   }): Promise<any> {
@@ -3097,6 +3098,19 @@ export class QuicClient {
     try {
       const res = await fetch(`${this.baseUrl}/dev/target`, {
         headers: this.authHeaders,
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  async getDevCompatibility(workDir: string, availableModules: string[]): Promise<DevCompatibilityStatus | null> {
+    if (!this.isConnected && !this.hasConnectionInfo) return null;
+    try {
+      const res = await fetch(`${this.baseUrl}/dev/compatibility`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ workDir, availableModules }),
       });
       if (!res.ok) return null;
       return await res.json();
@@ -5175,12 +5189,28 @@ export interface DevServerStatus {
   targetDeviceId?: string;
   targetDeviceName?: string;
   targetDeviceClass?: string;
+  iosInstallMethod?: string;
+  iosInstallReason?: string;
 }
 
 export interface DevTargetPreference {
   targetDeviceId?: string;
   targetDeviceName?: string;
   targetDeviceClass?: string;
+}
+
+export interface DevCompatibilityStatus {
+  compatible: boolean;
+  missingModules: string[];
+  availableModules?: string[];
+  warnings?: string[];
+  errors?: string[];
+  projectReactNative?: string;
+  sdkReactNative?: string;
+  needsYaverCLI?: boolean;
+  needsFeedbackSDK?: boolean;
+  recommendedFlow?: string;
+  guidance?: string;
 }
 
 export interface MobileWorkerPreviewSession {

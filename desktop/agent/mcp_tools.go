@@ -1586,7 +1586,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 		{
 			"name":        "project_new_quick",
-			"description": "One-shot fullstack project scaffold. Skips the interactive wizard and creates a monorepo (apps/{web,landing,mobile}, packages/shared, backend/convex) at parentDir/<slug>. Uses the opinionated defaults unless overridden: Convex + Next.js on Cloudflare + Expo RN + Apple/Google OAuth + native builds (xcodebuild + gradle, no EAS). Auto-inits git and pushes to GitHub/GitLab when git_provider is set.",
+			"description": "One-shot fullstack project scaffold. Skips the interactive wizard and creates a monorepo (apps/{web,landing,mobile}, packages/shared, backend/) at parentDir/<slug>. Uses the opinionated defaults unless overridden: Yaver SQLite-first backend + Next.js on Cloudflare + Expo RN + Apple/Google OAuth + native builds (xcodebuild + gradle, no EAS). Auto-inits git and pushes to GitHub/GitLab when git_provider is set.",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
 				"required": []string{"name", "slug", "description"},
@@ -1603,7 +1603,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"includeMobile":  map[string]interface{}{"type": "boolean", "description": "Default true"},
 					"includeBackend": map[string]interface{}{"type": "boolean", "description": "Default true"},
 					"webHost":        map[string]interface{}{"type": "string", "enum": []string{"cloudflare", "vercel", "netlify", "self-host"}},
-					"backend":        map[string]interface{}{"type": "string", "enum": []string{"convex", "supabase", "firebase", "yaver-oauth", "none"}},
+					"backend":        map[string]interface{}{"type": "string", "enum": []string{"sqlite", "postgres", "supabase", "convex", "pocketbase", "appwrite", "none"}},
 					"oauthApple":     map[string]interface{}{"type": "boolean"},
 					"oauthGoogle":    map[string]interface{}{"type": "boolean"},
 					"oauthMicrosoft": map[string]interface{}{"type": "boolean"},

@@ -63,6 +63,7 @@ export default function PhoneProjectsScreen() {
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [template, setTemplate] = useState("todos");
+  const [prompt, setPrompt] = useState("");
   const [creating, setCreating] = useState(false);
 
   // yc.md §Wedge Demo — user picks where the mini-backend lives at creation
@@ -116,7 +117,11 @@ export default function PhoneProjectsScreen() {
     }
     setCreating(true);
     try {
-      const spec = { name: name.trim(), template };
+      const spec = {
+        name: name.trim(),
+        template: prompt.trim() ? undefined : template,
+        prompt: prompt.trim() || undefined,
+      };
       let p: PhoneProject | null = null;
       let where = "";
 
@@ -149,6 +154,7 @@ export default function PhoneProjectsScreen() {
 
       if (!p) throw new Error("target returned no project");
       setName("");
+      setPrompt("");
       setShowForm(false);
       // Only refresh the local list — remote projects aren't in the user's
       // connected-agent list, so jumping straight to the detail screen for
@@ -232,6 +238,18 @@ export default function PhoneProjectsScreen() {
               placeholderTextColor={c.textMuted}
               style={[styles.input, { color: c.textPrimary, borderColor: c.border }]}
             />
+            <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Describe the app (optional)</Text>
+            <TextInput
+              value={prompt}
+              onChangeText={setPrompt}
+              placeholder="todo app with login, tags, and a simple dashboard"
+              placeholderTextColor={c.textMuted}
+              multiline
+              style={[styles.input, styles.promptInput, { color: c.textPrimary, borderColor: c.border }]}
+            />
+            <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
+              Fill this in to generate the phone backend from your prompt instead of using a fixed starter template.
+            </Text>
             <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Where should it live?</Text>
             {(
               [
@@ -288,6 +306,11 @@ export default function PhoneProjectsScreen() {
             ))}
 
             <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Template</Text>
+            {prompt.trim() ? (
+              <Text style={[styles.muted, { color: c.textMuted }]}>
+                Prompt mode is active. The template below will be ignored unless the prompt is empty.
+              </Text>
+            ) : null}
             {templates.map((t) => (
               <Pressable
                 key={t.id}
@@ -338,6 +361,7 @@ export default function PhoneProjectsScreen() {
       creating,
       err,
       name,
+      prompt,
       showForm,
       template,
       templates,
@@ -440,6 +464,10 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 10,
     fontSize: 15,
+  },
+  promptInput: {
+    minHeight: 84,
+    textAlignVertical: "top",
   },
   templateRow: {
     borderWidth: 1,

@@ -223,7 +223,7 @@ export default function PhoneProjectsView() {
     if (!selected) return;
     setDeploying(kind);
     try {
-      const res = await agentClient.pushPhoneProject(selected.slug, target, { onConflict: "overwrite" });
+      const res = await agentClient.pushPhoneProject(selected.slug, target, { onConflict: "overwrite", includeData: true });
       const url = res.browseUrl?.startsWith("http") ? res.browseUrl : deriveTargetUrl(target, res);
       setLastDeploy({ kind, url, via });
     } catch (e) {

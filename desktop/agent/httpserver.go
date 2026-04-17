@@ -736,6 +736,12 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// "Custom domain" flow to CNAME <sub>.<zone> to cloud.yaver.io in one tap.
 	s.registerDNSRoutes(mux)
 
+	// Escape routes — curated "I'm on X, get me to Y" list over the existing
+	// SwitchEngine. Trust-signal surface, not the headline feature: reassures
+	// vibe coders there's no lock-in without stealing attention from the
+	// phone-first wedge. See phone_escape.go.
+	s.registerEscapeRoutes(mux)
+
 	// Embedded SPA (when console_static is populated by the build)
 	s.mountConsoleEmbed(mux)
 

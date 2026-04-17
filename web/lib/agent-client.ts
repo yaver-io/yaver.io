@@ -3243,10 +3243,10 @@ class AgentClient {
   }
 
   /** Returns a blob of the tgz export so callers can .click() to download. */
-  async exportPhoneProjectBlob(slug: string): Promise<Blob | null> {
+  async exportPhoneProjectBlob(slug: string, includeData = false): Promise<Blob | null> {
     if (!this.isConnected || !this.baseUrl) return null;
     const res = await fetch(
-      `${this.baseUrl}/phone/projects/export?slug=${encodeURIComponent(slug)}`,
+      `${this.baseUrl}/phone/projects/export?slug=${encodeURIComponent(slug)}${includeData ? "&includeData=true" : ""}`,
       { headers: this.authHeaders },
     );
     if (!res.ok) return null;
@@ -3266,10 +3266,10 @@ class AgentClient {
   async pushPhoneProject(
     slug: string,
     target: PhonePushTarget,
-    opts: { onConflict?: "reject" | "rename" | "overwrite"; skipSeed?: boolean } = {},
+    opts: { onConflict?: "reject" | "rename" | "overwrite"; skipSeed?: boolean; includeData?: boolean } = {},
   ): Promise<PhonePushResult> {
     this.assertConnected();
-    const blob = await this.exportPhoneProjectBlob(slug);
+    const blob = await this.exportPhoneProjectBlob(slug, opts.includeData);
     if (!blob) throw new Error("export failed — agent not reachable");
 
     const form = new FormData();

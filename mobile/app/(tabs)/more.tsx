@@ -1359,14 +1359,34 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
       const headers = { ...(quicClient as any).authHeaders, "Content-Type": "application/json" };
       const res = await fetch(`${baseUrl}/repos/clone`, {
         method: "POST", headers,
-        body: JSON.stringify({ url: repo.sshUrl || repo.cloneUrl }),
+        body: JSON.stringify({ url: repo.sshUrl || repo.cloneUrl, autoInit: true }),
       });
       const data = await res.json();
       if (data.ok) {
         const meta = data.metadata;
+        const stackType = meta?.stackType ? `\nType: ${meta.stackType}` : "";
+        const ci = Array.isArray(meta?.ciProviders) && meta.ciProviders.length
+          ? `\nCI: ${meta.ciProviders.join(", ")}`
+          : "";
+        const integrations = Array.isArray(meta?.integrations) && meta.integrations.length
+          ? `\nIntegrations: ${meta.integrations.join(", ")}`
+          : "";
+        const coding =
+          Array.isArray(meta?.topology?.codingRunsOn) && meta.topology.codingRunsOn.length
+            ? `\nCoding: user choice (${meta.topology.codingRunsOn.join(" → ")})${Array.isArray(meta?.topology?.codingRunners) && meta.topology.codingRunners.length ? ` (${meta.topology.codingRunners.length} desktop runner${meta.topology.codingRunners.length === 1 ? "" : "s"} detected)` : ""}`
+            : "";
+        const backend =
+          Array.isArray(meta?.topology?.backendRunsOn) && meta.topology.backendRunsOn.includes("phone")
+            ? `\nBackend: Yaver continuum (phone → your hardware → Yaver Cloud)`
+            : "";
+        const autoinit = data.autoinit?.started
+          ? `\nAutoinit: started`
+          : data.autoinit?.error
+            ? `\nAutoinit: ${data.autoinit.error}`
+            : "";
         Alert.alert(
           data.alreadyExisted ? "Already Cloned" : "Cloned",
-          `${repo.fullName}\n${data.path}${meta?.framework ? `\nFramework: ${meta.framework}` : ""}${meta?.languages ? `\nLanguages: ${meta.languages.join(", ")}` : ""}`,
+          `${repo.fullName}\n${data.path}${meta?.framework ? `\nFramework: ${meta.framework}` : ""}${stackType}${meta?.languages ? `\nLanguages: ${meta.languages.join(", ")}` : ""}${ci}${integrations}${coding}${backend}${autoinit}`,
         );
       } else {
         Alert.alert("Clone Failed", data.error || "Unknown error");

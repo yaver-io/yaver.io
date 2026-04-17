@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import * as Clipboard from "expo-clipboard";
+import * as Linking from "expo-linking";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice } from "../src/context/DeviceContext";
 import {
@@ -35,6 +36,8 @@ const CATEGORIES: VaultCategory[] = [
   "git-credential",
   "custom",
 ];
+
+const OPENAI_API_KEYS_URL = "https://platform.openai.com/api-keys";
 
 export default function VaultScreen() {
   const c = useColors();
@@ -151,6 +154,13 @@ export default function VaultScreen() {
     if (!draftName.trim() || !draftValue.trim()) {
       Alert.alert("Vault", "Name and value are required");
       return;
+    }
+    if (draftName.trim().toUpperCase() === "OPENAI_API_KEY") {
+      const candidate = draftValue.trim();
+      if (!(candidate.startsWith("sk-") || candidate.startsWith("sess-"))) {
+        Alert.alert("Vault", "That does not look like an OpenAI API key. OpenAI keys usually start with sk-.");
+        return;
+      }
     }
     try {
       await quicClient.vaultSet({
@@ -276,6 +286,32 @@ export default function VaultScreen() {
           <Text style={{ color: "#fecaca" }}>{err}</Text>
         </View>
       ) : null}
+
+      <View style={[s.quickCard, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+        <Text style={{ color: c.textPrimary, fontSize: 16, fontWeight: "600" }}>OpenAI quick add</Text>
+        <Text style={{ color: c.textMuted, marginTop: 6 }}>
+          Paste your OpenAI API key into the host vault. It stays on your machine and can be reused for speech and upcoming prompt-to-scaffold flows.
+        </Text>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+          <Pressable
+            style={[s.btn, { backgroundColor: c.accent, borderColor: c.accent }]}
+            onPress={() => {
+              setDraftName("OPENAI_API_KEY");
+              setDraftCategory("api-key");
+              setDraftNotes("OpenAI API key for Yaver mobile-first scaffolding and speech");
+              setShowForm(true);
+            }}
+          >
+            <Text style={{ color: "#fff" }}>Use preset</Text>
+          </Pressable>
+          <Pressable
+            style={[s.btn, { backgroundColor: c.bg, borderColor: c.border }]}
+            onPress={() => Linking.openURL(OPENAI_API_KEYS_URL)}
+          >
+            <Text style={{ color: c.textPrimary }}>Open key page</Text>
+          </Pressable>
+        </View>
+      </View>
 
       {showForm ? (
         <ScrollView
@@ -412,6 +448,7 @@ const s = StyleSheet.create({
   },
   title: { fontSize: 17, fontWeight: "600" },
   err: { margin: 12, padding: 8, borderRadius: 6, borderWidth: 1, backgroundColor: "#3f0a0a22" },
+  quickCard: { marginHorizontal: 12, marginBottom: 8, padding: 12, borderRadius: 6, borderWidth: 1 },
   form: { padding: 12, borderRadius: 6, borderWidth: 1, margin: 12 },
   input: {
     borderWidth: 1,

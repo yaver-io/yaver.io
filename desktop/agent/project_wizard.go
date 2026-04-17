@@ -7,7 +7,7 @@ package main
 // web + mobile + backend + DNS + OAuth + TestFlight + Play
 // Store scaffold, via a Q&A wizard that runs from CLI, HTTP,
 // or MCP. Defaults are opinionated toward the stack the dev
-// already ships (Cloudflare Workers + Next.js + Convex +
+// already ships (Cloudflare Workers + Next.js + Yaver backend +
 // Expo/RN + Apple/Google/Microsoft OAuth).
 //
 // The wizard is a pure state machine so every surface gets to
@@ -76,7 +76,7 @@ type WizardSession struct {
 // name. Keep this close to what a non-developer needs to
 // answer — no dotfile paths, no internal jargon.
 // wizardQuestions drives a monorepo-first scaffold. Defaults are
-// the stack the dev already ships every day: Convex backend,
+// the stack the dev already ships every day: Yaver backend,
 // Next.js on Cloudflare, Expo RN for iOS + Android. Each surface
 // is opt-in so a "landing page only" project skips mobile, and a
 // pure mobile project skips web. The layout is always a monorepo
@@ -98,14 +98,14 @@ var wizardQuestions = []WizardQuestion{
 	// Which surfaces to scaffold — defaults = everything the dev's own stack needs.
 	{ID: "include_web", Kind: QBool, Prompt: "Include a web app (Next.js on Cloudflare)?", Default: "true"},
 	{ID: "include_mobile", Kind: QBool, Prompt: "Include a mobile app (Expo RN for iOS + Android)?", Default: "true"},
-	{ID: "include_backend", Kind: QBool, Prompt: "Include a backend (Convex)?", Default: "true"},
+	{ID: "include_backend", Kind: QBool, Prompt: "Include a Yaver backend?", Default: "true"},
 	{ID: "include_landing", Kind: QBool, Prompt: "Include a marketing landing page?", Default: "true"},
 
 	// Stack — only asked when the surface is on. Conditional
 	// skipping happens in nextQuestion().
 	{ID: "web_framework", Kind: QChoice, Prompt: "Web framework", Choices: []string{"nextjs", "remix", "astro"}, Default: "nextjs"},
 	{ID: "web_host", Kind: QChoice, Prompt: "Host the web app on?", Choices: []string{"cloudflare", "vercel", "netlify", "self-host"}, Default: "cloudflare"},
-	{ID: "backend", Kind: QChoice, Prompt: "Backend platform", Choices: []string{"convex", "supabase", "firebase", "yaver-oauth", "none"}, Default: "convex"},
+	{ID: "backend", Kind: QChoice, Prompt: "Backend platform", Choices: []string{"sqlite", "postgres", "supabase", "convex", "pocketbase", "appwrite", "none"}, Default: "sqlite"},
 	{ID: "mobile_stack", Kind: QChoice, Prompt: "Mobile stack", Choices: []string{"expo-rn", "native"}, Default: "expo-rn"},
 
 	// Auth — only asked when any surface needs it.
@@ -274,13 +274,15 @@ func nextQuestion(sess *WizardSession) *WizardQuestion {
 // ProjectGenerationResult is what GenerateProject returns — the
 // target directory + a bulleted list of manual follow-up steps.
 type ProjectGenerationResult struct {
-	OK              bool     `json:"ok"`
-	Directory       string   `json:"directory"`
-	Files           []string `json:"files"`
-	NextSteps       []string `json:"nextSteps"`
-	ServicesLog     string   `json:"servicesLog,omitempty"`
-	ServicesError   string   `json:"servicesError,omitempty"`
-	ServicesStarted bool     `json:"servicesStarted,omitempty"`
+	OK              bool                   `json:"ok"`
+	Directory       string                 `json:"directory"`
+	Files           []string               `json:"files"`
+	NextSteps       []string               `json:"nextSteps"`
+	ServicesLog     string                 `json:"servicesLog,omitempty"`
+	ServicesError   string                 `json:"servicesError,omitempty"`
+	ServicesStarted bool                   `json:"servicesStarted,omitempty"`
+	Topology        map[string]interface{} `json:"topology,omitempty"`
+	AutoInit        map[string]interface{} `json:"autoinit,omitempty"`
 }
 
 // GenerateProject materialises the scaffold described by the
@@ -294,7 +296,7 @@ type ProjectGenerationResult struct {
 //	├── packages/
 //	│   └── shared/     ← shared TS types + utils
 //	├── backend/
-//	│   └── convex/     ← Convex functions + schema (opt-in)
+//	│   └── ...         ← Yaver backend manifest / backend-specific files (opt-in)
 //	├── scripts/
 //	├── .github/workflows/
 //	├── README.md
@@ -438,7 +440,21 @@ func GenerateProject(id, parentDir string) (*ProjectGenerationResult, error) {
 		}
 	}
 
-	// --- backend/convex ---
+	// --- backend (Yaver-first portable manifest, with escape-hatch backends optional) ---
+	if a["include_backend"] == "true" && a["backend"] == "sqlite" {
+		if err := write("backend/README.md", yaverBackendReadme(a)); err != nil {
+			return nil, err
+		}
+		if err := write("backend/schema.yaml", yaverBackendSchema(a)); err != nil {
+			return nil, err
+		}
+		if err := write("backend/auth.yaml", yaverBackendAuth(a)); err != nil {
+			return nil, err
+		}
+		if err := write("backend/seed.json", yaverBackendSeed(a)); err != nil {
+			return nil, err
+		}
+	}
 	if a["include_backend"] == "true" && a["backend"] == "convex" {
 		if err := write("backend/package.json", convexPackageJSON(a)); err != nil {
 			return nil, err
@@ -509,13 +525,14 @@ func GenerateProject(id, parentDir string) (*ProjectGenerationResult, error) {
 		Directory: dir,
 		Files:     files,
 		NextSteps: manualNextSteps(a),
+		Topology:  detectRepoTopology(dir, DetectProjectInfo(dir)),
 	}
 	if pushResult != "" {
 		res.NextSteps = append([]string{"Git remote: " + pushResult}, res.NextSteps...)
 	}
 
 	// Auto-start the local backend services the wizard just wired up. This
-	// powers the Video 1 "tap Create Project and the Convex dashboard is live"
+	// powers the Video 1 "tap Create Project and the backend is live"
 	// flow — no manual `yaver services start` step. Best-effort: if Docker
 	// isn't running or presets are missing, we surface the error in the
 	// result but don't fail generation.
@@ -527,6 +544,18 @@ func GenerateProject(id, parentDir string) (*ProjectGenerationResult, error) {
 				res.ServicesLog = out
 				res.ServicesStarted = true
 			}
+		}
+	}
+	if autoinitResp, err := startAutoInitBackground(AutoInitStart{
+		Project: slug,
+		WorkDir: dir,
+	}); err == nil {
+		res.AutoInit = autoinitResp
+	} else {
+		res.AutoInit = map[string]interface{}{
+			"ok":      false,
+			"started": false,
+			"error":   err.Error(),
 		}
 	}
 	return res, nil
@@ -591,7 +620,11 @@ func rootReadme(a map[string]string) string {
 		stack = append(stack, "- **Mobile** (`apps/mobile`) — Expo RN (iOS + Android)")
 	}
 	if a["include_backend"] == "true" {
-		stack = append(stack, fmt.Sprintf("- **Backend** (`backend/`) — %s", a["backend"]))
+		if a["backend"] == "sqlite" {
+			stack = append(stack, "- **Backend** (`backend/`) — Yaver portable backend (SQLite first, promotable to your hardware or Yaver Cloud)")
+		} else {
+			stack = append(stack, fmt.Sprintf("- **Backend** (`backend/`) — %s", a["backend"]))
+		}
 	}
 	stack = append(stack, "- **Shared** (`packages/shared`) — cross-surface TS types + utils")
 	return fmt.Sprintf(`# %s
@@ -907,6 +940,9 @@ func quickStartFor(a map[string]string) string {
 	if a["web_framework"] == "nextjs" {
 		lines = append(lines, "cd web && npm install && cd ..")
 	}
+	if a["backend"] == "sqlite" {
+		lines = append(lines, "Yaver backend: backend/schema.yaml + backend/auth.yaml + backend/seed.json")
+	}
 	if a["backend"] == "convex" {
 		lines = append(lines, "cd backend && npm install && npx convex dev && cd ..")
 	}
@@ -959,7 +995,11 @@ func buildSetupGuide(a map[string]string) string {
 	}
 	if a["oauth_email"] == "true" {
 		b.WriteString("### Email + password fallback\n\n")
-		b.WriteString("- No external signup; the Convex `users` table stores hashed passwords out of the box.\n\n")
+		if a["backend"] == "sqlite" {
+			b.WriteString("- No external signup; the starter ships a portable Yaver auth manifest and seed that can run phone-first or on your own hardware.\n\n")
+		} else {
+			b.WriteString("- No external signup; wire email auth into the selected backend before first deploy.\n\n")
+		}
 	}
 
 	// Mobile
@@ -1006,6 +1046,9 @@ func manualNextSteps(a map[string]string) []string {
 	steps := []string{
 		"cd " + a["slug"] + " && less SETUP.md",
 		"Copy .env.example to .env and fill in the blanks as you finish each SETUP.md step.",
+	}
+	if a["include_backend"] == "true" && a["backend"] == "sqlite" {
+		steps = append(steps, "Review backend/schema.yaml, backend/auth.yaml, and backend/seed.json to shape the Yaver backend before first prompt-driven build.")
 	}
 	if a["web_host"] == "cloudflare" {
 		steps = append(steps, "Add the Cloudflare zone for "+a["domain"]+" and swap nameservers at your registrar.")
@@ -1189,6 +1232,89 @@ func convexPackageJSON(a map[string]string) string {
   }
 }
 `, a["slug"])
+}
+
+func yaverBackendReadme(a map[string]string) string {
+	return fmt.Sprintf("# %s backend\n\nYaver-native portable backend manifest.\n\n- `schema.yaml` defines the data model\n- `auth.yaml` defines the default personas\n- `seed.json` provides starter rows\n\nThis backend starts SQLite-first and is intended to move unchanged across:\n\n- phone\n- your hardware\n- Yaver Cloud\n\nGitHub, GitLab, OpenAI, Claude, Codex, Ollama, and similar tools are integrations around this backend, not the backend itself.\n", a["app_name"])
+}
+
+func yaverBackendSchema(a map[string]string) string {
+	return fmt.Sprintf(`tables:
+  - name: users
+    columns:
+      - name: id
+        type: text
+        primary: true
+      - name: email
+        type: text
+        required: true
+        unique: true
+      - name: name
+        type: text
+      - name: created_at
+        type: datetime
+        required: true
+        default: now
+  - name: notes
+    columns:
+      - name: id
+        type: text
+        primary: true
+      - name: user_id
+        type: text
+        required: true
+      - name: title
+        type: text
+        required: true
+      - name: body
+        type: text
+      - name: created_at
+        type: datetime
+        required: true
+        default: now
+
+meta:
+  app_name: %q
+  backend: sqlite
+  portability: yaver-continuum
+`, a["app_name"])
+}
+
+func yaverBackendAuth(a map[string]string) string {
+	return fmt.Sprintf(`providers:
+  email_password: %v
+  apple: %v
+  google: %v
+  microsoft: %v
+
+personas:
+  - email: founder@%s.local
+    password: demo-password
+    role: owner
+`, a["oauth_email"] == "true", a["oauth_apple"] == "true", a["oauth_google"] == "true", a["oauth_microsoft"] == "true", a["slug"])
+}
+
+func yaverBackendSeed(a map[string]string) string {
+	return fmt.Sprintf(`{
+  "users": [
+    {
+      "id": "owner",
+      "email": "founder@%s.local",
+      "name": "%s Founder",
+      "created_at": "now"
+    }
+  ],
+  "notes": [
+    {
+      "id": "welcome",
+      "user_id": "owner",
+      "title": "Welcome",
+      "body": "This starter backend is portable across phone, your hardware, and Yaver Cloud.",
+      "created_at": "now"
+    }
+  ]
+}
+`, a["slug"], a["app_name"])
 }
 
 func expoAppJSON(a map[string]string) string {

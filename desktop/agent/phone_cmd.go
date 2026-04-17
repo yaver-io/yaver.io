@@ -57,8 +57,9 @@ Commands:
 
 Examples:
   yaver phone push my-todos --to https://relay.yaver.io/d/devABC
+  yaver phone push my-todos --to https://cloud.yaver.io --include-data
   yaver phone push my-todos --to https://cloud.yaver.io --conflict rename
-  yaver phone export my-todos --out my-todos.tgz
+  yaver phone export my-todos --out my-todos.tgz --include-data
   yaver phone import my-todos.tgz --slug my-todos-backup`)
 }
 
@@ -81,13 +82,14 @@ func runPhoneList() {
 func runPhoneExport(args []string) {
 	fs := flag.NewFlagSet("phone export", flag.ExitOnError)
 	out := fs.String("out", "", "output path (default: <slug>.tgz)")
+	includeData := fs.Bool("include-data", false, "bundle the live SQLite file so runtime rows survive import")
 	_ = fs.Parse(args)
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: yaver phone export <slug> [--out <path>]")
+		fmt.Fprintln(os.Stderr, "Usage: yaver phone export <slug> [--out <path>] [--include-data]")
 		os.Exit(1)
 	}
 	slug := fs.Arg(0)
-	data, err := ExportPhoneProject(slug)
+	data, err := ExportPhoneProjectWithOptions(slug, PhoneExportOptions{IncludeData: *includeData})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "export failed: %v\n", err)
 		os.Exit(1)
@@ -139,15 +141,16 @@ func runPhonePush(args []string) {
 	asSlug := fs.String("as-slug", "", "slug to use on the target (default: same as source)")
 	conflict := fs.String("conflict", "reject", "reject|rename|overwrite")
 	skipSeed := fs.Bool("skip-seed", false, "push schema+auth but no seed rows")
+	includeData := fs.Bool("include-data", false, "bundle local.db so runtime rows survive promotion")
 	_ = fs.Parse(args)
 	if fs.NArg() < 1 || *to == "" {
-		fmt.Fprintln(os.Stderr, "Usage: yaver phone push <slug> --to <base-url> [--as-slug NAME] [--conflict reject|rename|overwrite]")
+		fmt.Fprintln(os.Stderr, "Usage: yaver phone push <slug> --to <base-url> [--as-slug NAME] [--conflict reject|rename|overwrite] [--include-data]")
 		os.Exit(1)
 	}
 	slug := fs.Arg(0)
 
 	// Export locally — bypass HTTP to avoid needing a running local server.
-	bundle, err := ExportPhoneProject(slug)
+	bundle, err := ExportPhoneProjectWithOptions(slug, PhoneExportOptions{IncludeData: *includeData})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "export: %v\n", err)
 		os.Exit(1)

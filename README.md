@@ -773,14 +773,75 @@ yaver dev start --framework vite     # Vite
 yaver dev start --framework nextjs   # Next.js
 ```
 
+### Linux / WSL / Remote iPhone Workflow
+
+For React Native / Expo, this is a first-class path:
+
+- Run `yaver` on Linux, WSL, or a remote box
+- Pair your iPhone with the Yaver mobile app
+- Start Metro on the host
+- Tap `Open in Yaver` on the phone
+- Yaver builds a Hermes bundle on the host and pushes it into the Yaver iPhone app
+
+This means your daily iPhone dev loop does not need Xcode or a Mac. The iPhone behaves like a real device attached to your remote workflow, not like a simulator tied to a local Mac.
+
+What still needs macOS:
+
+- building a standalone native iOS binary
+- code signing / provisioning
+- App Store / TestFlight shipping
+
+What does not need macOS:
+
+- React Native / Expo JS iteration
+- Metro-based hot reload on a real iPhone through Yaver
+- relay / Tailscale / remote-box workflows
+
+If you are on Linux or WSL, Yaver should use the Hermes bundle path for iPhone work rather than `xcodebuild`.
+
+### Do I Need To Modify My Project?
+
+Usually, no.
+
+For the normal Yaver agent flow (`yaver` running on Linux, WSL, macOS, or a remote host):
+
+- You do not need to inject `yaver-cli` into the app
+- You do not need to add the Feedback SDK just to open the app in Yaver
+- Yaver starts Metro, builds the Hermes bundle, and loads it into the Yaver phone app
+
+Use `yaver-cli` when:
+
+- you want direct push-to-device workflows without the full agent
+- you want compatibility analysis against Yaver's native module manifest
+- you want watch-mode push from a terminal with `yaver-push push --watch`
+
+Use the Feedback SDK when:
+
+- you want shake-to-report bug capture inside your own app
+- you want remote reload commands sent into your own app process
+- you want black-box event streaming and AI fix context
+
+In short:
+
+- `yaver` agent + mobile app = enough for Hermes reload into Yaver on iPhone/Android
+- `yaver-cli` = optional direct CLI push workflow
+- Feedback SDK = optional in-app debug/reload/reporting workflow
+
+What can still block success:
+
+- unsupported native modules not present in the Yaver host container
+- React Native / Hermes version mismatch for direct push workflows
+- apps that depend on a custom native module outside Yaver's shipped manifest
+
 ### Open App — dynamic dispatch (iOS)
 
 The Yaver mobile app's **Open App** button dispatches dynamically based on the connection mode — **never a WebView**. Third-party React Native apps always load natively:
 
 | Connection | What runs | Outcome |
 |------------|-----------|---------|
-| **iOS + same Wi-Fi** (direct LAN) | `xcodebuild build` (auto-detected `.xcworkspace` / `.xcodeproj` + scheme) inside `./ios/` with `-allowProvisioningUpdates`, then `xcrun devicectl device install app` + `xcrun devicectl device process launch` | App is installed + launched on the real device the same way Xcode would do it manually — fastest iteration, full native capabilities. |
+| **iOS + same Wi-Fi on macOS** (direct LAN) | `xcodebuild build` (auto-detected `.xcworkspace` / `.xcodeproj` + scheme) inside `./ios/` with `-allowProvisioningUpdates`, then `xcrun devicectl device install app` + `xcrun devicectl device process launch` | App is installed + launched on the real device the same way Xcode would do it manually — fastest full-native path when Xcode is available. |
 | **iOS + cellular / relay** | `/dev/build-native` runs the framework's bundler (`expo export:embed` or `react-native bundle`), compiles with embedded `hermesc` (BC96 from RN 0.81.5), ships the validated HBC over the P2P channel, phone loads it into the Yaver super-host via `YaverBundleLoader` (New Arch guest bridge with TurboModules + Fabric) | App runs *inside* Yaver with its full JS. Works over 4G / relay / anything. |
+| **iOS + Linux / WSL / remote host** | Same Hermes HBC push path as relay mode | The normal non-macOS workflow. Develop anywhere, hot reload on a real iPhone, no Xcode in the daily loop. |
 | **Android** | Hermes HBC push into the Yaver super-host (same path as iOS relay) | Single path — Android doesn't need a separate native install branch. |
 
 The dispatch lives in `mobile/app/(tabs)/apps.tsx`'s `handleOpen` + `handleTapProject`; the LAN native build uses the `PlatformXcodeDeviceInstall` build platform in `desktop/agent/builds.go`; and `desktop/agent/device_install.go` reads `CFBundleIdentifier` via `PlistBuddy` so the app auto-launches after install.
@@ -794,7 +855,7 @@ The dispatch lives in `mobile/app/(tabs)/apps.tsx`'s `handleOpen` + `handleTapPr
 | Vite | `npx vite` | Auto (Vite HMR) |
 | Next.js | `npx next dev` | Auto (Fast Refresh) |
 
-**Expo modes:** LAN native install (same Wi-Fi + iOS), Hermes HBC push to the Yaver super-host (any network), or raw dev client (custom native build with all native modules).
+**Expo modes:** LAN native install on macOS (same Wi-Fi + iOS), Hermes HBC push to the Yaver super-host (any network, including Linux/WSL/remote hosts), or raw dev client (custom native build with all native modules).
 
 ### Remote Reload — Trigger from Your Phone
 

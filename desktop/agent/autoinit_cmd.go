@@ -150,7 +150,7 @@ func autoinitGenerate(engine, runner, extraPrompt, project, outPath, wd string, 
 Project root: %s
 Project name: %s
 %s
-Read the project — package.json / go.mod / Cargo.toml / Podfile / app.json, top-level README, src/ + app/ directory shape, .github/workflows, scripts/, recent git log — and write a markdown document that captures the cached project context. Output ONLY the markdown body, no commentary, no code fences.
+Read the project — package.json / go.mod / Cargo.toml / Podfile / app.json, top-level README, src/ + app/ directory shape, apps/*, packages/*, backend/*, .github/workflows, .gitlab-ci.yml, scripts/, .yaver/*, and recent git log — and write a markdown document that captures the cached project context. Pay special attention to monorepo layout, GitHub/GitLab integration points, OpenAI usage, and any Yaver-native backend / phone-backend exportability surfaces. Output ONLY the markdown body, no commentary, no code fences.
 
 Required sections (use these exact H2 headings):
 
@@ -158,16 +158,19 @@ Required sections (use these exact H2 headings):
 1-2 sentences plain-English description of the product.
 
 ## Tech stack
-Bullet list: language(s), framework(s), backend, database, deployment targets. One bullet per item, terse.
+Bullet list: language(s), framework(s), backend, database, deployment targets, and key integrations (GitHub/GitLab/OpenAI/Yaver-native if present). One bullet per item, terse.
+
+## Runtime topology
+Bullet list describing where coding runs and where the backend runs. Treat coding as a user choice across phone, remote dev machine, and Yaver-managed/cloud runners unless the repo clearly constrains it. Be explicit when the project is phone-first, when desktop runners like Claude/Codex/Ollama/OpenCode/Aider are present, and when the backend can move independently across phone, user hardware, and Yaver Cloud.
 
 ## Layout
-Tree-style listing of the most important directories with one-line purpose each. Skip node_modules, build, dist, .git.
+Tree-style listing of the most important directories with one-line purpose each. For monorepos, call out apps/*, packages/*, backend/*, and any .yaver / phone-backend directories explicitly. Skip node_modules, build, dist, .git.
 
 ## Build / test / deploy
 Commands that work in this repo. One line each, with a 2-3 word label. Pull from package.json scripts, Makefile, or scripts/ if present.
 
 ## Conventions
-Bullet list of project conventions an autonomous agent must respect (commit message style, branch policy, file naming, language style guide, "never edit foo.gen.ts" type rules). Pull from CLAUDE.md / AGENTS.md / .cursorrules if present; otherwise infer from git log + lint configs.
+Bullet list of project conventions an autonomous agent must respect (commit message style, branch policy, file naming, language style guide, "never edit foo.gen.ts" type rules). Pull from CLAUDE.md / AGENTS.md / .cursorrules if present; otherwise infer from git log + lint configs. Mention any Yaver-specific portability or deploy constraints if present.
 
 ## Recent direction
 3-5 bullets summarising what's been built / changed in the last ~20 commits.

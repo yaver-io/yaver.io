@@ -75,6 +75,8 @@ type DevServerStatus struct {
 	TargetDeviceID    string `json:"targetDeviceId,omitempty"`
 	TargetDeviceName  string `json:"targetDeviceName,omitempty"`
 	TargetDeviceClass string `json:"targetDeviceClass,omitempty"`
+	IOSInstallMethod  string `json:"iosInstallMethod,omitempty"`
+	IOSInstallReason  string `json:"iosInstallReason,omitempty"`
 }
 
 // DevServerEvent is pushed via SSE on /dev/events.

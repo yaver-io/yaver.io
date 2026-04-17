@@ -18,8 +18,8 @@ import { useRouter } from "expo-router";
 import { Platform } from "react-native";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
-import { quicClient, type DevServerStatus, type MobileWorkerPreviewSession } from "../../src/lib/quic";
-import { loadApp } from "../../src/lib/bundleLoader";
+import { quicClient, type DevCompatibilityStatus, type DevServerStatus, type MobileWorkerPreviewSession } from "../../src/lib/quic";
+import { getAvailableModules, loadApp } from "../../src/lib/bundleLoader";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -43,6 +43,15 @@ const FRAMEWORK_ICONS: Record<string, string> = {
 const MOBILE_FRAMEWORKS = ["expo", "react-native", "flutter"];
 const WEB_FRAMEWORKS = ["nextjs", "vite", "react"];
 const PREVIEW_TARGET_KEY = "@yaver/hotreload_preview_target";
+
+function isHermesMobileFramework(framework?: string): boolean {
+  return framework === "expo" || framework === "react-native";
+}
+
+function agentFlowGuidance(framework?: string): string | null {
+  if (!isHermesMobileFramework(framework)) return null;
+  return "No project injection required for Open in Yaver. The Yaver agent starts Metro and pushes a Hermes bundle to the phone app. Use yaver-cli only for direct CLI push/watch workflows. Add the Feedback SDK only if you want in-app bug reports or remote reload inside your own app process.";
+}
 
 function getProjectCategory(framework?: string): "mobile" | "web" | "other" {
   if (!framework) return "other";
@@ -76,6 +85,7 @@ export default function AppsScreen() {
     project: string;
     path: string;
     actions: { label: string; target: string; type: string; framework?: string; platform?: string; command?: string; icon?: string; supported?: boolean; reason?: string }[];
+    compatibility?: DevCompatibilityStatus | null;
   } | null>(null);
   const [loadingActions, setLoadingActions] = useState(false);
 
@@ -168,6 +178,7 @@ export default function AppsScreen() {
   const router = useRouter();
 
   // Tap project → if dev server running, always use Hermes push (fast, ~10s).
+  // This keeps iPhone testing working from Linux, WSL, and remote hosts.
   // Xcode native build is available via "Install Native" action in the sheet.
   const handleTapProject = useCallback(async (projectName: string) => {
     const isRunning = devStatus?.workDir?.endsWith(projectName);
@@ -179,6 +190,16 @@ export default function AppsScreen() {
     setLoadingActions(true);
     try {
       const result = await quicClient.getProjectActions(projectName);
+      let compatibility: DevCompatibilityStatus | null = null;
+      const hermesFramework = result.actions.find((a: any) => isHermesMobileFramework(a.framework))?.framework;
+      if (isHermesMobileFramework(hermesFramework)) {
+        try {
+          const availableModules = await getAvailableModules();
+          compatibility = await quicClient.getDevCompatibility(result.path, availableModules);
+        } catch {
+          compatibility = null;
+        }
+      }
       // Always prepend "Vibing" + orchestration surfaces as the first options.
       const vibingAction = { label: "Vibing", target: ".", type: "vibing", icon: "\u{1F3B5}", framework: "", platform: "", command: "" };
       const agentAction = { label: "Agent Mode", target: ".", type: "agent", icon: "\u{1F9E0}", framework: "", platform: "", command: "" };
@@ -186,7 +207,7 @@ export default function AppsScreen() {
       const autoTestAction = { label: "Auto Test", target: ".", type: "autotest", icon: "\u{1F9EA}", framework: "", platform: "", command: "" };
       const gitSyncAction = { label: "Git Sync", target: ".", type: "git-sync", icon: "\u{1F504}", framework: "", platform: "", command: "" };
       result.actions = [vibingAction, agentAction, autoDevAction, autoTestAction, gitSyncAction, ...result.actions];
-      setActionSheet(result);
+      setActionSheet({ ...result, compatibility });
     } catch {
       // Fallback
       await quicClient.sendTask(`Run ${projectName} on my phone`, "").catch(() => {});
@@ -454,8 +475,8 @@ export default function AppsScreen() {
         }
       }
 
-      // 2. Build native Hermes bytecode bundle via Go agent
-      setLoadingStatus("Building native bundle...");
+      // 2. Build Hermes bytecode bundle via Go agent and load it into Yaver on the phone
+      setLoadingStatus("Building Hermes bundle...");
       setBuildProgress(0.15);
       const buildRes = await fetch(`${baseUrl}/dev/build-native`, {
         method: "POST",
@@ -490,6 +511,7 @@ export default function AppsScreen() {
   const handleOpen = useCallback(() => {
     if (!devStatus?.workDir) return;
     // Always Hermes push — fast (~10s), works on LAN and relay equally.
+    // This is the default iPhone path for Linux / WSL / remote dev.
     // Xcode native device install is available as a separate "Install Native" action.
     handleOpenNative(devStatus.workDir);
   }, [devStatus, handleOpenNative]);
@@ -536,6 +558,7 @@ export default function AppsScreen() {
   }
 
   const runningProject = devStatus?.workDir?.split("/").pop() ?? devStatus?.framework ?? "App";
+  const runningGuidance = agentFlowGuidance(devStatus?.framework);
 
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
@@ -551,6 +574,19 @@ export default function AppsScreen() {
                 <Text style={s.cardMeta}>
                   {devStatus.framework} · port {devStatus.port} · hot reload {devStatus.hotReload ? "on" : "off"}
                 </Text>
+                <Text style={[s.cardMeta, { color: "#86efac" }]}>
+                  mode · {devStatus.iosInstallMethod === "native" ? "native install" : "Hermes bundle in Yaver"}
+                </Text>
+                {devStatus.iosInstallReason ? (
+                  <Text style={[s.cardMeta, { color: "#d1d5db" }]}>
+                    {devStatus.iosInstallReason}
+                  </Text>
+                ) : null}
+                {runningGuidance ? (
+                  <Text style={[s.cardMeta, { color: "#cbd5e1" }]}>
+                    {runningGuidance}
+                  </Text>
+                ) : null}
                 <Text style={[s.cardMeta, { color: "#7dd3fc" }]}>
                   target · {devStatus.targetDeviceName || selectedTarget?.name || "this device"}
                 </Text>
@@ -569,7 +605,7 @@ export default function AppsScreen() {
                     <Text style={[s.openBtnText, { fontSize: 11, marginLeft: 6 }]}>Building...</Text>
                   </>
                 ) : (
-                  <Text style={s.openBtnText}>Open App</Text>
+                  <Text style={s.openBtnText}>Open in Yaver</Text>
                 )}
               </Pressable>
               <Pressable style={[s.actionBtn, s.reloadBtn]} onPress={handleReload}>
@@ -781,6 +817,40 @@ export default function AppsScreen() {
             <Text style={[s.actionSheetSubtitle, { color: c.textMuted }]}>
               What do you want to do?
             </Text>
+            {actionSheet?.compatibility?.guidance ? (
+              <Text style={[s.actionSheetSubtitle, { color: actionSheet.compatibility.compatible ? "#cbd5e1" : "#fbbf24", marginTop: -8 }]}>
+                {actionSheet.compatibility.guidance}
+              </Text>
+            ) : agentFlowGuidance(
+              actionSheet?.actions.find((a) => a.framework === "expo" || a.framework === "react-native")?.framework
+            ) ? (
+              <Text style={[s.actionSheetSubtitle, { color: "#cbd5e1", marginTop: -8 }]}>
+                {agentFlowGuidance(
+                  actionSheet?.actions.find((a) => a.framework === "expo" || a.framework === "react-native")?.framework
+                )}
+              </Text>
+            ) : null}
+            {!!actionSheet?.compatibility?.missingModules?.length && (
+              <Text style={[s.actionSheetSubtitle, { color: "#fca5a5", marginTop: -8 }]}>
+                Missing in Yaver: {actionSheet.compatibility.missingModules.slice(0, 4).join(", ")}
+                {actionSheet.compatibility.missingModules.length > 4 ? ` +${actionSheet.compatibility.missingModules.length - 4} more` : ""}
+              </Text>
+            )}
+            {!!actionSheet?.compatibility?.errors?.length && (
+              <Text style={[s.actionSheetSubtitle, { color: "#fca5a5", marginTop: -8 }]}>
+                {actionSheet.compatibility.errors[0]}
+              </Text>
+            )}
+            {!!actionSheet?.compatibility?.warnings?.length && !actionSheet?.compatibility?.errors?.length && (
+              <Text style={[s.actionSheetSubtitle, { color: "#fcd34d", marginTop: -8 }]}>
+                {actionSheet.compatibility.warnings[0]}
+              </Text>
+            )}
+            {actionSheet?.compatibility?.projectReactNative && actionSheet?.compatibility?.sdkReactNative && (
+              <Text style={[s.actionSheetSubtitle, { color: "#94a3b8", marginTop: -8 }]}>
+                RN {actionSheet.compatibility.projectReactNative} · Yaver RN {actionSheet.compatibility.sdkReactNative}
+              </Text>
+            )}
             <ScrollView style={s.actionSheetScroll}>
               {actionSheet?.actions.map((action, i) => {
                 const disabled = action.supported === false;

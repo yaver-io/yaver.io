@@ -192,7 +192,8 @@ export function DevPreview() {
 
   const handleOpen = useCallback(() => {
     if (isNativeMode) {
-      // Default: Hermes push (fast, ~10s) — load app inside Yaver's container
+      // Default: Hermes push (fast, ~10s) — load app inside Yaver on the phone.
+      // This is the main path for Linux / WSL / remote-host iPhone testing.
       // The "Back to Yaver" overlay is shown natively by AppDelegate
       handleRunInYaver();
       return;
@@ -286,7 +287,7 @@ export function DevPreview() {
             <ActivityIndicator size="small" color="#22c55e" />
           ) : (
             <>
-              <Text style={styles.bannerAction}>Open App</Text>
+              <Text style={styles.bannerAction}>Open in Yaver</Text>
               <Text style={styles.bannerArrow}>{"\u203A"}</Text>
             </>
           )}
@@ -405,11 +406,11 @@ export function DevPreview() {
                     {nativeLoading ? (
                       <ActivityIndicator size="small" color="#22c55e" />
                     ) : (
-                      <Text style={[styles.nativeBtnText, { color: "#22c55e" }]}>Run in Yaver</Text>
+                      <Text style={[styles.nativeBtnText, { color: "#22c55e" }]}>Open in Yaver</Text>
                     )}
                   </Pressable>
                   <Text style={{ fontSize: 11, color: "#555", textAlign: "center", marginTop: 4 }}>
-                    Full native access — camera, BLE, GPS, etc.
+                    Hermes bundle on this iPhone. Ideal for Linux, WSL, and remote-host workflows.
                   </Text>
 
                   {/* Open in separate dev client (if installed) */}

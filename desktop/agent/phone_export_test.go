@@ -14,6 +14,28 @@ import (
 	"testing"
 )
 
+func bundleContainsFile(t *testing.T, bundle []byte, want string) bool {
+	t.Helper()
+	gz, err := gzip.NewReader(bytes.NewReader(bundle))
+	if err != nil {
+		t.Fatalf("gunzip: %v", err)
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return false
+		}
+		if err != nil {
+			t.Fatalf("tar: %v", err)
+		}
+		if strings.HasSuffix(hdr.Name, "/"+want) || hdr.Name == want {
+			return true
+		}
+	}
+}
+
 // Roundtrip: Create → Export → Delete → Import → verify schema + seed.
 // This is the happy path for "mobile app → any target agent".
 func TestExportImportRoundtrip(t *testing.T) {
@@ -169,6 +191,77 @@ func TestImportSkipSeed(t *testing.T) {
 	}
 	if imp.Stats != nil && imp.Stats.PerTable["todos"] != 0 {
 		t.Errorf("expected 0 todos with SkipSeed=true, got %d", imp.Stats.PerTable["todos"])
+	}
+}
+
+func TestExportIncludeDataBundlesSQLiteFile(t *testing.T) {
+	setupPhoneTestHome(t)
+	p, err := CreatePhoneProject(PhoneCreateSpec{Name: "With Data", Template: "todos"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	bundle, err := ExportPhoneProjectWithOptions(p.Slug, PhoneExportOptions{IncludeData: true})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if !bundleContainsFile(t, bundle, "local.db") {
+		t.Fatal("expected bundle to include local.db")
+	}
+}
+
+func TestImportWithIncludedDataPreservesRuntimeRows(t *testing.T) {
+	setupPhoneTestHome(t)
+	p, err := CreatePhoneProject(PhoneCreateSpec{Name: "Live Rows", Template: "todos"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	adapter, err := PhoneAdapter(p.Slug)
+	if err != nil {
+		t.Fatalf("adapter: %v", err)
+	}
+	if _, err := adapter.Insert("todos", map[string]interface{}{
+		"id": "runtime-1", "title": "runtime row", "done": false,
+	}); err != nil {
+		t.Fatalf("insert runtime row: %v", err)
+	}
+	bundle, err := ExportPhoneProjectWithOptions(p.Slug, PhoneExportOptions{IncludeData: true})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	_ = DeletePhoneProject(p.Slug)
+	imp, err := ImportPhoneProject(bundle, PhoneImportOptions{})
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	adapter2, err := PhoneAdapter(imp.Slug)
+	if err != nil {
+		t.Fatalf("adapter2: %v", err)
+	}
+	res, err := adapter2.Query(`SELECT count(*) FROM todos WHERE id='runtime-1'`, nil)
+	if err != nil {
+		t.Fatalf("query runtime row: %v", err)
+	}
+	b, _ := json.Marshal(res)
+	if !strings.Contains(string(b), `"count(*)":1`) {
+		t.Fatalf("expected runtime row to survive import, got %s", string(b))
+	}
+}
+
+func TestHandlePhoneExport_IncludeDataQuery(t *testing.T) {
+	setupPhoneTestHome(t)
+	p, err := CreatePhoneProject(PhoneCreateSpec{Name: "Export Query", Template: "todos"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	srv := &HTTPServer{}
+	req := httptest.NewRequest(http.MethodGet, "/phone/projects/export?slug="+p.Slug+"&includeData=true", nil)
+	w := httptest.NewRecorder()
+	srv.handlePhoneExport(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	if !bundleContainsFile(t, w.Body.Bytes(), "local.db") {
+		t.Fatal("expected export response bundle to include local.db")
 	}
 }
 
