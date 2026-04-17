@@ -189,53 +189,53 @@ export default async function DownloadPage() {
                   className="rounded-md"
                 />
                 <span className="text-xs font-semibold uppercase tracking-[0.24em] text-surface-400">
-                  Linux installs that actually work
+                  Install Yaver
                 </span>
               </div>
               <h1 className="max-w-3xl text-4xl font-bold tracking-tight text-surface-50 md:text-5xl">
                 Install the Yaver agent without guessing.
               </h1>
               <p className="mt-4 max-w-2xl text-sm leading-6 text-surface-400 md:text-base">
-                This page is about the desktop and server-side agent that backs the mobile sandbox flow.
-                Use the package-manager path if you want upgrades, or grab a direct artifact if you want a single-file install.
+                The Go agent backs the mobile sandbox flow. Pick the path that matches your machine:
+                Linux, macOS, or WSL.
               </p>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-surface-500">
-                Current direct artifacts are published selectively. When a direct file is not available, the link falls back to GitHub Releases rather than pretending the artifact exists.
+                Use package-manager installs when you want upgrades. Use direct artifacts when you just need a file fast.
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
-                <DownloadButton href={`/download/${appImageSlug}`} primary>
-                  Download AppImage
+                <DownloadButton href={`/download/${debSlug}`} primary>
+                  Linux
                 </DownloadButton>
-                <DownloadButton href={`/download/${debSlug}`}>
-                  Download .deb
+                <DownloadButton href="/download/macos-arm64">
+                  macOS
                 </DownloadButton>
-                <DownloadButton href={GITHUB_RELEASE}>
-                  GitHub Releases
+                <DownloadButton href="#wsl">
+                  WSL
                 </DownloadButton>
               </div>
             </div>
 
             <div className="rounded-[1.5rem] border border-surface-800 bg-surface-950/80 p-5">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-surface-500">
-                Recommended path
+                Main paths
               </p>
               <div className="mt-4 space-y-4">
                 <div className="rounded-xl border border-surface-800 bg-surface-900/80 p-4">
-                  <p className="text-sm font-semibold text-surface-100">Ubuntu / Debian</p>
+                  <p className="text-sm font-semibold text-surface-100">Linux</p>
                   <p className="mt-1 text-sm text-surface-400">
-                    Use the apt repo if you want upgrades through your package manager.
+                    Use `apt`, the install script, or a direct artifact when Yaver runs on the machine itself.
                   </p>
                 </div>
                 <div className="rounded-xl border border-surface-800 bg-surface-900/80 p-4">
-                  <p className="text-sm font-semibold text-surface-100">Any distro</p>
+                  <p className="text-sm font-semibold text-surface-100">macOS</p>
                   <p className="mt-1 text-sm text-surface-400">
-                    Use the AppImage if you just want a single file and no system install.
+                    Homebrew is the fast path when you want the Go agent on a Mac.
                   </p>
                 </div>
-                <div className="rounded-xl border border-surface-800 bg-surface-900/80 p-4">
-                  <p className="text-sm font-semibold text-surface-100">CLI only</p>
+                <div id="wsl" className="rounded-xl border border-surface-800 bg-surface-900/80 p-4">
+                  <p className="text-sm font-semibold text-surface-100">WSL</p>
                   <p className="mt-1 text-sm text-surface-400">
-                    Homebrew works when you only need the `yaver` command and not a desktop app bundle.
+                    Use the CLI inside WSL. Authenticate through Windows and load Hermes builds into Yaver on your phone.
                   </p>
                 </div>
               </div>
@@ -328,7 +328,49 @@ export default async function DownloadPage() {
 
           <div className="space-y-5">
             <CommandCard label={commandBlocks[3].label} commands={commandBlocks[3].commands} />
-            <CommandCard label={commandBlocks[2].label} commands={commandBlocks[2].commands} />
+            <CommandCard
+              label="CLI on macOS"
+              commands={[
+                "brew install kivanccakmak/yaver/yaver",
+                "yaver auth",
+                "yaver serve",
+              ]}
+            />
+
+            <div className="rounded-2xl border border-surface-800 bg-surface-900 p-6">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-surface-500">
+                WSL
+              </p>
+              <h2 className="mt-2 text-xl font-semibold text-surface-50">
+                Use Yaver from Windows Subsystem for Linux
+              </h2>
+              <p className="mt-3 text-sm leading-6 text-surface-400">
+                Run the Go agent inside WSL, let `yaver auth` hand browser sign-in off to Windows,
+                and use the Yaver mobile app on your phone for Hermes reload.
+              </p>
+              <div className="mt-5 rounded-xl bg-surface-950 p-4 font-mono text-[13px] text-surface-300">
+                <div className="mb-2">
+                  <span className="text-surface-500">$</span>{" "}
+                  <span className="select-all">curl -fsSL https://yaver.io/install.sh | sh</span>
+                </div>
+                <div className="mb-2">
+                  <span className="text-surface-500">$</span>{" "}
+                  <span className="select-all">yaver auth</span>
+                </div>
+                <div className="mb-2">
+                  <span className="text-surface-500">$</span>{" "}
+                  <span className="select-all">yaver serve</span>
+                </div>
+                <div>
+                  <span className="text-surface-500">#</span>{" "}
+                  <span>Build Hermes in WSL, then load it into Yaver on your phone.</span>
+                </div>
+              </div>
+              <p className="mt-4 text-xs leading-6 text-surface-500">
+                WSL is for the agent and CLI path. Use the Windows browser for auth and the mobile app
+                as the runtime container on the phone.
+              </p>
+            </div>
 
             <div className="rounded-2xl border border-surface-800 bg-surface-900 p-6">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-surface-500">
@@ -356,19 +398,19 @@ export default async function DownloadPage() {
 
             <div className="rounded-2xl border border-surface-800 bg-surface-900 p-6">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-surface-500">
-                Need another platform
+                Other links
               </p>
               <p className="mt-3 text-sm leading-6 text-surface-400">
-                macOS, Windows, mobile, and package-manager installs still live here too.
+                Linux, macOS, and WSL are the main paths here. Keep the rest secondary.
               </p>
               <div className="mt-4 flex flex-wrap gap-3">
                 <DownloadButton href="/download/macos-arm64">macOS</DownloadButton>
-                <DownloadButton href="/download/windows-x64">Windows</DownloadButton>
+                <DownloadButton href={`/download/${debSlug}`}>Linux</DownloadButton>
                 <Link
                   href="/manuals/cli-setup"
                   className="inline-flex items-center justify-center rounded-xl border border-surface-700 px-4 py-2.5 text-sm font-semibold text-surface-200 transition hover:border-surface-500 hover:text-surface-50"
                 >
-                  CLI setup
+                  WSL / CLI setup
                 </Link>
               </div>
             </div>
