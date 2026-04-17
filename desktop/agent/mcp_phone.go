@@ -13,7 +13,7 @@ func phoneProjectMCPTools() []map[string]interface{} {
 	return []map[string]interface{}{
 		{
 			"name":        "phone_project_list",
-			"description": "List all phone-first mini-backend projects on this agent. Each project is a SQLite-backed Yaver project stored at ~/.yaver/phone-projects/<slug>/.",
+			"description": "List all phone-first mini-backend projects on this agent. Each project is its own local SQLite-backed Yaver project under ~/.yaver/phone-projects/<slug>/. Multiple projects can coexist; nothing is promoted off-machine until you explicitly export, push, or promote it.",
 			"inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
 		},
 		{
@@ -82,12 +82,46 @@ func phoneProjectMCPTools() []map[string]interface{} {
 		},
 		{
 			"name":        "phone_project_export",
-			"description": "Return a tgz of the project's portable manifest (schema + auth + seed + config + generated DDL). Base64-encoded so it round-trips through JSON.",
+			"description": "Return a tgz of the project's portable manifest (schema + auth + seed + config + generated DDL). Base64-encoded so it round-trips through JSON. Supports include_data and containerize so MCP clients can export the exact same local-first backend bundle the mobile app and CLI use.",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
 				"required": []string{"slug"},
 				"properties": map[string]interface{}{
-					"slug": map[string]interface{}{"type": "string"},
+					"slug":         map[string]interface{}{"type": "string"},
+					"include_data": map[string]interface{}{"type": "boolean", "description": "Include local.db so runtime rows survive import/push"},
+					"containerize": map[string]interface{}{"type": "boolean", "description": "Include Dockerfile/docker-compose/.env scaffold for own-cloud or Yaver Cloud deploy paths"},
+				},
+			},
+		},
+		{
+			"name":        "phone_project_import",
+			"description": "Import a previously exported phone project tgz (base64-encoded). This restores a local SQLite-backed phone sandbox on this agent without promoting it anywhere else.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"tarball_b64"},
+				"properties": map[string]interface{}{
+					"tarball_b64": map[string]interface{}{"type": "string", "description": "Base64-encoded .tgz produced by phone_project_export"},
+					"slug":        map[string]interface{}{"type": "string", "description": "Optional slug override on import"},
+					"on_conflict": map[string]interface{}{"type": "string", "description": "reject | rename | overwrite", "enum": []string{"reject", "rename", "overwrite"}},
+					"skip_seed":   map[string]interface{}{"type": "boolean", "description": "Restore schema/auth but skip seed/live data application"},
+				},
+			},
+		},
+		{
+			"name":        "phone_project_push",
+			"description": "Export a local phone project and push it to another reachable Yaver agent via /phone/projects/receive. Use this for explicit promotion to your dev machine, your own cloud host, or Yaver Cloud. Local source project remains local unless you choose otherwise.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"slug", "target_base_url"},
+				"properties": map[string]interface{}{
+					"slug":              map[string]interface{}{"type": "string"},
+					"target_base_url":   map[string]interface{}{"type": "string", "description": "Remote Yaver agent base URL, e.g. https://cloud.yaver.io or https://relay.yaver.io/d/<device>"},
+					"target_auth_token": map[string]interface{}{"type": "string", "description": "Optional bearer token for the target. Defaults to local config auth token, then the current agent token if available."},
+					"target_slug":       map[string]interface{}{"type": "string", "description": "Optional slug override on the target"},
+					"on_conflict":       map[string]interface{}{"type": "string", "description": "reject | rename | overwrite", "enum": []string{"reject", "rename", "overwrite"}},
+					"skip_seed":         map[string]interface{}{"type": "boolean"},
+					"include_data":      map[string]interface{}{"type": "boolean", "description": "Include local.db so runtime rows survive promotion"},
+					"containerize":      map[string]interface{}{"type": "boolean", "description": "Include Docker scaffold in the exported bundle before pushing"},
 				},
 			},
 		},
@@ -110,7 +144,7 @@ func phoneProjectMCPTools() []map[string]interface{} {
 
 // dispatchPhoneMCP handles phone_project_* MCP tool calls. Returns (handled,
 // result). If handled=false, the outer dispatcher should continue.
-func dispatchPhoneMCP(name string, arguments json.RawMessage) (bool, interface{}) {
+func dispatchPhoneMCP(s *HTTPServer, name string, arguments json.RawMessage) (bool, interface{}) {
 	switch name {
 	case "phone_project_list":
 		projs, err := ListPhoneProjects()
@@ -218,20 +252,116 @@ func dispatchPhoneMCP(name string, arguments json.RawMessage) (bool, interface{}
 
 	case "phone_project_export":
 		var args struct {
-			Slug string `json:"slug"`
+			Slug         string `json:"slug"`
+			IncludeData  bool   `json:"include_data"`
+			Containerize bool   `json:"containerize"`
 		}
 		_ = json.Unmarshal(arguments, &args)
 		if args.Slug == "" {
 			return true, mcpToolError("slug is required")
 		}
-		data, err := ExportPhoneProject(args.Slug)
+		data, err := ExportPhoneProjectWithOptions(args.Slug, PhoneExportOptions{
+			IncludeData:  args.IncludeData,
+			Containerize: args.Containerize,
+		})
 		if err != nil {
 			return true, mcpToolError(err.Error())
 		}
 		return true, mcpToolJSON(map[string]interface{}{
-			"slug":        args.Slug,
-			"bytes":       len(data),
-			"tarball_b64": base64.StdEncoding.EncodeToString(data),
+			"slug":          args.Slug,
+			"bytes":         len(data),
+			"include_data":  args.IncludeData,
+			"containerize":  args.Containerize,
+			"tarball_b64":   base64.StdEncoding.EncodeToString(data),
+			"bundle_format": "tgz",
+		})
+
+	case "phone_project_import":
+		var args struct {
+			TarballB64 string `json:"tarball_b64"`
+			Slug       string `json:"slug"`
+			OnConflict string `json:"on_conflict"`
+			SkipSeed   bool   `json:"skip_seed"`
+		}
+		_ = json.Unmarshal(arguments, &args)
+		if args.TarballB64 == "" {
+			return true, mcpToolError("tarball_b64 is required")
+		}
+		data, err := base64.StdEncoding.DecodeString(args.TarballB64)
+		if err != nil {
+			return true, mcpToolError("invalid tarball_b64: " + err.Error())
+		}
+		if args.OnConflict == "" {
+			args.OnConflict = "reject"
+		}
+		p, err := ImportPhoneProject(data, PhoneImportOptions{
+			SlugOverride: args.Slug,
+			OnConflict:   args.OnConflict,
+			SkipSeed:     args.SkipSeed,
+		})
+		if err != nil {
+			return true, mcpToolError(err.Error())
+		}
+		return true, mcpToolJSON(map[string]interface{}{
+			"slug":       p.Slug,
+			"name":       p.Name,
+			"dir":        p.Dir,
+			"skip_seed":  args.SkipSeed,
+			"conflict":   args.OnConflict,
+			"stats":      p.Stats,
+			"project":    p,
+			"local_only": true,
+		})
+
+	case "phone_project_push":
+		var args struct {
+			Slug            string `json:"slug"`
+			TargetBaseURL   string `json:"target_base_url"`
+			TargetAuthToken string `json:"target_auth_token"`
+			TargetSlug      string `json:"target_slug"`
+			OnConflict      string `json:"on_conflict"`
+			SkipSeed        bool   `json:"skip_seed"`
+			IncludeData     bool   `json:"include_data"`
+			Containerize    bool   `json:"containerize"`
+		}
+		_ = json.Unmarshal(arguments, &args)
+		if args.Slug == "" || args.TargetBaseURL == "" {
+			return true, mcpToolError("slug and target_base_url are required")
+		}
+		if args.OnConflict == "" {
+			args.OnConflict = "reject"
+		}
+		data, err := ExportPhoneProjectWithOptions(args.Slug, PhoneExportOptions{
+			IncludeData:  args.IncludeData,
+			Containerize: args.Containerize,
+		})
+		if err != nil {
+			return true, mcpToolError("export: " + err.Error())
+		}
+		token := strings.TrimSpace(args.TargetAuthToken)
+		if token == "" {
+			if cfg, err := LoadConfig(); err == nil && strings.TrimSpace(cfg.AuthToken) != "" {
+				token = strings.TrimSpace(cfg.AuthToken)
+			}
+		}
+		if token == "" && s != nil {
+			token = strings.TrimSpace(s.token)
+		}
+		result, err := pushPhoneBundle(strings.TrimRight(args.TargetBaseURL, "/"), token, data, args.TargetSlug, args.OnConflict, args.SkipSeed)
+		if err != nil {
+			return true, mcpToolError("push: " + err.Error())
+		}
+		return true, mcpToolJSON(map[string]interface{}{
+			"source_slug":     args.Slug,
+			"target_slug":     result.Slug,
+			"target_base_url": strings.TrimRight(args.TargetBaseURL, "/"),
+			"browse_url":      result.BrowseUrl,
+			"local_url":       result.LocalUrl,
+			"include_data":    args.IncludeData,
+			"containerize":    args.Containerize,
+			"skip_seed":       args.SkipSeed,
+			"on_conflict":     args.OnConflict,
+			"pushed":          true,
 		})
 
 	case "phone_project_promote":

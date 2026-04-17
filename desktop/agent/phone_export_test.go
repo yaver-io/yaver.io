@@ -10,6 +10,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -32,6 +34,32 @@ func bundleContainsFile(t *testing.T, bundle []byte, want string) bool {
 		}
 		if strings.HasSuffix(hdr.Name, "/"+want) || hdr.Name == want {
 			return true
+		}
+	}
+}
+
+func bundleFileContent(t *testing.T, bundle []byte, want string) string {
+	t.Helper()
+	gz, err := gzip.NewReader(bytes.NewReader(bundle))
+	if err != nil {
+		t.Fatalf("gunzip: %v", err)
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			t.Fatalf("bundle missing %s", want)
+		}
+		if err != nil {
+			t.Fatalf("tar: %v", err)
+		}
+		if strings.HasSuffix(hdr.Name, "/"+want) || hdr.Name == want {
+			data, err := io.ReadAll(tr)
+			if err != nil {
+				t.Fatalf("read tar entry: %v", err)
+			}
+			return string(data)
 		}
 	}
 }
@@ -247,6 +275,59 @@ func TestImportWithIncludedDataPreservesRuntimeRows(t *testing.T) {
 	}
 }
 
+func TestPushKeepsOtherLocalProjectsUntouched(t *testing.T) {
+	setupPhoneTestHome(t)
+
+	src, err := CreatePhoneProject(PhoneCreateSpec{Name: "Export Me", Template: "todos"})
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	other, err := CreatePhoneProject(PhoneCreateSpec{Name: "Keep Local", Template: "notes"})
+	if err != nil {
+		t.Fatalf("create other: %v", err)
+	}
+	before, err := LoadPhoneProject(other.Slug)
+	if err != nil {
+		t.Fatalf("load other before push: %v", err)
+	}
+	if before.Stats == nil {
+		t.Fatalf("expected stats for untouched local project")
+	}
+
+	targetSrv := &HTTPServer{token: "target-token"}
+	target := httptest.NewServer(http.HandlerFunc(targetSrv.auth(targetSrv.handlePhoneReceive)))
+	defer target.Close()
+
+	bundle, err := ExportPhoneProjectWithOptions(src.Slug, PhoneExportOptions{
+		IncludeData:  true,
+		Containerize: true,
+	})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	result, err := pushPhoneBundle(target.URL, "target-token", bundle, "remote-copy", "reject", false)
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if result == nil || result.Slug != "remote-copy" {
+		t.Fatalf("unexpected push result: %+v", result)
+	}
+
+	after, err := LoadPhoneProject(other.Slug)
+	if err != nil {
+		t.Fatalf("load other after push: %v", err)
+	}
+	if after.Slug != other.Slug {
+		t.Fatalf("other project slug changed: got %q want %q", after.Slug, other.Slug)
+	}
+	if after.Stats == nil || after.Stats.PerTable["notes"] != before.Stats.PerTable["notes"] {
+		t.Fatalf("untouched local project changed across push: before=%+v after=%+v", before.Stats, after.Stats)
+	}
+	if _, err := LoadPhoneProject(src.Slug); err != nil {
+		t.Fatalf("source project should remain local after explicit push: %v", err)
+	}
+}
+
 func TestHandlePhoneExport_IncludeDataQuery(t *testing.T) {
 	setupPhoneTestHome(t)
 	p, err := CreatePhoneProject(PhoneCreateSpec{Name: "Export Query", Template: "todos"})
@@ -262,6 +343,74 @@ func TestHandlePhoneExport_IncludeDataQuery(t *testing.T) {
 	}
 	if !bundleContainsFile(t, w.Body.Bytes(), "local.db") {
 		t.Fatal("expected export response bundle to include local.db")
+	}
+}
+
+func TestExportPhoneProject_ContainerizedBundleIncludesScaffold(t *testing.T) {
+	setupPhoneTestHome(t)
+	p, err := CreatePhoneProject(PhoneCreateSpec{Name: "Container Export", Template: "todos"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	bundle, err := ExportPhoneProjectWithOptions(p.Slug, PhoneExportOptions{
+		IncludeData:  true,
+		Containerize: true,
+	})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	for _, name := range []string{"local.db", "Dockerfile", "docker-compose.yml", ".env.example", ".dockerignore", ".gitignore"} {
+		if !bundleContainsFile(t, bundle, name) {
+			t.Fatalf("expected export bundle to include %s", name)
+		}
+	}
+	if got := bundleFileContent(t, bundle, "README.md"); !strings.Contains(got, "Containerized short path") {
+		t.Fatalf("expected README to mention containerized path, got %q", got)
+	}
+}
+
+func TestHandlePhoneExport_ContainerizeQuery(t *testing.T) {
+	setupPhoneTestHome(t)
+	p, err := CreatePhoneProject(PhoneCreateSpec{Name: "Container Query", Template: "todos"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	srv := &HTTPServer{}
+	req := httptest.NewRequest(http.MethodGet, "/phone/projects/export?slug="+p.Slug+"&includeData=true&containerize=true", nil)
+	w := httptest.NewRecorder()
+	srv.handlePhoneExport(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	for _, name := range []string{"local.db", "Dockerfile", "docker-compose.yml", ".env.example"} {
+		if !bundleContainsFile(t, w.Body.Bytes(), name) {
+			t.Fatalf("expected export response bundle to include %s", name)
+		}
+	}
+}
+
+func TestImportPhoneProject_PreservesExtraFiles(t *testing.T) {
+	setupPhoneTestHome(t)
+	p, err := CreatePhoneProject(PhoneCreateSpec{Name: "Preserve Extras", Template: "todos"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	bundle, err := ExportPhoneProjectWithOptions(p.Slug, PhoneExportOptions{
+		IncludeData:  true,
+		Containerize: true,
+	})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	_ = DeletePhoneProject(p.Slug)
+	imp, err := ImportPhoneProject(bundle, PhoneImportOptions{})
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	for _, name := range []string{"Dockerfile", "docker-compose.yml", ".env.example", ".dockerignore", ".gitignore", "README.md", "schema.sql", "schema.postgres.sql"} {
+		if _, err := os.Stat(filepath.Join(imp.Dir, name)); err != nil {
+			t.Fatalf("expected imported project to preserve %s: %v", name, err)
+		}
 	}
 }
 

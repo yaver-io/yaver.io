@@ -11226,7 +11226,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	default:
 		// Phone-first mini backend (desktop/agent/phone_backend.go)
-		if handled, result := dispatchPhoneMCP(call.Name, call.Arguments); handled {
+		if handled, result := dispatchPhoneMCP(s, call.Name, call.Arguments); handled {
 			return result
 		}
 		// Try workspace tools (services, proxy, dns, storage, mock, check, perf, db, preview, oauth, cloud, migrate, remote, scale, backend, platform, domain, site, form, seo, cms, template)

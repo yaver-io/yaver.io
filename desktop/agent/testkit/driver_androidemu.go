@@ -37,6 +37,12 @@ func (d *AndroidEmuDriver) Boot(ctx context.Context) (string, error) {
 	if err := d.Available(); err != nil {
 		return "", err
 	}
+	if deviceID := firstOnlineEmulator(ctx); deviceID != "" {
+		if err := waitForBootComplete(ctx, deviceID, 30*time.Second); err != nil {
+			return deviceID, err
+		}
+		return deviceID, nil
+	}
 	if d.AVD == "" {
 		// Auto-pick the first AVD if the user didn't name one.
 		out, _ := runCtx(ctx, "emulator", "-list-avds")
@@ -63,6 +69,21 @@ func (d *AndroidEmuDriver) Boot(ctx context.Context) (string, error) {
 		return deviceID, err
 	}
 	return deviceID, nil
+}
+
+func firstOnlineEmulator(ctx context.Context) string {
+	out, _ := runCtx(ctx, "adb", "devices")
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "List of devices") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == "device" && strings.HasPrefix(fields[0], "emulator-") {
+			return fields[0]
+		}
+	}
+	return ""
 }
 
 // Install installs the APK onto the booted device.

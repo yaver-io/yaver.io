@@ -1,0 +1,8 @@
+name: ${YAVER_TEST_IOS_SIM_DEVICE} local-first smoke
+target: ios-sim
+url: ${YAVER_TEST_IOS_SIM_DEVICE}
+app: ${YAVER_TEST_IOS_APP}
+steps:
+  - goto: ${YAVER_TEST_IOS_BUNDLE_ID}
+  - sleep_ms: 3000
+  - screenshot: true

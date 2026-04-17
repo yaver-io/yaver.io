@@ -78,6 +78,38 @@ steps:
 	}
 }
 
+func TestLoadSpecExpandsEnvForMobileSmoke(t *testing.T) {
+	t.Setenv("YAVER_TEST_IOS_APP", "/tmp/Yaver.app")
+	t.Setenv("YAVER_TEST_IOS_SIM_DEVICE", "iPhone 17 Pro")
+	t.Setenv("YAVER_TEST_IOS_BUNDLE_ID", "io.yaver.mobile")
+	dir := t.TempDir()
+	p := writeSpec(t, dir, "ios-smoke.test.yaml", `
+name: ${YAVER_TEST_IOS_SIM_DEVICE} smoke
+target: ios-sim
+url: ${YAVER_TEST_IOS_SIM_DEVICE}
+app: ${YAVER_TEST_IOS_APP}
+steps:
+  - goto: ${YAVER_TEST_IOS_BUNDLE_ID}
+  - screenshot: true
+`)
+	s, err := LoadSpec(p)
+	if err != nil {
+		t.Fatalf("LoadSpec: %v", err)
+	}
+	if s.Name != "iPhone 17 Pro smoke" {
+		t.Fatalf("Name = %q", s.Name)
+	}
+	if s.URL != "iPhone 17 Pro" {
+		t.Fatalf("URL = %q", s.URL)
+	}
+	if s.App != "/tmp/Yaver.app" {
+		t.Fatalf("App = %q", s.App)
+	}
+	if got := s.Steps[0].Goto; got != "io.yaver.mobile" {
+		t.Fatalf("Steps[0].Goto = %q", got)
+	}
+}
+
 func TestLoadSpecFillStep(t *testing.T) {
 	dir := t.TempDir()
 	p := writeSpec(t, dir, "fill.test.yaml", `
@@ -189,11 +221,11 @@ func TestRunUnknownTarget(t *testing.T) {
 	// Sanity: Run() returns an error result for unimplemented targets
 	// rather than panicking.
 	s := &Spec{
-		Name:    "ios",
-		Target:  TargetIOSSim,
-		URL:     "http://x",
-		Steps:   []Step{{Goto: "/"}},
-		Path:    "/tmp/ios.test.yaml",
+		Name:   "ios",
+		Target: TargetIOSSim,
+		URL:    "http://x",
+		Steps:  []Step{{Goto: "/"}},
+		Path:   "/tmp/ios.test.yaml",
 	}
 	res := Run(t.Context(), s, RunOptions{})
 	if res.Err == nil {
