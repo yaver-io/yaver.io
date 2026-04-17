@@ -6,13 +6,16 @@
 
 ## Current Status — end of Apr 17, 2026
 
-**Shipped so far (all pushed to `github/main`):**
+**Implemented so far (some already pushed, some still local as of Apr 17):**
 - Mini-backend runtime on the agent side — SQLite + schema DSL + auth personas + seed + CRUD. Templates: blank / crud / todos / notes. Portable tgz export with generated SQLite + Postgres DDL. Covers yc.md Apr 18–19 + Apr 22.
 - `POST /phone/projects/receive` on every `yaver serve` agent — the single receive endpoint used by dev-hw AND Yaver Cloud targets. 11 receive-side tests + 1 regression test (ErrPhoneProjectNotFound) all green.
 - `yaver phone <list|export|import|push>` CLI — the phone emulator used for dogfood. `push --to <base-url>` posts any local project to any reachable agent.
 - Mobile Deploy section (`mobile/app/phone-project/[slug].tsx`) — two primary buttons `[Your Dev Machine]` + `[Yaver Cloud]`; 6 switch-engine targets hidden under "Advanced". yc.md Apr 21 shipped.
 - Web dashboard mirror (`web/components/dashboard/PhoneProjectsView.tsx`) — same two-button Deploy UI for demo recording parity.
 - 3-mode picker at project creation (`mobile/app/phone-projects.tsx`) — user picks `[This device]` / `[Your Dev Machine]` / `[Yaver Cloud]` at project birth instead of create-then-promote. yc.md Apr 20 partial (AI-scaffold pending).
+- Voice/text prompt scaffold (`runPhonePromptGenerator`, mobile prompt UI) — prompt now generates schema/auth/seed/app spec for a phone project; remaining work is quality/polish, not first implementation.
+- Deploy-state rebinding (`PhoneProjectAccess`, `bindPhoneProjectToTarget`, `clearPhoneProjectBinding`) — after push, phone CRUD can rebind to the promoted target instead of staying pinned to the source sandbox.
+- Local phone sandbox bridge (`mobile/src/lib/phoneSandboxLocal.ts`) — offline/local project persistence exists, with sync back to the connected agent when reachable.
 - Hetzner cloud stack (`cloud/`) — static Go binary + Caddy compose, `deploy.sh` fresh-box bootstrap. Dogfooded on `***REMOVED***` — deploy → push → teardown works.
 
 **Dogfood numbers (real runs, 2026-04-17):**
@@ -24,16 +27,16 @@
 | Push to Hetzner (`[Yaver Cloud]`) | 1.3 KB | 196 ms |
 
 **What's still on the critical path for the YC video (ordered by leverage):**
-1. **Voice/text-prompt-to-scaffold** (yc.md Apr 20 core; 1–2 days) — the AI-writes-code half of the wedge. Currently the user creates an empty phone project and adds tables manually; we need a prompt field that produces a real schema + a working RN screen. See `PHONE_EXPORT_PIPELINE.md §Handoff 1.3`.
+1. **Prompt scaffold polish** (1 day) — first implementation exists, but the generated schema/screen quality still needs dogfood tightening so the demo path is reliable. See `PHONE_EXPORT_PIPELINE.md §Handoff 1.3`.
 2. **Cloud tenant DNS + TLS** (yc.md Apr 24; 30 min runbook) — point `cloud.yaver.io` at a Hetzner box with the `cloud/` stack + Caddy wildcard. Details in `PHONE_EXPORT_PIPELINE.md §Handoff 1.4`.
-3. **Deploy-state rebinding** (1 day) — after a push, the phone app still needs to treat the promoted target as the active backend instead of just surfacing a success URL.
-4. **GitHub/GitLab monorepo scaffolding** (1 day) — user-requested. Auth + clone + mono-repo layout + push. Can defer; the phone-only path is already demoable.
-5. **OpenAI key onboarding helper** (1 hour) — paste-with-validate + in-app link to platform.openai.com. OpenAI has no one-click OAuth-to-API-key. `PHONE_EXPORT_PIPELINE.md §Handoff 2.2`.
-6. **True on-device SQLite runtime (`expo-sqlite`)** (2–3 days) — so "Phone only" mode is literal, not "lives on the currently-connected agent". Not a demo-blocker; pragmatic today.
-7. **Landing page rewrite** (yc.md Apr 27) — "Build mobile apps from your phone" one-CTA.
-8. **HN launch** (yc.md Apr 29), video (May 1), application (May 4).
+3. **GitHub/GitLab monorepo scaffolding** (1 day) — user-requested. Auth + clone + mono-repo layout + push. Can defer; the phone-only path is already demoable.
+4. **OpenAI key onboarding helper** (1 hour) — paste-with-validate + in-app link to platform.openai.com. OpenAI has no one-click OAuth-to-API-key. `PHONE_EXPORT_PIPELINE.md §Handoff 2.2`.
+5. **True on-device SQLite runtime (`expo-sqlite`)** (2–3 days) — so "Phone only" mode is literal, not "lives on the currently-connected agent". Not a demo-blocker; pragmatic today.
+6. **Landing page rewrite** (yc.md Apr 27) — "Build mobile apps from your phone" one-CTA.
+7. **HN launch** (yc.md Apr 29), video (May 1), application (May 4).
 
 **Recently shipped (moved off critical path):**
+- Prompt-to-project scaffold + deploy-state rebinding + local sandbox sync all landed in the current repo state on Apr 17; the remaining work there is polish and dogfood, not first implementation.
 - `--include-data` flag on export + receive — runtime rows can now travel with the push when opt-in.
 - OAuth providers per phone project — Apple / Google / Microsoft setup guided from the mobile app, IDs + secrets stored at 0600 per-project, carried with the push. See `PHONE_EXPORT_PIPELINE.md §Handoff 1.2`.
 - Cloudflare DNS helpers — per-project "Custom Domain" screen on mobile, agent-side CF API wrapper with 14 tests. Paste scoped token → verify → CNAME/A/TXT with proxy toggle → one-tap create. Token never persisted by the agent. See `PHONE_EXPORT_PIPELINE.md §Handoff 2.4`.
