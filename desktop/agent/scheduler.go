@@ -257,7 +257,7 @@ func (s *Scheduler) RemoveSchedule(id string) error {
 		return fmt.Errorf("schedule not found: %s", id)
 	}
 	delete(s.tasks, id)
-	s.save()
+	s.saveLocked()
 	return nil
 }
 
@@ -270,7 +270,7 @@ func (s *Scheduler) PauseSchedule(id string) error {
 		return fmt.Errorf("schedule not found: %s", id)
 	}
 	st.Status = "paused"
-	s.save()
+	s.saveLocked()
 	return nil
 }
 
@@ -292,7 +292,7 @@ func (s *Scheduler) ResumeSchedule(id string) error {
 			st.NextRunAt = next.UTC().Format(time.RFC3339)
 		}
 	}
-	s.save()
+	s.saveLocked()
 	return nil
 }
 
@@ -315,9 +315,22 @@ func (s *Scheduler) GetSchedule(id string) (*ScheduledTask, bool) {
 	return st, ok
 }
 
+// save serializes the schedule map to disk. It takes the read lock
+// internally, so callers MUST NOT hold the write lock when invoking
+// it. Use saveLocked() from a write-locked section.
 func (s *Scheduler) save() {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	data, _ := json.MarshalIndent(s.tasks, "", "  ")
+	s.mu.RUnlock()
+	os.WriteFile(s.storePath, data, 0600)
+}
+
+// saveLocked is the same as save() but assumes the caller already
+// holds s.mu (read or write). Needed because PauseSchedule /
+// ResumeSchedule / RemoveSchedule want to persist the new state
+// while still inside the lock that guarantees consistency —
+// acquiring RLock on top of an existing Lock deadlocks.
+func (s *Scheduler) saveLocked() {
 	data, _ := json.MarshalIndent(s.tasks, "", "  ")
 	os.WriteFile(s.storePath, data, 0600)
 }
