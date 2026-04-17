@@ -6,6 +6,7 @@ import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
 import { loadApp } from "../../src/lib/bundleLoader";
+import { AppBackButton } from "../../src/components/AppBackButton";
 
 function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boolean; showGreenDot?: boolean }) {
   const c = useColors();
@@ -42,15 +43,9 @@ export default function TabLayout() {
 
   const backToMore = useCallback(
     () => (
-      <Pressable
-        onPress={() => router.navigate("/(tabs)/more" as any)}
-        style={{ paddingLeft: 14, paddingVertical: 8 }}
-        hitSlop={8}
-      >
-        <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
-      </Pressable>
+      <AppBackButton onPress={() => router.navigate("/(tabs)/more" as any)} style={{ paddingLeft: 14 }} />
     ),
-    [router, c.accent],
+    [router],
   );
 
   // Poll dev server status for green dot badge + auto-route

@@ -3,6 +3,7 @@ import React from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useColors } from "../../src/context/ThemeContext";
+import { AppBackButton } from "../../src/components/AppBackButton";
 
 export default function PrivacyPolicyScreen() {
   const c = useColors();
@@ -10,9 +11,7 @@ export default function PrivacyPolicyScreen() {
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: c.bg }]}>
       <View style={[styles.header, { borderBottomColor: c.border }]}>
-        <Pressable onPress={() => router.back()}>
-          <Text style={[styles.backButton, { color: c.accent }]}>Back</Text>
-        </Pressable>
+        <AppBackButton onPress={() => router.back()} textStyle={styles.backButton} />
         <Text style={[styles.headerTitle, { color: c.textPrimary }]}>Privacy Policy</Text>
         <View style={styles.headerSpacer} />
       </View>

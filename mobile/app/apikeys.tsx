@@ -19,6 +19,7 @@ import * as Clipboard from "expo-clipboard";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice } from "../src/context/DeviceContext";
 import { quicClient, type APIKeyRecord } from "../src/lib/quic";
+import { AppBackButton } from "../src/components/AppBackButton";
 
 // Mobile UI over /apikeys (desktop/agent/apikeys.go). Creating a key
 // goes through the agent → Convex (CreateSdkToken) → registry, and the
@@ -166,9 +167,7 @@ export default function APIKeysScreen() {
       style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top }}
     >
       <View style={[s.header, { borderColor: c.border }]}>
-        <Pressable onPress={() => router.back()}>
-          <Text style={{ color: c.textMuted, fontSize: 20 }}>{"\u2039"}</Text>
-        </Pressable>
+        <AppBackButton onPress={() => router.back()} />
         <Text style={[s.title, { color: c.textPrimary }]}>API Keys</Text>
         <Pressable onPress={() => setShowForm((v) => !v)}>
           <Text style={{ color: c.accent, fontSize: 18 }}>{showForm ? "\u00D7" : "+"}</Text>

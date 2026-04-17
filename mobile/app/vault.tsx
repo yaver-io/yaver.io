@@ -24,6 +24,7 @@ import {
   type VaultCategory,
   type VaultEntrySummary,
 } from "../src/lib/quic";
+import { AppBackButton } from "../src/components/AppBackButton";
 
 // Mobile UI for desktop/agent/vault.go. Values are never cached on
 // device — each reveal re-fetches over the P2P channel and lives in
@@ -272,9 +273,7 @@ export default function VaultScreen() {
       style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top }}
     >
       <View style={[s.header, { borderColor: c.border }]}>
-        <Pressable onPress={() => router.back()}>
-          <Text style={{ color: c.textMuted, fontSize: 20 }}>{"\u2039"}</Text>
-        </Pressable>
+        <AppBackButton onPress={() => router.back()} />
         <Text style={[s.title, { color: c.textPrimary }]}>Vault</Text>
         <Pressable onPress={() => setShowForm((v) => !v)}>
           <Text style={{ color: c.accent, fontSize: 18 }}>{showForm ? "\u00D7" : "+"}</Text>

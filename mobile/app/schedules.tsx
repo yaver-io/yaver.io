@@ -18,6 +18,7 @@ import { useRouter } from "expo-router";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice } from "../src/context/DeviceContext";
 import { quicClient, type ScheduledTask } from "../src/lib/quic";
+import { AppBackButton } from "../src/components/AppBackButton";
 
 // Mobile UI over desktop/agent/scheduler.go. Three scheduling modes:
 // cron, one-shot (runAt), or fixed interval (repeatInterval). All
@@ -263,9 +264,7 @@ export default function SchedulesScreen() {
       style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top }}
     >
       <View style={[s.header, { borderColor: c.border }]}>
-        <Pressable onPress={() => router.back()}>
-          <Text style={{ color: c.textMuted, fontSize: 20 }}>{"\u2039"}</Text>
-        </Pressable>
+        <AppBackButton onPress={() => router.back()} />
         <Text style={[s.title, { color: c.textPrimary }]}>Schedules</Text>
         <Pressable onPress={() => setShowForm((v) => !v)}>
           <Text style={{ color: c.accent, fontSize: 18 }}>{showForm ? "\u00D7" : "+"}</Text>

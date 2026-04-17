@@ -3,6 +3,7 @@ import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "r
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "../../../src/context/ThemeContext";
+import { AppBackButton } from "../../../src/components/AppBackButton";
 import { getPhoneProject, getPhoneProjectAccess, type PhoneProject, type PhoneProjectAccess } from "../../../src/lib/phoneProjects";
 
 type WorkspaceTab = "app" | "backend" | "code";
@@ -160,9 +161,7 @@ export default function PhoneProjectWorkspaceScreen() {
       }
     >
       <View style={{ paddingHorizontal: 16 }}>
-        <Pressable onPress={() => router.back()}>
-          <Text style={{ color: c.accent, marginBottom: 8 }}>‹ Back</Text>
-        </Pressable>
+        <AppBackButton onPress={() => router.back()} style={{ marginBottom: 8 }} />
         <Text style={[styles.title, { color: c.textPrimary }]}>{project?.name ?? slugStr}</Text>
         <Text style={{ color: c.textMuted, marginTop: 4 }}>
           Mobile-first sandbox workspace. App, backend, and code stay together.
