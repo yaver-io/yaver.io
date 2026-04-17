@@ -1672,6 +1672,7 @@ func (s *HTTPServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 		"ok":         true,
 		"projects":   result,
 		"currentDir": s.taskMgr.workDir,
+		"discovery":  currentProjectDiscoverySnapshot(),
 	})
 }
 

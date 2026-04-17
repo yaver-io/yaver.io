@@ -58,6 +58,7 @@ export default function HotReloadScreen() {
   const [devStatus, setDevStatus] = useState<DevServerStatus | null>(null);
   const [workerSession, setWorkerSession] = useState<MobileWorkerPreviewSession | null>(null);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
+  const [projectsScanning, setProjectsScanning] = useState(false);
   const [startingProject, setStartingProject] = useState<string | null>(null);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const mobileWorkers = devices.filter((d) => d.deviceClass === "edge-mobile");
@@ -128,6 +129,7 @@ export default function HotReloadScreen() {
         const res = await fetch(`${baseUrl}/projects/mobile`, { headers });
         const data = await res.json();
         if (mounted && data.ok && data.projects) {
+          setProjectsScanning(!!data.scanning);
           setProjects(data.projects.map((p: any) => ({
             name: p.name,
             path: p.path,
@@ -142,10 +144,9 @@ export default function HotReloadScreen() {
     poll();
     fetchMobileProjects();
     const interval = setInterval(poll, 3000);
-    // Refresh mobile project list every 30s (cache is 10min on server)
-    const projectInterval = setInterval(fetchMobileProjects, 30000);
+    const projectInterval = setInterval(fetchMobileProjects, projectsScanning ? 2500 : 15000);
     return () => { mounted = false; clearInterval(interval); clearInterval(projectInterval); };
-  }, [isConnected]);
+  }, [isConnected, projectsScanning]);
 
 
   const [nativeLoading, setNativeLoading] = useState(false);
@@ -466,10 +467,27 @@ export default function HotReloadScreen() {
           ListEmptyComponent={
             <View style={s.emptyList}>
               <Text style={[s.emptySubtitle, { color: c.textMuted }]}>
-                {projects.length > 0
+                {projectsScanning
+                  ? "Discovering mobile projects on your machine…"
+                  : projects.length > 0
                   ? "No hot-reloadable projects found.\nLooking for Expo, Flutter, Next.js, or Vite projects."
                   : "No projects discovered yet.\nThe agent scans your home directory automatically."}
               </Text>
+              <Pressable
+                style={[s.rediscoverBtn, { borderColor: c.border, backgroundColor: c.bgCard }]}
+                onPress={async () => {
+                  try {
+                    setProjectsScanning(true);
+                    const baseUrl = (quicClient as any).baseUrl;
+                    const headers = (quicClient as any).authHeaders;
+                    await fetch(`${baseUrl}/projects/mobile`, { method: "POST", headers });
+                  } catch {}
+                }}
+              >
+                <Text style={[s.rediscoverBtnText, { color: c.textPrimary }]}>
+                  {projectsScanning ? "Discovering..." : "Rediscover"}
+                </Text>
+              </Pressable>
             </View>
           }
         />
@@ -551,5 +569,7 @@ const s = StyleSheet.create({
   emptyTitle: { fontSize: 18, fontWeight: "700", marginBottom: 4 },
   emptySubtitle: { fontSize: 13, textAlign: "center", lineHeight: 20 },
   emptyList: { padding: 40, alignItems: "center" },
+  rediscoverBtn: { marginTop: 14, borderWidth: 1, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10 },
+  rediscoverBtnText: { fontSize: 14, fontWeight: "600" },
 
 });
