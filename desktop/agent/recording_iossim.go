@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -45,7 +45,7 @@ func (d *iosSimDriver) Start(ctx context.Context, outPath, runID, taskID string)
 	_ = removeFileIfExists(outPath)
 
 	cmd := exec.Command("xcrun", "simctl", "io", "booted", "recordVideo", "--codec=h264", outPath)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setProcGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		return driverState{}, err
 	}
@@ -57,7 +57,7 @@ func (d *iosSimDriver) Stop(state driverState) error {
 	if state.Cmd == nil || state.Cmd.Process == nil {
 		return fmt.Errorf("xcrun-simctl: no process to stop")
 	}
-	_ = state.Cmd.Process.Signal(syscall.SIGINT)
+	_ = state.Cmd.Process.Signal(os.Interrupt)
 	done := make(chan error, 1)
 	go func() { done <- state.Cmd.Wait() }()
 	select {

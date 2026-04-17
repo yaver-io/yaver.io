@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"syscall"
 	"time"
 )
 
@@ -54,7 +53,7 @@ func (d *ffmpegScreenDriver) Start(ctx context.Context, outPath, runID, taskID s
 	// Detach from the parent process group so Ctrl-C on the agent
 	// doesn't also kill the ffmpeg child prematurely — we want to
 	// send it SIGINT explicitly in Stop().
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setProcGroup(cmd)
 
 	// Pipe ffmpeg's stderr to /dev/null so the agent logs stay clean;
 	// ffmpeg prints status lines every second on stderr.
@@ -85,7 +84,7 @@ func (d *ffmpegScreenDriver) Stop(state driverState) error {
 	}
 	// Send SIGINT so ffmpeg finalizes the mp4 container (MOOV atom,
 	// last frames flushed). SIGKILL produces a broken file.
-	_ = state.Cmd.Process.Signal(syscall.SIGINT)
+	_ = state.Cmd.Process.Signal(os.Interrupt)
 
 	done := make(chan error, 1)
 	go func() { done <- state.Cmd.Wait() }()

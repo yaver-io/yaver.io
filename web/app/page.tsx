@@ -68,9 +68,9 @@ function DebugConsolePreview() {
   return (
     <div className="mt-10 overflow-hidden rounded-2xl border border-surface-800/60 bg-surface-900/30 p-6 sm:p-8">
       {/* Two-column: description left, phone right */}
-      <div className="flex flex-col items-center gap-8 lg:flex-row lg:items-start lg:gap-10">
+      <div className="flex flex-col items-center gap-8 lg:flex-row lg:items-center lg:gap-10">
         {/* Left — text */}
-        <div className="flex-1 lg:pt-8">
+        <div className="flex-1">
           <span className="mb-3 inline-block rounded-full bg-[#6366f1]/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#a5b4fc]">Feedback SDK</span>
           <h3 className="mb-3 text-xl font-bold text-surface-50 sm:text-2xl">
             Debug console inside your app
@@ -123,7 +123,7 @@ function DebugConsolePreview() {
         </div>
 
         {/* Right — phone mockup */}
-        <div className="shrink-0">
+        <div className="shrink-0 lg:self-center">
           <div className="relative overflow-hidden rounded-[2.8rem] border-[3px] border-surface-300/40 bg-white shadow-2xl shadow-black/30" style={{ width: 340 }}>
             {/* Dynamic Island */}
             <div className="relative z-20 mx-auto mt-2 h-[26px] w-[100px] rounded-full bg-black" />
