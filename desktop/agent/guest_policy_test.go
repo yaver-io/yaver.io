@@ -101,3 +101,25 @@ func TestTaskEnvKeepsHostKeysWhenExplicitlyAllowed(t *testing.T) {
 		t.Fatal("expected guest environment to include host key when explicitly allowed")
 	}
 }
+
+func TestTaskEnvAddsVaultBackedHostKeysForOwner(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "")
+	vs, err := NewVaultStore("test-passphrase")
+	if err != nil {
+		t.Fatalf("NewVaultStore: %v", err)
+	}
+	if err := vs.Set(VaultEntry{Name: "OPENAI_API_KEY", Category: "api-key", Value: "vault-openai-key"}); err != nil {
+		t.Fatalf("vault set: %v", err)
+	}
+	setRuntimeVaultStore(vs)
+	defer setRuntimeVaultStore(nil)
+
+	env := taskEnv(&Task{})
+	for _, entry := range env {
+		if entry == "OPENAI_API_KEY=vault-openai-key" {
+			return
+		}
+	}
+	t.Fatal("expected owner environment to include vault-backed OPENAI_API_KEY")
+}

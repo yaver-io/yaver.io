@@ -49,6 +49,14 @@ export interface APIKeyRecord {
   scopes?: string[];
 }
 
+export interface SyncItem<T = any> {
+  key: string;
+  value?: T;
+  updatedAt: number;
+  updatedBy: string;
+  deleted?: boolean;
+}
+
 // Matches desktop/agent/scheduler.go::ScheduledTask.
 export interface ScheduledTask {
   id: string;
@@ -2017,6 +2025,35 @@ export class QuicClient {
       { method: 'DELETE', headers: this.authHeaders },
     );
     if (!res.ok) throw new Error(`vault delete: HTTP ${res.status}`);
+  }
+
+  async syncList<T = any>(kind: string, since = 0): Promise<{ items: SyncItem<T>[]; latestAt: number }> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/sync/${encodeURIComponent(kind)}?since=${encodeURIComponent(String(since))}`,
+      { headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`sync list: HTTP ${res.status}`);
+    const data = await res.json();
+    return {
+      items: Array.isArray(data?.items) ? data.items : [],
+      latestAt: typeof data?.latestAt === "number" ? data.latestAt : 0,
+    };
+  }
+
+  async syncMerge<T = any>(kind: string, items: SyncItem<T>[]): Promise<{ applied: number; latestAt: number }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/sync/${encodeURIComponent(kind)}`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ items }),
+    });
+    if (!res.ok) throw new Error(`sync merge: HTTP ${res.status}`);
+    const data = await res.json();
+    return {
+      applied: typeof data?.applied === "number" ? data.applied : 0,
+      latestAt: typeof data?.latestAt === "number" ? data.latestAt : 0,
+    };
   }
 
   // ── API keys (labeled SDK tokens, local registry) ──

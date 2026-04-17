@@ -35,6 +35,63 @@ const BUILD_NUMBER =
   Constants.expoConfig?.android?.versionCode?.toString() ??
   "1";
 
+type ProviderKeyId = "openai" | "glm" | "anthropic";
+type ProviderKeyScope = "phone-local" | "host-vault";
+type ProviderKeyState = {
+  provider: ProviderKeyId;
+  scope: ProviderKeyScope;
+  storage: KeyStorage;
+  status: "saved" | "synced" | "failed";
+  updatedAt: number;
+  lastAttemptAt: number;
+  lastSuccessAt?: number;
+  lastFailureAt?: number;
+  lastError?: string;
+};
+
+function mergeProviderKeyState(current: ProviderKeyState | undefined, incoming: ProviderKeyState): ProviderKeyState {
+  if (!current) return incoming;
+  const currentSuccess = current.lastSuccessAt ?? 0;
+  const incomingSuccess = incoming.lastSuccessAt ?? 0;
+  const currentFailure = current.lastFailureAt ?? 0;
+  const incomingFailure = incoming.lastFailureAt ?? 0;
+  const latestSuccessAt = Math.max(currentSuccess, incomingSuccess);
+  const latestFailureAt = Math.max(currentFailure, incomingFailure);
+  const latestUpdated = incoming.updatedAt >= current.updatedAt ? incoming : current;
+  const latestSuccessState =
+    incomingSuccess >= currentSuccess
+      ? incoming
+      : current;
+  const latestFailureState =
+    incomingFailure >= currentFailure
+      ? incoming
+      : current;
+  return {
+    ...latestUpdated,
+    status: latestSuccessAt > 0 && latestSuccessAt >= latestFailureAt
+      ? (latestSuccessState.scope === "host-vault" ? "synced" : "saved")
+      : "failed",
+    scope: latestSuccessAt >= currentSuccess ? latestSuccessState.scope : current.scope,
+    storage: latestSuccessAt >= currentSuccess ? latestSuccessState.storage : current.storage,
+    lastAttemptAt: Math.max(current.lastAttemptAt, incoming.lastAttemptAt),
+    lastSuccessAt: latestSuccessAt || undefined,
+    lastFailureAt: latestFailureAt || undefined,
+    lastError: latestFailureAt > latestSuccessAt ? latestFailureState.lastError : undefined,
+    updatedAt: Math.max(current.updatedAt, incoming.updatedAt),
+  };
+}
+
+function providerKeyStatusLabel(state?: ProviderKeyState): string {
+  if (!state) return "No status yet";
+  const stamp = state.lastSuccessAt ?? state.lastFailureAt ?? state.updatedAt;
+  const minutesAgo = stamp > 0 ? Math.max(0, Math.round((Date.now() - stamp) / 60000)) : null;
+  const age = minutesAgo == null ? "" : minutesAgo < 1 ? "just now" : `${minutesAgo}m ago`;
+  if (state.status === "failed") {
+    return `${state.scope === "host-vault" ? "Host vault" : "Phone"} failed${age ? ` ${age}` : ""}${state.lastError ? ` · ${state.lastError}` : ""}`;
+  }
+  return `${state.scope === "host-vault" ? "Host vault" : "Phone"} ${state.status}${age ? ` ${age}` : ""}`;
+}
+
 export default function SettingsScreen() {
   const { user, token, logout, refreshUser } = useAuth();
   const { activeDevice, connectionStatus, disconnect, selectDevice } = useDevice();
@@ -96,6 +153,7 @@ export default function SettingsScreen() {
   const [isSavingSpeech, setIsSavingSpeech] = useState(false);
   const [isSavingAiProviders, setIsSavingAiProviders] = useState(false);
   const [isSyncingAiVault, setIsSyncingAiVault] = useState(false);
+  const [providerKeyStates, setProviderKeyStates] = useState<Record<string, ProviderKeyState>>({});
 
   // Key storage preference: "local" = device Keychain only, "cloud" = sync to Convex
   const [keyStorage, setKeyStorage] = useState<KeyStorage>("local");
@@ -149,6 +207,7 @@ export default function SettingsScreen() {
   const TUNNELS_KEY = customTunnelsKey(user?.id);
   const SYNC_KEY = user?.id ? `@yaver/u/${user.id}/relay_sync_enabled` : "@yaver/relay_sync_enabled";
   const DOGFOOD_KEY = user?.id ? `@yaver/u/${user.id}/dogfood_yaver` : "@yaver/dogfood_yaver";
+  const PROVIDER_KEY_STATUS_KEY = user?.id ? `@yaver/u/${user.id}/provider_key_status` : "@yaver/provider_key_status";
 
   // Load custom relay servers and sync preference from AsyncStorage
   useEffect(() => {
@@ -184,6 +243,12 @@ export default function SettingsScreen() {
         if (typeof cfg.prompt === "string" && cfg.prompt.trim()) setDogfoodPrompt(cfg.prompt);
       } catch {}
     });
+    AsyncStorage.getItem(PROVIDER_KEY_STATUS_KEY).then((raw) => {
+      if (!raw) return;
+      try {
+        setProviderKeyStates(JSON.parse(raw));
+      } catch {}
+    });
     // Load feedback SDK config
     const fbKey = user?.id ? `@yaver/u/${user.id}/feedback_config` : "@yaver/feedback_config";
     AsyncStorage.getItem(fbKey).then((raw) => {
@@ -199,7 +264,40 @@ export default function SettingsScreen() {
         } catch {}
       }
     });
-  }, [DOGFOOD_KEY, RELAYS_KEY, SYNC_KEY, TUNNELS_KEY, user?.id]);
+  }, [DOGFOOD_KEY, PROVIDER_KEY_STATUS_KEY, RELAYS_KEY, SYNC_KEY, TUNNELS_KEY, user?.id]);
+
+  const mergeProviderStates = async (incomingStates: ProviderKeyState[], pushToHost = false) => {
+    setProviderKeyStates((prev) => {
+      const next = { ...prev };
+      for (const state of incomingStates) {
+        const key = `${state.provider}:${state.scope}`;
+        next[key] = mergeProviderKeyState(next[key], state);
+      }
+      AsyncStorage.setItem(PROVIDER_KEY_STATUS_KEY, JSON.stringify(next)).catch(() => {});
+      if (pushToHost && connectionStatus === "connected" && !activeDevice?.isGuest) {
+        const items = Object.entries(next).map(([key, value]) => ({
+          key,
+          value,
+          updatedAt: value.updatedAt,
+          updatedBy: "mobile",
+        }));
+        quicClient.syncMerge("provider-keys", items).catch(() => {});
+      }
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    if (connectionStatus !== "connected" || !!activeDevice?.isGuest) return;
+    quicClient.syncList<ProviderKeyState>("provider-keys").then(({ items }) => {
+      const incoming = items
+        .map((item) => item?.value)
+        .filter((value): value is ProviderKeyState => !!value && typeof value.provider === "string" && typeof value.scope === "string");
+      if (incoming.length > 0) {
+        mergeProviderStates(incoming, false).catch(() => {});
+      }
+    }).catch(() => {});
+  }, [activeDevice?.id, activeDevice?.isGuest, connectionStatus]);
 
   const saveDogfoodConfig = async (patch: { repoDir?: string; prompt?: string }) => {
     const next = {
@@ -590,6 +688,20 @@ export default function SettingsScreen() {
         cloudSettings.mobileCodingProvider = "";
       }
       await saveUserSettings(token, cloudSettings);
+      const now = Date.now();
+      const statuses: ProviderKeyState[] = [];
+      if (openAiApiKey.trim()) {
+        statuses.push({ provider: "openai", scope: "phone-local", storage: keyStorage, status: "saved", updatedAt: now, lastAttemptAt: now, lastSuccessAt: now });
+      }
+      if (glmApiKey.trim()) {
+        statuses.push({ provider: "glm", scope: "phone-local", storage: keyStorage, status: "saved", updatedAt: now, lastAttemptAt: now, lastSuccessAt: now });
+      }
+      if (anthropicApiKey.trim()) {
+        statuses.push({ provider: "anthropic", scope: "phone-local", storage: keyStorage, status: "saved", updatedAt: now, lastAttemptAt: now, lastSuccessAt: now });
+      }
+      if (statuses.length > 0) {
+        await mergeProviderStates(statuses, true);
+      }
       Alert.alert("Saved", "AI provider settings saved.");
     } catch {
       Alert.alert("Error", "Failed to save AI provider settings.");
@@ -610,20 +722,48 @@ export default function SettingsScreen() {
     setIsSyncingAiVault(true);
     try {
       const entries = [
-        { name: "OPENAI_API_KEY", value: openAiApiKey, notes: "Owner-only AI provider key synced from Yaver mobile." },
-        { name: "GLM_API_KEY", value: glmApiKey, notes: "Owner-only AI provider key synced from Yaver mobile." },
-        { name: "ANTHROPIC_API_KEY", value: anthropicApiKey, notes: "Owner-only AI provider key synced from Yaver mobile." },
+        { provider: "openai" as const, name: "OPENAI_API_KEY", value: openAiApiKey, notes: "Owner-only AI provider key synced from Yaver mobile." },
+        { provider: "glm" as const, name: "GLM_API_KEY", value: glmApiKey, notes: "Owner-only AI provider key synced from Yaver mobile." },
+        { provider: "anthropic" as const, name: "ANTHROPIC_API_KEY", value: anthropicApiKey, notes: "Owner-only AI provider key synced from Yaver mobile." },
       ];
       let changed = 0;
+      const now = Date.now();
+      const statuses: ProviderKeyState[] = [];
       for (const entry of entries) {
         if (!entry.value.trim()) continue;
-        await quicClient.vaultSet({
-          name: entry.name,
-          category: "api-key",
-          value: entry.value.trim(),
-          notes: entry.notes,
-        });
-        changed += 1;
+        try {
+          await quicClient.vaultSet({
+            name: entry.name,
+            category: "api-key",
+            value: entry.value.trim(),
+            notes: entry.notes,
+          });
+          statuses.push({
+            provider: entry.provider,
+            scope: "host-vault",
+            storage: keyStorage,
+            status: "synced",
+            updatedAt: now,
+            lastAttemptAt: now,
+            lastSuccessAt: now,
+          });
+          changed += 1;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Sync failed";
+          statuses.push({
+            provider: entry.provider,
+            scope: "host-vault",
+            storage: keyStorage,
+            status: "failed",
+            updatedAt: now,
+            lastAttemptAt: now,
+            lastFailureAt: now,
+            lastError: message,
+          });
+        }
+      }
+      if (statuses.length > 0) {
+        await mergeProviderStates(statuses, true);
       }
       Alert.alert("Vault synced", changed > 0 ? `Synced ${changed} provider key${changed === 1 ? "" : "s"} to the connected machine vault.` : "No non-empty provider keys to sync.");
     } catch {
@@ -2707,6 +2847,9 @@ export default function SettingsScreen() {
                 autoCorrect={false}
                 secureTextEntry
               />
+              <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
+                {providerKeyStatusLabel(providerKeyStates["openai:host-vault"] || providerKeyStates["openai:phone-local"])}
+              </Text>
 
               <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 12 }}>GLM / Z.ai</Text>
               <TextInput
@@ -2719,6 +2862,9 @@ export default function SettingsScreen() {
                 autoCorrect={false}
                 secureTextEntry
               />
+              <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
+                {providerKeyStatusLabel(providerKeyStates["glm:host-vault"] || providerKeyStates["glm:phone-local"])}
+              </Text>
 
               <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 12 }}>Anthropic / Claude API</Text>
               <TextInput
@@ -2731,11 +2877,17 @@ export default function SettingsScreen() {
                 autoCorrect={false}
                 secureTextEntry
               />
+              <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
+                {providerKeyStatusLabel(providerKeyStates["anthropic:host-vault"] || providerKeyStates["anthropic:phone-local"])}
+              </Text>
               <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 6 }}>
                 Yaver account signup still uses Apple, Google, Microsoft, or email. OpenAI and Claude are connected as tooling providers, not Yaver login providers.
               </Text>
               <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 6 }}>
                 Host vault sync is owner-only. Guest sessions do not get raw provider secrets unless the host explicitly enables host-managed key usage.
+              </Text>
+              <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 6 }}>
+                Shared infra policy: host can share compute only, or compute plus host-managed keys. Guests never receive raw provider values from this screen.
               </Text>
 
               <View style={{ flexDirection: "row", gap: 8, marginTop: 14 }}>

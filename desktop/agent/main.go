@@ -31,7 +31,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.95.2"
+const version = "1.95.3"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
@@ -1958,6 +1958,7 @@ func runServe(args []string) {
 		log.Printf("Warning: vault unavailable: %v", err)
 	} else {
 		httpServer.vaultStore = vs
+		setRuntimeVaultStore(vs)
 		log.Printf("Vault unlocked (%d entries)", len(vs.List()))
 	}
 	globalEmailMgr = emailMgr // enable email notifications

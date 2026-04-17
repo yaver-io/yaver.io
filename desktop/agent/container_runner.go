@@ -18,7 +18,9 @@ var sharedSecretEnvVars = []string{
 	"ANTHROPIC_API_KEY",
 	"ANTHROPIC_AUTH_TOKEN",
 	"CLAUDE_CODE_OAUTH_TOKEN",
+	"GLM_API_KEY",
 	"OPENAI_API_KEY",
+	"ZAI_API_KEY",
 	"GOOGLE_API_KEY",
 	"MISTRAL_API_KEY",
 	"GROQ_API_KEY",
@@ -269,15 +271,9 @@ func (cr *ContainerRunner) DetectProjectImage(ctx context.Context, projectDir st
 // CollectAPIKeys gathers API keys from the host environment that AI agents need.
 // Only passes explicitly needed keys — not the entire host environment.
 func CollectAPIKeys() map[string]string {
-	keys := map[string]string{}
 	envVars := append([]string{}, sharedSecretEnvVars...)
 	envVars = append(envVars, "CLAUDE_CODE_USE_BEDROCK", "ANTHROPIC_MODEL")
-	for _, k := range envVars {
-		if v := os.Getenv(k); v != "" {
-			keys[k] = v
-		}
-	}
-	return keys
+	return collectHostSecretEnv(envVars)
 }
 
 func CollectAPIKeysForTask(task *Task) map[string]string {
