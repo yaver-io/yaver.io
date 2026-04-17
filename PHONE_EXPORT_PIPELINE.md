@@ -279,6 +279,42 @@ Regression test `TestPhoneAdapter_MissingProjectReturnsNotFound` added to `phone
 - `yaver phone push` uses Go's `flag` package which requires **all** flags before positional args: `yaver phone push --to URL SLUG`, not `yaver phone push SLUG --to URL`. The error path is helpful (prints usage), but the docs / error message could call this out explicitly.
 - The agent registers a macOS LaunchAgent / Linux systemd unit the first time it runs in a given HOME. For automation, set `YAVER_NO_BOOTSTRAP=1` **and** pre-write `macos_permission_onboarding_done: true` in `config.json` to avoid interactive prompts.
 
+## Dogfood log — 2026-04-17 (pm) — wedge-demo two-button deploy
+
+Second dogfood against the same two targets as the morning run — this time driving the new `[Your Dev Machine]` / `[Yaver Cloud]` deploy surface in mobile + web (yc.md §Wedge Demo Apr 21). CLI still the emulator (`yaver phone push`) since iOS hot-iterate is a 20-minute loop.
+
+### Flow shipped end-to-end
+
+```
+[1] Phone creates 'vibe-todos' (template: todos)
+      created in 15 ms
+[2] Phone adds 2 rows (simulating user CRUD)
+      source now has 5 todos
+[3] Tap [Your Dev Machine] → push to :28080
+      1349-byte bundle, 17 ms total latency
+      Mac target now has 3 todos (schema+seed; runtime rows NOT shipped per contract)
+[4] Tap [Yaver Cloud] → push to Hetzner
+      1349-byte bundle, 196 ms total latency
+      Hetzner now has 3 todos
+```
+
+Both targets reachable and running the same project after a clean 2-tap flow. 17 ms to the Mac is fast enough to feel instant in a demo recording; 196 ms to Hetzner is the baseline RTT to eu-central + a few round-trips of the upload. Both are well under the 3-minute budget `yc.md §HN Launch Playbook` requires for the HN-launch demo.
+
+### What the new UI looks like
+
+Mobile (`mobile/app/phone-project/[slug].tsx`) and web (`web/components/dashboard/PhoneProjectsView.tsx`) now both show a "Deploy" section with exactly two primary affordances:
+
+- **Your Dev Machine** — filled indigo button. Auto-targets the first online, owner-owned, non-mobile device (i.e. an agent running on a Mac / Pi / Linux box). Long-press (mobile) / dropdown (web) to pick a different sibling device. Goes through the active relay URL, which is how the phone's existing HTTP path already routes to the Mac. Cost: free.
+- **Yaver Cloud** — outlined button to `https://cloud.yaver.io`. Uses the same `POST /phone/projects/receive` endpoint; the Hetzner box runs a stock `yaver serve`. Cost: $19/mo tier per yc.md §Business Model.
+
+The 6-target switch-engine picker (SQLite, Turso, Postgres, Supabase, Neon, Convex) is hidden behind a collapsible "Advanced — promote to a switch-engine target" toggle so the wedge stays visually simple for the demo recording.
+
+### Follow-ups from this run
+
+- **Live-data carry-over is opt-in.** `vibe-1` + `vibe-2` rows added on the "phone" don't survive the promote. Matches the documented contract (`PHONE_EXPORT_PIPELINE.md §"The wire format"` — SQLite file not shipped). For the YC demo we'll want an **`--include-data` flag** on `phone push` / a checkbox in the UI so "I added a todo, now it's on my cloud too" is demonstrable. Small: bundle the `.db` file alongside seed.json in the tarball when requested; receiver copies it verbatim instead of rebuilding from seed.
+- **Token hygiene for CLI pushes.** `yaver phone push` reads the caller's `~/.yaver/config.json` for the bearer, so pushing to a cloud agent owned by a *different account* requires swapping the config. Mobile / web go through the same relay with the user's own token, so this is only a concern for the CLI path.
+- **macOS LaunchAgent / Linux systemd auto-registration** fires whenever the agent starts in a new HOME, which adds up over many CI / dogfood runs. Not hazardous (the units point at specific binary paths), but worth a `--no-autostart` flag for automation.
+
 ## Relationship to the YC sprint (`yc.md`)
 
 This thread finishes **Apr 19 – Apr 21** items in the 17-day sprint:

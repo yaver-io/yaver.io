@@ -1,0 +1,35 @@
+# Yaver Cloud TLS front.
+#
+# Single-host mode: one Hetzner box serves the /phone/projects/receive endpoint
+# (and the rest of the agent surface) behind a Let's Encrypt cert for
+# {$CLOUD_DOMAIN}.
+#
+# The 128 MB request cap must match maxBundle in phone_backend_http.go.
+
+{$CLOUD_DOMAIN} {
+	encode zstd gzip
+
+	# Phone-project tarballs come in here; bump the default Caddy body limit.
+	request_body {
+		max_size 128MB
+	}
+
+	tls {$CLOUD_TLS_EMAIL}
+
+	# Preserve the originating client IP so new-device alerts stay accurate.
+	reverse_proxy yaver-agent:18080 {
+		header_up X-Forwarded-For   {remote_host}
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host  {host}
+		transport http {
+			read_timeout 5m
+			write_timeout 5m
+		}
+	}
+
+	log {
+		output stdout
+		format console
+		level  INFO
+	}
+}

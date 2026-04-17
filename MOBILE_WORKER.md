@@ -39,7 +39,8 @@ This document also tracks a second, later platform direction:
 
 - a `mini backend` embedded inside the Yaver mobile app
 - optimized for creating a new mobile app from a mobile app
-- portable later to user-owned infra like Raspberry Pi, Linux, Mac, VPS, Supabase, or Convex
+- the first tier of a **Yaver-native backend continuum**: phone → user's own hardware → Yaver managed cloud, one portable manifest across all three, zero migration between tiers
+- exportable as an escape hatch to Supabase, Convex, Firebase, Postgres, Neon, Turso, and other third-party backends — for trust signaling and no-lock-in guarantees, not as the default promotion path
 
 That mini-backend track is explicitly a future layer on top of Yaver's phone-first development workflow. It is not a requirement for the initial mobile-worker rollout.
 
@@ -291,15 +292,25 @@ The product promise is:
 
 - phone-first creation
 - not phone-only forever
+- one runtime, one manifest, three tiers — no migration drama when scaling up
 
-Projects created this way must be promotable to:
+Projects created this way must be promotable along the **Yaver-native continuum** (the primary path):
 
-- Yaver backend
-- Raspberry Pi / Linux / Mac hosts
-- VPS
+1. Yaver mini-backend on the phone (SQLite, on-device) — where every project starts
+2. Yaver runtime on the user's own hardware (Raspberry Pi, Linux, Mac, Mac mini, VPS) via `yaver serve` — same manifest, materialized locally
+3. Yaver managed cloud (CPU / GPU / multi-user tiers) — same manifest, provisioned on our hosted infra
+
+And must also be exportable to third-party backends as **escape hatches** (not the default path):
+
 - Supabase
 - Convex
-- standard React Native / Expo projects where possible
+- Firebase
+- Postgres (Neon, managed, self-hosted)
+- Turso
+- other switch-engine targets
+- standard React Native / Expo projects where applicable
+
+The escape hatches exist so users trust the platform ("I can leave any time") — but the product we build, test, and monetize is the Yaver-native path from phone to cloud.
 
 ### Git and Monorepo Expectations
 
@@ -344,16 +355,24 @@ That means each project should be representable as:
 - seed data
 - environment bindings
 
-Yaver should later be able to promote that project to:
+**Primary promotion path (Yaver-native — the same runtime at every tier):**
 
-- local Raspberry Pi or Linux box
-- Mac mini or MacBook
-- VPS
+- Yaver on the phone (SQLite, on-device)
+- Yaver on the user's own local Raspberry Pi or Linux box (via `yaver serve`)
+- Yaver on the user's own Mac mini or MacBook (via `yaver serve`)
+- Yaver on the user's own VPS (via `yaver serve`)
+- Yaver managed cloud (CPU / GPU / multi-user tiers)
+
+**Escape-hatch exports (third-party targets — trust signal, not default):**
+
 - Supabase
 - Convex
+- Firebase
+- Postgres (Neon, managed, self-hosted)
+- Turso
 - custom backend scaffolds where needed
 
-The internal Yaver runtime must therefore stay intentionally constrained and declarative.
+The internal Yaver runtime must therefore stay intentionally constrained and declarative so it can be materialized at every Yaver-native tier without per-tier rewrites — and so the escape-hatch exporters have a stable manifest to translate from.
 
 ### iPhone and Android Expectations
 
@@ -403,7 +422,8 @@ The likely end state is:
 - primary phone runs Yaver control plane
 - Yaver can create and edit a mobile app project directly on the phone
 - Yaver can preview on the primary phone or on spare-phone workers
-- project can later be promoted to Mac, Pi, Linux, VPS, Supabase, or Convex
+- project grows along the Yaver-native continuum: on-phone → user's Mac / Pi / Linux / VPS (via `yaver serve`) → Yaver managed cloud
+- project can additionally be exported to Supabase, Convex, Firebase, or other third-party backends as an escape hatch (trust-signal, not primary path)
 
 ### Sequencing
 
