@@ -5698,6 +5698,24 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			}
 		}
 		return mcpToolJSON(mobileProjectStatus(args.Directory))
+	case "mobile_project_build":
+		var args struct {
+			Directory string `json:"directory"`
+			Framework string `json:"framework"`
+			Platform  string `json:"platform"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.Directory) == "" {
+			args.Directory = s.taskMgr.workDir
+		}
+		if strings.TrimSpace(args.Platform) == "" {
+			args.Platform = "ios"
+		}
+		result, err := s.buildNativeBundleForProject(args.Directory, args.Framework, args.Platform)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(result)
 
 	// --- GitHub ---
 	case "github_prs":

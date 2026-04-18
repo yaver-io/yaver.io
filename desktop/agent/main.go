@@ -6262,6 +6262,8 @@ func runMCP(args []string) {
 		fmt.Printf("Yaver MCP server (HTTP) v%s on port %d — work dir: %s\n", version, *httpPort, *workDir)
 		hostname, _ := os.Hostname()
 		srv := NewHTTPServer(*httpPort, "", "", "", "", hostname, taskMgr)
+		srv.devServerMgr = NewDevServerManager()
+		srv.devServerMgr.AgentURL = fmt.Sprintf("http://127.0.0.1:%d", *httpPort)
 		srv.agentGraphMgr = NewAgentGraphManager(taskMgr)
 		globalAgentGraphMgr = srv.agentGraphMgr
 		srv.aclMgr = aclMgr
@@ -6294,6 +6296,7 @@ func runMCPStdio(taskMgr *TaskManager, aclMgr *ACLManager, emailMgr *EmailManage
 		aclMgr:   aclMgr,
 		emailMgr: emailMgr,
 	}
+	srv.devServerMgr = NewDevServerManager()
 	// Stdio MCP is spawned BY the AI agent (Claude Code, Claude Desktop,
 	// etc.), so our parent PID is the agent process. session_handoff
 	// uses this when the caller doesn't pass an explicit caller_pid.

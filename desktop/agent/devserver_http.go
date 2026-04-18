@@ -2,12 +2,14 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -327,6 +329,66 @@ func mobileProjectStatus(workDir string) map[string]interface{} {
 		"compiledBundleSize":         buildState.BundleSize,
 		"compiledModuleName":         buildState.ModuleName,
 	}
+}
+
+func (s *HTTPServer) ensureDevServerManager() *DevServerManager {
+	if s.devServerMgr == nil {
+		s.devServerMgr = NewDevServerManager()
+	}
+	return s.devServerMgr
+}
+
+func (s *HTTPServer) ensureDevServerForProject(workDir, framework, platform string) error {
+	mgr := s.ensureDevServerManager()
+	if status := mgr.Status(); status != nil && status.Running && status.WorkDir == workDir {
+		return nil
+	}
+	if err := mgr.Start(framework, workDir, platform, 0, DevServerTarget{}); err != nil {
+		return err
+	}
+	for i := 0; i < 60; i++ {
+		time.Sleep(1 * time.Second)
+		status := mgr.Status()
+		if status != nil && status.Running && status.WorkDir == workDir {
+			return nil
+		}
+		if status == nil {
+			continue
+		}
+		if status.Error != "" {
+			return fmt.Errorf(status.Error)
+		}
+	}
+	return fmt.Errorf("dev server did not become ready in time")
+}
+
+func (s *HTTPServer) buildNativeBundleForProject(workDir, framework, platform string) (map[string]interface{}, error) {
+	if platform == "" {
+		platform = "ios"
+	}
+	if err := s.ensureDevServerForProject(workDir, framework, platform); err != nil {
+		return nil, err
+	}
+
+	body := bytes.NewBufferString(fmt.Sprintf(`{"platform":%q}`, platform))
+	req := httptest.NewRequest(http.MethodPost, "/dev/build-native", body)
+	rec := httptest.NewRecorder()
+	s.handleBuildNativeBundle(rec, req)
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		if rec.Code >= 400 {
+			return nil, fmt.Errorf(strings.TrimSpace(rec.Body.String()))
+		}
+		return nil, err
+	}
+	if rec.Code >= 400 {
+		if msg, _ := result["error"].(string); msg != "" {
+			return nil, fmt.Errorf(msg)
+		}
+		return nil, fmt.Errorf("native build failed with status %d", rec.Code)
+	}
+	return result, nil
 }
 
 func bundleCommand(packageManager, framework, platform, entryFile, bundlePath, assetsDir string) *exec.Cmd {
