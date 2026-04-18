@@ -288,8 +288,9 @@ winget install Yaver.Yaver                      # Windows (Winget)
 curl -fsSL https://yaver.io/install.sh | sh     # Quick install (macOS / Linux)
 irm https://yaver.io/install.ps1 | iex          # Quick install (Windows PowerShell)
 
-# Sign in & start agent
+# Sign in
 yaver auth
+# `yaver auth` starts the agent automatically if needed
 
 # Adopt a project (one-time, ~3 min) — caches stack/layout/conventions into init.md
 cd ~/code/my-project
