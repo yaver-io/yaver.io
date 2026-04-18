@@ -1,5 +1,6 @@
 const fs = require('fs');
 const { analyzeProject } = require('../analyzer');
+const { loadSDKManifest } = require('../sdk-manifest');
 
 async function doctor() {
   if (!fs.existsSync('package.json')) {
@@ -8,7 +9,7 @@ async function doctor() {
   }
 
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-  const sdkManifest = require('../../sdk-manifest.json');
+  const sdkManifest = loadSDKManifest();
   const analysis = analyzeProject(pkg, sdkManifest);
 
   console.log('\n📋 Yaver Compatibility Report\n');

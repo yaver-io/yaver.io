@@ -73,6 +73,8 @@ Expected behavior:
 
 This is the correct daily loop for projects like `sfmg` when they are standard Expo / React Native apps.
 
+`expo-updates` in the target app does not require a separate WSL workaround here. The Yaver mobile host includes `expo-updates`, and the shared SDK manifest is generated from the host app deps/plugin config and reused by the CLI and embedded iOS bundle, so it should not be treated as an automatic compatibility blocker for `Open in Yaver`.
+
 ## What Your Cousin Should Remember
 
 - If he is on WSL, he should not try to make iPhone reload depend on Xcode.

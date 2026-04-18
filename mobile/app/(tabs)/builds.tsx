@@ -16,6 +16,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
+import { AppBackButton } from "../../src/components/AppBackButton";
 import { quicClient, type DevServerStatus } from "../../src/lib/quic";
 import type { BuildSummary, DownloadProgress } from "../../src/lib/builds";
 import {
@@ -274,6 +275,11 @@ export default function BuildsScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]} edges={["bottom"]}>
+      <View style={[styles.header, { borderBottomColor: c.border }]}>
+        <AppBackButton onPress={() => router.navigate("/(tabs)/more" as any)} />
+        <Text style={[styles.headerTitle, { color: c.textPrimary }]}>Builds</Text>
+        <View style={styles.headerSpacer} />
+      </View>
       {!isConnected ? (
         <View style={styles.center}>
           <Text style={[styles.emptyText, { color: c.textMuted }]}>
@@ -407,6 +413,21 @@ export default function BuildsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  headerTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+  },
+  headerSpacer: {
+    width: 40,
   },
   center: {
     flex: 1,

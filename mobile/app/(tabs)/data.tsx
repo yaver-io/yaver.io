@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { AppBackButton } from "../../src/components/AppBackButton";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient } from "../../src/lib/quic";
 
@@ -20,6 +21,7 @@ export default function DataScreen() {
   const [directory, setDirectory] = useState("");
   const [status, setStatus] = useState<any>(null);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
+  const backendReady = !!status && !status.error && status.kind && status.kind !== "unknown";
 
   useEffect(() => { loadStatus(); }, [directory]);
   async function loadStatus() {
@@ -29,11 +31,9 @@ export default function DataScreen() {
   return (
     <View style={[styles.container, { backgroundColor: c.bg }]}>
       <View style={[styles.header, { borderBottomColor: c.border, paddingTop: insets.top + 12 }]}>
-        <Pressable onPress={() => router.navigate("/(tabs)/more" as any)} style={{ paddingVertical: 8 }}>
-          <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
-        </Pressable>
+        <AppBackButton onPress={() => router.navigate("/(tabs)/more" as any)} />
         <Text style={{ fontSize: 17, fontWeight: "700", color: c.textPrimary }}>Data</Text>
-        <View style={{ width: 50 }} />
+        <View style={styles.headerSpacer} />
       </View>
 
       <View style={[styles.tabbar, { backgroundColor: c.bgCard, borderBottomColor: c.border }]}>
@@ -55,12 +55,25 @@ export default function DataScreen() {
 
         <StatusBanner c={c} status={status} />
 
-        {tab === "tables" && <TablesTab c={c} dir={directory} onPick={(t) => { setSelectedTable(t); setTab("browse"); }} />}
-        {tab === "browse" && <BrowseTab c={c} dir={directory} table={selectedTable} />}
-        {tab === "query" && <QueryTab c={c} dir={directory} kind={status?.kind} />}
-        {tab === "schema" && <SchemaTab c={c} dir={directory} />}
-        {tab === "storage" && <StorageTab c={c} dir={directory} />}
-        {tab === "jobs" && <JobsTab c={c} dir={directory} />}
+        {!backendReady ? (
+          <View style={[card(c), styles.emptyStateCard]}>
+            <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600" }}>
+              Pick a project with a configured backend
+            </Text>
+            <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4, lineHeight: 16 }}>
+              Leave the field blank to use the agent cwd, or paste a project directory that contains a Yaver backend config.
+            </Text>
+          </View>
+        ) : (
+          <>
+            {tab === "tables" && <TablesTab c={c} dir={directory} onPick={(t) => { setSelectedTable(t); setTab("browse"); }} />}
+            {tab === "browse" && <BrowseTab c={c} dir={directory} table={selectedTable} />}
+            {tab === "query" && <QueryTab c={c} dir={directory} kind={status?.kind} />}
+            {tab === "schema" && <SchemaTab c={c} dir={directory} />}
+            {tab === "storage" && <StorageTab c={c} dir={directory} />}
+            {tab === "jobs" && <JobsTab c={c} dir={directory} />}
+          </>
+        )}
       </ScrollView>
     </View>
   );
@@ -78,15 +91,19 @@ function dirQ(dir: string) { return dir ? `?directory=${encodeURIComponent(dir)}
 function StatusBanner({ c, status }: { c: any; status: any }) {
   if (!status) return <Text style={{ color: c.textMuted, fontSize: 11, marginBottom: 10 }}>Checking…</Text>;
   const running = !!status.running;
+  const kindLabel = status.kind && status.kind !== "unknown" ? status.kind : "backend";
+  const errorText = status.error
+    ? status.error.replace(/^could not detect backend/i, "No backend detected")
+    : "";
   return (
     <View style={[{ backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10, marginBottom: 12 }]}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
         <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: running ? "#10b981" : "#ef4444" }} />
-        <Text style={{ color: c.accent, fontSize: 11, fontWeight: "700", textTransform: "uppercase" }}>{status.kind || "unknown"}</Text>
+        <Text style={{ color: c.accent, fontSize: 11, fontWeight: "700", textTransform: "uppercase" }}>{kindLabel}</Text>
         <Text style={{ color: c.textPrimary, fontFamily: "Menlo", fontSize: 11, flex: 1 }} numberOfLines={1}>{status.url}</Text>
       </View>
-      {status.error && <Text style={{ color: "#ef4444", fontSize: 10, marginTop: 4 }}>{status.error}</Text>}
-      {status.hint && <Text style={{ color: "#f59e0b", fontSize: 10, marginTop: 4 }}>{status.hint}</Text>}
+      {errorText ? <Text style={{ color: "#ef4444", fontSize: 10, marginTop: 4, lineHeight: 14 }}>{errorText}</Text> : null}
+      {status.hint ? <Text style={{ color: "#f59e0b", fontSize: 10, marginTop: 4, lineHeight: 14 }}>{status.hint}</Text> : null}
     </View>
   );
 }
@@ -283,5 +300,7 @@ function inputStyle(c: any) { return { backgroundColor: c.bgCard, borderColor: c
 const styles = StyleSheet.create({
   container: { flex: 1 },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1 },
+  headerSpacer: { width: 40 },
   tabbar: { borderBottomWidth: 1 },
+  emptyStateCard: { marginTop: 4 },
 });

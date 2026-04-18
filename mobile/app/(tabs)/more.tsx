@@ -2695,21 +2695,6 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
-        {/* Exec — run shell commands on the connected machine */}
-        {connected && (
-          <Pressable
-            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-            onPress={() => router.navigate("/exec" as any)}
-          >
-            <Text style={[s.icon, { color: c.textMuted }]}>{"\u2699"}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={[s.label, { color: c.textPrimary }]}>Exec</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Run shell commands</Text>
-            </View>
-            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-          </Pressable>
-        )}
-
         {/* Schedules — cron / runAt / interval tasks on the agent */}
         {connected && (
           <Pressable

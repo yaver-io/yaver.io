@@ -10,9 +10,11 @@ import {
   Text,
   View,
 } from "react-native";
+import * as Linking from "expo-linking";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import * as DocumentPicker from "expo-document-picker";
+import Markdown from "react-native-markdown-display";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice } from "../src/context/DeviceContext";
 import { quicClient } from "../src/lib/quic";
@@ -75,6 +77,7 @@ export default function StorageScreen() {
 
 type FileRoot = { id: string; name: string; path: string };
 type FileEntry = { name: string; path: string; isDir?: boolean; size?: number };
+type FilePreview = { path: string; content: string };
 
 function FilesTab() {
   const c = useColors();
@@ -86,7 +89,8 @@ function FilesTab() {
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [preview, setPreview] = useState<string | null>(null);
+  const [preview, setPreview] = useState<FilePreview | null>(null);
+  const [showRootOverview, setShowRootOverview] = useState(false);
 
   const loadRoots = useCallback(async () => {
     if (!connected) return;
@@ -101,6 +105,17 @@ function FilesTab() {
   }, [connected, activeRoot]);
 
   const loadDir = useCallback(async () => {
+    if (showRootOverview) {
+      setEntries(
+        roots.map((root) => ({
+          name: root.name,
+          path: root.id,
+          isDir: true,
+        })),
+      );
+      setLoading(false);
+      return;
+    }
     if (!activeRoot) return;
     setLoading(true);
     try {
@@ -112,7 +127,7 @@ function FilesTab() {
     } finally {
       setLoading(false);
     }
-  }, [activeRoot, path]);
+  }, [activeRoot, path, roots, showRootOverview]);
 
   useEffect(() => {
     void loadRoots();
@@ -122,6 +137,13 @@ function FilesTab() {
   }, [loadDir]);
 
   async function open(entry: FileEntry) {
+    if (showRootOverview) {
+      setActiveRoot(entry.path);
+      setPath("");
+      setPreview(null);
+      setShowRootOverview(false);
+      return;
+    }
     if (entry.isDir) {
       setPath(entry.path);
       setPreview(null);
@@ -130,18 +152,33 @@ function FilesTab() {
     if (!activeRoot) return;
     try {
       const data: any = await quicClient.filesRead(activeRoot, entry.path);
-      setPreview(typeof data?.content === "string" ? data.content : JSON.stringify(data, null, 2));
+      setPreview({
+        path: entry.path,
+        content: typeof data?.content === "string" ? data.content : JSON.stringify(data, null, 2),
+      });
     } catch (e: any) {
       setErr(e?.message ?? "failed");
     }
   }
 
   function up() {
+    if (!activeRoot) return;
+    if (!path) {
+      setShowRootOverview(true);
+      setPreview(null);
+      return;
+    }
     const segs = path.split("/").filter(Boolean);
     segs.pop();
     setPath(segs.join("/"));
     setPreview(null);
   }
+
+  const activeRootName = roots.find((root) => root.id === activeRoot)?.name ?? "";
+  const canGoUp = showRootOverview || !!activeRoot;
+  const locationLabel = showRootOverview
+    ? "/"
+    : `/${activeRootName}${path ? `/${path}` : ""}`;
 
   return (
     <View style={{ flex: 1, padding: 12 }}>
@@ -159,6 +196,7 @@ function FilesTab() {
                 setActiveRoot(r.id);
                 setPath("");
                 setPreview(null);
+                setShowRootOverview(false);
               }}
               style={{
                 borderWidth: 1,
@@ -180,13 +218,13 @@ function FilesTab() {
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
         <Pressable
           onPress={up}
-          disabled={!path}
-          style={{ opacity: path ? 1 : 0.4, backgroundColor: c.bgCard, borderWidth: 1, borderColor: c.border, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 4 }}
+          disabled={!canGoUp}
+          style={{ opacity: canGoUp ? 1 : 0.4, backgroundColor: c.bgCard, borderWidth: 1, borderColor: c.border, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 4 }}
         >
           <Text style={{ color: c.textPrimary }}>↑</Text>
         </Pressable>
         <Text style={{ color: c.textMuted, flexShrink: 1, fontFamily: "monospace", fontSize: 11 }} numberOfLines={1}>
-          /{path || ""}
+          {locationLabel}
         </Text>
       </View>
       {loading ? (
@@ -196,9 +234,21 @@ function FilesTab() {
           <Pressable onPress={() => setPreview(null)} style={{ marginBottom: 8 }}>
             <Text style={{ color: c.accent, fontSize: 11 }}>← back to list</Text>
           </Pressable>
-          <Text selectable style={{ color: c.textPrimary, fontFamily: "monospace", fontSize: 11 }}>
-            {preview}
-          </Text>
+          {isMarkdownPath(preview.path) ? (
+            <Markdown
+              style={markdownStyles(c)}
+              onLinkPress={(url) => {
+                Linking.openURL(url).catch(() => {});
+                return false;
+              }}
+            >
+              {preview.content}
+            </Markdown>
+          ) : (
+            <Text selectable style={{ color: c.textPrimary, fontFamily: "monospace", fontSize: 11 }}>
+              {preview.content}
+            </Text>
+          )}
         </ScrollView>
       ) : (
         <FlatList
@@ -232,6 +282,32 @@ function FilesTab() {
       )}
     </View>
   );
+}
+
+function isMarkdownPath(path: string): boolean {
+  const lower = path.toLowerCase();
+  return lower.endsWith(".md") || lower.endsWith(".mdx") || lower.endsWith(".markdown");
+}
+
+function markdownStyles(c: any) {
+  return {
+    body: { color: c.textPrimary, fontSize: 14, lineHeight: 21 },
+    heading1: { color: c.textPrimary, fontSize: 24, fontWeight: "700", marginTop: 12, marginBottom: 8 },
+    heading2: { color: c.textPrimary, fontSize: 20, fontWeight: "700", marginTop: 14, marginBottom: 6 },
+    heading3: { color: c.textPrimary, fontSize: 17, fontWeight: "700", marginTop: 12, marginBottom: 4 },
+    paragraph: { color: c.textPrimary, fontSize: 14, lineHeight: 21, marginTop: 4, marginBottom: 8 },
+    strong: { fontWeight: "700", color: c.textPrimary },
+    em: { fontStyle: "italic", color: c.textPrimary },
+    code_inline: { fontFamily: "Menlo", fontSize: 12, backgroundColor: c.bgCard, color: c.accent, paddingHorizontal: 4, borderRadius: 4 },
+    code_block: { fontFamily: "Menlo", fontSize: 11, backgroundColor: c.bgCard, color: c.textPrimary, padding: 10, borderRadius: 8 },
+    fence: { fontFamily: "Menlo", fontSize: 11, backgroundColor: c.bgCard, color: c.textPrimary, padding: 10, borderRadius: 8, marginVertical: 6 },
+    link: { color: c.accent, textDecorationLine: "underline" },
+    blockquote: { borderLeftWidth: 3, borderLeftColor: c.accent, paddingLeft: 10, marginVertical: 8, color: c.textMuted },
+    bullet_list: { marginVertical: 4 },
+    ordered_list: { marginVertical: 4 },
+    list_item: { color: c.textPrimary, marginVertical: 2 },
+    hr: { backgroundColor: c.border, height: 1, marginVertical: 12 },
+  } as any;
 }
 
 // ── Shared storage ──────────────────────────────────────────────────
