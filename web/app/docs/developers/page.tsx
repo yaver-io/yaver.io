@@ -217,7 +217,7 @@ export default function DevelopersPage() {
               {
                 title: "2. Go Agent (yaver)",
                 install: "brew install kivanccakmak/yaver/yaver",
-                desc: "Go binary for AI agent connectivity (P2P, relay, MCP). Hot reload dev servers (Expo, Flutter, Vite, Next.js). Session transfer, tasks, builds, deploys. Runs on the dev machine.",
+                desc: "Native `yaver` command for AI agent connectivity (P2P, relay, MCP). Hot reload dev servers (Expo, Flutter, Vite, Next.js). Session transfer, tasks, builds, deploys. Also bridges `yaver push` through npm when Node is available.",
               },
               {
                 title: "3. Desktop App (Yaver.io)",

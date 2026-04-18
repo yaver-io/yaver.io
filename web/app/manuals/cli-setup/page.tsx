@@ -27,7 +27,7 @@ export default function CLISetupManual() {
           </h2>
 
           <h3 className="mb-2 mt-6 text-sm font-semibold text-surface-200">
-            macOS &amp; Linux (Homebrew)
+            Fastest start (npm bootstrap)
           </h3>
           <div className="terminal mb-4">
             <div className="terminal-header">
@@ -40,13 +40,55 @@ export default function CLISetupManual() {
               <div>
                 <span className="text-surface-400">$</span>{" "}
                 <span className="text-surface-200 select-all">
-                  brew tap kivanccakmak/yaver
+                  npm install -g yaver-cli
                 </span>
               </div>
               <div>
                 <span className="text-surface-400">$</span>{" "}
                 <span className="text-surface-200 select-all">
-                  brew install yaver
+                  yaver auth
+                </span>
+              </div>
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200 select-all">
+                  yaver serve
+                </span>
+              </div>
+            </div>
+          </div>
+          <p className="mb-4 text-xs text-surface-500">
+            This single install gives you the same <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-400">yaver</code> command
+            for both the Go agent workflow and third-party React Native push via <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-400">yaver push</code>.
+          </p>
+
+          <h3 className="mb-2 mt-6 text-sm font-semibold text-surface-200">
+            Native package-manager installs
+          </h3>
+          <div className="terminal mb-4">
+            <div className="terminal-header">
+              <div className="terminal-dot bg-[#ff5f57]" />
+              <div className="terminal-dot bg-[#febc2e]" />
+              <div className="terminal-dot bg-[#28c840]" />
+              <span className="ml-3 text-xs text-surface-500">terminal</span>
+            </div>
+            <div className="terminal-body space-y-2 text-[13px]">
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200 select-all">
+                  brew install kivanccakmak/yaver/yaver
+                </span>
+              </div>
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200 select-all">
+                  yaver auth
+                </span>
+              </div>
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200 select-all">
+                  yaver serve
                 </span>
               </div>
             </div>
@@ -92,7 +134,7 @@ export default function CLISetupManual() {
               <div>
                 <span className="text-surface-400">$</span>{" "}
                 <span className="text-surface-200 select-all">
-                  brew install kivanccakmak/yaver/yaver
+                  curl -fsSL https://yaver.io/install.sh | sh
                 </span>
               </div>
             </div>
@@ -133,6 +175,8 @@ export default function CLISetupManual() {
           </div>
 
           <p className="text-xs text-surface-500">
+            All install paths give you a <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-400">yaver</code> command. Native installs handle
+            agent commands directly and bridge <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-400">yaver push</code> through npm when Node is available.
             Download binaries directly from the{" "}
             <Link href="/download" className="text-surface-300 underline underline-offset-2 hover:text-surface-100">
               download page
