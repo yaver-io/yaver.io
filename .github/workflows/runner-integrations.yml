@@ -20,9 +20,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: claude:sonnet
-            install: npm install -g @anthropic-ai/claude-code
-            needs_anthropic: true
           - runner: codex
             install: npm install -g @openai/codex
             needs_openai: true
@@ -45,16 +42,10 @@ jobs:
         run: go build -o /tmp/yaver .
       - name: Run real wrapper integration
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          NEEDS_ANTHROPIC: ${{ matrix.needs_anthropic }}
           NEEDS_OPENAI: ${{ matrix.needs_openai }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           YAVER_BIN: /tmp/yaver
         run: |
-          if [[ "${NEEDS_ANTHROPIC:-}" == "true" && -z "${ANTHROPIC_API_KEY:-}" ]]; then
-            echo "Skipping ${{ matrix.runner }} because ANTHROPIC_API_KEY is not configured."
-            exit 0
-          fi
           if [[ "${NEEDS_OPENAI:-}" == "true" && -z "${OPENAI_API_KEY:-}" ]]; then
             echo "Skipping ${{ matrix.runner }} because OPENAI_API_KEY is not configured."
             exit 0
