@@ -1,4 +1,4 @@
 #!/usr/bin/env node
 
-const { run } = require('../src/index');
-run(process.argv.slice(2));
+const { runPushCli } = require('../src/index');
+runPushCli(process.argv.slice(2));

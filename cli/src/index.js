@@ -1,3 +1,5 @@
+const PACKAGE = require('../package.json');
+const { resolveAgentInfo, runAgentCommand } = require('./agent-runtime');
 const { init } = require('./commands/init');
 const { push } = require('./commands/push');
 const { doctor } = require('./commands/doctor');
@@ -6,8 +8,8 @@ const { modules } = require('./commands/modules');
 const { reset } = require('./commands/reset');
 const { status } = require('./commands/status');
 
-const HELP = `
-yaver-push — Push existing React Native projects to yaver.io
+const PUSH_HELP = `
+yaver push — Push existing React Native projects to the Yaver mobile host
 
 Commands:
   init                              Analyze project, show compatibility, create yaver.json
@@ -27,12 +29,43 @@ Options:
   --help                            Show this help
 `;
 
-async function run(args) {
+const UNIFIED_HELP = `
+yaver — single npm install for the Go agent and the RN push CLI
+
+Agent commands:
+  yaver serve                       Start the Yaver agent (downloads platform binary if needed)
+  yaver auth                        Sign in and configure the agent
+  yaver version                     Print agent version
+  yaver <agent-command>             Forward any other command to the Go agent
+
+Push-to-device commands:
+  yaver push                        Bundle + validate + push current RN/Expo project
+  yaver push init                   Analyze current project and create yaver.json
+  yaver push doctor                 Deep compatibility report for current project
+  yaver push modules                List native modules compiled into the mobile host
+  yaver push devices                Scan LAN for Yaver mobile hosts
+  yaver push reset                  Clear pushed bundle on the selected device
+  yaver push status                 Show project + device push status
+
+Compatibility:
+  yaver-push <command>              Legacy alias for the push subcommands above
+
+Options:
+  --help                            Show this help
+`;
+
+const PUSH_SUBCOMMANDS = new Set(['init', 'push', 'doctor', 'devices', 'modules', 'reset', 'status']);
+const DIRECT_PUSH_ALIASES = new Map([
+  ['init', 'init'],
+  ['modules', 'modules'],
+]);
+
+async function runPushCli(args) {
   const command = args[0];
   const options = parseArgs(args.slice(1));
 
-  if (!command || command === '--help' || command === '-h') {
-    console.log(HELP);
+  if (!command || command === '--help' || command === '-h' || args.includes('--help') || args.includes('-h')) {
+    console.log(PUSH_HELP);
     process.exit(0);
   }
 
@@ -61,10 +94,57 @@ async function run(args) {
         break;
       default:
         console.error(`Unknown command: ${command}`);
-        console.log(HELP);
+        console.log(PUSH_HELP);
         process.exit(1);
     }
   } catch (err) {
+    console.error(`\n❌ ${err.message}`);
+    if (process.env.YAVER_DEBUG) console.error(err.stack);
+    process.exit(1);
+  }
+}
+
+async function runUnified(args) {
+  const command = args[0];
+
+  if (!command || command === '--help' || command === '-h' || command === 'help') {
+    console.log(UNIFIED_HELP);
+    process.exit(0);
+  }
+
+  if (command === 'push') {
+    const next = args[1];
+    if (!next || next.startsWith('-')) {
+      await runPushCli(['push', ...args.slice(1)]);
+      return;
+    }
+    if (PUSH_SUBCOMMANDS.has(next)) {
+      const subcommand = next === 'push' ? 'push' : next;
+      await runPushCli([subcommand, ...args.slice(2)]);
+      return;
+    }
+    console.error(`Unknown push subcommand: ${next}`);
+    console.log(PUSH_HELP);
+    process.exit(1);
+  }
+
+  if (DIRECT_PUSH_ALIASES.has(command)) {
+    await runPushCli([DIRECT_PUSH_ALIASES.get(command), ...args.slice(1)]);
+    return;
+  }
+
+  if (command === 'npm-agent-info') {
+    const info = resolveAgentInfo();
+    console.log(JSON.stringify(info, null, 2));
+    return;
+  }
+
+  try {
+    await runAgentCommand(args);
+  } catch (err) {
+    if (typeof err.exitCode === 'number') {
+      process.exit(err.exitCode);
+    }
     console.error(`\n❌ ${err.message}`);
     if (process.env.YAVER_DEBUG) console.error(err.stack);
     process.exit(1);
@@ -90,4 +170,4 @@ function parseArgs(args) {
   return opts;
 }
 
-module.exports = { run };
+module.exports = { runPushCli, runUnified };

@@ -37,12 +37,12 @@ async function init() {
 
   if (analysis.errors.filter(e => e.type === 'missing_module').length > 0) {
     console.log('\n⚠️  Your project has compatibility issues (see above).');
-    console.log('   You can still push with: yaver-push push --ignore-missing');
+    console.log('   You can still push with: yaver push --ignore-missing');
     console.log('   Features using missing modules will crash.\n');
   } else if (analysis.errors.length > 0) {
     console.log('\n🚫 Incompatible — see errors above.\n');
   } else {
-    console.log('\n🎉 Fully compatible! Run: yaver-push push\n');
+    console.log('\n🎉 Fully compatible! Run: yaver push\n');
   }
 }
 

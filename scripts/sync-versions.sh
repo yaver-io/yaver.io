@@ -108,6 +108,7 @@ update_pkg_version() {
 update_pkg_version "$REPO_ROOT/web/package.json" "$WEB_VERSION" "web package.json"
 update_pkg_version "$REPO_ROOT/backend/package.json" "$BACKEND_VERSION" "backend package.json"
 update_pkg_version "$REPO_ROOT/desktop/installer/package.json" "$INSTALLER_VERSION" "installer package.json"
+update_pkg_version "$REPO_ROOT/cli/package.json" "$CLI_VERSION" "cli package.json"
 
 echo ""
 if [ "$changed" -eq 0 ]; then

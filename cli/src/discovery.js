@@ -24,7 +24,7 @@ async function discoverDevice(manualIp) {
   throw new Error(
     'No yaver.io device found on network.\n' +
     '  Make sure the yaver.io app is open on your phone (same WiFi).\n' +
-    '  Or specify device IP: yaver-push push --device <ip>'
+    '  Or specify device IP: yaver push --device <ip>'
   );
 }
 

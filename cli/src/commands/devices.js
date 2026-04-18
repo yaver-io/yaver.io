@@ -16,7 +16,7 @@ async function devices() {
   for (const d of found) {
     console.log(`  📱 ${d.name} (${d.platform})`);
     console.log(`     IP: ${d.ip}:${d.port}`);
-    console.log(`     Push: yaver-push push --device ${d.ip}\n`);
+    console.log(`     Push: yaver push --device ${d.ip}\n`);
   }
 }
 
