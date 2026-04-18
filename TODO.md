@@ -83,6 +83,7 @@
 - [x] Mobile-first project builder/UI generation intake refresh (see `docs/mobile-ui-generation-task.md`)
 - [x] Mobile Design Mode v1: Figma import + AI brief + remote-dev handoff
 - [x] Mobile Design Mode v1.1: screenshot import + Canva/reference-link intake
+- [x] Mobile Design Mode v1.2: structured screen/component planning from imported designs
 - [ ] End-to-end encryption audit
 - [ ] P2P session caching and sync
 - [ ] Error handling and offline mode

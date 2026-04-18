@@ -284,6 +284,10 @@ Expanded further:
   multimodal context
 - provider-aware reference handling for Canva, Framer, Miro, Dribbble,
   Behance, and generic links
+- direct structured-plan generation on mobile for navigation, screens,
+  shared components, integrations, and build order
+- remote handoff now carries that structured plan alongside the imported
+  design and optional brief
 
 This is intentionally the first real integration slice, not the final
 design-tool story. It proves that Yaver mobile can act as a bridge from
@@ -308,12 +312,13 @@ Completed:
 
 ### High value
 
-- add image/file attachment support for screenshots on mobile
 - add first-class Figma/Canva URL validation and copy specific to each
   provider
 - use template choice to generate deeper starter IA and screens, not
   just nav labels and starter metadata
 - add web dashboard parity for the richer builder
+- turn provider-specific references into deeper imports where APIs allow
+  it, not only planning context
 
 ### Medium value
 

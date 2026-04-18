@@ -22,10 +22,12 @@ import {
   buildRemoteDesignPrompt,
   DESIGN_PROVIDERS,
   detectDesignProvider,
+  generateDesignImplementationPlan,
   generateDesignModeBrief,
   importFigmaReference,
   importReferenceLink,
   importScreenshotReference,
+  type DesignImplementationPlan,
   type DesignProvider,
   type DesignImportResult,
 } from "../../src/lib/designMode";
@@ -53,8 +55,10 @@ export default function DesignModeScreen() {
   const [surface, setSurface] = useState<Surface>("mobile-ui");
   const [imported, setImported] = useState<DesignImportResult | null>(null);
   const [brief, setBrief] = useState("");
+  const [plan, setPlan] = useState<DesignImplementationPlan | null>(null);
   const [loadingImport, setLoadingImport] = useState(false);
   const [loadingBrief, setLoadingBrief] = useState(false);
+  const [loadingPlan, setLoadingPlan] = useState(false);
   const [sendingRemote, setSendingRemote] = useState(false);
 
   useEffect(() => {
@@ -74,6 +78,7 @@ export default function DesignModeScreen() {
       const result = await importFigmaReference(figmaUrl, figmaToken);
       setImported(result);
       setBrief("");
+      setPlan(null);
       await saveLocalSecret(LOCAL_KEYS.figmaAccessToken, figmaToken.trim());
     } catch (e: any) {
       Alert.alert("Figma import failed", e?.message || "Unknown error");
@@ -100,6 +105,7 @@ export default function DesignModeScreen() {
       const result = await importScreenshotReference(picked.assets[0].uri);
       setImported(result);
       setBrief("");
+      setPlan(null);
     } catch (e: any) {
       Alert.alert("Screenshot import failed", e?.message || "Unknown error");
     } finally {
@@ -119,6 +125,7 @@ export default function DesignModeScreen() {
       });
       setImported(result);
       setBrief("");
+      setPlan(null);
     } catch (e: any) {
       Alert.alert("Reference import failed", e?.message || "Unknown error");
     } finally {
@@ -137,12 +144,33 @@ export default function DesignModeScreen() {
         targetSurface: surface,
       });
       setBrief(nextBrief);
+      await saveLocalSecret(LOCAL_KEYS.openAiApiKey, openAiKey.trim());
     } catch (e: any) {
       Alert.alert("Brief generation failed", e?.message || "Unknown error");
     } finally {
       setLoadingBrief(false);
     }
   }, [goal, imported, openAiKey, surface]);
+
+  const runPlan = useCallback(async () => {
+    if (!imported) return;
+    setLoadingPlan(true);
+    try {
+      const nextPlan = await generateDesignImplementationPlan({
+        apiKey: openAiKey,
+        imported,
+        productGoal: goal,
+        targetSurface: surface,
+        brief: brief.trim() || undefined,
+      });
+      setPlan(nextPlan);
+      await saveLocalSecret(LOCAL_KEYS.openAiApiKey, openAiKey.trim());
+    } catch (e: any) {
+      Alert.alert("Plan generation failed", e?.message || "Unknown error");
+    } finally {
+      setLoadingPlan(false);
+    }
+  }, [brief, goal, imported, openAiKey, surface]);
 
   const sendToRemote = useCallback(async () => {
     if (!connected) {
@@ -163,6 +191,7 @@ export default function DesignModeScreen() {
       const prompt = buildRemoteDesignPrompt({
         imported,
         brief: brief.trim() || undefined,
+        plan: plan ?? undefined,
         targetSurface: surface,
         productGoal: goal,
       });
@@ -484,9 +513,116 @@ export default function DesignModeScreen() {
         </View>
 
         <View style={[styles.panel, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+          <Text style={[styles.panelTitle, { color: c.textPrimary }]}>Implementation plan</Text>
+          <Text style={[styles.panelBody, { color: c.textMuted }]}>
+            Generate a structured screen and component plan directly on the phone. This is the bridge between a loose reference and a buildable mobile or web UI task.
+          </Text>
+          <Pressable
+            onPress={() => void runPlan()}
+            disabled={!imported || loadingPlan}
+            style={[styles.secondaryButton, { borderColor: c.border, backgroundColor: c.bgInput, opacity: !imported || loadingPlan ? 0.55 : 1 }]}
+          >
+            <Text style={{ color: c.textPrimary, fontWeight: "700" }}>
+              {loadingPlan ? "Generating plan…" : "Generate structured plan"}
+            </Text>
+          </Pressable>
+
+          {plan ? (
+            <>
+              {plan.summary ? <Text style={[styles.summaryText, { color: c.textPrimary, marginTop: 14 }]}>{plan.summary}</Text> : null}
+
+              {plan.navigation.length ? (
+                <>
+                  <Text style={[styles.smallLabel, { color: c.textMuted }]}>Navigation</Text>
+                  <View style={styles.wrapRow}>
+                    {plan.navigation.map((item) => (
+                      <View key={item} style={[styles.pill, { backgroundColor: c.bgInput }]}>
+                        <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "700" }}>{item}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </>
+              ) : null}
+
+              {plan.screens.length ? (
+                <>
+                  <Text style={[styles.smallLabel, { color: c.textMuted }]}>Screens</Text>
+                  {plan.screens.map((screen) => (
+                    <View key={screen.id} style={[styles.planCard, { borderColor: c.border, backgroundColor: c.bgInput }]}>
+                      <Text style={[styles.planCardTitle, { color: c.textPrimary }]}>{screen.title}</Text>
+                      {screen.purpose ? <Text style={[styles.planCardBody, { color: c.textMuted }]}>{screen.purpose}</Text> : null}
+                      {screen.keyElements.length ? (
+                        <Text style={[styles.planMeta, { color: c.textPrimary }]}>Elements: {screen.keyElements.join(", ")}</Text>
+                      ) : null}
+                      {screen.states.length ? (
+                        <Text style={[styles.planMeta, { color: c.textPrimary }]}>States: {screen.states.join(", ")}</Text>
+                      ) : null}
+                      {screen.dataNeeds.length ? (
+                        <Text style={[styles.planMeta, { color: c.textPrimary }]}>Data: {screen.dataNeeds.join(", ")}</Text>
+                      ) : null}
+                    </View>
+                  ))}
+                </>
+              ) : null}
+
+              {plan.components.length ? (
+                <>
+                  <Text style={[styles.smallLabel, { color: c.textMuted }]}>Shared components</Text>
+                  {plan.components.map((component) => (
+                    <View key={component.name} style={[styles.planCard, { borderColor: c.border, backgroundColor: c.bgInput }]}>
+                      <Text style={[styles.planCardTitle, { color: c.textPrimary }]}>{component.name}</Text>
+                      {component.role ? <Text style={[styles.planCardBody, { color: c.textMuted }]}>{component.role}</Text> : null}
+                      {component.variants.length ? (
+                        <Text style={[styles.planMeta, { color: c.textPrimary }]}>Variants: {component.variants.join(", ")}</Text>
+                      ) : null}
+                      {component.notes ? <Text style={[styles.planMeta, { color: c.textPrimary }]}>{component.notes}</Text> : null}
+                    </View>
+                  ))}
+                </>
+              ) : null}
+
+              {plan.visualSystem.length ? (
+                <>
+                  <Text style={[styles.smallLabel, { color: c.textMuted }]}>Visual system</Text>
+                  <View style={styles.wrapRow}>
+                    {plan.visualSystem.map((item) => (
+                      <View key={item} style={[styles.pill, { backgroundColor: c.bgInput }]}>
+                        <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "700" }}>{item}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </>
+              ) : null}
+
+              {plan.buildOrder.length ? (
+                <>
+                  <Text style={[styles.smallLabel, { color: c.textMuted }]}>Build order</Text>
+                  {plan.buildOrder.map((item, index) => (
+                    <Text key={`${index}-${item}`} style={[styles.planStep, { color: c.textPrimary }]}>
+                      {index + 1}. {item}
+                    </Text>
+                  ))}
+                </>
+              ) : null}
+
+              {plan.integrations.length ? (
+                <>
+                  <Text style={[styles.smallLabel, { color: c.textMuted }]}>Integrations</Text>
+                  {plan.integrations.map((item, index) => (
+                    <Text key={`${index}-${item}`} style={[styles.planStep, { color: c.textPrimary }]}>
+                      - {item}
+                    </Text>
+                  ))}
+                </>
+              ) : null}
+            </>
+          ) : null}
+        </View>
+
+        <View style={[styles.panel, { backgroundColor: c.bgCard, borderColor: c.border }]}>
           <Text style={[styles.panelTitle, { color: c.textPrimary }]}>Remote dev handoff</Text>
           <Text style={[styles.panelBody, { color: c.textMuted }]}>
-            Send the imported design and optional AI brief to the paired machine as a real task. The task runs in the resolved project path, so it can inspect the codebase before implementing.
+            Send the imported design, optional AI brief, and optional structured plan to the paired machine as a real task. The task runs in the resolved project path, so it can inspect the codebase before implementing.
           </Text>
           <TextInput
             value={projectQuery}
@@ -511,11 +647,11 @@ export default function DesignModeScreen() {
         {!imported && !loadingImport ? (
           <View style={[styles.footerNote, { borderColor: c.border }]}>
             <Text style={{ color: c.textMuted, lineHeight: 20 }}>
-              Current scope: live Figma import, optional AI briefing, and remote-dev handoff. Canva and screenshot ingestion can layer onto this same screen next.
+              Current scope: multi-source design import, optional AI briefing, structured planning, and remote-dev handoff from the phone.
             </Text>
           </View>
         ) : null}
-        {loadingImport || loadingBrief || sendingRemote ? <ActivityIndicator style={{ marginTop: 10 }} /> : null}
+        {loadingImport || loadingBrief || loadingPlan || sendingRemote ? <ActivityIndicator style={{ marginTop: 10 }} /> : null}
       </ScrollView>
     </View>
   );
@@ -596,4 +732,14 @@ const styles = StyleSheet.create({
   surfaceChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
   providerHelp: { fontSize: 13, lineHeight: 19, marginBottom: 12 },
   footerNote: { borderWidth: 1, borderRadius: 16, padding: 14, marginBottom: 10 },
+  planCard: {
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 14,
+    marginTop: 10,
+  },
+  planCardTitle: { fontSize: 15, fontWeight: "800" },
+  planCardBody: { fontSize: 13, lineHeight: 19, marginTop: 6 },
+  planMeta: { fontSize: 12, lineHeight: 18, marginTop: 6 },
+  planStep: { fontSize: 13, lineHeight: 20, marginTop: 6 },
 });

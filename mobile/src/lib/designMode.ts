@@ -17,6 +17,35 @@ export interface DesignImportResult {
   summary: string;
 }
 
+export interface DesignPlanScreen {
+  id: string;
+  title: string;
+  purpose: string;
+  keyElements: string[];
+  states: string[];
+  dataNeeds: string[];
+  sourceHints: string[];
+}
+
+export interface DesignPlanComponent {
+  name: string;
+  role: string;
+  variants: string[];
+  notes: string;
+}
+
+export interface DesignImplementationPlan {
+  summary: string;
+  navigation: string[];
+  screens: DesignPlanScreen[];
+  components: DesignPlanComponent[];
+  visualSystem: string[];
+  integrations: string[];
+  dataContracts: string[];
+  buildOrder: string[];
+  risks: string[];
+}
+
 export type DesignProvider =
   | "figma"
   | "canva"
@@ -140,6 +169,86 @@ function uniqueCompact(items: string[], limit: number): string[] {
     if (out.length >= limit) break;
   }
   return out;
+}
+
+function extractJsonObject(text: string): string {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) return fenced[1].trim();
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start >= 0 && end > start) return text.slice(start, end + 1);
+  return text.trim();
+}
+
+function asStringArray(value: unknown, limit = 12): string[] {
+  if (!Array.isArray(value)) return [];
+  return uniqueCompact(
+    value.map((item) => (typeof item === "string" ? item : "")).filter(Boolean),
+    limit,
+  );
+}
+
+function sanitizePlanScreen(value: unknown): DesignPlanScreen | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const id = typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : "";
+  const title = typeof raw.title === "string" && raw.title.trim() ? raw.title.trim() : "";
+  const purpose = typeof raw.purpose === "string" && raw.purpose.trim() ? raw.purpose.trim() : "";
+  if (!id || !title) return null;
+  return {
+    id,
+    title,
+    purpose,
+    keyElements: asStringArray(raw.keyElements),
+    states: asStringArray(raw.states),
+    dataNeeds: asStringArray(raw.dataNeeds),
+    sourceHints: asStringArray(raw.sourceHints),
+  };
+}
+
+function sanitizePlanComponent(value: unknown): DesignPlanComponent | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const name = typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : "";
+  if (!name) return null;
+  return {
+    name,
+    role: typeof raw.role === "string" ? raw.role.trim() : "",
+    variants: asStringArray(raw.variants),
+    notes: typeof raw.notes === "string" ? raw.notes.trim() : "",
+  };
+}
+
+function sanitizeImplementationPlan(value: unknown): DesignImplementationPlan {
+  if (!value || typeof value !== "object") {
+    return {
+      summary: "",
+      navigation: [],
+      screens: [],
+      components: [],
+      visualSystem: [],
+      integrations: [],
+      dataContracts: [],
+      buildOrder: [],
+      risks: [],
+    };
+  }
+  const raw = value as Record<string, unknown>;
+  return {
+    summary: typeof raw.summary === "string" ? raw.summary.trim() : "",
+    navigation: asStringArray(raw.navigation),
+    screens: Array.isArray(raw.screens)
+      ? raw.screens.map((item) => sanitizePlanScreen(item)).filter(Boolean) as DesignPlanScreen[]
+      : [],
+    components: Array.isArray(raw.components)
+      ? raw.components.map((item) => sanitizePlanComponent(item)).filter(Boolean) as DesignPlanComponent[]
+      : [],
+    visualSystem: asStringArray(raw.visualSystem),
+    integrations: asStringArray(raw.integrations),
+    dataContracts: asStringArray(raw.dataContracts),
+    buildOrder: asStringArray(raw.buildOrder),
+    risks: asStringArray(raw.risks),
+  };
 }
 
 function summarizeImport(data: {
@@ -337,9 +446,87 @@ export async function generateDesignModeBrief(args: {
   throw new Error("The AI provider returned an empty brief");
 }
 
+export async function generateDesignImplementationPlan(args: {
+  apiKey: string;
+  imported: DesignImportResult;
+  productGoal: string;
+  targetSurface: "mobile-ui" | "web-ui" | "full-stack";
+  brief?: string;
+}): Promise<DesignImplementationPlan> {
+  const key = args.apiKey.trim();
+  if (!key) throw new Error("OpenAI/Codex-compatible API key is required");
+  const contents: Array<{ type: string; text?: string; image_url?: string }> = [
+    {
+      type: "text",
+      text: [
+        `Target surface: ${args.targetSurface}.`,
+        `Reference source type: ${args.imported.sourceType}.`,
+        `Reference provider: ${args.imported.provider ?? "unknown"}.`,
+        `Product goal: ${args.productGoal.trim() || "Turn the imported design into a working UI implementation."}`,
+        `Design summary: ${args.imported.summary}`,
+        `Top-level layers: ${args.imported.topLevelLayers.join(", ") || "none"}`,
+        `Text snippets: ${args.imported.textSnippets.join(" | ") || "none"}`,
+        `Palette clues: ${args.imported.colors.join(", ") || "none"}`,
+        args.brief?.trim() ? `Implementation brief:\n${args.brief.trim()}` : "",
+        'Return compact JSON with keys: summary, navigation, screens, components, visualSystem, integrations, dataContracts, buildOrder, risks.',
+        'Each screen should use { id, title, purpose, keyElements, states, dataNeeds, sourceHints }.',
+        'Each component should use { name, role, variants, notes }.',
+        "Keep the plan implementation-ready, practical, and small enough for a first build pass.",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    },
+  ];
+  if (args.imported.previewUrl) {
+    contents.push({
+      type: "image_url",
+      image_url: args.imported.previewUrl,
+    });
+  }
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-4.1-mini",
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a senior mobile product designer and implementation planner. Convert design references into small, concrete build plans that a coding agent can execute immediately. Prefer explicit screens, components, integration seams, and build order over abstract product language.",
+        },
+        {
+          role: "user",
+          content: contents,
+        },
+      ],
+    }),
+  });
+  const text = await res.text().catch(() => "");
+  if (!res.ok) throw new Error(text || `OpenAI HTTP ${res.status}`);
+  const json = JSON.parse(text) as {
+    choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;
+  };
+  const content = json.choices?.[0]?.message?.content;
+  const rawText = Array.isArray(content)
+    ? content
+        .map((item) => (typeof item?.text === "string" ? item.text : ""))
+        .join("")
+    : typeof content === "string"
+      ? content
+      : "";
+  return sanitizeImplementationPlan(JSON.parse(extractJsonObject(rawText || "{}")));
+}
+
 export function buildRemoteDesignPrompt(args: {
   imported: DesignImportResult;
   brief?: string;
+  plan?: DesignImplementationPlan;
   targetSurface: "mobile-ui" | "web-ui" | "full-stack";
   productGoal: string;
 }) {
@@ -357,6 +544,26 @@ export function buildRemoteDesignPrompt(args: {
     "Inspect the current project first, then implement the closest high-quality version of this design in the existing stack.",
     "Preserve established repo patterns where they exist. If the design conflicts with the current structure, choose the smallest coherent implementation that gets the core flow working.",
     args.brief ? `Implementation brief:\n${args.brief}` : "",
+    args.plan?.summary ? `Structured implementation plan summary:\n${args.plan.summary}` : "",
+    args.plan?.navigation?.length ? `Navigation: ${args.plan.navigation.join(" | ")}` : "",
+    args.plan?.screens?.length
+      ? `Planned screens:\n${args.plan.screens
+          .map(
+            (screen) =>
+              `- ${screen.title} (${screen.id}): ${screen.purpose}${screen.keyElements.length ? ` | elements: ${screen.keyElements.join(", ")}` : ""}${screen.states.length ? ` | states: ${screen.states.join(", ")}` : ""}`,
+          )
+          .join("\n")}`
+      : "",
+    args.plan?.components?.length
+      ? `Planned shared components:\n${args.plan.components
+          .map(
+            (component) =>
+              `- ${component.name}: ${component.role}${component.variants.length ? ` | variants: ${component.variants.join(", ")}` : ""}${component.notes ? ` | notes: ${component.notes}` : ""}`,
+          )
+          .join("\n")}`
+      : "",
+    args.plan?.buildOrder?.length ? `Suggested build order:\n${args.plan.buildOrder.map((item) => `- ${item}`).join("\n")}` : "",
+    args.plan?.integrations?.length ? `Likely integrations: ${args.plan.integrations.join(", ")}` : "",
   ];
   return parts.filter(Boolean).join("\n\n");
 }
