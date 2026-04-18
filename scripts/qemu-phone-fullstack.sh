@@ -45,6 +45,7 @@ Optional:
   --guest-goos <os>                  Guest GOOS for yaver binary, default linux
   --guest-goarch <arch>              Guest GOARCH for yaver binary, default arm64
   --install-node                     Run `yaver install node` inside the guest before build steps
+  --install-codex                    Run `npm install -g @openai/codex` inside the guest before AI steps
   --include-data                     Include local.db in phone export
   --containerize                     Include Docker/compose scaffold in phone export
   --build-cmd <cmd>                  Command to run inside guest project dir
@@ -101,6 +102,7 @@ answers_json=""
 phone_slug=""
 guest_work_root=""
 install_node=0
+install_codex=0
 build_cmd=""
 pre_build_cmd=""
 autodev_prompt=""
@@ -153,6 +155,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --install-node)
       install_node=1
+      shift
+      ;;
+    --install-codex)
+      install_codex=1
       shift
       ;;
     --build-cmd)
@@ -222,7 +228,9 @@ if [[ -n "$identity" ]]; then
   SCP_OPTS+=(-i "$identity")
 fi
 
-REMOTE_STAGE='~/.cache/yaver-qemu-stage'
+remote_home="$(ssh "${SSH_OPTS[@]}" "$guest" 'printf %s "$HOME"')"
+[[ -n "$remote_home" ]] || fail "could not resolve remote home directory"
+REMOTE_STAGE="$remote_home/.cache/yaver-qemu-stage"
 
 if [[ -n "$local_yaver" ]]; then
   [[ -x "$local_yaver" ]] || fail "local yaver binary not executable: $local_yaver"
@@ -264,6 +272,7 @@ ENV_FILE="$TMP_DIR/run.env.sh"
     printf 'export YAVER_QEMU_WORK_ROOT=%s\n' "$(quote "$guest_work_root")"
   fi
   printf 'export YAVER_QEMU_INSTALL_NODE=%s\n' "$(quote "$install_node")"
+  printf 'export YAVER_QEMU_INSTALL_CODEX=%s\n' "$(quote "$install_codex")"
   printf 'export YAVER_QEMU_PRE_BUILD_CMD=%s\n' "$(quote "$pre_build_cmd")"
   printf 'export YAVER_QEMU_BUILD_CMD=%s\n' "$(quote "$build_cmd")"
   printf 'export YAVER_QEMU_AUTODEV_PROMPT=%s\n' "$(quote "$autodev_prompt")"
@@ -274,7 +283,7 @@ ENV_FILE="$TMP_DIR/run.env.sh"
 } > "$ENV_FILE"
 
 log "preparing guest stage directory"
-ssh "${SSH_OPTS[@]}" "$guest" "mkdir -p $REMOTE_STAGE/tools $REMOTE_STAGE/payload"
+ssh "${SSH_OPTS[@]}" "$guest" "rm -rf $REMOTE_STAGE && mkdir -p $REMOTE_STAGE/tools $REMOTE_STAGE/payload"
 
 log "copying harness files to guest"
 scp "${SCP_OPTS[@]}" "$LOCAL_YAVER" "$guest:$REMOTE_STAGE/tools/yaver" >/dev/null

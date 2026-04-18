@@ -14,6 +14,8 @@ Options:
   --ssh-port <port>           SSH port, default 2222
   --identity <path>           SSH private key, default .tmp-qemu/arm64-guest/id_ed25519
   --mode <mode>               auto | remote-dev | openai-key, default auto
+  --openai-api-key <key>      OpenAI API key for openai-key mode
+  --autodev-cmd <cmd>         Guest-side AI command override for openai-key mode
   --work-root <path>          Guest work root override
   --skip-vm                   Do not start/wait for the local VM first
 EOF
@@ -32,6 +34,8 @@ guest="ubuntu@127.0.0.1"
 ssh_port="2222"
 identity="$ROOT_DIR/.tmp-qemu/arm64-guest/id_ed25519"
 mode="auto"
+openai_api_key=""
+autodev_cmd=""
 work_root=""
 skip_vm=0
 
@@ -51,6 +55,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --mode)
       mode="${2:-}"
+      shift 2
+      ;;
+    --openai-api-key)
+      openai_api_key="${2:-}"
+      shift 2
+      ;;
+    --autodev-cmd)
+      autodev_cmd="${2:-}"
       shift 2
       ;;
     --work-root)
@@ -73,7 +85,9 @@ done
 
 case "$mode" in
   auto)
-    if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+    if [[ -n "$openai_api_key" ]]; then
+      run_mode="openai-key"
+    elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
       run_mode="openai-key"
     else
       run_mode="remote-dev"
@@ -87,10 +101,23 @@ case "$mode" in
     ;;
 esac
 
+if [[ "$run_mode" == "openai-key" ]]; then
+  if [[ -n "$openai_api_key" ]]; then
+    export OPENAI_API_KEY="$openai_api_key"
+  fi
+  [[ -n "${OPENAI_API_KEY:-}" ]] || fail "openai-key mode requires --openai-api-key or OPENAI_API_KEY"
+fi
+
 if [[ -z "$work_root" ]]; then
   stamp="$(date +%Y%m%d-%H%M%S)"
   suffix="${run_mode//-/_}"
   work_root="/home/ubuntu/yaver-qemu-dummy-${suffix}-${stamp}"
+fi
+
+if [[ "$run_mode" == "openai-key" ]]; then
+  expected_marker="OPENAI LOOP"
+else
+  expected_marker="QEMU LOOP"
 fi
 
 if [[ "$skip_vm" != "1" && "$guest" == "ubuntu@127.0.0.1" ]]; then
@@ -131,12 +158,13 @@ mkdir -p "$HOME/.local/lib"
 )
 test -d .qemu-expo-export
 test -f apps/mobile/App.tsx
-grep -q 'QEMU LOOP' apps/mobile/App.tsx
+grep -q '__EXPECTED_MARKER__' apps/mobile/App.tsx
 echo dummy-mobile-cycle-ok
 EOF
 )"
+build_cmd="${build_cmd/__EXPECTED_MARKER__/$expected_marker}"
 
-autodev_prompt="Fix the mobile timer bug in apps/mobile/app/components/CookTimer.tsx by replacing the unsafe undefined duration handling with a sensible fallback, then leave the project typecheckable."
+autodev_prompt="Update apps/mobile/App.tsx so the hero text reads 'MOBILE-FIRST STARTER · OPENAI LOOP', keep the rest of the generated starter intact, and leave the Expo export path buildable."
 
 log "running dummy mobile cycle in $run_mode mode"
 args=(
@@ -154,7 +182,11 @@ args=(
 if [[ "$run_mode" == "remote-dev" ]]; then
   args+=(--pre-build-cmd "$pre_build_cmd")
 else
+  args+=(--install-codex)
   args+=(--autodev-prompt "$autodev_prompt")
+  if [[ -n "$autodev_cmd" ]]; then
+    args+=(--autodev-cmd "$autodev_cmd")
+  fi
 fi
 
 "$SCRIPT_DIR/qemu-phone-fullstack.sh" "${args[@]}"

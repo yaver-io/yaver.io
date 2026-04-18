@@ -52,6 +52,15 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
 }
 
+install_codex_runner() {
+  if command -v codex >/dev/null 2>&1; then
+    log "codex CLI already installed"
+    return 0
+  fi
+  log "installing codex CLI"
+  npm install -g @openai/codex
+}
+
 activate_managed_node() {
   local extras=()
   if [[ -d "$HOME/.yaver/runtimes/node/bin" ]]; then
@@ -82,6 +91,11 @@ if [[ "${YAVER_QEMU_INSTALL_NODE:-0}" == "1" ]]; then
 fi
 
 activate_managed_node
+
+if [[ "${YAVER_QEMU_INSTALL_CODEX:-0}" == "1" ]]; then
+  require_cmd npm
+  install_codex_runner
+fi
 
 imported_slug=""
 project_dir=""
@@ -114,7 +128,22 @@ case "$SOURCE_KIND" in
     }
     printf '%s\n' "$generate_output"
     generator_dir="$(
-      printf '%s\n' "$generate_output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["directory"])'
+      printf '%s\n' "$generate_output" | python3 -c '
+import json, sys
+text = sys.stdin.read()
+decoder = json.JSONDecoder()
+for start in range(len(text) - 1, -1, -1):
+    if text[start] != "{":
+        continue
+    try:
+        obj, _ = decoder.raw_decode(text[start:])
+    except json.JSONDecodeError:
+        continue
+    if isinstance(obj, dict) and "directory" in obj:
+        print(obj["directory"])
+        raise SystemExit(0)
+raise SystemExit(1)
+'
     )" || fail "could not parse generated directory from quick scaffold output"
     [[ -d "$generator_dir" ]] || fail "generated directory missing: $generator_dir"
     project_dir="$generator_dir"
