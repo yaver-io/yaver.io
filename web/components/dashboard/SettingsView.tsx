@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CONVEX_URL } from "@/lib/constants";
 
 interface SettingsViewProps {
@@ -15,6 +15,8 @@ interface SettingsViewProps {
 }
 
 export default function SettingsView({ user, onLogout }: SettingsViewProps) {
+  const [identities, setIdentities] = useState<Array<{ provider: string; email: string | null; isPrimary: boolean }>>([]);
+  const [linkingProvider, setLinkingProvider] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -64,10 +66,97 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
     }
   };
 
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("yaver_auth_token") ||
+        document.cookie
+          .split(";")
+          .find((c) => c.trim().startsWith("yaver_auth_token="))
+          ?.split("=")[1] ||
+        null
+      : null;
+
+  useEffect(() => {
+    if (!token) return;
+    fetch(`${CONVEX_URL}/auth/providers`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(async (res) => (res.ok ? res.json() : null))
+      .then((data) => setIdentities(data?.identities || []))
+      .catch(() => undefined);
+  }, [token]);
+
+  const startLink = async (provider: "apple" | "google" | "microsoft") => {
+    if (!token) return;
+    setLinkingProvider(provider);
+    try {
+      const res = await fetch(`${CONVEX_URL}/auth/oauth-link/start`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          provider,
+          client: "web",
+          returnTo: "/dashboard",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.token) {
+        throw new Error(data?.error || "Failed to start link");
+      }
+      window.location.href = `/api/auth/oauth/${provider}?client=web&intent=link&linkToken=${encodeURIComponent(data.token)}&return=${encodeURIComponent("/dashboard")}`;
+    } catch (error) {
+      console.error(error);
+      setLinkingProvider(null);
+    }
+  };
+
   const isEmailUser = user?.provider === "email" || user?.provider === "password";
 
   return (
     <>
+      <div className="card mb-6">
+        <h3 className="mb-3 text-sm font-medium uppercase tracking-wider text-surface-400">
+          Sign-In Methods
+        </h3>
+        <p className="mb-4 text-xs text-surface-500">
+          Link Apple, Google, or Microsoft to this same Yaver account. Future sign-ins with any linked provider open the same machines and devices.
+        </p>
+        <div className="mb-4 space-y-2">
+          {identities.length === 0 ? (
+            <p className="text-xs text-surface-500">No linked providers loaded yet.</p>
+          ) : (
+            identities.map((identity) => (
+              <div key={`${identity.provider}:${identity.email || "none"}`} className="flex items-center justify-between rounded-lg border border-surface-800 bg-surface-900/60 px-3 py-2">
+                <div>
+                  <p className="text-sm text-surface-200">{identity.provider}</p>
+                  <p className="text-xs text-surface-500">{identity.email || "No email reported by provider"}</p>
+                </div>
+                {identity.isPrimary ? (
+                  <span className="rounded-full border border-emerald-500/30 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-emerald-300">Primary</span>
+                ) : (
+                  <span className="rounded-full border border-surface-700 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-surface-400">Linked</span>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {(["apple", "google", "microsoft"] as const).map((provider) => (
+            <button
+              key={provider}
+              onClick={() => startLink(provider)}
+              disabled={linkingProvider !== null}
+              className="rounded-lg border border-surface-700 px-4 py-3 text-sm text-surface-300 transition-colors hover:bg-surface-800/50 hover:text-surface-50 disabled:opacity-50"
+            >
+              {linkingProvider === provider ? "Connecting..." : `Connect ${provider}`}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Legal */}
       <div className="card mb-6">
         <h3 className="mb-3 text-sm font-medium uppercase tracking-wider text-surface-400">

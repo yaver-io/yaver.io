@@ -99,6 +99,40 @@ async function handleCallback(
     throw new Error("CONVEX_SITE_URL is not set");
   }
 
+  const baseUrl = getBaseUrl();
+  if (state.intent === "link" && state.linkToken) {
+    const linkRes = await fetch(`${convexSiteUrl}/auth/oauth-link/complete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        linkToken: state.linkToken,
+        provider,
+        providerId: userInfo.providerId,
+        email: userInfo.email.toLowerCase(),
+        fullName: userInfo.name || "",
+        avatarUrl: userInfo.avatarUrl,
+      }),
+    });
+    if (!linkRes.ok) {
+      const text = await linkRes.text();
+      await logToConvex(provider, "oauth_link", "error", "OAuth link failed", text);
+      throw new Error(`OAuth link failed: ${text}`);
+    }
+    await logToConvex(provider, "oauth_link", "info", "OAuth link completed");
+
+    if (state.client === "mobile") {
+      const mobileUrl = new URL(process.env.MOBILE_DEEP_LINK || "yaver://oauth-callback");
+      mobileUrl.searchParams.set("linkedProvider", provider);
+      mobileUrl.searchParams.set("linked", "1");
+      return NextResponse.redirect(mobileUrl.toString(), 303);
+    }
+
+    const linkUrl = new URL(state.returnTo || "/dashboard", baseUrl);
+    linkUrl.searchParams.set("linkedProvider", provider);
+    linkUrl.searchParams.set("linked", "1");
+    return NextResponse.redirect(linkUrl.toString(), 303);
+  }
+
   // Upsert user via Convex HTTP action
   let userId;
   try {
@@ -130,8 +164,6 @@ async function handleCallback(
     }
     throw err;
   }
-
-  const baseUrl = getBaseUrl();
 
   // Check if user has 2FA enabled before creating session
   try {

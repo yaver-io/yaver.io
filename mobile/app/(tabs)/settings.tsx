@@ -3047,6 +3047,28 @@ export default function SettingsScreen() {
           )}
         </View>
 
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: c.textSecondary }]}>Sign-in methods</Text>
+          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+            <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 15 }}>
+              {user?.provider ? `Primary: ${user.provider}` : "Manage linked providers"}
+            </Text>
+            <Text style={{ color: c.textMuted, fontSize: 13, marginTop: 8, lineHeight: 18 }}>
+              Link Apple, Google, and Microsoft to the same Yaver account so any of them opens the same machines and devices. If you accidentally created a split account, linking from the web dashboard will merge it back into this account.
+            </Text>
+            <Pressable
+              onPress={() => Linking.openURL("https://yaver.io/dashboard")}
+              style={({ pressed }) => [
+                styles.signOutButton,
+                { marginTop: 14, backgroundColor: c.bgCardElevated, borderWidth: 1, borderColor: c.border },
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Text style={{ color: c.textPrimary, fontWeight: "600" }}>Manage on yaver.io</Text>
+            </Pressable>
+          </View>
+        </View>
+
         {/* Change Password (email users only) */}
         {user?.provider === "email" && (
           <View style={styles.section}>

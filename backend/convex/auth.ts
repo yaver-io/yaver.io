@@ -5,6 +5,8 @@ import { internal } from "./_generated/api";
 import { deleteInfraGrantArtifactsForUser } from "./access";
 import { welcomeHtml } from "./email";
 
+type OAuthProvider = "google" | "microsoft" | "apple" | "email";
+
 // ── Helpers ──────────────────────────────────────────────────────────
 
 /** SHA-256 hex digest of a string. Works in Convex runtime (Web Crypto). */
@@ -23,6 +25,202 @@ export function randomHex(bytes: number = 32): string {
   return Array.from(buf)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
+}
+
+async function ensureAuthIdentity(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  provider: OAuthProvider,
+  providerId: string,
+  email?: string,
+) {
+  const existing = await ctx.db
+    .query("authIdentities")
+    .withIndex("by_provider", (q) => q.eq("provider", provider).eq("providerId", providerId))
+    .unique();
+  if (existing) {
+    if (existing.userId !== userId) {
+      throw new Error("IDENTITY_ALREADY_LINKED");
+    }
+    await ctx.db.patch(existing._id, {
+      email: email || existing.email,
+      lastUsedAt: Date.now(),
+    });
+    return existing._id;
+  }
+  return await ctx.db.insert("authIdentities", {
+    userId,
+    provider,
+    providerId,
+    email,
+    createdAt: Date.now(),
+    lastUsedAt: Date.now(),
+  });
+}
+
+async function ensureUserSettings(ctx: MutationCtx, userId: Id<"users">) {
+  const settings = await ctx.db
+    .query("userSettings")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .first();
+  if (!settings) {
+    const defaultRelay = await getDefaultRelay(ctx);
+    await ctx.db.insert("userSettings", { userId, forceRelay: false, ...defaultRelay });
+    return;
+  }
+  if (!settings.relayPassword) {
+    const defaultRelay = await getDefaultRelay(ctx);
+    if (defaultRelay.relayPassword) {
+      await ctx.db.patch(settings._id, defaultRelay);
+    }
+  }
+}
+
+async function findUserForOAuth(
+  ctx: QueryCtx | MutationCtx,
+  provider: OAuthProvider,
+  providerId: string,
+  email: string,
+) {
+  const identity = await ctx.db
+    .query("authIdentities")
+    .withIndex("by_provider", (q) => q.eq("provider", provider).eq("providerId", providerId))
+    .unique();
+  if (identity) {
+    const linked = await ctx.db.get(identity.userId);
+    if (linked) return linked;
+  }
+
+  const byProvider = await ctx.db
+    .query("users")
+    .withIndex("by_provider", (q) => q.eq("provider", provider).eq("providerId", providerId))
+    .unique();
+  if (byProvider) return byProvider;
+
+  const byEmail = await ctx.db
+    .query("users")
+    .withIndex("by_email", (q) => q.eq("email", email))
+    .unique();
+  return byEmail;
+}
+
+async function mergeUserInto(
+  ctx: MutationCtx,
+  sourceUserId: Id<"users">,
+  targetUserId: Id<"users">,
+) {
+  if (sourceUserId === targetUserId) return;
+
+  const sourceUser = await ctx.db.get(sourceUserId);
+  const targetUser = await ctx.db.get(targetUserId);
+  if (!sourceUser || !targetUser) return;
+
+  const sourceSettings = await ctx.db
+    .query("userSettings")
+    .withIndex("by_userId", (q) => q.eq("userId", sourceUserId))
+    .first();
+  const targetSettings = await ctx.db
+    .query("userSettings")
+    .withIndex("by_userId", (q) => q.eq("userId", targetUserId))
+    .first();
+  if (sourceSettings && !targetSettings) {
+    await ctx.db.insert("userSettings", {
+      userId: targetUserId,
+      forceRelay: sourceSettings.forceRelay,
+      runnerId: sourceSettings.runnerId,
+      customRunnerCommand: sourceSettings.customRunnerCommand,
+      relayUrl: sourceSettings.relayUrl,
+      relayPassword: sourceSettings.relayPassword,
+      tunnelUrl: sourceSettings.tunnelUrl,
+      speechProvider: sourceSettings.speechProvider,
+      speechApiKey: sourceSettings.speechApiKey,
+      ttsEnabled: sourceSettings.ttsEnabled,
+      verbosity: sourceSettings.verbosity,
+      keyStorage: sourceSettings.keyStorage,
+    });
+    await ctx.db.delete(sourceSettings._id);
+  } else if (sourceSettings && targetSettings) {
+    await ctx.db.patch(targetSettings._id, {
+      forceRelay: targetSettings.forceRelay ?? sourceSettings.forceRelay,
+      runnerId: targetSettings.runnerId ?? sourceSettings.runnerId,
+      customRunnerCommand: targetSettings.customRunnerCommand ?? sourceSettings.customRunnerCommand,
+      relayUrl: targetSettings.relayUrl ?? sourceSettings.relayUrl,
+      relayPassword: targetSettings.relayPassword ?? sourceSettings.relayPassword,
+      tunnelUrl: targetSettings.tunnelUrl ?? sourceSettings.tunnelUrl,
+      speechProvider: targetSettings.speechProvider ?? sourceSettings.speechProvider,
+      speechApiKey: targetSettings.speechApiKey ?? sourceSettings.speechApiKey,
+      ttsEnabled: targetSettings.ttsEnabled ?? sourceSettings.ttsEnabled,
+      verbosity: targetSettings.verbosity ?? sourceSettings.verbosity,
+      keyStorage: targetSettings.keyStorage ?? sourceSettings.keyStorage,
+    });
+    await ctx.db.delete(sourceSettings._id);
+  }
+
+  const sessions = await ctx.db
+    .query("sessions")
+    .withIndex("by_userId", (q) => q.eq("userId", sourceUserId))
+    .collect();
+  for (const session of sessions) {
+    await ctx.db.patch(session._id, { userId: targetUserId });
+  }
+
+  const devices = await ctx.db
+    .query("devices")
+    .withIndex("by_userId", (q) => q.eq("userId", sourceUserId))
+    .collect();
+  for (const device of devices) {
+    const existingTargetDevice = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", device.deviceId))
+      .unique();
+    if (existingTargetDevice && existingTargetDevice._id !== device._id && existingTargetDevice.userId === targetUserId) {
+      await ctx.db.patch(existingTargetDevice._id, {
+        name: device.name || existingTargetDevice.name,
+        platform: device.platform,
+        publicKey: device.publicKey || existingTargetDevice.publicKey,
+        quicHost: device.quicHost || existingTargetDevice.quicHost,
+        quicPort: device.quicPort || existingTargetDevice.quicPort,
+        isOnline: device.isOnline,
+        runnerDown: device.runnerDown ?? existingTargetDevice.runnerDown,
+        runners: device.runners ?? existingTargetDevice.runners,
+        lastHeartbeat: Math.max(device.lastHeartbeat, existingTargetDevice.lastHeartbeat),
+        hardwareId: device.hardwareId || existingTargetDevice.hardwareId,
+      });
+      await ctx.db.delete(device._id);
+    } else {
+      await ctx.db.patch(device._id, { userId: targetUserId });
+    }
+  }
+
+  const identities = await ctx.db
+    .query("authIdentities")
+    .withIndex("by_userId", (q) => q.eq("userId", sourceUserId))
+    .collect();
+  for (const identity of identities) {
+    try {
+      await ensureAuthIdentity(ctx, targetUserId, identity.provider, identity.providerId, identity.email);
+    } catch {
+      // ignore exact duplicates already on target
+    }
+    await ctx.db.delete(identity._id);
+  }
+
+  const surveys = await ctx.db
+    .query("developerSurveys")
+    .withIndex("by_userId", (q) => q.eq("userId", sourceUserId))
+    .collect();
+  for (const survey of surveys) {
+    await ctx.db.patch(survey._id, { userId: targetUserId });
+  }
+
+  await ctx.db.patch(targetUserId, {
+    email: targetUser.email || sourceUser.email,
+    fullName: targetUser.fullName || sourceUser.fullName,
+    avatarUrl: targetUser.avatarUrl || sourceUser.avatarUrl,
+    surveyCompleted: targetUser.surveyCompleted ?? sourceUser.surveyCompleted,
+  });
+
+  await ctx.db.delete(sourceUserId);
 }
 
 /**
@@ -100,73 +298,19 @@ export const createOrUpdateUser = mutation({
     avatarUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    // First: exact provider+providerId match (returning user via same provider)
-    const byProvider = await ctx.db
-      .query("users")
-      .withIndex("by_provider", (q) =>
-        q.eq("provider", args.provider).eq("providerId", args.providerId)
-      )
-      .unique();
-
-    if (byProvider) {
-      const patch: Record<string, string | undefined> = {
+    const existing = await findUserForOAuth(ctx, args.provider, args.providerId, args.email);
+    if (existing) {
+      const patch: Record<string, string | undefined | boolean> = {
         email: args.email,
         avatarUrl: args.avatarUrl,
       };
-      // Only overwrite fullName if the new value is non-empty
-      if (args.fullName) {
+      if (args.fullName && (!existing.fullName || existing.fullName === existing.email)) {
         patch.fullName = args.fullName;
       }
-      await ctx.db.patch(byProvider._id, patch);
-      // Ensure user has relay settings (may have been lost due to deletion/re-creation)
-      const settings = await ctx.db
-        .query("userSettings")
-        .withIndex("by_userId", (q) => q.eq("userId", byProvider._id))
-        .first();
-      if (!settings) {
-        const defaultRelay = await getDefaultRelay(ctx);
-        await ctx.db.insert("userSettings", { userId: byProvider._id, forceRelay: false, ...defaultRelay });
-      } else if (!settings.relayPassword) {
-        const defaultRelay = await getDefaultRelay(ctx);
-        if (defaultRelay.relayPassword) {
-          await ctx.db.patch(settings._id, defaultRelay);
-        }
-      }
-      return byProvider._id;
-    }
-
-    // Second: email match (account linking — same user, different provider)
-    const byEmail = await ctx.db
-      .query("users")
-      .withIndex("by_email", (q) => q.eq("email", args.email))
-      .unique();
-
-    if (byEmail) {
-      // Link to existing account — update avatar/name if better data available
-      const patch: Record<string, string | undefined> = {};
-      if (args.avatarUrl) patch.avatarUrl = args.avatarUrl;
-      if (args.fullName && (!byEmail.fullName || byEmail.fullName === byEmail.email)) {
-        // Update name if current name is empty or just the email (placeholder)
-        patch.fullName = args.fullName;
-      }
-      if (Object.keys(patch).length > 0) {
-        await ctx.db.patch(byEmail._id, patch);
-      }
-      // Ensure user has relay settings
-      const settings = await ctx.db
-        .query("userSettings")
-        .withIndex("by_userId", (q) => q.eq("userId", byEmail._id))
-        .first();
-      if (!settings) {
-        const defaultRelay = await getDefaultRelay(ctx);
-        await ctx.db.insert("userSettings", { userId: byEmail._id, forceRelay: false, ...defaultRelay });
-      } else if (!settings.relayPassword) {
-        const defaultRelay = await getDefaultRelay(ctx);
-        if (defaultRelay.relayPassword) {
-          await ctx.db.patch(settings._id, defaultRelay);
-        }
-      }
-      return byEmail._id;
+      await ctx.db.patch(existing._id, patch);
+      await ensureUserSettings(ctx, existing._id);
+      await ensureAuthIdentity(ctx, existing._id, args.provider, args.providerId, args.email);
+      return existing._id;
     }
 
     const userId = randomHex(16);
@@ -179,15 +323,9 @@ export const createOrUpdateUser = mutation({
       avatarUrl: args.avatarUrl,
       createdAt: Date.now(),
     });
-    // Create default settings for new user with platform relay as default
-    const defaultRelay = await getDefaultRelay(ctx);
-    await ctx.db.insert("userSettings", {
-      userId: userDocId,
-      forceRelay: false,
-      ...defaultRelay,
-    });
+    await ensureUserSettings(ctx, userDocId);
+    await ensureAuthIdentity(ctx, userDocId, args.provider, args.providerId, args.email);
 
-    // Send welcome email to new users
     await ctx.scheduler.runAfter(0, internal.email.send, {
       from: "Kivanc from Yaver <kivanc@yaver.io>",
       to: args.email,
@@ -197,6 +335,100 @@ export const createOrUpdateUser = mutation({
     });
 
     return userDocId;
+  },
+});
+
+export const listAuthIdentities = query({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, args) => {
+    const result = await validateSessionInternal(ctx, args.tokenHash);
+    if (!result) return null;
+    const identities = await ctx.db
+      .query("authIdentities")
+      .withIndex("by_userId", (q) => q.eq("userId", result.user._id))
+      .collect();
+    const mapped = identities.map((identity) => ({
+      provider: identity.provider,
+      email: identity.email ?? null,
+      createdAt: identity.createdAt,
+      lastUsedAt: identity.lastUsedAt,
+      isPrimary:
+        identity.provider === result.user.provider &&
+        identity.providerId === result.user.providerId,
+    }));
+    if (!mapped.some((identity) => identity.isPrimary)) {
+      mapped.unshift({
+        provider: result.user.provider,
+        email: result.user.email,
+        createdAt: result.user.createdAt,
+        lastUsedAt: result.user.createdAt,
+        isPrimary: true,
+      });
+    }
+    return mapped;
+  },
+});
+
+export const createOAuthLinkIntent = mutation({
+  args: {
+    tokenHash: v.string(),
+    provider: v.union(v.literal("google"), v.literal("microsoft"), v.literal("apple")),
+    client: v.optional(v.string()),
+    returnTo: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const result = await validateSessionInternal(ctx, args.tokenHash);
+    if (!result) throw new Error("Unauthorized");
+    const token = randomHex(24);
+    await ctx.db.insert("oauthLinkIntents", {
+      token,
+      userId: result.user._id,
+      provider: args.provider,
+      client: args.client,
+      returnTo: args.returnTo,
+      expiresAt: Date.now() + 15 * 60 * 1000,
+      createdAt: Date.now(),
+    });
+    return { token };
+  },
+});
+
+export const completeOAuthLink = mutation({
+  args: {
+    linkToken: v.string(),
+    provider: v.union(v.literal("google"), v.literal("microsoft"), v.literal("apple")),
+    providerId: v.string(),
+    email: v.string(),
+    fullName: v.string(),
+    avatarUrl: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const intent = await ctx.db
+      .query("oauthLinkIntents")
+      .withIndex("by_token", (q) => q.eq("token", args.linkToken))
+      .unique();
+    if (!intent || intent.expiresAt < Date.now()) {
+      throw new Error("INVALID_LINK_TOKEN");
+    }
+
+    const targetUser = await ctx.db.get(intent.userId);
+    if (!targetUser) throw new Error("TARGET_USER_NOT_FOUND");
+
+    const source = await findUserForOAuth(ctx, args.provider, args.providerId, args.email);
+    if (source && source._id !== targetUser._id) {
+      await mergeUserInto(ctx, source._id, targetUser._id);
+    }
+
+    await ensureAuthIdentity(ctx, targetUser._id, args.provider, args.providerId, args.email);
+    await ensureAuthIdentity(ctx, targetUser._id, targetUser.provider, targetUser.providerId, targetUser.email);
+    await ensureUserSettings(ctx, targetUser._id);
+    await ctx.db.patch(targetUser._id, {
+      email: targetUser.email || args.email,
+      fullName: targetUser.fullName || args.fullName,
+      avatarUrl: targetUser.avatarUrl || args.avatarUrl,
+    });
+    await ctx.db.delete(intent._id);
+    return { ok: true, userId: targetUser._id };
   },
 });
 
@@ -368,6 +600,7 @@ export const createEmailUser = mutation({
       forceRelay: false,
       ...defaultRelay,
     });
+    await ensureAuthIdentity(ctx, userDocId, "email", args.email, args.email);
 
     // Send welcome email
     await ctx.scheduler.runAfter(0, internal.email.send, {

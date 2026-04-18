@@ -128,7 +128,7 @@ for (const path of [
   "/auth/validate", "/auth/signup", "/auth/login", "/auth/refresh",
   "/auth/logout", "/auth/update-profile", "/auth/delete-account",
   "/auth/forgot-password", "/auth/reset-password", "/auth/change-password",
-  "/auth/verify-totp",
+  "/auth/verify-totp", "/auth/providers", "/auth/oauth-link/start", "/auth/oauth-link/complete",
   "/devices/list", "/devices/owner-by-hardware", "/config", "/settings",
   "/guests/invite", "/guests/accept", "/guests/accept-code",
   "/guests/revoke", "/guests/list", "/guests/hosts", "/guests/allowed",
@@ -412,6 +412,73 @@ http.route({
       avatarUrl: body.avatarUrl,
     });
     return jsonResponse({ userId });
+  }),
+});
+
+/** GET /auth/providers — List linked sign-in methods for current account. */
+http.route({
+  path: "/auth/providers",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const identities = await ctx.runQuery(api.auth.listAuthIdentities, { tokenHash });
+    if (identities === null) return errorResponse("Unauthorized", 401);
+    return jsonResponse({ identities });
+  }),
+});
+
+/** POST /auth/oauth-link/start — Start linking another OAuth provider to this account. */
+http.route({
+  path: "/auth/oauth-link/start",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    if (!body.provider) return errorResponse("provider required", 400);
+    try {
+      const result = await ctx.runMutation(api.auth.createOAuthLinkIntent, {
+        tokenHash,
+        provider: body.provider,
+        client: body.client || "web",
+        returnTo: body.returnTo || undefined,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      if (e?.message === "Unauthorized") return errorResponse("Unauthorized", 401);
+      return errorResponse(e?.message || "Failed to start OAuth linking", 400);
+    }
+  }),
+});
+
+/** POST /auth/oauth-link/complete — Complete provider linking/merge using a one-time intent token. */
+http.route({
+  path: "/auth/oauth-link/complete",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.json().catch(() => ({}));
+    if (!body.linkToken || !body.provider || !body.providerId || !body.email) {
+      return errorResponse("linkToken, provider, providerId, email required", 400);
+    }
+    try {
+      const result = await ctx.runMutation(api.auth.completeOAuthLink, {
+        linkToken: body.linkToken,
+        provider: body.provider,
+        providerId: body.providerId,
+        email: body.email,
+        fullName: body.fullName || "",
+        avatarUrl: body.avatarUrl || undefined,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      if (e?.message === "INVALID_LINK_TOKEN") return errorResponse("Invalid or expired link token", 410);
+      if (e?.message === "TARGET_USER_NOT_FOUND") return errorResponse("Target user not found", 404);
+      if (e?.message === "IDENTITY_ALREADY_LINKED") return errorResponse("Identity already linked to another account", 409);
+      return errorResponse(e?.message || "Failed to complete OAuth linking", 400);
+    }
   }),
 });
 

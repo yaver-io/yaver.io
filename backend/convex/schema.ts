@@ -19,6 +19,29 @@ export default defineSchema({
     .index("by_email", ["email"])
     .index("by_provider", ["provider", "providerId"]),
 
+  authIdentities: defineTable({
+    userId: v.id("users"),
+    provider: v.union(v.literal("google"), v.literal("microsoft"), v.literal("apple"), v.literal("email")),
+    providerId: v.string(),
+    email: v.optional(v.string()),
+    createdAt: v.number(),
+    lastUsedAt: v.number(),
+  })
+    .index("by_provider", ["provider", "providerId"])
+    .index("by_userId", ["userId"]),
+
+  oauthLinkIntents: defineTable({
+    token: v.string(),
+    userId: v.id("users"),
+    provider: v.union(v.literal("google"), v.literal("microsoft"), v.literal("apple")),
+    client: v.optional(v.string()),
+    returnTo: v.optional(v.string()),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_token", ["token"])
+    .index("by_userId", ["userId"]),
+
   passwordResets: defineTable({
     tokenHash: v.string(),          // SHA-256 of the reset token
     email: v.string(),              // email this reset is for

@@ -63,6 +63,8 @@ export function isProviderConfigured(provider: OAuthProvider): boolean {
 type OAuthState = {
   client?: string;
   returnTo?: string;
+  intent?: "signin" | "link";
+  linkToken?: string;
 };
 
 export function sanitizeReturnTo(value?: string | null): string | undefined {
