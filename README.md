@@ -83,24 +83,24 @@ Yaver is built for solo developers and small teams who ship from anywhere. It ha
 │                                                                             │
 │  ─────────────────────────────────────────────────────────────────────────  │
 │                                                                             │
-│  📦 PUSH-TO-DEVICE CLI (yaver-cli)           🐛 FEEDBACK SDK               │
+│  📦 NPM BOOTSTRAP (`yaver-cli`)              🐛 FEEDBACK SDK               │
 │  npm install -g yaver-cli                     npm install @yaver/feedback-*  │
 │                                                                             │
-│  For third-party RN developers.               Embed in YOUR app during dev. │
-│  Push your existing React Native project      Shake to report bugs with     │
-│  to the yaver.io phone app for real-device    screenshots + voice. Black    │
-│  testing. Bundles JS, compiles Hermes         box flight recorder streams   │
-│  bytecode, pushes over Wi-Fi. ~4 seconds.     all events to your AI agent.  │
+│  One npm install, two surfaces:               Embed in YOUR app during dev. │
+│  `yaver serve` bootstraps the Go agent;       Shake to report bugs with     │
+│  `yaver push` handles third-party RN apps.    screenshots + voice. Black    │
+│  Bundles JS, compiles Hermes bytecode,        box flight recorder streams   │
+│  pushes over Wi-Fi. ~4 seconds.               all events to your AI agent.  │
 │  No project modifications required.           React Native, Flutter, Web.   │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Why four pieces?** The mobile app and desktop agent are the core — phone talks to your machine P2P. The CLI (`yaver-cli`) is separate because third-party developers need a simple `npm install` to test their RN apps, without running the full agent. The Feedback SDK is separate because it embeds inside *your* app, not Yaver's — it captures bugs from within the app being tested.
+**Why four pieces?** The mobile app and desktop agent are the core — phone talks to your machine P2P. The npm package (`yaver-cli`) now bootstraps both the agent binary and the React Native push flow so new developers can start from a single install. The Feedback SDK is still separate because it embeds inside *your* app, not Yaver's — it captures bugs from within the app being tested.
 
 **You might use:**
 - Just the **mobile app + agent** — control AI agents from your phone, hot reload any framework
-- Add **yaver-cli** — push your existing React Native project to the phone app for native testing
+- Add the **npm bootstrap package** — `yaver serve` for the agent, `yaver push` for native RN testing
 - Add the **Feedback SDK** — embed a debug console in your app, shake to report bugs to your AI agent
 - All four together — the full loop: code on machine, push to device, test, report bugs, AI fixes, repeat
 
@@ -345,6 +345,7 @@ the resulting token back through the device-code flow.
 | **dnf/rpm** (Fedora/RHEL) | Download `yaver_<version>_x86_64.rpm` from [releases](https://github.com/kivanccakmak/yaver.io/releases) and `sudo rpm -i yaver_*.rpm` (or `sudo dnf install ./yaver_*.rpm`) |
 | **AppImage** | Download from [download page](https://yaver.io/download), `chmod +x Yaver-*.AppImage && ./Yaver-*.AppImage` |
 | **Tarball** | `curl -fsSL https://yaver.io/install.sh \| sh` — auto-detects arch, downloads the right tarball, installs to `~/.local/bin/yaver` |
+| **npm bootstrap** | `npm install -g yaver-cli` — installs a `yaver` command; `yaver serve` bootstraps the Go agent and `yaver push` handles RN bundle push |
 | **Nix** | `nix run github:kivanccakmak/yaver.io` |
 | **Docker** | `docker run --rm kivanccakmak/yaver-cli version` |
 | **curl** | `curl -fsSL https://yaver.io/install.sh \| sh` |
@@ -508,11 +509,11 @@ yaver feedback delete <id>       # Delete a report
 Combine push-to-device with the Feedback SDK for a complete QA loop:
 
 ```
-1. Push to device:     npx yaver-cli push
+1. Push to device:     yaver push
 2. Test on real phone: tap around, find bugs
 3. Report bug:         shake phone ��� screenshot + voice → sent to AI agent
 4. AI fixes it:        agent sees screenshot, reads stack trace, writes fix
-5. Re-push:            npx yaver-cli push → fix on device in ~4s
+5. Re-push:            yaver push → fix on device in ~4s
 6. Repeat
 ```
 
@@ -970,15 +971,15 @@ Usually, no.
 
 For the normal Yaver agent flow (`yaver` running on Linux, WSL, macOS, or a remote host):
 
-- You do not need to inject `yaver-cli` into the app
+- You do not need to inject the npm bootstrap package into the app
 - You do not need to add the Feedback SDK just to open the app in Yaver
 - Yaver starts Metro, builds the Hermes bundle, and loads it into the Yaver phone app
 
-Use `yaver-cli` when:
+Use the npm package when:
 
 - you want direct push-to-device workflows without the full agent
 - you want compatibility analysis against Yaver's native module manifest
-- you want watch-mode push from a terminal with `yaver-push push --watch`
+- you want watch-mode push from a terminal with `yaver push --watch`
 
 Use the Feedback SDK when:
 
@@ -989,7 +990,7 @@ Use the Feedback SDK when:
 In short:
 
 - `yaver` agent + mobile app = enough for Hermes reload into Yaver on iPhone/Android
-- `yaver-cli` = optional direct CLI push workflow
+- `yaver-cli` = npm distribution name for the unified bootstrap package
 - Feedback SDK = optional in-app debug/reload/reporting workflow
 
 What can still block success:
@@ -1039,12 +1040,12 @@ Two modes: `dev` (hot reload from dev server) and `bundle` (rebuild Hermes bytec
 Yaver doubles as a native container app (like Expo Go, but for existing projects). Install the yaver.io app from the App Store / Play Store, then push your existing React Native project to it — no project modifications required.
 
 ```bash
-# Install the CLI
+# Install the npm bootstrap package
 npm install -g yaver-cli
 
 # Analyze your existing project
 cd my-existing-rn-app
-yaver-push init
+yaver push init
 
 🔍 Analyzing your project...
 
@@ -1061,7 +1062,7 @@ yaver-push init
 ✅ Created yaver.json
 
 # Push to your phone
-yaver-push push
+yaver push
 
 📡 Found: Kivanc's iPhone (192.168.1.42)
 ✅ Compatible
@@ -1075,22 +1076,24 @@ yaver-push push
 
 ### How It Works
 
-1. **`yaver-push init`** reads your `package.json`, compares against the SDK manifest (React Native version, Hermes bytecode version, native modules), and reports compatibility
-2. **`yaver-push push`** bundles your JS with `react-native bundle`, compiles to Hermes bytecode with the CLI's own `hermesc`, validates the bytecode version matches the phone app, and pushes via HTTP to the phone's on-device server (port 8347)
+1. **`yaver push init`** reads your `package.json`, compares against the SDK manifest (React Native version, Hermes bytecode version, native modules), and reports compatibility
+2. **`yaver push`** bundles your JS with `react-native bundle`, compiles to Hermes bytecode with the npm package's embedded `hermesc`, validates the bytecode version matches the phone app, and pushes via HTTP to the phone's on-device server (port 8347)
 3. The phone validates the Hermes bytecode, saves it, and safely reloads the React Native bridge — polling for old bridge deallocation (Hermes GC teardown), then creating a new bridge with full New Architecture support (TurboModules, Fabric, JSI)
 
 ### CLI Commands
 
 ```
-yaver-push init                         Analyze project, show compatibility, create yaver.json
-yaver-push push [--device <ip>]         Bundle + validate + push
-yaver-push push --watch                 Watch mode — re-push on file save
-yaver-push push --ignore-missing        Push even with missing native modules
-yaver-push doctor                       Deep compatibility report with fix suggestions
-yaver-push devices                      List discovered devices
-yaver-push modules                      List all SDK native modules (80+)
-yaver-push reset                        Clear pushed bundle on device
-yaver-push status                       Device + project status
+yaver serve                             Start the Go agent from the npm bootstrap package
+yaver push init                         Analyze project, show compatibility, create yaver.json
+yaver push [--device <ip>]              Bundle + validate + push
+yaver push --watch                      Watch mode — re-push on file save
+yaver push --ignore-missing             Push even with missing native modules
+yaver push doctor                       Deep compatibility report with fix suggestions
+yaver push devices                      List discovered devices
+yaver push modules                      List all SDK native modules (80+)
+yaver push reset                        Clear pushed bundle on device
+yaver push status                       Device + project status
+yaver-push <same-subcommand>            Legacy alias for existing scripts
 ```
 
 ### Handling Missing Modules
@@ -1109,7 +1112,7 @@ if (!isYaver) {
 
 ### SDK Manifest
 
-The yaver.io app now ships with 80+ pre-installed native modules including: `react-native-screens`, `react-native-reanimated`, `react-native-gesture-handler`, `react-native-svg`, `react-native-webview`, `react-native-maps`, `@shopify/react-native-skia`, `@shopify/flash-list`, `@react-native-picker/picker`, `react-native-view-shot`, `expo-camera`, `expo-location`, `expo-notifications`, `expo-updates`, and more. Run `yaver-push modules` for the full list.
+The yaver.io app now ships with 80+ pre-installed native modules including: `react-native-screens`, `react-native-reanimated`, `react-native-gesture-handler`, `react-native-svg`, `react-native-webview`, `react-native-maps`, `@shopify/react-native-skia`, `@shopify/flash-list`, `@react-native-picker/picker`, `react-native-view-shot`, `expo-camera`, `expo-location`, `expo-notifications`, `expo-updates`, and more. Run `yaver push modules` for the full list.
 
 That manifest is generated from the actual mobile host app dependencies and Expo plugin config, then copied into the CLI package and embedded iOS app bundle. Regenerate with `node scripts/generate-sdk-manifest.mjs` and verify drift in CI with `node scripts/generate-sdk-manifest.mjs --check`.
 
@@ -1130,7 +1133,7 @@ React Native has first-class push-to-device support. Other frameworks have hot r
 
 ### How Push to Device Works (Under the Hood)
 
-If you've never worked with React Native internals, here's what's happening when you run `yaver-push push`:
+If you've never worked with React Native internals, here's what's happening when you run `yaver push`:
 
 ```
 Your Code (JSX/TypeScript)
@@ -1241,7 +1244,7 @@ ACL peers are also accessible via MCP tools (`acl_list_peers`, `acl_call_peer_to
 |-------|-----------|---------|-------------|
 | **Mobile App** | `mobile/` | App Store / Play Store | Remote control for AI agents + native RN container + on-device HTTP server (port 8347) |
 | **Desktop Agent** | `desktop/agent/` | `brew install yaver` | Go binary — P2P server, AI agent runner, MCP (473 tools), hot reload, builds, session transfer |
-| **Push-to-Device CLI** | `cli/` | `npm i -g yaver-cli` | Bundle existing RN projects → Hermes bytecode → push to phone. No agent needed. |
+| **Unified NPM Bootstrap** | `cli/` | `npm i -g yaver-cli` | Installs a `yaver` command. `yaver serve` bootstraps the Go agent, `yaver push` handles RN bundle push. |
 | **Feedback SDKs** | `sdk/feedback/` | `npm i yaver-feedback-*` | Debug console + black box recorder embedded in your app. React Native, Flutter, Web. |
 | **Programmatic SDKs** | `sdk/` | `npm i yaver-sdk`, `pip install yaver`, etc. | Automate Yaver from code — Go, Python, JS/TS, Flutter/Dart, C. |
 | Desktop Installer | `desktop/installer/` | [Download](https://yaver.io/download) | GUI installer (DMG/EXE/DEB) — installs the Go agent binary |

@@ -1,8 +1,9 @@
 {
   "name": "yaver-cli",
-  "version": "1.0.1",
-  "description": "Push existing React Native projects to yaver.io for testing on real devices",
+  "version": "1.95.4",
+  "description": "Unified npm bootstrap for the Yaver agent and push-to-device React Native tooling",
   "bin": {
+    "yaver": "bin/yaver",
     "yaver-push": "bin/yaver-push"
   },
   "main": "src/index.js",

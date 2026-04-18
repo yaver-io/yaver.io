@@ -37,6 +37,31 @@ jobs:
           echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $TAG_VERSION"
 
+  publish-npm:
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+      - name: Validate package version
+        run: |
+          CLI_PKG_VERSION=$(node -e "console.log(require('./cli/package.json').version)")
+          if [ "$CLI_PKG_VERSION" != "${{ needs.validate.outputs.version }}" ]; then
+            echo "ERROR: cli/package.json version ($CLI_PKG_VERSION) does not match release version (${{ needs.validate.outputs.version }})"
+            exit 1
+          fi
+      - name: Publish unified npm package
+        run: |
+          cd cli
+          npm ci
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
   build:
     needs: validate
     strategy:

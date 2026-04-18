@@ -49,7 +49,7 @@ Tools the dev uses while writing, testing, and debugging code.
 | **AI coding agent — autonomous loops** | Devin, Factory, Tabnine Agent | $20–500 | ✅ | `yaver loop` modes (`auto-fix`, `develop`, `auto-test`, `ideas`) run claude/codex/aider/ollama inside a per-loop git worktree with budget, session-limit, and release-train gates. |
 | **Remote dev environment** | GitHub Codespaces, Coder, DevPod | $0.18+/hr | ✅ | `yaver serve` turns the dev's own laptop / Hetzner box / Mac mini into the remote env; mobile + web dashboards connect over P2P or relay. No metered compute. |
 | **Dev server hot reload from phone** | Expo Go, Vercel dev tunnels | free / $20 | ✅ | `yaver dev start` proxies Expo / Flutter / Vite / Next.js through the P2P channel; phone banner auto-appears, hot reload via SSE. |
-| **Push-to-device (Expo Go-like container)** | Expo Go (can't run your native modules) | free | ✅ | `yaver-cli push` compiles Hermes bytecode and POSTs to the on-device HTTP server. First-party TurboModules match; no cloud. |
+| **Push-to-device (Expo Go-like container)** | Expo Go (can't run your native modules) | free | ✅ | `yaver push` compiles Hermes bytecode and POSTs to the on-device HTTP server. First-party TurboModules match; no cloud. |
 | **Test runner (browser)** | Playwright Cloud, BrowserStack Automate | $30–129 | ✅ | yaver-test-sdk: chromedp-backed, spec-driven, network throttling, visual diff, HAR, axe, video, macro includes. |
 | **Test runner (iOS sim)** | Waldo, Sauce RDC, Maestro Cloud | $50–500 | ✅ | testkit/driver_iossim.go + `yaver install wda` booting WebDriverAgent on the simulator for selector taps. |
 | **Test runner (Android emu)** | BrowserStack App Automate, LambdaTest | $50–200 | ✅ | testkit/driver_androidemu.go + UIAutomator2 bridge; specs stay identical across targets. |
@@ -117,7 +117,7 @@ where the dollar bleed is biggest.
 
 | Category | SaaS | $/mo | Yaver | Notes |
 |---|---|---:|:---:|---|
-| **Hot reload + device container** | Expo Go (free, but can't use 3rd-party native modules) | free | ✅ | `yaver-cli push` runs the dev's existing RN project in the native yaver.io container with full TurboModule support. |
+| **Hot reload + device container** | Expo Go (free, but can't use 3rd-party native modules) | free | ✅ | `yaver push` runs the dev's existing RN project in the native yaver.io container with full TurboModule support. |
 | **TestFlight upload automation** | Fastlane, EAS Submit | $0–30 | ✅ | `scripts/deploy-testflight.sh` does the whole archive + upload loop with one `.env`. |
 | **Play Store upload automation** | Fastlane, EAS Submit | $0–30 | ✅ | `scripts/deploy-playstore.sh` + Python helper for edit transactions. |
 | **Over-the-air JS updates (prod)** | EAS Update, Stallion, Appcircle | $30–100 | 🟡 | Yaver already ships Hermes compilation, BC validation, and the on-device HTTP server. One `yaver release publish` + a pull endpoint over the existing relay turns that into a self-hosted OTA lane. See §2 note and §6 R1. |

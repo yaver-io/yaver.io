@@ -14,7 +14,7 @@ async function status(options = {}) {
     console.log(`  Missing:       ${yj.missingModules?.length || 0} native modules`);
     console.log(`  Analyzed:      ${yj.analyzedAt}`);
   } else {
-    console.log('  No yaver.json found. Run: yaver-push init');
+    console.log('  No yaver.json found. Run: yaver push init');
   }
 
   // Device status

@@ -23,7 +23,7 @@ async function push(options = {}) {
 
   if (health.hermes?.bytecodeVersion !== sdkManifest.hermes.bytecodeVersion) {
     console.error(`�� Hermes BC mismatch: device BC${health.hermes?.bytecodeVersion}, CLI BC${sdkManifest.hermes.bytecodeVersion}`);
-    console.error('   Update yaver-cli or yaver.io app.');
+    console.error('   Update the npm package or the yaver.io app.');
     process.exit(1);
   }
 
@@ -43,7 +43,7 @@ async function push(options = {}) {
     console.warn(`\n⚠���  ${analysis.missingModules.length} native module(s) NOT in yaver SDK:`);
     analysis.missingModules.forEach(m => console.warn(`    • ${m.name}@${m.version}`));
     console.warn('\n  App will crash if it calls these modules.');
-    console.warn('  Push anyway: yaver-push push --ignore-missing\n');
+    console.warn('  Push anyway: yaver push --ignore-missing\n');
     if (!options.force) process.exit(1);
   }
 

@@ -1,0 +1,5 @@
+#!/usr/bin/env node
+
+const { runUnified } = require('../src/index');
+
+runUnified(process.argv.slice(2));
