@@ -13,6 +13,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Image } from "expo-image";
+import * as ImagePicker from "expo-image-picker";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { getLocalSecret, LOCAL_KEYS, saveLocalSecret } from "../../src/lib/auth";
@@ -21,10 +22,13 @@ import {
   buildRemoteDesignPrompt,
   generateDesignModeBrief,
   importFigmaReference,
-  type FigmaImportResult,
+  importReferenceLink,
+  importScreenshotReference,
+  type DesignImportResult,
 } from "../../src/lib/designMode";
 
 type Surface = "mobile-ui" | "web-ui" | "full-stack";
+type InputMode = "figma" | "screenshot" | "reference";
 
 export default function DesignModeScreen() {
   const c = useColors();
@@ -33,13 +37,17 @@ export default function DesignModeScreen() {
   const { connectionStatus } = useDevice();
   const connected = connectionStatus === "connected";
 
+  const [inputMode, setInputMode] = useState<InputMode>("figma");
   const [figmaUrl, setFigmaUrl] = useState("");
   const [figmaToken, setFigmaToken] = useState("");
   const [openAiKey, setOpenAiKey] = useState("");
+  const [referenceUrl, setReferenceUrl] = useState("");
+  const [referenceLabel, setReferenceLabel] = useState("");
+  const [referenceNotes, setReferenceNotes] = useState("");
   const [projectQuery, setProjectQuery] = useState("");
   const [goal, setGoal] = useState("Build the first shippable version of this design with strong mobile ergonomics.");
   const [surface, setSurface] = useState<Surface>("mobile-ui");
-  const [imported, setImported] = useState<FigmaImportResult | null>(null);
+  const [imported, setImported] = useState<DesignImportResult | null>(null);
   const [brief, setBrief] = useState("");
   const [loadingImport, setLoadingImport] = useState(false);
   const [loadingBrief, setLoadingBrief] = useState(false);
@@ -69,6 +77,48 @@ export default function DesignModeScreen() {
       setLoadingImport(false);
     }
   }, [figmaToken, figmaUrl]);
+
+  const importScreenshot = useCallback(async () => {
+    setLoadingImport(true);
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        throw new Error("Photo library permission is required");
+      }
+      const picked = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        quality: 1,
+      });
+      if (picked.canceled || !picked.assets?.[0]?.uri) {
+        setLoadingImport(false);
+        return;
+      }
+      const result = await importScreenshotReference(picked.assets[0].uri);
+      setImported(result);
+      setBrief("");
+    } catch (e: any) {
+      Alert.alert("Screenshot import failed", e?.message || "Unknown error");
+    } finally {
+      setLoadingImport(false);
+    }
+  }, []);
+
+  const importReference = useCallback(async () => {
+    setLoadingImport(true);
+    try {
+      const result = importReferenceLink({
+        url: referenceUrl,
+        label: referenceLabel,
+        notes: referenceNotes,
+      });
+      setImported(result);
+      setBrief("");
+    } catch (e: any) {
+      Alert.alert("Reference import failed", e?.message || "Unknown error");
+    } finally {
+      setLoadingImport(false);
+    }
+  }, [referenceLabel, referenceNotes, referenceUrl]);
 
   const runBrief = useCallback(async () => {
     if (!imported) return;
@@ -163,33 +213,117 @@ export default function DesignModeScreen() {
             Use a Figma file/frame URL plus a personal access token. Recent Figma API policy changes mean PATs expire, so treat this like a refreshable local secret.
           </Text>
 
-          <TextInput
-            value={figmaUrl}
-            onChangeText={setFigmaUrl}
-            placeholder="https://www.figma.com/design/... ?node-id=..."
-            placeholderTextColor={c.textMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-            style={[styles.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput }]}
-          />
-          <TextInput
-            value={figmaToken}
-            onChangeText={setFigmaToken}
-            placeholder="Figma personal access token"
-            placeholderTextColor={c.textMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-            secureTextEntry
-            style={[styles.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput }]}
-          />
+          <View style={styles.surfaceRow}>
+            {(["figma", "screenshot", "reference"] as InputMode[]).map((mode) => {
+              const active = inputMode === mode;
+              return (
+                <Pressable
+                  key={mode}
+                  onPress={() => setInputMode(mode)}
+                  style={[
+                    styles.surfaceChip,
+                    {
+                      borderColor: active ? c.accent : c.border,
+                      backgroundColor: active ? c.accent + "18" : c.bg,
+                    },
+                  ]}
+                >
+                  <Text style={{ color: active ? c.accent : c.textMuted, fontSize: 12, fontWeight: "700" }}>
+                    {mode === "figma" ? "Figma" : mode === "screenshot" ? "Screenshot" : "Canva / Link"}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
 
-          <Pressable
-            onPress={() => void runImport()}
-            disabled={loadingImport}
-            style={[styles.primaryButton, { backgroundColor: c.accent, opacity: loadingImport ? 0.65 : 1 }]}
-          >
-            <Text style={styles.primaryButtonText}>{loadingImport ? "Importing…" : "Import Figma reference"}</Text>
-          </Pressable>
+          {inputMode === "figma" ? (
+            <>
+              <TextInput
+                value={figmaUrl}
+                onChangeText={setFigmaUrl}
+                placeholder="https://www.figma.com/design/... ?node-id=..."
+                placeholderTextColor={c.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={[styles.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput }]}
+              />
+              <TextInput
+                value={figmaToken}
+                onChangeText={setFigmaToken}
+                placeholder="Figma personal access token"
+                placeholderTextColor={c.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                secureTextEntry
+                style={[styles.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput }]}
+              />
+
+              <Pressable
+                onPress={() => void runImport()}
+                disabled={loadingImport}
+                style={[styles.primaryButton, { backgroundColor: c.accent, opacity: loadingImport ? 0.65 : 1 }]}
+              >
+                <Text style={styles.primaryButtonText}>{loadingImport ? "Importing…" : "Import Figma reference"}</Text>
+              </Pressable>
+            </>
+          ) : null}
+
+          {inputMode === "screenshot" ? (
+            <>
+              <Text style={[styles.panelBody, { color: c.textMuted, marginBottom: 12 }]}>
+                Pick a screenshot, mockup export, or Canva-exported image from the phone. The brief generator will use the image directly as visual context.
+              </Text>
+              <Pressable
+                onPress={() => void importScreenshot()}
+                disabled={loadingImport}
+                style={[styles.primaryButton, { backgroundColor: c.accent, opacity: loadingImport ? 0.65 : 1 }]}
+              >
+                <Text style={styles.primaryButtonText}>{loadingImport ? "Importing…" : "Pick screenshot or mockup"}</Text>
+              </Pressable>
+            </>
+          ) : null}
+
+          {inputMode === "reference" ? (
+            <>
+              <Text style={[styles.panelBody, { color: c.textMuted, marginBottom: 12 }]}>
+                Use this for Canva share links, moodboards, or any other design reference URL when direct API import is not available yet.
+              </Text>
+              <TextInput
+                value={referenceUrl}
+                onChangeText={setReferenceUrl}
+                placeholder="https://www.canva.com/design/... or other reference URL"
+                placeholderTextColor={c.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={[styles.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput }]}
+              />
+              <TextInput
+                value={referenceLabel}
+                onChangeText={setReferenceLabel}
+                placeholder="Label, e.g. Canva board v2"
+                placeholderTextColor={c.textMuted}
+                style={[styles.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput }]}
+              />
+              <TextInput
+                value={referenceNotes}
+                onChangeText={setReferenceNotes}
+                placeholder="Notes about what to copy from this board"
+                placeholderTextColor={c.textMuted}
+                multiline
+                style={[
+                  styles.input,
+                  { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput, minHeight: 110, textAlignVertical: "top" },
+                ]}
+              />
+              <Pressable
+                onPress={() => void importReference()}
+                disabled={loadingImport}
+                style={[styles.primaryButton, { backgroundColor: c.accent, opacity: loadingImport ? 0.65 : 1 }]}
+              >
+                <Text style={styles.primaryButtonText}>{loadingImport ? "Importing…" : "Save reference link"}</Text>
+              </Pressable>
+            </>
+          ) : null}
         </View>
 
         <View style={[styles.panel, { backgroundColor: c.bgCard, borderColor: c.border }]}>
@@ -233,10 +367,11 @@ export default function DesignModeScreen() {
           <View style={[styles.panel, { backgroundColor: c.bgCard, borderColor: c.border }]}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
               <View style={{ flex: 1 }}>
-                <Text style={[styles.panelTitle, { color: c.textPrimary }]}>{imported.nodeName}</Text>
-                <Text style={[styles.panelBody, { color: c.textMuted }]}>
+            <Text style={[styles.panelTitle, { color: c.textPrimary }]}>{imported.nodeName}</Text>
+            <Text style={[styles.panelBody, { color: c.textMuted }]}>
                   {imported.fileName}
                   {imported.pageName ? ` · ${imported.pageName}` : ""}
+                  {imported.sourceType ? ` · ${imported.sourceType}` : ""}
                 </Text>
               </View>
               <Pressable onPress={() => void openSource()}>

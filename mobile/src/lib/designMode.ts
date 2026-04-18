@@ -1,12 +1,15 @@
-export interface FigmaImportResult {
+import * as FileSystem from "expo-file-system/legacy";
+
+export interface DesignImportResult {
+  sourceType: "figma" | "screenshot" | "reference-link";
   sourceUrl: string;
-  fileKey: string;
+  previewUrl?: string;
+  fileKey?: string;
   nodeId?: string;
   fileName: string;
   nodeName: string;
   nodeType: string;
   pageName?: string;
-  previewUrl?: string;
   colors: string[];
   topLevelLayers: string[];
   textSnippets: string[];
@@ -96,7 +99,7 @@ function summarizeImport(data: {
   return parts.join(" ");
 }
 
-export async function importFigmaReference(url: string, token: string): Promise<FigmaImportResult> {
+export async function importFigmaReference(url: string, token: string): Promise<DesignImportResult> {
   const sourceUrl = url.trim();
   const apiToken = token.trim();
   if (!sourceUrl) throw new Error("Figma URL is required");
@@ -176,7 +179,8 @@ export async function importFigmaReference(url: string, token: string): Promise<
   );
   const compactColors = uniqueCompact(colors, 8);
 
-  const result: FigmaImportResult = {
+  const result: DesignImportResult = {
+    sourceType: "figma",
     sourceUrl,
     fileKey,
     nodeId: previewNodeId,
@@ -203,13 +207,35 @@ export async function importFigmaReference(url: string, token: string): Promise<
 
 export async function generateDesignModeBrief(args: {
   apiKey: string;
-  imported: FigmaImportResult;
+  imported: DesignImportResult;
   productGoal: string;
   targetSurface: "mobile-ui" | "web-ui" | "full-stack";
 }): Promise<string> {
   const key = args.apiKey.trim();
   if (!key) throw new Error("OpenAI/Codex-compatible API key is required");
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  const contents: Array<{ type: string; text?: string; image_url?: string }> = [
+    {
+      type: "input_text",
+      text: [
+        `Target surface: ${args.targetSurface}.`,
+        `Reference source type: ${args.imported.sourceType}.`,
+        `Product goal: ${args.productGoal.trim() || "Turn the imported design into a working UI implementation."}`,
+        `Design summary: ${args.imported.summary}`,
+        `Top-level layers: ${args.imported.topLevelLayers.join(", ") || "none"}`,
+        `Text snippets: ${args.imported.textSnippets.join(" | ") || "none"}`,
+        `Palette clues: ${args.imported.colors.join(", ") || "none"}`,
+        "Return markdown with sections: Goal, Information Architecture, Components, Visual System, States, and Build Order.",
+      ].join("\n"),
+    },
+  ];
+  if (args.imported.previewUrl) {
+    contents.push({
+      type: "input_image",
+      image_url: args.imported.previewUrl,
+    });
+  }
+
+  const res = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${key}`,
@@ -217,46 +243,33 @@ export async function generateDesignModeBrief(args: {
     },
     body: JSON.stringify({
       model: "gpt-4.1-mini",
-      temperature: 0.3,
-      messages: [
+      input: [
         {
           role: "system",
-          content:
-            "You are a product design implementation planner. Write a compact but actionable UI build brief for a coding agent. Focus on information architecture, components, states, spacing, hierarchy, palette, copy, and implementation priorities. Be concrete and implementation-ready.",
+          content: [
+            {
+              type: "input_text",
+              text:
+                "You are a product design implementation planner. Write a compact but actionable UI build brief for a coding agent. Focus on information architecture, components, states, spacing, hierarchy, palette, copy, and implementation priorities. Be concrete and implementation-ready.",
+            },
+          ],
         },
         {
           role: "user",
-          content: [
-            `Target surface: ${args.targetSurface}.`,
-            `Product goal: ${args.productGoal.trim() || "Turn the imported design into a working UI implementation."}`,
-            `Figma summary: ${args.imported.summary}`,
-            `Top-level layers: ${args.imported.topLevelLayers.join(", ") || "none"}`,
-            `Text snippets: ${args.imported.textSnippets.join(" | ") || "none"}`,
-            `Palette clues: ${args.imported.colors.join(", ") || "none"}`,
-            "Return markdown with sections: Goal, Information Architecture, Components, Visual System, States, and Build Order.",
-          ].join("\n"),
+          content: contents,
         },
       ],
     }),
   });
   const text = await res.text().catch(() => "");
   if (!res.ok) throw new Error(text || `OpenAI HTTP ${res.status}`);
-  const json = JSON.parse(text) as {
-    choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;
-  };
-  const content = json.choices?.[0]?.message?.content;
-  if (typeof content === "string") return content.trim();
-  if (Array.isArray(content)) {
-    return content
-      .map((item) => (typeof item?.text === "string" ? item.text : ""))
-      .join("")
-      .trim();
-  }
+  const json = JSON.parse(text) as { output_text?: string };
+  if (typeof json.output_text === "string" && json.output_text.trim()) return json.output_text.trim();
   throw new Error("The AI provider returned an empty brief");
 }
 
 export function buildRemoteDesignPrompt(args: {
-  imported: FigmaImportResult;
+  imported: DesignImportResult;
   brief?: string;
   targetSurface: "mobile-ui" | "web-ui" | "full-stack";
   productGoal: string;
@@ -276,4 +289,49 @@ export function buildRemoteDesignPrompt(args: {
     args.brief ? `Implementation brief:\n${args.brief}` : "",
   ];
   return parts.filter(Boolean).join("\n\n");
+}
+
+export async function importScreenshotReference(imageUri: string): Promise<DesignImportResult> {
+  if (!imageUri.trim()) throw new Error("Screenshot URI is required");
+  const base64 = await FileSystem.readAsStringAsync(imageUri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  const previewUrl = `data:image/jpeg;base64,${base64}`;
+  return {
+    sourceType: "screenshot",
+    sourceUrl: imageUri,
+    previewUrl,
+    fileName: "Imported screenshot",
+    nodeName: "Screenshot reference",
+    nodeType: "IMAGE",
+    colors: [],
+    topLevelLayers: [],
+    textSnippets: [],
+    summary:
+      "Imported a screenshot reference. Use the image itself as the primary visual source of truth for layout, hierarchy, spacing, and style.",
+  };
+}
+
+export function importReferenceLink(args: {
+  url: string;
+  label?: string;
+  notes?: string;
+}): DesignImportResult {
+  const sourceUrl = args.url.trim();
+  if (!sourceUrl) throw new Error("Reference URL is required");
+  const label = args.label?.trim() || "Reference board";
+  const notes = args.notes?.trim() || "";
+  return {
+    sourceType: "reference-link",
+    sourceUrl,
+    fileName: label,
+    nodeName: label,
+    nodeType: "REFERENCE",
+    colors: [],
+    topLevelLayers: [],
+    textSnippets: notes ? [notes] : [],
+    summary: notes
+      ? `Imported a design reference link: ${label}. Notes: ${notes}`
+      : `Imported a design reference link: ${label}.`,
+  };
 }

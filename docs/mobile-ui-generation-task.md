@@ -276,6 +276,13 @@ The mobile app now also has a first real Design Mode surface:
 - one-tap handoff of the imported design + brief to the paired dev
   machine as a coding task
 
+Expanded further:
+
+- screenshot/mockup import from the phone photo library
+- Canva or generic design-link references as first-class design inputs
+- image-aware AI brief generation using the imported screenshot as
+  multimodal context
+
 This is intentionally the first real integration slice, not the final
 design-tool story. It proves that Yaver mobile can act as a bridge from
 design artifact to implementation task, instead of only collecting text
