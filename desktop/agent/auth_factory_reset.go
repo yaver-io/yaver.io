@@ -6,7 +6,6 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
-	"syscall"
 )
 
 func runAuthFactoryReset(args []string) {
@@ -136,6 +135,6 @@ func spawnAuthFactoryReset(headless bool) error {
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = nil
 	cmd.Env = os.Environ()
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	applyDetachSysProcAttr(cmd)
 	return cmd.Start()
 }
