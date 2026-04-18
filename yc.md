@@ -16,7 +16,7 @@
 - Voice/text prompt scaffold (`runPhonePromptGenerator`, mobile prompt UI) — prompt now generates schema/auth/seed/app spec for a phone project; remaining work is quality/polish, not first implementation.
 - Deploy-state rebinding (`PhoneProjectAccess`, `bindPhoneProjectToTarget`, `clearPhoneProjectBinding`) — after push, phone CRUD can rebind to the promoted target instead of staying pinned to the source sandbox.
 - Local phone sandbox bridge (`mobile/src/lib/phoneSandboxLocal.ts`) — offline/local project persistence exists, with sync back to the connected agent when reachable.
-- Hetzner cloud stack (`cloud/`) — static Go binary + Caddy compose, `deploy.sh` fresh-box bootstrap. Dogfooded on `***REMOVED***` — deploy → push → teardown works.
+- Hetzner cloud stack (`cloud/`) — static Go binary + Caddy compose, `deploy.sh` fresh-box bootstrap. Dogfooded on a shared dev box — deploy → push → teardown works.
 
 **Dogfood numbers (real runs, 2026-04-17):**
 | Hop | Bundle | Latency |
@@ -123,7 +123,7 @@ CLAUDE.md is 3× too big for the pitch. It stays in the repo — but the applica
 
 | Date | Ship | Done when | Status |
 |---|---|---|---|
-| Apr 24 (Fri) | Yaver Cloud path deploys to **one Hetzner box**. Single staging target, no autoscale, no SLA. | Cloud-deploy button works in demo. | 🟡 brought forward — `cloud/` stack + dogfood done (***REMOVED***). Still need: DNS `cloud.yaver.io` → box, Caddy Let's Encrypt live, `CLOUD_OWNER_TOKEN` minted. |
+| Apr 24 (Fri) | Yaver Cloud path deploys to **one Hetzner box**. Single staging target, no autoscale, no SLA. | Cloud-deploy button works in demo. | 🟡 brought forward — `cloud/` stack + dogfood done. Still need: DNS `cloud.yaver.io` → box, Caddy Let's Encrypt live, `CLOUD_OWNER_TOKEN` minted. |
 | Apr 25 (Sat) | Recruit 3 beta users (RN devs via Twitter/Reddit/Bluesky DM). Watch them use it on a call. | 3 users, 3 recordings, written notes. |
 | Apr 26 (Sun) | Fix top 5 crashes/confusions from beta feedback. No new features. | Beta users successfully ship one screen each. |
 | Apr 27 (Mon) | Landing page rewrite: `yaver.io` → "Build mobile apps from your phone. Deploy to your Mac or our cloud." One CTA. | Live on yaver.io; old feature grid gone. |

@@ -54,6 +54,8 @@ npm-debug.log*
 # Private keys and signing scripts
 keys/
 *.p8
+*.keystore
+mobile/android/keystore.properties
 sdk/go/clib/libyaver.*
 sdk/python/__pycache__/
 sdk/js/dist/

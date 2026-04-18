@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HOST="${HOST:-root@***REMOVED***}"
+if [ -z "${HOST:-}" ]; then
+  echo "HOST env var is required (e.g. HOST=root@relay.example.com)." >&2
+  echo "In CI this is wired from the RELAY_SSH_HOST GitHub secret." >&2
+  exit 2
+fi
 PUBLIC_URL="${PUBLIC_URL:-https://public.yaver.io/health}"
 PRIVATE_URL="${PRIVATE_URL:-https://kivanc.relay.yaver.io/health}"
 

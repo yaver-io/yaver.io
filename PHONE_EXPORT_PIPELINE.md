@@ -291,7 +291,7 @@ End-to-end validation of `yaver phone push` using the CLI as a phone-emulator ag
   - `rename` → target got `dogfood-todos-2`
   - `overwrite` → `dogfood-todos` replaced in place
 
-### Test B — Hetzner (***REMOVED***, aarch64, shared dev box)
+### Test B — remote aarch64 dev box
 
 - Pushed the arm64 binary + throwaway config to `/root/.yaver-dogfood/` via `scp`.
 - Ran on `:28080` under `nohup` (did not touch the existing relay / Convex / erpnext containers on the box, did not use the Docker-compose `cloud/` stack, no Let's Encrypt needed).
