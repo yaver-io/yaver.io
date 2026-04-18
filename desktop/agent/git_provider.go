@@ -247,6 +247,67 @@ func verifyGitLabToken(host, token string) (username, avatarURL string, err erro
 	return user.Username, user.AvatarURL, nil
 }
 
+// listGitHubReposPaged fetches up to maxPages pages of /user/repos so a
+// user with > perPage repos still sees later ones in the "browse all"
+// view. Caps total at maxPages*perPage to avoid silly fan-out for users
+// with thousands of repos — they should use the search box.
+func listGitHubReposPaged(token string, perPage, maxPages int) ([]RemoteRepo, error) {
+	if perPage <= 0 {
+		perPage = 100
+	}
+	if perPage > 100 {
+		perPage = 100
+	}
+	if maxPages <= 0 {
+		maxPages = 1
+	}
+	var all []RemoteRepo
+	for page := 1; page <= maxPages; page++ {
+		batch, err := listGitHubRepos(token, page, perPage)
+		if err != nil {
+			if page == 1 {
+				return nil, err
+			}
+			break
+		}
+		all = append(all, batch...)
+		if len(batch) < perPage {
+			break
+		}
+	}
+	return all, nil
+}
+
+// listGitLabReposPaged is the GitLab analogue of listGitHubReposPaged:
+// fetch up to maxPages pages of /api/v4/projects (membership=true so
+// private + collab repos appear) and return the union.
+func listGitLabReposPaged(host, token string, perPage, maxPages int) ([]RemoteRepo, error) {
+	if perPage <= 0 {
+		perPage = 100
+	}
+	if perPage > 100 {
+		perPage = 100
+	}
+	if maxPages <= 0 {
+		maxPages = 1
+	}
+	var all []RemoteRepo
+	for page := 1; page <= maxPages; page++ {
+		batch, err := listGitLabRepos(host, token, page, perPage)
+		if err != nil {
+			if page == 1 {
+				return nil, err
+			}
+			break
+		}
+		all = append(all, batch...)
+		if len(batch) < perPage {
+			break
+		}
+	}
+	return all, nil
+}
+
 func listGitHubRepos(token string, page, perPage int) ([]RemoteRepo, error) {
 	url := fmt.Sprintf("https://api.github.com/user/repos?sort=updated&direction=desc&per_page=%d&page=%d&type=all", perPage, page)
 	req, _ := http.NewRequest("GET", url, nil)
@@ -997,11 +1058,17 @@ func (s *HTTPServer) handleGitProviderRepos(w http.ResponseWriter, r *http.Reque
 	var repos []RemoteRepo
 	var err error
 
+	// Load every repo the user can see in one shot — paginating page
+	// by page on the phone hides private repos that fall onto page 2
+	// and confuses the search box (it could only filter what was
+	// already loaded). Cap at 1000 (10 pages × 100) which covers
+	// >99 % of users; anyone beyond that gets the search-box server
+	// fallback.
 	switch provider.Provider {
 	case "github":
-		repos, err = listGitHubRepos(provider.Token, page, perPage)
+		repos, err = listGitHubReposPaged(provider.Token, 100, 10)
 	case "gitlab":
-		repos, err = listGitLabRepos(host, provider.Token, page, perPage)
+		repos, err = listGitLabReposPaged(host, provider.Token, 100, 10)
 	}
 
 	if err != nil {
@@ -1009,14 +1076,16 @@ func (s *HTTPServer) handleGitProviderRepos(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Client-side search filter
+	// Optional client-style filter on the server (kept for callers
+	// that want to pre-narrow the response). Mobile filters
+	// client-side over the full list now that we return everything.
 	if search != "" {
-		search = strings.ToLower(search)
+		needle := strings.ToLower(search)
 		var filtered []RemoteRepo
 		for _, r := range repos {
-			if strings.Contains(strings.ToLower(r.Name), search) ||
-				strings.Contains(strings.ToLower(r.FullName), search) ||
-				strings.Contains(strings.ToLower(r.Description), search) {
+			if strings.Contains(strings.ToLower(r.Name), needle) ||
+				strings.Contains(strings.ToLower(r.FullName), needle) ||
+				strings.Contains(strings.ToLower(r.Description), needle) {
 				filtered = append(filtered, r)
 			}
 		}

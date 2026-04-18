@@ -270,6 +270,37 @@ func detectProjectPreparation(workDir string, manifest *projectPackageManifest) 
 	return prep
 }
 
+// canInstallMissingTool reports whether every entry in missing maps to
+// an integration the phone can trigger via POST /install/<tool>. Used
+// by the pre-flight to decide whether to advertise a one-tap install.
+func canInstallMissingTool(missing []string) bool {
+	if len(missing) == 0 {
+		return false
+	}
+	for _, t := range missing {
+		switch t {
+		case "node", "npm", "npx":
+			// All three come from the agent-managed Node runtime.
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// installEndpointForTool returns the /install/<tool> path the phone
+// should POST to in order to provision every missing tool. Picks
+// `node` whenever any of node/npm/npx is missing — the agent runtime
+// install ships all three.
+func installEndpointForTool(missing []string) string {
+	for _, t := range missing {
+		if t == "node" || t == "npm" || t == "npx" {
+			return "/install/node"
+		}
+	}
+	return ""
+}
+
 func installProjectDependencies(workDir string, prep projectPreparationStatus) error {
 	var cmd *exec.Cmd
 	switch prep.PackageManager {
@@ -283,6 +314,10 @@ func installProjectDependencies(workDir string, prep projectPreparationStatus) e
 		cmd = exec.Command("npm", "install", "--legacy-peer-deps")
 	}
 	cmd.Dir = workDir
+	// Pick up the agent-managed Node runtime (~/.yaver/runtimes/node/bin)
+	// when system Node is missing, so a fresh Linux box can install
+	// project deps after a phone-driven /install/node.
+	cmd.Env = augmentEnv(nil)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -539,6 +574,30 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 		marker := filepath.Join(yaverBuildsDir(), projectHash+".built")
 		os.Remove(marker)
 		log.Printf("[dev] Cleared build marker for %s (rebuild requested)", projectHash)
+	}
+
+	// Pre-flight: if the project directory is set and the box is
+	// missing required runtimes (e.g. Node), refuse with a 412 +
+	// structured payload so the phone can offer a one-tap install
+	// instead of surfacing a raw "executable not found" error after
+	// a long timeout. The mobile client knows to render this shape.
+	if req.WorkDir != "" {
+		if manifest, err := readProjectPackageManifest(req.WorkDir); err == nil {
+			prep := detectProjectPreparation(req.WorkDir, manifest)
+			if len(prep.MissingTools) > 0 {
+				installable := canInstallMissingTool(prep.MissingTools)
+				jsonReply(w, http.StatusPreconditionFailed, map[string]interface{}{
+					"error":           fmt.Sprintf("Cannot start dev server: %s missing on this machine.", strings.Join(prep.MissingTools, ", ")),
+					"missingTools":    prep.MissingTools,
+					"packageManager":  prep.PackageManager,
+					"hermesCompiler":  prep.HermesCompiler,
+					"installEndpoint": installEndpointForTool(prep.MissingTools),
+					"installable":     installable,
+					"helpHint":        "POST /install/node from the phone (sudo-free, ~/.yaver/runtimes/node) and retry.",
+				})
+				return
+			}
+		}
 	}
 
 	if err := s.devServerMgr.Start(req.Framework, req.WorkDir, req.Platform, req.Port, DevServerTarget{
@@ -901,7 +960,9 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	}
 
 	cmd.Dir = workDir
-	cmd.Env = append(os.Environ(), "NODE_ENV=production")
+	// augmentEnv prepends the agent-managed Node bin so a fresh
+	// Linux box (no system Node) still bundles after /install/node.
+	cmd.Env = append(augmentEnv(nil), "NODE_ENV=production")
 
 	log.Printf("[super-host] bundling with command: %v", cmd.Args)
 	logW := &devLogWriter{prefix: "[super-host]"}

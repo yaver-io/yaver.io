@@ -3546,6 +3546,8 @@ func runRestart(args []string) {
 // ---------------------------------------------------------------------------
 
 func runStatus() {
+	printWSL2RequirementWarning()
+
 	cfg, err := LoadConfig()
 	if err != nil || cfg == nil || cfg.AuthToken == "" {
 		// Unauthenticated path: don't bail. The agent may be
@@ -4227,6 +4229,7 @@ func runTmuxDetach(taskID string) {
 func runDoctor() {
 	fmt.Println("Yaver Doctor")
 	fmt.Printf("  Version: %s\n\n", version)
+	printWSL2RequirementWarning()
 
 	// Check for updates early (non-blocking, 3s timeout)
 	latestCLI := fetchLatestCLIVersion()

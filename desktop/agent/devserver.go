@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -582,7 +583,10 @@ func (b *baseDevServer) startProcess(ctx context.Context, name string, args []st
 
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = workDir
-	cmd.Env = append(os.Environ(), env...)
+	// augmentEnv prepends ~/.yaver/runtimes/node/bin to PATH so
+	// `npx` / `node` invocations resolve to the agent-managed Node
+	// runtime on a fresh Linux box that never had system Node.
+	cmd.Env = append(augmentEnv(nil), env...)
 
 	// Pipe output to log with [dev] prefix, and stream to SSE subscribers
 	logWriter := &devLogWriter{prefix: fmt.Sprintf("[dev:%s]", b.name)}
@@ -715,15 +719,23 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		}
 	}
 
-	// Install deps if needed
+	// Install deps if needed — honor the project's package manager
+	// (yarn / pnpm / bun / npm) instead of hardcoding npm, and surface
+	// missing-runtime errors with an actionable next step the phone
+	// can render ("Install Node" → POST /install/node).
 	if _, err := os.Stat(filepath.Join(opts.WorkDir, "node_modules")); os.IsNotExist(err) {
-		log.Printf("[dev] Installing dependencies in %s...", opts.WorkDir)
-		install := exec.CommandContext(ctx, "npm", "install", "--legacy-peer-deps")
-		install.Dir = opts.WorkDir
-		install.Stdout = os.Stdout
-		install.Stderr = os.Stderr
-		if err := install.Run(); err != nil {
-			return fmt.Errorf("npm install failed: %w", err)
+		manifest, _ := readProjectPackageManifest(opts.WorkDir)
+		prep := detectProjectPreparation(opts.WorkDir, manifest)
+		if !prep.CanAutoInstallDependencies {
+			missing := strings.Join(prep.MissingTools, ", ")
+			if missing == "" {
+				missing = "package manager"
+			}
+			return fmt.Errorf("cannot install dependencies (%s missing on this machine). Install Node from the phone (POST /install/node) or run `yaver install node`", missing)
+		}
+		log.Printf("[dev] Installing dependencies in %s with %s...", opts.WorkDir, prep.PackageManager)
+		if err := installProjectDependencies(opts.WorkDir, prep); err != nil {
+			return fmt.Errorf("%s install failed: %w", prep.PackageManager, err)
 		}
 	}
 
@@ -745,10 +757,19 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		fileExists(filepath.Join(opts.WorkDir, "android", "build.gradle"))
 
 	if !hasNativeProject {
-		// No native dirs — run expo prebuild first
-		log.Printf("[dev:expo] No native project — running expo prebuild...")
-		prebuild := exec.CommandContext(ctx, "npx", "expo", "prebuild", "--platform", "ios")
+		// No native dirs — run expo prebuild first. Pick the platform
+		// that actually builds on this OS: macOS can do iOS, Linux/WSL
+		// only really has Android. Falling back to ios on Linux used
+		// to silently waste time generating Xcode metadata that this
+		// box can never compile.
+		prebuildPlatform := "ios"
+		if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
+			prebuildPlatform = "android"
+		}
+		log.Printf("[dev:expo] No native project — running expo prebuild --platform %s...", prebuildPlatform)
+		prebuild := exec.CommandContext(ctx, "npx", "expo", "prebuild", "--platform", prebuildPlatform)
 		prebuild.Dir = opts.WorkDir
+		prebuild.Env = augmentEnv(nil)
 		prebuild.Stdout = &devLogWriter{prefix: "[dev:expo:prebuild]"}
 		prebuild.Stderr = &devLogWriter{prefix: "[dev:expo:prebuild]"}
 		if err := prebuild.Run(); err != nil {
@@ -912,15 +933,21 @@ func (rn *ReactNativeDevServer) Start(ctx context.Context, opts DevServerOpts) e
 		rn.port = 8081
 	}
 
-	// Install deps if needed
+	// Install deps if needed — honor project package manager and
+	// surface missing-runtime errors with an actionable next step.
 	if _, err := os.Stat(filepath.Join(opts.WorkDir, "node_modules")); os.IsNotExist(err) {
-		log.Printf("[dev] Installing dependencies in %s...", opts.WorkDir)
-		install := exec.CommandContext(ctx, "npm", "install", "--legacy-peer-deps")
-		install.Dir = opts.WorkDir
-		install.Stdout = os.Stdout
-		install.Stderr = os.Stderr
-		if err := install.Run(); err != nil {
-			return fmt.Errorf("npm install failed: %w", err)
+		manifest, _ := readProjectPackageManifest(opts.WorkDir)
+		prep := detectProjectPreparation(opts.WorkDir, manifest)
+		if !prep.CanAutoInstallDependencies {
+			missing := strings.Join(prep.MissingTools, ", ")
+			if missing == "" {
+				missing = "package manager"
+			}
+			return fmt.Errorf("cannot install dependencies (%s missing on this machine). Install Node from the phone (POST /install/node) or run `yaver install node`", missing)
+		}
+		log.Printf("[dev] Installing dependencies in %s with %s...", opts.WorkDir, prep.PackageManager)
+		if err := installProjectDependencies(opts.WorkDir, prep); err != nil {
+			return fmt.Errorf("%s install failed: %w", prep.PackageManager, err)
 		}
 	}
 
@@ -1089,7 +1116,10 @@ func (f *FlutterDevServer) startProcessWithStdin(ctx context.Context, name strin
 
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = workDir
-	cmd.Env = append(os.Environ(), env...)
+	// augmentEnv prepends ~/.yaver/runtimes/node/bin to PATH so
+	// `npx` / `node` invocations resolve to the agent-managed Node
+	// runtime on a fresh Linux box that never had system Node.
+	cmd.Env = append(augmentEnv(nil), env...)
 
 	logWriter := &devLogWriter{prefix: fmt.Sprintf("[dev:%s]", f.name)}
 	cmd.Stdout = logWriter

@@ -1342,7 +1342,10 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
     try {
       const baseUrl = (quicClient as any).baseUrl;
       const headers = (quicClient as any).authHeaders;
-      const res = await fetch(`${baseUrl}/git/provider/repos?host=${encodeURIComponent(providerHost)}&per_page=50`, { headers });
+      // Server now loads all pages (cap 1000) in one shot — keep
+      // per_page large so callers that pin to a single page still
+      // get a useful slice.
+      const res = await fetch(`${baseUrl}/git/provider/repos?host=${encodeURIComponent(providerHost)}&per_page=100`, { headers });
       const data = await res.json();
       if (data.ok) setRepos(data.repos || []);
     } catch {
@@ -1461,38 +1464,43 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
               ) : filteredRepos.length === 0 ? (
                 <Text style={{ color: c.textMuted, fontSize: 13, padding: 12 }}>No repos found.</Text>
               ) : (
-                <ScrollView style={{ maxHeight: 300 }}>
+                // Render the full list inline — the outer page already
+                // scrolls. A nested ScrollView with maxHeight:300 used
+                // to clip the list to ~5 cramped rows; letting it flow
+                // gives each repo room to breathe and matches what the
+                // user expects from a phone screen.
+                <View>
                   {filteredRepos.map((repo: any) => (
                     <Pressable
                       key={repo.fullName}
-                      style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: c.border, gap: 8 }}
+                      style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: c.border, gap: 12 }}
                       onPress={() => handleClone(repo)}
                       disabled={cloning === repo.fullName}
                     >
-                      <View style={{ flex: 1 }}>
-                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                          <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600" }}>{repo.name}</Text>
+                      <View style={{ flex: 1, gap: 6 }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <Text style={{ color: c.textPrimary, fontSize: 16, fontWeight: "600" }}>{repo.name}</Text>
                           {repo.private && (
-                            <View style={{ backgroundColor: "#f59e0b22", borderRadius: 3, paddingHorizontal: 4, paddingVertical: 1 }}>
-                              <Text style={{ color: "#f59e0b", fontSize: 9, fontWeight: "600" }}>private</Text>
+                            <View style={{ backgroundColor: "#f59e0b22", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 }}>
+                              <Text style={{ color: "#f59e0b", fontSize: 11, fontWeight: "600" }}>private</Text>
                             </View>
                           )}
                           {repo.language && (
-                            <Text style={{ color: c.textMuted, fontSize: 10 }}>{repo.language}</Text>
+                            <Text style={{ color: c.textMuted, fontSize: 12 }}>{repo.language}</Text>
                           )}
                         </View>
                         {repo.description ? (
-                          <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 1 }} numberOfLines={1}>{repo.description}</Text>
+                          <Text style={{ color: c.textMuted, fontSize: 13, lineHeight: 18 }} numberOfLines={2}>{repo.description}</Text>
                         ) : null}
                       </View>
                       {cloning === repo.fullName ? (
                         <ActivityIndicator size="small" color={c.accent} />
                       ) : (
-                        <Text style={{ color: c.accent, fontSize: 12, fontWeight: "600" }}>Clone</Text>
+                        <Text style={{ color: c.accent, fontSize: 14, fontWeight: "600" }}>Clone</Text>
                       )}
                     </Pressable>
                   ))}
-                </ScrollView>
+                </View>
               )}
             </View>
           )}

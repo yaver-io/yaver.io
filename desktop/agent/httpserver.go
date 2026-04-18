@@ -579,6 +579,12 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/repos/credentials", s.auth(s.handleRepoCredentials))
 	mux.HandleFunc("/repos/credentials/", s.auth(s.handleRepoCredentialByHost))
 
+	// Phone-driven dependency installer — `yaver install <tool>` over HTTP.
+	// Output streams to /streams/install:<tool>. Owner-auth only (runs
+	// shell commands and downloads runtimes into ~/.yaver/runtimes).
+	mux.HandleFunc("/install/", s.auth(s.handleInstall))
+	mux.HandleFunc("/install", s.auth(s.handleInstall))
+
 	// Git provider (GitHub/GitLab — auto-detect from dev machine's existing credentials)
 	mux.HandleFunc("/git/provider/detect", s.auth(s.handleGitProviderAutoDetect))
 	mux.HandleFunc("/git/provider/setup", s.auth(s.handleGitProviderSetup))
