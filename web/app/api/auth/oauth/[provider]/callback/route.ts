@@ -13,6 +13,18 @@ import {
 
 const VALID_PROVIDERS = new Set<OAuthProvider>(["google", "microsoft", "apple"]);
 
+function extractDeviceCode(returnTo?: string): string | null {
+  if (!returnTo) return null;
+  try {
+    const url = new URL(returnTo, "https://yaver.io");
+    if (url.pathname !== "/auth/device") return null;
+    const code = (url.searchParams.get("code") || "").trim().toUpperCase();
+    return code || null;
+  } catch {
+    return null;
+  }
+}
+
 function getBaseUrl(): string {
   if (process.env.NEXT_PUBLIC_BASE_URL) return process.env.NEXT_PUBLIC_BASE_URL;
   if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
@@ -202,7 +214,51 @@ async function handleCallback(
     const bridgeUrl = new URL("/auth/desktop-callback", baseUrl);
     bridgeUrl.searchParams.set("token", token);
     await logToConvex(provider, "redirect", "info", "Redirecting to desktop bridge page");
-    return NextResponse.redirect(bridgeUrl.toString(), 303);
+    const response = NextResponse.redirect(bridgeUrl.toString(), 303);
+    response.cookies.set("yaver_auth_token", token, {
+      path: "/",
+      maxAge: 60 * 60 * 24 * 30,
+      sameSite: "lax",
+      secure: true,
+      httpOnly: false,
+    });
+    return response;
+  }
+
+  const deviceCode = extractDeviceCode(state.returnTo);
+  if (deviceCode) {
+    try {
+      const authorizeRes = await fetch(`${convexSiteUrl}/auth/device-code/authorize`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ userCode: deviceCode }),
+      });
+
+      if (authorizeRes.ok) {
+        const successUrl = new URL("/auth/device", baseUrl);
+        successUrl.searchParams.set("code", deviceCode);
+        successUrl.searchParams.set("authorized", "1");
+        await logToConvex(provider, "device_authorize", "info", `Authorized device code ${deviceCode}`);
+        const response = NextResponse.redirect(successUrl.toString(), 303);
+        response.cookies.set("yaver_auth_token", token, {
+          path: "/",
+          maxAge: 60 * 60 * 24 * 30,
+          sameSite: "lax",
+          secure: true,
+          httpOnly: false,
+        });
+        return response;
+      }
+
+      const body = await authorizeRes.text();
+      await logToConvex(provider, "device_authorize", "warn", `Device auth fallback for ${deviceCode}`, body);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await logToConvex(provider, "device_authorize", "warn", `Device auth fallback for ${deviceCode}`, msg);
+    }
   }
 
   // Web client: redirect to /auth/callback which stores token in localStorage
@@ -212,7 +268,15 @@ async function handleCallback(
     callbackUrl.searchParams.set("return", state.returnTo);
   }
   await logToConvex(provider, "redirect", "info", "Redirecting to web /auth/callback");
-  return NextResponse.redirect(callbackUrl.toString(), 303);
+  const response = NextResponse.redirect(callbackUrl.toString(), 303);
+  response.cookies.set("yaver_auth_token", token, {
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+    sameSite: "lax",
+    secure: true,
+    httpOnly: false,
+  });
+  return response;
 }
 
 export async function GET(

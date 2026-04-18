@@ -9,6 +9,7 @@ import { CONVEX_URL } from "@/lib/constants";
 function DeviceCodeContent() {
   const params = useSearchParams();
   const prefillCode = params.get("code") || "";
+  const alreadyAuthorized = params.get("authorized") === "1";
   const providerHint = (params.get("provider") || "").toLowerCase();
   const [deviceInfo, setDeviceInfo] = useState<null | {
     machineName: string | null;
@@ -86,6 +87,13 @@ function DeviceCodeContent() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefillCode, token]);
+
+  useEffect(() => {
+    if (alreadyAuthorized) {
+      setStatus("success");
+      setErrorMsg("");
+    }
+  }, [alreadyAuthorized]);
 
   const authUrlFor = (provider: "apple" | "google" | "microsoft") => {
     const qs = new URLSearchParams({ client: "web" });
