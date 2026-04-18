@@ -909,8 +909,8 @@ export default function HomePage() {
           <h2 className="mb-10 text-center text-2xl font-bold text-surface-50 md:text-3xl">
             The short-term product path
           </h2>
-          <div className="grid gap-6 md:grid-cols-3">
-            {/* Column 1 */}
+          <div className="grid gap-6 md:grid-cols-2 md:items-start">
+            {/* Column 1 — Install the agent (the dense one) */}
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
               <div className="mb-3 flex items-center gap-2">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">1</span>
@@ -951,7 +951,8 @@ export default function HomePage() {
               </div>
             </div>
 
-            {/* Column 2 */}
+            {/* Column 2 — steps 2+3 stacked so vertical whitespace next to step 1 disappears */}
+            <div className="flex flex-col gap-6">
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
               <div className="mb-3 flex items-center gap-2">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">2</span>
@@ -977,7 +978,7 @@ export default function HomePage() {
               </p>
             </div>
 
-            {/* Column 3 */}
+            {/* Column 3 (stacked under 2) */}
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
               <div className="mb-3 flex items-center gap-2">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">3</span>
@@ -1000,6 +1001,7 @@ export default function HomePage() {
               <p className="mt-3 text-[11px] text-surface-500">
                 Local-first is the default. Cloud is a promotion step, not the starting requirement.
               </p>
+            </div>
             </div>
           </div>
 
