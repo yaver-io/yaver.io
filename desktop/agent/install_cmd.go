@@ -8,10 +8,10 @@ package main
 //
 // Strict rules:
 //
-//   - We never download or compile binaries ourselves. Every install
-//     shells out to the user's existing package manager (brew on
-//     macOS, apt/dnf on Linux). The user can verify what we're doing
-//     because the actual command is printed before it runs.
+//   - Most installs shell out to the user's existing package manager
+//     (brew on macOS, apt/dnf on Linux). Agent-managed runtimes such
+//     as Node are the exception: Yaver downloads them into
+//     ~/.yaver/runtimes so headless boxes do not need sudo.
 //   - We only support macOS and Linux. Windows users are out of scope
 //     for the local-CI persona.
 //   - Every "tool" is one or more package manager commands. We don't
@@ -100,7 +100,7 @@ var integrations = []installPlan{
 	},
 	{
 		name:        "node",
-		description: "Node.js LTS — installs to ~/.yaver/runtimes/node, sudo-free, modern enough for Expo SDK 50+ (apt nodejs on Ubuntu 22.04 ships Node 12 which Expo rejects)",
+		description: "Node.js LTS for the Hermes reload stack — installs to ~/.yaver/runtimes/node, sudo-free, modern enough for Expo SDK 50+",
 		runFunc: func(ctx context.Context, progress func(string)) error {
 			_, err := installNodeRuntime(ctx, progress)
 			return err
@@ -108,10 +108,18 @@ var integrations = []installPlan{
 	},
 	{
 		name:        "mobile",
-		description: "React Native / Expo dev stack on a fresh box: Node LTS into ~/.yaver/runtimes/node. Sudo-free. Meta-target.",
+		description: "Hermes bundle reload stack for React Native / Expo: Node LTS plus the embedded hermesc sanity check. Meta-target.",
 		runFunc: func(ctx context.Context, progress func(string)) error {
 			if _, err := installNodeRuntime(ctx, progress); err != nil {
 				return err
+			}
+			summary, err := embeddedHermescSummary()
+			if err != nil {
+				return err
+			}
+			if progress != nil {
+				progress("Embedded hermesc ready: " + summary)
+				progress("Hermes reload stack ready for Open in Yaver on Linux, WSL, or macOS.")
 			}
 			return nil
 		},
@@ -253,11 +261,11 @@ func checkInstalled(name string) string {
 	// CLI users, so a plain LookPath would always say "—".
 	switch name {
 	case "node", "mobile":
-		if v := nodeRuntimeExisting(runtimeNodeBinDir()); v != "" {
-			return "✓"
-		}
-		if name == "node" {
-			if _, err := exec.LookPath("node"); err == nil {
+		if _, v := detectManagedOrSystemNode(); v != "" {
+			if name == "node" {
+				return "✓"
+			}
+			if _, err := embeddedHermescSummary(); err == nil {
 				return "✓"
 			}
 		}

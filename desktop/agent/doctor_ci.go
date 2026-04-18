@@ -83,7 +83,7 @@ func probeBrowserVersion(bin string) string {
 // detectBinaryWithVersion looks up `name` in PATH and asks it for its
 // version. Returns ("", "") if the binary isn't on PATH.
 func detectBinaryWithVersion(name, versionFlag string) (path, version string) {
-	p, err := exec.LookPath(name)
+	p, err := lookPathWithRuntimes(name)
 	if err != nil {
 		return "", ""
 	}

@@ -142,6 +142,20 @@ func nodeRuntimeExisting(binDir string) string {
 	return strings.TrimSpace(string(out))
 }
 
+func detectManagedOrSystemNode() (path, version string) {
+	if p, v := detectBinaryWithVersion("node", "--version"); p != "" {
+		return p, v
+	}
+	binDir := runtimeNodeBinDir()
+	if binDir == "" {
+		return "", ""
+	}
+	if v := nodeRuntimeExisting(binDir); v != "" {
+		return filepath.Join(binDir, "node"), v
+	}
+	return "", ""
+}
+
 // downloadFile fetches url into dstPath. Existing file is overwritten
 // atomically via a .part rename. Honors ctx for cancellation.
 func downloadFile(ctx context.Context, url, dstPath string) error {

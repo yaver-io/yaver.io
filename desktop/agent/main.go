@@ -1218,8 +1218,8 @@ func logFilePath() string {
 // needs a password-manager decision.
 func printHeadlessNextSteps() {
 	fmt.Println("Next — on your phone:")
-	fmt.Println("  Install the Yaver app and sign in with the same account you just used.")
-	fmt.Println("    iOS (TestFlight):  https://testflight.apple.com/join/yaver")
+	fmt.Println("  Open the Yaver app and sign in with the same account you just used.")
+	fmt.Println("    iPhone:            https://apps.apple.com/us/app/yaver-io/id6760467669")
 	fmt.Println("    Android (Play):    https://play.google.com/store/apps/details?id=io.yaver.mobile")
 	fmt.Println("  This machine will appear in its device list automatically.")
 	fmt.Println()
@@ -4814,33 +4814,29 @@ func runDoctor() {
 	}
 
 	// 8. Hermes / Super-host
-	fmt.Println("\n── Hermes (Super-host) ──")
-	check("Embedded hermesc")
-	if hermescBin, herr := GetEmbeddedHermesc(); herr == nil {
-		// Run hermesc --version to get BC version
-		out, rerr := osexec.Command(hermescBin, "--version").CombinedOutput()
-		if rerr == nil {
-			lines := strings.Split(string(out), "\n")
-			bcLine := ""
-			rnLine := ""
-			for _, l := range lines {
-				if strings.Contains(l, "HBC bytecode version") {
-					bcLine = strings.TrimSpace(l)
-				}
-				if strings.Contains(l, "Hermes release version") {
-					rnLine = strings.TrimSpace(l)
-				}
-			}
-			if bcLine != "" {
-				pass(fmt.Sprintf("%s (%s)", bcLine, rnLine))
-			} else {
-				pass(hermescBin)
-			}
-		} else {
-			warning(fmt.Sprintf("present but --version failed: %v", rerr))
-		}
+	fmt.Println("\n── Hermes Reload Stack ──")
+	nodePath, nodeVersion := detectManagedOrSystemNode()
+	check("Node.js runtime")
+	if nodePath != "" {
+		pass(fmt.Sprintf("%s (%s)", nodePath, nodeVersion))
 	} else {
-		failed(fmt.Sprintf("not available: %v", herr))
+		failed("not installed — run `yaver install mobile`")
+	}
+
+	check("Embedded hermesc")
+	hermesReady := false
+	if summary, err := embeddedHermescSummary(); err == nil {
+		pass(summary)
+		hermesReady = true
+	} else {
+		failed(err.Error())
+	}
+
+	check("Hermes reload path")
+	if nodePath != "" && hermesReady {
+		pass("ready for React Native / Expo bundle reload into Yaver mobile from Linux, WSL, or macOS")
+	} else {
+		warning("install the mobile stack with `yaver install mobile` to enable Open in Yaver bundle reload")
 	}
 
 	check("SDK manifest BC version")
@@ -4957,7 +4953,7 @@ func runDoctor() {
 	// Playwright / Cypress as a fallback for things yaver-test-sdk
 	// doesn't cover yet.
 	check("Node.js")
-	if path, ver := detectBinaryWithVersion("node", "--version"); path != "" {
+	if path, ver := detectManagedOrSystemNode(); path != "" {
 		pass(fmt.Sprintf("%s (%s)", path, ver))
 	} else {
 		warning("not installed (optional — only for legacy Playwright/Cypress fallback)")

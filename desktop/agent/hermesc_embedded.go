@@ -4,7 +4,9 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"os/exec"
 	"runtime"
+	"strings"
 	"sync"
 )
 
@@ -60,4 +62,33 @@ func GetEmbeddedHermesc() (string, error) {
 		hermescPath = tmp.Name()
 	})
 	return hermescPath, hermescPathErr
+}
+
+func embeddedHermescSummary() (string, error) {
+	hermescBin, err := GetEmbeddedHermesc()
+	if err != nil {
+		return "", fmt.Errorf("not available: %w", err)
+	}
+	out, err := exec.Command(hermescBin, "--version").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("present but --version failed: %v", err)
+	}
+	lines := strings.Split(string(out), "\n")
+	bcLine := ""
+	rnLine := ""
+	for _, l := range lines {
+		if strings.Contains(l, "HBC bytecode version") {
+			bcLine = strings.TrimSpace(l)
+		}
+		if strings.Contains(l, "Hermes release version") {
+			rnLine = strings.TrimSpace(l)
+		}
+	}
+	if bcLine == "" {
+		return hermescBin, nil
+	}
+	if rnLine == "" {
+		return bcLine, nil
+	}
+	return fmt.Sprintf("%s (%s)", bcLine, rnLine), nil
 }

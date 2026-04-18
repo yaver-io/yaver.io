@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -65,4 +66,16 @@ func augmentEnv(env []string) []string {
 		out = append(out, "PATH="+prepend+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
 	return out
+}
+
+// lookPathWithRuntimes prefers agent-managed runtime bins before the
+// ambient PATH so readiness checks agree with subprocess execution.
+func lookPathWithRuntimes(name string) (string, error) {
+	for _, dir := range runtimeBinDirs() {
+		candidate := filepath.Join(dir, name)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate, nil
+		}
+	}
+	return exec.LookPath(name)
 }

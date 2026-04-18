@@ -88,9 +88,9 @@ type LazySetupResult struct {
 // app" flow. See the package comment for design notes.
 func yaverLazySetup(ctx context.Context, waitSeconds int) (LazySetupResult, error) {
 	out := LazySetupResult{}
-	out.MobileApp.IOS = "https://testflight.apple.com/join/yaver"
+	out.MobileApp.IOS = "https://apps.apple.com/us/app/yaver-io/id6760467669"
 	out.MobileApp.Android = "https://play.google.com/store/apps/details?id=io.yaver.mobile"
-	out.MobileApp.Instruction = "Install the Yaver app on your phone and sign in with the same account. Your dev machine will appear automatically."
+	out.MobileApp.Instruction = "Open the Yaver app on your phone and sign in with the same account. If it is not installed yet, use the official download link. Your dev machine will appear automatically."
 
 	// Fast path: already signed in.
 	if snap := authStatusSnapshot(); snap.SignedIn {
@@ -99,9 +99,9 @@ func yaverLazySetup(ctx context.Context, waitSeconds int) (LazySetupResult, erro
 		out.Provider = snap.Provider
 		out.DeviceID = snap.DeviceID
 		if snap.UserEmail != "" {
-			out.NextAction = "You're signed in as " + snap.UserEmail + ". Install the Yaver mobile app and sign in with the same account — your dev machine will show up in its device list."
+			out.NextAction = "You're signed in as " + snap.UserEmail + ". Open the Yaver mobile app and sign in with the same account — your dev machine will show up in its device list. If the app is not installed yet, use the official download link."
 		} else {
-			out.NextAction = "You're signed in. Install the Yaver mobile app and sign in with the same account — your dev machine will show up in its device list."
+			out.NextAction = "You're signed in. Open the Yaver mobile app and sign in with the same account — your dev machine will show up in its device list. If the app is not installed yet, use the official download link."
 		}
 		return out, nil
 	}

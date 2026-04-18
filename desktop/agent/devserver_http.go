@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -178,7 +179,7 @@ func projectFileExists(path string) bool {
 }
 
 func commandExists(name string) bool {
-	_, err := exec.LookPath(name)
+	_, err := lookPathWithRuntimes(name)
 	return err == nil
 }
 
@@ -290,12 +291,13 @@ func canInstallMissingTool(missing []string) bool {
 
 // installEndpointForTool returns the /install/<tool> path the phone
 // should POST to in order to provision every missing tool. Picks
-// `node` whenever any of node/npm/npx is missing — the agent runtime
-// install ships all three.
+// `mobile` whenever any of node/npm/npx is missing — the agent-managed
+// mobile install ships the Node runtime those tools come from and
+// verifies the embedded hermesc reload path too.
 func installEndpointForTool(missing []string) string {
 	for _, t := range missing {
 		if t == "node" || t == "npm" || t == "npx" {
-			return "/install/node"
+			return "/install/mobile"
 		}
 	}
 	return ""
@@ -325,7 +327,7 @@ func installProjectDependenciesTo(workDir string, prep projectPreparationStatus,
 	cmd.Dir = workDir
 	// Pick up the agent-managed Node runtime (~/.yaver/runtimes/node/bin)
 	// when system Node is missing, so a fresh Linux box can install
-	// project deps after a phone-driven /install/node.
+	// project deps after a phone-driven /install/mobile.
 	cmd.Env = augmentEnv(nil)
 	if extraOut != nil {
 		cmd.Stdout = io.MultiWriter(os.Stdout, extraOut)
@@ -405,7 +407,7 @@ func (s *HTTPServer) ensureDevServerForProject(workDir, framework, platform stri
 			continue
 		}
 		if status.Error != "" {
-			return fmt.Errorf(status.Error)
+			return errors.New(status.Error)
 		}
 	}
 	return fmt.Errorf("dev server did not become ready in time")
@@ -427,13 +429,13 @@ func (s *HTTPServer) buildNativeBundleForProject(workDir, framework, platform st
 	var result map[string]interface{}
 	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
 		if rec.Code >= 400 {
-			return nil, fmt.Errorf(strings.TrimSpace(rec.Body.String()))
+			return nil, errors.New(strings.TrimSpace(rec.Body.String()))
 		}
 		return nil, err
 	}
 	if rec.Code >= 400 {
 		if msg, _ := result["error"].(string); msg != "" {
-			return nil, fmt.Errorf(msg)
+			return nil, errors.New(msg)
 		}
 		return nil, fmt.Errorf("native build failed with status %d", rec.Code)
 	}

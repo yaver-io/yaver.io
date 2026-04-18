@@ -123,7 +123,7 @@ func ensureNodeDepsStreamed(ctx context.Context, workDir string, emit func(DevSe
 		if missing == "" {
 			missing = "package manager"
 		}
-		return fmt.Errorf("cannot install dependencies (%s missing on this machine). Install Node from the phone (POST /install/node) or run `yaver install node`", missing)
+		return fmt.Errorf("cannot install dependencies (%s missing on this machine). Install the mobile stack from the phone (POST /install/mobile) or run `yaver install mobile`", missing)
 	}
 	log.Printf("[dev] Installing dependencies in %s with %s...", workDir, prep.PackageManager)
 	if installWriter != nil {

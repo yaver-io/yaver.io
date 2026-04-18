@@ -238,6 +238,79 @@ func (c *MobileClient) GetDevStatus(ctx context.Context) (*DevServerStatus, erro
 	return &out, nil
 }
 
+// BuildNativeBundleResult mirrors the JSON response of /dev/build-native.
+type BuildNativeBundleResult struct {
+	Status     string `json:"status"`
+	BundleURL  string `json:"bundleUrl"`
+	AssetsURL  string `json:"assetsUrl,omitempty"`
+	Size       int64  `json:"size"`
+	MD5        string `json:"md5"`
+	BCVersion  int    `json:"bcVersion"`
+	Platform   string `json:"platform"`
+	ModuleName string `json:"moduleName"`
+	HasAssets  bool   `json:"hasAssets"`
+}
+
+// BuildNativeBundle hits POST /dev/build-native — the same call the
+// mobile Hot Reload "Open in Yaver" button makes. Agent runs
+// metro+hermesc, validates the HBC header, writes the bundle, and
+// returns metadata the phone uses to fetch + load it.
+func (c *MobileClient) BuildNativeBundle(ctx context.Context, platform string) (*BuildNativeBundleResult, error) {
+	if platform == "" {
+		platform = "ios"
+	}
+	body := map[string]string{"platform": platform}
+	var out BuildNativeBundleResult
+	if err := c.doJSON(ctx, "POST", "/dev/build-native", body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DownloadBundleAndValidate GETs the compiled HBC bundle from
+// bundleURL and verifies the Hermes bytecode header. Returns the
+// bundle bytes on success so a caller can pipe them further (e.g.
+// push to a paired phone's on-device HTTP server, or just prove
+// the full pipeline completes). Parses the HBC magic + BC version
+// exactly as the mobile-side `ValidateHBC` does on the phone.
+func (c *MobileClient) DownloadBundleAndValidate(ctx context.Context, bundleURL string, expectedBC int) ([]byte, int, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.BaseURL+bundleURL, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	if c.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.AuthToken)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		raw, _ := io.ReadAll(resp.Body)
+		return nil, 0, fmt.Errorf("GET %s: %d %s", bundleURL, resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, 0, err
+	}
+	// HBC header: magic 0x1F1903C1 starts at offset 4, BC version
+	// at offset 8 (uint32 LE). Same checks the on-device validator
+	// performs before loading into the Hermes runtime.
+	if len(data) < 12 {
+		return data, 0, fmt.Errorf("bundle too short: %d bytes (need >= 12)", len(data))
+	}
+	magic := uint32(data[4]) | uint32(data[5])<<8 | uint32(data[6])<<16 | uint32(data[7])<<24
+	if magic != 0x1F1903C1 {
+		return data, 0, fmt.Errorf("bundle HBC magic mismatch: got 0x%08X, want 0x1F1903C1", magic)
+	}
+	bc := int(uint32(data[8]) | uint32(data[9])<<8 | uint32(data[10])<<16 | uint32(data[11])<<24)
+	if expectedBC != 0 && bc != expectedBC {
+		return data, bc, fmt.Errorf("bundle BC version mismatch: got %d, want %d", bc, expectedBC)
+	}
+	return data, bc, nil
+}
+
 // SubscribeDevEvents opens an SSE stream on /dev/events and invokes
 // onEvent for each frame until ctx is cancelled or the server
 // disconnects. Shaped to match mobile's quicClient.subscribeDevEvents.

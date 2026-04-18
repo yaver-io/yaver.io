@@ -2643,26 +2643,23 @@ func (s *HTTPServer) handleDoctor(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Hermes / Super-host
-	if hermescBin, herr := GetEmbeddedHermesc(); herr == nil {
-		out, rerr := osexec.Command(hermescBin, "--version").CombinedOutput()
-		if rerr == nil {
-			lines := strings.Split(string(out), "\n")
-			bcLine := ""
-			for _, l := range lines {
-				if strings.Contains(l, "HBC bytecode version") {
-					bcLine = strings.TrimSpace(l)
-				}
-			}
-			if bcLine != "" {
-				addCheck("hermes", "Embedded hermesc", "pass", bcLine)
-			} else {
-				addCheck("hermes", "Embedded hermesc", "pass", hermescBin)
-			}
-		} else {
-			addCheck("hermes", "Embedded hermesc", "warn", fmt.Sprintf("present but version check failed: %v", rerr))
-		}
+	nodePath, nodeVersion := detectManagedOrSystemNode()
+	if nodePath != "" {
+		addCheck("hermes", "Node.js runtime", "pass", fmt.Sprintf("%s (%s)", nodePath, nodeVersion))
 	} else {
-		addCheck("hermes", "Embedded hermesc", "fail", fmt.Sprintf("not available: %v", herr))
+		addCheck("hermes", "Node.js runtime", "fail", "not installed — run `yaver install mobile`")
+	}
+	hermesReady := false
+	if summary, err := embeddedHermescSummary(); err == nil {
+		addCheck("hermes", "Embedded hermesc", "pass", summary)
+		hermesReady = true
+	} else {
+		addCheck("hermes", "Embedded hermesc", "fail", err.Error())
+	}
+	if nodePath != "" && hermesReady {
+		addCheck("hermes", "Hermes reload path", "pass", "ready for React Native / Expo bundle reload into Yaver mobile")
+	} else {
+		addCheck("hermes", "Hermes reload path", "warn", "run `yaver install mobile` to provision the Node runtime and verify hermesc")
 	}
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{
