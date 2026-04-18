@@ -282,6 +282,8 @@ Expanded further:
 - Canva or generic design-link references as first-class design inputs
 - image-aware AI brief generation using the imported screenshot as
   multimodal context
+- provider-aware reference handling for Canva, Framer, Miro, Dribbble,
+  Behance, and generic links
 
 This is intentionally the first real integration slice, not the final
 design-tool story. It proves that Yaver mobile can act as a bridge from

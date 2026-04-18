@@ -20,10 +20,13 @@ import { getLocalSecret, LOCAL_KEYS, saveLocalSecret } from "../../src/lib/auth"
 import { quicClient } from "../../src/lib/quic";
 import {
   buildRemoteDesignPrompt,
+  DESIGN_PROVIDERS,
+  detectDesignProvider,
   generateDesignModeBrief,
   importFigmaReference,
   importReferenceLink,
   importScreenshotReference,
+  type DesignProvider,
   type DesignImportResult,
 } from "../../src/lib/designMode";
 
@@ -41,6 +44,7 @@ export default function DesignModeScreen() {
   const [figmaUrl, setFigmaUrl] = useState("");
   const [figmaToken, setFigmaToken] = useState("");
   const [openAiKey, setOpenAiKey] = useState("");
+  const [referenceProvider, setReferenceProvider] = useState<DesignProvider>("canva");
   const [referenceUrl, setReferenceUrl] = useState("");
   const [referenceLabel, setReferenceLabel] = useState("");
   const [referenceNotes, setReferenceNotes] = useState("");
@@ -106,8 +110,10 @@ export default function DesignModeScreen() {
   const importReference = useCallback(async () => {
     setLoadingImport(true);
     try {
+      const inferred = detectDesignProvider(referenceUrl);
       const result = importReferenceLink({
         url: referenceUrl,
+        provider: referenceProvider === "generic" ? inferred : referenceProvider,
         label: referenceLabel,
         notes: referenceNotes,
       });
@@ -118,7 +124,7 @@ export default function DesignModeScreen() {
     } finally {
       setLoadingImport(false);
     }
-  }, [referenceLabel, referenceNotes, referenceUrl]);
+  }, [referenceLabel, referenceNotes, referenceProvider, referenceUrl]);
 
   const runBrief = useCallback(async () => {
     if (!imported) return;
@@ -288,10 +294,35 @@ export default function DesignModeScreen() {
               <Text style={[styles.panelBody, { color: c.textMuted, marginBottom: 12 }]}>
                 Use this for Canva share links, moodboards, or any other design reference URL when direct API import is not available yet.
               </Text>
+              <View style={styles.surfaceRow}>
+                {DESIGN_PROVIDERS.map((provider) => {
+                  const active = referenceProvider === provider.id;
+                  return (
+                    <Pressable
+                      key={provider.id}
+                      onPress={() => setReferenceProvider(provider.id)}
+                      style={[
+                        styles.surfaceChip,
+                        {
+                          borderColor: active ? c.accent : c.border,
+                          backgroundColor: active ? c.accent + "18" : c.bg,
+                        },
+                      ]}
+                    >
+                      <Text style={{ color: active ? c.accent : c.textMuted, fontSize: 12, fontWeight: "700" }}>
+                        {provider.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <Text style={[styles.providerHelp, { color: c.textMuted }]}>
+                {DESIGN_PROVIDERS.find((provider) => provider.id === referenceProvider)?.helper}
+              </Text>
               <TextInput
                 value={referenceUrl}
                 onChangeText={setReferenceUrl}
-                placeholder="https://www.canva.com/design/... or other reference URL"
+                placeholder={DESIGN_PROVIDERS.find((provider) => provider.id === referenceProvider)?.placeholder}
                 placeholderTextColor={c.textMuted}
                 autoCapitalize="none"
                 autoCorrect={false}
@@ -300,7 +331,7 @@ export default function DesignModeScreen() {
               <TextInput
                 value={referenceLabel}
                 onChangeText={setReferenceLabel}
-                placeholder="Label, e.g. Canva board v2"
+                placeholder={`Label, e.g. ${DESIGN_PROVIDERS.find((provider) => provider.id === referenceProvider)?.label} board v2`}
                 placeholderTextColor={c.textMuted}
                 style={[styles.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput }]}
               />
@@ -563,5 +594,6 @@ const styles = StyleSheet.create({
   swatch: { width: 16, height: 16, borderRadius: 8 },
   surfaceRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 },
   surfaceChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
+  providerHelp: { fontSize: 13, lineHeight: 19, marginBottom: 12 },
   footerNote: { borderWidth: 1, borderRadius: 16, padding: 14, marginBottom: 10 },
 });

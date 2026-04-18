@@ -2,6 +2,7 @@ import * as FileSystem from "expo-file-system/legacy";
 
 export interface DesignImportResult {
   sourceType: "figma" | "screenshot" | "reference-link";
+  provider?: DesignProvider;
   sourceUrl: string;
   previewUrl?: string;
   fileKey?: string;
@@ -15,6 +16,67 @@ export interface DesignImportResult {
   textSnippets: string[];
   summary: string;
 }
+
+export type DesignProvider =
+  | "figma"
+  | "canva"
+  | "framer"
+  | "miro"
+  | "dribbble"
+  | "behance"
+  | "generic";
+
+export interface DesignProviderSpec {
+  id: DesignProvider;
+  label: string;
+  placeholder: string;
+  helper: string;
+}
+
+export const DESIGN_PROVIDERS: DesignProviderSpec[] = [
+  {
+    id: "canva",
+    label: "Canva",
+    placeholder: "https://www.canva.com/design/...",
+    helper:
+      "Use a Canva share link or export a screen as an image. Yaver will treat it as a structured reference and carry provider hints into the implementation brief.",
+  },
+  {
+    id: "framer",
+    label: "Framer",
+    placeholder: "https://your-site.framer.website or share link",
+    helper:
+      "Use a Framer published page or share link. Best for landing pages and web UI references.",
+  },
+  {
+    id: "miro",
+    label: "Miro",
+    placeholder: "https://miro.com/app/board/...",
+    helper:
+      "Use a Miro board link when the design source is a board, flow, or whiteboard rather than polished screens.",
+  },
+  {
+    id: "dribbble",
+    label: "Dribbble",
+    placeholder: "https://dribbble.com/shots/...",
+    helper:
+      "Use a Dribbble shot link as style reference or interaction inspiration.",
+  },
+  {
+    id: "behance",
+    label: "Behance",
+    placeholder: "https://www.behance.net/gallery/...",
+    helper:
+      "Use a Behance project link for multi-screen or case-study style references.",
+  },
+  {
+    id: "generic",
+    label: "Generic",
+    placeholder: "Any design reference URL",
+    helper:
+      "Fallback for any other design tool, moodboard, deck, or shared reference page.",
+  },
+];
 
 interface FigmaNode {
   id?: string;
@@ -81,6 +143,7 @@ function uniqueCompact(items: string[], limit: number): string[] {
 }
 
 function summarizeImport(data: {
+  provider?: DesignProvider;
   fileName: string;
   nodeName: string;
   nodeType: string;
@@ -92,6 +155,9 @@ function summarizeImport(data: {
   const parts = [
     `Imported Figma node "${data.nodeName}" (${data.nodeType}) from file "${data.fileName}".`,
   ];
+  if (data.provider && data.provider !== "figma" && data.provider !== "generic") {
+    parts.unshift(`Reference provider: ${data.provider}.`);
+  }
   if (data.pageName) parts.push(`Page: ${data.pageName}.`);
   if (data.topLevelLayers.length) parts.push(`Top layers: ${data.topLevelLayers.join(", ")}.`);
   if (data.textSnippets.length) parts.push(`Visible text: ${data.textSnippets.join(" | ")}.`);
@@ -181,6 +247,7 @@ export async function importFigmaReference(url: string, token: string): Promise<
 
   const result: DesignImportResult = {
     sourceType: "figma",
+    provider: "figma",
     sourceUrl,
     fileKey,
     nodeId: previewNodeId,
@@ -196,6 +263,7 @@ export async function importFigmaReference(url: string, token: string): Promise<
       fileName: String(fileJson?.name || "Untitled Figma file"),
       nodeName: targetNode.name || "Unnamed node",
       nodeType: targetNode.type || "UNKNOWN",
+      provider: "figma",
       pageName: pageName || undefined,
       topLevelLayers: compactLayers,
       textSnippets: compactTexts,
@@ -219,6 +287,7 @@ export async function generateDesignModeBrief(args: {
       text: [
         `Target surface: ${args.targetSurface}.`,
         `Reference source type: ${args.imported.sourceType}.`,
+        `Reference provider: ${args.imported.provider ?? "unknown"}.`,
         `Product goal: ${args.productGoal.trim() || "Turn the imported design into a working UI implementation."}`,
         `Design summary: ${args.imported.summary}`,
         `Top-level layers: ${args.imported.topLevelLayers.join(", ") || "none"}`,
@@ -276,6 +345,7 @@ export function buildRemoteDesignPrompt(args: {
 }) {
   const parts = [
     `Implement a ${args.targetSurface} based on the imported Figma reference.`,
+    `Reference provider: ${args.imported.provider ?? "unknown"}`,
     `Goal: ${args.productGoal.trim() || "Turn the design into working UI."}`,
     `Figma URL: ${args.imported.sourceUrl}`,
     `File: ${args.imported.fileName}`,
@@ -299,6 +369,7 @@ export async function importScreenshotReference(imageUri: string): Promise<Desig
   const previewUrl = `data:image/jpeg;base64,${base64}`;
   return {
     sourceType: "screenshot",
+    provider: "generic",
     sourceUrl: imageUri,
     previewUrl,
     fileName: "Imported screenshot",
@@ -314,6 +385,7 @@ export async function importScreenshotReference(imageUri: string): Promise<Desig
 
 export function importReferenceLink(args: {
   url: string;
+  provider?: DesignProvider;
   label?: string;
   notes?: string;
 }): DesignImportResult {
@@ -321,8 +393,10 @@ export function importReferenceLink(args: {
   if (!sourceUrl) throw new Error("Reference URL is required");
   const label = args.label?.trim() || "Reference board";
   const notes = args.notes?.trim() || "";
+  const provider = args.provider ?? detectDesignProvider(sourceUrl);
   return {
     sourceType: "reference-link",
+    provider,
     sourceUrl,
     fileName: label,
     nodeName: label,
@@ -331,7 +405,18 @@ export function importReferenceLink(args: {
     topLevelLayers: [],
     textSnippets: notes ? [notes] : [],
     summary: notes
-      ? `Imported a design reference link: ${label}. Notes: ${notes}`
-      : `Imported a design reference link: ${label}.`,
+      ? `Imported a ${provider} design reference link: ${label}. Notes: ${notes}`
+      : `Imported a ${provider} design reference link: ${label}.`,
   };
+}
+
+export function detectDesignProvider(url: string): DesignProvider {
+  const value = url.toLowerCase();
+  if (value.includes("figma.com")) return "figma";
+  if (value.includes("canva.com")) return "canva";
+  if (value.includes("framer.") || value.includes("framer.com")) return "framer";
+  if (value.includes("miro.com")) return "miro";
+  if (value.includes("dribbble.com")) return "dribbble";
+  if (value.includes("behance.net")) return "behance";
+  return "generic";
 }
