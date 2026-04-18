@@ -1438,6 +1438,17 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
                 {showRepos === p.host ? "Hide" : "Repos"}
               </Text>
             </Pressable>
+            <Pressable onPress={() => {
+              // Re-open the same manual-setup form pre-targeted at this
+              // provider. POST /git/provider/setup updates in place when
+              // the host already exists, so the user can rotate to a
+              // new PAT (e.g. one that can see private repos like sfmg)
+              // without removing + re-adding from scratch.
+              setToken("");
+              setShowManualSetup(p.provider as "github" | "gitlab");
+            }}>
+              <Text style={{ color: c.accent, fontSize: 12, fontWeight: "600" }}>Update</Text>
+            </Pressable>
             <Pressable onPress={() => handleRemove(p.host)}>
               <Text style={{ color: "#ef4444", fontSize: 12, fontWeight: "600" }}>Remove</Text>
             </Pressable>
@@ -1522,15 +1533,18 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
         </Pressable>
       )}
 
-      {/* Manual token entry (fallback) */}
-      {showManualSetup && (
+      {/* Manual token entry — also used to UPDATE an existing token */}
+      {showManualSetup && (() => {
+        const isUpdate = providers.some(p => p.provider === showManualSetup);
+        const titleVerb = isUpdate ? "Update" : "Add";
+        return (
         <View style={{ marginTop: 8, backgroundColor: c.bgCard, borderRadius: 10, borderWidth: 1, borderColor: c.border, padding: 14, gap: 10 }}>
           <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "700" }}>
-            {showManualSetup === "github" ? "GitHub Token" : "GitLab Token"}
+            {titleVerb} {showManualSetup === "github" ? "GitHub" : "GitLab"} Token
           </Text>
           <Text style={{ color: c.textMuted, fontSize: 12, lineHeight: 17 }}>
             {showManualSetup === "github"
-              ? "Create a token at github.com/settings/tokens with 'repo' scope."
+              ? "Create a token at github.com/settings/tokens. For private repos: classic PAT with 'repo' scope, OR fine-grained with Contents+Metadata: Read on All repositories."
               : "Create a token at gitlab.com/-/user_settings/personal_access_tokens with 'api' scope."}
           </Text>
           <TextInput
@@ -1549,7 +1563,7 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
               onPress={() => handleManualSetup(showManualSetup)}
               disabled={!token.trim() || detecting}
             >
-              {detecting ? <ActivityIndicator size="small" color="#fff" /> : <Text style={[s.actionBtnText, { color: "#fff" }]}>Connect</Text>}
+              {detecting ? <ActivityIndicator size="small" color="#fff" /> : <Text style={[s.actionBtnText, { color: "#fff" }]}>{titleVerb === "Update" ? "Save" : "Connect"}</Text>}
             </Pressable>
             <Pressable
               style={[s.actionBtn, { backgroundColor: c.bgCard, borderWidth: 1, borderColor: c.border, flex: 1 }]}
@@ -1562,7 +1576,8 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
             Stored locally on your dev machine. Never sent to Yaver servers.
           </Text>
         </View>
-      )}
+        );
+      })()}
     </View>
   );
 }
