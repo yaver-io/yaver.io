@@ -957,6 +957,22 @@ If your cousin only remembers one line, make it this:
 
 This is the intended path for projects like `sfmg` when they are Expo / React Native apps.
 
+Contributor workflow:
+
+1. contributor clones `sfmg` and edits source with Claude Code
+2. contributor runs `yaver serve`
+3. contributor opens the project from the Yaver phone app
+4. if the project is source-only, Yaver now shows `Compile Hermes`
+5. contributor taps `Open in Yaver` to test on the phone inside the Yaver container
+6. contributor commits and pushes
+7. maintainer deploys the real TestFlight build later from the Mac/Xcode path
+
+That means "never built before" is not a blocker for the daily contributor loop. Yaver can detect:
+
+- source-only project that still needs its first Hermes compile
+- previously compiled project that is ready to open
+- last Hermes build failed and should be rebuilt after fixing the error
+
 Troubleshooting shortcut:
 
 - if the system tries to do a native iOS install on WSL, the mode is wrong
@@ -992,6 +1008,7 @@ In short:
 - `yaver` agent + mobile app = enough for Hermes reload into Yaver on iPhone/Android
 - `yaver-cli` = npm distribution name for the unified bootstrap package
 - Feedback SDK = optional in-app debug/reload/reporting workflow
+- the phone UI now exposes `Compile Hermes`, `Rebuild Hermes`, and `Open in Yaver` as separate steps for source-only third-party apps
 
 What can still block success:
 

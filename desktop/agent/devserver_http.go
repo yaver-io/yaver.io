@@ -14,9 +14,117 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"golang.org/x/mod/semver"
 )
+
+type nativeBuildStatus struct {
+	State         string `json:"state"`
+	Platform      string `json:"platform,omitempty"`
+	LastBuiltAt   string `json:"lastBuiltAt,omitempty"`
+	LastFailedAt  string `json:"lastFailedAt,omitempty"`
+	LastError     string `json:"lastError,omitempty"`
+	BundleSize    int64  `json:"bundleSize,omitempty"`
+	BundlePath    string `json:"bundlePath,omitempty"`
+	ModuleName    string `json:"moduleName,omitempty"`
+	HermesVersion int    `json:"hermesVersion,omitempty"`
+}
+
+func nativeBuildStatusPath(workDir string) string {
+	return filepath.Join(workDir, ".yaver-build", "status.json")
+}
+
+func readNativeBuildStatus(workDir string) nativeBuildStatus {
+	status := nativeBuildStatus{State: "needs_build"}
+
+	buildDir := filepath.Join(workDir, ".yaver-build")
+	bundlePath := filepath.Join(buildDir, "main.jsbundle")
+	if info, err := os.Stat(bundlePath); err == nil && !info.IsDir() {
+		status.State = "ready"
+		status.BundlePath = bundlePath
+		status.BundleSize = info.Size()
+		status.LastBuiltAt = info.ModTime().UTC().Format(time.RFC3339)
+	}
+
+	data, err := os.ReadFile(nativeBuildStatusPath(workDir))
+	if err != nil {
+		return status
+	}
+	var stored nativeBuildStatus
+	if json.Unmarshal(data, &stored) != nil {
+		return status
+	}
+	if stored.State != "" {
+		status.State = stored.State
+	}
+	if stored.Platform != "" {
+		status.Platform = stored.Platform
+	}
+	if stored.LastBuiltAt != "" {
+		status.LastBuiltAt = stored.LastBuiltAt
+	}
+	if stored.LastFailedAt != "" {
+		status.LastFailedAt = stored.LastFailedAt
+	}
+	if stored.LastError != "" {
+		status.LastError = stored.LastError
+	}
+	if stored.BundleSize > 0 {
+		status.BundleSize = stored.BundleSize
+	}
+	if stored.BundlePath != "" {
+		status.BundlePath = stored.BundlePath
+	}
+	if stored.ModuleName != "" {
+		status.ModuleName = stored.ModuleName
+	}
+	if stored.HermesVersion > 0 {
+		status.HermesVersion = stored.HermesVersion
+	}
+
+	if _, err := os.Stat(bundlePath); err != nil {
+		if status.State == "ready" {
+			status.State = "needs_build"
+		}
+		status.BundlePath = ""
+		status.BundleSize = 0
+		status.LastBuiltAt = ""
+	}
+
+	return status
+}
+
+func writeNativeBuildStatus(workDir string, status nativeBuildStatus) {
+	buildDir := filepath.Join(workDir, ".yaver-build")
+	if err := os.MkdirAll(buildDir, 0o755); err != nil {
+		return
+	}
+	data, err := json.MarshalIndent(status, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(nativeBuildStatusPath(workDir), data, 0o644)
+}
+
+func buildStateGuidance(state nativeBuildStatus) string {
+	switch state.State {
+	case "ready":
+		if state.LastBuiltAt != "" {
+			return fmt.Sprintf("Hermes bundle already compiled on this machine (%s). Open in Yaver should load it immediately, and Rebuild Hermes is available if you changed source.", state.LastBuiltAt)
+		}
+		return "Hermes bundle already compiled on this machine. Open in Yaver should load it immediately."
+	case "building":
+		return "Hermes bundle build is currently running on the agent."
+	case "build_failed":
+		if state.LastError != "" {
+			return fmt.Sprintf("Last Hermes build failed: %s", state.LastError)
+		}
+		return "Last Hermes build failed. Rebuild Hermes after fixing dependencies or bundler errors."
+	default:
+		return "This project is still source-only on this machine. Compile Hermes once, then Open in Yaver on the phone."
+	}
+}
 
 // handleDevServerStatus returns the current dev server status.
 // GET /dev/status
@@ -404,6 +512,10 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 
 	log.Printf("[super-host] build-native called: platform=%s workDir=%s", req.Platform, workDir)
 	s.devServerMgr.EmitLog("Building native bundle...")
+	writeNativeBuildStatus(workDir, nativeBuildStatus{
+		State:    "building",
+		Platform: req.Platform,
+	})
 
 	os.MkdirAll(buildDir, 0o755)
 
@@ -476,6 +588,12 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 
 	if err := cmd.Run(); err != nil {
 		s.devServerMgr.EmitLog(fmt.Sprintf("Bundle failed: %v", err))
+		writeNativeBuildStatus(workDir, nativeBuildStatus{
+			State:        "build_failed",
+			Platform:     req.Platform,
+			LastFailedAt: time.Now().UTC().Format(time.RFC3339),
+			LastError:    fmt.Sprintf("bundle failed: %v", err),
+		})
 		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("bundle failed: %v. Check agent logs for details.", err)})
 		return
 	}
@@ -529,6 +647,12 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		errMsg := fmt.Sprintf("Bundle validation failed: %v", valErr)
 		log.Printf("[super-host] %s", errMsg)
 		s.devServerMgr.EmitLog(errMsg)
+		writeNativeBuildStatus(workDir, nativeBuildStatus{
+			State:        "build_failed",
+			Platform:     req.Platform,
+			LastFailedAt: time.Now().UTC().Format(time.RFC3339),
+			LastError:    errMsg,
+		})
 		jsonReply(w, http.StatusInternalServerError, map[string]string{
 			"error": errMsg,
 			"code":  "BUNDLE_VALIDATION_FAILED",
@@ -559,6 +683,15 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 
 	s.devServerMgr.EmitLog(fmt.Sprintf("Bundle ready: %d KB, MD5 verified, BC%d, module: %s",
 		meta.Size/1024, meta.HermesBCVersion, moduleName))
+	writeNativeBuildStatus(workDir, nativeBuildStatus{
+		State:         "ready",
+		Platform:      req.Platform,
+		LastBuiltAt:   time.Now().UTC().Format(time.RFC3339),
+		BundleSize:    meta.Size,
+		BundlePath:    bundlePath,
+		ModuleName:    moduleName,
+		HermesVersion: meta.HermesBCVersion,
+	})
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"status":     "ok",
@@ -815,14 +948,15 @@ func (s *HTTPServer) handleDevServerCompatibility(w http.ResponseWriter, r *http
 	}
 	if workDir == "" {
 		jsonReply(w, http.StatusOK, map[string]interface{}{
-			"compatible":         true,
-			"missingModules":     []string{},
-			"availableModules":   []string{},
-			"warnings":           []string{},
-			"needsYaverCLI":      false,
-			"needsFeedbackSDK":   false,
-			"recommendedFlow":    "agent-open-in-yaver",
-			"guidance":           "No project selected yet. Open in Yaver does not require yaver-cli or the Feedback SDK.",
+			"compatible":       true,
+			"missingModules":   []string{},
+			"availableModules": []string{},
+			"warnings":         []string{},
+			"needsYaverCLI":    false,
+			"needsFeedbackSDK": false,
+			"buildState":       "needs_build",
+			"recommendedFlow":  "agent-open-in-yaver",
+			"guidance":         "No project selected yet. Open in Yaver does not require yaver-cli or the Feedback SDK.",
 		})
 		return
 	}
@@ -831,14 +965,15 @@ func (s *HTTPServer) handleDevServerCompatibility(w http.ResponseWriter, r *http
 	data, err := os.ReadFile(pkgPath)
 	if err != nil {
 		jsonReply(w, http.StatusOK, map[string]interface{}{
-			"compatible":         true,
-			"missingModules":     []string{},
-			"availableModules":   []string{},
-			"warnings":           []string{fmt.Sprintf("package.json not found at %s", pkgPath)},
-			"needsYaverCLI":      false,
-			"needsFeedbackSDK":   false,
-			"recommendedFlow":    "agent-open-in-yaver",
-			"guidance":           "Open in Yaver does not require yaver-cli or the Feedback SDK, but compatibility could not be checked because package.json was not found.",
+			"compatible":       true,
+			"missingModules":   []string{},
+			"availableModules": []string{},
+			"warnings":         []string{fmt.Sprintf("package.json not found at %s", pkgPath)},
+			"needsYaverCLI":    false,
+			"needsFeedbackSDK": false,
+			"buildState":       "needs_build",
+			"recommendedFlow":  "agent-open-in-yaver",
+			"guidance":         "Open in Yaver does not require yaver-cli or the Feedback SDK, but compatibility could not be checked because package.json was not found.",
 		})
 		return
 	}
@@ -851,19 +986,21 @@ func (s *HTTPServer) handleDevServerCompatibility(w http.ResponseWriter, r *http
 	}
 	if err := json.Unmarshal(data, &pkg); err != nil {
 		jsonReply(w, http.StatusOK, map[string]interface{}{
-			"compatible":         true,
-			"missingModules":     []string{},
-			"availableModules":   []string{},
-			"warnings":           []string{"package.json could not be parsed for compatibility analysis"},
-			"needsYaverCLI":      false,
-			"needsFeedbackSDK":   false,
-			"recommendedFlow":    "agent-open-in-yaver",
-			"guidance":           "Open in Yaver does not require yaver-cli or the Feedback SDK. Compatibility analysis failed, so missing native modules may still block runtime behavior.",
+			"compatible":       true,
+			"missingModules":   []string{},
+			"availableModules": []string{},
+			"warnings":         []string{"package.json could not be parsed for compatibility analysis"},
+			"needsYaverCLI":    false,
+			"needsFeedbackSDK": false,
+			"buildState":       "needs_build",
+			"recommendedFlow":  "agent-open-in-yaver",
+			"guidance":         "Open in Yaver does not require yaver-cli or the Feedback SDK. Compatibility analysis failed, so missing native modules may still block runtime behavior.",
 		})
 		return
 	}
 
 	manifest, manifestErr := loadSDKManifest()
+	buildState := readNativeBuildStatus(workDir)
 
 	available := make(map[string]bool)
 	for _, m := range req.AvailableModules {
@@ -946,20 +1083,32 @@ func (s *HTTPServer) handleDevServerCompatibility(w http.ResponseWriter, r *http
 		guidance = strings.Join(errors, " ") + " yaver-cli is not required for the agent flow, but its compatibility check/watch workflow may help. The Feedback SDK is still optional."
 	} else if len(warnings) > 0 {
 		guidance = warnings[0] + " Open in Yaver should still be the default path. yaver-cli remains optional."
+	} else {
+		guidance = buildStateGuidance(buildState)
+	}
+	if len(errors) == 0 && buildState.State == "build_failed" && buildState.LastError != "" && !strings.Contains(guidance, buildState.LastError) {
+		guidance = buildStateGuidance(buildState)
 	}
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{
-		"compatible":       len(errors) == 0,
-		"missingModules":   missing,
-		"availableModules": present,
-		"warnings":         warnings,
-		"errors":           errors,
+		"compatible":         len(errors) == 0,
+		"missingModules":     missing,
+		"availableModules":   present,
+		"warnings":           warnings,
+		"errors":             errors,
 		"projectReactNative": projectRN,
 		"sdkReactNative":     sdkRN,
-		"needsYaverCLI":    needsYaverCLI,
-		"needsFeedbackSDK": needsFeedbackSDK,
-		"recommendedFlow":  recommendedFlow,
-		"guidance":         guidance,
+		"needsYaverCLI":      needsYaverCLI,
+		"needsFeedbackSDK":   needsFeedbackSDK,
+		"recommendedFlow":    recommendedFlow,
+		"guidance":           guidance,
+		"buildState":         buildState.State,
+		"canBuildInYaver":    len(errors) == 0,
+		"lastBuildAt":        buildState.LastBuiltAt,
+		"lastBuildFailedAt":  buildState.LastFailedAt,
+		"lastBuildError":     buildState.LastError,
+		"compiledBundleSize": buildState.BundleSize,
+		"compiledModuleName": buildState.ModuleName,
 	})
 }
 
