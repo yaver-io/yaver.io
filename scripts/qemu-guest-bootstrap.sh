@@ -36,8 +36,9 @@ WORK_ROOT="${YAVER_QEMU_WORK_ROOT:-$HOME/yaver-qemu-work}"
 LOCAL_HOME="${YAVER_QEMU_HOME:-$HOME}"
 RESULT_JSON="$SESSION_ROOT/result.json"
 YAVER_BIN="$TOOLS_DIR/yaver"
+CODEX_HOME_DIR="$SESSION_ROOT/codex-home"
 
-mkdir -p "$TOOLS_DIR" "$PAYLOAD_DIR" "$WORK_ROOT"
+mkdir -p "$TOOLS_DIR" "$PAYLOAD_DIR" "$WORK_ROOT" "$CODEX_HOME_DIR"
 
 log() {
   printf '[qemu-guest] %s\n' "$*"
@@ -95,6 +96,13 @@ activate_managed_node
 if [[ "${YAVER_QEMU_INSTALL_CODEX:-0}" == "1" ]]; then
   require_cmd npm
   install_codex_runner
+fi
+
+if [[ "${YAVER_QEMU_USE_CODEX_AUTH_FILE:-0}" == "1" ]]; then
+  [[ -f "$SCRIPT_DIR/codex-auth.json" ]] || fail "missing uploaded codex-auth.json"
+  cp "$SCRIPT_DIR/codex-auth.json" "$CODEX_HOME_DIR/auth.json"
+  chmod 600 "$CODEX_HOME_DIR/auth.json"
+  export CODEX_HOME="$CODEX_HOME_DIR"
 fi
 
 imported_slug=""
@@ -166,8 +174,13 @@ if [[ -n "${YAVER_QEMU_PRE_BUILD_CMD:-}" ]]; then
 fi
 
 if [[ "$MODE" == "openai-key" ]]; then
-  [[ -n "${OPENAI_API_KEY:-}" ]] || fail "OPENAI_API_KEY is required for openai-key mode"
-  export OPENAI_API_KEY
+  if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+    if [[ -z "${CODEX_HOME:-}" || ! -f "${CODEX_HOME}/auth.json" ]]; then
+      fail "openai-key mode requires OPENAI_API_KEY or CODEX_HOME/auth.json"
+    fi
+  else
+    export OPENAI_API_KEY
+  fi
   autodev_prompt="${YAVER_QEMU_AUTODEV_PROMPT:-stabilize the project, keep changes minimal, then leave the tree in a buildable state}"
   autodev_cmd="${YAVER_QEMU_AUTODEV_CMD:-$YAVER_BIN autodev --engine codex --hours 1 --max-iterations 1 --prompt \"$autodev_prompt\"}"
   log "running guest-side AI command"

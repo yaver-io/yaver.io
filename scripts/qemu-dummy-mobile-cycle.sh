@@ -15,6 +15,8 @@ Options:
   --identity <path>           SSH private key, default .tmp-qemu/arm64-guest/id_ed25519
   --mode <mode>               auto | remote-dev | openai-key, default auto
   --openai-api-key <key>      OpenAI API key for openai-key mode
+  --use-host-codex-auth       Reuse ~/.codex/auth.json instead of passing an API key
+  --host-codex-auth <path>    Override the host Codex auth.json path
   --autodev-cmd <cmd>         Guest-side AI command override for openai-key mode
   --work-root <path>          Guest work root override
   --skip-vm                   Do not start/wait for the local VM first
@@ -35,6 +37,8 @@ ssh_port="2222"
 identity="$ROOT_DIR/.tmp-qemu/arm64-guest/id_ed25519"
 mode="auto"
 openai_api_key=""
+use_host_codex_auth=0
+host_codex_auth="$HOME/.codex/auth.json"
 autodev_cmd=""
 work_root=""
 skip_vm=0
@@ -59,6 +63,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --openai-api-key)
       openai_api_key="${2:-}"
+      shift 2
+      ;;
+    --use-host-codex-auth)
+      use_host_codex_auth=1
+      shift
+      ;;
+    --host-codex-auth)
+      host_codex_auth="${2:-}"
       shift 2
       ;;
     --autodev-cmd)
@@ -87,6 +99,8 @@ case "$mode" in
   auto)
     if [[ -n "$openai_api_key" ]]; then
       run_mode="openai-key"
+    elif [[ "$use_host_codex_auth" == "1" && -f "$host_codex_auth" ]]; then
+      run_mode="openai-key"
     elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
       run_mode="openai-key"
     else
@@ -105,7 +119,12 @@ if [[ "$run_mode" == "openai-key" ]]; then
   if [[ -n "$openai_api_key" ]]; then
     export OPENAI_API_KEY="$openai_api_key"
   fi
-  [[ -n "${OPENAI_API_KEY:-}" ]] || fail "openai-key mode requires --openai-api-key or OPENAI_API_KEY"
+  if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+    if [[ "$use_host_codex_auth" != "1" ]]; then
+      fail "openai-key mode requires --openai-api-key, OPENAI_API_KEY, or --use-host-codex-auth"
+    fi
+    [[ -f "$host_codex_auth" ]] || fail "host Codex auth file not found: $host_codex_auth"
+  fi
 fi
 
 if [[ -z "$work_root" ]]; then
@@ -184,6 +203,9 @@ if [[ "$run_mode" == "remote-dev" ]]; then
 else
   args+=(--install-codex)
   args+=(--autodev-prompt "$autodev_prompt")
+  if [[ "$use_host_codex_auth" == "1" ]]; then
+    args+=(--host-codex-auth "$host_codex_auth")
+  fi
   if [[ -n "$autodev_cmd" ]]; then
     args+=(--autodev-cmd "$autodev_cmd")
   fi

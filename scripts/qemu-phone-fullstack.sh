@@ -46,6 +46,7 @@ Optional:
   --guest-goarch <arch>              Guest GOARCH for yaver binary, default arm64
   --install-node                     Run `yaver install node` inside the guest before build steps
   --install-codex                    Run `npm install -g @openai/codex` inside the guest before AI steps
+  --host-codex-auth <path>           Copy a host Codex auth.json into the guest and set CODEX_HOME there
   --include-data                     Include local.db in phone export
   --containerize                     Include Docker/compose scaffold in phone export
   --build-cmd <cmd>                  Command to run inside guest project dir
@@ -103,6 +104,7 @@ phone_slug=""
 guest_work_root=""
 install_node=0
 install_codex=0
+host_codex_auth=""
 build_cmd=""
 pre_build_cmd=""
 autodev_prompt=""
@@ -161,6 +163,10 @@ while [[ $# -gt 0 ]]; do
       install_codex=1
       shift
       ;;
+    --host-codex-auth)
+      host_codex_auth="${2:-}"
+      shift 2
+      ;;
     --build-cmd)
       build_cmd="${2:-}"
       shift 2
@@ -211,7 +217,9 @@ if [[ "$source_kind" == "wizard-quick" ]]; then
   [[ -f "$answers_json" ]] || fail "answers json not found: $answers_json"
 fi
 if [[ "$mode" == "openai-key" ]]; then
-  [[ -n "${OPENAI_API_KEY:-}" ]] || fail "OPENAI_API_KEY is required for openai-key mode"
+  if [[ -z "${OPENAI_API_KEY:-}" && -z "$host_codex_auth" ]]; then
+    fail "openai-key mode requires OPENAI_API_KEY or --host-codex-auth"
+  fi
 fi
 
 require_cmd ssh
@@ -273,11 +281,14 @@ ENV_FILE="$TMP_DIR/run.env.sh"
   fi
   printf 'export YAVER_QEMU_INSTALL_NODE=%s\n' "$(quote "$install_node")"
   printf 'export YAVER_QEMU_INSTALL_CODEX=%s\n' "$(quote "$install_codex")"
+  if [[ -n "$host_codex_auth" ]]; then
+    printf 'export YAVER_QEMU_USE_CODEX_AUTH_FILE=1\n'
+  fi
   printf 'export YAVER_QEMU_PRE_BUILD_CMD=%s\n' "$(quote "$pre_build_cmd")"
   printf 'export YAVER_QEMU_BUILD_CMD=%s\n' "$(quote "$build_cmd")"
   printf 'export YAVER_QEMU_AUTODEV_PROMPT=%s\n' "$(quote "$autodev_prompt")"
   printf 'export YAVER_QEMU_AUTODEV_CMD=%s\n' "$(quote "$autodev_cmd")"
-  if [[ "$mode" == "openai-key" ]]; then
+  if [[ "$mode" == "openai-key" && -n "${OPENAI_API_KEY:-}" ]]; then
     printf 'export OPENAI_API_KEY=%s\n' "$(quote "${OPENAI_API_KEY}")"
   fi
 } > "$ENV_FILE"
@@ -289,6 +300,10 @@ log "copying harness files to guest"
 scp "${SCP_OPTS[@]}" "$LOCAL_YAVER" "$guest:$REMOTE_STAGE/tools/yaver" >/dev/null
 scp "${SCP_OPTS[@]}" "$GUEST_BOOTSTRAP_LOCAL" "$guest:$REMOTE_STAGE/qemu-guest-bootstrap.sh" >/dev/null
 scp "${SCP_OPTS[@]}" "$ENV_FILE" "$guest:$REMOTE_STAGE/run.env.sh" >/dev/null
+if [[ -n "$host_codex_auth" ]]; then
+  [[ -f "$host_codex_auth" ]] || fail "host codex auth file not found: $host_codex_auth"
+  scp "${SCP_OPTS[@]}" "$host_codex_auth" "$guest:$REMOTE_STAGE/codex-auth.json" >/dev/null
+fi
 if [[ "$source_kind" == "phone-export" ]]; then
   scp "${SCP_OPTS[@]}" "$PAYLOAD_DIR/project.tgz" "$guest:$REMOTE_STAGE/payload/project.tgz" >/dev/null
 else
