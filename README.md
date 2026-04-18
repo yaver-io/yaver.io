@@ -527,6 +527,7 @@ Yaver implements the Model Context Protocol (MCP) with 473 tools. Connect from C
 
 ```bash
 yaver mcp setup claude       # Claude Desktop
+yaver mcp setup claude-code  # Claude Code user MCP config
 yaver mcp setup cursor       # Cursor
 yaver mcp setup vscode       # VS Code
 yaver mcp setup windsurf     # Windsurf
@@ -548,6 +549,14 @@ Add to your `claude_desktop_config.json`:
   }
 }
 ```
+
+For Claude Code, Yaver can register itself through the Claude CLI instead of editing files manually:
+
+```bash
+claude mcp add --scope user yaver -- /path/to/yaver mcp
+```
+
+`yaver auth` and `yaver serve` now try to do this automatically when `claude` is on `PATH`.
 
 ### Network MCP (HTTP) — Remote / Claude Web UI
 

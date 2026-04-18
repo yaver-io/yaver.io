@@ -599,6 +599,7 @@ func runAuth(args []string) {
 		fmt.Println("  Free relay: public.yaver.io (included, no setup needed)")
 		fmt.Println()
 		startServeIfStopped()
+		autoSetupMCP()
 		return
 	}
 
@@ -635,6 +636,7 @@ func runAuth(args []string) {
 		fmt.Println("  Free relay: public.yaver.io (included, no setup needed)")
 		fmt.Println()
 		startServeIfStopped()
+		autoSetupMCP()
 		return
 	}
 
@@ -730,6 +732,7 @@ func runAuth(args []string) {
 		fmt.Println("  Free relay: public.yaver.io (included, no setup needed)")
 		fmt.Println()
 		startServeIfStopped()
+		autoSetupMCP()
 
 	case <-time.After(5 * time.Minute):
 		srv1.Close()

@@ -5285,6 +5285,13 @@ export interface DevCompatibilityStatus {
   lastBuildError?: string;
   compiledBundleSize?: number;
   compiledModuleName?: string;
+  packageManager?: string;
+  dependenciesInstalled?: boolean;
+  needsDependencyInstall?: boolean;
+  canAutoInstallDependencies?: boolean;
+  missingLocalTools?: string[];
+  hermesCompiler?: string;
+  hermesCompilerError?: string;
 }
 
 export interface MobileWorkerPreviewSession {
