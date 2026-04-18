@@ -12,3 +12,7 @@ routes = [
   { pattern = "yaver.io/*", zone_name = "yaver.io" },
   { pattern = "www.yaver.io/*", zone_name = "yaver.io" },
 ]
+
+[vars]
+CONVEX_SITE_URL = "https://perceptive-minnow-557.eu-west-1.convex.site"
+NEXT_PUBLIC_BASE_URL = "https://yaver.io"

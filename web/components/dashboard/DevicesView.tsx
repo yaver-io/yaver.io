@@ -41,9 +41,11 @@ function platformLabel(platform: string): string {
 interface DevicesViewProps {
   devices: Device[];
   onRefresh: () => Promise<void>;
+  signedInEmail?: string;
+  signedInProvider?: string;
 }
 
-export default function DevicesView({ devices, onRefresh }: DevicesViewProps) {
+export default function DevicesView({ devices, onRefresh, signedInEmail, signedInProvider }: DevicesViewProps) {
   return (
     <div className="mb-6">
       <div className="mb-3 flex items-center justify-between">
@@ -59,6 +61,13 @@ export default function DevicesView({ devices, onRefresh }: DevicesViewProps) {
       {devices.length === 0 ? (
         <div className="card p-8 text-center">
           <p className="mb-2 text-sm text-surface-400">No devices registered.</p>
+          {signedInEmail ? (
+            <p className="mb-3 text-xs text-surface-500">
+              Signed in as <span className="font-medium text-surface-300">{signedInEmail}</span>
+              {signedInProvider ? ` via ${signedInProvider}` : ""}.
+              If you expected devices here, check that this matches the account used on your machines.
+            </p>
+          ) : null}
           <p className="mb-4 text-xs text-surface-500">
             Install the Yaver CLI on your machine and run <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-300">yaver auth</code> to register.
           </p>
