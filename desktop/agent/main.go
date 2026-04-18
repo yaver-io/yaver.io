@@ -31,7 +31,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.96.7"
+const version = "1.96.8"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -568,7 +568,15 @@ func runAuth(args []string) {
 	convexURL := fs.String("convex-url", defaultConvexSiteURL, "Convex site URL")
 	token := fs.String("token", "", "Provide token directly (skip browser)")
 	headless := fs.Bool("headless", false, "Use device code flow (for headless/SSH servers)")
+	backgroundWait := fs.Bool("background-wait", false, "Internal: continue polling a pending headless sign-in in the background")
 	fs.Parse(args)
+
+	if *backgroundWait {
+		if err := runPendingAuthBackgroundWaiter(*convexURL); err != nil {
+			fmt.Fprintf(os.Stderr, "background auth waiter: %v\n", err)
+		}
+		return
+	}
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -588,27 +596,10 @@ func runAuth(args []string) {
 	}
 
 	if *token != "" {
-		// Direct token
-		cfg.AuthToken = *token
-		cfg.ConvexSiteURL = *convexURL
-		if err := ValidateToken(cfg.ConvexSiteURL, cfg.AuthToken); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: token validation failed: %v\n", err)
+		if err := finalizeAuthConfig(cfg, *convexURL, *token, true, false); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		if cfg.DeviceID == "" {
-			cfg.DeviceID = uuid.New().String()
-		}
-		// Clear any manually configured relay — use per-user relay from backend
-		cfg.RelayServers = nil
-		cfg.RelayPassword = ""
-		if err := SaveConfig(cfg); err != nil {
-			log.Fatalf("save config: %v", err)
-		}
-		fmt.Println("Signed in successfully.")
-		fmt.Println("  Free relay: public.yaver.io (included, no setup needed)")
-		fmt.Println()
-		startServeIfStopped()
-		autoSetupMCP()
 		return
 	}
 
@@ -638,27 +629,10 @@ func runAuth(args []string) {
 			os.Exit(1)
 		}
 
-		cfg.AuthToken = t
-		cfg.ConvexSiteURL = *convexURL
-		if err := ValidateToken(cfg.ConvexSiteURL, cfg.AuthToken); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: token validation failed: %v\n", err)
+		if err := finalizeAuthConfig(cfg, *convexURL, t, true, true); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		if cfg.DeviceID == "" {
-			cfg.DeviceID = uuid.New().String()
-		}
-		// Clear any manually configured relay — use per-user relay from backend
-		cfg.RelayServers = nil
-		cfg.RelayPassword = ""
-		if err := SaveConfig(cfg); err != nil {
-			log.Fatalf("save config: %v", err)
-		}
-		fmt.Println("Signed in successfully.")
-		fmt.Println("  Free relay: public.yaver.io (included, no setup needed)")
-		fmt.Println()
-		startServeIfStopped()
-		autoSetupMCP()
-		printHeadlessNextSteps()
 		return
 	}
 
@@ -1197,6 +1171,34 @@ func logFilePath() string {
 		return ""
 	}
 	return filepath.Join(dir, "agent.log")
+}
+
+func finalizeAuthConfig(cfg *Config, convexURL, token string, printSuccess, printHeadlessSteps bool) error {
+	cfg.AuthToken = token
+	cfg.ConvexSiteURL = convexURL
+	if err := ValidateToken(cfg.ConvexSiteURL, cfg.AuthToken); err != nil {
+		return fmt.Errorf("token validation failed: %w", err)
+	}
+	if cfg.DeviceID == "" {
+		cfg.DeviceID = uuid.New().String()
+	}
+	// Clear any manually configured relay — use per-user relay from backend
+	cfg.RelayServers = nil
+	cfg.RelayPassword = ""
+	if err := SaveConfig(cfg); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	if printSuccess {
+		fmt.Println("Signed in successfully.")
+		fmt.Println("  Free relay: public.yaver.io (included, no setup needed)")
+		fmt.Println()
+	}
+	startServeIfStopped()
+	autoSetupMCP()
+	if printHeadlessSteps {
+		printHeadlessNextSteps()
+	}
+	return nil
 }
 
 // printHeadlessNextSteps runs at the end of a successful headless

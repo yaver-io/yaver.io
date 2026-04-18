@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -90,6 +91,62 @@ func clearPendingAuth() {
 	}
 }
 
+func pendingAuthWatcherPath() (string, error) {
+	dir, err := ConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "pending-auth-watcher.pid"), nil
+}
+
+func readPendingAuthWatcherPID() int {
+	path, err := pendingAuthWatcherPath()
+	if err != nil {
+		return 0
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	var pid int
+	if _, err := fmt.Sscanf(string(data), "%d", &pid); err != nil {
+		return 0
+	}
+	return pid
+}
+
+func clearPendingAuthWatcher() {
+	if path, err := pendingAuthWatcherPath(); err == nil {
+		_ = os.Remove(path)
+	}
+}
+
+func ensurePendingAuthBackgroundWaiter(convexURL string) {
+	if pid := readPendingAuthWatcherPID(); pid > 0 && isProcessAlive(pid) {
+		return
+	}
+	execPath, err := os.Executable()
+	if err != nil || strings.TrimSpace(execPath) == "" {
+		return
+	}
+	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		return
+	}
+	cmd := osexec.Command(execPath, "auth", "--headless", "--background-wait", "--convex-url", convexURL)
+	cmd.Stdout = devNull
+	cmd.Stderr = devNull
+	detachProcess(cmd)
+	if err := cmd.Start(); err != nil {
+		_ = devNull.Close()
+		return
+	}
+	if path, err := pendingAuthWatcherPath(); err == nil {
+		_ = os.WriteFile(path, []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0o600)
+	}
+	_ = devNull.Close()
+}
+
 // perInvocationBlockingAuthBudget caps how long a single `yaver auth`
 // invocation will block polling. Agentic-AI bash tools commonly cap
 // tool calls at a few minutes; we stay well under the most common
@@ -111,6 +168,7 @@ func runDeviceCodeAuth(convexURL string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	ensurePendingAuthBackgroundWaiter(convexURL)
 
 	authURL := "https://yaver.io/auth/device?code=" + dcResp.UserCode
 	meta := buildDeviceCodeRequest()
@@ -264,6 +322,39 @@ func pollUntilAuthorized(convexURL, deviceCode string, absoluteDeadline time.Tim
 		case <-ticker.C:
 		}
 	}
+}
+
+func runPendingAuthBackgroundWaiter(convexURL string) error {
+	defer clearPendingAuthWatcher()
+	pending, err := loadPendingAuth()
+	if err != nil || pending == nil {
+		return err
+	}
+	if pending.ExpiresAt <= time.Now().UnixMilli() {
+		clearPendingAuth()
+		return nil
+	}
+	useURL := strings.TrimSpace(pending.ConvexURL)
+	if useURL == "" {
+		useURL = convexURL
+	}
+	token, err := pollUntilAuthorized(
+		useURL,
+		pending.DeviceCode,
+		time.UnixMilli(pending.ExpiresAt),
+		time.Until(time.UnixMilli(pending.ExpiresAt)),
+	)
+	if err != nil {
+		if err == errResumable {
+			return nil
+		}
+		return err
+	}
+	cfg, cfgErr := LoadConfig()
+	if cfgErr != nil {
+		return cfgErr
+	}
+	return finalizeAuthConfig(cfg, useURL, token, false, false)
 }
 
 func humanRoundDuration(d time.Duration) string {
