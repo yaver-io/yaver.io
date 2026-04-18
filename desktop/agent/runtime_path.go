@@ -26,6 +26,12 @@ func runtimeBinDirs() []string {
 	candidates := []string{
 		filepath.Join(root, "node", "bin"),
 	}
+	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+		candidates = append(candidates,
+			filepath.Join(home, ".local", "bin"),
+			filepath.Join(home, ".npm-global", "bin"),
+		)
+	}
 	var out []string
 	for _, c := range candidates {
 		if info, err := os.Stat(c); err == nil && info.IsDir() {

@@ -36,6 +36,7 @@ type nativeBuildStatus struct {
 
 type projectPreparationStatus struct {
 	PackageManager             string   `json:"packageManager,omitempty"`
+	PackageManagerSpec         string   `json:"-"`
 	DependenciesInstalled      bool     `json:"dependenciesInstalled"`
 	NeedsDependencyInstall     bool     `json:"needsDependencyInstall"`
 	CanAutoInstallDependencies bool     `json:"canAutoInstallDependencies"`
@@ -187,6 +188,9 @@ func detectProjectPreparation(workDir string, manifest *projectPackageManifest) 
 	prep := projectPreparationStatus{
 		PackageManager: detectProjectPackageManager(workDir, manifest),
 	}
+	if manifest != nil {
+		prep.PackageManagerSpec = strings.TrimSpace(manifest.PackageManager)
+	}
 
 	nodeExists := commandExists("node")
 	npmExists := commandExists("npm")
@@ -195,6 +199,7 @@ func detectProjectPreparation(workDir string, manifest *projectPackageManifest) 
 	pnpmExists := commandExists("pnpm")
 	bunExists := commandExists("bun")
 	bunxExists := commandExists("bunx")
+	corepackExists := commandExists("corepack")
 
 	if !nodeExists {
 		prep.MissingTools = append(prep.MissingTools, "node")
@@ -209,14 +214,18 @@ func detectProjectPreparation(workDir string, manifest *projectPackageManifest) 
 		}
 	case "yarn":
 		if !yarnExists {
-			prep.MissingTools = append(prep.MissingTools, "yarn")
+			if !canBootstrapPackageManager(prep.PackageManager, npmExists, corepackExists) {
+				prep.MissingTools = append(prep.MissingTools, "yarn")
+			}
 		}
 		if !npxExists {
 			prep.MissingTools = append(prep.MissingTools, "npx")
 		}
 	case "pnpm":
 		if !pnpmExists {
-			prep.MissingTools = append(prep.MissingTools, "pnpm")
+			if !canBootstrapPackageManager(prep.PackageManager, npmExists, corepackExists) {
+				prep.MissingTools = append(prep.MissingTools, "pnpm")
+			}
 		}
 		if !npxExists {
 			prep.MissingTools = append(prep.MissingTools, "npx")
@@ -243,9 +252,9 @@ func detectProjectPreparation(workDir string, manifest *projectPackageManifest) 
 		case "npm":
 			prep.CanAutoInstallDependencies = nodeExists && npmExists
 		case "yarn":
-			prep.CanAutoInstallDependencies = nodeExists && yarnExists
+			prep.CanAutoInstallDependencies = nodeExists && (yarnExists || canBootstrapPackageManager(prep.PackageManager, npmExists, corepackExists))
 		case "pnpm":
-			prep.CanAutoInstallDependencies = nodeExists && pnpmExists
+			prep.CanAutoInstallDependencies = nodeExists && (pnpmExists || canBootstrapPackageManager(prep.PackageManager, npmExists, corepackExists))
 		case "bun":
 			prep.CanAutoInstallDependencies = bunExists
 		}
@@ -269,6 +278,69 @@ func detectProjectPreparation(workDir string, manifest *projectPackageManifest) 
 	}
 
 	return prep
+}
+
+func canBootstrapPackageManager(packageManager string, npmExists, corepackExists bool) bool {
+	switch packageManager {
+	case "yarn", "pnpm":
+		return corepackExists || npmExists
+	default:
+		return false
+	}
+}
+
+func defaultPackageManagerInstallSpec(packageManager string) string {
+	switch packageManager {
+	case "yarn":
+		return "yarn@1.22.22"
+	case "pnpm":
+		return "pnpm@latest"
+	default:
+		return packageManager
+	}
+}
+
+func ensureProjectPackageManager(prep projectPreparationStatus, extraOut io.Writer) error {
+	if prep.PackageManager == "" || commandExists(prep.PackageManager) {
+		return nil
+	}
+
+	run := func(cmd *exec.Cmd) error {
+		cmd.Env = augmentEnv(nil)
+		if extraOut != nil {
+			cmd.Stdout = io.MultiWriter(os.Stdout, extraOut)
+			cmd.Stderr = io.MultiWriter(os.Stderr, extraOut)
+		} else {
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+		}
+		return cmd.Run()
+	}
+
+	if commandExists("corepack") {
+		if err := run(exec.Command("corepack", "enable")); err != nil {
+			return fmt.Errorf("corepack enable failed: %w", err)
+		}
+		spec := prep.PackageManagerSpec
+		if strings.TrimSpace(spec) == "" {
+			spec = defaultPackageManagerInstallSpec(prep.PackageManager)
+		}
+		if err := run(exec.Command("corepack", "prepare", spec, "--activate")); err != nil {
+			return fmt.Errorf("corepack prepare %s failed: %w", spec, err)
+		}
+	} else if commandExists("npm") {
+		spec := defaultPackageManagerInstallSpec(prep.PackageManager)
+		if err := run(exec.Command("npm", "install", "-g", spec)); err != nil {
+			return fmt.Errorf("npm install -g %s failed: %w", spec, err)
+		}
+	} else {
+		return fmt.Errorf("%s is missing and neither corepack nor npm is available to install it", prep.PackageManager)
+	}
+
+	if !commandExists(prep.PackageManager) {
+		return fmt.Errorf("%s still not found after bootstrap", prep.PackageManager)
+	}
+	return nil
 }
 
 // canInstallMissingTool reports whether every entry in missing maps to
@@ -313,6 +385,10 @@ func installProjectDependencies(workDir string, prep projectPreparationStatus) e
 // Hot Reload card sees every npm/yarn line live. Pass nil to fall
 // back to stdout-only (matches the pre-streaming behaviour).
 func installProjectDependenciesTo(workDir string, prep projectPreparationStatus, extraOut io.Writer) error {
+	if err := ensureProjectPackageManager(prep, extraOut); err != nil {
+		return err
+	}
+
 	var cmd *exec.Cmd
 	switch prep.PackageManager {
 	case "yarn":
