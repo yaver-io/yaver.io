@@ -129,6 +129,7 @@ for (const path of [
   "/auth/logout", "/auth/update-profile", "/auth/delete-account",
   "/auth/forgot-password", "/auth/reset-password", "/auth/change-password",
   "/auth/verify-totp", "/auth/providers", "/auth/oauth-link/start", "/auth/oauth-link/complete",
+  "/auth/device-code/authorize",
   "/devices/list", "/devices/owner-by-hardware", "/config", "/settings",
   "/guests/invite", "/guests/accept", "/guests/accept-code",
   "/guests/revoke", "/guests/list", "/guests/hosts", "/guests/allowed",

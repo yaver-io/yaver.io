@@ -253,7 +253,7 @@ export default function DeviceCodeClient({
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 12000);
     try {
-      const res = await fetch(`${CONVEX_URL}/auth/device-code/authorize`, {
+      const res = await fetch(`/api/auth/device/authorize`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
