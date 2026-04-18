@@ -86,6 +86,19 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				"properties": map[string]interface{}{},
 			},
 		},
+		{
+			"name":        "yaver_auth_factory_reset",
+			"description": "Reset local Yaver auth state on this machine, then restart sign-in from the canonical hosted backend. Useful when browser OAuth succeeded but the local agent kept validating against stale auth state or an old backend.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"headless": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Use device-code auth after reset instead of browser auth.",
+					},
+				},
+			},
+		},
 		// --- Runner Management ---
 		{
 			"name":        "list_runners",

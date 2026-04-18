@@ -459,6 +459,7 @@ Usage:
   yaver purge       Factory reset — remove all local data (auth, sessions, tasks, logs)
   yaver reset       Alias for purge
   yaver uninstall   Remove config, certs, and stop the agent
+  yaver auth factory-reset   Re-sign in from a clean auth state and refresh npm CLI if available
   yaver completion <bash|zsh|fish>  Generate shell completions
   yaver doctor      Diagnose issues
   yaver help        Show this help message
@@ -551,6 +552,9 @@ func runAuth(args []string) {
 			return
 		case "send":
 			runAuthSend(args[1:])
+			return
+		case "factory-reset", "reset", "repair":
+			runAuthFactoryReset(args[1:])
 			return
 		}
 	}
@@ -715,7 +719,7 @@ func runAuth(args []string) {
 		if validationErr != nil {
 			fmt.Fprintf(os.Stderr, "Error: token validation failed after retries: %v\n", validationErr)
 			fmt.Fprintln(os.Stderr, "The token was received but could not be validated against Convex.")
-			fmt.Fprintln(os.Stderr, "Try again with: yaver auth")
+			fmt.Fprintln(os.Stderr, "Try again with: yaver auth factory-reset")
 			os.Exit(1)
 		}
 		if cfg.DeviceID == "" {

@@ -71,12 +71,18 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
           <p className="mb-4 text-xs text-surface-500">
             Install the Yaver CLI on your machine and run <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-300">yaver auth</code> to register.
           </p>
+          <p className="mb-4 text-xs text-surface-500">
+            If browser OAuth already succeeded on the machine but Yaver still shows no devices, run <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-300">yaver auth factory-reset</code> there to clear stale auth state and re-sign in against the live backend.
+          </p>
           <Link href="/download" className="btn-secondary px-4 py-2 text-sm">
             Download Yaver
           </Link>
         </div>
       ) : (
         <div className="space-y-2">
+          <div className="rounded-xl border border-amber-500/20 bg-amber-500/8 px-4 py-3 text-xs text-amber-100">
+            If a machine finishes browser OAuth but still shows stale auth locally, run <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-100">yaver auth factory-reset</code> on that machine. MCP clients can call <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-100">yaver_auth_factory_reset</code>.
+          </div>
           {devices.map((device) => (
             <div key={device.id} className="card flex items-center gap-4">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-surface-800 text-surface-400">

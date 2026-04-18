@@ -3427,6 +3427,23 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		hostname, _ := os.Hostname()
 		return mcpToolResult(fmt.Sprintf("Hostname: %s\nVersion: %s\nWork Dir: %s", hostname, version, s.taskMgr.workDir))
 
+	case "yaver_auth_factory_reset":
+		var args struct {
+			Headless bool `json:"headless"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		go func() {
+			time.Sleep(500 * time.Millisecond)
+			if err := spawnAuthFactoryReset(args.Headless); err != nil {
+				log.Printf("[MCP] auth factory-reset failed to launch: %v", err)
+			}
+		}()
+		mode := "browser"
+		if args.Headless {
+			mode = "device-code"
+		}
+		return mcpToolResult(fmt.Sprintf("Starting Yaver auth factory-reset in the background (%s mode). This clears local auth state, refreshes the canonical backend URL, and reopens sign-in.", mode))
+
 	case "web_search":
 		var args struct {
 			Query    string `json:"query"`
