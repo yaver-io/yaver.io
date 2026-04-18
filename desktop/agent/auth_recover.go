@@ -35,6 +35,7 @@ package main
 // has a live path as long as one of those transports is wired.
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -397,7 +398,8 @@ func verifyHostToken(bearer string) (bool, error) {
 // /auth/device-code Convex endpoint. Shared with runDeviceCodeAuth
 // via the same payload shape.
 func requestDeviceCode(convexURL string) (*deviceCodeResponse, error) {
-	resp, err := httpClient.Post(convexURL+"/auth/device-code", "application/json", strings.NewReader("{}"))
+	payload, _ := json.Marshal(buildDeviceCodeRequest())
+	resp, err := httpClient.Post(convexURL+"/auth/device-code", "application/json", bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}

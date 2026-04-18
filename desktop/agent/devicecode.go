@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,7 +29,8 @@ type pollResponse struct {
 // It requests a device code, displays it (with QR code), and polls until authorized.
 func runDeviceCodeAuth(convexURL string) (string, error) {
 	// 1. Request a device code
-	resp, err := httpClient.Post(convexURL+"/auth/device-code", "application/json", nil)
+	payload, _ := json.Marshal(buildDeviceCodeRequest())
+	resp, err := httpClient.Post(convexURL+"/auth/device-code", "application/json", bytes.NewReader(payload))
 	if err != nil {
 		return "", fmt.Errorf("request device code: %w", err)
 	}

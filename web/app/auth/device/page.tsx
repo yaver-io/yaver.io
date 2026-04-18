@@ -8,6 +8,16 @@ import { CONVEX_URL } from "@/lib/constants";
 function DeviceCodeContent() {
   const params = useSearchParams();
   const prefillCode = params.get("code") || "";
+  const [deviceInfo, setDeviceInfo] = useState<null | {
+    machineName: string | null;
+    platform: string | null;
+    arch: string | null;
+    shell: string | null;
+    environment: string | null;
+    runtimeVersion: string | null;
+    isWsl: boolean;
+    expiresAt: number;
+  }>(null);
 
   const [code, setCode] = useState(prefillCode);
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
@@ -37,6 +47,19 @@ function DeviceCodeContent() {
     }
   }, []);
 
+  useEffect(() => {
+    if (!prefillCode) return;
+    fetch(`${CONVEX_URL}/auth/device-code/info?user_code=${encodeURIComponent(prefillCode)}`)
+      .then(async (res) => {
+        if (!res.ok) return null;
+        return res.json();
+      })
+      .then((data) => {
+        if (data) setDeviceInfo(data);
+      })
+      .catch(() => undefined);
+  }, [prefillCode]);
+
   // If prefill code and token are both available, auto-submit
   useEffect(() => {
     if (prefillCode && token && status === "idle") {
@@ -51,6 +74,24 @@ function DeviceCodeContent() {
     qs.set("return", returnUrl);
     return `/api/auth/oauth/${provider}?${qs.toString()}`;
   };
+
+  const devicePlatformLabel = (() => {
+    if (!deviceInfo?.platform) return null;
+    switch (deviceInfo.platform) {
+      case "wsl1":
+        return "WSL1";
+      case "wsl2":
+        return "WSL2";
+      case "darwin":
+        return "macOS";
+      case "linux":
+        return "Linux";
+      case "windows":
+        return "Windows";
+      default:
+        return deviceInfo.platform;
+    }
+  })();
 
   const handleAuthorize = async (userCode: string, authToken: string) => {
     const cleaned = userCode.toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -151,6 +192,36 @@ function DeviceCodeContent() {
                 <p className="mt-4 text-sm text-surface-400">
                   Get a code from <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-300">yaver auth --headless</code>, then come back here.
                 </p>
+              )}
+              {deviceInfo && (
+                <div className="mt-4 rounded-xl border border-surface-800 bg-surface-950/70 px-4 py-3 text-sm text-surface-300">
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Waiting Machine</div>
+                  <div className="mt-2 font-semibold text-surface-50">
+                    {deviceInfo.machineName || "Unnamed machine"}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                    {devicePlatformLabel && (
+                      <span className="rounded-full border border-surface-700 px-2 py-1 text-surface-300">
+                        {devicePlatformLabel}
+                      </span>
+                    )}
+                    {deviceInfo.arch && (
+                      <span className="rounded-full border border-surface-700 px-2 py-1 text-surface-300">
+                        {deviceInfo.arch}
+                      </span>
+                    )}
+                    {deviceInfo.shell && (
+                      <span className="rounded-full border border-surface-700 px-2 py-1 text-surface-300">
+                        {deviceInfo.shell.split("/").pop()}
+                      </span>
+                    )}
+                  </div>
+                  {deviceInfo.platform === "wsl1" && (
+                    <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                      WSL1 detected. Yaver requires WSL2 for most mobile and React Native features.
+                    </div>
+                  )}
+                </div>
               )}
               <div className="mt-4 space-y-1 text-xs text-surface-400">
                 <p>1. Sign in with Apple, Google, or Microsoft.</p>

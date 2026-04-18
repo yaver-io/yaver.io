@@ -1396,8 +1396,17 @@ http.route({
 http.route({
   path: "/auth/device-code",
   method: "POST",
-  handler: httpAction(async (ctx) => {
-    const result = await ctx.runMutation(api.deviceCode.createDeviceCode, {});
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.json().catch(() => ({}));
+    const result = await ctx.runMutation(api.deviceCode.createDeviceCode, {
+      machineName: typeof body?.machineName === "string" ? body.machineName : undefined,
+      platform: typeof body?.platform === "string" ? body.platform : undefined,
+      arch: typeof body?.arch === "string" ? body.arch : undefined,
+      shell: typeof body?.shell === "string" ? body.shell : undefined,
+      environment: typeof body?.environment === "string" ? body.environment : undefined,
+      runtimeVersion: typeof body?.runtimeVersion === "string" ? body.runtimeVersion : undefined,
+      isWsl: typeof body?.isWsl === "boolean" ? body.isWsl : undefined,
+    });
     return jsonResponse(result);
   }),
 });
@@ -1413,6 +1422,24 @@ http.route({
       return errorResponse("device_code required", 400);
     }
     const result = await ctx.runMutation(api.deviceCode.pollDeviceCode, { deviceCode });
+    return jsonResponse(result);
+  }),
+});
+
+/** GET /auth/device-code/info — Public machine info for a waiting device code. */
+http.route({
+  path: "/auth/device-code/info",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const url = new URL(request.url);
+    const userCode = (url.searchParams.get("user_code") || "").toUpperCase().trim();
+    if (!userCode) {
+      return errorResponse("user_code required", 400);
+    }
+    const result = await ctx.runQuery(api.deviceCode.getDeviceCodeInfo, { userCode });
+    if (!result) {
+      return errorResponse("Not found", 404);
+    }
     return jsonResponse(result);
   }),
 });
