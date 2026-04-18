@@ -169,6 +169,8 @@ func main() {
 		runConnect(os.Args[2:])
 	case "serve":
 		runServe(os.Args[2:])
+	case "push":
+		runPushBridge(os.Args[2:])
 	case "permissions":
 		runMacOSPermissions(os.Args[2:])
 	case "logs":
@@ -347,6 +349,7 @@ func printUsage() {
 	fmt.Print(`Yaver — your AI coding agent, on your phone
 
 Usage:
+  yaver push        Push-to-device helper for existing RN/Expo projects
   yaver auth        Sign in and start agent (opens browser)
   yaver signout     Sign out and clear credentials
   yaver connect     Connect to your dev machine
@@ -501,6 +504,33 @@ Flags for exec:
 
 Run 'yaver <command> -h' for command-specific options.
 `)
+}
+
+func runPushBridge(args []string) {
+	npmPath, err := osexec.LookPath("npm")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "yaver push requires npm because it bundles an existing React Native / Expo project.")
+		fmt.Fprintln(os.Stderr, "Install Node.js/npm, then rerun `yaver push ...`.")
+		os.Exit(1)
+	}
+
+	packageRef := fmt.Sprintf("yaver-cli@%s", version)
+	argv := append([]string{"exec", "--yes", "--package", packageRef, "--", "yaver", "push"}, args...)
+	cmd := osexec.Command(npmPath, argv...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	cmd.Env = os.Environ()
+	if wd, werr := os.Getwd(); werr == nil && strings.TrimSpace(wd) != "" {
+		cmd.Dir = wd
+	}
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*osexec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		fmt.Fprintf(os.Stderr, "failed to run push bridge via npm: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 // ---------------------------------------------------------------------------

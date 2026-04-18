@@ -345,7 +345,7 @@ the resulting token back through the device-code flow.
 | **dnf/rpm** (Fedora/RHEL) | Download `yaver_<version>_x86_64.rpm` from [releases](https://github.com/kivanccakmak/yaver.io/releases) and `sudo rpm -i yaver_*.rpm` (or `sudo dnf install ./yaver_*.rpm`) |
 | **AppImage** | Download from [download page](https://yaver.io/download), `chmod +x Yaver-*.AppImage && ./Yaver-*.AppImage` |
 | **Tarball** | `curl -fsSL https://yaver.io/install.sh \| sh` — auto-detects arch, downloads the right tarball, installs to `~/.local/bin/yaver` |
-| **npm bootstrap** | `npm install -g yaver-cli` — installs a `yaver` command; `yaver serve` bootstraps the Go agent and `yaver push` handles RN bundle push |
+| **npm bootstrap** | `npm install -g yaver-cli` — fastest start; installs a `yaver` command and covers both `yaver serve` and `yaver push` |
 | **Nix** | `nix run github:kivanccakmak/yaver.io` |
 | **Docker** | `docker run --rm kivanccakmak/yaver-cli version` |
 | **curl** | `curl -fsSL https://yaver.io/install.sh \| sh` |
@@ -1243,8 +1243,8 @@ ACL peers are also accessible via MCP tools (`acl_list_peers`, `acl_call_peer_to
 | Piece | Directory | Install | What it does |
 |-------|-----------|---------|-------------|
 | **Mobile App** | `mobile/` | App Store / Play Store | Remote control for AI agents + native RN container + on-device HTTP server (port 8347) |
-| **Desktop Agent** | `desktop/agent/` | `brew install yaver` | Go binary — P2P server, AI agent runner, MCP (473 tools), hot reload, builds, session transfer |
-| **Unified NPM Bootstrap** | `cli/` | `npm i -g yaver-cli` | Installs a `yaver` command. `yaver serve` bootstraps the Go agent, `yaver push` handles RN bundle push. |
+| **Desktop Agent** | `desktop/agent/` | `brew install yaver` or `apt install yaver` | Native `yaver` command for P2P server, AI agent runner, MCP, hot reload, builds, and session transfer. Also bridges `yaver push` through npm when Node is present. |
+| **Unified NPM Bootstrap** | `cli/` | `npm i -g yaver-cli` | Fastest start. Installs the same `yaver` command and covers both `yaver serve` and `yaver push`. |
 | **Feedback SDKs** | `sdk/feedback/` | `npm i yaver-feedback-*` | Debug console + black box recorder embedded in your app. React Native, Flutter, Web. |
 | **Programmatic SDKs** | `sdk/` | `npm i yaver-sdk`, `pip install yaver`, etc. | Automate Yaver from code — Go, Python, JS/TS, Flutter/Dart, C. |
 | Desktop Installer | `desktop/installer/` | [Download](https://yaver.io/download) | GUI installer (DMG/EXE/DEB) — installs the Go agent binary |
