@@ -1,6 +1,6 @@
 {
   "name": "yaver-cli",
-  "version": "1.96.1",
+  "version": "1.96.2",
   "mcpName": "io.github.kivanccakmak/yaver",
   "description": "Unified npm bootstrap for the Yaver agent and push-to-device React Native tooling",
   "bin": {
