@@ -1,0 +1,298 @@
+package main
+
+// MobileClient mirrors the HTTP surface the Yaver mobile app's
+// `QuicClient` (mobile/src/lib/quic.ts) uses when it talks to a live
+// agent. Every method here corresponds 1:1 with a mobile-app method
+// so the two can evolve in lockstep:
+//
+//   mobile QuicClient method       →  Go MobileClient method
+//   ──────────────────────────────────────────────────────
+//   getDevServerStatus             →  DevServerStatus
+//   startDevServer                 →  StartDevServer
+//   getDevServerTarget             →  DevServerTarget
+//   subscribeDevEvents             →  SubscribeDevEvents
+//   cloneRepo                      →  CloneRepo
+//   pullRepo                       →  PullRepo
+//   (direct fetch `/projects/mobile`)  →  ListMobileProjects
+//
+// The `yaver emu` CLI uses this to replay the mobile card's flow end
+// to end from the terminal — so a developer can dogfood clone +
+// start + log streaming + error handling without a phone in the
+// loop. Keep these methods aligned with quic.ts: when a new HTTP
+// call is added on the mobile side, add its twin here.
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// MobileClient is the shared HTTP client the mobile emulator uses.
+// All methods are safe for concurrent use once the instance is
+// created; each call opens its own HTTP request.
+type MobileClient struct {
+	BaseURL   string
+	AuthToken string
+	HTTP      *http.Client
+}
+
+// NewMobileClient returns a client configured for the given agent.
+// Pass "" for the default http.Client with a 30s timeout.
+func NewMobileClient(baseURL, authToken string, hc *http.Client) *MobileClient {
+	if hc == nil {
+		hc = &http.Client{Timeout: 30 * time.Second}
+	}
+	return &MobileClient{
+		BaseURL:   strings.TrimRight(baseURL, "/"),
+		AuthToken: authToken,
+		HTTP:      hc,
+	}
+}
+
+// doJSON is the shared helper: adds auth header, encodes body as
+// JSON if non-nil, decodes response into out if non-nil. Returns an
+// error for any non-2xx response.
+func (c *MobileClient) doJSON(ctx context.Context, method, path string, body any, out any) error {
+	var bodyReader io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		bodyReader = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, bodyReader)
+	if err != nil {
+		return err
+	}
+	if c.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.AuthToken)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("%s %s: %d %s", method, path, resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	if out == nil {
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// ── Health + status ─────────────────────────────────────────────
+
+// Health hits /health — used to verify the agent is reachable and
+// authenticated before running any other mobile-flow.
+func (c *MobileClient) Health(ctx context.Context) (map[string]any, error) {
+	var out map[string]any
+	if err := c.doJSON(ctx, "GET", "/health", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Info returns the agent's /info payload (hostname, version, device
+// id, capabilities…). Same endpoint the mobile app hits on connect.
+func (c *MobileClient) Info(ctx context.Context) (map[string]any, error) {
+	var out map[string]any
+	if err := c.doJSON(ctx, "GET", "/info", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ── Mobile projects (the Hot Reload tab's list) ─────────────────
+
+// MobileProjectSummary mirrors the fields the mobile Hot Reload tab reads.
+type MobileProjectSummary struct {
+	Name      string   `json:"name"`
+	Path      string   `json:"path"`
+	Framework string   `json:"framework"`
+	SDK       string   `json:"sdk,omitempty"`
+	Branch    string   `json:"branch,omitempty"`
+	Tags      []string `json:"tags,omitempty"`
+}
+
+// ListMobileProjectsResponse wraps the scanner payload.
+type ListMobileProjectsResponse struct {
+	OK        bool            `json:"ok"`
+	Projects  []MobileProjectSummary `json:"projects"`
+	Scanning  bool            `json:"scanning"`
+	ScannedAt string          `json:"scannedAt"`
+}
+
+// ListMobileProjects hits GET /projects/mobile — the same call the
+// Hot Reload tab makes every 15s (or every 2.5s while scanning).
+func (c *MobileClient) ListMobileProjects(ctx context.Context) (*ListMobileProjectsResponse, error) {
+	var out ListMobileProjectsResponse
+	if err := c.doJSON(ctx, "GET", "/projects/mobile", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ── Repos (clone / pull) ────────────────────────────────────────
+
+// CloneRepoResult mirrors the JSON response shape.
+type CloneRepoResult struct {
+	OK     bool   `json:"ok"`
+	Path   string `json:"path"`
+	Output string `json:"output"`
+}
+
+// SetGitCredential hits POST /repos/credentials — stores a PAT for
+// a git host so subsequent clones of private repos on that host
+// authenticate. Same endpoint the mobile "Git credentials" form uses.
+func (c *MobileClient) SetGitCredential(ctx context.Context, host, username, token string) error {
+	return c.doJSON(ctx, "POST", "/repos/credentials", map[string]string{
+		"host":     host,
+		"username": username,
+		"token":    token,
+	}, nil)
+}
+
+// CloneRepo hits POST /repos/clone — the same call the mobile
+// "Clone" action triggers. On success the agent also invalidates
+// project caches, so a subsequent ListMobileProjects call (within
+// ~2.5s) should show the new project.
+func (c *MobileClient) CloneRepo(ctx context.Context, url, dir, branch string) (*CloneRepoResult, error) {
+	body := map[string]any{"url": url}
+	if dir != "" {
+		body["dir"] = dir
+	}
+	if branch != "" {
+		body["branch"] = branch
+	}
+	var out CloneRepoResult
+	if err := c.doJSON(ctx, "POST", "/repos/clone", body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ── Dev server (start / status / stop / events) ─────────────────
+
+// DevStartRequest mirrors the mobile StartDevServerRequest shape.
+type DevStartRequest struct {
+	Framework         string `json:"framework,omitempty"`
+	WorkDir           string `json:"workDir"`
+	Port              int    `json:"port,omitempty"`
+	Platform          string `json:"platform,omitempty"`
+	TargetDeviceID    string `json:"targetDeviceId,omitempty"`
+	TargetDeviceName  string `json:"targetDeviceName,omitempty"`
+	TargetDeviceClass string `json:"targetDeviceClass,omitempty"`
+}
+
+// StartDevServer hits POST /dev/start.
+func (c *MobileClient) StartDevServer(ctx context.Context, req DevStartRequest) error {
+	return c.doJSON(ctx, "POST", "/dev/start", req, nil)
+}
+
+// StopDevServer hits POST /dev/stop.
+func (c *MobileClient) StopDevServer(ctx context.Context) error {
+	return c.doJSON(ctx, "POST", "/dev/stop", nil, nil)
+}
+
+// GetDevStatus hits GET /dev/status. Returns nil if no dev server
+// is active (agent returns 404 or empty body — we treat both as nil).
+func (c *MobileClient) GetDevStatus(ctx context.Context) (*DevServerStatus, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.BaseURL+"/dev/status", nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.AuthToken)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 404 {
+		return nil, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GET /dev/status: %d %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	var out DevServerStatus
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	if out.Framework == "" && !out.Running {
+		return nil, nil
+	}
+	return &out, nil
+}
+
+// SubscribeDevEvents opens an SSE stream on /dev/events and invokes
+// onEvent for each frame until ctx is cancelled or the server
+// disconnects. Shaped to match mobile's quicClient.subscribeDevEvents.
+//
+// Uses a dedicated http.Client with no timeout — c.HTTP is fine for
+// normal JSON calls but its 30s deadline would kill a long-running
+// SSE subscription as soon as the bundler is quiet for a bit. The
+// caller controls the stream lifetime via ctx.
+func (c *MobileClient) SubscribeDevEvents(ctx context.Context, onEvent func(DevServerEvent)) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.BaseURL+"/dev/events", nil)
+	if err != nil {
+		return err
+	}
+	if c.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.AuthToken)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	sseClient := &http.Client{Transport: http.DefaultTransport}
+	resp, err := sseClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		raw, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("GET /dev/events: %d %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	reader := bufio.NewReader(resp.Body)
+	var dataBuf strings.Builder
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			if dataBuf.Len() > 0 {
+				var ev DevServerEvent
+				if jerr := json.Unmarshal([]byte(dataBuf.String()), &ev); jerr == nil {
+					onEvent(ev)
+				}
+				dataBuf.Reset()
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			dataBuf.WriteString(strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " "))
+		}
+	}
+}

@@ -922,6 +922,56 @@ export class QuicClient {
     return final;
   }
 
+  /**
+   * Subscribe to the dev server's SSE event stream (/dev/events).
+   * onEvent fires once per event ({type, framework, logLine, message, ...}).
+   * Returns an unsubscribe function that aborts the stream.
+   *
+   * The server emits "log" on every Metro / Expo / Flutter subprocess
+   * line, plus "starting" / "ready" / "error" / "stopped" lifecycle
+   * events. The caller is expected to keep only the tail (e.g. last
+   * 100 lines) — this helper does no buffering.
+   */
+  subscribeDevEvents(onEvent: (ev: { type: string; framework?: string; logLine?: string; message?: string; bundleUrl?: string; deepLink?: string; timestamp?: string }) => void): () => void {
+    if (!this.isConnected) return () => {};
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(`${this.baseUrl}/dev/events`, {
+          headers: { ...this.authHeaders, Accept: "text/event-stream" },
+          signal: controller.signal,
+        });
+        if (!res.ok || !res.body) return;
+        const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let idx: number;
+          while ((idx = buf.indexOf("\n\n")) >= 0) {
+            const frame = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            const dataLines = frame
+              .split("\n")
+              .filter((l) => l.startsWith("data:"))
+              .map((l) => l.slice(5).trimStart());
+            if (dataLines.length === 0) continue;
+            try {
+              onEvent(JSON.parse(dataLines.join("\n")));
+            } catch {
+              // drop malformed frames
+            }
+          }
+        }
+      } catch {
+        // aborted or connection dropped — the caller re-subscribes on its own cadence
+      }
+    })();
+    return () => controller.abort();
+  }
+
   /** List all tasks from the desktop agent, falling back to cache on failure. */
   async listTasks(): Promise<Task[]> {
     if (!this.isConnected) {

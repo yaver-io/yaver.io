@@ -60,6 +60,10 @@ export default function HotReloadScreen() {
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [projectsScanning, setProjectsScanning] = useState(false);
   const [startingProject, setStartingProject] = useState<string | null>(null);
+  // Tail of log lines streamed from /dev/events SSE. Bounded to 40
+  // so a chatty Metro bundle doesn't blow up state; the card shows
+  // the last ~6. Cleared when a new dev server starts.
+  const [devLog, setDevLog] = useState<string[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const mobileWorkers = devices.filter((d) => d.deviceClass === "edge-mobile");
   const selectedTarget = mobileWorkers.find((d) => d.id === selectedTargetId) || null;
@@ -147,6 +151,32 @@ export default function HotReloadScreen() {
     const projectInterval = setInterval(fetchMobileProjects, projectsScanning ? 2500 : 15000);
     return () => { mounted = false; clearInterval(interval); clearInterval(projectInterval); };
   }, [isConnected, projectsScanning]);
+
+  // Subscribe to /dev/events SSE so the user sees Metro / Expo /
+  // Flutter output live while the dev server is coming up. Without
+  // this, a slow-starting Metro looks like "expo · starting…" with
+  // a spinner indefinitely — no signal of progress, no signal of
+  // failure. Cap the tail at 40 lines to keep state bounded.
+  useEffect(() => {
+    if (!isConnected) return;
+    setDevLog([]);
+    const unsub = quicClient.subscribeDevEvents((ev) => {
+      if (ev.type === "log" && ev.logLine) {
+        setDevLog((prev) => {
+          const next = [...prev, String(ev.logLine)];
+          return next.length > 40 ? next.slice(next.length - 40) : next;
+        });
+      } else if (ev.type === "ready" || ev.type === "stopped") {
+        setDevLog([]);
+      } else if (ev.type === "error" && ev.message) {
+        setDevLog((prev) => {
+          const next = [...prev, `[error] ${ev.message}`];
+          return next.length > 40 ? next.slice(next.length - 40) : next;
+        });
+      }
+    });
+    return () => unsub();
+  }, [isConnected, activeDevice?.id]);
 
 
   const [nativeLoading, setNativeLoading] = useState(false);
@@ -352,15 +382,22 @@ export default function HotReloadScreen() {
 
         {/* Running / starting dev server card */}
         {devStatus && (
-          <View style={[s.card, s.activeCard, !devStatus.running && { borderColor: "#f59e0b44", backgroundColor: "#1a150f" }]}>
+          <View style={[
+            s.card,
+            s.activeCard,
+            !devStatus.running && !devStatus.error && { borderColor: "#f59e0b44", backgroundColor: "#1a150f" },
+            !!devStatus.error && { borderColor: "#ef4444", backgroundColor: "#1a0a0a" },
+          ]}>
             <View style={s.cardHeader}>
-              <View style={[s.statusDot, { backgroundColor: devStatus.running ? "#22c55e" : "#f59e0b" }]} />
+              <View style={[s.statusDot, { backgroundColor: devStatus.error ? "#ef4444" : devStatus.running ? "#22c55e" : "#f59e0b" }]} />
               <View style={s.cardTitleContainer}>
                 <Text style={s.cardTitle}>{runningProject}</Text>
                 <Text style={s.cardMeta}>
-                  {devStatus.running
-                    ? `${devStatus.framework} · port ${devStatus.port} · hot reload ${devStatus.hotReload ? "on" : "off"}`
-                    : `${devStatus.framework} · starting...`}
+                  {devStatus.error
+                    ? `${devStatus.framework} · failed to start`
+                    : devStatus.running
+                      ? `${devStatus.framework} · port ${devStatus.port} · hot reload ${devStatus.hotReload ? "on" : "off"}`
+                      : `${devStatus.framework} · starting...`}
                 </Text>
                 <Text style={[s.cardMeta, { color: "#86efac" }]}>
                   mode · {devStatus.iosInstallMethod === "native" ? "native install" : "Hermes bundle in Yaver"}
@@ -391,10 +428,40 @@ export default function HotReloadScreen() {
                   </Text>
                 )}
               </View>
-              {!devStatus.running && <ActivityIndicator size="small" color="#f59e0b" />}
+              {!devStatus.running && !devStatus.error && <ActivityIndicator size="small" color="#f59e0b" />}
             </View>
             {loadingStatus ? (
               <Text style={{ color: "#9ca3af", fontSize: 11, marginTop: 4 }}>{loadingStatus}</Text>
+            ) : null}
+            {/* Failure banner: shows the server-captured reason (stderr tail, missing tool, etc.) */}
+            {devStatus.error ? (
+              <View style={{ marginTop: 8, padding: 8, borderRadius: 6, backgroundColor: "#2a0a0a", borderWidth: 1, borderColor: "#ef444466" }}>
+                <Text style={{ color: "#f87171", fontSize: 12, fontWeight: "600", marginBottom: 4 }}>
+                  Start failed
+                </Text>
+                <Text style={{ color: "#fecaca", fontSize: 11, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }} numberOfLines={10}>
+                  {String(devStatus.error).trim()}
+                </Text>
+              </View>
+            ) : null}
+            {/* Live agent activity: Metro/Expo/Flutter stdout streamed over /dev/events SSE.
+                Shows the last ~6 lines so the user sees progress during "starting…" and
+                the actual log tail on failure. */}
+            {!devStatus.running && devLog.length > 0 ? (
+              <View style={{ marginTop: 8, padding: 8, borderRadius: 6, backgroundColor: "#0b0b0b", borderWidth: 1, borderColor: "#333" }}>
+                <Text style={{ color: "#9ca3af", fontSize: 10, fontWeight: "600", marginBottom: 4 }}>
+                  agent activity
+                </Text>
+                {devLog.slice(-6).map((line, i) => (
+                  <Text
+                    key={`${i}-${line.length}`}
+                    style={{ color: "#cbd5e1", fontSize: 10, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }}
+                    numberOfLines={1}
+                  >
+                    {line}
+                  </Text>
+                ))}
+              </View>
             ) : null}
             <View style={s.cardActions}>
               {devStatus.running && (
@@ -415,6 +482,24 @@ export default function HotReloadScreen() {
                     </Pressable>
                   )}
                 </>
+              )}
+              {devStatus.error && devStatus.workDir && devStatus.framework && (
+                <Pressable
+                  style={[s.actionBtn, s.reloadBtn]}
+                  onPress={() => {
+                    const framework = devStatus.framework || "";
+                    const workDir = devStatus.workDir || "";
+                    quicClient.startDevServer({
+                      framework,
+                      workDir,
+                      targetDeviceId: selectedTarget?.id,
+                      targetDeviceName: selectedTarget?.name,
+                      targetDeviceClass: selectedTarget?.deviceClass,
+                    }).catch(() => Alert.alert("Retry failed", "Could not restart the dev server"));
+                  }}
+                >
+                  <Text style={s.reloadBtnText}>Retry</Text>
+                </Pressable>
               )}
               <Pressable style={[s.actionBtn, s.stopBtn]} onPress={handleStop}>
                 <Text style={s.stopBtnText}>Stop</Text>

@@ -775,20 +775,8 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 	// (yarn / pnpm / bun / npm) instead of hardcoding npm, and surface
 	// missing-runtime errors with an actionable next step the phone
 	// can render ("Install Node" → POST /install/node).
-	if _, err := os.Stat(filepath.Join(opts.WorkDir, "node_modules")); os.IsNotExist(err) {
-		manifest, _ := readProjectPackageManifest(opts.WorkDir)
-		prep := detectProjectPreparation(opts.WorkDir, manifest)
-		if !prep.CanAutoInstallDependencies {
-			missing := strings.Join(prep.MissingTools, ", ")
-			if missing == "" {
-				missing = "package manager"
-			}
-			return fmt.Errorf("cannot install dependencies (%s missing on this machine). Install Node from the phone (POST /install/node) or run `yaver install node`", missing)
-		}
-		log.Printf("[dev] Installing dependencies in %s with %s...", opts.WorkDir, prep.PackageManager)
-		if err := installProjectDependencies(opts.WorkDir, prep); err != nil {
-			return fmt.Errorf("%s install failed: %w", prep.PackageManager, err)
-		}
+	if err := ensureNodeDepsStreamed(ctx, opts.WorkDir, e.emitFn, e.name); err != nil {
+		return err
 	}
 
 	// Run yaver.config.js if it exists (generates SDK config)
@@ -987,20 +975,8 @@ func (rn *ReactNativeDevServer) Start(ctx context.Context, opts DevServerOpts) e
 
 	// Install deps if needed — honor project package manager and
 	// surface missing-runtime errors with an actionable next step.
-	if _, err := os.Stat(filepath.Join(opts.WorkDir, "node_modules")); os.IsNotExist(err) {
-		manifest, _ := readProjectPackageManifest(opts.WorkDir)
-		prep := detectProjectPreparation(opts.WorkDir, manifest)
-		if !prep.CanAutoInstallDependencies {
-			missing := strings.Join(prep.MissingTools, ", ")
-			if missing == "" {
-				missing = "package manager"
-			}
-			return fmt.Errorf("cannot install dependencies (%s missing on this machine). Install Node from the phone (POST /install/node) or run `yaver install node`", missing)
-		}
-		log.Printf("[dev] Installing dependencies in %s with %s...", opts.WorkDir, prep.PackageManager)
-		if err := installProjectDependencies(opts.WorkDir, prep); err != nil {
-			return fmt.Errorf("%s install failed: %w", prep.PackageManager, err)
-		}
+	if err := ensureNodeDepsStreamed(ctx, opts.WorkDir, rn.emitFn, rn.name); err != nil {
+		return err
 	}
 
 	// Try npx expo start --web first (works if expo CLI is available, even for bare RN)

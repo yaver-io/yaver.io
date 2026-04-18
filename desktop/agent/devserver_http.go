@@ -302,6 +302,15 @@ func installEndpointForTool(missing []string) string {
 }
 
 func installProjectDependencies(workDir string, prep projectPreparationStatus) error {
+	return installProjectDependenciesTo(workDir, prep, nil)
+}
+
+// installProjectDependenciesTo runs the project's package-manager
+// install with output also tee'd to extraOut. Callers pass a
+// devLogWriter whose onLogLine emits SSE "log" events so the mobile
+// Hot Reload card sees every npm/yarn line live. Pass nil to fall
+// back to stdout-only (matches the pre-streaming behaviour).
+func installProjectDependenciesTo(workDir string, prep projectPreparationStatus, extraOut io.Writer) error {
 	var cmd *exec.Cmd
 	switch prep.PackageManager {
 	case "yarn":
@@ -318,8 +327,13 @@ func installProjectDependencies(workDir string, prep projectPreparationStatus) e
 	// when system Node is missing, so a fresh Linux box can install
 	// project deps after a phone-driven /install/node.
 	cmd.Env = augmentEnv(nil)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	if extraOut != nil {
+		cmd.Stdout = io.MultiWriter(os.Stdout, extraOut)
+		cmd.Stderr = io.MultiWriter(os.Stderr, extraOut)
+	} else {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	}
 	return cmd.Run()
 }
 
@@ -584,7 +598,13 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 	if req.WorkDir != "" {
 		if manifest, err := readProjectPackageManifest(req.WorkDir); err == nil {
 			prep := detectProjectPreparation(req.WorkDir, manifest)
-			if len(prep.MissingTools) > 0 {
+			// Relax the pre-flight when only Node itself is missing —
+			// the dev-server Start goroutine now auto-installs Node via
+			// ensureNodeDepsStreamed (Task 4) and streams progress to
+			// /dev/events SSE. We only 412-reject when some *other*
+			// toolchain is missing (bun / pnpm / yarn / hermesc, etc.)
+			// that we can't fix ourselves.
+			if len(prep.MissingTools) > 0 && !isOnlyNodeMissing(prep.MissingTools) {
 				installable := canInstallMissingTool(prep.MissingTools)
 				jsonReply(w, http.StatusPreconditionFailed, map[string]interface{}{
 					"error":           fmt.Sprintf("Cannot start dev server: %s missing on this machine.", strings.Join(prep.MissingTools, ", ")),
