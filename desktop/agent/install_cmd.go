@@ -260,11 +260,13 @@ func checkInstalled(name string) string {
 	// ~/.yaver/runtimes/<tool>/bin and are not on the system PATH for
 	// CLI users, so a plain LookPath would always say "—".
 	switch name {
-	case "node", "mobile":
-		if _, v := detectManagedOrSystemNode(); v != "" {
-			if name == "node" {
-				return "✓"
-			}
+	case "node":
+		if v := nodeRuntimeExisting(runtimeNodeBinDir()); v != "" {
+			return "✓"
+		}
+		return "—"
+	case "mobile":
+		if v := nodeRuntimeExisting(runtimeNodeBinDir()); v != "" {
 			if _, err := embeddedHermescSummary(); err == nil {
 				return "✓"
 			}
