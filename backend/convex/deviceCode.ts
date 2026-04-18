@@ -26,8 +26,16 @@ function generateUserCode(): string {
  * Returns userCode (shown to user) and deviceCode (used by CLI to poll).
  */
 export const createDeviceCode = mutation({
-  args: {},
-  handler: async (ctx) => {
+  args: {
+    machineName: v.optional(v.string()),
+    platform: v.optional(v.string()),
+    arch: v.optional(v.string()),
+    shell: v.optional(v.string()),
+    environment: v.optional(v.string()),
+    runtimeVersion: v.optional(v.string()),
+    isWsl: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
     // Clean up expired codes lazily (delete up to 10)
     const expired = await ctx.db
       .query("deviceCodes")
@@ -57,6 +65,13 @@ export const createDeviceCode = mutation({
       userCode,
       deviceCode,
       status: "pending",
+      machineName: args.machineName,
+      platform: args.platform,
+      arch: args.arch,
+      shell: args.shell,
+      environment: args.environment,
+      runtimeVersion: args.runtimeVersion,
+      isWsl: args.isWsl,
       expiresAt: now + DEVICE_CODE_TTL_MS,
       createdAt: now,
     });
@@ -65,6 +80,34 @@ export const createDeviceCode = mutation({
       userCode,
       deviceCode,
       expiresAt: now + DEVICE_CODE_TTL_MS,
+    };
+  },
+});
+
+export const getDeviceCodeInfo = query({
+  args: { userCode: v.string() },
+  handler: async (ctx, args) => {
+    const code = await ctx.db
+      .query("deviceCodes")
+      .withIndex("by_userCode", (q) => q.eq("userCode", args.userCode))
+      .unique();
+
+    if (!code) {
+      return null;
+    }
+
+    return {
+      userCode: code.userCode,
+      status: code.status,
+      machineName: code.machineName ?? null,
+      platform: code.platform ?? null,
+      arch: code.arch ?? null,
+      shell: code.shell ?? null,
+      environment: code.environment ?? null,
+      runtimeVersion: code.runtimeVersion ?? null,
+      isWsl: code.isWsl ?? false,
+      expiresAt: code.expiresAt,
+      createdAt: code.createdAt,
     };
   },
 });
