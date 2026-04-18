@@ -110,6 +110,21 @@
   - checks New Architecture compatibility
   - warns on major native-module version mismatches
   - returns guidance about when `yaver-cli` may still be helpful
+- The contributor workflow is now explicit in agent + mobile UI:
+  - remembers Hermes build state (`needs_build`, `ready`, `build_failed`)
+  - surfaces `Compile Hermes`, `Rebuild Hermes`, and `Open in Yaver` separately
+  - shows package manager, dependency-install state, missing local tools, and Hermes compiler readiness before first build
+- Fresh-clone preparation is now smarter on the agent:
+  - detects `npm` / `yarn` / `pnpm` / `bun` from lockfiles or `packageManager`
+  - auto-installs dependencies on first build when the machine can do it
+  - blocks early with explicit guidance when `node` / `npm` / `npx` / other required tools are missing
+- Claude Code MCP setup is now integrated into Yaver startup flow:
+  - `yaver auth` and `yaver serve` auto-try to register Yaver into Claude Code MCP config when `claude` is on `PATH`
+  - `yaver mcp setup claude-code` exists as the explicit recovery path
+- MCP now exposes mobile-project readiness to remote agents:
+  - `mobile_project_status`
+  - `mobile_project_prepare`
+  - this lets Claude Code on WSL inspect and prepare a freshly cloned Expo / React Native project before the phone tries to build it
 
 ### Current Product Position
 
@@ -125,9 +140,36 @@
   - Feedback SDK for in-app bug reporting, black-box streaming, and reload inside the app’s own process
 - Main remaining runtime risk:
   - project depends on native modules not present in the Yaver phone app manifest
+- Supported contributor split now:
+  - contributor clones source, runs `yaver auth` / `yaver serve`, tests on iPhone inside Yaver, commits and pushes
+  - maintainer does the real TestFlight deploy later from the Mac/Xcode path
 
 ### Next Work
 
+- Add MCP tools that trigger the actual Hermes build and open flow, not just status/prepare.
+  - `mobile_project_build`
+  - optional `mobile_project_open`
+  - this would let Claude Code fully drive the “fresh clone -> install deps -> compile Hermes -> ready for phone” loop
+- Make machine capability detection smarter than binary presence.
+  - distinguish WSL, native Linux, macOS, remote VM
+  - detect whether install guidance should prefer `apt`, `brew`, `mise`, `nvm`, or distro-native node packages
+  - expose that advice directly in the compatibility payload and phone UI
+- Add project-prep tests for the fresh-clone case.
+  - no `node_modules`
+  - missing `node`
+  - `pnpm` / `yarn` / `bun` lockfile detection
+  - embedded hermesc available vs project hermesc vs no hermesc path
+- Add Claude Code MCP auto-setup tests / dry-run path.
+  - avoid silently regressing CLI integration on WSL
+  - verify we do not spam duplicate `claude mcp add` calls once already configured
+- Surface the prep state outside the action sheet too.
+  - project card badge for `needs deps`
+  - project card badge for `needs build`
+  - project card badge for `build failed`
+- Add a one-shot “prepare this project for iPhone testing” button in mobile.
+  - should install deps when allowed
+  - should compile Hermes if possible
+  - should leave `Open in Yaver` as the final step
 - Make compatibility even closer to `yaver-cli` output.
   - Reuse or mirror the analyzer logic more directly so pure-JS exclusions and false-positive native package handling stay aligned in one place.
 - Surface compatibility outside the action sheet too.
@@ -157,6 +199,8 @@
 ### Verification Run For This Slice
 
 - `go test -run 'TestResolveIOSInstallMethodWithReason'` in `desktop/agent`
+- `go build ./...` in `desktop/agent`
+- `npx tsc --noEmit` in `mobile`
 
 ## Phone Backend for Third-Party Apps
 
