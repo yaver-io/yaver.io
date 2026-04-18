@@ -235,9 +235,9 @@ export default function DevelopersPage() {
                 desc: "Drop-in SDK for React Native, Flutter, and Web apps. Visual bug reports with screenshots, voice notes, BlackBox streaming, and remote hot reload — all connected to the AI agent for automatic fixes.",
               },
               {
-                title: "6. Push-to-Device CLI (yaver-cli)",
+                title: "6. Unified npm bootstrap (yaver-cli)",
                 install: "npm install -g yaver-cli",
-                desc: "Push existing React Native projects to the yaver.io app. Analyzes compatibility, bundles JS, compiles Hermes bytecode, pushes directly to phone. No agent needed.",
+                desc: "Single install that provides the `yaver` command. Use `yaver serve` for the Go agent and `yaver push` for existing React Native projects.",
               },
             ].map((item) => (
               <div key={item.title} className="rounded-lg border border-surface-800 bg-surface-900/50 p-4">
@@ -251,32 +251,34 @@ export default function DevelopersPage() {
           </div>
           <Prose>
             <strong className="text-surface-200">Key distinction:</strong>{" "}
-            <InlineCode>yaver-cli</InlineCode> (npm) and{" "}
-            <InlineCode>yaver</InlineCode> (Go binary) are completely separate tools.{" "}
-            <InlineCode>yaver-cli</InlineCode> is for third-party RN developers who want to test their
-            apps on real devices. <InlineCode>yaver</InlineCode> is for running AI agents from your phone.
-            A developer might use both, plus the Feedback SDK in their apps.
+            <InlineCode>yaver-cli</InlineCode> is now the npm distribution name for the unified bootstrap
+            package. It installs the <InlineCode>yaver</InlineCode> command, which covers both the Go
+            agent workflow and the RN push-to-device flow. Native package-manager installs of the Go binary
+            still exist for developers who prefer brew/apt/system packages.
           </Prose>
         </section>
 
         {/* ─── Push to Device ─── */}
         <section className="mb-20">
-          <SectionHeading id="push-to-device">Push to Device (yaver-cli)</SectionHeading>
+          <SectionHeading id="push-to-device">Push to Device (Unified npm install)</SectionHeading>
           <Prose>
             The yaver.io mobile app doubles as a native container (like Expo Go) for existing
-            React Native projects. Third-party developers push their existing RN apps to it
-            for real-device QA testing. No project modifications needed.
+            React Native projects. Install `yaver-cli` once, get a `yaver` command, and use the
+            same install for both `yaver serve` and `yaver push` for real-device QA. No project
+            modifications needed.
           </Prose>
           <Terminal title="push-to-device">
-            <Comment># Install the CLI</Comment>
+            <Comment># One npm install for agent + push-to-device</Comment>
             <Cmd>npm install -g yaver-cli</Cmd>
+            <Comment># Start the agent on your dev machine (same install)</Comment>
+            <Cmd>yaver serve</Cmd>
             <Comment># Analyze your project</Comment>
-            <Cmd>cd my-app && yaver-push init</Cmd>
+            <Cmd>cd my-app && yaver push init</Cmd>
             <Output>React Native: 0.81.5 ✅ (yaver supports 0.81.x)</Output>
             <Output>15/16 native modules available ✅</Output>
             <Output>Created yaver.json</Output>
             <Comment># Push to your phone</Comment>
-            <Cmd>yaver-push push</Cmd>
+            <Cmd>yaver push</Cmd>
             <Output>📡 Found: iPhone 15 (192.168.1.42)</Output>
             <Output>🔨 Bundling → ⚡ Hermes → 📤 Push 847 KB</Output>
             <Output>🚀 Done in 4.1s — app loading on device</Output>
@@ -286,15 +288,15 @@ export default function DevelopersPage() {
             <table className="w-full text-xs">
               <tbody className="divide-y divide-surface-800">
                 {[
-                  ["yaver-push init", "Analyze project, create yaver.json"],
-                  ["yaver-push push", "Bundle + validate + push to device"],
-                  ["yaver-push push --watch", "Watch mode — re-push on file save"],
-                  ["yaver-push push --ignore-missing", "Push despite missing native modules"],
-                  ["yaver-push doctor", "Deep compatibility report with fix suggestions"],
-                  ["yaver-push devices", "List discovered devices on network"],
-                  ["yaver-push modules", "List all 41 SDK native modules"],
-                  ["yaver-push reset", "Clear pushed bundle, restore default UI"],
-                  ["yaver-push status", "Device + project status"],
+                  ["yaver push init", "Analyze project, create yaver.json"],
+                  ["yaver push", "Bundle + validate + push to device"],
+                  ["yaver push --watch", "Watch mode — re-push on file save"],
+                  ["yaver push --ignore-missing", "Push despite missing native modules"],
+                  ["yaver push doctor", "Deep compatibility report with fix suggestions"],
+                  ["yaver push devices", "List discovered devices on network"],
+                  ["yaver push modules", "List all host native modules"],
+                  ["yaver push reset", "Clear pushed bundle, restore default UI"],
+                  ["yaver push status", "Device + project status"],
                 ].map(([cmd, desc]) => (
                   <tr key={cmd}>
                     <td className="py-2 pr-4 font-mono text-surface-200">{cmd}</td>

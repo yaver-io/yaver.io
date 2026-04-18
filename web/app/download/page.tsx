@@ -126,6 +126,15 @@ export default async function DownloadPage() {
   const debName = armDeb ? "yaver-arm64.deb" : "yaver-amd64.deb";
   const commandBlocks = [
     {
+      label: "Fastest start (npm bootstrap)",
+      commands: [
+        "npm install -g yaver-cli",
+        "yaver auth",
+        "yaver serve",
+        "# same install also supports: yaver push",
+      ],
+    },
+    {
       label: "apt (Debian / Ubuntu)",
       commands: [
         "curl -fsSL https://raw.githubusercontent.com/kivanccakmak/apt-yaver/main/KEY.gpg | sudo gpg --dearmor -o /usr/share/keyrings/yaver.gpg",
@@ -142,7 +151,7 @@ export default async function DownloadPage() {
       ],
     },
     {
-      label: "CLI on Linux",
+      label: "Native CLI on Linux",
       commands: [
         "brew install kivanccakmak/yaver/yaver",
         "yaver auth",
@@ -196,8 +205,9 @@ export default async function DownloadPage() {
                 Install the Yaver agent without guessing.
               </h1>
               <p className="mt-4 max-w-2xl text-sm leading-6 text-surface-400 md:text-base">
-                The Go agent backs the mobile sandbox flow. Pick the path that matches your machine:
-                Linux, macOS, or WSL.
+                Fastest start: `npm install -g yaver-cli`. It installs the `yaver` command for both
+                the Go agent and third-party React Native push-to-device. Native package-manager and
+                direct-download paths are still available for Linux, macOS, or WSL.
               </p>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-surface-500">
                 Use package-manager installs when you want upgrades. Use direct artifacts when you just need a file fast.
@@ -220,6 +230,13 @@ export default async function DownloadPage() {
                 Main paths
               </p>
               <div className="mt-4 space-y-4">
+                <div className="rounded-xl border border-surface-800 bg-surface-900/80 p-4">
+                  <p className="text-sm font-semibold text-surface-100">Fastest start</p>
+                  <p className="mt-1 text-sm text-surface-400">
+                    Use `npm install -g yaver-cli` when you want one install that covers `yaver serve`
+                    and `yaver push`.
+                  </p>
+                </div>
                 <div className="rounded-xl border border-surface-800 bg-surface-900/80 p-4">
                   <p className="text-sm font-semibold text-surface-100">Linux</p>
                   <p className="mt-1 text-sm text-surface-400">
