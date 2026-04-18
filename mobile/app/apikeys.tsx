@@ -169,8 +169,44 @@ export default function APIKeysScreen() {
       <View style={[s.header, { borderColor: c.border }]}>
         <AppBackButton onPress={() => router.back()} />
         <Text style={[s.title, { color: c.textPrimary }]}>API Keys</Text>
-        <Pressable onPress={() => setShowForm((v) => !v)}>
-          <Text style={{ color: c.accent, fontSize: 18 }}>{showForm ? "\u00D7" : "+"}</Text>
+        <Pressable
+          onPress={() => setShowForm((v) => !v)}
+          hitSlop={12}
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 16,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: showForm ? "transparent" : `${c.accent}22`,
+            borderWidth: 1,
+            borderColor: c.accent,
+          }}
+        >
+          <Text style={{ color: c.accent, fontSize: 18, fontWeight: "600", lineHeight: 20 }}>
+            {showForm ? "\u00D7" : "+"}
+          </Text>
+        </Pressable>
+      </View>
+
+      {/* Clarify what these are: Yaver SDK tokens, not provider keys. */}
+      <View style={[s.explainer, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+        <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600" }}>
+          Yaver SDK tokens
+        </Text>
+        <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 4, lineHeight: 17 }}>
+          Long-lived tokens that let your own third-party apps (Feedback SDK, CI, scripts) call
+          this agent's feedback / blackbox / voice / builds endpoints. Not OpenAI, not Anthropic /
+          Claude — for those provider keys, use Vault.
+        </Text>
+        <Pressable
+          onPress={() => router.push("/vault")}
+          style={{ alignSelf: "flex-start", marginTop: 8 }}
+          hitSlop={8}
+        >
+          <Text style={{ color: c.accent, fontSize: 12, fontWeight: "600" }}>
+            Open Vault →
+          </Text>
         </Pressable>
       </View>
 
@@ -287,9 +323,39 @@ export default function APIKeysScreen() {
             />
           }
           ListEmptyComponent={
-            <Text style={{ color: c.textMuted, padding: 16, textAlign: "center" }}>
-              {connected ? "No keys yet. Tap + to create one." : "Connect to a device to manage API keys."}
-            </Text>
+            connected ? (
+              <View style={{ alignItems: "center", paddingHorizontal: 24, paddingTop: 32 }}>
+                <Text
+                  style={{
+                    color: c.textMuted,
+                    textAlign: "center",
+                    marginBottom: 14,
+                    fontSize: 14,
+                  }}
+                >
+                  No SDK tokens yet.
+                </Text>
+                <Pressable
+                  onPress={() => setShowForm(true)}
+                  style={{
+                    backgroundColor: c.accent,
+                    paddingHorizontal: 20,
+                    paddingVertical: 12,
+                    borderRadius: 8,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <Text style={{ color: "#fff", fontSize: 18, fontWeight: "600" }}>+</Text>
+                  <Text style={{ color: "#fff", fontWeight: "600" }}>New SDK token</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <Text style={{ color: c.textMuted, padding: 16, textAlign: "center" }}>
+                Connect to a device to manage API keys.
+              </Text>
+            )
           }
         />
       )}
@@ -307,6 +373,13 @@ const s = StyleSheet.create({
   },
   title: { fontSize: 17, fontWeight: "600" },
   err: { margin: 12, padding: 8, borderRadius: 6, borderWidth: 1 },
+  explainer: {
+    marginHorizontal: 12,
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
   fresh: { margin: 12, padding: 10, borderRadius: 6, borderWidth: 1, backgroundColor: "#78350f22" },
   form: { padding: 12, borderRadius: 6, borderWidth: 1, margin: 12 },
   input: {

@@ -1134,6 +1134,17 @@ func (s *HTTPServer) auth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		// WebSocket clients (mobile Terminal, browser) cannot set custom
+		// headers, so they pass the bearer as ?token=<jwt>. Promote it
+		// into the Authorization header before the regular Bearer path
+		// so every downstream check (owner / support / paired / Convex)
+		// works unchanged.
+		if r.Header.Get("Authorization") == "" {
+			if qt := r.URL.Query().Get("token"); qt != "" {
+				r.Header.Set("Authorization", "Bearer "+qt)
+			}
+		}
+
 		authHeader := r.Header.Get("Authorization")
 		if !strings.HasPrefix(authHeader, "Bearer ") {
 			log.Printf("[AUTH] %s %s — missing Authorization header", r.Method, r.URL.Path)
