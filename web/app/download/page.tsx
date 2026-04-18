@@ -300,6 +300,53 @@ export default async function DownloadPage() {
           </div>
         </section>
 
+        <section id="raspi" className="mt-10 rounded-2xl border border-surface-800 bg-surface-900 p-6">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-lg font-semibold text-surface-50">Raspberry Pi / ARM64 home server</h2>
+            <span className="rounded-full border border-emerald-700/50 bg-emerald-950/40 px-2.5 py-1 text-[11px] font-medium text-emerald-300">
+              always-on host
+            </span>
+          </div>
+          <p className="mt-3 text-sm leading-6 text-surface-400">
+            Run <code>yaver serve</code> on a Raspberry Pi 4 (4+ GB) or any arm64 Linux SBC so the phone has a
+            24/7 target for Hermes bundle push, project hosting, and relay roaming. The Pi compiles
+            React Native bundles natively (hermesc is arm64-capable) and serves them back to the
+            Yaver mobile app — no Mac needed to iterate on JS.
+          </p>
+          <p className="mt-3 text-xs text-surface-500">
+            First Metro bundle on a Pi 4: ~30–60s. Hot reloads: under 2s. Use <code>yaver install node</code>
+            once if Node isn&apos;t already on the Pi; the agent auto-installs a sudo-free LTS into <code>~/.yaver/runtimes/node</code>.
+          </p>
+          <div className="mt-5 rounded-xl bg-surface-950 p-4 font-mono text-[12px] text-surface-300">
+            <div className="mb-2"><span className="text-surface-500">$</span> <span className="select-all">curl -fsSL https://yaver.io/install.sh | sh</span></div>
+            <div className="mb-2 text-surface-500"># or direct tarball (arm64):</div>
+            <div className="mb-2"><span className="text-surface-500">$</span> <span className="select-all">tar xzf yaver-*-linux-arm64.tar.gz && sudo mv yaver-linux-arm64 /usr/local/bin/yaver</span></div>
+            <div className="mb-2"><span className="text-surface-500">$</span> <span className="select-all">yaver auth</span></div>
+            <div><span className="text-surface-500">$</span> <span className="select-all">yaver serve --install-systemd  # survives reboots</span></div>
+          </div>
+        </section>
+
+        <section id="docker" className="mt-10 rounded-2xl border border-surface-800 bg-surface-900 p-6">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-lg font-semibold text-surface-50">Docker image (multi-arch)</h2>
+            <span className="rounded-full border border-surface-700 px-2.5 py-1 text-[11px] font-medium text-surface-400">
+              linux/amd64 · linux/arm64
+            </span>
+          </div>
+          <p className="mt-3 text-sm leading-6 text-surface-400">
+            Prebuilt image for x86-64, Apple Silicon (via Docker Desktop), and arm64 (Raspberry Pi,
+            AWS Graviton, Oracle ARM free tier). Pulls on every arch without changing the tag.
+          </p>
+          <div className="mt-5 rounded-xl bg-surface-950 p-4 font-mono text-[12px] text-surface-300">
+            <div className="mb-2 text-surface-500"># Docker Hub:</div>
+            <div className="mb-2"><span className="text-surface-500">$</span> <span className="select-all">docker pull kivanccakmak/yaver-cli:latest</span></div>
+            <div className="mb-2 text-surface-500"># GitHub Container Registry (same image):</div>
+            <div className="mb-2"><span className="text-surface-500">$</span> <span className="select-all">docker pull ghcr.io/kivanccakmak/yaver.io/cli:latest</span></div>
+            <div className="mb-2 text-surface-500"># Run the agent with your auth token mounted:</div>
+            <div><span className="text-surface-500">$</span> <span className="select-all">docker run --rm -v ~/.yaver:/root/.yaver -p 18080:18080 kivanccakmak/yaver-cli serve</span></div>
+          </div>
+        </section>
+
         <section id="tarballs" className="mt-10 grid gap-5 md:grid-cols-2">
           {directArtifacts.map((artifact) => {
             const resolved = resolveArtifact(artifact.slug);

@@ -356,7 +356,8 @@ the resulting token back through the device-code flow.
 | **Tarball** | `curl -fsSL https://yaver.io/install.sh \| sh` — auto-detects arch, downloads the right tarball, installs to `~/.local/bin/yaver` |
 | **npm bootstrap** | `npm install -g yaver-cli` — fastest start; installs a `yaver` command and covers both `yaver serve` and `yaver push` |
 | **Nix** | `nix run github:kivanccakmak/yaver.io` |
-| **Docker** | `docker run --rm kivanccakmak/yaver-cli version` |
+| **Docker** (multi-arch: amd64, arm64) | `docker pull kivanccakmak/yaver-cli:latest` · also on `ghcr.io/kivanccakmak/yaver.io/cli:latest` |
+| **Raspberry Pi / ARM64 SBC** | `curl -fsSL https://yaver.io/install.sh \| sh` — then `yaver auth && yaver serve --install-systemd`. Pi 4 (4+ GB) runs `yaver serve` 24/7; hermesc arm64 compiles RN bundles natively. See [download page](https://yaver.io/download#raspi). |
 | **curl** | `curl -fsSL https://yaver.io/install.sh \| sh` |
 | **PowerShell** | `irm https://yaver.io/install.ps1 \| iex` |
 | **Binary** | Download from [releases](https://github.com/kivanccakmak/yaver.io/releases) |
