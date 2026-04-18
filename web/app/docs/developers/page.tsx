@@ -1697,7 +1697,7 @@ CLI Agent ◄──QUIC──────────────── Relay (:
                 User accounts. Fields: <InlineCode>email</InlineCode>,{" "}
                 <InlineCode>fullName</InlineCode>,{" "}
                 <InlineCode>provider</InlineCode> (google / apple / microsoft /
-                email), <InlineCode>providerId</InlineCode>,{" "}
+                github / gitlab / email), <InlineCode>providerId</InlineCode>,{" "}
                 <InlineCode>passwordHash</InlineCode> (email auth only),{" "}
                 <InlineCode>avatarUrl</InlineCode>.
               </p>

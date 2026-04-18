@@ -24,7 +24,7 @@ export async function clearKeychainIfFreshInstall(): Promise<void> {
   }
 }
 
-export type OAuthProvider = "google" | "microsoft" | "apple" | "github";
+export type OAuthProvider = "google" | "microsoft" | "apple" | "github" | "gitlab";
 
 export interface User {
   id: string;
@@ -557,7 +557,7 @@ export async function saveUserSettings(token: string, settings: Partial<UserSett
 // account merge. All endpoints require the user's session bearer token.
 
 export interface AuthIdentity {
-  provider: "google" | "microsoft" | "apple" | "github" | "email";
+  provider: "google" | "microsoft" | "apple" | "github" | "gitlab" | "email";
   email: string | null;
   isPrimary: boolean;
   createdAt?: number;

@@ -239,7 +239,7 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  const startLink = async (provider: "apple" | "github" | "google" | "microsoft") => {
+  const startLink = async (provider: "apple" | "github" | "google" | "microsoft" | "gitlab") => {
     if (!token) return;
     setLinkError(null);
     setLinkingProvider(provider);
@@ -278,7 +278,7 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
           Sign-In Methods
         </h3>
         <p className="mb-4 text-xs text-surface-500">
-          Link Apple, GitHub, Google, or Microsoft to this same Yaver account. Future sign-ins with any linked provider open the same machines and devices.
+          Link Apple, GitHub, GitLab, Google, or Microsoft to this same Yaver account. Future sign-ins with any linked provider open the same machines and devices.
         </p>
         <div className="mb-4 space-y-2">
           {identities.length === 0 ? (
@@ -320,7 +320,7 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
         {linkError && <p className="mb-3 text-xs text-red-400">{linkError}</p>}
         {unlinkError && <p className="mb-3 text-xs text-red-400">{unlinkError}</p>}
         <div className="grid gap-2 sm:grid-cols-4">
-          {(["apple", "github", "google", "microsoft"] as const).map((provider) => {
+          {(["apple", "github", "gitlab", "google", "microsoft"] as const).map((provider) => {
             const alreadyLinked = identities.some((identity) => identity.provider === provider);
             return (
               <button

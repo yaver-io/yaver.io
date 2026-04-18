@@ -49,7 +49,7 @@ func buildDeviceCodeRequest() deviceCodeRequest {
 func detectPreferredAuthProvider() string {
 	if raw := strings.ToLower(strings.TrimSpace(os.Getenv("YAVER_AUTH_PROVIDER"))); raw != "" {
 		switch raw {
-		case "apple", "github", "google", "microsoft":
+		case "apple", "github", "google", "microsoft", "gitlab":
 			return raw
 		}
 	}
@@ -63,7 +63,7 @@ func detectPreferredAuthProvider() string {
 	}
 	raw := strings.ToLower(strings.TrimSpace(info.Provider))
 	switch raw {
-	case "apple", "github", "google", "microsoft":
+	case "apple", "github", "google", "microsoft", "gitlab":
 		return raw
 	default:
 		return ""

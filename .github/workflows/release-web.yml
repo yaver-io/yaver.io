@@ -44,6 +44,8 @@ jobs:
       CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
       OAUTH_GITHUB_CLIENT_ID: ${{ secrets.OAUTH_GITHUB_CLIENT_ID }}
       OAUTH_GITHUB_CLIENT_SECRET: ${{ secrets.OAUTH_GITHUB_CLIENT_SECRET }}
+      OAUTH_GITLAB_CLIENT_ID: ${{ secrets.OAUTH_GITLAB_CLIENT_ID }}
+      OAUTH_GITLAB_CLIENT_SECRET: ${{ secrets.OAUTH_GITLAB_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -54,11 +56,17 @@ jobs:
         run: cd web && npm ci
 
       - name: Sync runtime OAuth secrets to Cloudflare
-        if: ${{ env.OAUTH_GITHUB_CLIENT_ID != '' && env.OAUTH_GITHUB_CLIENT_SECRET != '' }}
+        if: ${{ env.OAUTH_GITHUB_CLIENT_ID != '' || env.OAUTH_GITLAB_CLIENT_ID != '' }}
         run: |
           cd web
-          printf '%s' "$OAUTH_GITHUB_CLIENT_ID" | npx wrangler secret put OAUTH_GITHUB_CLIENT_ID
-          printf '%s' "$OAUTH_GITHUB_CLIENT_SECRET" | npx wrangler secret put OAUTH_GITHUB_CLIENT_SECRET
+          if [ -n "$OAUTH_GITHUB_CLIENT_ID" ] && [ -n "$OAUTH_GITHUB_CLIENT_SECRET" ]; then
+            printf '%s' "$OAUTH_GITHUB_CLIENT_ID" | npx wrangler secret put OAUTH_GITHUB_CLIENT_ID
+            printf '%s' "$OAUTH_GITHUB_CLIENT_SECRET" | npx wrangler secret put OAUTH_GITHUB_CLIENT_SECRET
+          fi
+          if [ -n "$OAUTH_GITLAB_CLIENT_ID" ] && [ -n "$OAUTH_GITLAB_CLIENT_SECRET" ]; then
+            printf '%s' "$OAUTH_GITLAB_CLIENT_ID" | npx wrangler secret put OAUTH_GITLAB_CLIENT_ID
+            printf '%s' "$OAUTH_GITLAB_CLIENT_SECRET" | npx wrangler secret put OAUTH_GITLAB_CLIENT_SECRET
+          fi
 
       - name: Check size constraint
         run: |

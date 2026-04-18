@@ -242,6 +242,20 @@ export default function LoginScreen() {
               { backgroundColor: c.bgCard, borderColor: c.border },
               pressed && styles.buttonPressed,
             ]}
+            onPress={() => handleOAuth("gitlab")}
+          >
+            <View style={styles.buttonContent}>
+              <FontAwesome name="gitlab" size={16} color={c.textPrimary} style={styles.buttonIcon} />
+              <Text style={[styles.buttonTextCentered, { color: c.textPrimary }]}>Continue with GitLab</Text>
+            </View>
+          </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [
+              styles.button,
+              { backgroundColor: c.bgCard, borderColor: c.border },
+              pressed && styles.buttonPressed,
+            ]}
             onPress={() => handleOAuth("microsoft")}
           >
             <View style={styles.buttonContent}>
@@ -249,6 +263,7 @@ export default function LoginScreen() {
               <Text style={[styles.buttonTextCentered, { color: c.textPrimary }]}>Continue with Microsoft</Text>
             </View>
           </Pressable>
+
 
           {/* Continue with Email — collapsed button or expanded form */}
           {!showEmailForm ? (

@@ -12,7 +12,13 @@ import {
 } from "./email";
 import { base32Decode, verifyTOTP } from "./totp";
 
-type OAuthProvider = "google" | "microsoft" | "apple" | "github" | "email";
+type OAuthProvider =
+  | "google"
+  | "microsoft"
+  | "apple"
+  | "github"
+  | "gitlab"
+  | "email";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -490,7 +496,7 @@ export async function validateSessionInternal(
     userId: string;
     email: string;
     fullName: string;
-    provider: "google" | "microsoft" | "apple" | "github" | "email";
+    provider: "google" | "microsoft" | "apple" | "github" | "gitlab" | "email";
     providerId: string;
     passwordHash?: string;
     avatarUrl?: string;
@@ -526,7 +532,14 @@ export const createOrUpdateUser = mutation({
   args: {
     email: v.string(),
     fullName: v.string(),
-    provider: v.union(v.literal("google"), v.literal("microsoft"), v.literal("apple"), v.literal("github"), v.literal("email")),
+    provider: v.union(
+      v.literal("google"),
+      v.literal("microsoft"),
+      v.literal("apple"),
+      v.literal("github"),
+      v.literal("gitlab"),
+      v.literal("email"),
+    ),
     providerId: v.string(),
     avatarUrl: v.optional(v.string()),
   },
@@ -605,7 +618,13 @@ export const listAuthIdentities = query({
 export const createOAuthLinkIntent = mutation({
   args: {
     tokenHash: v.string(),
-    provider: v.union(v.literal("google"), v.literal("microsoft"), v.literal("apple"), v.literal("github")),
+    provider: v.union(
+      v.literal("google"),
+      v.literal("microsoft"),
+      v.literal("apple"),
+      v.literal("github"),
+      v.literal("gitlab"),
+    ),
     client: v.optional(v.string()),
     returnTo: v.optional(v.string()),
   },
@@ -629,7 +648,13 @@ export const createOAuthLinkIntent = mutation({
 export const completeOAuthLink = mutation({
   args: {
     linkToken: v.string(),
-    provider: v.union(v.literal("google"), v.literal("microsoft"), v.literal("apple"), v.literal("github")),
+    provider: v.union(
+      v.literal("google"),
+      v.literal("microsoft"),
+      v.literal("apple"),
+      v.literal("github"),
+      v.literal("gitlab"),
+    ),
     providerId: v.string(),
     email: v.string(),
     fullName: v.string(),
@@ -696,7 +721,14 @@ export const completeOAuthLink = mutation({
 export const unlinkAuthIdentity = mutation({
   args: {
     tokenHash: v.string(),
-    provider: v.union(v.literal("google"), v.literal("microsoft"), v.literal("apple"), v.literal("github"), v.literal("email")),
+    provider: v.union(
+      v.literal("google"),
+      v.literal("microsoft"),
+      v.literal("apple"),
+      v.literal("github"),
+      v.literal("gitlab"),
+      v.literal("email"),
+    ),
     totpCode: v.optional(v.string()),
   },
   handler: async (ctx, args) => {

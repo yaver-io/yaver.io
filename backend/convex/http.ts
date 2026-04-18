@@ -492,14 +492,14 @@ http.route({
     const tokenHash = await sha256Hex(authHeader.slice(7));
     const url = new URL(request.url);
     const provider = url.pathname.replace(/^.*\/auth\/oauth-link\//, "").trim();
-    if (!provider || !["google", "microsoft", "apple", "github", "email"].includes(provider)) {
+    if (!provider || !["google", "microsoft", "apple", "github", "gitlab", "email"].includes(provider)) {
       return errorResponse("unknown provider", 400);
     }
     const body = await request.json().catch(() => ({}));
     try {
       const result = await ctx.runMutation(api.auth.unlinkAuthIdentity, {
         tokenHash,
-        provider: provider as "google" | "microsoft" | "apple" | "github" | "email",
+        provider: provider as "google" | "microsoft" | "apple" | "github" | "gitlab" | "email",
         totpCode: typeof body?.totpCode === "string" ? body.totpCode : undefined,
       });
       if (!result.ok) {

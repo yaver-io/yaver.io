@@ -1,6 +1,11 @@
 import crypto from "crypto";
 
-export type OAuthProvider = "google" | "microsoft" | "apple" | "github";
+export type OAuthProvider =
+  | "google"
+  | "microsoft"
+  | "apple"
+  | "github"
+  | "gitlab";
 
 type ProviderConfig = {
   authUrl: string;
@@ -58,6 +63,15 @@ function getProviderConfig(provider: OAuthProvider): ProviderConfig {
         clientId: process.env.OAUTH_GITHUB_CLIENT_ID || "",
         clientSecret: process.env.OAUTH_GITHUB_CLIENT_SECRET || "",
         scope: "read:user user:email",
+      };
+    case "gitlab":
+      return {
+        authUrl: "https://gitlab.com/oauth/authorize",
+        tokenUrl: "https://gitlab.com/oauth/token",
+        userInfoUrl: "https://gitlab.com/oauth/userinfo",
+        clientId: process.env.OAUTH_GITLAB_CLIENT_ID || "",
+        clientSecret: process.env.OAUTH_GITLAB_CLIENT_SECRET || "",
+        scope: "openid profile email",
       };
     default:
       throw new Error(`Unknown OAuth provider: ${provider}`);
@@ -193,8 +207,8 @@ export async function getUserInfo(
   }
 
   const config = getProviderConfig(provider);
-
   const res = await fetch(config.userInfoUrl, {
+    method: "GET",
     headers: {
       Authorization: `Bearer ${tokens.access_token}`,
       Accept: "application/json",
@@ -247,6 +261,16 @@ export async function getUserInfo(
       providerId: String(data.id),
       avatarUrl: data.avatar_url,
       username: data.login,
+    };
+  }
+
+  if (provider === "gitlab") {
+    return {
+      email: data.email,
+      name: data.name || data.nickname || data.preferred_username,
+      providerId: String(data.sub),
+      avatarUrl: data.picture,
+      username: data.preferred_username || data.nickname,
     };
   }
 

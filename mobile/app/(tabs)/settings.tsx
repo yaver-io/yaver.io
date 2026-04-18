@@ -1,4 +1,5 @@
 import Constants from "expo-constants";
+import { Ionicons, FontAwesome } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -212,6 +213,61 @@ export default function SettingsScreen() {
   const [newTunnelLabel, setNewTunnelLabel] = useState("");
   const [testingTunnelId, setTestingTunnelId] = useState<string | null>(null);
   const [tunnelTestResults, setTunnelTestResults] = useState<Record<string, { ok: boolean; ms?: number; error?: string }>>({});
+
+  const providerBadge = (provider: AuthIdentity["provider"] | OAuthProvider, size: "sm" | "md" = "sm") => {
+    const iconSize = size === "sm" ? 14 : 16;
+    const circle = {
+      width: size === "sm" ? 24 : 28,
+      height: size === "sm" ? 24 : 28,
+      borderRadius: 999,
+      alignItems: "center" as const,
+      justifyContent: "center" as const,
+      borderWidth: 1,
+      borderColor: c.border,
+      backgroundColor: c.bgCardElevated,
+    };
+
+    switch (provider) {
+      case "apple":
+        return (
+          <View style={circle}>
+            <Ionicons name="logo-apple" size={iconSize} color={c.textPrimary} />
+          </View>
+        );
+      case "github":
+        return (
+          <View style={circle}>
+            <Ionicons name="logo-github" size={iconSize} color={c.textPrimary} />
+          </View>
+        );
+      case "google":
+        return (
+          <View style={circle}>
+            <Ionicons name="logo-google" size={iconSize - 1} color={c.textPrimary} />
+          </View>
+        );
+      case "microsoft":
+        return (
+          <View style={circle}>
+            <FontAwesome name="windows" size={iconSize - 1} color={c.textPrimary} />
+          </View>
+        );
+      case "gitlab":
+        return (
+          <View style={[circle, { backgroundColor: "#2a160d", borderColor: "#5b3219" }]}>
+            <Text style={{ color: "#ff9a5a", fontSize: size === "sm" ? 10 : 11, fontWeight: "700" }}>GL</Text>
+          </View>
+        );
+      default:
+        return (
+          <View style={circle}>
+            <Text style={{ color: c.textPrimary, fontSize: size === "sm" ? 10 : 11, fontWeight: "700", textTransform: "uppercase" }}>
+              {provider.slice(0, 1)}
+            </Text>
+          </View>
+        );
+    }
+  };
 
   // User-scoped storage keys
   const RELAYS_KEY = customRelaysKey(user?.id);
@@ -1226,7 +1282,7 @@ export default function SettingsScreen() {
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Sign-In Methods</Text>
           <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, padding: 14 }]}>
             <Text style={{ color: c.textMuted, fontSize: 12, lineHeight: 18 }}>
-              Link Apple, GitHub, Google, or Microsoft to this same Yaver account. Future sign-ins with any linked provider open the same machines and devices.
+              Link Apple, GitHub, GitLab, Google, or Microsoft to this same Yaver account. Future sign-ins with any linked provider open the same machines and devices.
             </Text>
             {authError && (
               <Text style={{ color: c.error, fontSize: 12, marginTop: 10 }}>{authError}</Text>
@@ -1247,13 +1303,16 @@ export default function SettingsScreen() {
                         paddingVertical: 10,
                       }}
                     >
-                      <View style={{ flex: 1, marginRight: 10 }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", flex: 1, marginRight: 10, gap: 10 }}>
+                        {providerBadge(identity.provider, "sm")}
+                        <View style={{ flex: 1 }}>
                         <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600", textTransform: "capitalize" }}>
                           {identity.provider}
                         </Text>
                         <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 2 }} numberOfLines={1}>
                           {identity.email || "No email reported"}
                         </Text>
+                        </View>
                       </View>
                       {identity.isPrimary ? (
                         <View style={{ borderWidth: 1, borderColor: c.success, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, marginRight: 6 }}>
@@ -1282,7 +1341,7 @@ export default function SettingsScreen() {
               </View>
             )}
             <View style={{ marginTop: 14, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-              {(["apple", "github", "google", "microsoft"] as const).map((provider) => {
+              {(["apple", "github", "gitlab", "google", "microsoft"] as const).map((provider) => {
                 const already = identities.some((i) => i.provider === provider);
                 const disabled = linkingProvider !== null || already;
                 return (
@@ -1298,10 +1357,14 @@ export default function SettingsScreen() {
                       paddingVertical: 11,
                       paddingHorizontal: 12,
                       alignItems: "center",
+                      justifyContent: "center",
+                      flexDirection: "row",
+                      gap: 8,
                       opacity: disabled ? 0.45 : 1,
                       backgroundColor: c.bgCardElevated,
                     }}
                   >
+                    {providerBadge(provider, "sm")}
                     <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600", textTransform: "capitalize" }}>
                       {already ? `${provider} linked` : linkingProvider === provider ? "Opening…" : `Connect ${provider}`}
                     </Text>

@@ -21,7 +21,7 @@ function AuthContent() {
   const [formError, setFormError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const handleOAuth = (provider: "google" | "microsoft" | "apple" | "github") => {
+  const handleOAuth = (provider: "google" | "microsoft" | "apple" | "github" | "gitlab") => {
     const qs = new URLSearchParams({ client });
     if (returnUrl) {
       qs.set("return", returnUrl);
@@ -171,6 +171,14 @@ function AuthContent() {
           </button>
 
           <button
+            onClick={() => handleOAuth("gitlab")}
+            className="flex w-full items-center justify-center gap-3 rounded-lg border border-surface-700 bg-surface-900 px-4 py-3 text-sm font-medium text-surface-200 transition-colors hover:border-surface-600 hover:text-surface-50"
+          >
+            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-orange-500/15 text-[10px] font-semibold text-orange-300">GL</span>
+            Continue with GitLab
+          </button>
+
+          <button
             onClick={() => handleOAuth("google")}
             className="flex w-full items-center justify-center gap-3 rounded-lg border border-surface-700 bg-surface-900 px-4 py-3 text-sm font-medium text-surface-200 transition-colors hover:border-surface-600 hover:text-surface-50"
           >
@@ -195,6 +203,7 @@ function AuthContent() {
             </svg>
             Continue with Microsoft
           </button>
+
         </div>
 
         {/* Divider */}

@@ -188,9 +188,9 @@ func authLinkStart(ctx context.Context, provider string) (AuthLinkStartResult, e
 		provider = "microsoft"
 	}
 	switch provider {
-	case "apple", "github", "google", "microsoft":
+	case "apple", "github", "google", "microsoft", "gitlab":
 	default:
-		return AuthLinkStartResult{}, fmt.Errorf("provider must be apple | github | google | microsoft, got %q", provider)
+		return AuthLinkStartResult{}, fmt.Errorf("provider must be apple | github | gitlab | google | microsoft, got %q", provider)
 	}
 	convexURL, token, err := loadAuthedConfig()
 	if err != nil {

@@ -301,8 +301,8 @@ yaver auth                 # opens browser automatically
 yaver auth --headless      # prints a URL + short code you approve from your phone
 # `yaver auth` starts the agent automatically if needed
 #
-# Supported sign-in providers (all 8 linkable to the same account):
-#   Google · Apple · Microsoft/O365 · GitHub · GitLab · Discord · Slack · email/password
+# Supported sign-in providers (all 6 linkable to the same account):
+#   Google · Apple · Microsoft/O365 · GitHub · GitLab · email/password
 # See https://yaver.io/download#headless-auth for the full flow.
 
 # Adopt a project (one-time, ~3 min) — caches stack/layout/conventions into init.md
@@ -327,7 +327,7 @@ yaver stream autodev:my-project-autodev
 You don't need a browser on the headless machine. Pick one:
 
 ```bash
-# Option A — fresh OAuth via QR (Apple / Google / Microsoft)
+# Option A — fresh OAuth via QR (Apple / GitHub / GitLab / Google / Microsoft)
 yaver auth --headless
 # → prints a QR code pointing at yaver.io/auth/device
 # → scan it with your phone camera, sign in with whatever provider,
@@ -342,8 +342,9 @@ yaver auth send <PAIR-CODE> <target-url-from-the-qr>
 # Or scan the QR from the Yaver mobile app → More → Pair device.
 ```
 
-Both paths work the same for Apple, Google, and Microsoft — the web
-sign-in page at `yaver.io/auth/device` accepts all three and hands
+Both paths work the same for Apple, GitHub, GitLab, Google, and
+Microsoft — the web sign-in page at `yaver.io/auth/device` accepts all
+five and hands
 the resulting token back through the device-code flow.
 
 ### All Installation Methods

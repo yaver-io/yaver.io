@@ -11,7 +11,13 @@ import {
   sessionExpiresAtMs,
 } from "@/lib/session";
 
-const VALID_PROVIDERS = new Set<OAuthProvider>(["google", "microsoft", "apple", "github"]);
+const VALID_PROVIDERS = new Set<OAuthProvider>([
+  "google",
+  "microsoft",
+  "apple",
+  "github",
+  "gitlab",
+]);
 
 function extractDeviceCode(returnTo?: string): string | null {
   if (!returnTo) return null;

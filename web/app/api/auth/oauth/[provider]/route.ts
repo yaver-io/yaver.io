@@ -7,7 +7,13 @@ import {
   sanitizeReturnTo,
 } from "@/lib/oauth";
 
-const VALID_PROVIDERS = new Set<OAuthProvider>(["google", "microsoft", "apple", "github"]);
+const VALID_PROVIDERS = new Set<OAuthProvider>([
+  "google",
+  "microsoft",
+  "apple",
+  "github",
+  "gitlab",
+]);
 
 export async function GET(
   request: Request,
