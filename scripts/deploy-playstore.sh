@@ -10,11 +10,17 @@ NEW_VERSION_CODE=$((CURRENT_VERSION_CODE + 1))
 sed -i '' "s/versionCode $CURRENT_VERSION_CODE/versionCode $NEW_VERSION_CODE/" "$GRADLE_FILE"
 echo "versionCode $CURRENT_VERSION_CODE -> $NEW_VERSION_CODE"
 
-# Clean and build release AAB
-# Build worklets prefab first — reanimated CMake configure needs it,
-# but `clean` deletes it and Gradle doesn't re-order the configure step.
+# Build release AAB.
+# We deliberately do NOT `gradlew clean` here. A clean wipes every
+# react-native-<lib>/android/build/generated/source/codegen/jni/
+# directory, but the autolinking-generated CMakeLists.txt still
+# references all of them at configure time — so the next bundleRelease
+# blows up with "add_subdirectory given source ... which is not an
+# existing directory" before any codegen task gets a chance to run.
+# Letting Gradle do an incremental build keeps the JNI dirs around
+# and avoids the chicken-and-egg.
+# Build worklets prefab first — reanimated CMake configure depends on it.
 echo "Building release AAB..."
-./gradlew clean
 ./gradlew :react-native-worklets:prefabReleasePackage
 ./gradlew bundleRelease
 

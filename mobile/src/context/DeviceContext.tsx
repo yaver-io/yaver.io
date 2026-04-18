@@ -210,18 +210,22 @@ function mergeDeviceEntries(existing: Device, incoming: Device): Device {
 
 // pickActiveOverStaleNeedsAuth returns whichever of the two device
 // records should "win" when they share an alias key (os + hostname)
-// but have differing hwid/publicKey. If one is stale (>24h old) and
-// flagged needsAuth while the other is authenticated and seen
-// recently, return the live one. Otherwise null = keep both visible.
+// but have differing hwid/publicKey. The strong signal "this is a
+// leftover registration, not a second physical machine" is
+// `needsAuth + offline` paired with `authenticated + online` on the
+// other side — that pattern only happens when the agent re-paired
+// (or was wiped + reinstalled) and the previous Convex row never
+// got cleaned up. Time-since-last-seen turned out to be a bad
+// secondary check because Convex back-dates `lastHeartbeat` from
+// the first sync, so a 1-hour-old leftover still showed up as a
+// duplicate. Hide it without the staleness gate.
 function pickActiveOverStaleNeedsAuth(a: Device, b: Device): Device | null {
-  const STALE_MS = 24 * 60 * 60 * 1000;
-  const now = Date.now();
-  const aStale = !!a.needsAuth && a.lastSeen > 0 && now - a.lastSeen > STALE_MS;
-  const bStale = !!b.needsAuth && b.lastSeen > 0 && now - b.lastSeen > STALE_MS;
-  const aLive = !a.needsAuth && (a.online || (now - (a.lastSeen || 0)) < STALE_MS);
-  const bLive = !b.needsAuth && (b.online || (now - (b.lastSeen || 0)) < STALE_MS);
-  if (aStale && bLive) return b;
-  if (bStale && aLive) return a;
+  const aDead = !!a.needsAuth && !a.online;
+  const bDead = !!b.needsAuth && !b.online;
+  const aLive = !a.needsAuth && a.online;
+  const bLive = !b.needsAuth && b.online;
+  if (aDead && bLive) return b;
+  if (bDead && aLive) return a;
   return null;
 }
 
