@@ -978,13 +978,11 @@ export default function HomePage() {
                   <div className="terminal-dot bg-[#28c840]" />
                 </div>
                 <div className="terminal-body space-y-1 text-[12px]">
-                  <div className="text-surface-500"># From your phone or yaver.io:</div>
-                  <div className="text-surface-500"># Tap [+ New Project]</div>
-                  <div className="text-surface-500"># Pick [This device], [Your Dev Machine], or [Yaver Cloud]</div>
+                  <div className="text-surface-500"># From phone or yaver.io: tap [+ New Project]</div>
+                  <div className="text-surface-500"># Pick [This device], [Dev Machine], or [Cloud]</div>
                   <div className="my-1 h-px bg-surface-800/60" />
-                  <div className="text-surface-500"># Then later:</div>
-                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver phone push my-app --to http://your-machine-or-cloud</span></div>
-                  <div className="text-[11px] text-green-400/80">{"\u2192 Same project promoted without changing backend shape"}</div>
+                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver phone push my-app --to http://your-machine</span></div>
+                  <div className="text-[11px] text-green-400/80">{"\u2192 Promoted without changing backend shape"}</div>
                 </div>
               </div>
               <p className="mt-3 text-[11px] text-surface-500">
