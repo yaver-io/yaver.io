@@ -2538,6 +2538,15 @@ func runConfigSet(key, value string) {
 			}
 			workDir, _ := os.Getwd()
 			if err := installAutoStart(exePath, workDir); err != nil {
+				if isWSL() {
+					fmt.Println("WSL detected.")
+					fmt.Println("Yaver does not install a native auto-start service inside WSL.")
+					fmt.Println("Use one of these instead:")
+					fmt.Println("  - start `yaver serve` from your shell profile or tmux session inside WSL")
+					fmt.Println("  - start WSL + `yaver serve` from Windows startup / Task Scheduler")
+					fmt.Println("For the supported always-on path, use native Linux or macOS.")
+					return
+				}
 				fmt.Fprintf(os.Stderr, "Error installing auto-start: %v\n", err)
 				os.Exit(1)
 			}

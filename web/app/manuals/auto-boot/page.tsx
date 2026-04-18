@@ -24,6 +24,11 @@ export default function AutoBootManual() {
           Yaver as a system service, OAuth that survives reboots, auto-updates,
           and project discovery.
         </p>
+        <div className="mb-12 rounded-lg border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-100">
+          This guide is for native macOS, native Linux, and Windows. WSL is supported for Yaver
+          development flows and Hermes reload, but not as the primary always-on auto-boot target:
+          Yaver does not install a native systemd auto-start service inside WSL.
+        </div>
 
         {/* Why */}
         <section className="mb-12">
@@ -557,7 +562,7 @@ WantedBy=default.target`}
           <p className="mt-4 text-sm text-surface-400">
             Combined with BIOS auto-power-on, your machine becomes a permanent AI development
             server that auto-updates, auto-discovers your projects, and is always reachable from
-            your phone. Your committed dev companion, always in your pocket.
+            your phone. For that always-on role, prefer native macOS or Linux over WSL.
           </p>
         </div>
 

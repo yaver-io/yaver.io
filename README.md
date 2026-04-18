@@ -359,7 +359,20 @@ Download the desktop app with full GUI from the [download page](https://yaver.io
 
 ## Always-Up Mode (Boots Without Auth)
 
-`yaver serve` is designed to start and stay reachable even on a brand-new install with no token. The HTTP server comes up in **bootstrap mode** the moment you run it for the first time, the agent registers itself with the OS auto-start system (LaunchAgent on macOS, systemd user unit on Linux, scheduled task on Windows), and the next reboot brings the box back automatically — still in bootstrap mode if no one has paired it yet.
+`yaver serve` is designed to start and stay reachable even on a brand-new install with no token. The HTTP server comes up in **bootstrap mode** the moment you run it for the first time, and on the primary always-on targets it also registers itself with the OS auto-start system.
+
+Primary always-on targets:
+
+- **macOS** via LaunchAgent
+- **Linux** via systemd user service + linger
+- **Windows** via Scheduled Task
+
+WSL support is different:
+
+- WSL is supported for the React Native / Hermes daily loop and headless auth
+- WSL is **not** the same as native Linux for reboot persistence
+- Yaver does **not** install a systemd auto-start service inside WSL
+- if you want WSL to come back after reboot, use Windows startup / Task Scheduler or your own WSL shell bootstrap
 
 ```bash
 # Brand-new install. No `yaver auth` needed yet.
@@ -402,9 +415,10 @@ The first `yaver serve` writes the OS-native auto-start descriptor:
 |----|---------------------|
 | **macOS** | `~/Library/LaunchAgents/io.yaver.agent.plist` (RunAtLoad + KeepAlive). Loaded automatically on next login. |
 | **Linux** | `~/.config/systemd/user/yaver.service` + `loginctl enable-linger` so the unit runs without an interactive login. |
+| **WSL** | No native Yaver auto-start service is installed. Use Windows startup / Task Scheduler or launch `yaver serve` from your own WSL bootstrap. |
 | **Windows** | A scheduled task that fires on user login. |
 
-After the first install you can reboot the machine and the agent comes back automatically — in bootstrap mode if no one has paired it yet, in normal mode if it already has a token. Either way, the phone can reach it without you ever opening a terminal again.
+After the first install you can reboot the machine and the agent comes back automatically on macOS, native Linux, and Windows — in bootstrap mode if no one has paired it yet, in normal mode if it already has a token. On WSL, keep the expectation narrower: the daily dev flow is supported, but always-on reboot recovery depends on Windows-side startup wiring.
 
 ## Visual Feedback Loop
 
@@ -929,10 +943,18 @@ If your code lives in WSL and you want real iPhone reload, the daily loop is:
 5. Tap `Open in Yaver`.
 6. Let Yaver build Metro + Hermes on the WSL host and load the bundle inside the phone app.
 
+Important boundary:
+
+- WSL is supported for development and phone testing
+- WSL is not the primary always-on deployment target for Yaver itself
+- if you want the machine to survive power loss and come back without touching a terminal, prefer native Linux or macOS
+- if you stay on WSL, use Windows-side startup / Task Scheduler or your own shell bootstrap to bring `yaver serve` back
+
 The important rule is:
 
 - **WSL iPhone reload = Hermes bundle into Yaver mobile**
 - **WSL iPhone reload != `xcodebuild`**
+- **WSL reboot persistence != native Linux systemd support**
 
 Command-first version:
 

@@ -256,6 +256,13 @@ export default function DevelopersPage() {
             agent workflow and the RN push-to-device flow. Native package-manager installs of the Go binary
             still exist for developers who prefer brew/apt/system packages.
           </Prose>
+          <Prose>
+            <strong className="text-surface-200">Platform support boundary:</strong>{" "}
+            native Linux and macOS are the primary always-on agent targets. WSL is supported for
+            headless auth, MCP, and the React Native Hermes loop into the Yaver mobile app, but it
+            does not currently get the same native auto-start and reboot-persistence guarantees as a
+            real Linux or macOS host.
+          </Prose>
         </section>
 
         {/* ─── Push to Device ─── */}

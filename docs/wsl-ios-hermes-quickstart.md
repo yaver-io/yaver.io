@@ -15,12 +15,15 @@ The rule is simple:
 - real iPhone testing through the Yaver mobile app
 - Hermes bundle reload from WSL, Linux, or a remote host
 - remote-agent workflows over LAN, relay, or Tailscale
+- headless device-code auth from phone or laptop browser
 
 ## What This Does Not Support
 
 - native iOS builds from WSL
 - App Store signing from WSL
 - arbitrary native modules that are not already present in the Yaver mobile container
+- native Yaver auto-start via systemd inside WSL
+- the same reboot persistence guarantees as native Linux/macOS
 
 ## Fast Path
 
@@ -44,7 +47,13 @@ Then authenticate and start the agent:
 
 ```bash
 yaver auth
-yaver serve
+# `yaver auth` starts the agent automatically if needed
+```
+
+If you are on a remote or SSH-only WSL session:
+
+```bash
+yaver auth --headless
 ```
 
 If you want to force the iPhone path to stay on Hermes bundle mode:
@@ -54,6 +63,24 @@ yaver mcp call set_ios_install_method '{"method":"bundle"}'
 ```
 
 The default `auto` mode already resolves to bundle on WSL.
+
+## WSL Support Boundary
+
+Treat WSL as a supported development host, not as the primary always-on deployment target for Yaver itself.
+
+What works well:
+
+- edit code in WSL
+- run `yaver`
+- authenticate from your phone or browser
+- build Metro + Hermes on WSL
+- test on iPhone through the Yaver mobile app
+
+What is different from native Linux:
+
+- Yaver does not install a native systemd auto-start service inside WSL
+- after a Windows reboot or power loss, you need Windows-side startup wiring or your own WSL bootstrap to bring `yaver serve` back
+- if you want the strongest "box comes back by itself and the phone can re-auth it" behavior, use native Linux or macOS
 
 ## Open The Project On iPhone
 
@@ -84,6 +111,7 @@ This is the correct daily loop for projects like `sfmg` when they are standard E
 - If the phone says source-only or needs build, tap `Compile Hermes`.
 - The right button is `Open in Yaver`.
 - The right mental model is `WSL -> Hermes bundle -> Yaver mobile app`.
+- The wrong expectation is `WSL behaves exactly like native Linux for system service auto-start`.
 
 ## Contributor to TestFlight Workflow
 

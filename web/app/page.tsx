@@ -935,7 +935,7 @@ export default function HomePage() {
                 Prefer native package managers? Homebrew, Linux `apt`, AppImage, `.deb`, `.rpm`, tarball, and install script paths are still available.
               </p>
               <p className="mt-2 text-[11px] text-surface-500">
-                WSL is supported through the same Linux/Hermes bundle path when the phone uses the Yaver mobile app as the container.
+                WSL is supported for the Linux/Hermes phone-testing path when the phone uses the Yaver mobile app as the container. For always-on reboot persistence, native Linux or macOS remain the primary targets.
               </p>
             </div>
 
