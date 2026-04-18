@@ -1,0 +1,37 @@
+# Smithery.ai configuration for Yaver's MCP server.
+#
+# Yaver's MCP server is a thin stdio wrapper over a locally-running
+# yaver daemon that already holds the user's OAuth token. The wrapper
+# itself is zero-config — all secrets live on the user's own machine,
+# not in Smithery.
+#
+# When Smithery installs this server into a client, the client will
+# invoke `npx -y yaver-cli@latest`, which drops into the `yaver mcp`
+# stdio entry point.
+#
+# First-time flow for a new user on a fresh machine:
+#   1. `npm install -g yaver-cli` (one time)
+#   2. `yaver auth` — opens browser or prints device-code URL
+#      depending on environment; the resumable-flow docs live at
+#      https://yaver.io/llms.txt
+#   3. Smithery-installed client can now use the MCP tools.
+runtime: node
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      YAVER_HEADLESS:
+        type: string
+        title: "Force headless device-code auth"
+        description: "Set to '1' to force device-code OAuth (useful on WSL / SSH / sandboxed environments where no browser is available)."
+        enum:
+          - "0"
+          - "1"
+        default: "0"
+  commandFunction: |-
+    (config) => ({
+      command: 'npx',
+      args: ['-y', 'yaver-cli@latest'],
+      env: Object.fromEntries(Object.entries(config || {}).filter(([_, v]) => v != null && v !== ''))
+    })
