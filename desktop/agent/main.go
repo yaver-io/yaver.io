@@ -31,7 +31,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.95.5"
+const version = "1.95.6"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -5136,12 +5136,39 @@ func runUninstall() {
 		}
 	}
 
+	if removed, note := uninstallPackageWrapper(); note != "" {
+		fmt.Println(note)
+	} else if removed {
+		fmt.Println("  Removed npm-installed yaver command.")
+	}
+
 	fmt.Println()
 	fmt.Println("Yaver has been uninstalled.")
 	fmt.Println()
 	fmt.Println("To remove the binary:")
 	fmt.Println("  brew uninstall yaver          # if installed via Homebrew")
+	fmt.Println("  npm uninstall -g yaver-cli    # if installed via npm")
 	fmt.Printf("  rm %s   # if installed manually\n", os.Args[0])
+}
+
+func uninstallPackageWrapper() (bool, string) {
+	npm, err := osexec.LookPath("npm")
+	if err != nil {
+		return false, ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := osexec.CommandContext(ctx, npm, "uninstall", "-g", "yaver-cli")
+	cmd.Env = augmentEnv(nil)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return false, fmt.Sprintf("  Warning: could not remove npm wrapper automatically: %s", msg)
+	}
+	return true, ""
 }
 
 // ---------------------------------------------------------------------------
