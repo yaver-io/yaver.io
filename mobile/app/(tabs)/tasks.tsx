@@ -344,6 +344,7 @@ export default function TasksScreen() {
   const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, selectDevice, disconnect, isLoadingDevices, refreshDevices } = useDevice();
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>(getLogEntries());
+  const [isRefreshingDevices, setIsRefreshingDevices] = useState(false);
 
   // Subscribe to log changes
   useEffect(() => {
@@ -1432,63 +1433,61 @@ export default function TasksScreen() {
               </View>
             ) : devices.length === 0 ? (
               <View style={s.emptyList}>
-                <View style={[s.discoverCard, { backgroundColor: c.bgCard, borderColor: c.border }]}>
-                  <Text style={[s.discoverIcon, { color: c.textMuted }]}>{"\u2318"}</Text>
-                  <Text style={[s.emptyTitle, { color: c.textPrimary }]}>Set Up Your Dev Machine</Text>
-                  <Text style={[s.emptySubtitle, { color: c.textSecondary, marginTop: 8 }]}>
-                    Install the Yaver agent on your computer to start sending tasks from your phone.
-                  </Text>
-                  <View
-                    style={{
-                      width: "100%",
-                      marginTop: 16,
-                      padding: 14,
-                      borderRadius: 12,
-                      borderWidth: 1,
-                      borderColor: c.border,
-                      backgroundColor: c.bg,
-                    }}
-                  >
-                    <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600" }}>
-                      Mobile sandbox still works without a device
-                    </Text>
-                    <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 6, lineHeight: 18 }}>
-                      Start a local SQLite-backed project from this phone now. Git is optional, and if you use git Yaver only supports a monorepo workspace.
-                    </Text>
-                    <Pressable
-                      style={[s.discoverBtn, { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, marginTop: 14, alignSelf: "stretch" }]}
-                      onPress={() => taskRouter.navigate("/phone-projects" as any)}
-                    >
-                      <Text style={[s.discoverBtnText, { color: c.textPrimary }]}>Open Mobile Sandbox</Text>
-                    </Pressable>
-                  </View>
-                  <View style={s.discoverSteps}>
-                    <View style={s.discoverStep}>
-                      <View style={[s.discoverStepDot, { backgroundColor: c.accent }]}>
-                        <Text style={s.discoverStepNum}>1</Text>
-                      </View>
-                      <View style={s.discoverStepContent}>
-                        <Text style={[s.discoverStepTitle, { color: c.textPrimary }]}>Install</Text>
-                        <Text style={[s.discoverStepDesc, { color: c.textMuted }]}>brew install kivanccakmak/yaver/yaver</Text>
-                      </View>
+                <Text style={[s.discoverIcon, { color: c.textMuted }]}>{"\u2318"}</Text>
+                <Text style={[s.emptyTitle, { color: c.textPrimary }]}>Start Coding</Text>
+                <Text style={[s.emptySubtitle, { color: c.textSecondary, marginTop: 8, marginBottom: 20 }]}>
+                  Build from this phone, or pair a dev machine.
+                </Text>
+
+                <Pressable
+                  style={[s.discoverPrimaryBtn, { backgroundColor: c.accent }]}
+                  onPress={() => taskRouter.navigate("/phone-projects" as any)}
+                >
+                  <Text style={s.discoverBtnText}>Open Mobile Sandbox</Text>
+                </Pressable>
+                <Text style={[s.discoverHelper, { color: c.textMuted }]}>
+                  Local SQLite-backed project. No machine required. Git is optional; if used, Yaver expects a monorepo workspace.
+                </Text>
+
+                <View style={[s.discoverDivider, { backgroundColor: c.border }]} />
+                <Text style={[s.discoverSectionLabel, { color: c.textMuted }]}>Or pair your computer</Text>
+
+                <View style={s.discoverSteps}>
+                  <View style={s.discoverStep}>
+                    <View style={[s.discoverStepDot, { backgroundColor: c.accent }]}>
+                      <Text style={s.discoverStepNum}>1</Text>
                     </View>
-                    <View style={s.discoverStep}>
-                      <View style={[s.discoverStepDot, { backgroundColor: c.accent }]}>
-                        <Text style={s.discoverStepNum}>2</Text>
-                      </View>
-                      <View style={s.discoverStepContent}>
-                        <Text style={[s.discoverStepTitle, { color: c.textPrimary }]}>Sign in & start</Text>
-                        <Text style={[s.discoverStepDesc, { color: c.textMuted }]}>yaver auth</Text>
-                      </View>
+                    <View style={s.discoverStepContent}>
+                      <Text style={[s.discoverStepTitle, { color: c.textPrimary }]}>Install</Text>
+                      <Text style={[s.discoverStepDesc, { color: c.textMuted }]}>brew install kivanccakmak/yaver/yaver</Text>
                     </View>
                   </View>
-                  <Pressable
-                    style={[s.discoverBtn, { backgroundColor: c.accent }]}
-                    onPress={() => refreshDevices()}
-                  >
-                    <Text style={s.discoverBtnText}>Refresh Devices</Text>
-                  </Pressable>
+                  <View style={s.discoverStep}>
+                    <View style={[s.discoverStepDot, { backgroundColor: c.accent }]}>
+                      <Text style={s.discoverStepNum}>2</Text>
+                    </View>
+                    <View style={s.discoverStepContent}>
+                      <Text style={[s.discoverStepTitle, { color: c.textPrimary }]}>Sign in &amp; start</Text>
+                      <Text style={[s.discoverStepDesc, { color: c.textMuted }]}>yaver auth</Text>
+                    </View>
+                  </View>
                 </View>
+
+                <Pressable
+                  style={[s.discoverSecondaryBtn, { borderColor: c.border, opacity: isRefreshingDevices ? 0.6 : 1 }]}
+                  onPress={async () => {
+                    if (isRefreshingDevices) return;
+                    setIsRefreshingDevices(true);
+                    try { await refreshDevices(); } finally { setIsRefreshingDevices(false); }
+                  }}
+                  disabled={isRefreshingDevices}
+                >
+                  {isRefreshingDevices ? (
+                    <ActivityIndicator size="small" color={c.textPrimary} />
+                  ) : (
+                    <Text style={[s.discoverBtnText, { color: c.textPrimary }]}>Refresh Devices</Text>
+                  )}
+                </Pressable>
               </View>
             ) : userDisconnected && devices.length >= 1 ? (
               <View style={s.emptyList}>
@@ -2268,16 +2267,19 @@ const s = StyleSheet.create({
   errorActions: { flexDirection: "row", marginTop: 20 },
 
   // Discover card (no devices)
-  discoverCard: { width: "100%", borderRadius: 16, borderWidth: 1, padding: 24, alignItems: "center" },
   discoverIcon: { fontSize: 40, marginBottom: 12 },
-  discoverSteps: { width: "100%", marginTop: 20, gap: 14 },
+  discoverPrimaryBtn: { width: "100%", paddingVertical: 14, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  discoverSecondaryBtn: { width: "100%", marginTop: 20, paddingVertical: 12, borderRadius: 10, borderWidth: 1, alignItems: "center", justifyContent: "center", minHeight: 44 },
+  discoverHelper: { fontSize: 12, lineHeight: 18, marginTop: 12, textAlign: "center", paddingHorizontal: 8 },
+  discoverDivider: { height: 1, width: "100%", marginTop: 28, marginBottom: 14, opacity: 0.5 },
+  discoverSectionLabel: { fontSize: 11, fontWeight: "600", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 },
+  discoverSteps: { width: "100%", marginTop: 12, gap: 14 },
   discoverStep: { flexDirection: "row", alignItems: "center", gap: 12 },
   discoverStepDot: { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center" },
   discoverStepNum: { color: "#fff", fontSize: 13, fontWeight: "700" },
   discoverStepContent: { flex: 1 },
   discoverStepTitle: { fontSize: 14, fontWeight: "600" },
   discoverStepDesc: { fontSize: 12, fontFamily: "monospace", marginTop: 2 },
-  discoverBtn: { marginTop: 24, paddingHorizontal: 28, paddingVertical: 12, borderRadius: 10 },
   discoverBtnText: { color: "#ffffff", fontWeight: "600", fontSize: 15 },
 
   // Reconnect card (disconnected with prior session)
