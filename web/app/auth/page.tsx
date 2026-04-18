@@ -10,6 +10,8 @@ function AuthContent() {
   const error = params.get("error");
   const client = params.get("client") || "web";
   const returnUrl = params.get("return");
+  const isDeviceAuth = !!returnUrl && returnUrl.startsWith("/auth/device");
+  const pendingDeviceCode = isDeviceAuth ? new URLSearchParams(returnUrl.split("?")[1] || "").get("code") : null;
 
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [fullName, setFullName] = useState("");
@@ -114,8 +116,30 @@ function AuthContent() {
           <span className="text-2xl font-bold tracking-tight text-surface-50">
             yaver<span className="font-normal text-surface-500">.io</span>
           </span>
+          {isDeviceAuth && (
+            <div className="mx-auto mt-6 max-w-sm rounded-2xl border border-indigo-500/20 bg-indigo-500/10 px-4 py-4 text-left">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-indigo-300">
+                Remote Device Authorization
+              </div>
+              <p className="mt-2 text-sm text-surface-200">
+                You are signing in to authorize a waiting Yaver machine. After login, Yaver returns to the device page and completes the remote sign-in automatically.
+              </p>
+              {pendingDeviceCode && (
+                <div className="mt-4 rounded-xl border border-surface-700 bg-surface-950/70 px-4 py-3 text-center">
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Device Code</div>
+                  <div className="mt-1 font-mono text-xl font-bold tracking-[0.24em] text-surface-50">
+                    {pendingDeviceCode}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           <p className="mt-3 text-sm text-surface-500">
-            {mode === "signin" ? "Sign in to get started" : "Create an account with email"}
+            {mode === "signin"
+              ? isDeviceAuth
+                ? "Sign in to continue authorizing the remote machine"
+                : "Sign in to get started"
+              : "Create an account with email"}
           </p>
         </div>
 
