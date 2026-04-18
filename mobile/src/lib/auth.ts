@@ -469,6 +469,7 @@ export const LOCAL_KEYS = {
   openAiApiKey: `${LOCAL_KEY_PREFIX}openai_api_key`,
   glmApiKey: `${LOCAL_KEY_PREFIX}glm_api_key`,
   anthropicApiKey: `${LOCAL_KEY_PREFIX}anthropic_api_key`,
+  figmaAccessToken: `${LOCAL_KEY_PREFIX}figma_access_token`,
   mobileCodingProvider: `${LOCAL_KEY_PREFIX}mobile_coding_provider`,
   relayPassword: `${LOCAL_KEY_PREFIX}relay_password`,
   relayUrl: `${LOCAL_KEY_PREFIX}relay_url`,

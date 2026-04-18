@@ -2837,6 +2837,20 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/designmode" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u25A7"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Design Mode</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Import Figma and send to vibing</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+          </Pressable>
+        )}
+
         {/* Solo Stack — Forms + Newsletter + Job queue in one place */}
         {connected && (
           <Pressable

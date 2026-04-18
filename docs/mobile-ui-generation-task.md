@@ -263,6 +263,24 @@ The generated output now includes:
 - a more useful Expo starter screen that reflects palette, nav,
   languages, auth stubs, and design intake metadata
 
+## Implemented in follow-up pass: Design Mode
+
+The mobile app now also has a first real Design Mode surface:
+
+- hidden route + entry from More and New Project
+- live Figma import using a file/frame URL and PAT
+- local secure storage for the Figma access token
+- imported design summary with preview image, layers, colors, and text
+- optional AI-generated implementation brief using the phone's stored
+  OpenAI-compatible key
+- one-tap handoff of the imported design + brief to the paired dev
+  machine as a coding task
+
+This is intentionally the first real integration slice, not the final
+design-tool story. It proves that Yaver mobile can act as a bridge from
+design artifact to implementation task, instead of only collecting text
+prompts.
+
 ## Files Changed
 
 - `desktop/agent/project_wizard.go`

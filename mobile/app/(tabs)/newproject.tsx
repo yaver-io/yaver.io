@@ -436,11 +436,11 @@ export default function NewProjectScreen() {
         </ScrollView>
       ) : (
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 36 }} keyboardShouldPersistTaps="handled">
-          <View style={[styles.hero, { backgroundColor: c.bgCard, borderColor: c.border }]}>
-            <Text style={[styles.heroEyebrow, { color: c.accent }]}>
-              {QUESTION_SECTIONS[question.id] ?? "Builder"} · Step {Math.min(currentIndex + 1, progressTotal)} / {progressTotal}
-            </Text>
-            <Text style={[styles.heroTitle, { color: c.textPrimary }]}>Phone-first monorepo setup</Text>
+        <View style={[styles.hero, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+          <Text style={[styles.heroEyebrow, { color: c.accent }]}>
+            {QUESTION_SECTIONS[question.id] ?? "Builder"} · Step {Math.min(currentIndex + 1, progressTotal)} / {progressTotal}
+          </Text>
+          <Text style={[styles.heroTitle, { color: c.textPrimary }]}>Phone-first monorepo setup</Text>
             <Text style={[styles.heroBody, { color: c.textMuted }]}>
               Capture template, palette, languages, navigation, references, and auth now. Anything optional can be skipped or defaulted.
             </Text>
@@ -456,6 +456,14 @@ export default function NewProjectScreen() {
                 ))}
               </View>
             ) : null}
+            <Pressable
+              onPress={() => router.navigate("/(tabs)/designmode" as any)}
+              style={[styles.designModeLink, { borderColor: c.border, backgroundColor: c.bg }]}
+            >
+              <Text style={{ color: c.textPrimary, fontWeight: "700", fontSize: 13 }}>
+                Need a visual starting point? Open Design Mode to import Figma first.
+              </Text>
+            </Pressable>
           </View>
 
           {error ? <Text style={{ color: c.error, marginBottom: 12 }}>{error}</Text> : null}
@@ -526,6 +534,7 @@ const styles = StyleSheet.create({
   summaryRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 14 },
   summaryPill: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7 },
   summaryPillText: { fontSize: 12, fontWeight: "700" },
+  designModeLink: { marginTop: 14, borderWidth: 1, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 12 },
   panel: {
     borderWidth: 1,
     borderRadius: 24,

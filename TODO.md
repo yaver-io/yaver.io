@@ -81,6 +81,7 @@
 
 ## Phase 8: Polish & Launch
 - [x] Mobile-first project builder/UI generation intake refresh (see `docs/mobile-ui-generation-task.md`)
+- [x] Mobile Design Mode v1: Figma import + AI brief + remote-dev handoff
 - [ ] End-to-end encryption audit
 - [ ] P2P session caching and sync
 - [ ] Error handling and offline mode

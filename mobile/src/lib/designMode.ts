@@ -1,0 +1,279 @@
+export interface FigmaImportResult {
+  sourceUrl: string;
+  fileKey: string;
+  nodeId?: string;
+  fileName: string;
+  nodeName: string;
+  nodeType: string;
+  pageName?: string;
+  previewUrl?: string;
+  colors: string[];
+  topLevelLayers: string[];
+  textSnippets: string[];
+  summary: string;
+}
+
+interface FigmaNode {
+  id?: string;
+  name?: string;
+  type?: string;
+  children?: FigmaNode[];
+  characters?: string;
+  fills?: Array<{ visible?: boolean; type?: string; color?: { r: number; g: number; b: number } }>;
+}
+
+function extractFileKey(url: string): string | null {
+  const match = url.match(/figma\.com\/(?:file|design|proto)\/([a-zA-Z0-9]+)/);
+  return match?.[1] ?? null;
+}
+
+function extractNodeId(url: string): string | null {
+  const match = url.match(/[?&]node-id=([^&#]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function hexFromColor(nodeColor?: { r: number; g: number; b: number } | null): string | null {
+  if (!nodeColor) return null;
+  const toHex = (value: number) =>
+    Math.max(0, Math.min(255, Math.round(value * 255)))
+      .toString(16)
+      .padStart(2, "0")
+      .toUpperCase();
+  return `#${toHex(nodeColor.r)}${toHex(nodeColor.g)}${toHex(nodeColor.b)}`;
+}
+
+function walkFigma(
+  node: FigmaNode | undefined,
+  depth: number,
+  layers: string[],
+  texts: string[],
+  colors: string[],
+) {
+  if (!node) return;
+  if (depth <= 1 && node.name) layers.push(node.name);
+  if (node.type === "TEXT" && typeof node.characters === "string" && node.characters.trim()) {
+    texts.push(node.characters.trim());
+  }
+  for (const fill of node.fills ?? []) {
+    if (fill?.visible === false || fill?.type !== "SOLID") continue;
+    const hex = hexFromColor(fill.color);
+    if (hex) colors.push(hex);
+  }
+  for (const child of node.children ?? []) {
+    walkFigma(child, depth + 1, layers, texts, colors);
+  }
+}
+
+function uniqueCompact(items: string[], limit: number): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items) {
+    const normalized = item.trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function summarizeImport(data: {
+  fileName: string;
+  nodeName: string;
+  nodeType: string;
+  pageName?: string;
+  topLevelLayers: string[];
+  textSnippets: string[];
+  colors: string[];
+}) {
+  const parts = [
+    `Imported Figma node "${data.nodeName}" (${data.nodeType}) from file "${data.fileName}".`,
+  ];
+  if (data.pageName) parts.push(`Page: ${data.pageName}.`);
+  if (data.topLevelLayers.length) parts.push(`Top layers: ${data.topLevelLayers.join(", ")}.`);
+  if (data.textSnippets.length) parts.push(`Visible text: ${data.textSnippets.join(" | ")}.`);
+  if (data.colors.length) parts.push(`Palette clues: ${data.colors.join(", ")}.`);
+  return parts.join(" ");
+}
+
+export async function importFigmaReference(url: string, token: string): Promise<FigmaImportResult> {
+  const sourceUrl = url.trim();
+  const apiToken = token.trim();
+  if (!sourceUrl) throw new Error("Figma URL is required");
+  if (!apiToken) throw new Error("Figma access token is required");
+
+  const fileKey = extractFileKey(sourceUrl);
+  if (!fileKey) throw new Error("Could not extract Figma file key from URL");
+  const nodeId = extractNodeId(sourceUrl) ?? undefined;
+
+  const headers = {
+    "X-Figma-Token": apiToken,
+  };
+
+  const fileRes = await fetch(`https://api.figma.com/v1/files/${fileKey}`, { headers });
+  const fileJson = await fileRes.json().catch(() => ({}));
+  if (!fileRes.ok) {
+    throw new Error(fileJson?.err || `Figma file fetch failed (${fileRes.status})`);
+  }
+
+  let targetNode: FigmaNode | undefined;
+  let pageName = "";
+
+  if (nodeId) {
+    const nodesRes = await fetch(
+      `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${encodeURIComponent(nodeId)}&depth=4`,
+      { headers },
+    );
+    const nodesJson = await nodesRes.json().catch(() => ({}));
+    if (!nodesRes.ok) {
+      throw new Error(nodesJson?.err || `Figma node fetch failed (${nodesRes.status})`);
+    }
+    targetNode = nodesJson?.nodes?.[nodeId]?.document as FigmaNode | undefined;
+  } else {
+    const document = fileJson?.document as FigmaNode | undefined;
+    pageName = document?.children?.[0]?.name ?? "";
+    targetNode = document?.children?.[0] ?? document;
+  }
+
+  if (!targetNode) throw new Error("Could not load the selected Figma node");
+
+  if (!pageName) {
+    const root = fileJson?.document as FigmaNode | undefined;
+    for (const page of root?.children ?? []) {
+      const found = (function find(node?: FigmaNode): boolean {
+        if (!node) return false;
+        if (node.id === nodeId) return true;
+        return (node.children ?? []).some((child) => find(child));
+      })(page);
+      if (found) {
+        pageName = page.name ?? "";
+        break;
+      }
+    }
+  }
+
+  const layerNames: string[] = [];
+  const textSnippets: string[] = [];
+  const colors: string[] = [];
+  walkFigma(targetNode, 0, layerNames, textSnippets, colors);
+
+  let previewUrl: string | undefined;
+  const previewNodeId = targetNode.id || nodeId;
+  if (previewNodeId) {
+    const imageRes = await fetch(
+      `https://api.figma.com/v1/images/${fileKey}?ids=${encodeURIComponent(previewNodeId)}&format=png&scale=2`,
+      { headers },
+    );
+    const imageJson = await imageRes.json().catch(() => ({}));
+    if (imageRes.ok) {
+      previewUrl = imageJson?.images?.[previewNodeId];
+    }
+  }
+
+  const compactLayers = uniqueCompact(layerNames, 8);
+  const compactTexts = uniqueCompact(textSnippets, 6).map((item) =>
+    item.length > 80 ? `${item.slice(0, 77)}...` : item,
+  );
+  const compactColors = uniqueCompact(colors, 8);
+
+  const result: FigmaImportResult = {
+    sourceUrl,
+    fileKey,
+    nodeId: previewNodeId,
+    fileName: String(fileJson?.name || "Untitled Figma file"),
+    nodeName: targetNode.name || "Unnamed node",
+    nodeType: targetNode.type || "UNKNOWN",
+    pageName: pageName || undefined,
+    previewUrl,
+    colors: compactColors,
+    topLevelLayers: compactLayers,
+    textSnippets: compactTexts,
+    summary: summarizeImport({
+      fileName: String(fileJson?.name || "Untitled Figma file"),
+      nodeName: targetNode.name || "Unnamed node",
+      nodeType: targetNode.type || "UNKNOWN",
+      pageName: pageName || undefined,
+      topLevelLayers: compactLayers,
+      textSnippets: compactTexts,
+      colors: compactColors,
+    }),
+  };
+  return result;
+}
+
+export async function generateDesignModeBrief(args: {
+  apiKey: string;
+  imported: FigmaImportResult;
+  productGoal: string;
+  targetSurface: "mobile-ui" | "web-ui" | "full-stack";
+}): Promise<string> {
+  const key = args.apiKey.trim();
+  if (!key) throw new Error("OpenAI/Codex-compatible API key is required");
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-4.1-mini",
+      temperature: 0.3,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a product design implementation planner. Write a compact but actionable UI build brief for a coding agent. Focus on information architecture, components, states, spacing, hierarchy, palette, copy, and implementation priorities. Be concrete and implementation-ready.",
+        },
+        {
+          role: "user",
+          content: [
+            `Target surface: ${args.targetSurface}.`,
+            `Product goal: ${args.productGoal.trim() || "Turn the imported design into a working UI implementation."}`,
+            `Figma summary: ${args.imported.summary}`,
+            `Top-level layers: ${args.imported.topLevelLayers.join(", ") || "none"}`,
+            `Text snippets: ${args.imported.textSnippets.join(" | ") || "none"}`,
+            `Palette clues: ${args.imported.colors.join(", ") || "none"}`,
+            "Return markdown with sections: Goal, Information Architecture, Components, Visual System, States, and Build Order.",
+          ].join("\n"),
+        },
+      ],
+    }),
+  });
+  const text = await res.text().catch(() => "");
+  if (!res.ok) throw new Error(text || `OpenAI HTTP ${res.status}`);
+  const json = JSON.parse(text) as {
+    choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;
+  };
+  const content = json.choices?.[0]?.message?.content;
+  if (typeof content === "string") return content.trim();
+  if (Array.isArray(content)) {
+    return content
+      .map((item) => (typeof item?.text === "string" ? item.text : ""))
+      .join("")
+      .trim();
+  }
+  throw new Error("The AI provider returned an empty brief");
+}
+
+export function buildRemoteDesignPrompt(args: {
+  imported: FigmaImportResult;
+  brief?: string;
+  targetSurface: "mobile-ui" | "web-ui" | "full-stack";
+  productGoal: string;
+}) {
+  const parts = [
+    `Implement a ${args.targetSurface} based on the imported Figma reference.`,
+    `Goal: ${args.productGoal.trim() || "Turn the design into working UI."}`,
+    `Figma URL: ${args.imported.sourceUrl}`,
+    `File: ${args.imported.fileName}`,
+    `Selected node: ${args.imported.nodeName} (${args.imported.nodeType})`,
+    args.imported.pageName ? `Page: ${args.imported.pageName}` : "",
+    args.imported.topLevelLayers.length ? `Top-level layers: ${args.imported.topLevelLayers.join(", ")}` : "",
+    args.imported.textSnippets.length ? `Visible text snippets: ${args.imported.textSnippets.join(" | ")}` : "",
+    args.imported.colors.length ? `Palette clues: ${args.imported.colors.join(", ")}` : "",
+    "Inspect the current project first, then implement the closest high-quality version of this design in the existing stack.",
+    "Preserve established repo patterns where they exist. If the design conflicts with the current structure, choose the smallest coherent implementation that gets the core flow working.",
+    args.brief ? `Implementation brief:\n${args.brief}` : "",
+  ];
+  return parts.filter(Boolean).join("\n\n");
+}

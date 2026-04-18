@@ -210,6 +210,7 @@ export default function TabLayout() {
       <Tabs.Screen name="healthmon" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="files" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="newproject" options={{ href: null, headerShown: false }} />
+      <Tabs.Screen name="designmode" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="gitproviders" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="guests" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="solostack" options={{ href: null, headerShown: false }} />
