@@ -1,5 +1,5 @@
 import Constants from "expo-constants";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -905,6 +905,32 @@ export default function SettingsScreen() {
   useEffect(() => {
     refreshIdentities();
   }, [user?.id]);
+
+  // Cold-launch OAuth-link success. When the user taps a provider
+  // button in the web UI, the callback redirects to
+  // `yaver://oauth-callback?linkedProvider=…&linked=1`. That opens
+  // the app and routes through `app/oauth-callback.tsx`, which
+  // forwards the user to this tab with linkedProvider as a query
+  // param. The in-place URL listener below only fires if Settings
+  // was already mounted, so this effect closes the gap for the
+  // cold-start case.
+  const linkedProviderParam = useLocalSearchParams().linkedProvider;
+  const handledLinkedProvider = useRef<string | null>(null);
+  useEffect(() => {
+    if (typeof linkedProviderParam !== "string" || !linkedProviderParam) return;
+    if (handledLinkedProvider.current === linkedProviderParam) return;
+    handledLinkedProvider.current = linkedProviderParam;
+    setLinkingProvider(null);
+    refreshIdentities();
+    Alert.alert("Linked", `${linkedProviderParam} added to this Yaver account.`);
+    // Clear the param so a navigation back here doesn't re-toast.
+    try {
+      router.setParams({ linkedProvider: "" });
+    } catch {
+      // best-effort; older expo-router versions may not support this
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedProviderParam]);
 
   // Refresh linked identities when the app returns to the foreground.
   // The OAuth link flow sends the user to Safari / Chrome — when they
