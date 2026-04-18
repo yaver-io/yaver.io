@@ -54,6 +54,62 @@ type linuxStep struct {
 // integrations is the catalogue. Adding a new tool = adding an entry.
 var integrations = []installPlan{
 	{
+		name:        "git",
+		description: "Git — required for repo sync, worktrees, and nearly every Yaver coding loop",
+		macOS:       []string{"brew install git"},
+		linux: []linuxStep{
+			{"apt-get", "sudo apt-get install -y git"},
+			{"dnf", "sudo dnf install -y git"},
+			{"pacman", "sudo pacman -S --noconfirm git"},
+		},
+	},
+	{
+		name:        "gh",
+		description: "GitHub CLI — useful for repo auth, PR flows, and headless developer setup",
+		macOS:       []string{"brew install gh"},
+		linux: []linuxStep{
+			{"apt-get", "sudo apt-get install -y gh"},
+			{"dnf", "sudo dnf install -y gh"},
+			{"pacman", "sudo pacman -S --noconfirm github-cli"},
+		},
+	},
+	{
+		name:        "uv",
+		description: "uv — fast Python/environment manager for modern dev boxes",
+		macOS:       []string{"brew install uv"},
+		linux: []linuxStep{
+			{"curl", "curl -LsSf https://astral.sh/uv/install.sh | sh"},
+		},
+	},
+	{
+		name:        "docker",
+		description: "Docker engine / Docker Desktop for containerized dev, isolated job runners, and compose workflows",
+		macOS:       []string{"brew install --cask docker"},
+		linux: []linuxStep{
+			{"apt-get", "sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2"},
+			{"dnf", "sudo dnf install -y docker docker-compose-plugin"},
+			{"pacman", "sudo pacman -S --noconfirm docker docker-compose"},
+		},
+	},
+	{
+		name:        "tailscale",
+		description: "Tailscale — private remote access to the dev node without exposing SSH or ports publicly",
+		macOS:       []string{"brew install --cask tailscale"},
+		linux: []linuxStep{
+			{"curl", "curl -fsSL https://tailscale.com/install.sh | sh"},
+		},
+	},
+	{
+		name:        "cloudflared",
+		description: "Cloudflare Tunnel client — optional public tunnel for dashboards or webhooks",
+		macOS:       []string{"brew install cloudflared"},
+		linux: []linuxStep{
+			{"curl", "curl -fsSL https://pkg.cloudflare.com/install.sh | sudo bash && sudo apt-get install -y cloudflared"},
+			{"dnf", "sudo dnf install -y cloudflared"},
+			{"pacman", "sudo pacman -S --noconfirm cloudflared"},
+		},
+	},
+	{
 		name:        "chrome",
 		description: "Google Chrome — required for `yaver test run` web target",
 		macOS:       []string{"brew install --cask google-chrome"},
@@ -165,6 +221,67 @@ var integrations = []installPlan{
 		},
 	},
 	{
+		name:        "pre-commit",
+		description: "pre-commit — repo quality gates and fast local hook automation",
+		macOS:       []string{"python3 -m pip install --user --upgrade pre-commit"},
+		linux: []linuxStep{
+			{"pip3", "pip3 install --user --upgrade pre-commit"},
+			{"pipx", "pipx install pre-commit"},
+		},
+	},
+	{
+		name:        "pytest",
+		description: "pytest — default Python unit test runner for TDD loops",
+		macOS:       []string{"python3 -m pip install --user --upgrade pytest"},
+		linux: []linuxStep{
+			{"pip3", "pip3 install --user --upgrade pytest"},
+			{"pipx", "pipx install pytest"},
+		},
+	},
+	{
+		name:        "ruff",
+		description: "ruff — fast Python lint + format tool for low-cost repair loops",
+		macOS:       []string{"python3 -m pip install --user --upgrade ruff"},
+		linux: []linuxStep{
+			{"pip3", "pip3 install --user --upgrade ruff"},
+			{"pipx", "pipx install ruff"},
+		},
+	},
+	{
+		name:        "vitest",
+		description: "Vitest — default TypeScript/JavaScript unit test runner for headless app TDD",
+		macOS:       []string{"npm install -g vitest"},
+		linux: []linuxStep{
+			{"npm", "npm install -g vitest"},
+		},
+	},
+	{
+		name:        "eslint",
+		description: "ESLint — JavaScript and TypeScript linting support for auto-fix loops",
+		macOS:       []string{"npm install -g eslint"},
+		linux: []linuxStep{
+			{"npm", "npm install -g eslint"},
+		},
+	},
+	{
+		name:        "prettier",
+		description: "Prettier — formatter for JavaScript/TypeScript/web repos",
+		macOS:       []string{"npm install -g prettier"},
+		linux: []linuxStep{
+			{"npm", "npm install -g prettier"},
+		},
+	},
+	{
+		name:        "tdd",
+		description: "Core TDD / quality stack: pre-commit, pytest, ruff, vitest, eslint, prettier. Meta-target.",
+		runFunc:     runTDDInstall,
+	},
+	{
+		name:        "pi-dev-node",
+		description: "Raspberry Pi / ARM64 headless dev-node profile: base dev tools + mobile runtime + economic hybrid stack + TDD tooling. Meta-target.",
+		runFunc:     runPiDevNodeInstall,
+	},
+	{
 		name:        "tmux",
 		description: "tmux — required for the agent's task runner (probably already installed)",
 		macOS:       []string{"brew install tmux"},
@@ -256,6 +373,10 @@ func wdaIsLive() bool {
 }
 
 func checkInstalled(name string) string {
+	if compositeInstallSatisfied(name) {
+		return "✓"
+	}
+
 	// Special-case the agent-managed runtimes: they live under
 	// ~/.yaver/runtimes/<tool>/bin and are not on the system PATH for
 	// CLI users, so a plain LookPath would always say "—".
@@ -275,6 +396,12 @@ func checkInstalled(name string) string {
 	}
 
 	probe := map[string][]string{
+		"git":         {"git"},
+		"gh":          {"gh"},
+		"uv":          {"uv"},
+		"docker":      {"docker"},
+		"tailscale":   {"tailscale"},
+		"cloudflared": {"cloudflared"},
 		"chrome":      {"google-chrome", "google-chrome-stable", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"},
 		"chromium":    {"chromium", "chromium-browser", "/Applications/Chromium.app/Contents/MacOS/Chromium"},
 		"firefox":     {"firefox", "/Applications/Firefox.app/Contents/MacOS/firefox"},
@@ -284,6 +411,12 @@ func checkInstalled(name string) string {
 		"aider":       {"aider"},
 		"opencode":    {"opencode"},
 		"hybrid":      {"aider"}, // presence of aider is our cheapest proxy
+		"pre-commit":  {"pre-commit"},
+		"pytest":      {"pytest"},
+		"ruff":        {"ruff"},
+		"vitest":      {"vitest"},
+		"eslint":      {"eslint"},
+		"prettier":    {"prettier"},
 		"tmux":        {"tmux"},
 		"ffmpeg":      {"ffmpeg"},
 	}
@@ -299,6 +432,23 @@ func checkInstalled(name string) string {
 		}
 	}
 	return "—"
+}
+
+func compositeInstallSatisfied(name string) bool {
+	required := map[string][]string{
+		"tdd":         {"pre-commit", "pytest", "ruff", "vitest", "eslint", "prettier"},
+		"pi-dev-node": {"git", "gh", "uv", "docker", "mobile", "tmux", "ffmpeg", "ollama", "aider", "opencode", "tdd"},
+	}
+	targets, ok := required[name]
+	if !ok {
+		return false
+	}
+	for _, target := range targets {
+		if checkInstalled(target) != "✓" {
+			return false
+		}
+	}
+	return true
 }
 
 // runtimeNodeBinDir is a tiny convenience wrapper so install_cmd.go
@@ -461,4 +611,240 @@ func integrationsHelpText(name string) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprintf("Run `yaver install %s` to install %s.", plan.name, plan.description))
+}
+
+func runPiDevNodeInstall(ctx context.Context, progress func(string)) error {
+	planNames := []string{"git", "gh", "uv", "docker", "mobile", "tmux", "ffmpeg", "ollama", "aider", "opencode", "tdd"}
+	for _, name := range planNames {
+		plan, ok := metaInstallPlan(name)
+		if !ok {
+			return fmt.Errorf("missing install plan: %s", name)
+		}
+		if progress != nil {
+			progress("==> " + plan.name + " — " + plan.description)
+		}
+		if checkInstalled(plan.name) == "✓" {
+			if progress != nil {
+				progress("already installed, skipping")
+			}
+			continue
+		}
+		if err := runInstallPlan(ctx, plan, progress); err != nil {
+			return fmt.Errorf("%s: %w", plan.name, err)
+		}
+	}
+	if progress != nil {
+		progress("Pi dev-node base installed.")
+		progress("Optional next steps: `yaver install tailscale`, `yaver install cloudflared`, or `yaver install hybrid` if you want qwen2.5-coder:14b pulled immediately.")
+		progress("Recommended hardware: Raspberry Pi 5, 16 GB RAM, 256 GB storage, active cooling, Ethernet.")
+	}
+	return nil
+}
+
+func runTDDInstall(ctx context.Context, progress func(string)) error {
+	planNames := []string{"pre-commit", "pytest", "ruff", "vitest", "eslint", "prettier"}
+	for _, name := range planNames {
+		plan, ok := metaInstallPlan(name)
+		if !ok {
+			return fmt.Errorf("missing install plan: %s", name)
+		}
+		if progress != nil {
+			progress("==> " + plan.name + " — " + plan.description)
+		}
+		if checkInstalled(plan.name) == "✓" {
+			if progress != nil {
+				progress("already installed, skipping")
+			}
+			continue
+		}
+		if err := runInstallPlan(ctx, plan, progress); err != nil {
+			return fmt.Errorf("%s: %w", plan.name, err)
+		}
+	}
+	if progress != nil {
+		progress("TDD stack installed.")
+	}
+	return nil
+}
+
+func metaInstallPlan(name string) (installPlan, bool) {
+	switch name {
+	case "git":
+		return installPlan{
+			name:        "git",
+			description: "Git — required for repo sync, worktrees, and nearly every Yaver coding loop",
+			macOS:       []string{"brew install git"},
+			linux: []linuxStep{
+				{"apt-get", "sudo apt-get install -y git"},
+				{"dnf", "sudo dnf install -y git"},
+				{"pacman", "sudo pacman -S --noconfirm git"},
+			},
+		}, true
+	case "gh":
+		return installPlan{
+			name:        "gh",
+			description: "GitHub CLI — useful for repo auth, PR flows, and headless developer setup",
+			macOS:       []string{"brew install gh"},
+			linux: []linuxStep{
+				{"apt-get", "sudo apt-get install -y gh"},
+				{"dnf", "sudo dnf install -y gh"},
+				{"pacman", "sudo pacman -S --noconfirm github-cli"},
+			},
+		}, true
+	case "uv":
+		return installPlan{
+			name:        "uv",
+			description: "uv — fast Python/environment manager for modern dev boxes",
+			macOS:       []string{"brew install uv"},
+			linux: []linuxStep{
+				{"curl", "curl -LsSf https://astral.sh/uv/install.sh | sh"},
+			},
+		}, true
+	case "docker":
+		return installPlan{
+			name:        "docker",
+			description: "Docker engine / Docker Desktop for containerized dev, isolated job runners, and compose workflows",
+			macOS:       []string{"brew install --cask docker"},
+			linux: []linuxStep{
+				{"apt-get", "sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2"},
+				{"dnf", "sudo dnf install -y docker docker-compose-plugin"},
+				{"pacman", "sudo pacman -S --noconfirm docker docker-compose"},
+			},
+		}, true
+	case "mobile":
+		return installPlan{
+			name:        "mobile",
+			description: "Hermes bundle reload stack for React Native / Expo: Node LTS plus the embedded hermesc sanity check. Meta-target.",
+			runFunc: func(ctx context.Context, progress func(string)) error {
+				if _, err := installNodeRuntime(ctx, progress); err != nil {
+					return err
+				}
+				summary, err := embeddedHermescSummary()
+				if err != nil {
+					return err
+				}
+				if progress != nil {
+					progress("Embedded hermesc ready: " + summary)
+					progress("Hermes reload stack ready for Open in Yaver on Linux, WSL, or macOS.")
+				}
+				return nil
+			},
+		}, true
+	case "tmux":
+		return installPlan{
+			name:        "tmux",
+			description: "tmux — required for the agent's task runner (probably already installed)",
+			macOS:       []string{"brew install tmux"},
+			linux: []linuxStep{
+				{"apt-get", "sudo apt-get install -y tmux"},
+				{"dnf", "sudo dnf install -y tmux"},
+				{"pacman", "sudo pacman -S --noconfirm tmux"},
+			},
+		}, true
+	case "ffmpeg":
+		return installPlan{
+			name:        "ffmpeg",
+			description: "ffmpeg — required for the morning match-report screen recorder (run `yaver record`)",
+			macOS:       []string{"brew install ffmpeg"},
+			linux: []linuxStep{
+				{"apt-get", "sudo apt-get install -y ffmpeg"},
+				{"dnf", "sudo dnf install -y ffmpeg"},
+				{"pacman", "sudo pacman -S --noconfirm ffmpeg"},
+			},
+		}, true
+	case "ollama":
+		return installPlan{
+			name:        "ollama",
+			description: "Ollama — local LLM provider for $0 visual inspection (alternative to Mistral/OpenAI/Anthropic)",
+			macOS:       []string{"brew install ollama"},
+			linux: []linuxStep{
+				{"curl", "curl -fsSL https://ollama.com/install.sh | sh"},
+			},
+		}, true
+	case "aider":
+		return installPlan{
+			name:        "aider",
+			description: "Aider — file-editing AI CLI; pairs with Ollama/Qwen for the hybrid mode implementer",
+			macOS:       []string{"python3 -m pip install --user --upgrade aider-chat"},
+			linux: []linuxStep{
+				{"pip3", "pip3 install --user --upgrade aider-chat"},
+				{"pipx", "pipx install aider-chat"},
+			},
+		}, true
+	case "opencode":
+		return installPlan{
+			name:        "opencode",
+			description: "OpenCode — alternative terminal AI coding agent; usable as a hybrid planner or implementer",
+			macOS:       []string{"brew install opencode"},
+			linux: []linuxStep{
+				{"npm", "npm install -g opencode-ai"},
+				{"curl", "curl -fsSL https://opencode.ai/install | bash"},
+			},
+		}, true
+	case "tdd":
+		return installPlan{
+			name:        "tdd",
+			description: "Core TDD / quality stack: pre-commit, pytest, ruff, vitest, eslint, prettier. Meta-target.",
+			runFunc:     runTDDInstall,
+		}, true
+	case "pre-commit":
+		return installPlan{
+			name:        "pre-commit",
+			description: "pre-commit — repo quality gates and fast local hook automation",
+			macOS:       []string{"python3 -m pip install --user --upgrade pre-commit"},
+			linux: []linuxStep{
+				{"pip3", "pip3 install --user --upgrade pre-commit"},
+				{"pipx", "pipx install pre-commit"},
+			},
+		}, true
+	case "pytest":
+		return installPlan{
+			name:        "pytest",
+			description: "pytest — default Python unit test runner for TDD loops",
+			macOS:       []string{"python3 -m pip install --user --upgrade pytest"},
+			linux: []linuxStep{
+				{"pip3", "pip3 install --user --upgrade pytest"},
+				{"pipx", "pipx install pytest"},
+			},
+		}, true
+	case "ruff":
+		return installPlan{
+			name:        "ruff",
+			description: "ruff — fast Python lint + format tool for low-cost repair loops",
+			macOS:       []string{"python3 -m pip install --user --upgrade ruff"},
+			linux: []linuxStep{
+				{"pip3", "pip3 install --user --upgrade ruff"},
+				{"pipx", "pipx install ruff"},
+			},
+		}, true
+	case "vitest":
+		return installPlan{
+			name:        "vitest",
+			description: "Vitest — default TypeScript/JavaScript unit test runner for headless app TDD",
+			macOS:       []string{"npm install -g vitest"},
+			linux: []linuxStep{
+				{"npm", "npm install -g vitest"},
+			},
+		}, true
+	case "eslint":
+		return installPlan{
+			name:        "eslint",
+			description: "ESLint — JavaScript and TypeScript linting support for auto-fix loops",
+			macOS:       []string{"npm install -g eslint"},
+			linux: []linuxStep{
+				{"npm", "npm install -g eslint"},
+			},
+		}, true
+	case "prettier":
+		return installPlan{
+			name:        "prettier",
+			description: "Prettier — formatter for JavaScript/TypeScript/web repos",
+			macOS:       []string{"npm install -g prettier"},
+			linux: []linuxStep{
+				{"npm", "npm install -g prettier"},
+			},
+		}, true
+	default:
+		return installPlan{}, false
+	}
 }

@@ -170,6 +170,10 @@ export default function ContributingPage() {
                   page (Vercel)
                 </li>
                 <li>
+                  &bull; <InlineCode>pi-image/</InlineCode> &mdash; Raspberry Pi
+                  image overlay, first-boot config, and release assets
+                </li>
+                <li>
                   &bull; <InlineCode>versions.json</InlineCode> &mdash; Single
                   source of truth for all component versions
                 </li>
@@ -186,7 +190,8 @@ export default function ContributingPage() {
                 editing <InlineCode>versions.json</InlineCode>, run{" "}
                 <InlineCode>./scripts/sync-versions.sh</InlineCode> to propagate
                 to all downstream files (Go consts, app.json, Info.plist,
-                build.gradle, package.json).
+                build.gradle, package.json). The Pi image has its own version
+                key too: <InlineCode>piImage</InlineCode>.
               </p>
             </div>
           </div>

@@ -11,6 +11,12 @@ import {
 
 const directArtifacts = [
   {
+    title: "Raspberry Pi 5 image",
+    description: "Prebuilt ARM64 Yaver dev-node image for Raspberry Pi 5.",
+    slug: "raspi-image-arm64" as const,
+    installHint: "Flash yaver-pi5-devnode-arm64.img.xz with Raspberry Pi Imager or dd, boot, pair in Yaver, then finish setup from mobile.",
+  },
+  {
     title: "Linux x64 tarball",
     description: "Raw amd64 agent binary tarball for Linux hosts.",
     slug: "linux-tarball-amd64" as const,
@@ -313,6 +319,11 @@ export default async function DownloadPage() {
             React Native bundles natively (hermesc is arm64-capable) and serves them back to the
             Yaver mobile app — no Mac needed to iterate on JS.
           </p>
+          <p className="mt-3 text-sm leading-6 text-surface-400">
+            For the new headless dev-node path, the recommended target is a <code>Raspberry Pi 5</code> with
+            <code> 16 GB RAM</code> and <code>256 GB</code> storage. There is now a dedicated image artifact for that
+            setup, intended to pair into Yaver and act as an economic hybrid node.
+          </p>
           <p className="mt-3 text-xs text-surface-500">
             First Metro bundle on a Pi 4: ~30–60s. Hot reloads: under 2s. Use <code>yaver install node</code>
             once if Node isn&apos;t already on the Pi; the agent auto-installs a sudo-free LTS into <code>~/.yaver/runtimes/node</code>.
@@ -324,12 +335,31 @@ export default async function DownloadPage() {
             </Link>
             .
           </p>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <DownloadButton href={resolveArtifact("raspi-image-arm64").href} primary>
+              Download Pi 5 Image
+            </DownloadButton>
+            <DownloadButton href="/manuals/raspberry-pi">
+              Read the Pi manual
+            </DownloadButton>
+          </div>
           <div className="mt-5 rounded-xl bg-surface-950 p-4 font-mono text-[12px] text-surface-300">
             <div className="mb-2"><span className="text-surface-500">$</span> <span className="select-all">curl -fsSL https://yaver.io/install.sh | sh</span></div>
             <div className="mb-2 text-surface-500"># or direct tarball (arm64):</div>
             <div className="mb-2"><span className="text-surface-500">$</span> <span className="select-all">tar xzf yaver-*-linux-arm64.tar.gz && sudo mv yaver-linux-arm64 /usr/local/bin/yaver</span></div>
             <div className="mb-2"><span className="text-surface-500">$</span> <span className="select-all">yaver auth</span></div>
             <div><span className="text-surface-500">$</span> <span className="select-all">yaver serve --install-systemd  # survives reboots</span></div>
+          </div>
+          <div className="mt-5 rounded-xl border border-surface-800 bg-surface-950/60 p-4 text-sm text-surface-400">
+            <p className="font-semibold text-surface-100">Pi image artifact</p>
+            <p className="mt-2">
+              <code>{resolveArtifact("raspi-image-arm64").filename}</code>
+              {resolveArtifact("raspi-image-arm64").size > 0 ? ` · ${formatFileSize(resolveArtifact("raspi-image-arm64").size)}` : ""}
+              {resolveArtifact("raspi-image-arm64").version ? ` · v${resolveArtifact("raspi-image-arm64").version}` : ""}
+            </p>
+            <p className="mt-2 text-xs text-surface-500">
+              Stored through the same Convex-backed download pipeline as the other public artifacts.
+            </p>
           </div>
         </section>
 
@@ -415,7 +445,7 @@ export default async function DownloadPage() {
                 <div className="flex items-center justify-between gap-4">
                   <h2 className="text-lg font-semibold text-surface-50">{artifact.title}</h2>
                   <span className="rounded-full border border-surface-700 px-2.5 py-1 text-[11px] font-medium text-surface-400">
-                    {resolved.version ? `v${resolved.version}` : "tarball"}
+                    {resolved.version ? `v${resolved.version}` : artifact.slug === "raspi-image-arm64" ? "image" : "tarball"}
                   </span>
                 </div>
                 <p className="mt-3 text-sm leading-6 text-surface-400">{artifact.description}</p>

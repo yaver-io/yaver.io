@@ -1231,6 +1231,20 @@ return (
                     <p className="text-sm font-medium text-surface-100">{"\uD83C\uDFE0  Your home server"}</p>
                     <p className="mt-1 text-xs text-surface-400">Mac Mini, old laptop, Raspberry Pi. If it runs Docker, Yaver can deploy to it.</p>
                   </div>
+                  <div className="rounded-xl border border-emerald-800/60 bg-emerald-950/20 p-4">
+                    <p className="text-sm font-medium text-surface-100">{"\u{1F347}  Raspberry Pi 5 image"}</p>
+                    <p className="mt-1 text-xs text-surface-400">
+                      Flash the Yaver Pi 5 dev-node image, pair it from the mobile app, and use it as an always-on economic hybrid node.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                      <Link href="/download#raspi" className="rounded-lg border border-emerald-700/60 px-2.5 py-1 text-emerald-300 hover:bg-emerald-950/40">
+                        Download image
+                      </Link>
+                      <Link href="/blog/yaver-pi-image" className="rounded-lg border border-surface-700 px-2.5 py-1 text-surface-300 hover:bg-surface-800/60">
+                        Read release note
+                      </Link>
+                    </div>
+                  </div>
                 </div>
               </div>
 

@@ -11,6 +11,7 @@ export type DownloadEntry = {
 };
 
 export type DownloadSlug =
+  | "raspi-image-arm64"
   | "linux-appimage-amd64"
   | "linux-appimage-arm64"
   | "linux-deb-amd64"
@@ -27,6 +28,7 @@ export const DOWNLOAD_SLUGS: Record<
   DownloadSlug,
   { platform: DownloadEntry["platform"]; arch: string; format: string }
 > = {
+  "raspi-image-arm64": { platform: "linux", arch: "arm64", format: "image" },
   "linux-appimage-amd64": { platform: "linux", arch: "amd64", format: "appimage" },
   "linux-appimage-arm64": { platform: "linux", arch: "arm64", format: "appimage" },
   "linux-deb-amd64": { platform: "linux", arch: "amd64", format: "deb" },
@@ -64,6 +66,7 @@ export type DownloadFallback = {
 };
 
 export const VERIFIED_DOWNLOAD_SLUGS = new Set<DownloadSlug>([
+  "raspi-image-arm64",
   "linux-tarball-amd64",
   "linux-tarball-arm64",
   "macos-arm64",

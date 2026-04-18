@@ -1,0 +1,114 @@
+name: Release Pi Image
+
+on:
+  push:
+    tags:
+      - "pi-image/v*"
+
+concurrency:
+  group: release-pi-image
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: "1.26"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract and validate version
+        id: version
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/pi-image/v}"
+          JSON_VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('versions.json','utf8')).piImage)")
+          if [ "$TAG_VERSION" != "$JSON_VERSION" ]; then
+            echo "ERROR: Tag version ($TAG_VERSION) does not match versions.json ($JSON_VERSION)"
+            exit 1
+          fi
+          echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: validate
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Install image build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rsync xz-utils unzip util-linux mount cloud-guest-utils
+      - name: Build arm64 agent
+        run: cd desktop/agent && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o /tmp/yaver-linux-arm64 .
+      - name: Build Pi image
+        run: |
+          ./scripts/build-pi-image.sh \
+            --version "$VERSION" \
+            --yaver-binary /tmp/yaver-linux-arm64 \
+            --output-dir "$GITHUB_WORKSPACE/release"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pi-image-arm64
+          path: release/yaver-pi5-devnode-arm64.img.xz
+          retention-days: 7
+
+  release:
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: pi-image-*
+      - name: Prepare release
+        run: |
+          mkdir -p release
+          find artifacts -name "*.img.xz" -exec cp {} release/ \;
+          cd release
+          sha256sum * > checksums.txt
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "pi-image/v${VERSION}" \
+            --title "Yaver Pi Image v${VERSION}" \
+            --draft \
+            --generate-notes \
+            release/*
+
+  publish-download:
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          pattern: pi-image-*
+      - name: Flatten artifact layout
+        run: find release -name "*.img.xz" -exec cp {} release/ \;
+      - name: Upload Pi image to Convex downloads
+        if: ${{ env.CONVEX_SITE_URL != '' }}
+        run: |
+          cd backend && npm ci
+          DOWNLOADS_DIR=../release node ../scripts/upload-downloads.mjs

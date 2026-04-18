@@ -21,6 +21,7 @@ file_to_component() {
     relay/*) echo "relay" ;;
     web/*) echo "web" ;;
     backend/*) echo "backend" ;;
+    pi-image/*) echo "piImage" ;;
     *) echo "" ;;
   esac
 }

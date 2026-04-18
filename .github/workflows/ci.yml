@@ -21,6 +21,7 @@ jobs:
       installer: ${{ steps.resolve.outputs.installer }}
       mcp: ${{ steps.resolve.outputs.mcp }}
       sdk: ${{ steps.resolve.outputs.sdk }}
+      piImage: ${{ steps.resolve.outputs.piImage }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -44,6 +45,12 @@ jobs:
               - 'desktop/installer/**'
             sdk:
               - 'sdk/**'
+            piImage:
+              - 'pi-image/**'
+              - 'scripts/build-pi-image.sh'
+              - 'scripts/upload-downloads.mjs'
+              - 'desktop/agent/**'
+              - 'versions.json'
       # On workflow_dispatch we don't have a base ref to diff against, so run
       # every component unconditionally. On pull_request, forward the
       # paths-filter output as-is.
@@ -51,7 +58,7 @@ jobs:
         id: resolve
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            for name in cli relay mcp mobile web backend installer sdk; do
+            for name in cli relay mcp mobile web backend installer sdk piImage; do
               echo "$name=true" >> "$GITHUB_OUTPUT"
             done
           else
@@ -63,6 +70,7 @@ jobs:
             echo "backend=${{ steps.filter.outputs.backend }}" >> "$GITHUB_OUTPUT"
             echo "installer=${{ steps.filter.outputs.installer }}" >> "$GITHUB_OUTPUT"
             echo "sdk=${{ steps.filter.outputs.sdk }}" >> "$GITHUB_OUTPUT"
+            echo "piImage=${{ steps.filter.outputs.piImage }}" >> "$GITHUB_OUTPUT"
           fi
 
   version-check:
@@ -190,6 +198,22 @@ jobs:
           cache-dependency-path: sdk/feedback/react-native/package-lock.json
       - name: Test Feedback SDK (React Native)
         run: cd sdk/feedback/react-native && npm ci && npm test -- --passWithNoTests
+
+  pi-image-validate:
+    needs: changes
+    if: needs.changes.outputs.piImage == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+          cache-dependency-path: desktop/agent/go.sum
+      - name: Validate build script syntax
+        run: bash -n scripts/build-pi-image.sh
+      - name: Build arm64 agent for image injection
+        run: cd desktop/agent && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/yaver-linux-arm64 .
 
   # Deep agent E2E — builds agent, authenticates, tests every API surface
   agent-e2e:

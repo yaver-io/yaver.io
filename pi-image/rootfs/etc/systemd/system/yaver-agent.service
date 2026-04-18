@@ -1,0 +1,18 @@
+[Unit]
+Description=Yaver Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Environment=HOME=/root
+ExecStart=/usr/local/bin/yaver serve --multi-user --port 18080 --work-dir /var/lib/yaver/workspaces --debug
+Restart=always
+RestartSec=5
+WorkingDirectory=/var/lib/yaver
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

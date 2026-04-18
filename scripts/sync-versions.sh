@@ -22,6 +22,7 @@ RELAY_VERSION=$(read_version relay)
 WEB_VERSION=$(read_version web)
 INSTALLER_VERSION=$(read_version installer)
 BACKEND_VERSION=$(read_version backend)
+PI_IMAGE_VERSION=$(read_version piImage)
 
 changed=0
 update_file() {
@@ -37,7 +38,7 @@ update_file() {
 
 echo "Syncing versions from versions.json..."
 echo "  cli=$CLI_VERSION mobile=$MOBILE_VERSION relay=$RELAY_VERSION"
-echo "  web=$WEB_VERSION installer=$INSTALLER_VERSION backend=$BACKEND_VERSION"
+echo "  web=$WEB_VERSION installer=$INSTALLER_VERSION backend=$BACKEND_VERSION piImage=$PI_IMAGE_VERSION"
 echo ""
 
 # --- Desktop CLI (Go const) ---

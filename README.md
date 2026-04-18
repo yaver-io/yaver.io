@@ -363,7 +363,8 @@ the resulting token back through the device-code flow.
 | **npm bootstrap** | `npm install -g yaver-cli` — fastest start; installs a `yaver` command and covers both `yaver serve` and `yaver push` |
 | **Nix** | `nix run github:kivanccakmak/yaver.io` |
 | **Docker** (multi-arch: amd64, arm64) | `docker pull kivanccakmak/yaver-cli:latest` · also on `ghcr.io/kivanccakmak/yaver.io/cli:latest` |
-| **Raspberry Pi / ARM64 SBC** | `curl -fsSL https://yaver.io/install.sh \| sh` — then `yaver auth && yaver serve --install-systemd`. Pi 4 (4+ GB) runs `yaver serve` 24/7; hermesc arm64 compiles RN bundles natively. See [download page](https://yaver.io/download#raspi). |
+| **Raspberry Pi / ARM64 SBC** | `curl -fsSL https://yaver.io/install.sh \| sh` — then `yaver install pi-dev-node && yaver auth && yaver serve --install-systemd`. Pi 4 (4+ GB) runs `yaver serve` 24/7; hermesc arm64 compiles RN bundles natively. See [download page](https://yaver.io/download#raspi). |
+| **Raspberry Pi 5 Image** | Download `yaver-pi5-devnode-arm64.img.xz` from the [download page](https://yaver.io/download#raspi), flash it to a Pi 5, boot, pair from Yaver mobile, and finish first-boot provisioning there. |
 | **curl** | `curl -fsSL https://yaver.io/install.sh \| sh` |
 | **PowerShell** | `irm https://yaver.io/install.ps1 \| iex` |
 | **Binary** | Download from [releases](https://github.com/kivanccakmak/yaver.io/releases) |
@@ -371,6 +372,9 @@ the resulting token back through the device-code flow.
 ### Desktop App (GUI)
 
 Download the desktop app with full GUI from the [download page](https://yaver.io/download) — available as DMG (macOS), installer (Windows), deb/AppImage (Linux).
+
+The download page also exposes the new **Raspberry Pi 5 dev-node image** through the same Convex-backed public artifact pipeline as the CLI/download assets.
+The image build itself is Linux-native; from macOS use `./scripts/build-pi-image.sh --docker` once Docker is running, or let the `pi-image/vX.Y.Z` GitHub workflow build and publish it.
 
 ## Always-Up Mode (Boots Without Auth)
 

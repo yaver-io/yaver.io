@@ -12,21 +12,34 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
 
-// Read CONVEX_URL from backend/.env.local
-const envFile = fs.readFileSync(path.join(ROOT, "backend", ".env.local"), "utf8");
-const convexUrl = envFile.match(/CONVEX_URL=(.+)/)?.[1]?.trim();
+function normalizeConvexUrl(raw) {
+  if (!raw) return "";
+  const trimmed = raw.trim();
+  if (trimmed.includes(".convex.site")) {
+    return trimmed.replace(".convex.site", ".convex.cloud");
+  }
+  return trimmed;
+}
+
+let convexUrl = normalizeConvexUrl(process.env.CONVEX_URL || process.env.CONVEX_SITE_URL);
+if (!convexUrl && fs.existsSync(path.join(ROOT, "backend", ".env.local"))) {
+  const envFile = fs.readFileSync(path.join(ROOT, "backend", ".env.local"), "utf8");
+  convexUrl = normalizeConvexUrl(envFile.match(/CONVEX_URL=(.+)/)?.[1]?.trim());
+}
 if (!convexUrl) {
-  console.error("CONVEX_URL not found in backend/.env.local");
+  console.error("CONVEX_URL not found in env or backend/.env.local");
   process.exit(1);
 }
 
-const DIST = path.join(ROOT, "desktop", "installer", "dist");
+const DIST = process.env.DOWNLOADS_DIR
+  ? path.resolve(process.env.DOWNLOADS_DIR)
+  : path.join(ROOT, "desktop", "installer", "dist");
 
-// Read version from package.json
-const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "desktop", "installer", "package.json"), "utf8"));
-const VERSION = pkg.version;
+const versions = JSON.parse(fs.readFileSync(path.join(ROOT, "versions.json"), "utf8"));
+const installerVersion = JSON.parse(fs.readFileSync(path.join(ROOT, "desktop", "installer", "package.json"), "utf8")).version;
 
 const CANONICAL_FILENAMES = {
+  "linux:arm64:image": "yaver-pi5-devnode-arm64.img.xz",
   "macos:arm64:dmg": "Yaver-arm64.dmg",
   "macos:arm64:zip": "Yaver-arm64.zip",
   "macos:amd64:dmg": "Yaver-amd64.dmg",
@@ -55,6 +68,9 @@ function inferArtifact(file) {
   }
   if (lower.endsWith(".appimage")) {
     return { platform: "linux", arch, format: "appimage" };
+  }
+  if (lower.endsWith(".img.xz") || lower.endsWith(".img.gz") || lower.endsWith(".img.zip")) {
+    return { platform: "linux", arch: arch || "arm64", format: "image" };
   }
   if (lower.endsWith(".deb")) {
     return { platform: "linux", arch, format: "deb" };
@@ -177,7 +193,7 @@ async function uploadFile(entry) {
     platform: entry.platform,
     arch: entry.arch,
     format: entry.format,
-    version: VERSION,
+    version: entry.format === "image" ? (versions.piImage || installerVersion) : installerVersion,
     filename: entry.filename,
     storageId,
     size,

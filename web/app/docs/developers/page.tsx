@@ -1650,7 +1650,7 @@ CLI Agent ◄──QUIC──────────────── Relay (:
                     <InlineCode>/downloads/list</InlineCode>
                   </td>
                   <td className="py-3 pr-4">No</td>
-                  <td className="py-3">List all available CLI downloads</td>
+                  <td className="py-3">List all public downloads and artifacts, including CLI binaries and the Raspberry Pi image</td>
                 </tr>
                 <tr className="border-b border-surface-800/50">
                   <td className="py-3 pr-4">
@@ -2256,7 +2256,8 @@ CLI Agent ◄──QUIC──────────────── Relay (:
               </h4>
               <p className="mb-3 text-sm text-surface-400">
                 Every component has its own version in <InlineCode>versions.json</InlineCode>.
-                CI enforces that changed components have their version bumped.
+                CI enforces that changed components have their version bumped, including the
+                Raspberry Pi image lane under <InlineCode>pi-image/</InlineCode>.
               </p>
               <Terminal title="version bump">
                 <Comment># Edit versions.json, then sync everywhere</Comment>
@@ -2280,7 +2281,8 @@ CLI Agent ◄──QUIC──────────────── Relay (:
                 <li>
                   &bull; <span className="text-surface-200">Tag format</span>:
                   <InlineCode>cli/vX.Y.Z</InlineCode>, <InlineCode>relay/vX.Y.Z</InlineCode>,
-                  <InlineCode>mobile/vX.Y.Z</InlineCode>, <InlineCode>web/vX.Y.Z</InlineCode>
+                  <InlineCode>mobile/vX.Y.Z</InlineCode>, <InlineCode>web/vX.Y.Z</InlineCode>,
+                  <InlineCode>pi-image/vX.Y.Z</InlineCode>
                 </li>
                 <li>
                   &bull; <span className="text-surface-200">Production deploys</span> require
