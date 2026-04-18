@@ -140,8 +140,6 @@ export const pollDeviceCode = mutation({
       // Return token and clear it (one-time retrieval)
       const token = code.pendingToken;
       await ctx.db.patch(code._id, { pendingToken: undefined });
-      // Delete the code after successful retrieval
-      await ctx.db.delete(code._id);
       return { status: "authorized" as const, token };
     }
 

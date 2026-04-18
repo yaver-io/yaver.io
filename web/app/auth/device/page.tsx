@@ -60,10 +60,52 @@ function DeviceCodeContent() {
         return res.json();
       })
       .then((data) => {
-        if (data) setDeviceInfo(data);
+        if (!data) return;
+        setDeviceInfo(data);
+        if (data.status === "authorized") {
+          setStatus("success");
+          setErrorMsg("");
+        } else if (data.status === "expired" && status !== "success") {
+          setStatus("error");
+          setErrorMsg("This code has expired. Run 'yaver auth --headless' again to get a new code.");
+        }
       })
       .catch(() => undefined);
-  }, [prefillCode]);
+  }, [prefillCode, status]);
+
+  useEffect(() => {
+    if (!prefillCode) return;
+    if (status === "success") return;
+
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await fetch(`${CONVEX_URL}/auth/device-code/info?user_code=${encodeURIComponent(prefillCode)}`, {
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled || !data) return;
+        setDeviceInfo(data);
+        if (data.status === "authorized") {
+          setStatus("success");
+          setErrorMsg("");
+        } else if (data.status === "expired") {
+          setStatus("error");
+          setErrorMsg("This code has expired. Run 'yaver auth --headless' again to get a new code.");
+        }
+      } catch {
+        // Keep the existing screen state; polling is a progressive enhancement.
+      }
+    };
+
+    void poll();
+    const id = window.setInterval(poll, 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [prefillCode, status]);
 
   useEffect(() => {
     const hintedProvider = providerHint || deviceInfo?.preferredProvider || "";
