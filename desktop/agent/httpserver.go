@@ -7396,9 +7396,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolJSON(result)
 	case "yaver_auth_link_wait":
 		var a struct {
-			Provider         string `json:"provider"`
-			TimeoutSec       int    `json:"timeout_seconds"`
-			PollIntervalSec  int    `json:"poll_interval_seconds"`
+			Provider        string `json:"provider"`
+			TimeoutSec      int    `json:"timeout_seconds"`
+			PollIntervalSec int    `json:"poll_interval_seconds"`
 		}
 		json.Unmarshal(call.Arguments, &a)
 		if a.TimeoutSec > 300 {
@@ -7412,24 +7412,29 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	case "yaver_auth_unlink":
 		var a struct {
 			Provider string `json:"provider"`
+			TOTPCode string `json:"totp_code"`
 		}
 		json.Unmarshal(call.Arguments, &a)
-		result, err := authUnlink(context.Background(), a.Provider)
+		result, err := authUnlink(context.Background(), a.Provider, a.TOTPCode)
 		if err != nil {
 			return mcpToolError(err.Error())
 		}
 		return mcpToolJSON(result)
 	case "yaver_auth_merge_start":
-		result, err := authMergeStart(context.Background())
+		var a struct {
+			TOTPCode string `json:"totp_code"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		result, err := authMergeStart(context.Background(), a.TOTPCode)
 		if err != nil {
 			return mcpToolError(err.Error())
 		}
 		return mcpToolJSON(result)
 	case "yaver_auth_merge_wait":
 		var a struct {
-			MergeToken       string `json:"merge_token"`
-			TimeoutSec       int    `json:"timeout_seconds"`
-			PollIntervalSec  int    `json:"poll_interval_seconds"`
+			MergeToken      string `json:"merge_token"`
+			TimeoutSec      int    `json:"timeout_seconds"`
+			PollIntervalSec int    `json:"poll_interval_seconds"`
 		}
 		json.Unmarshal(call.Arguments, &a)
 		if a.TimeoutSec > 600 {

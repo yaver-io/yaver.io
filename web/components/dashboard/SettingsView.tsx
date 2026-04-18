@@ -17,6 +17,7 @@ interface SettingsViewProps {
 export default function SettingsView({ user, onLogout }: SettingsViewProps) {
   const [identities, setIdentities] = useState<Array<{ provider: string; email: string | null; isPrimary: boolean }>>([]);
   const [linkingProvider, setLinkingProvider] = useState<string | null>(null);
+  const [linkError, setLinkError] = useState<string | null>(null);
   const [unlinkingProvider, setUnlinkingProvider] = useState<string | null>(null);
   const [unlinkError, setUnlinkError] = useState<string | null>(null);
   const [mergeStarting, setMergeStarting] = useState(false);
@@ -240,6 +241,7 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
 
   const startLink = async (provider: "apple" | "github" | "google" | "microsoft") => {
     if (!token) return;
+    setLinkError(null);
     setLinkingProvider(provider);
     try {
       const res = await fetch(`${CONVEX_URL}/auth/oauth-link/start`, {
@@ -261,6 +263,8 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
       window.location.href = `/api/auth/oauth/${provider}?client=web&intent=link&linkToken=${encodeURIComponent(data.token)}&return=${encodeURIComponent("/dashboard")}`;
     } catch (error) {
       console.error(error);
+      const message = error instanceof Error ? error.message : `Failed to start ${provider} link`;
+      setLinkError(message);
       setLinkingProvider(null);
     }
   };
@@ -313,6 +317,7 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
             {unlinkSuccess}
           </p>
         )}
+        {linkError && <p className="mb-3 text-xs text-red-400">{linkError}</p>}
         {unlinkError && <p className="mb-3 text-xs text-red-400">{unlinkError}</p>}
         <div className="grid gap-2 sm:grid-cols-4">
           {(["apple", "github", "google", "microsoft"] as const).map((provider) => {

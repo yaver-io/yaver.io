@@ -19,6 +19,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as WebBrowser from "expo-web-browser";
 import { useAuth } from "../../src/context/AuthContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { customRelaysKey, customTunnelsKey } from "../../src/context/DeviceContext";
@@ -30,6 +31,8 @@ import * as ExpoClipboard from "expo-clipboard";
 import * as ExpoLinking from "expo-linking";
 import { getLogEntries, clearLogEntries, onLogsChanged, LogEntry } from "../../src/lib/logger";
 import { quicClient, type AgentStatus, type RelayServer, type TunnelServer } from "../../src/lib/quic";
+
+WebBrowser.maybeCompleteAuthSession();
 
 const APP_VERSION = Constants.expoConfig?.version ?? "1.0.0";
 const BUILD_NUMBER =
@@ -982,9 +985,25 @@ export default function SettingsScreen() {
       const tok = await getToken();
       if (!tok) throw new Error("Not signed in.");
       const intent = await startLinkIntent(tok, provider);
-      await Linking.openURL(intent.url);
-      // Don't refresh immediately — the user is now in the browser. When
-      // they return we refresh via the focus effect below.
+      const returnUrl = ExpoLinking.createURL("/oauth-callback");
+      const result = await WebBrowser.openAuthSessionAsync(intent.url, returnUrl);
+
+      if (result.type === "cancel" || result.type === "dismiss") {
+        return;
+      }
+
+      if (result.type === "success" && result.url) {
+        const parsed = ExpoLinking.parse(result.url);
+        const linkedProvider =
+          (parsed.queryParams?.linkedProvider as string | undefined) || provider;
+        refreshIdentities();
+        Alert.alert("Linked", `${linkedProvider} added to this Yaver account.`);
+        return;
+      }
+
+      // Fallback: if the platform reports a non-success result but the app
+      // returned to the foreground, the AppState/link listeners above will
+      // still refresh identities and clear the in-flight state.
     } catch (e: any) {
       setAuthError(e?.message || `Failed to start ${provider} link`);
     } finally {

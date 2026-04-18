@@ -142,11 +142,13 @@ func TestAuthLinkStart_BuildsOAuthURL(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"token": "stub-link-token"})
 	})
 
+	t.Setenv("YAVER_WEB_BASE_URL", "https://selfhost.example")
+
 	result, err := authLinkStart(context.Background(), "google")
 	if err != nil {
 		t.Fatalf("link start: %v", err)
 	}
-	if !strings.Contains(result.URL, "yaver.io/api/auth/oauth/google") {
+	if !strings.Contains(result.URL, "selfhost.example/api/auth/oauth/google") {
 		t.Fatalf("URL missing provider path: %s", result.URL)
 	}
 	if !strings.Contains(result.URL, "linkToken=stub-link-token") {
@@ -181,7 +183,7 @@ func TestAuthUnlink_OnlyIdentityReturnsFriendlyMessage(t *testing.T) {
 		_, _ = w.Write([]byte("Refusing to unlink the only sign-in method"))
 	})
 
-	result, err := authUnlink(context.Background(), "google")
+	result, err := authUnlink(context.Background(), "google", "")
 	if err != nil {
 		t.Fatalf("unlink: %v", err)
 	}
@@ -202,7 +204,7 @@ func TestAuthUnlink_NotLinkedReturns404Friendly(t *testing.T) {
 		_, _ = w.Write([]byte("not_linked"))
 	})
 
-	result, err := authUnlink(context.Background(), "apple")
+	result, err := authUnlink(context.Background(), "apple", "")
 	if err != nil {
 		t.Fatalf("unlink: %v", err)
 	}
@@ -226,12 +228,17 @@ func TestAuthMergeStart_BuildsApprovalURL(t *testing.T) {
 		})
 	})
 
-	result, err := authMergeStart(context.Background())
+	t.Setenv("YAVER_WEB_BASE_URL", "https://selfhost.example")
+
+	result, err := authMergeStart(context.Background(), "")
 	if err != nil {
 		t.Fatalf("merge start: %v", err)
 	}
 	if !strings.Contains(result.ApprovalURL, "token=merge-abc") {
 		t.Fatalf("approval URL missing merge token: %s", result.ApprovalURL)
+	}
+	if !strings.Contains(result.ApprovalURL, "selfhost.example/account/merge") {
+		t.Fatalf("approval URL missing self-hosted base: %s", result.ApprovalURL)
 	}
 	if result.TargetEmail != "me@example.com" {
 		t.Fatalf("bad target email: %s", result.TargetEmail)

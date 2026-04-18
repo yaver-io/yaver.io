@@ -26,6 +26,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -53,6 +54,22 @@ func loadAuthedConfig() (string, string, error) {
 		convexURL = defaultConvexSiteURL
 	}
 	return convexURL, token, nil
+}
+
+func webBaseURL() string {
+	if value := strings.TrimSpace(os.Getenv("YAVER_WEB_BASE_URL")); value != "" {
+		return strings.TrimRight(value, "/")
+	}
+	if value := strings.TrimSpace(os.Getenv("NEXT_PUBLIC_BASE_URL")); value != "" {
+		return strings.TrimRight(value, "/")
+	}
+	cfg, err := LoadConfig()
+	if err == nil && cfg != nil {
+		if value := strings.TrimSpace(cfg.WebBaseURL); value != "" {
+			return strings.TrimRight(value, "/")
+		}
+	}
+	return "https://yaver.io"
 }
 
 func authedRequest(ctx context.Context, method, url, token string, body any) (*http.Response, error) {
@@ -167,6 +184,9 @@ type AuthLinkStartResult struct {
 
 func authLinkStart(ctx context.Context, provider string) (AuthLinkStartResult, error) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "msft" {
+		provider = "microsoft"
+	}
 	switch provider {
 	case "apple", "github", "google", "microsoft":
 	default:
@@ -205,7 +225,7 @@ func authLinkStart(ctx context.Context, provider string) (AuthLinkStartResult, e
 	q.Set("intent", "link")
 	q.Set("linkToken", body.Token)
 	q.Set("return", "/dashboard")
-	authURL := fmt.Sprintf("https://yaver.io/api/auth/oauth/%s?%s", provider, q.Encode())
+	authURL := fmt.Sprintf("%s/api/auth/oauth/%s?%s", webBaseURL(), provider, q.Encode())
 
 	var qrBuf bytes.Buffer
 	qrterminal.GenerateWithConfig(authURL, qrterminal.Config{
@@ -236,10 +256,10 @@ func authLinkStart(ctx context.Context, provider string) (AuthLinkStartResult, e
 // ---------------------------------------------------------------------------
 
 type AuthLinkWaitResult struct {
-	Status     string                `json:"status"` // pending | linked | timeout
-	Provider   string                `json:"provider"`
-	Snapshot   AuthListIdentitiesResult `json:"snapshot"`
-	Message    string                `json:"message"`
+	Status   string                   `json:"status"` // pending | linked | timeout
+	Provider string                   `json:"provider"`
+	Snapshot AuthListIdentitiesResult `json:"snapshot"`
+	Message  string                   `json:"message"`
 }
 
 // authLinkWait polls /auth/providers until an identity with the requested
@@ -323,8 +343,11 @@ type AuthUnlinkResult struct {
 	Message   string `json:"message"`
 }
 
-func authUnlink(ctx context.Context, provider string) (AuthUnlinkResult, error) {
+func authUnlink(ctx context.Context, provider, totpCode string) (AuthUnlinkResult, error) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "msft" {
+		provider = "microsoft"
+	}
 	if provider == "" {
 		return AuthUnlinkResult{}, fmt.Errorf("provider is required")
 	}
@@ -332,7 +355,11 @@ func authUnlink(ctx context.Context, provider string) (AuthUnlinkResult, error) 
 	if err != nil {
 		return AuthUnlinkResult{}, err
 	}
-	resp, err := authedRequest(ctx, "DELETE", convexURL+"/auth/oauth-link/"+url.PathEscape(provider), token, nil)
+	var requestBody any
+	if strings.TrimSpace(totpCode) != "" {
+		requestBody = map[string]string{"totpCode": strings.TrimSpace(totpCode)}
+	}
+	resp, err := authedRequest(ctx, "DELETE", convexURL+"/auth/oauth-link/"+url.PathEscape(provider), token, requestBody)
 	if err != nil {
 		return AuthUnlinkResult{}, err
 	}
@@ -343,6 +370,12 @@ func authUnlink(ctx context.Context, provider string) (AuthUnlinkResult, error) 
 	}
 	if resp.StatusCode == 404 {
 		return AuthUnlinkResult{OK: false, Provider: provider, Message: fmt.Sprintf("%s is not linked to this account.", provider)}, nil
+	}
+	if resp.StatusCode == 412 {
+		return AuthUnlinkResult{OK: false, Provider: provider, Message: "2FA is enabled on this account. Retry with a current 6-digit code."}, nil
+	}
+	if resp.StatusCode == 403 {
+		return AuthUnlinkResult{OK: false, Provider: provider, Message: "Invalid 2FA code."}, nil
 	}
 	if resp.StatusCode >= 400 {
 		return AuthUnlinkResult{}, fmt.Errorf("unlink %s: HTTP %d: %s", provider, resp.StatusCode, strings.TrimSpace(string(raw)))
@@ -375,12 +408,16 @@ type AuthMergeStartResult struct {
 	Message      string   `json:"message"`
 }
 
-func authMergeStart(ctx context.Context) (AuthMergeStartResult, error) {
+func authMergeStart(ctx context.Context, totpCode string) (AuthMergeStartResult, error) {
 	convexURL, token, err := loadAuthedConfig()
 	if err != nil {
 		return AuthMergeStartResult{}, err
 	}
-	resp, err := authedRequest(ctx, "POST", convexURL+"/auth/account/merge/start", token, map[string]string{"client": "mcp"})
+	requestBody := map[string]string{"client": "mcp"}
+	if strings.TrimSpace(totpCode) != "" {
+		requestBody["totpCode"] = strings.TrimSpace(totpCode)
+	}
+	resp, err := authedRequest(ctx, "POST", convexURL+"/auth/account/merge/start", token, requestBody)
 	if err != nil {
 		return AuthMergeStartResult{}, err
 	}
@@ -389,11 +426,11 @@ func authMergeStart(ctx context.Context) (AuthMergeStartResult, error) {
 		ExpiresAt   int64  `json:"expiresAt"`
 		TargetEmail string `json:"targetEmail"`
 	}
-	body, raw, err := decodeAuthedJSONBody[payload](resp)
+	data, raw, err := decodeAuthedJSONBody[payload](resp)
 	if err != nil {
 		return AuthMergeStartResult{}, fmt.Errorf("merge start: %v (%s)", err, raw)
 	}
-	approvalURL := "https://yaver.io/account/merge?token=" + url.QueryEscape(body.MergeToken)
+	approvalURL := webBaseURL() + "/account/merge?token=" + url.QueryEscape(data.MergeToken)
 
 	var qrBuf bytes.Buffer
 	qrterminal.GenerateWithConfig(approvalURL, qrterminal.Config{
@@ -405,10 +442,10 @@ func authMergeStart(ctx context.Context) (AuthMergeStartResult, error) {
 	})
 
 	return AuthMergeStartResult{
-		MergeToken:  body.MergeToken,
+		MergeToken:  data.MergeToken,
 		ApprovalURL: approvalURL,
-		ExpiresAtMs: body.ExpiresAt,
-		TargetEmail: body.TargetEmail,
+		ExpiresAtMs: data.ExpiresAt,
+		TargetEmail: data.TargetEmail,
 		QRASCII:     qrBuf.String(),
 		Instructions: []string{
 			"1. Open the approval URL on ANY browser.",
@@ -416,7 +453,7 @@ func authMergeStart(ctx context.Context) (AuthMergeStartResult, error) {
 			"3. Confirm the merge when prompted.",
 			"4. Call yaver_auth_merge_wait here to watch for completion.",
 		},
-		Message: fmt.Sprintf("Merge intent created. Open %s on a browser where the other Yaver account is (or can be) signed in, then confirm. This account (%s) will receive the merged data.", approvalURL, body.TargetEmail),
+		Message: fmt.Sprintf("Merge intent created. Open %s on a browser where the other Yaver account is (or can be) signed in, then confirm. This account (%s) will receive the merged data.", approvalURL, data.TargetEmail),
 	}, nil
 }
 

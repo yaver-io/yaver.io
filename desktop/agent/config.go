@@ -14,6 +14,7 @@ type Config struct {
 	AuthToken     string              `json:"auth_token,omitempty"`
 	DeviceID      string              `json:"device_id,omitempty"`
 	ConvexSiteURL string              `json:"convex_site_url,omitempty"`
+	WebBaseURL    string              `json:"web_base_url,omitempty"`
 	TLSCert       string              `json:"tls_cert,omitempty"`
 	TLSKey        string              `json:"tls_key,omitempty"`
 	AutoStart     bool                `json:"auto_start,omitempty"`

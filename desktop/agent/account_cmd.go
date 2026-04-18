@@ -58,7 +58,8 @@ func accountUsage() {
 
 Usage:
   yaver account providers                   List linked sign-in methods
-  yaver account link <apple|google|msft>    Open browser to link another provider
+  yaver account link <apple|google|microsoft|msft>
+                                            Open browser to link another provider
   yaver account unlink <provider> [--totp <code>]
                                             Remove a linked provider
   yaver account merge start [--totp <code>] Start a merge intent; prints approval URL
@@ -98,10 +99,13 @@ func runAccountProviders(ctx context.Context) {
 
 func runAccountLink(ctx context.Context, args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: yaver account link <apple|google|microsoft>")
+		fmt.Fprintln(os.Stderr, "Usage: yaver account link <apple|google|microsoft|msft>")
 		os.Exit(1)
 	}
 	provider := strings.ToLower(args[0])
+	if provider == "msft" {
+		provider = "microsoft"
+	}
 	result, err := authLinkStart(ctx, provider)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -140,7 +144,7 @@ func runAccountUnlink(ctx context.Context, args []string) {
 	// through the existing helper; if the backend responds 412 we retry
 	// with a one-shot prompt for the code.
 	if totpCode == "" {
-		result, err := authUnlink(ctx, provider)
+		result, err := authUnlink(ctx, provider, "")
 		if err == nil {
 			fmt.Println(result.Message)
 			if !result.OK {
@@ -264,7 +268,7 @@ func startMergeWithTotp(ctx context.Context, totpCode string) (AuthMergeStartRes
 	if err != nil {
 		return AuthMergeStartResult{}, fmt.Errorf("%v (%s)", err, raw)
 	}
-	url := "https://yaver.io/account/merge?token=" + parsed.MergeToken
+	url := webBaseURL() + "/account/merge?token=" + parsed.MergeToken
 	return AuthMergeStartResult{
 		MergeToken:  parsed.MergeToken,
 		ApprovalURL: url,
