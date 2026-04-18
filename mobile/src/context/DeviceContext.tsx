@@ -314,6 +314,12 @@ interface DeviceState {
   refreshDevices: () => Promise<void>;
   detachDevice: (device: Device) => Promise<void>;
   removeDevice: (device: Device) => Promise<void>;
+  /** Device IDs the phone has failed to reach this session. Cleared on successful connect. */
+  unreachableDeviceIds: string[];
+  /** Flag a device as not reachable (e.g. after user hit Stop on a reconnect loop). */
+  markDeviceUnreachable: (deviceId: string) => void;
+  /** Stop the active reconnect loop, clear the active device, mark it unreachable, and refresh from Convex. */
+  stopReconnectAndBounce: () => Promise<void>;
   /** Pending guest invitations from other users */
   guestInvitations: GuestInvitation[];
   /** Accept a guest invitation by email match */
@@ -384,7 +390,26 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   const [lastError, setLastError] = useState<string | null>(null);
   const [guestInvitations, setGuestInvitations] = useState<GuestInvitation[]>([]);
   const [agentAuthExpired, setAgentAuthExpired] = useState(false);
+  const [unreachableSet, setUnreachableSet] = useState<Set<string>>(() => new Set());
   const hasLoadedOnce = useRef(false);
+
+  const markDeviceUnreachable = useCallback((deviceId: string) => {
+    setUnreachableSet((prev) => {
+      if (prev.has(deviceId)) return prev;
+      const next = new Set(prev);
+      next.add(deviceId);
+      return next;
+    });
+  }, []);
+
+  const clearDeviceUnreachable = useCallback((deviceId: string) => {
+    setUnreachableSet((prev) => {
+      if (!prev.has(deviceId)) return prev;
+      const next = new Set(prev);
+      next.delete(deviceId);
+      return next;
+    });
+  }, []);
 
   const refreshDevices = useCallback(async () => {
     if (!token) {
@@ -503,6 +528,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         setConnectionStatus("connected");
         setLastError(null);
         setAgentAuthExpired(quicClient.agentAuthExpired);
+        clearDeviceUnreachable(device.id);
         // Fetch hwid from /info for dedup (P2P only, never sent to Convex)
         try {
           const info = await quicClient.getInfo();
@@ -538,6 +564,29 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     setUserDisconnected(true);
     setAgentAuthExpired(false);
   }, []);
+
+  const stopReconnectAndBounce = useCallback(async () => {
+    const failed = activeDevice;
+    try {
+      quicClient.stopReconnect();
+    } catch {
+      // best-effort
+    }
+    quicClient.disconnect();
+    if (failed) {
+      markDeviceUnreachable(failed.id);
+    }
+    setActiveDevice(null);
+    setConnectionStatus("disconnected");
+    setUserDisconnected(true);
+    setAgentAuthExpired(false);
+    setLastError(null);
+    try {
+      await refreshDevices();
+    } catch {
+      // refreshDevices already logs; never block the UI reset on it
+    }
+  }, [activeDevice, markDeviceUnreachable, refreshDevices]);
 
   const handleDetachDevice = useCallback(async (device: Device) => {
     const key = deviceIdentityKey(device);
@@ -1140,12 +1189,15 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       refreshDevices,
       detachDevice: handleDetachDevice,
       removeDevice: handleRemoveDevice,
+      unreachableDeviceIds: Array.from(unreachableSet),
+      markDeviceUnreachable,
+      stopReconnectAndBounce,
       guestInvitations,
       acceptGuestInvitation,
       acceptGuestByCode,
       inviteGuest,
     }),
-    [devices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest]
+    [devices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, unreachableSet, markDeviceUnreachable, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

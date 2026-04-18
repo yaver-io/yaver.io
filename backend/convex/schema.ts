@@ -42,6 +42,25 @@ export default defineSchema({
     .index("by_token", ["token"])
     .index("by_userId", ["userId"]),
 
+  // accountMergeIntents let a signed-in user request that another of their
+  // accounts be merged INTO the current one. The target (currently signed
+  // in) creates an intent and gets a short-lived token. Someone signed
+  // into the SOURCE account then exchanges that token + their own session
+  // to complete the merge — merging is irreversible so we require the
+  // source user to actively consent by signing in on the approval URL.
+  accountMergeIntents: defineTable({
+    token: v.string(),           // short random token carried in URL
+    targetUserId: v.id("users"), // account that stays; receives source's data
+    targetEmail: v.string(),     // cached for approval-page UX
+    status: v.union(v.literal("pending"), v.literal("completed"), v.literal("cancelled")),
+    client: v.optional(v.string()),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+    completedAt: v.optional(v.number()),
+  })
+    .index("by_token", ["token"])
+    .index("by_targetUserId", ["targetUserId"]),
+
   passwordResets: defineTable({
     tokenHash: v.string(),          // SHA-256 of the reset token
     email: v.string(),              // email this reset is for

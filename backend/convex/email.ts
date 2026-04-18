@@ -126,6 +126,94 @@ export function welcomeHtml(name: string): string {
 </html>`.trim();
 }
 
+// ── Security-event templates ────────────────────────────────────────
+// Every destructive auth operation (link a provider, unlink one, merge
+// another account) triggers a heads-up email. Keeps users in the loop
+// so a stolen session can't silently alter their account without them
+// noticing.
+
+function securityShell(title: string, body: string): string {
+  return `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:520px;margin:0 auto;padding:32px 16px;color:#1a1a1a;">
+  <h2 style="margin:0 0 8px;">${title}</h2>
+  ${body}
+  <p style="font-size:12px;color:#999;margin:32px 0 0;">
+    If this wasn't you, reply to this email or contact <a href="mailto:kivanc@yaver.io" style="color:#666;">kivanc@yaver.io</a> right away.
+  </p>
+  <p style="font-size:12px;color:#999;margin:8px 0 0;">
+    <a href="https://yaver.io" style="color:#666;">yaver.io</a>
+  </p>
+</body>
+</html>`.trim();
+}
+
+export function providerLinkedHtml(name: string, provider: string): string {
+  return securityShell(
+    `Sign-in method added: ${provider}`,
+    `
+  <p style="margin:0 0 16px;color:#444;font-size:15px;">Hi ${name || "there"},</p>
+  <p style="margin:0 0 16px;color:#444;font-size:15px;">
+    We linked <strong>${provider}</strong> to your Yaver account. You can now
+    sign in to the same account using any of your linked providers.
+  </p>
+  <p style="margin:0 0 16px;color:#444;font-size:15px;">
+    Manage your sign-in methods from the Yaver dashboard → Settings.
+  </p>`
+  );
+}
+
+export function providerUnlinkedHtml(name: string, provider: string): string {
+  return securityShell(
+    `Sign-in method removed: ${provider}`,
+    `
+  <p style="margin:0 0 16px;color:#444;font-size:15px;">Hi ${name || "there"},</p>
+  <p style="margin:0 0 16px;color:#444;font-size:15px;">
+    We removed <strong>${provider}</strong> from your Yaver account. You
+    won't be able to sign in with that provider anymore.
+  </p>
+  <p style="margin:0 0 16px;color:#444;font-size:15px;">
+    Add it back any time from the Yaver dashboard → Settings.
+  </p>`
+  );
+}
+
+export function accountsMergedHtml(name: string, mergedFrom: string, mergedInto: string): string {
+  return securityShell(
+    "Accounts merged",
+    `
+  <p style="margin:0 0 16px;color:#444;font-size:15px;">Hi ${name || "there"},</p>
+  <p style="margin:0 0 16px;color:#444;font-size:15px;">
+    We merged <strong>${mergedFrom}</strong> into <strong>${mergedInto}</strong>.
+    Everything from ${mergedFrom} — devices, linked providers, settings,
+    projects, guest access, and history — now lives on ${mergedInto}. The
+    old account has been deleted.
+  </p>
+  <p style="margin:0 0 16px;color:#444;font-size:15px;">
+    Use any of ${mergedInto}'s sign-in methods to access the combined account.
+  </p>`
+  );
+}
+
+export function mergeStartedHtml(name: string, targetEmail: string): string {
+  return securityShell(
+    "Account-merge request started",
+    `
+  <p style="margin:0 0 16px;color:#444;font-size:15px;">Hi ${name || "there"},</p>
+  <p style="margin:0 0 16px;color:#444;font-size:15px;">
+    A merge request was started on <strong>${targetEmail}</strong>. If
+    approved from the other Yaver account, that other account will be
+    deleted and its data will move onto ${targetEmail}.
+  </p>
+  <p style="margin:0 0 16px;color:#444;font-size:15px;">
+    If you didn't do this, sign into the Yaver dashboard → Settings →
+    "Merge another account" → Cancel.
+  </p>`
+  );
+}
+
 export function guestInviteHtml(hostName: string, inviteCode: string): string {
   return `
 <!DOCTYPE html>

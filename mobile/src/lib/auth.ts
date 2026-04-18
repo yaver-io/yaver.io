@@ -550,6 +550,145 @@ export async function saveUserSettings(token: string, settings: Partial<UserSett
   }).catch(() => {});
 }
 
+// ── Account linking / unlink / merge ──────────────────────────────────
+// These helpers mirror what web SettingsView does so the mobile Settings
+// screen can list providers, add Google/Apple/Microsoft to the current
+// account, remove one (refusing if it's the last), and kick off a manual
+// account merge. All endpoints require the user's session bearer token.
+
+export interface AuthIdentity {
+  provider: "google" | "microsoft" | "apple" | "email";
+  email: string | null;
+  isPrimary: boolean;
+  createdAt?: number;
+  lastUsedAt?: number;
+}
+
+export async function listAuthIdentities(token: string): Promise<AuthIdentity[]> {
+  try {
+    const res = await fetch(`${getConvexSiteUrl()}/auth/providers`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.identities || []) as AuthIdentity[];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Start a linking intent for an additional OAuth provider. Returns the
+ * browser URL the caller should open (we return it rather than calling
+ * Linking.openURL here so the screen can wrap it with Platform-specific UX).
+ */
+export async function startLinkIntent(
+  token: string,
+  provider: OAuthProvider,
+): Promise<{ url: string; linkToken: string }> {
+  const res = await fetch(`${getConvexSiteUrl()}/auth/oauth-link/start`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ provider, client: "mobile", returnTo: "/dashboard" }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data?.token) {
+    throw new Error(data?.error || "Failed to start link");
+  }
+  const params = new URLSearchParams({
+    client: "mobile",
+    intent: "link",
+    linkToken: data.token,
+    return: "/dashboard",
+  });
+  return {
+    url: `${getWebBaseUrl()}/api/auth/oauth/${provider}?${params.toString()}`,
+    linkToken: data.token,
+  };
+}
+
+/**
+ * Remove an OAuth provider from the current account. Throws with a
+ * user-visible message when the backend refuses (e.g., it's the only
+ * linked provider).
+ */
+export async function unlinkProvider(
+  token: string,
+  provider: AuthIdentity["provider"],
+): Promise<void> {
+  const res = await fetch(
+    `${getConvexSiteUrl()}/auth/oauth-link/${encodeURIComponent(provider)}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Failed to unlink ${provider}`);
+  }
+}
+
+export interface MergeIntent {
+  mergeToken: string;
+  approvalUrl: string;
+  expiresAt: number;
+  targetEmail: string;
+}
+
+/** Start a manual merge intent. The target of the merge is the currently signed-in account. */
+export async function startMergeIntent(token: string): Promise<MergeIntent> {
+  const res = await fetch(`${getConvexSiteUrl()}/auth/account/merge/start`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ client: "mobile" }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data?.mergeToken) {
+    throw new Error(data?.error || "Failed to start merge");
+  }
+  return {
+    mergeToken: data.mergeToken,
+    approvalUrl: `${getWebBaseUrl()}/account/merge?token=${encodeURIComponent(data.mergeToken)}`,
+    expiresAt: data.expiresAt,
+    targetEmail: data.targetEmail,
+  };
+}
+
+/** Cancel a pending merge intent (target-side). */
+export async function cancelMergeIntent(token: string, mergeToken: string): Promise<void> {
+  await fetch(`${getConvexSiteUrl()}/auth/account/merge/cancel`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ mergeToken }),
+  }).catch(() => undefined);
+}
+
+/** Poll the public status of a merge intent (no auth required). */
+export async function getMergeIntentStatus(
+  mergeToken: string,
+): Promise<"pending" | "completed" | "cancelled" | "expired" | "unknown"> {
+  try {
+    const res = await fetch(
+      `${getConvexSiteUrl()}/auth/account/merge/status?token=${encodeURIComponent(mergeToken)}`,
+    );
+    if (!res.ok) return "unknown";
+    const data = await res.json();
+    return data.status as any;
+  } catch {
+    return "unknown";
+  }
+}
+
 export async function deleteAccount(): Promise<boolean> {
   const token = await getToken();
   if (!token) return false;

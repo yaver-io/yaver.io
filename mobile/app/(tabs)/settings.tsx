@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   KeyboardAvoidingView,
   Linking,
   Modal,
@@ -22,10 +23,11 @@ import { useAuth } from "../../src/context/AuthContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { customRelaysKey, customTunnelsKey } from "../../src/context/DeviceContext";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
-import { deleteAccount as deleteAccountApi, updateProfile, changePassword as changePasswordApi, getUserSettings, saveUserSettings, getAiRunners, type AiRunner, getDeviceMetrics, getDeviceEvents, type DeviceMetric, type DeviceEvent, getUsageSummary, type UsageSummary, type SpeechProvider, type KeyStorage, LOCAL_KEYS, getLocalSecret, saveLocalSecret, deleteLocalSecret, getKeyStoragePreference, saveKeyStoragePreference } from "../../src/lib/auth";
+import { deleteAccount as deleteAccountApi, updateProfile, changePassword as changePasswordApi, getUserSettings, saveUserSettings, getAiRunners, type AiRunner, getDeviceMetrics, getDeviceEvents, type DeviceMetric, type DeviceEvent, getUsageSummary, type UsageSummary, type SpeechProvider, type KeyStorage, LOCAL_KEYS, getLocalSecret, saveLocalSecret, deleteLocalSecret, getKeyStoragePreference, saveKeyStoragePreference, listAuthIdentities, startLinkIntent, unlinkProvider as unlinkProviderApi, startMergeIntent, cancelMergeIntent, type AuthIdentity, type OAuthProvider, type MergeIntent } from "../../src/lib/auth";
 import { SPEECH_PROVIDERS } from "../../src/lib/speech";
 import { clearCache } from "../../src/lib/storage";
 import * as ExpoClipboard from "expo-clipboard";
+import * as ExpoLinking from "expo-linking";
 import { getLogEntries, clearLogEntries, onLogsChanged, LogEntry } from "../../src/lib/logger";
 import { quicClient, type AgentStatus, type RelayServer, type TunnelServer } from "../../src/lib/quic";
 
@@ -107,6 +109,12 @@ export default function SettingsScreen() {
   const [isCleaning, setIsCleaning] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const [identities, setIdentities] = useState<AuthIdentity[]>([]);
+  const [linkingProvider, setLinkingProvider] = useState<OAuthProvider | null>(null);
+  const [unlinkingProvider, setUnlinkingProvider] = useState<AuthIdentity["provider"] | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [mergeIntent, setMergeIntent] = useState<MergeIntent | null>(null);
+  const [mergeStarting, setMergeStarting] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>(getLogEntries());
   const [forceRelay, setForceRelay] = useState(quicClient.forceRelay);
@@ -878,6 +886,159 @@ export default function SettingsScreen() {
     }
   };
 
+  // ── Sign-in methods (link / unlink / merge) ──────────────────────────
+  // Loads linked identities on mount and after mutations so the UI stays
+  // in sync with Convex. Errors surface inline so the user can retry
+  // without leaving the settings screen.
+  const refreshIdentities = async () => {
+    const { getToken } = await import("../../src/lib/auth");
+    const tok = await getToken();
+    if (!tok) return;
+    try {
+      const list = await listAuthIdentities(tok);
+      setIdentities(list);
+    } catch {
+      // keep previous list; user can tap again
+    }
+  };
+
+  useEffect(() => {
+    refreshIdentities();
+  }, [user?.id]);
+
+  // Refresh linked identities when the app returns to the foreground.
+  // The OAuth link flow sends the user to Safari / Chrome — when they
+  // come back we want the "Sign-In Methods" list to reflect reality
+  // without forcing a manual pull-to-refresh.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (next) => {
+      if (next === "active") {
+        refreshIdentities();
+        // If a link was in-flight, clear the spinner state — the user
+        // either finished OAuth or bailed, and we'll see the outcome in
+        // the refreshed identity list.
+        setLinkingProvider(null);
+      }
+    });
+    return () => sub.remove();
+    // refreshIdentities is defined in-scope and closes over latest
+    // state via the identities setter — dropping it from deps is fine
+    // and the lint is suppressed where it'd suggest otherwise.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Fast-path: the web OAuth callback redirects to
+  //   yaver://oauth-callback?linked=1&linkedProvider=<provider>
+  // when the flow was initiated as a link (vs. a fresh sign-in). We
+  // listen for that URL shape here and surface a success toast + kick
+  // the identity refresh immediately, so the user doesn't have to wait
+  // for the next AppState focus fire or tab away and back.
+  useEffect(() => {
+    const sub = Linking.addEventListener("url", (event) => {
+      const url = event.url || "";
+      if (!url.startsWith("yaver://oauth-callback")) return;
+      if (!/\blinked=1\b/.test(url)) return;
+      const parsed = ExpoLinking.parse(url);
+      const linkedProvider = (parsed.queryParams?.linkedProvider as string | undefined) || "provider";
+      setLinkingProvider(null);
+      refreshIdentities();
+      Alert.alert("Linked", `${linkedProvider} added to this Yaver account.`);
+    });
+    return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleLinkProvider = async (provider: OAuthProvider) => {
+    setAuthError(null);
+    setLinkingProvider(provider);
+    try {
+      const { getToken } = await import("../../src/lib/auth");
+      const tok = await getToken();
+      if (!tok) throw new Error("Not signed in.");
+      const intent = await startLinkIntent(tok, provider);
+      await Linking.openURL(intent.url);
+      // Don't refresh immediately — the user is now in the browser. When
+      // they return we refresh via the focus effect below.
+    } catch (e: any) {
+      setAuthError(e?.message || `Failed to start ${provider} link`);
+    } finally {
+      setLinkingProvider(null);
+    }
+  };
+
+  const handleUnlinkProvider = async (provider: AuthIdentity["provider"]) => {
+    if (identities.length <= 1) {
+      Alert.alert("Can't unlink", "This is your only sign-in method. Add another provider before removing this one.");
+      return;
+    }
+    Alert.alert(
+      `Unlink ${provider}?`,
+      `You won't be able to sign in with ${provider} afterwards. You'll still be able to sign in with ${identities.length - 1} other method${identities.length - 1 === 1 ? "" : "s"}.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Unlink",
+          style: "destructive",
+          onPress: async () => {
+            setAuthError(null);
+            setUnlinkingProvider(provider);
+            try {
+              const { getToken } = await import("../../src/lib/auth");
+              const tok = await getToken();
+              if (!tok) throw new Error("Not signed in.");
+              await unlinkProviderApi(tok, provider);
+              await refreshIdentities();
+            } catch (e: any) {
+              setAuthError(e?.message || `Failed to unlink ${provider}`);
+            } finally {
+              setUnlinkingProvider(null);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleStartMerge = async () => {
+    setAuthError(null);
+    setMergeStarting(true);
+    try {
+      const { getToken } = await import("../../src/lib/auth");
+      const tok = await getToken();
+      if (!tok) throw new Error("Not signed in.");
+      const intent = await startMergeIntent(tok);
+      setMergeIntent(intent);
+    } catch (e: any) {
+      setAuthError(e?.message || "Failed to start merge");
+    } finally {
+      setMergeStarting(false);
+    }
+  };
+
+  const handleCancelMerge = async () => {
+    if (!mergeIntent) return;
+    const { getToken } = await import("../../src/lib/auth");
+    const tok = await getToken();
+    if (tok) await cancelMergeIntent(tok, mergeIntent.mergeToken);
+    setMergeIntent(null);
+  };
+
+  const handleOpenMergeUrl = async () => {
+    if (mergeIntent) await Linking.openURL(mergeIntent.approvalUrl);
+  };
+
+  const [mergeUrlCopied, setMergeUrlCopied] = useState(false);
+  const handleCopyMergeUrl = async () => {
+    if (!mergeIntent) return;
+    try {
+      await ExpoClipboard.setStringAsync(mergeIntent.approvalUrl);
+      setMergeUrlCopied(true);
+      setTimeout(() => setMergeUrlCopied(false), 2000);
+    } catch {
+      // clipboard unavailable — user can still long-press the URL
+    }
+  };
+
   const startTestApp = async (target: 'device' | 'simulator') => {
     setTestTarget(target);
     setTestRunning(true);
@@ -1014,6 +1175,178 @@ export default function SettingsScreen() {
         </View>
 
         {/* Developer Profile section removed — survey no longer required */}
+
+        {/* Sign-in methods (link / unlink / merge) */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Sign-In Methods</Text>
+          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, padding: 14 }]}>
+            <Text style={{ color: c.textMuted, fontSize: 12, lineHeight: 18 }}>
+              Link Apple, Google, or Microsoft to this same Yaver account. Future sign-ins with any linked provider open the same machines and devices.
+            </Text>
+            {authError && (
+              <Text style={{ color: c.error, fontSize: 12, marginTop: 10 }}>{authError}</Text>
+            )}
+            {identities.length > 0 && (
+              <View style={{ marginTop: 12 }}>
+                {identities.map((identity) => {
+                  const canUnlink = identities.length > 1;
+                  return (
+                    <View
+                      key={`${identity.provider}:${identity.email || "none"}`}
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        borderTopWidth: 1,
+                        borderTopColor: c.border,
+                        paddingVertical: 10,
+                      }}
+                    >
+                      <View style={{ flex: 1, marginRight: 10 }}>
+                        <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600", textTransform: "capitalize" }}>
+                          {identity.provider}
+                        </Text>
+                        <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 2 }} numberOfLines={1}>
+                          {identity.email || "No email reported"}
+                        </Text>
+                      </View>
+                      {identity.isPrimary ? (
+                        <View style={{ borderWidth: 1, borderColor: c.success, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, marginRight: 6 }}>
+                          <Text style={{ color: c.success, fontSize: 10, letterSpacing: 0.6 }}>PRIMARY</Text>
+                        </View>
+                      ) : null}
+                      <Pressable
+                        onPress={() => handleUnlinkProvider(identity.provider)}
+                        disabled={!canUnlink || unlinkingProvider === identity.provider}
+                        style={{
+                          borderWidth: 1,
+                          borderColor: c.border,
+                          borderRadius: 999,
+                          paddingHorizontal: 10,
+                          paddingVertical: 5,
+                          opacity: canUnlink ? 1 : 0.35,
+                        }}
+                      >
+                        <Text style={{ color: canUnlink ? c.error : c.textMuted, fontSize: 11, letterSpacing: 0.4 }}>
+                          {unlinkingProvider === identity.provider ? "…" : "UNLINK"}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+            <View style={{ marginTop: 14, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              {(["apple", "google", "microsoft"] as const).map((provider) => {
+                const already = identities.some((i) => i.provider === provider);
+                const disabled = linkingProvider !== null || already;
+                return (
+                  <Pressable
+                    key={provider}
+                    onPress={() => handleLinkProvider(provider)}
+                    disabled={disabled}
+                    style={{
+                      flexGrow: 1,
+                      borderWidth: 1,
+                      borderColor: c.border,
+                      borderRadius: 10,
+                      paddingVertical: 11,
+                      paddingHorizontal: 12,
+                      alignItems: "center",
+                      opacity: disabled ? 0.45 : 1,
+                      backgroundColor: c.bgCardElevated,
+                    }}
+                  >
+                    <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600", textTransform: "capitalize" }}>
+                      {already ? `${provider} linked` : linkingProvider === provider ? "Opening…" : `Connect ${provider}`}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, padding: 14, marginTop: 12 }]}>
+            <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "600" }}>Merge another account</Text>
+            <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 6, lineHeight: 18 }}>
+              Accidentally created two Yaver accounts? Merge them into this one. You&apos;ll get an approval URL to open on any browser where the OTHER account is signed in.
+            </Text>
+            {!mergeIntent ? (
+              <Pressable
+                onPress={handleStartMerge}
+                disabled={mergeStarting}
+                style={{
+                  marginTop: 12,
+                  borderWidth: 1,
+                  borderColor: c.border,
+                  borderRadius: 10,
+                  paddingVertical: 11,
+                  alignItems: "center",
+                  opacity: mergeStarting ? 0.5 : 1,
+                  backgroundColor: c.bgCardElevated,
+                }}
+              >
+                <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600" }}>
+                  {mergeStarting ? "Starting…" : "Start merge"}
+                </Text>
+              </Pressable>
+            ) : (
+              <View style={{ marginTop: 12 }}>
+                <Text style={{ color: c.textMuted, fontSize: 11, letterSpacing: 0.4, textTransform: "uppercase" }}>Approval URL</Text>
+                <Text selectable style={{ color: c.textPrimary, fontSize: 12, marginTop: 6, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }}>
+                  {mergeIntent.approvalUrl}
+                </Text>
+                <View style={{ flexDirection: "row", marginTop: 12, gap: 8 }}>
+                  <Pressable
+                    onPress={handleOpenMergeUrl}
+                    style={{
+                      flex: 1,
+                      borderWidth: 1,
+                      borderColor: c.border,
+                      borderRadius: 10,
+                      paddingVertical: 11,
+                      alignItems: "center",
+                      backgroundColor: c.bgCardElevated,
+                    }}
+                  >
+                    <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600" }}>Open in browser</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleCopyMergeUrl}
+                    style={{
+                      flex: 1,
+                      borderWidth: 1,
+                      borderColor: c.border,
+                      borderRadius: 10,
+                      paddingVertical: 11,
+                      alignItems: "center",
+                    }}
+                  >
+                    <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600" }}>
+                      {mergeUrlCopied ? "Copied" : "Copy URL"}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleCancelMerge}
+                    style={{
+                      flex: 1,
+                      borderWidth: 1,
+                      borderColor: c.border,
+                      borderRadius: 10,
+                      paddingVertical: 11,
+                      alignItems: "center",
+                    }}
+                  >
+                    <Text style={{ color: c.error, fontSize: 13, fontWeight: "600" }}>Cancel</Text>
+                  </Pressable>
+                </View>
+                <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 10 }}>
+                  Expires {new Date(mergeIntent.expiresAt).toLocaleTimeString()}
+                </Text>
+              </View>
+            )}
+          </View>
+        </View>
 
         {/* Security — optional two-factor authentication */}
         <View style={styles.section}>

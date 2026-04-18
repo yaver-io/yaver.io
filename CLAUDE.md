@@ -508,6 +508,67 @@ yaver serve --multi-user --team team_abc  # Restrict to team members
 yaver serve --multi-user --max-users 10   # Limit concurrent users
 ```
 
+## Account Linking & Merge
+
+A Yaver user can hold **multiple OAuth identities** (Apple + Google + Microsoft + email) on the same account, and can fold two Yaver accounts into one if they accidentally signed up twice. All operations surface through web, mobile, CLI, and MCP — fully symmetric.
+
+### Identity model
+- `authIdentities` table (`backend/convex/schema.ts`) stores `(userId, provider, providerId)` tuples. One user can have many rows.
+- `users` table still holds a "primary" `(provider, providerId)` for legacy lookups; when that primary identity is unlinked, another linked identity is auto-promoted.
+- OAuth sign-in resolves via `findUserForOAuth()`: `authIdentities` index first, then primary on `users`, then email. Signing in with any linked provider always lands on the same account.
+
+### HTTP surface (all at Convex site)
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/auth/providers` | GET | list identities for current session |
+| `/auth/oauth-link/start` | POST | mint a 15-min link intent |
+| `/auth/oauth-link/complete` | POST | OAuth callback completes it |
+| `/auth/oauth-link/:provider` | DELETE | unlink (refuses last one, refuses stale TOTP) |
+| `/auth/account/merge/start` | POST | mint a 30-min merge intent; target is the caller's account |
+| `/auth/account/merge/status` | GET (public, token is secret) | for the approval page |
+| `/auth/account/merge/complete` | POST | source session approves + executes |
+| `/auth/account/merge/cancel` | POST | target cancels before approval |
+
+### Security envelope (every destructive auth op)
+- **TOTP re-verification** when `users.totpEnabled` — unlink, `createAccountMergeIntent`, and `completeAccountMerge` (source side) all require a fresh 6-digit code (or a recovery code, which is consumed). Without it they fail with `TOTP_REQUIRED` → HTTP 412.
+- **Rate limit** on merge intents: max 3 pending + max 10 per hour per user.
+- **Security events** — every link/unlink/merge writes a row to `securityEvents` with `eventType` ∈ {`link_added`, `link_removed`, `merge_started`, `merge_completed`, `merge_cancelled`}.
+- **Security emails** sent via Resend on every action. Templates in `backend/convex/email.ts`: `providerLinkedHtml`, `providerUnlinkedHtml`, `accountsMergedHtml`, `mergeStartedHtml`. Merge also courtesy-emails the deleted address.
+- **Unlink of `email` provider** clears `users.passwordHash` when it was the last email identity, so password login actually stops working.
+
+### Manual merge flow
+1. Target (keeps data) calls `/auth/account/merge/start` from their session → receives `{mergeToken, approvalUrl, expiresAt}`. Approval URL is `https://yaver.io/account/merge?token=<mergeToken>`.
+2. Target shares the URL out-of-band (or opens it on another browser).
+3. Source (will be deleted) signs in on that browser, the page loads `/account/merge?token=...`, confirms target email, user approves.
+4. `/auth/account/merge/complete` validates both sessions + (if source has 2FA) `sourceTotpCode`, then runs `mergeUserInto(source, target)`.
+
+### `mergeUserInto` coverage (all user-keyed tables)
+Sessions, devices, userSettings, developerSurveys, subscriptions, managedRelays, cloudMachines, sdkTokens, securityEvents, authLogs, userProjects, userServices, userDeployments, userActivity, runnerUsage, dailyTaskCounts, teams (owner), teamMembers (deduping + role upgrade on collision, invitedBy rewrite), guestInvitations (+ optional guestUserId), guestAccess, guestUsage, infraAccessGrants + Devices + Machines, authIdentities. Ephemeral tables (passwordResets, pendingAuth, oauthLinkIntents) are deleted; source-owned merge intents are cleaned up so the source user row can be deleted cleanly.
+
+### Surfaces
+
+| Interface | Link | Unlink | Merge | List |
+|---|---|---|---|---|
+| **Web** | Settings → Sign-In Methods → Connect | per-row Unlink button | Merge another account card + `/account/merge` approval page | identity list in Settings |
+| **Mobile** | Settings → Sign-In Methods → Connect | per-row Unlink pill | Start merge card (shows URL) | identity list in Settings |
+| **CLI** | `yaver account link <provider>` | `yaver account unlink <provider> [--totp x]` | `yaver account merge start [--totp x]` → approval URL | `yaver account providers` |
+| **MCP** | `yaver_auth_link_start` + `yaver_auth_link_wait` | `yaver_auth_unlink` | `yaver_auth_merge_start` + `yaver_auth_merge_wait` | `yaver_auth_list_identities` |
+
+### Deep-link return (mobile)
+The OAuth callback route (`web/app/api/auth/oauth/[provider]/callback/route.ts`) redirects to `yaver://oauth-callback?linked=1&linkedProvider=<provider>` when `state.client === "mobile"` and `state.intent === "link"`. Settings tab listens for that URL and immediately refreshes + toasts "X linked to this Yaver account."
+
+### Key files
+- `backend/convex/auth.ts` — all mutations + helpers (`mergeUserInto`, `requireFreshTotp`, `recordAuthSecurityEvent`, `scheduleSecurityEmail`)
+- `backend/convex/email.ts` — email templates
+- `backend/convex/schema.ts` — `authIdentities`, `accountMergeIntents`, `securityEvents`
+- `backend/convex/http.ts` — HTTP routes
+- `desktop/agent/mcp_auth_link_tools.go` — 6 MCP tool helpers + tests in `_test.go`
+- `desktop/agent/account_cmd.go` — `yaver account` CLI
+- `web/components/dashboard/SettingsView.tsx` — Sign-In Methods + Merge cards
+- `web/app/account/merge/page.tsx` — approval page
+- `mobile/app/(tabs)/settings.tsx` — Sign-In Methods section + AppState + deep-link listeners
+- `mobile/src/lib/auth.ts` — mobile client helpers
+
 ## Guest Access (Share Your Machine)
 
 Let other people use your machine through Yaver without giving them SSH, passwords, or team setup. The host invites a guest by email; the guest accepts from the Yaver mobile app and can then run tasks on the host's agent. No team or subscription required — just OAuth identity + consent.
@@ -1269,6 +1330,14 @@ The existing `/backend/*`, `/manifest/*`, `/switch/*` endpoints also work agains
 `POST /phone/projects/promote` calls `SwitchEngine.Plan(projectDir, targetID, dryRun)` where `projectDir` is the phone-project directory. Because each phone project has a valid `.yaver/config.yaml` (backend=sqlite), the switch engine sees it as a regular SQLite-backed Yaver project and plans the usual 7-layer migration (snapshot → provision → migrate-data → update-env → verify) with the right complexity tier. The 7-day rollback window applies.
 
 ## Networking Stack
+
+> **Running the agent inside WSL2?** Read
+> [`docs/wsl2-relay-troubleshooting.md`](docs/wsl2-relay-troubleshooting.md)
+> if the mobile app can't stop reconnecting or the relay log shows
+> `sendmsg: invalid argument` / `timeout: no recent network
+> activity`. `yaver serve` auto-tunes UDP buffers on WSL2 now; the
+> deeper NAT problem needs `[wsl2] networkingMode=mirrored` on the
+> Windows host.
 
 Yaver's networking has three layers that work together for instant, reliable connections:
 

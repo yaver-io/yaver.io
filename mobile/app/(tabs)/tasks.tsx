@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -341,7 +341,8 @@ export default function TasksScreen() {
   const shouldOpenNew =
     typeof taskParams.openNew === "string" &&
     (taskParams.openNew === "1" || taskParams.openNew === "true");
-  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, selectDevice, disconnect, isLoadingDevices, refreshDevices } = useDevice();
+  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce } = useDevice();
+  const unreachableSet = useMemo(() => new Set(unreachableDeviceIds), [unreachableDeviceIds]);
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>(getLogEntries());
   const [isRefreshingDevices, setIsRefreshingDevices] = useState(false);
@@ -1226,7 +1227,20 @@ export default function TasksScreen() {
               {isEffectivelyConnected ? modeLabel : ""}
               {activeDevice ? ` \u00b7 ${activeDevice.name}` : ""}
             </Text>
-            {showRetryButton && (
+            {showReconnectProgress && (
+              <Text style={{ color: banner.text, fontSize: 11, marginLeft: 6, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }}>
+                {displayedAttempt}/{quicClient.maxReconnectAttempts}
+              </Text>
+            )}
+            {showReconnectProgress && (
+              <Pressable
+                style={{ marginLeft: 8, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, backgroundColor: "#ef444433" }}
+                onPress={() => { stopReconnectAndBounce().catch(() => {}); }}
+              >
+                <Text style={{ fontSize: 12, color: "#f87171", fontWeight: "600" }}>Stop</Text>
+              </Pressable>
+            )}
+            {!showReconnectProgress && showRetryButton && (
               <Pressable
                 style={{ marginLeft: 8, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, backgroundColor: "#6366f133" }}
                 onPress={() => activeDevice && selectDevice(activeDevice)}
@@ -1234,17 +1248,12 @@ export default function TasksScreen() {
                 <Text style={{ fontSize: 12, color: "#818cf8", fontWeight: "600" }}>Retry</Text>
               </Pressable>
             )}
-            {showReconnectProgress && (
-              <Text style={{ color: banner.text, fontSize: 11, marginLeft: 6, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }}>
-                {displayedAttempt}/{quicClient.maxReconnectAttempts}
-              </Text>
-            )}
-            {connectionStatus === "error" && (
+            {(showReconnectProgress || showRetryButton) && (
               <Pressable
-                style={{ marginLeft: 8, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, backgroundColor: "#ef444433" }}
-                onPress={() => quicClient.stopReconnect()}
+                style={{ marginLeft: 8, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, backgroundColor: "#64748b33" }}
+                onPress={() => setShowLogs(true)}
               >
-                <Text style={{ fontSize: 12, color: "#f87171", fontWeight: "600" }}>Stop</Text>
+                <Text style={{ fontSize: 12, color: "#94a3b8", fontWeight: "600" }}>View Logs</Text>
               </Pressable>
             )}
           </View>
@@ -1579,24 +1588,30 @@ export default function TasksScreen() {
                 <Text style={[s.emptySubtitle, { color: c.textSecondary, marginBottom: 16 }]}>
                   Which device do you want to connect to?
                 </Text>
-                {devices.map((d) => (
-                  <Pressable
-                    key={d.id}
-                    style={[s.devicePickerCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
-                    onPress={() => selectDevice(d)}
-                  >
-                    <View style={s.devicePickerRow}>
-                      <View>
-                        <Text style={[s.devicePickerName, { color: c.textPrimary }]}>{d.name}</Text>
-                        <Text style={[s.devicePickerMeta, { color: c.textMuted }]}>{d.os} · {d.host}</Text>
-                        {d.deviceClass === "edge-mobile" && (
-                          <Text style={[s.devicePickerMeta, { color: c.accent, marginTop: 2 }]}>Mobile worker</Text>
-                        )}
+                {devices.map((d) => {
+                  const unreachable = unreachableSet.has(d.id);
+                  return (
+                    <Pressable
+                      key={d.id}
+                      style={[s.devicePickerCard, { backgroundColor: c.bgCard, borderColor: unreachable ? "#ef4444" : c.border }]}
+                      onPress={() => selectDevice(d)}
+                    >
+                      <View style={s.devicePickerRow}>
+                        <View>
+                          <Text style={[s.devicePickerName, { color: c.textPrimary }]}>{d.name}</Text>
+                          <Text style={[s.devicePickerMeta, { color: c.textMuted }]}>{d.os} · {d.host}</Text>
+                          {d.deviceClass === "edge-mobile" && (
+                            <Text style={[s.devicePickerMeta, { color: c.accent, marginTop: 2 }]}>Mobile worker</Text>
+                          )}
+                          {unreachable && (
+                            <Text style={[s.devicePickerMeta, { color: "#f87171", marginTop: 2 }]}>Not reachable · tap to retry</Text>
+                          )}
+                        </View>
+                        <View style={[s.devicePickerDot, { backgroundColor: unreachable ? "#ef4444" : d.online ? c.success || "#22c55e" : c.textMuted }]} />
                       </View>
-                      <View style={[s.devicePickerDot, { backgroundColor: d.online ? c.success || "#22c55e" : c.textMuted }]} />
-                    </View>
-                  </Pressable>
-                ))}
+                    </Pressable>
+                  );
+                })}
               </View>
             ) : null
           }

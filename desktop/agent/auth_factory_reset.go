@@ -28,14 +28,26 @@ func runAuthFactoryReset(args []string) {
 		}
 	}
 
-	for _, resolver := range []func() (string, error){ConfigPath, pairedTokensPath} {
+	// Wipe every piece of local auth state. pendingAuthPath is the
+	// resume file for in-flight device-code sign-ins; leaving it
+	// around would make the next `yaver auth` try to resume a stale
+	// code and fail noisily.
+	removed := 0
+	for _, resolver := range []func() (string, error){ConfigPath, pendingAuthPath, pairedTokensPath} {
 		path, pathErr := resolver()
 		if pathErr != nil || path == "" {
 			continue
 		}
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "Warning: could not remove %s: %v\n", path, err)
+		if err := os.Remove(path); err == nil || os.IsNotExist(err) {
+			if err == nil {
+				removed++
+			}
+			continue
 		}
+		fmt.Fprintf(os.Stderr, "Warning: could not remove %s: %v\n", path, err)
+	}
+	if removed > 0 {
+		fmt.Printf("Removed %d local auth file(s).\n", removed)
 	}
 
 	nextBinary := ""
@@ -44,6 +56,13 @@ func runAuthFactoryReset(args []string) {
 			fmt.Fprintf(os.Stderr, "Warning: npm refresh failed: %v\n", refreshErr)
 			fmt.Fprintln(os.Stderr, "Continuing with the current yaver binary.")
 		} else {
+			nextBinary = path
+		}
+	}
+
+	if nextBinary == "" {
+		augmentAgentPATH()
+		if path, lookErr := osexec.LookPath("yaver"); lookErr == nil {
 			nextBinary = path
 		}
 	}

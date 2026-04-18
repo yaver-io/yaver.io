@@ -482,6 +482,158 @@ http.route({
   }),
 });
 
+/** DELETE /auth/oauth-link/:provider — Unlink an OAuth provider from the current account. */
+http.route({
+  pathPrefix: "/auth/oauth-link/",
+  method: "DELETE",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const url = new URL(request.url);
+    const provider = url.pathname.replace(/^.*\/auth\/oauth-link\//, "").trim();
+    if (!provider || !["google", "microsoft", "apple", "email"].includes(provider)) {
+      return errorResponse("unknown provider", 400);
+    }
+    const body = await request.json().catch(() => ({}));
+    try {
+      const result = await ctx.runMutation(api.auth.unlinkAuthIdentity, {
+        tokenHash,
+        provider: provider as "google" | "microsoft" | "apple" | "email",
+        totpCode: typeof body?.totpCode === "string" ? body.totpCode : undefined,
+      });
+      if (!result.ok) {
+        return errorResponse(result.reason || "not linked", 404);
+      }
+      return jsonResponse(result);
+    } catch (e: any) {
+      if (e?.message === "Unauthorized") return errorResponse("Unauthorized", 401);
+      if (e?.message === "ONLY_IDENTITY") {
+        return errorResponse("Refusing to unlink the only sign-in method — add another provider first.", 409);
+      }
+      if (e?.message === "TOTP_REQUIRED") {
+        return errorResponse("TOTP code required (2FA is enabled on this account).", 412);
+      }
+      if (e?.message === "INVALID_TOTP") {
+        return errorResponse("Invalid 2FA code.", 403);
+      }
+      return errorResponse(e?.message || "Failed to unlink provider", 400);
+    }
+  }),
+});
+
+/** POST /auth/account/merge/start — Target user starts a merge intent. */
+http.route({
+  path: "/auth/account/merge/start",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    try {
+      const result = await ctx.runMutation(api.auth.createAccountMergeIntent, {
+        tokenHash,
+        client: body?.client || undefined,
+        totpCode: typeof body?.totpCode === "string" ? body.totpCode : undefined,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      if (e?.message === "Unauthorized") return errorResponse("Unauthorized", 401);
+      if (e?.message === "TOTP_REQUIRED") {
+        return errorResponse("TOTP code required (2FA is enabled on this account).", 412);
+      }
+      if (e?.message === "INVALID_TOTP") {
+        return errorResponse("Invalid 2FA code.", 403);
+      }
+      if (e?.message === "TOO_MANY_PENDING_MERGES") {
+        return errorResponse("Too many pending merge intents. Cancel an existing one first.", 429);
+      }
+      if (e?.message === "MERGE_RATE_LIMIT") {
+        return errorResponse("Too many merge requests in the last hour. Try again later.", 429);
+      }
+      return errorResponse(e?.message || "Failed to start merge", 400);
+    }
+  }),
+});
+
+/** GET /auth/account/merge/status?token=... — Public status for approval-page UX. */
+http.route({
+  path: "/auth/account/merge/status",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const url = new URL(request.url);
+    const token = url.searchParams.get("token");
+    if (!token) return errorResponse("token required", 400);
+    const result = await ctx.runQuery(api.auth.getAccountMergeIntentStatus, { token });
+    return jsonResponse(result);
+  }),
+});
+
+/**
+ * POST /auth/account/merge/complete
+ *
+ * Called from a session signed into the SOURCE account (the one that will
+ * be merged away). Body: { mergeToken }. The Authorization header carries
+ * the source's bearer token.
+ */
+http.route({
+  path: "/auth/account/merge/complete",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const sourceTokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    if (!body?.mergeToken) return errorResponse("mergeToken required", 400);
+    try {
+      const result = await ctx.runMutation(api.auth.completeAccountMerge, {
+        mergeToken: body.mergeToken,
+        sourceTokenHash,
+        sourceTotpCode: typeof body?.sourceTotpCode === "string" ? body.sourceTotpCode : undefined,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      if (e?.message === "Unauthorized") return errorResponse("Unauthorized", 401);
+      if (e?.message === "INVALID_MERGE_TOKEN") return errorResponse("Invalid merge token", 404);
+      if (e?.message === "MERGE_ALREADY_RESOLVED") return errorResponse("Merge already completed or cancelled", 409);
+      if (e?.message === "MERGE_TOKEN_EXPIRED") return errorResponse("Merge token expired", 410);
+      if (e?.message === "CANNOT_MERGE_SELF") return errorResponse("Cannot merge an account into itself", 400);
+      if (e?.message === "TARGET_USER_NOT_FOUND") return errorResponse("Target account no longer exists", 404);
+      if (e?.message === "TOTP_REQUIRED") {
+        return errorResponse("TOTP code required (source account has 2FA enabled).", 412);
+      }
+      if (e?.message === "INVALID_TOTP") {
+        return errorResponse("Invalid 2FA code.", 403);
+      }
+      return errorResponse(e?.message || "Merge failed", 400);
+    }
+  }),
+});
+
+/** POST /auth/account/merge/cancel — target cancels a pending merge intent. */
+http.route({
+  path: "/auth/account/merge/cancel",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    if (!body?.mergeToken) return errorResponse("mergeToken required", 400);
+    try {
+      const result = await ctx.runMutation(api.auth.cancelAccountMergeIntent, {
+        tokenHash,
+        mergeToken: body.mergeToken,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      if (e?.message === "Unauthorized") return errorResponse("Unauthorized", 401);
+      return errorResponse(e?.message || "Failed to cancel merge", 400);
+    }
+  }),
+});
+
 /** POST /auth/create-session — Create a session (called from web server). */
 http.route({
   path: "/auth/create-session",

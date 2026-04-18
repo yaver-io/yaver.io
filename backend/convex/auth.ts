@@ -3,7 +3,14 @@ import { mutation, query, internalQuery, QueryCtx, MutationCtx } from "./_genera
 import { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { deleteInfraGrantArtifactsForUser } from "./access";
-import { welcomeHtml } from "./email";
+import {
+  welcomeHtml,
+  providerLinkedHtml,
+  providerUnlinkedHtml,
+  accountsMergedHtml,
+  mergeStartedHtml,
+} from "./email";
+import { base32Decode, verifyTOTP } from "./totp";
 
 type OAuthProvider = "google" | "microsoft" | "apple" | "email";
 
@@ -102,6 +109,90 @@ async function findUserForOAuth(
     .withIndex("by_email", (q) => q.eq("email", email))
     .unique();
   return byEmail;
+}
+
+// ── Shared helpers for destructive auth flows ──────────────────────
+// These live here so `unlinkAuthIdentity`, `createAccountMergeIntent`,
+// and `completeAccountMerge` share one implementation for the common
+// bits: TOTP re-verification, security event writing, notification
+// email scheduling. Every destructive action goes through all three,
+// so users can't be silently attacked via a stolen session.
+
+/**
+ * If the user has 2FA enabled, require a valid TOTP code or recovery
+ * code on destructive auth actions. Throws with TOTP_REQUIRED when the
+ * caller didn't supply a code, or INVALID_TOTP when the code is wrong.
+ * Consumes the recovery code if one matched.
+ */
+async function requireFreshTotp(
+  ctx: MutationCtx,
+  user: {
+    _id: Id<"users">;
+    totpEnabled?: boolean;
+    totpSecret?: string;
+    totpRecoveryCodes?: string;
+  },
+  providedCode: string | undefined,
+) {
+  if (!user.totpEnabled) return;
+  const code = (providedCode ?? "").trim();
+  if (!code) throw new Error("TOTP_REQUIRED");
+  if (!user.totpSecret) return; // misconfigured — fail open rather than lock the user out
+
+  const secretBytes = base32Decode(user.totpSecret);
+  const ok = await verifyTOTP(secretBytes, code);
+  if (ok) return;
+
+  if (user.totpRecoveryCodes) {
+    const codeHash = await sha256Hex(code);
+    const hashes: string[] = JSON.parse(user.totpRecoveryCodes);
+    const idx = hashes.indexOf(codeHash);
+    if (idx !== -1) {
+      hashes.splice(idx, 1);
+      await ctx.db.patch(user._id, {
+        totpRecoveryCodes: JSON.stringify(hashes),
+      });
+      return;
+    }
+  }
+  throw new Error("INVALID_TOTP");
+}
+
+async function recordAuthSecurityEvent(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  eventType:
+    | "link_added"
+    | "link_removed"
+    | "merge_started"
+    | "merge_completed"
+    | "merge_cancelled"
+    | "merge_received",
+  detailObj: Record<string, unknown>,
+) {
+  await ctx.db.insert("securityEvents", {
+    userId,
+    eventType,
+    details: JSON.stringify(detailObj),
+    read: false,
+    createdAt: Date.now(),
+  });
+}
+
+function scheduleSecurityEmail(
+  ctx: MutationCtx,
+  to: string,
+  subject: string,
+  html: string,
+) {
+  if (!to) return;
+  void ctx.scheduler.runAfter(0, internal.email.send, {
+    from: "Yaver Security <kivanc@yaver.io>",
+    to,
+    subject,
+    html,
+    replyTo: "kivanc@yaver.io",
+  });
 }
 
 async function mergeUserInto(
@@ -211,6 +302,148 @@ async function mergeUserInto(
     .collect();
   for (const survey of surveys) {
     await ctx.db.patch(survey._id, { userId: targetUserId });
+  }
+
+  // ---- Generic reassignments for every other user-keyed table -------
+  //
+  // Each entry names a table and the userId-like column. We iterate in
+  // batches of source-owned rows and just patch the column to point at
+  // target. For tables with multiple user columns (guest/host), we run
+  // the helper once per column.
+  //
+  // This has to stay in sync with the schema: when a new user-keyed
+  // table is added, add it here too or its rows will be orphaned on
+  // every future merge. The unit tests in auth_linking_test.ts guard
+  // against regressions by seeding a row in every listed table and
+  // asserting ownership flips.
+
+  const singleOwnerTables: Array<{ table: any; index: string; field: string }> = [
+    { table: "subscriptions", index: "by_userId", field: "userId" },
+    { table: "managedRelays", index: "by_userId", field: "userId" },
+    { table: "cloudMachines", index: "by_user", field: "userId" },
+    { table: "sdkTokens", index: "by_userId", field: "userId" },
+    { table: "securityEvents", index: "by_userId", field: "userId" },
+    { table: "authLogs", index: "by_userId", field: "userId" },
+    { table: "userProjects", index: "by_userId", field: "userId" },
+    { table: "userServices", index: "by_userId", field: "userId" },
+    { table: "userDeployments", index: "by_userId", field: "userId" },
+    { table: "userActivity", index: "by_userId", field: "userId" },
+    { table: "runnerUsage", index: "by_userId", field: "userId" },
+    { table: "dailyTaskCounts", index: "by_userId_date", field: "userId" },
+  ];
+  for (const { table, index, field } of singleOwnerTables) {
+    const rows = await ctx.db
+      .query(table as any)
+      .withIndex(index as any, (q: any) => q.eq(field, sourceUserId))
+      .collect();
+    for (const row of rows as any[]) {
+      await ctx.db.patch(row._id, { [field]: targetUserId } as any);
+    }
+  }
+
+  // Teams: move ownership, then collapse team memberships so target
+  // doesn't end up with two rows for the same team.
+  const ownedTeams = await ctx.db
+    .query("teams")
+    .withIndex("by_owner", (q) => q.eq("ownerId", sourceUserId))
+    .collect();
+  for (const team of ownedTeams) {
+    await ctx.db.patch(team._id, { ownerId: targetUserId });
+  }
+  const sourceMemberships = await ctx.db
+    .query("teamMembers")
+    .withIndex("by_user", (q) => q.eq("userId", sourceUserId))
+    .collect();
+  for (const member of sourceMemberships) {
+    const existing = await ctx.db
+      .query("teamMembers")
+      .withIndex("by_team_user", (q) => q.eq("teamId", member.teamId).eq("userId", targetUserId))
+      .unique();
+    if (existing) {
+      // target already belongs — drop the source row; keep the stronger role
+      const rankedRole = member.role === "admin" ? "admin" : existing.role;
+      if (existing.role !== rankedRole) {
+        await ctx.db.patch(existing._id, { role: rankedRole });
+      }
+      await ctx.db.delete(member._id);
+    } else {
+      await ctx.db.patch(member._id, { userId: targetUserId });
+    }
+  }
+  // Reassign invitedBy references so audit history stays intact.
+  const invitedByRows = await ctx.db
+    .query("teamMembers")
+    .collect();
+  for (const row of invitedByRows) {
+    if (row.invitedBy === sourceUserId) {
+      await ctx.db.patch(row._id, { invitedBy: targetUserId });
+    }
+  }
+
+  // Guest tables — both hostUserId and guestUserId can match source.
+  const guestDualTables: Array<{ table: any; hostIndex: string; guestIndex: string }> = [
+    { table: "guestInvitations", hostIndex: "by_hostUserId", guestIndex: "" },
+    { table: "guestAccess", hostIndex: "by_hostUserId", guestIndex: "by_guestUserId" },
+    { table: "guestUsage", hostIndex: "by_host_guest_date", guestIndex: "" },
+    { table: "infraAccessGrants", hostIndex: "by_hostUserId", guestIndex: "by_guestUserId" },
+    { table: "infraAccessGrantDevices", hostIndex: "by_hostUserId", guestIndex: "by_guestUserId" },
+    { table: "infraAccessGrantMachines", hostIndex: "by_hostUserId", guestIndex: "by_guestUserId" },
+  ];
+  for (const { table, hostIndex, guestIndex } of guestDualTables) {
+    if (hostIndex) {
+      const rows = await ctx.db
+        .query(table as any)
+        .withIndex(hostIndex as any, (q: any) => q.eq("hostUserId", sourceUserId))
+        .collect();
+      for (const row of rows as any[]) {
+        await ctx.db.patch(row._id, { hostUserId: targetUserId } as any);
+      }
+    }
+    if (guestIndex) {
+      const rows = await ctx.db
+        .query(table as any)
+        .withIndex(guestIndex as any, (q: any) => q.eq("guestUserId", sourceUserId))
+        .collect();
+      for (const row of rows as any[]) {
+        await ctx.db.patch(row._id, { guestUserId: targetUserId } as any);
+      }
+    }
+  }
+
+  // guestInvitations also stores guestUserId optionally.
+  const invitedAsGuest = await ctx.db
+    .query("guestInvitations")
+    .collect();
+  for (const row of invitedAsGuest) {
+    if (row.guestUserId === sourceUserId) {
+      await ctx.db.patch(row._id, { guestUserId: targetUserId });
+    }
+  }
+
+  // Ephemeral tables — clear source-owned rows rather than reassign.
+  // These are all short-lived state: an orphan password reset or pending
+  // auth row buys nothing, and reassigning invite/merge intents would
+  // be actively surprising (the user didn't consent to those on target).
+  // deviceCodes has no userId column — they're looked up by opaque code
+  // and expire on their own, so we leave them alone.
+  const ephemeralTables = ["passwordResets", "pendingAuth", "oauthLinkIntents"];
+  for (const tableName of ephemeralTables) {
+    const rows = await ctx.db
+      .query(tableName as any)
+      .withIndex("by_userId" as any, (q: any) => q.eq("userId", sourceUserId))
+      .collect();
+    for (const row of rows as any[]) {
+      await ctx.db.delete(row._id);
+    }
+  }
+
+  // Source-owned merge intents are no longer meaningful.
+  const srcMergeIntents = await ctx.db
+    .query("accountMergeIntents")
+    .withIndex("by_targetUserId", (q) => q.eq("targetUserId", sourceUserId))
+    .collect();
+  for (const intent of srcMergeIntents) {
+    await ctx.db.delete(intent._id);
   }
 
   await ctx.db.patch(targetUserId, {
@@ -428,7 +661,308 @@ export const completeOAuthLink = mutation({
       avatarUrl: targetUser.avatarUrl || args.avatarUrl,
     });
     await ctx.db.delete(intent._id);
+
+    await recordAuthSecurityEvent(ctx, targetUser._id, "link_added", {
+      provider: args.provider,
+      email: args.email,
+    });
+
+    const notifyTarget = targetUser.email || args.email;
+    if (notifyTarget) {
+      scheduleSecurityEmail(
+        ctx,
+        notifyTarget,
+        `Sign-in method added: ${args.provider}`,
+        providerLinkedHtml(targetUser.fullName || args.fullName || "", args.provider),
+      );
+    }
+
     return { ok: true, userId: targetUser._id };
+  },
+});
+
+/**
+ * Unlink an OAuth provider identity from the current account.
+ *
+ * Refuses when this would leave the user with no way to sign in:
+ *   - If the identity doesn't exist, returns ok=false (idempotent-ish).
+ *   - If it's the only identity on the account, throws ONLY_IDENTITY.
+ *
+ * If the unlinked identity was the primary one tracked on `users`, we
+ * promote any remaining identity to primary by patching users.{provider,
+ * providerId,email} so `findUserForOAuth` keeps working for the fallback
+ * users-table lookup.
+ */
+export const unlinkAuthIdentity = mutation({
+  args: {
+    tokenHash: v.string(),
+    provider: v.union(v.literal("google"), v.literal("microsoft"), v.literal("apple"), v.literal("email")),
+    totpCode: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const result = await validateSessionInternal(ctx, args.tokenHash);
+    if (!result) throw new Error("Unauthorized");
+
+    // Security envelope: TOTP re-verification when 2FA is on — stops a
+    // stolen session from silently stripping the user's sign-in methods.
+    await requireFreshTotp(ctx, result.user, args.totpCode);
+
+    const identities = await ctx.db
+      .query("authIdentities")
+      .withIndex("by_userId", (q) => q.eq("userId", result.user._id))
+      .collect();
+
+    const target = identities.find((identity) => identity.provider === args.provider);
+    if (!target) {
+      return { ok: false, reason: "not_linked" as const };
+    }
+    if (identities.length <= 1) {
+      throw new Error("ONLY_IDENTITY");
+    }
+
+    const wasPrimary =
+      result.user.provider === target.provider &&
+      result.user.providerId === target.providerId;
+
+    await ctx.db.delete(target._id);
+
+    // If we just removed the last email-provider identity, clear
+    // passwordHash so email+password login is actually disabled. Without
+    // this, unlinking "email" is cosmetic — the user can still sign in
+    // with /auth/login.
+    if (args.provider === "email") {
+      const stillHasEmailIdentity = identities.some(
+        (identity) => identity._id !== target._id && identity.provider === "email",
+      );
+      if (!stillHasEmailIdentity && result.user.passwordHash) {
+        await ctx.db.patch(result.user._id, { passwordHash: undefined });
+      }
+    }
+
+    if (wasPrimary) {
+      const next = identities.find((identity) => identity._id !== target._id);
+      if (next) {
+        await ctx.db.patch(result.user._id, {
+          provider: next.provider,
+          providerId: next.providerId,
+          email: next.email || result.user.email,
+        });
+      }
+    }
+
+    await recordAuthSecurityEvent(ctx, result.user._id, "link_removed", {
+      provider: args.provider,
+      remaining: identities.length - 1,
+    });
+
+    if (result.user.email) {
+      scheduleSecurityEmail(
+        ctx,
+        result.user.email,
+        `Sign-in method removed: ${args.provider}`,
+        providerUnlinkedHtml(result.user.fullName || "", args.provider),
+      );
+    }
+
+    return { ok: true, remaining: identities.length - 1 };
+  },
+});
+
+/**
+ * Manual account-merge: the currently signed-in user starts an intent. A
+ * separate session (the SOURCE account) approves it by calling
+ * completeAccountMerge with the same mergeToken. This lets a user who
+ * accidentally created two Yaver accounts fold one into the other without
+ * going through an OAuth provider collision.
+ */
+export const createAccountMergeIntent = mutation({
+  args: {
+    tokenHash: v.string(),
+    client: v.optional(v.string()),
+    totpCode: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const result = await validateSessionInternal(ctx, args.tokenHash);
+    if (!result) throw new Error("Unauthorized");
+
+    await requireFreshTotp(ctx, result.user, args.totpCode);
+
+    // Rate limit: destructive op, so we cap both pending intents and
+    // intents-per-hour. A stolen session can't mint unlimited merge
+    // URLs that way — and the user sees a security email on the first
+    // one they didn't trigger, which is the real defense.
+    const existing = await ctx.db
+      .query("accountMergeIntents")
+      .withIndex("by_targetUserId", (q) => q.eq("targetUserId", result.user._id))
+      .collect();
+    const pending = existing.filter((i) => i.status === "pending" && i.expiresAt > Date.now());
+    if (pending.length >= 3) {
+      throw new Error("TOO_MANY_PENDING_MERGES");
+    }
+    const lastHour = Date.now() - 60 * 60 * 1000;
+    const recent = existing.filter((i) => i.createdAt > lastHour);
+    if (recent.length >= 10) {
+      throw new Error("MERGE_RATE_LIMIT");
+    }
+
+    const token = randomHex(24);
+    const expiresAt = Date.now() + 30 * 60 * 1000; // 30 minutes
+    await ctx.db.insert("accountMergeIntents", {
+      token,
+      targetUserId: result.user._id,
+      targetEmail: result.user.email,
+      status: "pending",
+      client: args.client,
+      expiresAt,
+      createdAt: Date.now(),
+    });
+
+    await recordAuthSecurityEvent(ctx, result.user._id, "merge_started", {
+      expiresAt,
+      client: args.client,
+    });
+
+    if (result.user.email) {
+      scheduleSecurityEmail(
+        ctx,
+        result.user.email,
+        "Yaver account-merge request started",
+        mergeStartedHtml(result.user.fullName || "", result.user.email),
+      );
+    }
+
+    return { mergeToken: token, expiresAt, targetEmail: result.user.email };
+  },
+});
+
+/**
+ * Public status of a merge intent. The approval page calls this with the
+ * mergeToken from the URL so it can display the target email before asking
+ * for confirmation. No auth required — the mergeToken itself is the secret.
+ */
+export const getAccountMergeIntentStatus = query({
+  args: { token: v.string() },
+  handler: async (ctx, args) => {
+    const intent = await ctx.db
+      .query("accountMergeIntents")
+      .withIndex("by_token", (q) => q.eq("token", args.token))
+      .unique();
+    if (!intent) return { status: "unknown" as const };
+    if (intent.expiresAt < Date.now() && intent.status === "pending") {
+      return { status: "expired" as const, targetEmail: intent.targetEmail };
+    }
+    return {
+      status: intent.status,
+      targetEmail: intent.targetEmail,
+      expiresAt: intent.expiresAt,
+      completedAt: intent.completedAt,
+    };
+  },
+});
+
+/**
+ * Complete an account merge. The caller's session (sourceTokenHash) is the
+ * account that will be merged AWAY (deleted). The mergeToken identifies
+ * the target account to receive the data. Refuses to merge an account
+ * into itself. After success, the source account's session is no longer
+ * valid (its user row is deleted).
+ */
+export const completeAccountMerge = mutation({
+  args: {
+    mergeToken: v.string(),
+    sourceTokenHash: v.string(),
+    sourceTotpCode: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const intent = await ctx.db
+      .query("accountMergeIntents")
+      .withIndex("by_token", (q) => q.eq("token", args.mergeToken))
+      .unique();
+    if (!intent) throw new Error("INVALID_MERGE_TOKEN");
+    if (intent.status !== "pending") throw new Error("MERGE_ALREADY_RESOLVED");
+    if (intent.expiresAt < Date.now()) throw new Error("MERGE_TOKEN_EXPIRED");
+
+    const source = await validateSessionInternal(ctx, args.sourceTokenHash);
+    if (!source) throw new Error("Unauthorized");
+
+    if (source.user._id === intent.targetUserId) {
+      throw new Error("CANNOT_MERGE_SELF");
+    }
+
+    // Require 2FA from the SOURCE user — they're the ones consenting to
+    // have their account deleted. If source has no 2FA this is a no-op.
+    await requireFreshTotp(ctx, source.user, args.sourceTotpCode);
+
+    const target = await ctx.db.get(intent.targetUserId);
+    if (!target) throw new Error("TARGET_USER_NOT_FOUND");
+
+    const sourceEmailSnapshot = source.user.email;
+    const sourceNameSnapshot = source.user.fullName || "";
+
+    await mergeUserInto(ctx, source.user._id, intent.targetUserId);
+    await ctx.db.patch(intent._id, {
+      status: "completed",
+      completedAt: Date.now(),
+    });
+
+    // Audit + email the surviving user. Source user row was deleted
+    // inside mergeUserInto so we can't write a security event against
+    // it — but the target should know their account just absorbed
+    // another one.
+    await recordAuthSecurityEvent(ctx, intent.targetUserId, "merge_completed", {
+      mergedFromEmail: sourceEmailSnapshot,
+    });
+
+    if (target.email) {
+      scheduleSecurityEmail(
+        ctx,
+        target.email,
+        "Yaver accounts merged",
+        accountsMergedHtml(target.fullName || "", sourceEmailSnapshot, target.email),
+      );
+    }
+    // Courtesy email to the now-deleted source address so the human
+    // behind it has a record — the row is gone but the mailbox isn't.
+    if (sourceEmailSnapshot) {
+      scheduleSecurityEmail(
+        ctx,
+        sourceEmailSnapshot,
+        "Your Yaver account was merged",
+        accountsMergedHtml(sourceNameSnapshot, sourceEmailSnapshot, target.email),
+      );
+    }
+
+    return {
+      ok: true,
+      mergedFrom: sourceEmailSnapshot,
+      mergedInto: target.email,
+    };
+  },
+});
+
+/**
+ * Cancel a pending merge intent. Called by the target user if they change
+ * their mind. No-op if the intent is already resolved or missing.
+ */
+export const cancelAccountMergeIntent = mutation({
+  args: {
+    tokenHash: v.string(),
+    mergeToken: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const result = await validateSessionInternal(ctx, args.tokenHash);
+    if (!result) throw new Error("Unauthorized");
+    const intent = await ctx.db
+      .query("accountMergeIntents")
+      .withIndex("by_token", (q) => q.eq("token", args.mergeToken))
+      .unique();
+    if (!intent || intent.targetUserId !== result.user._id) return { ok: false };
+    if (intent.status !== "pending") return { ok: false };
+    await ctx.db.patch(intent._id, { status: "cancelled" });
+    await recordAuthSecurityEvent(ctx, result.user._id, "merge_cancelled", {
+      mergeToken: args.mergeToken,
+    });
+    return { ok: true };
   },
 });
 

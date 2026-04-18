@@ -29,7 +29,7 @@ function base32Encode(data: Uint8Array): string {
 }
 
 /** Base32 decode string to bytes. */
-function base32Decode(input: string): Uint8Array {
+export function base32Decode(input: string): Uint8Array {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
   const cleanInput = input.toUpperCase().replace(/=+$/, "");
   let bits = 0;
@@ -86,7 +86,7 @@ async function generateTOTP(secret: Uint8Array, counter: number): Promise<string
 }
 
 /** Verify a TOTP code against a secret, allowing a time window. */
-async function verifyTOTP(secret: Uint8Array, code: string): Promise<boolean> {
+export async function verifyTOTP(secret: Uint8Array, code: string): Promise<boolean> {
   const now = Math.floor(Date.now() / 1000);
   const counter = Math.floor(now / TOTP_PERIOD);
 
