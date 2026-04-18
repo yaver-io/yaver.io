@@ -88,11 +88,15 @@ var wizardQuestions = []WizardQuestion{
 	{ID: "slug", Kind: QText, Prompt: "URL-safe slug", Help: "Used for the monorepo folder + package names + bundle IDs.", Default: "myapp"},
 	{ID: "description", Kind: QText, Prompt: "Describe the app in one paragraph", Help: "Goes into the README, the landing page hero, and feeds the AI agent when it later helps you build features.", Default: ""},
 	{ID: "tagline", Kind: QText, Prompt: "One-line tagline", Help: "Landing page subheader. If you press Enter I'll derive one from your description.", Default: ""},
+	{ID: "app_template", Kind: QChoice, Prompt: "Starting app template", Help: "This shapes the initial mobile information architecture and starter content.", Choices: []string{"saas-dashboard", "creator-marketplace", "internal-tool", "consumer-social", "commerce", "booking", "ai-companion"}, Default: "saas-dashboard"},
+	{ID: "supported_languages", Kind: QText, Prompt: "Supported app languages", Help: "Comma-separated user-facing languages, e.g. English, Turkish. Leave blank for English only.", Default: "English"},
 
 	// Domain + branding
 	{ID: "domain", Kind: QText, Prompt: "Production domain (leave blank if not decided)", Help: "e.g. myapp.com — wired into wrangler + OAuth redirects.", Default: ""},
 	{ID: "primary_color", Kind: QColor, Prompt: "Primary brand color (hex)", Default: "#4F46E5"},
+	{ID: "secondary_color", Kind: QColor, Prompt: "Secondary brand color (hex)", Default: "#0EA5E9"},
 	{ID: "accent_color", Kind: QColor, Prompt: "Accent color (hex)", Default: "#F59E0B"},
+	{ID: "surface_color", Kind: QColor, Prompt: "Surface / card color (hex)", Default: "#111827"},
 	{ID: "tone", Kind: QChoice, Prompt: "Visual tone", Choices: []string{"light", "dark", "system"}, Default: "system"},
 
 	// Which surfaces to scaffold — defaults = everything the dev's own stack needs.
@@ -107,6 +111,12 @@ var wizardQuestions = []WizardQuestion{
 	{ID: "web_host", Kind: QChoice, Prompt: "Host the web app on?", Choices: []string{"cloudflare", "vercel", "netlify", "self-host"}, Default: "cloudflare"},
 	{ID: "backend", Kind: QChoice, Prompt: "Backend platform", Choices: []string{"sqlite", "postgres", "supabase", "convex", "pocketbase", "appwrite", "none"}, Default: "sqlite"},
 	{ID: "mobile_stack", Kind: QChoice, Prompt: "Mobile stack", Choices: []string{"expo-rn", "native"}, Default: "expo-rn"},
+	{ID: "mobile_nav_style", Kind: QChoice, Prompt: "Primary mobile navigation", Help: "Bottom tabs are the default because they work well for thumb-first product flows.", Choices: []string{"bottom-tabs", "top-tabs", "drawer", "stack-only"}, Default: "bottom-tabs"},
+	{ID: "mobile_nav_count", Kind: QChoice, Prompt: "How many primary nav items?", Help: "3 to 5 is the comfortable range for bottom navigation.", Choices: []string{"3", "4", "5"}, Default: "4"},
+	{ID: "mobile_nav_labels", Kind: QText, Prompt: "Navigation labels", Help: "Comma-separated labels. Leave blank and the starter uses template-aware defaults.", Default: ""},
+	{ID: "design_source", Kind: QChoice, Prompt: "Design reference source", Help: "Tell the generator whether to rely on prompt-only direction, a Figma frame, Canva board, or screenshots.", Choices: []string{"prompt-only", "figma", "canva", "screenshots", "other-url"}, Default: "prompt-only"},
+	{ID: "design_reference_url", Kind: QText, Prompt: "Design reference URL", Help: "Paste a share link to a Figma file, Canva board, or screenshot folder. Leave blank to skip.", Default: ""},
+	{ID: "design_notes", Kind: QText, Prompt: "Design notes", Help: "Optional cues like 'dense admin UI', 'large cards for thumbs', 'use rounded playful illustrations'.", Default: ""},
 
 	// Auth — only asked when any surface needs it.
 	{ID: "oauth_apple", Kind: QBool, Prompt: "Add Apple Sign-In?", Default: "true"},
@@ -237,9 +247,17 @@ func nextQuestion(sess *WizardSession) *WizardQuestion {
 			sess.Answers[q.ID] = ""
 			continue
 		}
+		if (q.ID == "mobile_nav_style" || q.ID == "mobile_nav_count" || q.ID == "mobile_nav_labels") && !mobileOn {
+			sess.Answers[q.ID] = ""
+			continue
+		}
 		// Backend-only questions
 		if q.ID == "backend" && !backendOn {
 			sess.Answers[q.ID] = "none"
+			continue
+		}
+		if q.ID == "design_reference_url" && (sess.Answers["design_source"] == "" || sess.Answers["design_source"] == "prompt-only") {
+			sess.Answers[q.ID] = ""
 			continue
 		}
 		// Auth questions only matter if we have a surface that uses them
@@ -579,6 +597,128 @@ func deriveTagline(desc, appName string) string {
 	return d
 }
 
+func csvItems(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, part)
+	}
+	return out
+}
+
+func appLanguages(a map[string]string) []string {
+	items := csvItems(a["supported_languages"])
+	if len(items) == 0 {
+		return []string{"English"}
+	}
+	return items
+}
+
+func defaultNavLabels(templateID, count string) []string {
+	switch templateID {
+	case "creator-marketplace":
+		if count == "3" {
+			return []string{"Discover", "Orders", "Profile"}
+		}
+		if count == "5" {
+			return []string{"Discover", "Saved", "Sell", "Orders", "Profile"}
+		}
+		return []string{"Discover", "Saved", "Sell", "Profile"}
+	case "internal-tool":
+		if count == "3" {
+			return []string{"Home", "Queue", "Profile"}
+		}
+		if count == "5" {
+			return []string{"Home", "Queue", "Approvals", "Reports", "Profile"}
+		}
+		return []string{"Home", "Queue", "Reports", "Profile"}
+	case "consumer-social":
+		if count == "3" {
+			return []string{"Feed", "Create", "Profile"}
+		}
+		if count == "5" {
+			return []string{"Feed", "Explore", "Create", "Inbox", "Profile"}
+		}
+		return []string{"Feed", "Explore", "Create", "Profile"}
+	case "commerce":
+		if count == "3" {
+			return []string{"Shop", "Cart", "Profile"}
+		}
+		if count == "5" {
+			return []string{"Shop", "Categories", "Saved", "Cart", "Profile"}
+		}
+		return []string{"Shop", "Search", "Cart", "Profile"}
+	case "booking":
+		if count == "3" {
+			return []string{"Explore", "Trips", "Profile"}
+		}
+		if count == "5" {
+			return []string{"Explore", "Saved", "Bookings", "Inbox", "Profile"}
+		}
+		return []string{"Explore", "Saved", "Bookings", "Profile"}
+	case "ai-companion":
+		if count == "3" {
+			return []string{"Chat", "Tasks", "Profile"}
+		}
+		if count == "5" {
+			return []string{"Chat", "Tasks", "Library", "Insights", "Profile"}
+		}
+		return []string{"Chat", "Tasks", "Insights", "Profile"}
+	default:
+		if count == "3" {
+			return []string{"Home", "Work", "Profile"}
+		}
+		if count == "5" {
+			return []string{"Home", "Projects", "Create", "Inbox", "Profile"}
+		}
+		return []string{"Home", "Projects", "Activity", "Profile"}
+	}
+}
+
+func mobileNavLabels(a map[string]string) []string {
+	labels := csvItems(a["mobile_nav_labels"])
+	count := a["mobile_nav_count"]
+	want := 4
+	if count == "3" {
+		want = 3
+	} else if count == "5" {
+		want = 5
+	}
+	if len(labels) >= want {
+		return labels[:want]
+	}
+	for _, fallback := range defaultNavLabels(a["app_template"], count) {
+		if len(labels) >= want {
+			break
+		}
+		labels = append(labels, fallback)
+	}
+	return labels
+}
+
+func bulletList(items []string) string {
+	if len(items) == 0 {
+		return "- None"
+	}
+	lines := make([]string, 0, len(items))
+	for _, item := range items {
+		lines = append(lines, "- "+item)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func jsStringArray(items []string) string {
+	quoted := make([]string, 0, len(items))
+	for _, item := range items {
+		quoted = append(quoted, fmt.Sprintf("%q", item))
+	}
+	return "[" + strings.Join(quoted, ", ") + "]"
+}
+
 func rootWorkspacePackageJSON(a map[string]string) string {
 	workspaces := []string{}
 	if a["include_web"] == "true" {
@@ -627,6 +767,17 @@ func rootReadme(a map[string]string) string {
 		}
 	}
 	stack = append(stack, "- **Shared** (`packages/shared`) — cross-surface TS types + utils")
+	productNotes := []string{
+		"Template: " + a["app_template"],
+		"Supported languages: " + strings.Join(appLanguages(a), ", "),
+		"Palette: primary " + a["primary_color"] + ", secondary " + a["secondary_color"] + ", accent " + a["accent_color"] + ", surface " + a["surface_color"],
+	}
+	if a["include_mobile"] == "true" {
+		productNotes = append(productNotes, "Mobile navigation: "+a["mobile_nav_style"]+" ("+strings.Join(mobileNavLabels(a), ", ")+")")
+	}
+	if a["design_source"] != "" && a["design_source"] != "prompt-only" {
+		productNotes = append(productNotes, "Design reference: "+a["design_source"]+" — "+a["design_reference_url"])
+	}
 	return fmt.Sprintf(`# %s
 
 > %s
@@ -642,6 +793,10 @@ func rootReadme(a map[string]string) string {
 Auth: %s
 Payments: %s
 
+## Product defaults
+
+%s
+
 ## Quick start
 
 %s`+"```bash\nnpm install\n./scripts/dev.sh    # runs every app in dev mode\n./scripts/deploy.sh # builds + deploys every surface\n```\n\n"+`See [SETUP.md](./SETUP.md) for one-time signups (OAuth, Cloudflare, TestFlight, Play Store).
@@ -651,6 +806,7 @@ Generated by `+"`yaver new`"+` on %s.
 		a["app_name"], a["tagline"], a["description"],
 		strings.Join(stack, "\n"),
 		describeAuth(a), a["payments"],
+		bulletList(productNotes),
 		"",
 		time.Now().Format("2006-01-02"),
 	)
@@ -676,6 +832,9 @@ func sharedIndexTS(a map[string]string) string {
 
 export const APP_NAME = %q;
 export const APP_TAGLINE = %q;
+export const APP_TEMPLATE = %q;
+export const APP_LANGUAGES = %s;
+export const MOBILE_NAV_ITEMS = %s;
 
 export interface User {
   id: string;
@@ -683,7 +842,7 @@ export interface User {
   name?: string;
   avatarUrl?: string;
 }
-`, a["app_name"], a["app_name"], a["tagline"])
+`, a["app_name"], a["app_name"], a["tagline"], a["app_template"], jsStringArray(appLanguages(a)), jsStringArray(mobileNavLabels(a)))
 }
 
 func landingHTML(a map[string]string) string {
@@ -913,6 +1072,14 @@ func runCmdOutput(dir, bin string, args ...string) (string, error) {
 // --- template helpers ------------------------------------------------------
 
 func describeAuth(a map[string]string) string {
+	parts := authProviders(a)
+	if len(parts) == 0 {
+		return "None"
+	}
+	return strings.Join(parts, ", ")
+}
+
+func authProviders(a map[string]string) []string {
 	parts := []string{}
 	if a["oauth_apple"] == "true" {
 		parts = append(parts, "Apple")
@@ -926,10 +1093,7 @@ func describeAuth(a map[string]string) string {
 	if a["oauth_email"] == "true" {
 		parts = append(parts, "Email+password")
 	}
-	if len(parts) == 0 {
-		return "None"
-	}
-	return strings.Join(parts, ", ")
+	return parts
 }
 
 func quickStartFor(a map[string]string) string {
@@ -970,8 +1134,25 @@ func buildSetupGuide(a map[string]string) string {
 	}
 	b.WriteString("\n")
 
+	b.WriteString("## 2. Design handoff\n\n")
+	b.WriteString("- Palette chosen in the wizard:\n")
+	b.WriteString("  - Primary: `" + a["primary_color"] + "`\n")
+	b.WriteString("  - Secondary: `" + a["secondary_color"] + "`\n")
+	b.WriteString("  - Accent: `" + a["accent_color"] + "`\n")
+	b.WriteString("  - Surface: `" + a["surface_color"] + "`\n")
+	b.WriteString("- Starter template: `" + a["app_template"] + "`\n")
+	b.WriteString("- Supported app languages: `" + strings.Join(appLanguages(a), ", ") + "`\n")
+	if a["design_source"] != "" && a["design_source"] != "prompt-only" {
+		b.WriteString("- Linked reference (" + a["design_source"] + "): " + a["design_reference_url"] + "\n")
+	}
+	if strings.TrimSpace(a["design_notes"]) != "" {
+		b.WriteString("- Visual notes: " + a["design_notes"] + "\n")
+	}
+	b.WriteString("- If you later import more screens from Figma, Canva, or screenshots, keep this section updated so the next agent pass has the same visual contract.\n\n")
+
 	// OAuth
-	b.WriteString("## 2. OAuth providers\n\n")
+	b.WriteString("## 3. OAuth providers\n\n")
+	b.WriteString("The scaffold already includes stub wiring and `.env` placeholders for each provider you turn on here. You still need to create the provider app yourself and paste the real client IDs, secrets, and redirect URLs before production auth will work.\n\n")
 	if a["oauth_apple"] == "true" {
 		b.WriteString("### Apple Sign-In\n\n")
 		b.WriteString("- https://developer.apple.com/account/resources/identifiers/list/serviceId — create a Services ID.\n")
@@ -1004,7 +1185,7 @@ func buildSetupGuide(a map[string]string) string {
 
 	// Mobile
 	if a["include_mobile"] == "true" && a["mobile_stack"] == "expo-rn" {
-		b.WriteString("## 3. iOS TestFlight\n\n")
+		b.WriteString("## 4. iOS TestFlight\n\n")
 		if a["apple_team_id"] != "" {
 			b.WriteString("- Team ID: `" + a["apple_team_id"] + "`\n")
 		} else {
@@ -1015,7 +1196,7 @@ func buildSetupGuide(a map[string]string) string {
 		b.WriteString("- Put them in `.env` under `APP_STORE_KEY_PATH`, `APP_STORE_KEY_ID`, `APP_STORE_KEY_ISSUER`, `APPLE_TEAM_ID`.\n")
 		b.WriteString("- Deploy with `./scripts/deploy.sh testflight`.\n\n")
 
-		b.WriteString("## 4. Android Play Store\n\n")
+		b.WriteString("## 5. Android Play Store\n\n")
 		b.WriteString("- https://play.google.com/console — create your app listing.\n")
 		b.WriteString("- https://console.cloud.google.com/iam-admin/serviceaccounts — create a service account, grant it access in Play Console under Users & Permissions.\n")
 		b.WriteString("- Download the JSON key.\n")
@@ -1029,7 +1210,7 @@ func buildSetupGuide(a map[string]string) string {
 
 	// Payments
 	if a["payments"] == "stripe" {
-		b.WriteString("## 5. Stripe\n\n")
+		b.WriteString("## 6. Stripe\n\n")
 		b.WriteString("- https://dashboard.stripe.com/apikeys — grab publishable + secret keys.\n")
 		b.WriteString("- https://dashboard.stripe.com/webhooks — add `https://" + a["domain"] + "/api/stripe/webhook` and copy the signing secret.\n")
 		b.WriteString("- Put them in `.env` under `STRIPE_PUBLIC_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`.\n\n")
@@ -1046,6 +1227,9 @@ func manualNextSteps(a map[string]string) []string {
 	steps := []string{
 		"cd " + a["slug"] + " && less SETUP.md",
 		"Copy .env.example to .env and fill in the blanks as you finish each SETUP.md step.",
+	}
+	if a["design_source"] != "" && a["design_source"] != "prompt-only" {
+		steps = append(steps, "Review the linked "+a["design_source"]+" reference and align the starter UI before generating more screens.")
 	}
 	if a["include_backend"] == "true" && a["backend"] == "sqlite" {
 		steps = append(steps, "Review backend/schema.yaml, backend/auth.yaml, and backend/seed.json to shape the Yaver backend before first prompt-driven build.")
@@ -1376,18 +1560,215 @@ registerRootComponent(App);
 
 func expoAppTSX(a map[string]string) string {
 	return fmt.Sprintf(`import { StatusBar } from "expo-status-bar";
-import { Text, View } from "react-native";
+import { useState } from "react";
+import { Pressable, ScrollView, Text, View } from "react-native";
+
+const APP_LANGUAGES = %s;
+const NAV_ITEMS = %s;
+const AUTH_PROVIDERS = %s;
+const DESIGN_SOURCE = %q;
+const DESIGN_REFERENCE_URL = %q;
+const DESIGN_NOTES = %q;
 
 export default function App() {
+  const [activeTab, setActiveTab] = useState(0);
+
   return (
-    <View style={{ flex: 1, backgroundColor: "%s", alignItems: "center", justifyContent: "center" }}>
-      <Text style={{ color: "white", fontSize: 28, fontWeight: "700" }}>%s</Text>
-      <Text style={{ color: "white", opacity: 0.8, marginTop: 8 }}>%s</Text>
+    <View style={{ flex: 1, backgroundColor: "#020617" }}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 72, paddingBottom: 132 }}>
+        <View
+          style={{
+            borderRadius: 30,
+            padding: 22,
+            backgroundColor: "%s",
+            shadowColor: "%s",
+            shadowOpacity: 0.25,
+            shadowRadius: 24,
+            shadowOffset: { width: 0, height: 18 },
+            elevation: 8,
+          }}
+        >
+          <Text style={{ color: "#ffffff", fontSize: 12, fontWeight: "800", letterSpacing: 1.2 }}>
+            MOBILE-FIRST STARTER
+          </Text>
+          <Text style={{ color: "#ffffff", fontSize: 34, fontWeight: "800", marginTop: 12 }}>
+            %s
+          </Text>
+          <Text style={{ color: "rgba(255,255,255,0.88)", fontSize: 16, lineHeight: 23, marginTop: 8 }}>
+            %s
+          </Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 16 }}>
+            <HeroPill label="%s" />
+            <HeroPill label={"Nav: %s"} />
+            <HeroPill label={"Backend: %s"} />
+          </View>
+        </View>
+
+        <Section
+          title="Builder preferences"
+          subtitle="These are the product decisions captured in the phone-first setup flow."
+        >
+          <Card surfaceColor="%s">
+            <Text style={styles.kicker}>Supported languages</Text>
+            <View style={styles.rowWrap}>
+              {APP_LANGUAGES.map((lang) => (
+                <Token key={lang} label={lang} />
+              ))}
+            </View>
+          </Card>
+          <Card surfaceColor="%s">
+            <Text style={styles.kicker}>Authentication</Text>
+            <View style={styles.rowWrap}>
+              {AUTH_PROVIDERS.length ? (
+                AUTH_PROVIDERS.map((provider) => <Token key={provider} label={provider} />)
+              ) : (
+                <Text style={styles.body}>No auth providers selected yet.</Text>
+              )}
+            </View>
+            <Text style={styles.caption}>
+              Provider apps are stubbed only. Add the real client IDs, secrets, and redirect URLs in .env before release.
+            </Text>
+          </Card>
+        </Section>
+
+        <Section
+          title="Design intake"
+          subtitle="Attach screenshots, Figma, or Canva references early so future generated screens stay closer to the intended look."
+        >
+          <Card surfaceColor="%s">
+            <Text style={styles.kicker}>Reference source</Text>
+            <Text style={styles.body}>
+              {DESIGN_SOURCE === "prompt-only" ? "Prompt-only for now. No external reference linked yet." : DESIGN_SOURCE}
+            </Text>
+            {DESIGN_REFERENCE_URL ? <Text style={styles.link}>{DESIGN_REFERENCE_URL}</Text> : null}
+            {DESIGN_NOTES ? <Text style={styles.caption}>{DESIGN_NOTES}</Text> : null}
+          </Card>
+        </Section>
+
+        <Section
+          title="Navigation preview"
+          subtitle="Keep the first release opinionated and small. You can expand the IA once real usage data shows where it should bend."
+        >
+          <Card surfaceColor="%s">
+            <View style={styles.navPreview}>
+              {NAV_ITEMS.map((item, index) => (
+                <Pressable
+                  key={item}
+                  onPress={() => setActiveTab(index)}
+                  style={[
+                    styles.navChip,
+                    activeTab === index && { backgroundColor: "%s", borderColor: "%s" },
+                  ]}
+                >
+                  <Text style={[styles.navText, activeTab === index && { color: "#08111f" }]}>{item}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <Text style={styles.caption}>Active tab preview: {NAV_ITEMS[activeTab] ?? NAV_ITEMS[0] ?? "Home"}</Text>
+          </Card>
+        </Section>
+      </ScrollView>
+
+      <View style={[styles.bottomBar, { backgroundColor: "%s", borderColor: "%s" }]}>
+        {NAV_ITEMS.map((item, index) => (
+          <Pressable key={item} onPress={() => setActiveTab(index)} style={styles.bottomItem}>
+            <Text
+              style={[
+                styles.bottomLabel,
+                activeTab === index && { color: "%s", fontWeight: "800" },
+              ]}
+            >
+              {item}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
       <StatusBar style="light" />
     </View>
   );
 }
-`, a["primary_color"], a["app_name"], a["tagline"])
+
+function Section({ title, subtitle, children }) {
+  return (
+    <View style={{ marginTop: 26 }}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={styles.sectionSubtitle}>{subtitle}</Text>
+      <View style={{ gap: 12, marginTop: 14 }}>{children}</View>
+    </View>
+  );
+}
+
+function Card({ children, surfaceColor }) {
+  return <View style={[styles.card, { backgroundColor: surfaceColor }]}>{children}</View>;
+}
+
+function HeroPill({ label }) {
+  return (
+    <View style={styles.heroPill}>
+      <Text style={styles.heroPillText}>{label}</Text>
+    </View>
+  );
+}
+
+function Token({ label }) {
+  return (
+    <View style={styles.token}>
+      <Text style={styles.tokenText}>{label}</Text>
+    </View>
+  );
+}
+
+const styles = {
+  sectionTitle: { color: "#e2e8f0", fontSize: 22, fontWeight: "800" },
+  sectionSubtitle: { color: "#94a3b8", fontSize: 14, marginTop: 6, lineHeight: 20 },
+  card: {
+    borderRadius: 24,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: "rgba(148,163,184,0.16)",
+  },
+  kicker: { color: "#f8fafc", fontSize: 15, fontWeight: "700", marginBottom: 10 },
+  body: { color: "#dbe7f5", fontSize: 15, lineHeight: 22 },
+  caption: { color: "#94a3b8", fontSize: 13, lineHeight: 19, marginTop: 10 },
+  link: { color: "#7dd3fc", fontSize: 13, marginTop: 8 },
+  rowWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  heroPill: { backgroundColor: "rgba(255,255,255,0.14)", borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
+  heroPillText: { color: "#ffffff", fontSize: 12, fontWeight: "700" },
+  token: {
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderRadius: 999,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  tokenText: { color: "#e2e8f0", fontSize: 12, fontWeight: "700" },
+  navPreview: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  navChip: {
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: "#0f172a",
+    borderWidth: 1,
+    borderColor: "rgba(148,163,184,0.16)",
+  },
+  navText: { color: "#cbd5e1", fontSize: 13, fontWeight: "700" },
+  bottomBar: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: 24,
+    borderRadius: 24,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    borderWidth: 1,
+  },
+  bottomItem: { flex: 1, alignItems: "center", paddingVertical: 8 },
+  bottomLabel: { color: "#94a3b8", fontSize: 12, fontWeight: "700" },
+};
+`, jsStringArray(appLanguages(a)), jsStringArray(mobileNavLabels(a)), jsStringArray(authProviders(a)), a["design_source"], a["design_reference_url"], a["design_notes"], a["primary_color"], a["secondary_color"], a["app_name"], a["tagline"], a["app_template"], a["mobile_nav_style"], a["backend"], a["surface_color"], a["surface_color"], a["surface_color"], a["surface_color"], a["accent_color"], a["accent_color"], a["surface_color"], a["secondary_color"], a["accent_color"])
 }
 
 func deployScript(a map[string]string) string {

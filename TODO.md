@@ -80,6 +80,7 @@
 - [ ] Desktop code signing (macOS notarization, Windows Authenticode)
 
 ## Phase 8: Polish & Launch
+- [x] Mobile-first project builder/UI generation intake refresh (see `docs/mobile-ui-generation-task.md`)
 - [ ] End-to-end encryption audit
 - [ ] P2P session caching and sync
 - [ ] Error handling and offline mode

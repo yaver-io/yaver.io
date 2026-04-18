@@ -155,10 +155,12 @@ func runNewQuick(args []string) {
 	// Every known wizard key. Unknown keys are ignored — JSON is the
 	// contract, not a spec. Order matches project_wizard.go for reviewability.
 	for _, k := range []string{
-		"app_name", "slug", "description", "tagline", "domain",
-		"primary_color", "accent_color", "tone",
+		"app_name", "slug", "description", "tagline", "app_template", "supported_languages", "domain",
+		"primary_color", "secondary_color", "accent_color", "surface_color", "tone",
 		"include_web", "include_mobile", "include_backend", "include_landing",
 		"web_framework", "web_host", "backend", "mobile_stack",
+		"mobile_nav_style", "mobile_nav_count", "mobile_nav_labels",
+		"design_source", "design_reference_url", "design_notes",
 		"oauth_apple", "oauth_google", "oauth_microsoft", "oauth_email",
 		"payments",
 		"ios_bundle_id", "android_package",

@@ -4571,6 +4571,19 @@ export class QuicClient {
     }
   }
 
+  async wizardQuestions(): Promise<WizardQuestion[] | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/project/wizard/questions`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return Array.isArray(data?.questions) ? (data.questions as WizardQuestion[]) : null;
+    } catch {
+      return null;
+    }
+  }
+
   // ---- Unauthenticated recovery -----------------------------------------
   //
   // Call this when every authenticated request to the agent returns 401 and
