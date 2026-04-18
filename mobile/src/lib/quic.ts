@@ -5278,6 +5278,13 @@ export interface DevCompatibilityStatus {
   needsFeedbackSDK?: boolean;
   recommendedFlow?: string;
   guidance?: string;
+  buildState?: "needs_build" | "building" | "ready" | "build_failed";
+  canBuildInYaver?: boolean;
+  lastBuildAt?: string;
+  lastBuildFailedAt?: string;
+  lastBuildError?: string;
+  compiledBundleSize?: number;
+  compiledModuleName?: string;
 }
 
 export interface MobileWorkerPreviewSession {

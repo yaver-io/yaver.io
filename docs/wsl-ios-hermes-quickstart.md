@@ -71,6 +71,8 @@ Expected behavior:
 - pushes the bundle to the phone
 - loads the app inside Yaver on the iPhone
 
+If this repo has never been compiled on that machine before, that is fine. Yaver now reports the project as source-only and exposes `Compile Hermes` / `Rebuild Hermes` in the phone UI before `Open in Yaver`.
+
 This is the correct daily loop for projects like `sfmg` when they are standard Expo / React Native apps.
 
 `expo-updates` in the target app does not require a separate WSL workaround here. The Yaver mobile host includes `expo-updates`, and the shared SDK manifest is generated from the host app deps/plugin config and reused by the CLI and embedded iOS bundle, so it should not be treated as an automatic compatibility blocker for `Open in Yaver`.
@@ -79,8 +81,21 @@ This is the correct daily loop for projects like `sfmg` when they are standard E
 
 - If he is on WSL, he should not try to make iPhone reload depend on Xcode.
 - If he sees native iOS build language, that is the wrong path for daily iteration.
+- If the phone says source-only or needs build, tap `Compile Hermes`.
 - The right button is `Open in Yaver`.
 - The right mental model is `WSL -> Hermes bundle -> Yaver mobile app`.
+
+## Contributor to TestFlight Workflow
+
+This is a normal split:
+
+1. contributor edits source in WSL or Linux
+2. contributor runs `yaver serve`
+3. contributor compiles Hermes in Yaver and tests on the iPhone inside the Yaver app
+4. contributor commits and pushes
+5. maintainer deploys the real TestFlight build later from macOS/Xcode
+
+Yaver covers the contributor device-test loop. TestFlight stays the maintainer/release step.
 
 ## Troubleshooting
 

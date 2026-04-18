@@ -60,6 +60,44 @@ function agentFlowGuidance(framework?: string, feedbackSDKInstalled?: boolean): 
   return "Open in Yaver uses Metro + Hermes. Feedback SDK is optional for in-app bug reports and remote reload in your app process.";
 }
 
+function buildStateLabel(compatibility?: DevCompatibilityStatus | null): string | null {
+  if (!compatibility?.buildState) return null;
+  switch (compatibility.buildState) {
+    case "ready":
+      return compatibility.lastBuildAt ? `Hermes ready · ${formatBuildTimestamp(compatibility.lastBuildAt)}` : "Hermes ready";
+    case "building":
+      return "Hermes build running";
+    case "build_failed":
+      return compatibility.lastBuildFailedAt ? `Last build failed · ${formatBuildTimestamp(compatibility.lastBuildFailedAt)}` : "Last build failed";
+    default:
+      return "Source only · compile Hermes first";
+  }
+}
+
+function buildStateTone(compatibility?: DevCompatibilityStatus | null): string {
+  switch (compatibility?.buildState) {
+    case "ready":
+      return "#86efac";
+    case "build_failed":
+      return "#fca5a5";
+    case "building":
+      return "#7dd3fc";
+    default:
+      return "#fcd34d";
+  }
+}
+
+function compileActionLabel(compatibility?: DevCompatibilityStatus | null): string {
+  return compatibility?.buildState === "ready" ? "Rebuild Hermes" : "Compile Hermes";
+}
+
+function formatBuildTimestamp(value?: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
 function getProjectCategory(framework?: string): "mobile" | "web" | "other" {
   if (!framework) return "other";
   if (MOBILE_FRAMEWORKS.includes(framework)) return "mobile";
@@ -193,7 +231,7 @@ export default function AppsScreen() {
   const handleTapProject = useCallback(async (projectName: string) => {
     const isRunning = devStatus?.workDir?.endsWith(projectName);
     if (isRunning) {
-      handleOpenNative(devStatus!.workDir!);
+      handleOpenNative(devStatus!.workDir!, devStatus?.framework);
       return;
     }
 
@@ -217,7 +255,29 @@ export default function AppsScreen() {
       const autoDevAction = { label: "Auto Dev", target: ".", type: "autodev", icon: "\u{1F916}", framework: "", platform: "", command: "" };
       const autoTestAction = { label: "Auto Test", target: ".", type: "autotest", icon: "\u{1F9EA}", framework: "", platform: "", command: "" };
       const gitSyncAction = { label: "Git Sync", target: ".", type: "git-sync", icon: "\u{1F504}", framework: "", platform: "", command: "" };
-      result.actions = [projectAction, vibingAction, agentAction, autoDevAction, autoTestAction, gitSyncAction, ...result.actions];
+      const hermesActions = isHermesMobileFramework(hermesFramework) ? [
+        {
+          label: "Open in Yaver",
+          target: ".",
+          type: "open-native",
+          icon: "\u{1F4F1}",
+          framework: hermesFramework,
+          platform: Platform.OS,
+          supported: compatibility?.compatible !== false,
+          reason: compatibility?.errors?.[0],
+        },
+        {
+          label: compileActionLabel(compatibility),
+          target: ".",
+          type: "compile-hermes",
+          icon: compatibility?.buildState === "ready" ? "\u21BB" : "\u2699",
+          framework: hermesFramework,
+          platform: Platform.OS,
+          supported: compatibility?.canBuildInYaver !== false,
+          reason: compatibility?.errors?.[0],
+        },
+      ] : [];
+      result.actions = [projectAction, ...hermesActions, vibingAction, agentAction, autoDevAction, autoTestAction, gitSyncAction, ...result.actions];
       setActionSheet({ ...result, compatibility });
     } catch {
       // Fallback
@@ -238,6 +298,7 @@ export default function AppsScreen() {
 
     const project = actionSheet?.project ?? "";
     const path = actionSheet?.path ?? "";
+    const compatibility = actionSheet?.compatibility ?? null;
     setActionSheet(null);
 
     if (action.type === "git-sync") {
@@ -288,6 +349,20 @@ export default function AppsScreen() {
       // Jump to Local CI / runs screen (yaver-test-sdk), which is where
       // auto-test loops live. Same pattern as Auto Dev.
       router.navigate({ pathname: "/(tabs)/runs", params: { project, path } } as any);
+      return;
+    }
+
+    if (action.type === "open-native") {
+      await handleOpenNative(path, action.framework);
+      return;
+    }
+
+    if (action.type === "compile-hermes") {
+      if (compatibility?.errors?.length) {
+        Alert.alert("Compatibility Blocked", compatibility.errors[0]);
+        return;
+      }
+      await handleCompileHermes(path, action.framework);
       return;
     }
 
@@ -418,8 +493,37 @@ export default function AppsScreen() {
     }
   }, [devStatus?.workDir]);
 
-  // Open app natively: Go agent builds Hermes bytecode → phone loads into RCTBridge
-  const handleOpenNative = useCallback(async (workDir: string) => {
+  const ensureHermesDevServer = useCallback(async (workDir: string, framework?: string) => {
+    const currentStatus = await quicClient.getDevServerStatus();
+    if (currentStatus?.running && currentStatus.workDir === workDir) {
+      return;
+    }
+
+    setLoadingStatus("Starting dev server...");
+    setBuildProgress(0.05);
+    await quicClient.startDevServer({
+      framework: framework || "expo",
+      workDir,
+      targetDeviceId: selectedTarget?.id,
+      targetDeviceName: selectedTarget?.name,
+      targetDeviceClass: selectedTarget?.deviceClass,
+    });
+
+    for (let i = 0; i < 30; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const status = await quicClient.getDevServerStatus();
+      setLoadingStatus(status?.running ? "Dev server ready" : "Starting dev server...");
+      if (status?.running && status.workDir === workDir) return;
+    }
+
+    throw new Error("Dev server did not become ready in time");
+  }, [selectedTarget]);
+
+  const buildHermesBundle = useCallback(async ({ workDir, framework, loadAfterBuild }: {
+    workDir: string;
+    framework?: string;
+    loadAfterBuild: boolean;
+  }) => {
     const baseUrl = (quicClient as any).baseUrl;
     if (!baseUrl) {
       Alert.alert("Error", "Not connected to agent");
@@ -433,7 +537,6 @@ export default function AppsScreen() {
       "Content-Type": "application/json",
     };
 
-    // Listen to SSE for real-time build progress from Go agent
     const sseController = new AbortController();
     const listenSSE = async () => {
       try {
@@ -449,20 +552,18 @@ export default function AppsScreen() {
           if (done) break;
           const text = decoder.decode(value);
           for (const line of text.split("\n")) {
-            if (line.startsWith("data: ")) {
-              try {
-                const event = JSON.parse(line.slice(6));
-                if (event.type === "log" && event.message) {
-                  const msg = event.message;
-                  setLoadingStatus(msg);
-                  // Map known build stages to progress percentage
-                  if (msg.includes("Installing dependencies")) setBuildProgress(0.1);
-                  else if (msg.includes("Bundling")) setBuildProgress(0.3);
-                  else if (msg.includes("Compiling Hermes")) setBuildProgress(0.7);
-                  else if (msg.includes("Bundle ready")) setBuildProgress(0.95);
-                }
-              } catch {}
-            }
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const event = JSON.parse(line.slice(6));
+              if (event.type === "log" && event.message) {
+                const msg = event.message;
+                setLoadingStatus(msg);
+                if (msg.includes("Installing dependencies")) setBuildProgress(0.1);
+                else if (msg.includes("Bundling")) setBuildProgress(0.3);
+                else if (msg.includes("Compiling Hermes")) setBuildProgress(0.7);
+                else if (msg.includes("Bundle ready")) setBuildProgress(0.95);
+              }
+            } catch {}
           }
         }
       } catch {}
@@ -470,28 +571,8 @@ export default function AppsScreen() {
     listenSSE();
 
     try {
-      // 1. Ensure dev server is running for this project
-      const currentStatus = await quicClient.getDevServerStatus();
-      if (!currentStatus?.running || !currentStatus.workDir?.includes(workDir.split("/").pop() || "")) {
-        setLoadingStatus("Starting dev server...");
-        setBuildProgress(0.05);
-        await quicClient.startDevServer({
-          framework: "expo",
-          workDir: workDir,
-          targetDeviceId: selectedTarget?.id,
-          targetDeviceName: selectedTarget?.name,
-          targetDeviceClass: selectedTarget?.deviceClass,
-        });
-        // Wait for ready
-        for (let i = 0; i < 30; i++) {
-          await new Promise(r => setTimeout(r, 1000));
-          const s = await quicClient.getDevServerStatus();
-          setLoadingStatus(s?.running ? "Dev server ready" : "Starting dev server...");
-          if (s?.running) break;
-        }
-      }
+      await ensureHermesDevServer(workDir, framework);
 
-      // 2. Build Hermes bytecode bundle via Go agent and load it into Yaver on the phone
       setLoadingStatus("Building Hermes bundle...");
       setBuildProgress(0.15);
       const buildRes = await fetch(`${baseUrl}/dev/build-native`, {
@@ -505,31 +586,44 @@ export default function AppsScreen() {
         throw new Error(buildResult.error || "Build failed");
       }
 
-      // 3. Load compiled bytecode into native RCTBridge (NOT WebView)
-      const sizeKB = Math.round((buildResult.size || 0) / 1024);
-      setLoadingStatus(`Downloading ${sizeKB}KB bundle...`);
-      setBuildProgress(0.95);
-      const bundleUrl = `${baseUrl}${buildResult.bundleUrl}`;
-      const moduleName = buildResult.moduleName || "main";
-      await loadApp(bundleUrl, moduleName, (quicClient as any).authHeaders);
-      setBuildProgress(1);
-      setLoadingStatus("Loaded!");
+      if (loadAfterBuild) {
+        const sizeKB = Math.round((buildResult.size || 0) / 1024);
+        setLoadingStatus(`Downloading ${sizeKB}KB bundle...`);
+        setBuildProgress(0.95);
+        const bundleUrl = `${baseUrl}${buildResult.bundleUrl}`;
+        const moduleName = buildResult.moduleName || "main";
+        await loadApp(bundleUrl, moduleName, (quicClient as any).authHeaders);
+        setBuildProgress(1);
+        setLoadingStatus("Loaded!");
+      } else {
+        setBuildProgress(1);
+        setLoadingStatus("Hermes bundle ready");
+      }
     } catch (err: any) {
-      Alert.alert("Load Failed", err?.message || "Could not load app in Yaver");
+      Alert.alert(loadAfterBuild ? "Load Failed" : "Build Failed", err?.message || "Could not build Hermes bundle in Yaver");
     } finally {
       sseController.abort();
       setNativeLoading(false);
       setBuildProgress(0);
       setTimeout(() => setLoadingStatus(""), 2000);
     }
-  }, []);
+  }, [ensureHermesDevServer]);
+
+  // Open app natively: Go agent builds Hermes bytecode → phone loads into RCTBridge
+  const handleOpenNative = useCallback(async (workDir: string, framework?: string) => {
+    await buildHermesBundle({ workDir, framework, loadAfterBuild: true });
+  }, [buildHermesBundle]);
+
+  const handleCompileHermes = useCallback(async (workDir: string, framework?: string) => {
+    await buildHermesBundle({ workDir, framework, loadAfterBuild: false });
+  }, [buildHermesBundle]);
 
   const handleOpen = useCallback(() => {
     if (!devStatus?.workDir) return;
     // Always Hermes push — fast (~10s), works on LAN and relay equally.
     // This is the default iPhone path for Linux / WSL / remote dev.
     // Xcode native device install is available as a separate "Install Native" action.
-    handleOpenNative(devStatus.workDir);
+    handleOpenNative(devStatus.workDir, devStatus.framework);
   }, [devStatus, handleOpenNative]);
 
   const handleReload = useCallback(async () => {
@@ -889,6 +983,22 @@ export default function AppsScreen() {
                 RN {actionSheet.compatibility.projectReactNative} · Yaver RN {actionSheet.compatibility.sdkReactNative}
               </Text>
             )}
+            {buildStateLabel(actionSheet?.compatibility) ? (
+              <Text style={[s.actionSheetSubtitle, { color: buildStateTone(actionSheet?.compatibility), marginTop: -8 }]}>
+                {buildStateLabel(actionSheet?.compatibility)}
+                {actionSheet?.compatibility?.compiledBundleSize
+                  ? ` · ${Math.round(actionSheet.compatibility.compiledBundleSize / 1024)} KB`
+                  : ""}
+                {actionSheet?.compatibility?.compiledModuleName
+                  ? ` · ${actionSheet.compatibility.compiledModuleName}`
+                  : ""}
+              </Text>
+            ) : null}
+            {actionSheet?.compatibility?.lastBuildError && actionSheet.compatibility.buildState === "build_failed" ? (
+              <Text style={[s.actionSheetSubtitle, { color: "#fca5a5", marginTop: -8 }]}>
+                {actionSheet.compatibility.lastBuildError}
+              </Text>
+            ) : null}
             <ScrollView style={s.actionSheetScroll}>
               {actionSheet?.actions.map((action, i) => {
                 const disabled = action.supported === false;
