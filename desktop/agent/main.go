@@ -1185,11 +1185,11 @@ func logFilePath() string {
 // manually.
 func startServeIfStopped() {
 	if probeLocalAgentHealthInfo(18080) != nil {
-		fmt.Println("Agent is already running.")
+		fmt.Println("Agent is already running. No need to run `yaver serve` again.")
 		return
 	}
 	if _, running := isAgentRunning(); running {
-		fmt.Println("Agent is already running.")
+		fmt.Println("Agent is already running. No need to run `yaver serve` again.")
 		return
 	}
 	execPath, err := os.Executable()
@@ -1198,6 +1198,7 @@ func startServeIfStopped() {
 		fmt.Fprintln(os.Stderr, "Run `yaver serve` manually.")
 		return
 	}
+	fmt.Println("Starting Yaver agent automatically...")
 	cmd := osexec.Command(execPath, "serve")
 	// Inherit stdio so the user sees the "Restarting Yaver agent" /
 	// "Starting Yaver agent…" line the server prints before it

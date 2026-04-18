@@ -925,11 +925,10 @@ export default function HomePage() {
                 <div className="terminal-body space-y-1 text-[12px]">
                   <div><span className="text-surface-400">$</span> <span className="text-surface-200">npm install -g yaver-cli</span></div>
                   <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver auth</span></div>
-                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver serve</span></div>
                 </div>
               </div>
               <p className="mt-3 text-[11px] text-surface-500">
-                Fastest start: `npm install -g yaver-cli`. It installs the `yaver` command for both the Go agent (`yaver serve`) and third-party React Native push (`yaver push`).
+                Fastest start: `npm install -g yaver-cli`. It installs the `yaver` command for both the Go agent and third-party React Native push (`yaver push`). `yaver auth` starts the agent automatically if needed.
                 {" "}<Link href="/download" className="underline hover:text-surface-300">See install methods</Link>.
               </p>
               <p className="mt-2 text-[11px] text-surface-500">
