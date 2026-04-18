@@ -162,6 +162,10 @@ type devServerSession struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	target DevServerTarget
+	// failed is true when ds.Start returned an error; we keep the
+	// session around so Status() still reports the failure. A
+	// subsequent Start() on the same framework clears it.
+	failed bool
 }
 
 type DevServerTarget struct {
@@ -287,10 +291,17 @@ func (m *DevServerManager) Start(framework, workDir, platform string, port int, 
 	go func() {
 		if err := ds.Start(ctx, opts); err != nil {
 			log.Printf("[dev] %s failed to start: %v", ds.Name(), err)
+			// Keep the session around so /dev/status still reports
+			// something the mobile client can render as a failure
+			// (red banner + View Logs + Retry) instead of silently
+			// disappearing into "no dev server running".
+			if setter, ok := ds.(interface{ SetError(string) }); ok {
+				setter.SetError(err.Error())
+			}
 			m.mu.Lock()
 			if m.active != nil && m.active.server == ds {
 				m.active.cancel()
-				m.active = nil
+				m.active.failed = true
 			}
 			m.mu.Unlock()
 			m.emit(DevServerEvent{
@@ -526,6 +537,15 @@ func (b *baseDevServer) Name() string                      { return b.name }
 func (b *baseDevServer) Port() int                         { return b.port }
 func (b *baseDevServer) SetEmitFn(fn func(DevServerEvent)) { b.emitFn = fn }
 
+// SetError records a human-readable failure reason on the dev server
+// so Status() returns it even after the manager clears b.running.
+func (b *baseDevServer) SetError(msg string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.err = msg
+	b.running = false
+}
+
 // PreStart sets the name, port, and workDir before the async Start goroutine.
 // This ensures Status() returns meaningful data immediately.
 func (b *baseDevServer) PreStart(name string, port int, workDir string) {
@@ -618,6 +638,13 @@ func (b *baseDevServer) startProcess(ctx context.Context, name string, args []st
 	b.startedAt = time.Now()
 	b.mu.Unlock()
 
+	// Signal subprocess exit. If the command dies before readyURL
+	// responds, we want to abort the readiness loop immediately and
+	// bubble up the tail of its output so the user sees a real error
+	// instead of a 120 s "did not become ready" spinner.
+	exitCh := make(chan error, 1)
+	go func() { exitCh <- cmd.Wait() }()
+
 	// Wait for dev server to become ready (poll health/readiness)
 	deadline := time.After(120 * time.Second) // Expo web first build can take 2+ min
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -627,7 +654,17 @@ func (b *baseDevServer) startProcess(ctx context.Context, name string, args []st
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case waitErr := <-exitCh:
+			tail := logWriter.Tail(12)
+			if waitErr != nil {
+				return fmt.Errorf("%s exited before becoming ready: %v\n%s", name, waitErr, tail)
+			}
+			return fmt.Errorf("%s exited before becoming ready\n%s", name, tail)
 		case <-deadline:
+			tail := logWriter.Tail(12)
+			if tail != "" {
+				return fmt.Errorf("%s did not become ready within 120s\n%s", name, tail)
+			}
 			return fmt.Errorf("%s did not become ready within 120s", name)
 		case <-ticker.C:
 			resp, err := http.Get(readyURL)
@@ -662,6 +699,21 @@ func (w *devLogWriter) Contains(substr string) bool {
 		}
 	}
 	return false
+}
+
+// Tail returns the last n non-empty log lines joined with newlines.
+// Used when a subprocess dies before readiness so the surfaced error
+// includes the actual stderr output instead of a blank "did not
+// become ready".
+func (w *devLogWriter) Tail(n int) string {
+	if n <= 0 || len(w.history) == 0 {
+		return ""
+	}
+	start := len(w.history) - n
+	if start < 0 {
+		start = 0
+	}
+	return strings.Join(w.history[start:], "\n")
 }
 
 func (w *devLogWriter) Write(p []byte) (int, error) {

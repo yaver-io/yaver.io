@@ -7316,6 +7316,117 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpAccountStatus(a.Provider))
+	// --- Yaver sign-in (headless OAuth) ---
+	case "yaver_auth_status":
+		return mcpToolJSON(authStatusSnapshot())
+	case "yaver_auth_start":
+		var a struct {
+			ConvexURL string `json:"convex_url"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		result, err := authStartDeviceCode(context.Background(), a.ConvexURL)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(result)
+	case "yaver_auth_poll":
+		var a struct {
+			DeviceCode string `json:"device_code"`
+			ConvexURL  string `json:"convex_url"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		result, err := authPollDeviceCode(context.Background(), a.ConvexURL, a.DeviceCode)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(result)
+	case "yaver_auth_wait":
+		var a struct {
+			DeviceCode          string `json:"device_code"`
+			ConvexURL           string `json:"convex_url"`
+			TimeoutSeconds      int    `json:"timeout_seconds"`
+			PollIntervalSeconds int    `json:"poll_interval_seconds"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		// Clamp timeout to protect callers from their own footguns — some
+		// MCP clients abort at 2min, others wait much longer. 300s is a
+		// hard ceiling; callers wanting longer should loop yaver_auth_poll.
+		if a.TimeoutSeconds > 300 {
+			a.TimeoutSeconds = 300
+		}
+		result, err := authWaitDeviceCode(context.Background(), a.ConvexURL, a.DeviceCode, a.TimeoutSeconds, a.PollIntervalSeconds)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(result)
+	case "yaver_auth_logout":
+		result, err := authLogout()
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(result)
+	case "yaver_auth_list_identities":
+		result, err := authListIdentities(context.Background())
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(result)
+	case "yaver_auth_link_start":
+		var a struct {
+			Provider string `json:"provider"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		result, err := authLinkStart(context.Background(), a.Provider)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(result)
+	case "yaver_auth_link_wait":
+		var a struct {
+			Provider         string `json:"provider"`
+			TimeoutSec       int    `json:"timeout_seconds"`
+			PollIntervalSec  int    `json:"poll_interval_seconds"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		if a.TimeoutSec > 300 {
+			a.TimeoutSec = 300
+		}
+		result, err := authLinkWait(context.Background(), a.Provider, a.TimeoutSec, a.PollIntervalSec)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(result)
+	case "yaver_auth_unlink":
+		var a struct {
+			Provider string `json:"provider"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		result, err := authUnlink(context.Background(), a.Provider)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(result)
+	case "yaver_auth_merge_start":
+		result, err := authMergeStart(context.Background())
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(result)
+	case "yaver_auth_merge_wait":
+		var a struct {
+			MergeToken       string `json:"merge_token"`
+			TimeoutSec       int    `json:"timeout_seconds"`
+			PollIntervalSec  int    `json:"poll_interval_seconds"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		if a.TimeoutSec > 600 {
+			a.TimeoutSec = 600
+		}
+		result, err := authMergeWait(context.Background(), a.MergeToken, a.TimeoutSec, a.PollIntervalSec)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(result)
 	// --- Cloud provisioning ---
 	case "cloud_provision":
 		var a struct {

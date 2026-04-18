@@ -400,6 +400,11 @@ func (s *HTTPServer) handleRepoClone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Invalidate project/repo caches so the mobile Hot Reload list
+	// reflects the just-cloned project on its next poll (within 2.5s
+	// while scanning, vs. a 10-minute wait otherwise).
+	invalidateProjectCaches()
+
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"ok":     true,
 		"path":   clonePath,
@@ -450,6 +455,10 @@ func (s *HTTPServer) handleRepoPull(w http.ResponseWriter, r *http.Request) {
 		branch = b
 	}
 
+	// A pull can introduce a new package.json / pubspec.yaml that
+	// flips a repo into a mobile-project category, so refresh caches.
+	invalidateProjectCaches()
+
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"ok":     true,
 		"output": output,
@@ -464,6 +473,37 @@ var repoCache struct {
 	repos    []RepoInfo
 	dirTimes map[string]time.Time // dir path → last mod time at scan
 	cachedAt time.Time
+}
+
+// invalidateProjectCaches flips every project/repo cache to stale and
+// kicks off a background mobile-project rescan. Called after git
+// mutations (clone / pull) so the mobile Hot Reload tab's next poll
+// gets fresh data — the 15s / 2.5s-while-scanning cadence then picks
+// up the new project within a few seconds instead of waiting out the
+// 10-minute scan TTL.
+func invalidateProjectCaches() {
+	repoCache.mu.Lock()
+	repoCache.repos = nil
+	repoCache.cachedAt = time.Time{}
+	repoCache.dirTimes = nil
+	repoCache.mu.Unlock()
+
+	// Mark the mobile cache as scanning so the mobile client switches
+	// to its fast-poll cadence immediately; the goroutine refreshes
+	// the results in place.
+	mobileProjectCache.mu.Lock()
+	mobileProjectCache.scannedAt = time.Time{}
+	mobileProjectCache.scanning = true
+	mobileProjectCache.mu.Unlock()
+
+	go func() {
+		projects := scanMobileProjects()
+		mobileProjectCache.mu.Lock()
+		mobileProjectCache.projects = projects
+		mobileProjectCache.scannedAt = time.Now()
+		mobileProjectCache.scanning = false
+		mobileProjectCache.mu.Unlock()
+	}()
 }
 
 // handleRepoList handles GET /repos/list.
