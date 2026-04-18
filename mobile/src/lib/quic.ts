@@ -3292,15 +3292,104 @@ export class QuicClient {
     targetDeviceName?: string;
     targetDeviceClass?: string;
   }): Promise<DevServerStatus | null> {
+    const res = await fetch(`${this.baseUrl}/dev/start`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(opts),
+    });
+    // Agent returns 412 with structured payload when a runtime
+    // dependency is missing on the dev box (e.g. no Node on a fresh
+    // Linux machine). Throw a typed error the caller can render as a
+    // one-tap "Install Node" CTA via /install/node.
+    if (res.status === 412) {
+      const detail = await res.json().catch(() => ({}));
+      const err = new Error(detail.error || "Missing runtime on dev machine") as Error & {
+        kind?: "missing-runtime";
+        missingTools?: string[];
+        installEndpoint?: string;
+        installable?: boolean;
+        helpHint?: string;
+      };
+      err.kind = "missing-runtime";
+      err.missingTools = detail.missingTools || [];
+      err.installEndpoint = detail.installEndpoint || "";
+      err.installable = !!detail.installable;
+      err.helpHint = detail.helpHint || "";
+      throw err;
+    }
+    if (!res.ok) return null;
     try {
-      const res = await fetch(`${this.baseUrl}/dev/start`, {
-        method: "POST",
-        headers: { ...this.authHeaders, "Content-Type": "application/json" },
-        body: JSON.stringify(opts),
-      });
-      if (!res.ok) return null;
       return await res.json();
-    } catch { return null; }
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Trigger a dependency install on the dev machine via
+   * POST /install/<tool>. Returns the SSE stream name to subscribe to
+   * for live progress (use subscribeStream() below).
+   */
+  async installTool(tool: string): Promise<{ ok: boolean; tool: string; stream: string; error?: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/install/${encodeURIComponent(tool)}`, {
+      method: "POST",
+      headers: this.authHeaders,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, tool, stream: "", error: data.error || `HTTP ${res.status}` };
+    }
+    return { ok: true, tool: data.tool || tool, stream: data.stream || `install:${tool}` };
+  }
+
+  /**
+   * Subscribe to a named log stream over SSE. Calls onLine for each
+   * `{type:"line",text}` event and onResult for the terminal
+   * `{type:"result",status}` event. Returns a cancel function.
+   */
+  subscribeStream(
+    name: string,
+    onLine: (text: string) => void,
+    onResult?: (status: string, error?: string) => void,
+  ): () => void {
+    const ctrl = new AbortController();
+    const url = `${this.baseUrl}/streams/${encodeURIComponent(name)}`;
+    const auth = this.authHeaders;
+    (async () => {
+      try {
+        const res = await fetch(url, { headers: auth, signal: ctrl.signal });
+        if (!res.ok || !res.body) return;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buf = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let idx;
+          while ((idx = buf.indexOf("\n\n")) >= 0) {
+            const chunk = buf.slice(0, idx).trim();
+            buf = buf.slice(idx + 2);
+            if (!chunk.startsWith("data:")) continue;
+            const payload = chunk.slice(5).trim();
+            try {
+              const ev = JSON.parse(payload);
+              if (ev.type === "line" && typeof ev.text === "string") {
+                onLine(ev.text);
+              } else if (ev.type === "result" && onResult) {
+                onResult(ev.status || "", ev.error);
+              }
+            } catch {
+              // ignore non-JSON SSE comments / keepalives
+            }
+          }
+        }
+      } catch {
+        // network drop / cancel — caller should treat as ended
+      }
+    })();
+    return () => ctrl.abort();
   }
 
   /** Stop the running dev server. */

@@ -18,11 +18,15 @@ package main
 //     hide them behind a custom installer.
 
 import (
+	"bufio"
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"time"
 )
@@ -35,6 +39,11 @@ type installPlan struct {
 	// Linux commands; the runner picks the first one whose
 	// underlying tool exists (apt-get, dnf, pacman, etc).
 	linux []linuxStep
+	// runFunc, when non-nil, fully replaces the macOS/linux shell
+	// recipes — used for sudo-free in-process installers (e.g. Node
+	// runtime extracted to ~/.yaver/runtimes/node) so an HTTP-driven
+	// install from the phone never has to prompt for a password.
+	runFunc func(ctx context.Context, progress func(string)) error
 }
 
 type linuxStep struct {
@@ -91,11 +100,20 @@ var integrations = []installPlan{
 	},
 	{
 		name:        "node",
-		description: "Node.js — only required for legacy Playwright/Cypress fallback",
-		macOS:       []string{"brew install node"},
-		linux: []linuxStep{
-			{"apt-get", "sudo apt-get install -y nodejs npm"},
-			{"dnf", "sudo dnf install -y nodejs npm"},
+		description: "Node.js LTS — installs to ~/.yaver/runtimes/node, sudo-free, modern enough for Expo SDK 50+ (apt nodejs on Ubuntu 22.04 ships Node 12 which Expo rejects)",
+		runFunc: func(ctx context.Context, progress func(string)) error {
+			_, err := installNodeRuntime(ctx, progress)
+			return err
+		},
+	},
+	{
+		name:        "mobile",
+		description: "React Native / Expo dev stack on a fresh box: Node LTS into ~/.yaver/runtimes/node. Sudo-free. Meta-target.",
+		runFunc: func(ctx context.Context, progress func(string)) error {
+			if _, err := installNodeRuntime(ctx, progress); err != nil {
+				return err
+			}
+			return nil
 		},
 	},
 	{
@@ -230,13 +248,28 @@ func wdaIsLive() bool {
 }
 
 func checkInstalled(name string) string {
+	// Special-case the agent-managed runtimes: they live under
+	// ~/.yaver/runtimes/<tool>/bin and are not on the system PATH for
+	// CLI users, so a plain LookPath would always say "—".
+	switch name {
+	case "node", "mobile":
+		if v := nodeRuntimeExisting(runtimeNodeBinDir()); v != "" {
+			return "✓"
+		}
+		if name == "node" {
+			if _, err := exec.LookPath("node"); err == nil {
+				return "✓"
+			}
+		}
+		return "—"
+	}
+
 	probe := map[string][]string{
 		"chrome":      {"google-chrome", "google-chrome-stable", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"},
 		"chromium":    {"chromium", "chromium-browser", "/Applications/Chromium.app/Contents/MacOS/Chromium"},
 		"firefox":     {"firefox", "/Applications/Firefox.app/Contents/MacOS/firefox"},
 		"android-sdk": {"adb"},
 		"appium":      {"appium"},
-		"node":        {"node"},
 		"ollama":      {"ollama"},
 		"aider":       {"aider"},
 		"opencode":    {"opencode"},
@@ -258,6 +291,17 @@ func checkInstalled(name string) string {
 	return "—"
 }
 
+// runtimeNodeBinDir is a tiny convenience wrapper so install_cmd.go
+// stays decoupled from filepath spelling.
+func runtimeNodeBinDir() string {
+	for _, d := range runtimeBinDirs() {
+		if strings.HasSuffix(d, "/node/bin") {
+			return d
+		}
+	}
+	return ""
+}
+
 func lookupIntegration(name string) (installPlan, bool) {
 	for _, p := range integrations {
 		if p.name == name {
@@ -271,6 +315,14 @@ func runInstallOne(plan installPlan) {
 	fmt.Printf("\n=> %s — %s\n", plan.name, plan.description)
 	if checkInstalled(plan.name) == "✓" {
 		fmt.Println("   already installed, skipping")
+		return
+	}
+	if plan.runFunc != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		if err := plan.runFunc(ctx, func(line string) { fmt.Printf("   %s\n", line) }); err != nil {
+			fmt.Fprintf(os.Stderr, "   error: %v\n", err)
+		}
 		return
 	}
 	switch runtime.GOOS {
@@ -298,6 +350,74 @@ func runInstallOne(plan installPlan) {
 	default:
 		fmt.Fprintf(os.Stderr, "   error: %s is not supported (yaver local CI is macOS + Linux only)\n", runtime.GOOS)
 	}
+}
+
+// runInstallPlan is the non-interactive (HTTP-driven) cousin of
+// runInstallOne. It streams every output line through `progress`
+// instead of printing to a terminal, honors `runFunc` if present,
+// and falls back to the shell recipes otherwise. Suitable for the
+// /install/<tool> handler so a phone-only user can drive setup
+// without ever opening a terminal.
+func runInstallPlan(ctx context.Context, plan installPlan, progress func(string)) error {
+	if plan.runFunc != nil {
+		return plan.runFunc(ctx, progress)
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		if _, err := exec.LookPath("brew"); err != nil {
+			return fmt.Errorf("brew not found — install Homebrew first: https://brew.sh")
+		}
+		for _, c := range plan.macOS {
+			if err := runShellStreaming(ctx, c, progress); err != nil {
+				return err
+			}
+		}
+		return nil
+	case "linux":
+		for _, step := range plan.linux {
+			if _, err := exec.LookPath(step.manager); err != nil {
+				continue
+			}
+			return runShellStreaming(ctx, step.cmd, progress)
+		}
+		return fmt.Errorf("no supported package manager (tried: %v)", linuxManagers(plan))
+	default:
+		return fmt.Errorf("%s is not supported (macOS + Linux only)", runtime.GOOS)
+	}
+}
+
+// runShellStreaming runs a shell command, streaming combined stdout
+// and stderr lines through `progress`. Honors ctx for cancellation.
+// Used by the HTTP install path so the phone sees live output.
+func runShellStreaming(ctx context.Context, cmdline string, progress func(string)) error {
+	progress("$ " + cmdline)
+	cmd := exec.CommandContext(ctx, "sh", "-c", cmdline)
+	cmd.Env = augmentEnv(nil)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	var wg sync.WaitGroup
+	scan := func(r io.Reader) {
+		defer wg.Done()
+		s := bufio.NewScanner(r)
+		s.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for s.Scan() {
+			progress(s.Text())
+		}
+	}
+	wg.Add(2)
+	go scan(stdout)
+	go scan(stderr)
+	wg.Wait()
+	return cmd.Wait()
 }
 
 func linuxManagers(plan installPlan) []string {

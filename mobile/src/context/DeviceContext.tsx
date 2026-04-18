@@ -208,6 +208,23 @@ function mergeDeviceEntries(existing: Device, incoming: Device): Device {
   };
 }
 
+// pickActiveOverStaleNeedsAuth returns whichever of the two device
+// records should "win" when they share an alias key (os + hostname)
+// but have differing hwid/publicKey. If one is stale (>24h old) and
+// flagged needsAuth while the other is authenticated and seen
+// recently, return the live one. Otherwise null = keep both visible.
+function pickActiveOverStaleNeedsAuth(a: Device, b: Device): Device | null {
+  const STALE_MS = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const aStale = !!a.needsAuth && a.lastSeen > 0 && now - a.lastSeen > STALE_MS;
+  const bStale = !!b.needsAuth && b.lastSeen > 0 && now - b.lastSeen > STALE_MS;
+  const aLive = !a.needsAuth && (a.online || (now - (a.lastSeen || 0)) < STALE_MS);
+  const bLive = !b.needsAuth && (b.online || (now - (b.lastSeen || 0)) < STALE_MS);
+  if (aStale && bLive) return b;
+  if (bStale && aLive) return a;
+  return null;
+}
+
 function collapseAliasDevices(devices: Device[]): Device[] {
   const byIdentity = new Map<string, Device>();
   for (const device of devices) {
@@ -232,6 +249,17 @@ function collapseAliasDevices(devices: Device[]): Device[] {
       (!!existing.hwid && !!device.hwid && existing.hwid !== device.hwid) ||
       (!!existing.publicKey && !!device.publicKey && existing.publicKey !== device.publicKey);
     if (hasStrongIdentity) {
+      // Same hostname / OS but distinct strong identities. Normally
+      // these are two separate machines and we keep both visible.
+      // BUT if one is a stale "needs auth" record that hasn't been
+      // seen in over 24h while the other is authenticated and recent,
+      // the stale one is leftover from a prior install (re-paired
+      // agent, wiped config) and just confuses the picker. Drop it.
+      const winner = pickActiveOverStaleNeedsAuth(existing, device);
+      if (winner) {
+        byAlias.set(alias, winner);
+        continue;
+      }
       byAlias.set(`id:${device.id}`, device);
       continue;
     }

@@ -1,27 +1,60 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 )
 
-func isWSL() bool {
+type wslRuntimeInfo struct {
+	IsWSL   bool
+	Version int
+}
+
+func detectWSLRuntime() wslRuntimeInfo {
 	if os.Getenv("WSL_DISTRO_NAME") != "" || os.Getenv("WSL_INTEROP") != "" {
-		return true
+		if containsWSL2Marker(strings.ToLower(os.Getenv("WSL_INTEROP"))) {
+			return wslRuntimeInfo{IsWSL: true, Version: 2}
+		}
 	}
 
-	data, err := os.ReadFile("/proc/version")
-	if err == nil && strings.Contains(strings.ToLower(string(data)), "microsoft") {
-		return true
+	combined := strings.ToLower(readTextFile("/proc/version") + "\n" + readTextFile("/proc/sys/kernel/osrelease"))
+	if !strings.Contains(combined, "microsoft") {
+		return wslRuntimeInfo{}
+	}
+	if containsWSL2Marker(combined) {
+		return wslRuntimeInfo{IsWSL: true, Version: 2}
+	}
+	return wslRuntimeInfo{IsWSL: true, Version: 1}
+}
+
+func isWSL() bool {
+	return detectWSLRuntime().IsWSL
+}
+
+func printWSL2RequirementWarning() {
+	rt := detectWSLRuntime()
+	if !rt.IsWSL || rt.Version != 1 {
+		return
 	}
 
-	data, err = os.ReadFile("/proc/sys/kernel/osrelease")
-	if err == nil && strings.Contains(strings.ToLower(string(data)), "microsoft") {
-		return true
-	}
+	fmt.Println("Warning: detected WSL1.")
+	fmt.Println("Yaver depends on WSL2 on Windows hosts.")
+	fmt.Println("Upgrade this distro to WSL2, then rerun this command.")
+	fmt.Println()
+}
 
-	return false
+func containsWSL2Marker(s string) bool {
+	return strings.Contains(s, "wsl2")
+}
+
+func readTextFile(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 func preferredUnixShell() string {

@@ -369,8 +369,9 @@ export default function AppsScreen() {
     if (action.type === "dev-server") {
       // Direct dev server start — use the exact target path (handles monorepos like talos/mobile)
       setStartingProject(project);
+      const targetPath = action.target === "." ? path : `${path}/${action.target}`.replace(/\/+$/, "");
+      let deferStartingClear = false;
       try {
-        const targetPath = action.target === "." ? path : `${path}/${action.target}`.replace(/\/+$/, "");
         await quicClient.startDevServer({
           framework: action.framework || "",
           workDir: targetPath,
@@ -388,15 +389,86 @@ export default function AppsScreen() {
           );
           router.navigate("/(tabs)/tasks");
         }
-      } catch {
-        const targetPath = action.target === "." ? path : `${path}/${action.target}`.replace(/\/+$/, "");
+      } catch (e) {
+        const err = e as Error & {
+          kind?: "missing-runtime";
+          missingTools?: string[];
+          installEndpoint?: string;
+          installable?: boolean;
+          helpHint?: string;
+        };
+        if (err?.kind === "missing-runtime" && err.installable && err.installEndpoint) {
+          // Phone-driven sudo-free install path: fire /install/node and
+          // stream the agent's output as an alert until the result event
+          // lands, then auto-retry the dev server start. The async work
+          // outlives this try/catch so we hold the spinner until the
+          // result handler clears it.
+          deferStartingClear = true;
+          const tool = err.installEndpoint.replace(/^\/install\//, "") || "node";
+          const missingLabel = (err.missingTools || []).join(", ") || tool;
+          Alert.alert(
+            "Install required",
+            `${missingLabel} missing on dev box. Install Node LTS into ~/.yaver/runtimes/node (no sudo)?`,
+            [
+              { text: "Cancel", style: "cancel", onPress: () => setStartingProject(null) },
+              {
+                text: "Install",
+                onPress: async () => {
+                  let lastLine = "Starting…";
+                  setQuickActionStatus(`Installing ${tool}: ${lastLine}`);
+                  const res = await quicClient.installTool(tool);
+                  if (!res.ok) {
+                    Alert.alert("Install failed", res.error || "Unknown error");
+                    setStartingProject(null);
+                    setQuickActionStatus(null);
+                    return;
+                  }
+                  const cancel = quicClient.subscribeStream(
+                    res.stream,
+                    (line) => {
+                      lastLine = line;
+                      setQuickActionStatus(`Installing ${tool}: ${line.slice(0, 80)}`);
+                    },
+                    async (status, error) => {
+                      cancel();
+                      if (status === "ok") {
+                        setQuickActionStatus("Install complete — retrying dev server…");
+                        try {
+                          await quicClient.startDevServer({
+                            framework: action.framework || "",
+                            workDir: targetPath,
+                            platform: action.platform || "",
+                            targetDeviceId: selectedTarget?.id,
+                            targetDeviceName: selectedTarget?.name,
+                            targetDeviceClass: selectedTarget?.deviceClass,
+                          });
+                        } catch (retryErr) {
+                          Alert.alert(
+                            "Dev server failed after install",
+                            retryErr instanceof Error ? retryErr.message : String(retryErr),
+                          );
+                        }
+                        setQuickActionStatus(null);
+                      } else {
+                        Alert.alert("Install failed", error || lastLine);
+                        setQuickActionStatus(null);
+                      }
+                      setStartingProject(null);
+                    },
+                  );
+                },
+              },
+            ],
+          );
+          return;
+        }
         await quicClient.sendTask(
           `Hot reload ${project} on my phone`,
           `Call POST /dev/start with workDir=${targetPath}. Metro only — no expo run:ios, no xcodebuild. Mobile loads via Hermes push.`,
         ).catch(() => {});
         router.navigate("/(tabs)/tasks");
       } finally {
-        setStartingProject(null);
+        if (!deferStartingClear) setStartingProject(null);
       }
     } else if (action.command) {
       // Direct command
