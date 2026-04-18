@@ -21,7 +21,7 @@ func ensureUserShellPathSetup(progress func(string)) error {
 		return fmt.Errorf("resolve home dir: %w", err)
 	}
 
-	exportLine := `export PATH="$HOME/.local/node-current/bin:$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"`
+	exportLine := `export PATH="$HOME/.yaver/runtimes/node/bin:$HOME/.local/node-current/bin:$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"`
 	targets := []string{
 		filepath.Join(home, ".profile"),
 		filepath.Join(home, ".bashrc"),
@@ -139,6 +139,9 @@ func configureNpmUserPrefix(nodeBinDir string, progress func(string)) error {
 	targetPrefix := filepath.Join(home, ".local")
 	if err := os.MkdirAll(filepath.Join(targetPrefix, "bin"), 0o755); err != nil {
 		return fmt.Errorf("create npm prefix bin dir: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Join(targetPrefix, "lib"), 0o755); err != nil {
+		return fmt.Errorf("create npm prefix lib dir: %w", err)
 	}
 
 	cmd := exec.Command(npmBin, "config", "set", "prefix", targetPrefix)

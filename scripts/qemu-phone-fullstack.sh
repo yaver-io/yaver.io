@@ -44,6 +44,7 @@ Optional:
   --guest-work-root <path>           Guest work root, default ~/yaver-qemu-work
   --guest-goos <os>                  Guest GOOS for yaver binary, default linux
   --guest-goarch <arch>              Guest GOARCH for yaver binary, default arm64
+  --install-node                     Run `yaver install node` inside the guest before build steps
   --include-data                     Include local.db in phone export
   --containerize                     Include Docker/compose scaffold in phone export
   --build-cmd <cmd>                  Command to run inside guest project dir
@@ -99,6 +100,7 @@ guest_goarch="arm64"
 answers_json=""
 phone_slug=""
 guest_work_root=""
+install_node=0
 build_cmd=""
 pre_build_cmd=""
 autodev_prompt=""
@@ -148,6 +150,10 @@ while [[ $# -gt 0 ]]; do
     --guest-work-root)
       guest_work_root="${2:-}"
       shift 2
+      ;;
+    --install-node)
+      install_node=1
+      shift
       ;;
     --build-cmd)
       build_cmd="${2:-}"
@@ -257,6 +263,7 @@ ENV_FILE="$TMP_DIR/run.env.sh"
   if [[ -n "$guest_work_root" ]]; then
     printf 'export YAVER_QEMU_WORK_ROOT=%s\n' "$(quote "$guest_work_root")"
   fi
+  printf 'export YAVER_QEMU_INSTALL_NODE=%s\n' "$(quote "$install_node")"
   printf 'export YAVER_QEMU_PRE_BUILD_CMD=%s\n' "$(quote "$pre_build_cmd")"
   printf 'export YAVER_QEMU_BUILD_CMD=%s\n' "$(quote "$build_cmd")"
   printf 'export YAVER_QEMU_AUTODEV_PROMPT=%s\n' "$(quote "$autodev_prompt")"

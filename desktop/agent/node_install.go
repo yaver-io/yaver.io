@@ -43,6 +43,9 @@ func installNodeRuntime(ctx context.Context, progress func(string)) (string, err
 	binDir := filepath.Join(target, "bin")
 
 	if existing := nodeRuntimeExisting(binDir); existing != "" {
+		if err := ensureNodeCurrentSymlink(target); err != nil {
+			return "", err
+		}
 		if err := ensureUserShellPathSetup(progress); err != nil {
 			return "", err
 		}
@@ -94,6 +97,9 @@ func installNodeRuntime(ctx context.Context, progress func(string)) (string, err
 	}
 
 	if existing := nodeRuntimeExisting(binDir); existing != "" {
+		if err := ensureNodeCurrentSymlink(target); err != nil {
+			return "", err
+		}
 		if err := ensureUserShellPathSetup(progress); err != nil {
 			return "", err
 		}
@@ -104,6 +110,36 @@ func installNodeRuntime(ctx context.Context, progress func(string)) (string, err
 		return binDir, nil
 	}
 	return "", fmt.Errorf("node binary missing after extract at %s", binDir)
+}
+
+func ensureNodeCurrentSymlink(target string) error {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return fmt.Errorf("resolve home dir for node-current symlink: %w", err)
+	}
+	localDir := filepath.Join(home, ".local")
+	if err := os.MkdirAll(localDir, 0o755); err != nil {
+		return fmt.Errorf("create .local dir: %w", err)
+	}
+	linkPath := filepath.Join(localDir, "node-current")
+	if info, err := os.Lstat(linkPath); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			if current, readErr := os.Readlink(linkPath); readErr == nil {
+				if current == target {
+					return nil
+				}
+			}
+		}
+		if removeErr := os.RemoveAll(linkPath); removeErr != nil {
+			return fmt.Errorf("remove stale node-current link: %w", removeErr)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat node-current link: %w", err)
+	}
+	if err := os.Symlink(target, linkPath); err != nil {
+		return fmt.Errorf("create node-current symlink: %w", err)
+	}
+	return nil
 }
 
 // nodeTarballForPlatform returns (filename, urlPath, ok) for the

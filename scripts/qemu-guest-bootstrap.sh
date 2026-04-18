@@ -52,11 +52,22 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
 }
 
-run_step() {
-  local label="$1"
-  shift
-  log "$label"
-  "$@"
+activate_managed_node() {
+  local extras=()
+  if [[ -d "$HOME/.yaver/runtimes/node/bin" ]]; then
+    extras+=("$HOME/.yaver/runtimes/node/bin")
+  fi
+  if [[ -d "$HOME/.local/bin" ]]; then
+    extras+=("$HOME/.local/bin")
+  fi
+  if [[ -d "$HOME/.npm-global/bin" ]]; then
+    extras+=("$HOME/.npm-global/bin")
+  fi
+  if [[ ${#extras[@]} -gt 0 ]]; then
+    local joined
+    joined="$(IFS=:; printf '%s' "${extras[*]}")"
+    export PATH="$joined:$PATH"
+  fi
 }
 
 for tool in bash git tar python3; do
@@ -64,6 +75,13 @@ for tool in bash git tar python3; do
 done
 
 [[ -x "$YAVER_BIN" ]] || fail "missing uploaded yaver binary at $YAVER_BIN"
+
+if [[ "${YAVER_QEMU_INSTALL_NODE:-0}" == "1" ]]; then
+  log "installing managed node runtime"
+  HOME="$LOCAL_HOME" "$YAVER_BIN" install node
+fi
+
+activate_managed_node
 
 imported_slug=""
 project_dir=""

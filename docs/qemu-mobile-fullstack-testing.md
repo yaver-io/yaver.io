@@ -1,6 +1,6 @@
 # QEMU For Phone-First Fullstack Testing
 
-Status: initial design + first harness implementation
+Status: initial design + working first harness implementation
 
 This document defines how QEMU should be used for Yaver's phone-first fullstack development story:
 
@@ -11,6 +11,34 @@ This document defines how QEMU should be used for Yaver's phone-first fullstack 
 - the result can be compiled, tested, and sent back toward mobile or another target
 
 This is about **testing and continuation of development**, not claiming that raw QEMU is the end-user mobile runtime.
+
+## Current Working Result
+
+As of this implementation, the following path works on an Apple Silicon host using raw QEMU and an Ubuntu ARM64 guest:
+
+1. boot local ARM64 guest with `scripts/qemu-local-arm64-vm.sh`
+2. scaffold a mobile/backend monorepo in the guest with `yaver new --quick`
+3. install managed Node inside the guest with `yaver install node`
+4. mutate the generated mobile app inside the guest
+5. run `npm install`
+6. export the Expo Android bundle inside the guest
+
+That flow is currently automated by:
+
+- `scripts/qemu-dummy-mobile-cycle.sh`
+
+Important current ARM64 note:
+
+- Expo Android export works in the guest with `--no-bytecode`
+- Hermes bytecode generation does **not** work on this ARM64 guest yet because the React Native package currently exposes `node_modules/react-native/sdks/hermesc/linux64-bin/hermesc`, which is x86_64-only in this tested path
+
+So the current reliable mobile build signal in ARM64 QEMU is:
+
+- JS bundle/export success
+
+not:
+
+- Hermes bytecode success
 
 ## Short Answer
 
