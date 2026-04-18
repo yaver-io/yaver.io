@@ -152,6 +152,67 @@ function normalizedHost(host: string | undefined): string {
     .replace(/\.local$/i, "");
 }
 
+function normalizedURL(url: string | undefined): string {
+  return String(url || "")
+    .trim()
+    .replace(/\/+$/, "")
+    .toLowerCase();
+}
+
+function dedupeRelayServers(servers: RelayServer[]): RelayServer[] {
+  const seen = new Set<string>();
+  const out: RelayServer[] = [];
+  for (const server of servers) {
+    const key = normalizedURL(server.httpUrl) || `${server.id}:${server.quicAddr}`;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(server);
+  }
+  return out.sort((a, b) => a.priority - b.priority);
+}
+
+function resolveRelayServers(
+  platformServers: RelayServer[],
+  accountRelayUrl?: string,
+  accountRelayPassword?: string,
+): RelayServer[] {
+  const platform = dedupeRelayServers(platformServers || []);
+  const relayUrl = normalizedURL(accountRelayUrl);
+  if (!relayUrl) return platform;
+
+  const matched = platform.filter((server) => normalizedURL(server.httpUrl) === relayUrl);
+  if (matched.length > 0) {
+    return dedupeRelayServers([
+      ...matched.map((server) => ({
+        ...server,
+        password: accountRelayPassword || server.password,
+        priority: 1,
+      })),
+      ...platform.map((server) =>
+        normalizedURL(server.httpUrl) === relayUrl
+          ? {
+              ...server,
+              password: accountRelayPassword || server.password,
+              priority: 1,
+            }
+          : server
+      ),
+    ]);
+  }
+
+  return dedupeRelayServers([
+    {
+      id: "account",
+      quicAddr: "",
+      httpUrl: accountRelayUrl!.trim(),
+      region: "account",
+      priority: 1,
+      password: accountRelayPassword,
+    },
+    ...platform,
+  ]);
+}
+
 function deviceEndpointKey(device: Pick<Device, "host" | "port" | "isGuest">): string | null {
   if (device.isGuest) return null;
   const host = normalizedHost(device.host);
@@ -702,24 +763,28 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
+      let platformServers: RelayServer[] = [];
+      try {
+        const res = await fetch(`${CONVEX_SITE_URL}/config`);
+        if (res.ok) {
+          const data = await res.json();
+          platformServers = data.relayServers || [];
+        }
+      } catch {
+        // Best-effort — account relay may still work on mobile without platform config.
+      }
+
       // 2. No local relays — check Convex user settings (account-level relay config)
       if (token) {
         try {
           const settings = await getUserSettings(token);
           if (settings.relayUrl) {
-            const accountRelay: RelayServer = {
-              id: "account",
-              quicAddr: "",
-              httpUrl: settings.relayUrl,
-              region: "account",
-              priority: 1,
-              password: settings.relayPassword,
-            };
-            quicClient.setRelayServers([accountRelay]);
-            // Persist to AsyncStorage so it works offline and on next launch
-            await AsyncStorage.setItem(RELAYS_KEY, JSON.stringify([accountRelay]));
+            const resolved = resolveRelayServers(platformServers, settings.relayUrl, settings.relayPassword);
+            quicClient.setRelayServers(resolved);
+            // Persist the resolved fallback set so the app can reconnect offline too.
+            await AsyncStorage.setItem(RELAYS_KEY, JSON.stringify(resolved));
             await AsyncStorage.setItem(SYNC_KEY, "true");
-            console.log("[DeviceContext] Loaded relay from Convex user settings:", settings.relayUrl);
+            console.log("[DeviceContext] Loaded", resolved.length, "relay server(s) from Convex user settings");
             return;
           }
         } catch {
@@ -728,13 +793,8 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       }
 
       // 3. No account-level relay — fall back to Convex platform config
-      const res = await fetch(`${CONVEX_SITE_URL}/config`);
-      if (res.ok) {
-        const data = await res.json();
-        const servers: RelayServer[] = data.relayServers || [];
-        quicClient.setRelayServers(servers);
-        console.log("[DeviceContext] Loaded", servers.length, "relay server(s) from Convex");
-      }
+      quicClient.setRelayServers(platformServers);
+      console.log("[DeviceContext] Loaded", platformServers.length, "relay server(s) from Convex");
     } catch {
       sendTelemetry(token, "relays-failed", "Could not fetch relay config");
     }

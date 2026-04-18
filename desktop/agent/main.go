@@ -31,7 +31,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.96.8"
+const version = "1.96.9"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -100,6 +100,9 @@ func relayInfosFromConfig(servers []RelayServerConfig) ([]RelayServerInfo, map[s
 	var relayServers []RelayServerInfo
 	passwords := make(map[string]string)
 	for _, rs := range servers {
+		if strings.TrimSpace(rs.QuicAddr) == "" {
+			continue
+		}
 		relayServers = append(relayServers, RelayServerInfo{
 			ID:       rs.ID,
 			QuicAddr: rs.QuicAddr,
@@ -132,6 +135,9 @@ func cacheResolvedRelayConfig(cfg *Config, servers []RelayServerInfo, globalPass
 	}
 	cached := make([]RelayServerConfig, 0, len(servers))
 	for _, rs := range servers {
+		if strings.TrimSpace(rs.QuicAddr) == "" {
+			continue
+		}
 		cached = append(cached, RelayServerConfig{
 			ID:       rs.ID,
 			QuicAddr: rs.QuicAddr,
@@ -149,6 +155,16 @@ func cacheResolvedRelayConfig(cfg *Config, servers []RelayServerInfo, globalPass
 	if err := SaveConfig(cfg); err != nil {
 		log.Printf("Warning: could not cache relay config: %v", err)
 	}
+}
+
+func normalizeRelayHTTPURL(raw string) string {
+	return strings.TrimRight(strings.TrimSpace(raw), "/")
+}
+
+func relayHTTPURLsMatch(a, b string) bool {
+	a = normalizeRelayHTTPURL(a)
+	b = normalizeRelayHTTPURL(b)
+	return a != "" && b != "" && a == b
 }
 
 func main() {
@@ -1751,10 +1767,14 @@ func runServe(args []string) {
 			log.Printf("  [%s] %s (%s)", rs.ID, rs.QuicAddr, rs.Region)
 		}
 	} else if !*noRelay && len(cfg.CachedRelayServers) > 0 {
-		log.Printf("Using %d cached relay server(s):", len(cfg.CachedRelayServers))
 		relayServers, relayPasswords = relayInfosFromConfig(cfg.CachedRelayServers)
-		for _, rs := range relayServers {
-			log.Printf("  [%s] %s (%s)", rs.ID, rs.QuicAddr, rs.Region)
+		if len(relayServers) == 0 {
+			log.Printf("Ignoring %d cached relay server(s) without QUIC addresses", len(cfg.CachedRelayServers))
+		} else {
+			log.Printf("Using %d cached relay server(s):", len(relayServers))
+			for _, rs := range relayServers {
+				log.Printf("  [%s] %s (%s)", rs.ID, rs.QuicAddr, rs.Region)
+			}
 		}
 	}
 
@@ -1776,21 +1796,14 @@ func runServe(args []string) {
 	if !*noRelay && len(relayServers) == 0 && userSettingsErr == nil && userSettings.RelayUrl != "" && platformErr == nil {
 		// Match user's relayUrl against platform config to get full relay info (incl. QUIC address)
 		for _, rs := range platformCfg.RelayServers {
-			if rs.HttpURL == userSettings.RelayUrl {
+			if relayHTTPURLsMatch(rs.HttpURL, userSettings.RelayUrl) {
 				relayServers = append(relayServers, rs)
 				log.Printf("Using relay from user settings: %s (QUIC: %s)", rs.HttpURL, rs.QuicAddr)
 				break
 			}
 		}
 		if len(relayServers) == 0 {
-			// relayUrl doesn't match any platform relay — use as-is (custom relay)
-			log.Printf("Using custom relay from user settings: %s", userSettings.RelayUrl)
-			relayServers = append(relayServers, RelayServerInfo{
-				ID:       "user-settings",
-				HttpURL:  userSettings.RelayUrl,
-				Region:   "user",
-				Priority: 1,
-			})
+			log.Printf("User relay setting %s has no matching platform relay with QUIC info; falling back to platform relays", userSettings.RelayUrl)
 		}
 	}
 
