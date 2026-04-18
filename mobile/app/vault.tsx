@@ -275,8 +275,23 @@ export default function VaultScreen() {
       <View style={[s.header, { borderColor: c.border }]}>
         <AppBackButton onPress={() => router.back()} />
         <Text style={[s.title, { color: c.textPrimary }]}>Vault</Text>
-        <Pressable onPress={() => setShowForm((v) => !v)}>
-          <Text style={{ color: c.accent, fontSize: 18 }}>{showForm ? "\u00D7" : "+"}</Text>
+        <Pressable
+          onPress={() => setShowForm((v) => !v)}
+          hitSlop={12}
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 16,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: showForm ? "transparent" : `${c.accent}22`,
+            borderWidth: 1,
+            borderColor: c.accent,
+          }}
+        >
+          <Text style={{ color: c.accent, fontSize: 18, fontWeight: "600", lineHeight: 20 }}>
+            {showForm ? "\u00D7" : "+"}
+          </Text>
         </Pressable>
       </View>
 
@@ -374,39 +389,49 @@ export default function VaultScreen() {
         </ScrollView>
       ) : null}
 
-      {/* Category filter chips */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: 12, paddingTop: 4, gap: 6 }}
-      >
-        {CATEGORIES.map((cat) => (
-          <Pressable
-            key={cat}
-            onPress={() => {
-              setFilter((prev) => {
-                const next = new Set(prev);
-                if (next.has(cat)) next.delete(cat);
-                else next.add(cat);
-                if (next.size === 0) return new Set(CATEGORIES);
-                return next;
-              });
-            }}
-            style={{
-              borderWidth: 1,
-              borderColor: filter.has(cat) ? c.accent : c.border,
-              backgroundColor: filter.has(cat) ? `${c.accent}22` : "transparent",
-              paddingHorizontal: 8,
-              paddingVertical: 3,
-              borderRadius: 3,
-            }}
-          >
-            <Text style={{ color: filter.has(cat) ? c.accent : c.textMuted, fontSize: 10 }}>
-              {cat}
-            </Text>
-          </Pressable>
-        ))}
-      </ScrollView>
+      {/* Category filter chips — fixed height row so the chips don't
+       *  stretch vertically in the flex column. */}
+      <View style={{ height: 36, marginTop: 4 }}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{
+            paddingHorizontal: 12,
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          {CATEGORIES.map((cat) => {
+            const active = filter.has(cat);
+            return (
+              <Pressable
+                key={cat}
+                onPress={() => {
+                  setFilter((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(cat)) next.delete(cat);
+                    else next.add(cat);
+                    if (next.size === 0) return new Set(CATEGORIES);
+                    return next;
+                  });
+                }}
+                style={{
+                  borderWidth: 1,
+                  borderColor: active ? c.accent : c.border,
+                  backgroundColor: active ? `${c.accent}22` : "transparent",
+                  paddingHorizontal: 10,
+                  paddingVertical: 4,
+                  borderRadius: 999,
+                }}
+              >
+                <Text style={{ color: active ? c.accent : c.textMuted, fontSize: 11 }}>
+                  {cat}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
 
       {loading ? (
         <ActivityIndicator style={{ marginTop: 24 }} color={c.accent} />
@@ -427,9 +452,39 @@ export default function VaultScreen() {
             />
           }
           ListEmptyComponent={
-            <Text style={{ color: c.textMuted, padding: 16, textAlign: "center" }}>
-              {connected ? "No entries yet. Tap + to add one." : "Connect to a device to view vault."}
-            </Text>
+            connected ? (
+              <View style={{ alignItems: "center", paddingHorizontal: 24, paddingTop: 32 }}>
+                <Text
+                  style={{
+                    color: c.textMuted,
+                    textAlign: "center",
+                    marginBottom: 14,
+                    fontSize: 14,
+                  }}
+                >
+                  No entries yet.
+                </Text>
+                <Pressable
+                  onPress={() => setShowForm(true)}
+                  style={{
+                    backgroundColor: c.accent,
+                    paddingHorizontal: 20,
+                    paddingVertical: 12,
+                    borderRadius: 8,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <Text style={{ color: "#fff", fontSize: 18, fontWeight: "600" }}>+</Text>
+                  <Text style={{ color: "#fff", fontWeight: "600" }}>New entry</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <Text style={{ color: c.textMuted, padding: 16, textAlign: "center" }}>
+                Connect to a device to view vault.
+              </Text>
+            )
           }
         />
       )}

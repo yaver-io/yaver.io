@@ -252,8 +252,34 @@ func DetectProjectTags(dir string) []string {
 	if fileExists(filepath.Join(dir, "tailwind.config.js")) || fileExists(filepath.Join(dir, "tailwind.config.ts")) {
 		tags = append(tags, "tailwind")
 	}
+	if hasFeedbackSDK(dir) {
+		tags = append(tags, "feedback-sdk")
+	}
 
 	return tags
+}
+
+func hasFeedbackSDK(dir string) bool {
+	candidates := []string{
+		filepath.Join(dir, "package.json"),
+		filepath.Join(dir, "app.json"),
+		filepath.Join(dir, "app.config.js"),
+		filepath.Join(dir, "app.config.ts"),
+		filepath.Join(dir, "yaver.json"),
+	}
+	for _, candidate := range candidates {
+		data, err := readSmallFile(candidate)
+		if err != nil {
+			continue
+		}
+		content := string(data)
+		if strings.Contains(content, "yaver-feedback-react-native") ||
+			strings.Contains(content, "yaver-feedback") ||
+			strings.Contains(content, `"sdkVersion"`) {
+			return true
+		}
+	}
+	return false
 }
 
 // detectFramework checks common framework indicators.
