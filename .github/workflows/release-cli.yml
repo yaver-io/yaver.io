@@ -521,16 +521,18 @@ jobs:
             fi
           done
 
-          # Generate Release file
-          cat > dists/stable/Release <<RELEASE
-          Origin: Yaver
-          Label: Yaver
-          Suite: stable
-          Codename: stable
-          Architectures: amd64 arm64
-          Components: main
-          Description: Yaver CLI apt repository
-          RELEASE
+          # Regenerate apt metadata and remove stale signed metadata until signing is wired in here.
+          cat > apt-release.conf <<'EOF'
+          APT::FTPArchive::Release::Origin "Yaver";
+          APT::FTPArchive::Release::Label "Yaver";
+          APT::FTPArchive::Release::Suite "stable";
+          APT::FTPArchive::Release::Codename "stable";
+          APT::FTPArchive::Release::Architectures "amd64 arm64";
+          APT::FTPArchive::Release::Components "main";
+          APT::FTPArchive::Release::Description "Yaver CLI apt repository";
+          EOF
+          apt-ftparchive -c=apt-release.conf release dists/stable > dists/stable/Release
+          rm -f dists/stable/InRelease dists/stable/Release.gpg
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

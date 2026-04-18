@@ -117,17 +117,23 @@ export default async function DownloadPage() {
                 Install the Yaver agent without guessing.
               </h1>
               <p className="mt-4 max-w-2xl text-sm leading-6 text-surface-400 md:text-base">
-                The supported landing-page paths are the install script plus direct agent tarballs. I
-                verified the script on fresh Hetzner Linux hosts and trimmed out the broken package-manager
-                and HTML-fallback routes.
+                The fastest path is the npm bootstrap, and the native package-manager routes are available
+                too. I verified the current Linux flow on a fresh Ubuntu host with both
+                <code> npm install -g yaver-cli</code> and <code>apt install yaver</code>.
               </p>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-surface-500">
                 Native Windows is not a main path here. Use WSL2 on Windows, and use the Yaver mobile app
                 on your phone for the Hermes runtime container.
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
-                <DownloadButton href="#script" primary>
+                <DownloadButton href="#npm" primary>
+                  npm bootstrap
+                </DownloadButton>
+                <DownloadButton href="#script">
                   Install script
+                </DownloadButton>
+                <DownloadButton href="#packages">
+                  Package managers
                 </DownloadButton>
                 <DownloadButton href="#tarballs">
                   Direct tarballs
@@ -144,16 +150,17 @@ export default async function DownloadPage() {
               </p>
               <div className="mt-4 space-y-4">
                 <div className="rounded-xl border border-surface-800 bg-surface-900/80 p-4">
-                  <p className="text-sm font-semibold text-surface-100">Linux / WSL</p>
+                  <p className="text-sm font-semibold text-surface-100">npm bootstrap</p>
                   <p className="mt-1 text-sm text-surface-400">
-                    Use <code>curl -fsSL https://yaver.io/install.sh | sh</code>. This is the path I verified on
-                    fresh amd64 and arm64 Linux VMs.
+                    Use <code>npm install -g yaver-cli</code>. It installs a single <code>yaver</code> command
+                    that covers both agent startup and third-party React Native push flows.
                   </p>
                 </div>
                 <div className="rounded-xl border border-surface-800 bg-surface-900/80 p-4">
-                  <p className="text-sm font-semibold text-surface-100">Direct binaries</p>
+                  <p className="text-sm font-semibold text-surface-100">apt / brew / package managers</p>
                   <p className="mt-1 text-sm text-surface-400">
-                    Use the tarball routes below when you want an exact agent binary file instead of an installer.
+                    apt works from a CDN-backed repo, Homebrew stays native, and Scoop/Winget/Chocolatey remain
+                    available as secondary package-manager surfaces.
                   </p>
                 </div>
                 <div id="wsl" className="rounded-xl border border-surface-800 bg-surface-900/80 p-4">
@@ -168,23 +175,23 @@ export default async function DownloadPage() {
           </div>
         </section>
 
-        <section id="script" className="mt-10 grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
+        <section id="npm" className="mt-10 grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
           <div className="rounded-2xl border border-surface-800 bg-surface-900 p-6">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-surface-500">
               Recommended
             </p>
             <h2 className="mt-2 text-2xl font-semibold text-surface-50">
-              Install with the auto-detect script
+              Install with npm
             </h2>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-surface-400">
-              This is the main landing-page install method now. It auto-detects Linux vs macOS and amd64 vs
-              arm64, downloads the matching agent tarball, and installs <code>yaver</code> for you.
+              This is the shortest onboarding path now. It gives you a single <code>yaver</code> command for
+              the Go agent plus the React Native push/injection flow.
             </p>
             <div className="mt-6 space-y-4">
               <CommandCard
-                label="Linux / macOS / WSL"
+                label="npm bootstrap"
                 commands={[
-                  "curl -fsSL https://yaver.io/install.sh | sh",
+                  "npm install -g yaver-cli",
                   "yaver auth",
                   "yaver serve",
                 ]}
@@ -193,19 +200,26 @@ export default async function DownloadPage() {
           </div>
 
           <div className="space-y-5">
-            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-6">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">
-                Removed from landing page
+            <div id="script" className="rounded-2xl border border-surface-800 bg-surface-900 p-6">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-surface-500">
+                No npm required
               </p>
-              <div className="mt-4 space-y-3 text-sm leading-6 text-amber-100/90">
-                <p>
-                  <code>npm install -g yaver-cli</code> is temporarily not a landing-page recommendation because the
-                  published npm package and the published agent release assets are out of sync.
-                </p>
-                <p>
-                  The old <code>apt</code>, <code>rpm</code>, <code>.deb</code>, and AppImage entries were removed because
-                  several public routes were returning HTML fallbacks or installer packages instead of a clean agent install.
-                </p>
+              <h2 className="mt-2 text-xl font-semibold text-surface-50">
+                Install with the auto-detect script
+              </h2>
+              <p className="mt-3 text-sm leading-6 text-surface-400">
+                Use the shell installer when you want the matching tarball and a local <code>yaver</code>
+                binary without setting up npm first.
+              </p>
+              <div className="mt-5 rounded-xl bg-surface-950 p-4 font-mono text-[13px] text-surface-300">
+                <div className="mb-2">
+                  <span className="text-surface-500">$</span>{" "}
+                  <span className="select-all">curl -fsSL https://yaver.io/install.sh | sh</span>
+                </div>
+                <div>
+                  <span className="text-surface-500">$</span>{" "}
+                  <span className="select-all">yaver serve</span>
+                </div>
               </div>
             </div>
 
@@ -237,6 +251,50 @@ export default async function DownloadPage() {
                   <span className="text-surface-500">#</span>{" "}
                   <span>Open the project in Yaver on the phone. WSL uses the Hermes bundle path, not Xcode.</span>
                 </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="packages" className="mt-10 grid gap-5 md:grid-cols-2">
+          <div className="rounded-2xl border border-surface-800 bg-surface-900 p-6">
+            <h2 className="text-lg font-semibold text-surface-50">apt</h2>
+            <p className="mt-3 text-sm leading-6 text-surface-400">
+              Debian and Ubuntu can install Yaver from the CDN-backed apt repository.
+            </p>
+            <div className="mt-5 rounded-xl bg-surface-950 p-4 font-mono text-[13px] text-surface-300">
+              <div className="mb-2">
+                <span className="text-surface-500">$</span>{" "}
+                <span className="select-all">{`echo "deb [arch=$(dpkg --print-architecture) trusted=yes] https://cdn.jsdelivr.net/gh/kivanccakmak/apt-yaver@main stable main" | sudo tee /etc/apt/sources.list.d/yaver.list`}</span>
+              </div>
+              <div className="mb-2">
+                <span className="text-surface-500">$</span>{" "}
+                <span className="select-all">sudo apt update</span>
+              </div>
+              <div>
+                <span className="text-surface-500">$</span>{" "}
+                <span className="select-all">sudo apt install yaver</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-surface-800 bg-surface-900 p-6">
+            <h2 className="text-lg font-semibold text-surface-50">Other package managers</h2>
+            <p className="mt-3 text-sm leading-6 text-surface-400">
+              WSL2 is still the real Windows-hosted dev path, but these package-manager entries are live too.
+            </p>
+            <div className="mt-5 rounded-xl bg-surface-950 p-4 font-mono text-[13px] text-surface-300">
+              <div className="mb-2">
+                <span className="text-surface-500">&gt;</span>{" "}
+                <span className="select-all">winget install Yaver.Yaver</span>
+              </div>
+              <div className="mb-2">
+                <span className="text-surface-500">&gt;</span>{" "}
+                <span className="select-all">choco install yaver</span>
+              </div>
+              <div>
+                <span className="text-surface-500">&gt;</span>{" "}
+                <span className="select-all">scoop bucket add yaver https://github.com/kivanccakmak/scoop-yaver && scoop install yaver</span>
               </div>
             </div>
           </div>
