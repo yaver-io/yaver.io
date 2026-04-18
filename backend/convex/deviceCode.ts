@@ -33,6 +33,7 @@ export const createDeviceCode = mutation({
     shell: v.optional(v.string()),
     environment: v.optional(v.string()),
     runtimeVersion: v.optional(v.string()),
+    preferredProvider: v.optional(v.string()),
     isWsl: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
@@ -71,6 +72,7 @@ export const createDeviceCode = mutation({
       shell: args.shell,
       environment: args.environment,
       runtimeVersion: args.runtimeVersion,
+      preferredProvider: args.preferredProvider,
       isWsl: args.isWsl,
       expiresAt: now + DEVICE_CODE_TTL_MS,
       createdAt: now,
@@ -105,6 +107,7 @@ export const getDeviceCodeInfo = query({
       shell: code.shell ?? null,
       environment: code.environment ?? null,
       runtimeVersion: code.runtimeVersion ?? null,
+      preferredProvider: code.preferredProvider ?? null,
       isWsl: code.isWsl ?? false,
       expiresAt: code.expiresAt,
       createdAt: code.createdAt,

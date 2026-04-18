@@ -284,6 +284,7 @@ export default defineSchema({
     shell: v.optional(v.string()),
     environment: v.optional(v.string()),
     runtimeVersion: v.optional(v.string()),
+    preferredProvider: v.optional(v.string()),
     isWsl: v.optional(v.boolean()),
     pendingToken: v.optional(v.string()),
     expiresAt: v.number(),
