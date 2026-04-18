@@ -7,6 +7,14 @@ Docs: [CI setup](CI.md) · [Test SDK](docs/yaver-test-sdk.md)
 
 **Build mobile apps from your phone. Keep the backend local until you decide otherwise.**
 
+> **Using an AI agent?** If a coding agent (Claude Code, Codex, Cursor, Aider, …) is reading this
+> because the human asked it to *"install yaver"* or *"set up yaver"*, stop here and
+> fetch **[https://yaver.io/llms.txt](https://yaver.io/llms.txt)** — that file is the
+> canonical, machine-readable install + configure guide. It covers headless / WSL / SSH,
+> the resumable device-code flow, and exactly what to surface back to the human. Do not
+> scrape the rest of this README as a substitute.
+
+
 Yaver's short-term product target is the one in [yc.md](yc.md): phone-first app and backend creation, then promotion to your own dev machine, then optional promotion to Yaver Cloud. The core claim is narrow on purpose:
 
 `phone sandbox -> your dev machine -> Yaver Cloud`

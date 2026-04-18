@@ -50,11 +50,80 @@ yaver auth
 # `yaver auth` starts the agent automatically if needed
 ```
 
-If you are on a remote or SSH-only WSL session:
+On WSL, `yaver auth` auto-detects the environment — if there is no `DISPLAY`
+set (the normal WSL case) or you are on SSH, it switches to the device-code
+flow automatically: it prints a URL like `https://yaver.io/auth/device?code=XXXX`,
+you open it on your phone, sign in with Apple / Google / Microsoft, and the
+token flows back to the waiting shell. No browser ever opens on the Windows
+host.
+
+If you want to force that flow in a shell where auto-detection guesses wrong
+(some cloud shells, terminal-in-an-editor bridges, etc.):
 
 ```bash
-yaver auth --headless
+yaver auth --headless        # explicit flag
+# or, as a sticky env var:
+YAVER_HEADLESS=1 yaver auth
 ```
+
+### Driving the install from outside the LAN (non-developer user)
+
+Target user: someone who is not going to type commands. They only
+know how to talk to an AI coding agent (Claude Code / Codex / …)
+that is already running on their home WSL box, and tap a link on
+their phone. They are on cellular at a cafe; the WSL box is at home.
+
+The agent runs, in order:
+
+```bash
+npm install -g yaver-cli
+yaver auth                    # auto-picks device-code flow on WSL / SSH / YAVER_HEADLESS
+```
+
+`yaver auth` on WSL-without-DISPLAY prints a single line of the form
+
+```
+    https://yaver.io/auth/device?code=XXXX-NNNN
+```
+
+plus (on a real terminal only) an ASCII QR. The agent surfaces that
+URL to the user; the user taps it, signs in with Apple / Google /
+Microsoft on their phone, and the agent keeps polling.
+
+**The flow is resumable.** `yaver auth` caps each invocation's
+blocking wait at ~2.5 minutes (safely inside a bash-tool timeout) and
+persists the pending code to `~/.yaver/pending-auth.json`. If the
+tool call returns before the human finished signing in, the agent
+just re-runs `yaver auth` — the same URL is reused, the human does
+**not** sign in a second time. Sign-in burns exactly one OAuth round
+trip on the phone, no matter how many times the wrapper retries.
+
+After success the daemon is forked, `autoSetupMCP()` registers the
+Yaver MCP server in every installed coding agent, and the post-auth
+block nudges the agent to finish with:
+
+```bash
+yaver config set auto-start true   # survive reboots (WSL helper + Windows Startup wrapper)
+yaver init                         # optional: sets a bootstrap secret so
+                                   #  the mobile app can remotely re-auth
+                                   #  this box if the token ever expires
+```
+
+### MCP alternative (same flow through tools)
+
+Agents that prefer MCP over bash can drive the same flow through
+tools that share the `~/.yaver/pending-auth.json` record:
+
+```
+yaver_auth_start        → { url, user_code, device_code, qr_ascii }
+yaver_auth_wait         → blocks up to `timeout_seconds` (default 120),
+                          returns pending|authorized|expired.
+                          Re-invoke on pending until authorized.
+```
+
+Mixing surfaces is safe: if the agent started the flow via `yaver auth`
+and then switched to `yaver_auth_start`, the MCP call resumes the same
+code — and vice-versa.
 
 If you want to force the iPhone path to stay on Hermes bundle mode:
 

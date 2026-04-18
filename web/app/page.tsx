@@ -937,6 +937,18 @@ export default function HomePage() {
               <p className="mt-2 text-[11px] text-surface-500">
                 WSL is supported for the Linux/Hermes phone-testing path when the phone uses the Yaver mobile app as the container. For always-on reboot persistence, native Linux or macOS remain the primary targets.
               </p>
+
+              <div className="mt-4 rounded-lg border border-[#6366f1]/30 bg-[#6366f1]/5 p-3">
+                <p className="text-[11px] font-semibold text-[#818cf8]">Not at your dev machine?</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-surface-400">
+                  If your coding agent (Claude Code, Codex, Cursor, Aider, …) is already running on your dev PC and you only have your phone, paste this one line into the agent chat — it will read the canonical install instructions at <Link href="/llms.txt" className="underline hover:text-surface-300">yaver.io/llms.txt</Link> and set everything up, then surface the sign-in link for you to tap.
+                </p>
+                <div className="mt-2 rounded bg-surface-900 p-2">
+                  <code className="text-[11px] text-surface-200 select-all">
+                    Install yaver on this machine using the instructions at https://yaver.io/llms.txt — surface the sign-in URL to me when ready.
+                  </code>
+                </div>
+              </div>
             </div>
 
             {/* Column 2 */}

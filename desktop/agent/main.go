@@ -539,6 +539,11 @@ func runPushBridge(args []string) {
 // ---------------------------------------------------------------------------
 
 func runAuth(args []string) {
+	// Run the WSL2 network tuner before auth so the first `yaver
+	// serve` (often invoked automatically right after auth) already
+	// has UDP buffers large enough for the QUIC relay. Noop elsewhere.
+	maybeRunWSL2NetworkTuning()
+
 	// Subcommand dispatch: `yaver auth pair` / `yaver auth send`
 	// handle the QR-based P2P token forwarding flow for cases
 	// where another yaver machine is already signed in and we
@@ -617,6 +622,18 @@ func runAuth(args []string) {
 
 		t, err := runDeviceCodeAuth(*convexURL)
 		if err != nil {
+			// Resumable: a round-timeout (agentic bash tool gave up
+			// before the human finished signing in). Exit 0 with a
+			// structured hint so the caller re-invokes this same
+			// command — pending-auth is still on disk so we'll keep
+			// polling the same URL.
+			if errors.Is(err, errResumable) {
+				fmt.Println()
+				fmt.Println("Sign-in still pending — same URL is valid.")
+				fmt.Println("  Re-run: yaver auth")
+				fmt.Println("  (resumes the existing flow; the human does NOT need to sign in again)")
+				return
+			}
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -641,6 +658,7 @@ func runAuth(args []string) {
 		fmt.Println()
 		startServeIfStopped()
 		autoSetupMCP()
+		printHeadlessNextSteps()
 		return
 	}
 
@@ -1181,6 +1199,54 @@ func logFilePath() string {
 	return filepath.Join(dir, "agent.log")
 }
 
+// printHeadlessNextSteps prints the post-sign-in guidance for someone
+// who just ran `yaver auth` on a remote / WSL / headless box. Three
+// things get surfaced:
+//
+//  1. Install the Yaver mobile app on the human's phone and sign in
+//     with the same OAuth provider — without it their P2P flow has no
+//     client end. The app-install link always prints; it's cheap and
+//     the cousin-at-a-cafe path (where an AI agent is orchestrating a
+//     non-developer through install) depends on the agent relaying
+//     this line to the human.
+//  2. Enable auto-start so the box comes back after a reboot without
+//     another SSH round trip. Suppressed if already configured.
+//  3. Optional `yaver init` for a bootstrap secret so the mobile app
+//     can remotely re-auth this box from outside the LAN. Suppressed
+//     if already set.
+func printHeadlessNextSteps() {
+	autoStartKnown := isAutoStartInstalled()
+	bootstrapKnown := false
+	if cfg, _ := LoadConfig(); cfg != nil && strings.TrimSpace(cfg.BootstrapSecretHash) != "" {
+		bootstrapKnown = true
+	}
+
+	fmt.Println("Next — on your phone:")
+	fmt.Println("  Install the Yaver app and sign in with the same account you just used.")
+	fmt.Println("    iOS (TestFlight):  https://testflight.apple.com/join/yaver")
+	fmt.Println("    Android (Play):    https://play.google.com/store/apps/details?id=io.yaver.mobile")
+	fmt.Println("  This machine will appear in its device list automatically.")
+	fmt.Println()
+
+	if autoStartKnown && bootstrapKnown {
+		return
+	}
+	fmt.Println("Optional next steps for a remote/headless machine:")
+	if !autoStartKnown {
+		if isWSL() {
+			fmt.Println("  yaver config set auto-start true   # survive WSL/Windows reboots")
+		} else {
+			fmt.Println("  yaver config set auto-start true   # survive reboots (systemd/launchd)")
+		}
+	}
+	if !bootstrapKnown {
+		fmt.Println("  yaver init                         # also generates a bootstrap secret")
+		fmt.Println("                                       (lets the mobile app re-auth this box")
+		fmt.Println("                                        without another SSH session)")
+	}
+	fmt.Println()
+}
+
 // startServeIfStopped forks `yaver serve` in the background if the
 // agent isn't already running. Called at the end of a successful
 // auth / pair flow so the user doesn't have to remember the extra
@@ -1372,6 +1438,7 @@ func runServe(args []string) {
 	}
 
 	maybeRunMacOSPermissionOnboarding("serve")
+	maybeRunWSL2NetworkTuning()
 
 	cfgForReuse, _ := LoadConfig()
 	authTokenForReuse := ""
@@ -3577,7 +3644,25 @@ func runStatus() {
 		// the user what's actually up so they know what to do
 		// next instead of just "Run yaver auth".
 		fmt.Printf("Yaver:    v%s\n", version)
-		fmt.Println("Auth:     \033[33m●\033[0m not signed in")
+
+		// If we're mid-device-code-flow (the human is about to tap
+		// the URL on their phone, or hasn't yet), surface that up
+		// front — this is the key bit an orchestrating AI agent
+		// re-polls for between retries of `yaver auth`.
+		if pend, _ := loadPendingAuth(); pend != nil &&
+			pend.ExpiresAt > time.Now().UnixMilli() &&
+			strings.TrimSpace(pend.DeviceCode) != "" {
+			fmt.Println("Auth:     \033[33m●\033[0m waiting for sign-in on your phone")
+			fmt.Printf("  URL:    %s\n", pend.URL)
+			fmt.Printf("  Code:   %s\n", pend.UserCode)
+			fmt.Printf("  Valid:  another %s\n",
+				humanRoundDuration(time.Until(time.UnixMilli(pend.ExpiresAt))))
+			fmt.Println("  Tap the URL on your phone, sign in (Apple / Google / Microsoft),")
+			fmt.Println("  then run `yaver auth` once more here to finalize.")
+			fmt.Println()
+		} else {
+			fmt.Println("Auth:     \033[33m●\033[0m not signed in")
+		}
 
 		// Probe the local HTTP surface. If the agent is up in
 		// bootstrap mode, /info answers without auth and reports

@@ -270,21 +270,7 @@ export default function DeviceCodeClient({
   }
 
   if (status === "success") {
-    return (
-      <div className="flex min-h-[70vh] items-center justify-center px-6 py-20">
-        <div className="w-full max-w-sm text-center">
-          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-green-500/10">
-            <svg className="h-8 w-8 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
-          </div>
-          <h2 className="text-xl font-bold text-surface-50">Device authorized</h2>
-          <p className="mt-3 text-sm text-surface-400">
-            Your terminal should sign in automatically. You can close this page.
-          </p>
-        </div>
-      </div>
-    );
+    return <DeviceAuthorizedSuccess machineName={deviceInfo?.machineName ?? null} />;
   }
 
   if (!token) {
@@ -453,6 +439,108 @@ export default function DeviceCodeClient({
           <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-400">yaver auth pair</code> on the headless box,
           then <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-400">yaver auth send &lt;code&gt; &lt;url&gt;</code> from the signed-in machine.
         </p>
+      </div>
+    </div>
+  );
+}
+
+// Detects iOS / Android from the user-agent so the success screen can
+// suggest the right app store. Runs client-side only, safe if it
+// returns "other" (we just show both buttons).
+function detectMobileOS(): "ios" | "android" | "other" {
+  if (typeof navigator === "undefined") return "other";
+  const ua = navigator.userAgent || "";
+  if (/iPhone|iPad|iPod/i.test(ua)) return "ios";
+  if (/Android/i.test(ua)) return "android";
+  return "other";
+}
+
+// DeviceAuthorizedSuccess is the post-OAuth confirmation. It does two
+// jobs at once:
+//
+//   1. Tell the user the terminal handoff is already complete — their
+//      coding agent at home is now signed in, no further action needed.
+//   2. Hand them the Yaver mobile app so they don't have to figure out
+//      "so what do I install next?". The cousin-at-a-cafe path lands
+//      here right after tapping a single link; making him root around
+//      for the App Store would break the "pasted one sentence, done"
+//      seamlessness we built the whole resumable-auth flow for.
+//
+// On iOS we show TestFlight; on Android, Play; otherwise both.
+function DeviceAuthorizedSuccess({ machineName }: { machineName: string | null }) {
+  const [os, setOs] = useState<"ios" | "android" | "other">("other");
+  useEffect(() => {
+    setOs(detectMobileOS());
+  }, []);
+
+  const testFlightHref = "https://testflight.apple.com/join/yaver";
+  const playHref = "https://play.google.com/store/apps/details?id=io.yaver.mobile";
+
+  return (
+    <div className="flex min-h-[70vh] items-center justify-center px-6 py-14">
+      <div className="w-full max-w-md">
+        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-green-500/10">
+          <svg className="h-8 w-8 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+        <h2 className="text-center text-2xl font-bold text-surface-50">
+          {machineName ? `${machineName} is signed in` : "Machine signed in"}
+        </h2>
+        <p className="mt-3 text-center text-sm text-surface-400">
+          Your terminal picked up the token automatically. You can close this
+          tab and go back to your coding agent — it will continue from here.
+        </p>
+
+        <div className="mt-8 rounded-2xl border border-indigo-500/30 bg-indigo-500/5 p-5">
+          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-300">
+            One more step — on this phone
+          </div>
+          <h3 className="mt-2 text-base font-semibold text-surface-50">
+            Install the Yaver app
+          </h3>
+          <p className="mt-2 text-sm leading-relaxed text-surface-400">
+            Install the app, sign in with the <em>same</em> OAuth provider you
+            just used, and your dev machine will appear in the device list
+            within seconds. You can then run tasks, hot-reload, and send
+            feedback from your phone.
+          </p>
+
+          <div className="mt-4 flex flex-col gap-2">
+            {(os === "ios" || os === "other") && (
+              <a
+                href={testFlightHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-surface-50 px-4 py-3 text-sm font-semibold text-surface-950 transition-colors hover:bg-surface-200"
+              >
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z" />
+                </svg>
+                Install on iPhone (TestFlight)
+              </a>
+            )}
+            {(os === "android" || os === "other") && (
+              <a
+                href={playHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-surface-800 px-4 py-3 text-sm font-semibold text-surface-50 transition-colors hover:bg-surface-700"
+              >
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M3.609 1.814l10.14 10.151-10.14 10.151c-.366-.19-.609-.57-.609-1.007V2.821c0-.437.243-.817.609-1.007zm11.04 11.04l2.614 2.614-11.69 6.753 9.076-9.367zm0-2l-9.076-9.367 11.69 6.753-2.614 2.614zm4.01 1l3.41 1.97a1.166 1.166 0 0 1 0 2.03l-3.41 1.97-2.853-2.985 2.853-2.985z" />
+                </svg>
+                Install on Android (Play)
+              </a>
+            )}
+          </div>
+
+          <p className="mt-4 text-[11px] leading-relaxed text-surface-500">
+            Same email, any provider: if you signed in above with Apple,
+            Google, or Microsoft, use the same one in the app. Your machine
+            appears automatically — no re-pairing, no passwords.
+          </p>
+        </div>
       </div>
     </div>
   );

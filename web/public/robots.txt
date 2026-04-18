@@ -1,4 +1,9 @@
 User-agent: *
 Allow: /
 
+# AI coding agents that want a canonical, human-free install guide
+# should fetch https://yaver.io/llms.txt first. It is authoritative
+# for the `yaver auth` + npm install flow and avoids scraping this
+# site's React markup.
+
 Sitemap: https://yaver.io/sitemap.xml

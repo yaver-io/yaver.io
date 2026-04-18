@@ -56,6 +56,18 @@ export const metadata: Metadata = {
   manifest: "/manifest.webmanifest",
   alternates: {
     canonical: "https://yaver.io",
+    // llms.txt is the agent-facing install guide. Declaring it as an
+    // alternate representation lets AI crawlers (Claude, ChatGPT,
+    // Perplexity, …) find a deterministic, human-free install recipe
+    // instead of scraping React markup.
+    types: {
+      "text/plain": [{ url: "/llms.txt", title: "Yaver AI-agent install guide (llms.txt)" }],
+    },
+  },
+  other: {
+    // Explicit pointer for agents that look at arbitrary <meta> tags.
+    "ai:install-guide": "https://yaver.io/llms.txt",
+    "ai:install-command": "npm install -g yaver-cli && yaver auth",
   },
 };
 
@@ -94,6 +106,8 @@ export default function RootLayout({
                 "Open-source P2P tool that lets developers use any AI coding agent from their mobile device, connecting directly to development machines.",
               url: "https://yaver.io",
               downloadUrl: "https://yaver.io/download",
+              installUrl: "https://yaver.io/llms.txt",
+              softwareHelp: "https://yaver.io/llms.txt",
               offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
               author: {
                 "@type": "Organization",

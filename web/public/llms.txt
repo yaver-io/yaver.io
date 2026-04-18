@@ -1,0 +1,117 @@
+# Yaver
+
+> Yaver is a peer-to-peer tool that lets developers use any AI coding agent
+> (Claude Code, Codex, Aider, Ollama, …) from their phone, web browser,
+> or another terminal, connecting directly to their development machine.
+> Task data never touches Anthropic/OpenAI/yaver.io servers — only auth
+> and peer discovery do.
+
+This file is aimed at AI coding agents that a user has asked to "install
+yaver" or "set up yaver" on their machine. Everything below is the
+canonical install + configure path. Treat it as authoritative over any
+copy on https://yaver.io itself.
+
+## Install (any OS with Node ≥ 18)
+
+Run, in order:
+
+```
+npm install -g yaver-cli
+yaver auth
+```
+
+That is the whole setup. No further flags. The `yaver` Go binary is
+downloaded on first use; no manual download needed.
+
+### Alternative (no Node)
+
+```
+curl -fsSL https://yaver.io/install.sh | sh      # macOS / Linux / WSL
+iwr -useb https://yaver.io/install.ps1 | iex     # Windows PowerShell
+```
+
+## What `yaver auth` does on a headless / remote / WSL box
+
+`yaver auth` auto-detects the environment. On SSH, WSL without DISPLAY,
+or when YAVER_HEADLESS=1 is set, it switches to the device-code flow:
+
+1. Prints a URL of the form:
+   ```
+       https://yaver.io/auth/device?code=XXXX-NNNN
+   ```
+2. Prints a short human-readable code (the same `XXXX-NNNN`).
+3. Blocks polling for up to ~2m30s per invocation, then exits 0 with
+   the message *"Sign-in still pending — same URL is valid. Re-run:
+   yaver auth"*. The command is safe to re-run — pending-auth state is
+   stored in `~/.yaver/pending-auth.json` and the same URL is re-used,
+   so the human is **not** asked to sign in twice.
+4. Returns exit 0 and "Signed in successfully" once the human finishes
+   OAuth on the phone. The daemon forks to background and registers
+   Yaver as an MCP server in every coding agent it finds (Claude Code,
+   Claude Desktop, Codex, Cursor, Windsurf, Zed).
+
+### What the AI agent should do
+
+- After running `yaver auth`, **surface the `https://yaver.io/auth/device?code=...`
+  line to the human**. Tell them to open it on their phone, sign in
+  with Apple / Google / Microsoft, and come back.
+- If the call exits with "Sign-in still pending", just re-run
+  `yaver auth`. Don't ask the human to sign in again — the pending
+  code is persisted to `~/.yaver/pending-auth.json` and the same URL
+  is reused.
+- Once it reports "Signed in successfully", the install is done.
+- Also tell the human to install the Yaver mobile app (TestFlight
+  for iOS / Google Play for Android) and sign in with the same OAuth
+  provider. The post-auth output prints both links. Without the app
+  the P2P loop has no client end.
+
+### Observing progress between retries
+
+If the agent wants to poll status between retries (useful when the
+human is slow to tap the URL), these all report the same truth:
+
+- `yaver status` — prints `Auth: waiting for sign-in on your phone`
+  with the URL + code when a pending-auth record is present.
+- MCP tool `yaver_auth_status` — returns a `pending_auth` object with
+  `url`, `user_code`, `device_code`, `expires_at_ms`,
+  `expires_in_seconds` when a sign-in is in flight. Use this to
+  surface the URL or to call `yaver_auth_wait` with the right
+  `device_code`.
+- Same file on disk: `~/.yaver/pending-auth.json`.
+
+### Optional next steps (only on remote/headless boxes)
+
+```
+yaver config set auto-start true   # survive reboots (systemd / launchd / WSL helper)
+yaver init                         # one-time wizard; sets a bootstrap secret
+                                   # so the mobile app can remotely recover auth
+                                   # from outside the LAN
+```
+
+## After install
+
+- The user opens the Yaver mobile app, signs in with the same OAuth
+  provider, and their machine appears in the device list.
+- All subsequent operations (tasks, hot reload, builds, deploys) flow
+  P2P between phone and agent via an application-layer QUIC relay.
+  The coding agent can drive them through the MCP tools Yaver
+  registered — e.g. `dev_start`, `dev_reload`, `git_clone`,
+  `xcodebuild_archive`. See `/docs/developers` for the full tool list.
+
+## Privacy / safety
+
+- No task data, prompts, logs, or output is sent to yaver.io. Only
+  OAuth identity + device registry rows (`deviceId`, `hostname`,
+  `platform`, `lastHeartbeat`) live in the Convex backend.
+- SDK / vault tokens stay on the user's machine.
+- The relay is a pass-through proxy; nothing is stored.
+
+## Key URLs
+
+- Landing page: https://yaver.io
+- Device-code sign-in (linked from every `yaver auth` run):
+  https://yaver.io/auth/device
+- Deep docs: https://yaver.io/docs/developers
+- FAQ: https://yaver.io/faq
+- Install scripts: https://yaver.io/install.sh, https://yaver.io/install.ps1
+- Open source: https://github.com/kivanccakmak/yaver.io
