@@ -84,7 +84,7 @@ hands. **This is where Yaver has real gaps.**
 | **Uptime monitoring** | BetterStack, UptimeRobot, Pingdom | $0–20 | 🟡 | `healthmon.go` monitors the dev's own machines (for the Yaver agent daemon). **Missing:** monitoring the dev's shipped app endpoints. Could add a `yaver monitor add <url>` that runs a cron job through the existing scheduler. |
 | **Log aggregation (prod)** | BetterStack Logs, Papertrail, Datadog | $20–80 | 🟡 | BlackBox streams logs from one device at a time. No cross-device search or alert rules. |
 | **Push notifications (prod users)** | OneSignal, Expo Push, Firebase Cloud Messaging | $0–99 | ❌ | End-user push. Out of scope — Firebase + Expo Push already free. |
-| **OTA updates (prod)** | Expo EAS Update ($99/mo 50k MAU), CodePush (dead), Stallion | $30–100 | 🟡 | **Most of the plumbing already exists.** `cli/src/bundler.js` + `cli/hermesc/` compile Hermes bytecode; `bundlecheck.go` validates the HBC version on ingest; the mobile app already runs a `YaverHTTPServer` on port 8347 and `YaverBundleValidator` guards bridge reloads; the P2P relay already forwards authenticated HTTPS to any `/releases/*` path we expose. **Missing:** a `yaver release publish` pipeline that stores versioned bundles on the agent, a `/releases/latest?channel=<lane>` pull endpoint, and a small end-user-side `expo-updates` shim that polls through the relay. See §6 build item R1. |
+| **OTA updates (prod)** | Expo EAS Update ($99/mo 50k MAU), CodePush (dead), Stallion | $30–100 | 🟡 | **Most of the plumbing already exists.** `cli/src/bundler.js` + `cli/hermesc/` compile Hermes bytecode; `bundlecheck.go` validates the HBC version on ingest; the mobile app already runs a `YaverHTTPServer` on port 8347 and `YaverBundleValidator` guards bridge reloads; the host app now includes `expo-updates`; the P2P relay already forwards authenticated HTTPS to any `/releases/*` path we expose. **Missing:** a `yaver release publish` pipeline that stores versioned bundles on the agent and a `/releases/latest?channel=<lane>` pull endpoint. See §6 build item R1. |
 | **Transactional email** | Resend, Postmark, SendGrid | $15–50 | ❌ | Not dev-runtime. |
 
 **Verdict:** Three real gaps worth considering (error dashboard,
@@ -207,7 +207,9 @@ For each real gap in section 2, the decision:
    differentiator in the whole matrix** — nobody else ships
    "no vendor, no store, no server, just your own relay"
    OTA. Rough scope: 1 day for the publish side, 2 days for
-   the end-user native module + expo-updates-shim.
+   the release channel / cache-management side on top of the
+   already-shipped `expo-updates` host support and the generated shared SDK
+   manifest used by the host app, CLI, and embedded iOS runtime.
 
 ### Skip
 

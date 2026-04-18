@@ -1,0 +1,23 @@
+{
+  "sdkVersion": "1.0.0",
+  "hermesBytecodeVersion": 96,
+  "supportedRNRange": "0.81.x",
+  "arch": {
+    "newArch": true,
+    "fabric": true,
+    "bridgeless": false
+  },
+  "manualNativeModules": [
+    "@expo/vector-icons",
+    "@gorhom/bottom-sheet",
+    "@shopify/flash-list",
+    "lottie-react-native",
+    "victory-native",
+    "whisper.rn"
+  ],
+  "moduleSupportDefaults": {
+    "hostApp": true,
+    "cliPush": true,
+    "agentOpenInYaver": true
+  }
+}

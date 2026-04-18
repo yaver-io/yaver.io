@@ -145,6 +145,20 @@ function deviceAliasKey(device: Pick<Device, "name" | "os" | "isGuest">): string
   return `${normalizedOs}:${normalizedName}`;
 }
 
+function normalizedHost(host: string | undefined): string {
+  return String(host || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\.local$/i, "");
+}
+
+function deviceEndpointKey(device: Pick<Device, "host" | "port" | "isGuest">): string | null {
+  if (device.isGuest) return null;
+  const host = normalizedHost(device.host);
+  if (!host) return null;
+  return `${host}:${device.port || 0}`;
+}
+
 function deviceIdentityKey(device: Pick<Device, "id" | "hwid" | "publicKey" | "name" | "os" | "isGuest" | "hostEmail" | "hostName">): string {
   if (device.hwid) return `hwid:${device.hwid}`;
   if (device.publicKey) return `pub:${device.publicKey}`;
@@ -162,6 +176,7 @@ function deviceIdentityKey(device: Pick<Device, "id" | "hwid" | "publicKey" | "n
 
 function mergeDeviceEntries(existing: Device, incoming: Device): Device {
   const incomingWins =
+    (!!existing.needsAuth && !incoming.needsAuth) ||
     incoming.lastSeen > existing.lastSeen ||
     (!!incoming.online && !existing.online) ||
     (!!incoming.local && !existing.local);
@@ -223,7 +238,18 @@ function collapseAliasDevices(devices: Device[]): Device[] {
     byAlias.set(alias, mergeDeviceEntries(existing, device));
   }
 
-  return [...byAlias.values()];
+  const byEndpoint = new Map<string, Device>();
+  for (const device of byAlias.values()) {
+    const endpoint = deviceEndpointKey(device);
+    if (!endpoint) {
+      byEndpoint.set(`id:${device.id}`, device);
+      continue;
+    }
+    const existing = byEndpoint.get(endpoint);
+    byEndpoint.set(endpoint, existing ? mergeDeviceEntries(existing, device) : device);
+  }
+
+  return [...byEndpoint.values()];
 }
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";

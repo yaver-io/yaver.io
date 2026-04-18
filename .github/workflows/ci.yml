@@ -155,7 +155,13 @@ jobs:
           cache: "npm"
           cache-dependency-path: mobile/package-lock.json
       - name: Typecheck mobile
-        run: cd mobile && npm ci && npx tsc --noEmit
+        run: |
+          cd mobile
+          npm ci
+          cd ..
+          node scripts/generate-sdk-manifest.mjs --check
+          cd mobile
+          npx tsc --noEmit
 
   backend-typecheck:
     needs: changes

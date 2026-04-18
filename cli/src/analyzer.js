@@ -73,7 +73,7 @@ function analyzeProject(packageJson, sdkManifest) {
     if (PURE_JS_PACKAGES.has(name)) continue;
     if (FALSE_POSITIVE_NATIVE.has(name)) continue;
     if (packageJson.devDependencies?.[name] && !packageJson.dependencies?.[name]) continue;
-    if (!looksLikeNativeModule(name)) continue;
+    if (!looksLikeNativeModule(name, sdkManifest)) continue;
 
     const sdkVersion = sdkManifest.nativeModules[name];
 
@@ -89,10 +89,10 @@ function analyzeProject(packageJson, sdkManifest) {
 
       const localParsed = semver.coerce(cleanLocal);
       const sdkParsed = semver.coerce(sdkVersion);
-      if (localParsed && sdkParsed && semver.major(localParsed) !== semver.major(sdkParsed)) {
+      if (localParsed && sdkParsed && hasPotentiallyBreakingVersionDrift(localParsed, sdkParsed)) {
         warnings.push({
           type: 'version_mismatch', module: name,
-          message: `"${name}": project ${version}, yaver ${sdkVersion}. Major version differs.`,
+          message: `"${name}": project ${version}, yaver ${sdkVersion}. Version differs at a potentially breaking boundary.`,
         });
       }
     }
@@ -101,7 +101,8 @@ function analyzeProject(packageJson, sdkManifest) {
   return { reactNativeVersion: projectRN, errors, warnings, availableModules, missingModules };
 }
 
-function looksLikeNativeModule(name) {
+function looksLikeNativeModule(name, sdkManifest) {
+  if (sdkManifest?.nativeModules?.[name]) return true;
   return name.startsWith('react-native-') ||
     name.startsWith('@react-native-') ||
     name.startsWith('@react-native/') ||
@@ -112,6 +113,14 @@ function looksLikeNativeModule(name) {
 
 function cleanVersion(v) {
   return (v || '').replace(/[\^~>=<\s]/g, '');
+}
+
+function hasPotentiallyBreakingVersionDrift(projectVersion, sdkVersion) {
+  if (semver.major(projectVersion) !== semver.major(sdkVersion)) return true;
+  if (semver.major(projectVersion) === 0 && semver.minor(projectVersion) !== semver.minor(sdkVersion)) {
+    return true;
+  }
+  return false;
 }
 
 module.exports = { analyzeProject, PURE_JS_PACKAGES, FALSE_POSITIVE_NATIVE };

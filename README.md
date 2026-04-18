@@ -1071,7 +1071,7 @@ yaver-push push
 🚀 Done in 4.1s — app loading on device
 ```
 
-**What this is NOT:** Not a WebView. Every `<View>` renders as a real `UIView` / `android.view.View` with full New Architecture support (TurboModules, Fabric). Not Metro dev server — the phone runs a production App Store binary with 40+ pre-installed native modules.
+**What this is NOT:** Not a WebView. Every `<View>` renders as a real `UIView` / `android.view.View` with full New Architecture support (TurboModules, Fabric). Not Metro dev server — the phone runs a production App Store binary with 80+ pre-installed native modules.
 
 ### How It Works
 
@@ -1088,7 +1088,7 @@ yaver-push push --watch                 Watch mode — re-push on file save
 yaver-push push --ignore-missing        Push even with missing native modules
 yaver-push doctor                       Deep compatibility report with fix suggestions
 yaver-push devices                      List discovered devices
-yaver-push modules                      List all SDK native modules (40+)
+yaver-push modules                      List all SDK native modules (80+)
 yaver-push reset                        Clear pushed bundle on device
 yaver-push status                       Device + project status
 ```
@@ -1109,7 +1109,9 @@ if (!isYaver) {
 
 ### SDK Manifest
 
-The yaver.io app ships with 40+ pre-installed native modules including: `react-native-screens`, `react-native-reanimated`, `react-native-gesture-handler`, `react-native-svg`, `react-native-webview`, `react-native-maps`, `@shopify/react-native-skia`, `expo-camera`, `expo-location`, `expo-notifications`, and more. Run `yaver-push modules` for the full list.
+The yaver.io app now ships with 80+ pre-installed native modules including: `react-native-screens`, `react-native-reanimated`, `react-native-gesture-handler`, `react-native-svg`, `react-native-webview`, `react-native-maps`, `@shopify/react-native-skia`, `@shopify/flash-list`, `@react-native-picker/picker`, `react-native-view-shot`, `expo-camera`, `expo-location`, `expo-notifications`, `expo-updates`, and more. Run `yaver-push modules` for the full list.
+
+That manifest is generated from the actual mobile host app dependencies and Expo plugin config, then copied into the CLI package and embedded iOS app bundle. Regenerate with `node scripts/generate-sdk-manifest.mjs` and verify drift in CI with `node scripts/generate-sdk-manifest.mjs --check`.
 
 ### Platform Support
 
@@ -1159,7 +1161,7 @@ Your Code (JSX/TypeScript)
 
 **New Architecture (TurboModules + Fabric)** is React Native's modern runtime. Old RN used an async JSON bridge (slow). New Architecture uses JSI (JavaScript Interface) for synchronous, direct communication between JS and native -- like calling a C function from JS instead of sending a message. TurboModules are native modules that use this fast path. Fabric is the new rendering system. Yaver's container supports both.
 
-**The Native Container** is Yaver's phone app with 40+ native modules pre-compiled in. When you push your JS bundle, it runs inside this container using all the pre-installed native modules (cameras, maps, sensors, etc.). If your app uses a native module that isn't pre-installed, that specific feature won't work, but everything else will. This is the same concept as Expo Go, but Yaver supports New Architecture and more modules.
+**The Native Container** is Yaver's phone app with 80+ native modules pre-compiled in. When you push your JS bundle, it runs inside this container using all the pre-installed native modules (cameras, maps, sensors, storage, lists, pickers, etc.). If your app uses a native module that isn't pre-installed, that specific feature won't work, but everything else will. This is the same concept as Expo Go, but Yaver supports New Architecture and more modules.
 
 **Safe Bridge Reload** -- when a new bundle arrives, Yaver can't just swap the JS file. It needs to: (1) shut down the old JavaScript runtime, (2) wait for background threads (Hermes garbage collector) to finish, (3) create a fresh runtime with the new bundle. If step 2 is skipped, the GC thread touches freed memory and the app crashes. Yaver polls for actual deallocation before proceeding.
 

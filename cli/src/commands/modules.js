@@ -1,5 +1,6 @@
 async function modules() {
-  const sdkManifest = require('../../sdk-manifest.json');
+  const { loadSDKManifest } = require('../sdk-manifest');
+  const sdkManifest = loadSDKManifest();
 
   console.log(`\n📦 Yaver SDK v${sdkManifest.sdkVersion} — Native Modules\n`);
   console.log(`  React Native: ${sdkManifest.reactNative}`);

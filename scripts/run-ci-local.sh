@@ -114,7 +114,7 @@ run_ci() {
 
   if need npm; then
     [[ -d web      ]] && step "web-build"          bash -c "cd web && (test -d node_modules || npm ci) && npm run build"
-    [[ -d mobile   ]] && step "mobile typecheck"   bash -c "cd mobile && (test -d node_modules || npm ci) && npx tsc --noEmit"
+    [[ -d mobile   ]] && step "mobile typecheck"   bash -c "cd mobile && (test -d node_modules || npm ci) && cd .. && node scripts/generate-sdk-manifest.mjs --check && cd mobile && npx tsc --noEmit"
     [[ -d backend  ]] && step "backend typecheck"  bash -c "cd backend && (test -d node_modules || npm ci) && npx convex typecheck 2>/dev/null || npx tsc --noEmit"
     [[ -d sdk/feedback/react-native ]] && \
       step "sdk: feedback (RN)" bash -c "cd sdk/feedback/react-native && (test -d node_modules || npm ci) && npm test -- --passWithNoTests"

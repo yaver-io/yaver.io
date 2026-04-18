@@ -3,13 +3,14 @@ const path = require('path');
 const { analyzeProject } = require('../analyzer');
 const { bundle, compileHermes, readBytecodeVersion } = require('../bundler');
 const { discoverDevice, fetchHealth } = require('../discovery');
+const { loadSDKManifest } = require('../sdk-manifest');
 const { pushBundle, pushAssets } = require('../transport');
 
 async function push(options = {}) {
   const startTime = Date.now();
   const quiet = options.quiet;
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-  const sdkManifest = require('../../sdk-manifest.json');
+  const sdkManifest = loadSDKManifest();
 
   // Find device
   if (!quiet) console.log('📡 Finding device...');

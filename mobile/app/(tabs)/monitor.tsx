@@ -26,7 +26,9 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { AppBackButton } from "../../src/components/AppBackButton";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import {
@@ -46,6 +48,7 @@ type Section = "errors" | "releases" | "machine" | "uptime" | "events" | "flags"
 
 export default function MonitorScreen() {
   const c = useColors();
+  const router = useRouter();
   const { connectionStatus } = useDevice();
   const isConnected = connectionStatus === "connected";
 
@@ -54,6 +57,11 @@ export default function MonitorScreen() {
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: c.bg }]} edges={[]}>
       <View style={[styles.header, { borderBottomColor: c.border }]}>
+        <View style={styles.headerTopRow}>
+          <AppBackButton onPress={() => router.navigate("/(tabs)/more" as any)} />
+          <Text style={[styles.headerTitle, { color: c.textPrimary }]}>Monitor</Text>
+          <View style={styles.headerSpacer} />
+        </View>
         <Text style={[styles.subtitle, { color: c.textSecondary }]}>
           Errors · Releases · Uptime · Events · Flags
         </Text>
@@ -1135,6 +1143,9 @@ function timeAgo(isoStr: string): string {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   header: { paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1 },
+  headerTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
+  headerTitle: { fontSize: 17, fontWeight: "700" },
+  headerSpacer: { width: 40 },
   title: { fontSize: 20, fontWeight: "700" },
   subtitle: { fontSize: 12, marginTop: 2 },
   tabs: { flexDirection: "row", borderBottomWidth: 1 },

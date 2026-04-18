@@ -11,8 +11,10 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { useColors } from "../src/context/ThemeContext";
+import { AppBackButton } from "../src/components/AppBackButton";
 import {
   morningGetRun,
   morningListRuns,
@@ -31,6 +33,7 @@ import {
 
 export default function MorningScreen() {
   const c = useColors();
+  const router = useRouter();
   const [runs, setRuns] = useState<MorningRunSummary[]>([]);
   const [selected, setSelected] = useState<MorningRunSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -78,6 +81,10 @@ export default function MorningScreen() {
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]}>
       <View style={[styles.header, { borderBottomColor: c.border }]}>
+        <View style={styles.headerTopRow}>
+          <AppBackButton onPress={() => router.back()} />
+          <View style={styles.headerSpacer} />
+        </View>
         <Text style={[styles.title, { color: c.textPrimary }]}>☀ Morning</Text>
         <Text style={[styles.sub, { color: c.textMuted }]}>
           Match report for overnight autodev runs
@@ -291,6 +298,8 @@ function formatStarted(iso?: string): string {
 const styles = StyleSheet.create({
   safe: { flex: 1 },
   header: { paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1 },
+  headerTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
+  headerSpacer: { width: 40 },
   title: { fontSize: 20, fontWeight: "700" },
   sub: { fontSize: 12, marginTop: 2 },
   runList: { borderBottomWidth: 1 },

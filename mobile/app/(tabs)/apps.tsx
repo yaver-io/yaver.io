@@ -48,9 +48,16 @@ function isHermesMobileFramework(framework?: string): boolean {
   return framework === "expo" || framework === "react-native";
 }
 
-function agentFlowGuidance(framework?: string): string | null {
+function hasFeedbackSDK(project?: ProjectItem | null): boolean {
+  return !!project?.tags?.includes("feedback-sdk");
+}
+
+function agentFlowGuidance(framework?: string, feedbackSDKInstalled?: boolean): string | null {
   if (!isHermesMobileFramework(framework)) return null;
-  return "No project injection required for Open in Yaver. The Yaver agent starts Metro and pushes a Hermes bundle to the phone app. Use yaver-cli only for direct CLI push/watch workflows. Add the Feedback SDK only if you want in-app bug reports or remote reload inside your own app process.";
+  if (feedbackSDKInstalled) {
+    return "Open in Yaver uses Metro + Hermes. Feedback SDK detected for in-app bug reports and remote reload in your app process.";
+  }
+  return "Open in Yaver uses Metro + Hermes. Feedback SDK is optional for in-app bug reports and remote reload in your app process.";
 }
 
 function getProjectCategory(framework?: string): "mobile" | "web" | "other" {
@@ -566,8 +573,10 @@ export default function AppsScreen() {
     );
   }
 
-  const runningProject = devStatus?.workDir?.split("/").pop() ?? devStatus?.framework ?? "App";
-  const runningGuidance = agentFlowGuidance(devStatus?.framework);
+  const currentProject = projects.find((project) => project.path === devStatus?.workDir) ?? null;
+  const runningProject = currentProject?.name ?? devStatus?.workDir?.split("/").pop() ?? devStatus?.framework ?? "App";
+  const runningHasFeedbackSDK = hasFeedbackSDK(currentProject);
+  const runningGuidance = agentFlowGuidance(devStatus?.framework, runningHasFeedbackSDK);
 
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
@@ -591,8 +600,13 @@ export default function AppsScreen() {
                     {devStatus.iosInstallReason}
                   </Text>
                 ) : null}
+                {runningHasFeedbackSDK ? (
+                  <Text style={[s.cardMeta, { color: "#86efac" }]}>
+                    feedback sdk · detected
+                  </Text>
+                ) : null}
                 {runningGuidance ? (
-                  <Text style={[s.cardMeta, { color: "#cbd5e1" }]}>
+                  <Text style={[s.cardMeta, s.guidanceText, { color: "#cbd5e1" }]} numberOfLines={3}>
                     {runningGuidance}
                   </Text>
                 ) : null}
@@ -1313,6 +1327,7 @@ const s = StyleSheet.create({
   cardTitleContainer: { flex: 1 },
   cardTitle: { fontSize: 16, fontWeight: "700", color: "#fff" },
   cardMeta: { fontSize: 11, color: "#666", marginTop: 2 },
+  guidanceText: { lineHeight: 15, marginTop: 4 },
   statusDot: { width: 8, height: 8, borderRadius: 4 },
   frameworkIcon: { fontSize: 20 },
 

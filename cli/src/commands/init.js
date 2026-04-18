@@ -1,6 +1,6 @@
 const fs = require('fs');
-const path = require('path');
 const { analyzeProject } = require('../analyzer');
+const { loadSDKManifest } = require('../sdk-manifest');
 
 async function init() {
   if (!fs.existsSync('package.json')) {
@@ -16,7 +16,7 @@ async function init() {
 
   console.log('🔍 Analyzing your project...\n');
 
-  const sdkManifest = require('../../sdk-manifest.json');
+  const sdkManifest = loadSDKManifest();
   const analysis = analyzeProject(pkg, sdkManifest);
 
   printAnalysis(analysis, sdkManifest);
