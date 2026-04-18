@@ -1405,6 +1405,7 @@ http.route({
       shell: typeof body?.shell === "string" ? body.shell : undefined,
       environment: typeof body?.environment === "string" ? body.environment : undefined,
       runtimeVersion: typeof body?.runtimeVersion === "string" ? body.runtimeVersion : undefined,
+      preferredProvider: typeof body?.preferredProvider === "string" ? body.preferredProvider : undefined,
       isWsl: typeof body?.isWsl === "boolean" ? body.isWsl : undefined,
     });
     return jsonResponse(result);
