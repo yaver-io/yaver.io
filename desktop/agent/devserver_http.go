@@ -31,6 +31,25 @@ type nativeBuildStatus struct {
 	HermesVersion int    `json:"hermesVersion,omitempty"`
 }
 
+type projectPreparationStatus struct {
+	PackageManager             string   `json:"packageManager,omitempty"`
+	DependenciesInstalled      bool     `json:"dependenciesInstalled"`
+	NeedsDependencyInstall     bool     `json:"needsDependencyInstall"`
+	CanAutoInstallDependencies bool     `json:"canAutoInstallDependencies"`
+	MissingTools               []string `json:"missingTools,omitempty"`
+	HermesCompiler             string   `json:"hermesCompiler,omitempty"`
+	HermesCompilerError        string   `json:"hermesCompilerError,omitempty"`
+}
+
+type projectPackageManifest struct {
+	Main             string                 `json:"main"`
+	PackageManager   string                 `json:"packageManager"`
+	Dependencies     map[string]string      `json:"dependencies"`
+	PeerDependencies map[string]string      `json:"peerDependencies"`
+	DevDependencies  map[string]string      `json:"devDependencies"`
+	ReactNative      map[string]interface{} `json:"reactNative"`
+}
+
 func nativeBuildStatusPath(workDir string) string {
 	return filepath.Join(workDir, ".yaver-build", "status.json")
 }
@@ -123,6 +142,217 @@ func buildStateGuidance(state nativeBuildStatus) string {
 		return "Last Hermes build failed. Rebuild Hermes after fixing dependencies or bundler errors."
 	default:
 		return "This project is still source-only on this machine. Compile Hermes once, then Open in Yaver on the phone."
+	}
+}
+
+func detectProjectPackageManager(workDir string, manifest *projectPackageManifest) string {
+	if manifest != nil {
+		pm := strings.TrimSpace(manifest.PackageManager)
+		if pm != "" {
+			if idx := strings.Index(pm, "@"); idx > 0 {
+				pm = pm[:idx]
+			}
+			switch pm {
+			case "npm", "yarn", "pnpm", "bun":
+				return pm
+			}
+		}
+	}
+	switch {
+	case projectFileExists(filepath.Join(workDir, "pnpm-lock.yaml")):
+		return "pnpm"
+	case projectFileExists(filepath.Join(workDir, "yarn.lock")):
+		return "yarn"
+	case projectFileExists(filepath.Join(workDir, "bun.lock")), projectFileExists(filepath.Join(workDir, "bun.lockb")):
+		return "bun"
+	default:
+		return "npm"
+	}
+}
+
+func projectFileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func commandExists(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+func detectProjectPreparation(workDir string, manifest *projectPackageManifest) projectPreparationStatus {
+	prep := projectPreparationStatus{
+		PackageManager: detectProjectPackageManager(workDir, manifest),
+	}
+
+	nodeExists := commandExists("node")
+	npmExists := commandExists("npm")
+	npxExists := commandExists("npx")
+	yarnExists := commandExists("yarn")
+	pnpmExists := commandExists("pnpm")
+	bunExists := commandExists("bun")
+	bunxExists := commandExists("bunx")
+
+	if !nodeExists {
+		prep.MissingTools = append(prep.MissingTools, "node")
+	}
+	switch prep.PackageManager {
+	case "npm":
+		if !npmExists {
+			prep.MissingTools = append(prep.MissingTools, "npm")
+		}
+		if !npxExists {
+			prep.MissingTools = append(prep.MissingTools, "npx")
+		}
+	case "yarn":
+		if !yarnExists {
+			prep.MissingTools = append(prep.MissingTools, "yarn")
+		}
+		if !npxExists {
+			prep.MissingTools = append(prep.MissingTools, "npx")
+		}
+	case "pnpm":
+		if !pnpmExists {
+			prep.MissingTools = append(prep.MissingTools, "pnpm")
+		}
+		if !npxExists {
+			prep.MissingTools = append(prep.MissingTools, "npx")
+		}
+	case "bun":
+		if !bunExists {
+			prep.MissingTools = append(prep.MissingTools, "bun")
+		}
+		if !bunxExists {
+			prep.MissingTools = append(prep.MissingTools, "bunx")
+		}
+	}
+
+	prep.DependenciesInstalled = projectFileExists(filepath.Join(workDir, "node_modules", ".yarn-integrity")) || projectFileExists(filepath.Join(workDir, "node_modules", ".modules.yaml"))
+	if !prep.DependenciesInstalled {
+		if stat, err := os.Stat(filepath.Join(workDir, "node_modules")); err == nil && stat.IsDir() {
+			prep.DependenciesInstalled = true
+		}
+	}
+	prep.NeedsDependencyInstall = !prep.DependenciesInstalled
+
+	if prep.NeedsDependencyInstall {
+		switch prep.PackageManager {
+		case "npm":
+			prep.CanAutoInstallDependencies = nodeExists && npmExists
+		case "yarn":
+			prep.CanAutoInstallDependencies = nodeExists && yarnExists
+		case "pnpm":
+			prep.CanAutoInstallDependencies = nodeExists && pnpmExists
+		case "bun":
+			prep.CanAutoInstallDependencies = bunExists
+		}
+	}
+
+	if _, err := GetEmbeddedHermesc(); err == nil {
+		prep.HermesCompiler = "embedded"
+	} else if path := findProjectHermesc(workDir); path != "" {
+		prep.HermesCompiler = "project"
+	} else {
+		info := detectHermesRuntimeInfo(workDir)
+		if info.HermesRef == "" {
+			prep.HermesCompiler = "missing"
+			prep.HermesCompilerError = "Hermes compiler could not be resolved from the embedded runtime or the project dependencies yet."
+		} else if err := ensureHermescBuildDeps(); err == nil {
+			prep.HermesCompiler = "buildable"
+		} else {
+			prep.HermesCompiler = "missing"
+			prep.HermesCompilerError = err.Error()
+		}
+	}
+
+	return prep
+}
+
+func installProjectDependencies(workDir string, prep projectPreparationStatus) error {
+	var cmd *exec.Cmd
+	switch prep.PackageManager {
+	case "yarn":
+		cmd = exec.Command("yarn", "install")
+	case "pnpm":
+		cmd = exec.Command("pnpm", "install")
+	case "bun":
+		cmd = exec.Command("bun", "install")
+	default:
+		cmd = exec.Command("npm", "install", "--legacy-peer-deps")
+	}
+	cmd.Dir = workDir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func readProjectPackageManifest(workDir string) (*projectPackageManifest, error) {
+	data, err := os.ReadFile(filepath.Join(workDir, "package.json"))
+	if err != nil {
+		return nil, err
+	}
+	var manifest projectPackageManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return nil, err
+	}
+	return &manifest, nil
+}
+
+func mobileProjectStatus(workDir string) map[string]interface{} {
+	manifest, err := readProjectPackageManifest(workDir)
+	if err != nil {
+		return map[string]interface{}{
+			"workDir":    workDir,
+			"ok":         false,
+			"error":      fmt.Sprintf("package.json not found or invalid: %v", err),
+			"buildState": "needs_build",
+		}
+	}
+	prep := detectProjectPreparation(workDir, manifest)
+	buildState := readNativeBuildStatus(workDir)
+	return map[string]interface{}{
+		"workDir":                    workDir,
+		"ok":                         len(prep.MissingTools) == 0,
+		"packageManager":             prep.PackageManager,
+		"dependenciesInstalled":      prep.DependenciesInstalled,
+		"needsDependencyInstall":     prep.NeedsDependencyInstall,
+		"canAutoInstallDependencies": prep.CanAutoInstallDependencies,
+		"missingTools":               prep.MissingTools,
+		"hermesCompiler":             prep.HermesCompiler,
+		"hermesCompilerError":        prep.HermesCompilerError,
+		"buildState":                 buildState.State,
+		"lastBuildAt":                buildState.LastBuiltAt,
+		"lastBuildFailedAt":          buildState.LastFailedAt,
+		"lastBuildError":             buildState.LastError,
+		"compiledBundleSize":         buildState.BundleSize,
+		"compiledModuleName":         buildState.ModuleName,
+	}
+}
+
+func bundleCommand(packageManager, framework, platform, entryFile, bundlePath, assetsDir string) *exec.Cmd {
+	switch framework {
+	case "expo":
+		switch packageManager {
+		case "yarn":
+			return exec.Command("yarn", "expo", "export:embed", "--platform", platform, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
+		case "pnpm":
+			return exec.Command("pnpm", "exec", "expo", "export:embed", "--platform", platform, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
+		case "bun":
+			return exec.Command("bunx", "expo", "export:embed", "--platform", platform, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
+		default:
+			return exec.Command("npx", "expo", "export:embed", "--platform", platform, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
+		}
+	default:
+		switch packageManager {
+		case "yarn":
+			return exec.Command("yarn", "react-native", "bundle", "--platform", platform, "--entry-file", entryFile, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
+		case "pnpm":
+			return exec.Command("pnpm", "exec", "react-native", "bundle", "--platform", platform, "--entry-file", entryFile, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
+		case "bun":
+			return exec.Command("bunx", "react-native", "bundle", "--platform", platform, "--entry-file", entryFile, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
+		default:
+			return exec.Command("npx", "react-native", "bundle", "--platform", platform, "--entry-file", entryFile, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
+		}
 	}
 }
 
@@ -519,16 +749,55 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 
 	os.MkdirAll(buildDir, 0o755)
 
-	// ── Check node_modules ──
-	if _, err := os.Stat(filepath.Join(workDir, "node_modules")); os.IsNotExist(err) {
-		s.devServerMgr.EmitLog("Installing dependencies...")
-		install := exec.Command("npm", "install", "--legacy-peer-deps")
-		install.Dir = workDir
-		if err := install.Run(); err != nil {
-			install = exec.Command("yarn", "install")
-			install.Dir = workDir
-			install.Run()
+	manifest, manifestErr := readProjectPackageManifest(workDir)
+	if manifestErr != nil {
+		writeNativeBuildStatus(workDir, nativeBuildStatus{
+			State:        "build_failed",
+			Platform:     req.Platform,
+			LastFailedAt: time.Now().UTC().Format(time.RFC3339),
+			LastError:    manifestErr.Error(),
+		})
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("package.json missing or invalid: %v", manifestErr)})
+		return
+	}
+	prep := detectProjectPreparation(workDir, manifest)
+	if len(prep.MissingTools) > 0 {
+		errMsg := fmt.Sprintf("missing required tools on this machine: %s", strings.Join(prep.MissingTools, ", "))
+		writeNativeBuildStatus(workDir, nativeBuildStatus{
+			State:        "build_failed",
+			Platform:     req.Platform,
+			LastFailedAt: time.Now().UTC().Format(time.RFC3339),
+			LastError:    errMsg,
+		})
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": errMsg})
+		return
+	}
+
+	if prep.NeedsDependencyInstall {
+		if !prep.CanAutoInstallDependencies {
+			errMsg := fmt.Sprintf("dependencies are missing and cannot be auto-installed with %s on this machine", prep.PackageManager)
+			writeNativeBuildStatus(workDir, nativeBuildStatus{
+				State:        "build_failed",
+				Platform:     req.Platform,
+				LastFailedAt: time.Now().UTC().Format(time.RFC3339),
+				LastError:    errMsg,
+			})
+			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": errMsg})
+			return
 		}
+		s.devServerMgr.EmitLog(fmt.Sprintf("Installing dependencies with %s...", prep.PackageManager))
+		if err := installProjectDependencies(workDir, prep); err != nil {
+			errMsg := fmt.Sprintf("dependency install failed: %v", err)
+			writeNativeBuildStatus(workDir, nativeBuildStatus{
+				State:        "build_failed",
+				Platform:     req.Platform,
+				LastFailedAt: time.Now().UTC().Format(time.RFC3339),
+				LastError:    errMsg,
+			})
+			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": errMsg})
+			return
+		}
+		prep = detectProjectPreparation(workDir, manifest)
 	}
 
 	// ── Detect project type ──
@@ -547,20 +816,16 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	}
 
 	// ── Bundle ──
-	var bundleCmd string
+	assetsDir := filepath.Join(buildDir, "assets")
+	var cmd *exec.Cmd
 	if isExpo {
 		s.devServerMgr.EmitLog(fmt.Sprintf("Bundling with Expo for %s...", req.Platform))
-		bundleCmd = fmt.Sprintf("npx expo export:embed --platform %s --bundle-output %s --assets-dest %s --dev false --minify true --reset-cache",
-			req.Platform, bundlePath, filepath.Join(buildDir, "assets"))
+		cmd = bundleCommand(prep.PackageManager, "expo", req.Platform, "", bundlePath, assetsDir)
 	} else {
 		// Find entry file: package.json "main" → fallback candidates
 		entryFile := "index.js"
-		var pkg struct {
-			Main string `json:"main"`
-		}
-		json.Unmarshal(pkgData, &pkg)
-		if pkg.Main != "" {
-			entryFile = pkg.Main
+		if manifest.Main != "" {
+			entryFile = manifest.Main
 		}
 		// Check for expo-router entry
 		if strings.Contains(string(pkgData), `"expo-router"`) {
@@ -570,15 +835,13 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 			}
 		}
 		s.devServerMgr.EmitLog(fmt.Sprintf("Bundling %s for %s...", entryFile, req.Platform))
-		bundleCmd = fmt.Sprintf("npx react-native bundle --platform %s --entry-file %s --bundle-output %s --assets-dest %s --dev false --minify true --reset-cache",
-			req.Platform, entryFile, bundlePath, filepath.Join(buildDir, "assets"))
+		cmd = bundleCommand(prep.PackageManager, "react-native", req.Platform, entryFile, bundlePath, assetsDir)
 	}
 
-	cmd := exec.Command("sh", "-c", bundleCmd)
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(), "NODE_ENV=production")
 
-	log.Printf("[super-host] bundling with command: %s", bundleCmd)
+	log.Printf("[super-host] bundling with command: %v", cmd.Args)
 	logW := &devLogWriter{prefix: "[super-host]"}
 	if s.devServerMgr != nil {
 		logW.onLogLine = func(line string) { s.devServerMgr.EmitLog(line) }
@@ -673,7 +936,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	s.devServerMgr.SetBundleMetadata(meta.JSON())
 
 	// ── Check for assets ──
-	assetsDir := filepath.Join(buildDir, "assets")
+	assetsDir = filepath.Join(buildDir, "assets")
 	hasAssets := false
 	if info, err := os.Stat(assetsDir); err == nil && info.IsDir() {
 		entries, _ := os.ReadDir(assetsDir)
@@ -962,8 +1225,7 @@ func (s *HTTPServer) handleDevServerCompatibility(w http.ResponseWriter, r *http
 	}
 
 	pkgPath := workDir + "/package.json"
-	data, err := os.ReadFile(pkgPath)
-	if err != nil {
+	if _, err := os.ReadFile(pkgPath); err != nil {
 		jsonReply(w, http.StatusOK, map[string]interface{}{
 			"compatible":       true,
 			"missingModules":   []string{},
@@ -978,13 +1240,8 @@ func (s *HTTPServer) handleDevServerCompatibility(w http.ResponseWriter, r *http
 		return
 	}
 
-	var pkg struct {
-		Dependencies     map[string]string      `json:"dependencies"`
-		PeerDependencies map[string]string      `json:"peerDependencies"`
-		DevDependencies  map[string]string      `json:"devDependencies"`
-		ReactNative      map[string]interface{} `json:"reactNative"`
-	}
-	if err := json.Unmarshal(data, &pkg); err != nil {
+	pkg, err := readProjectPackageManifest(workDir)
+	if err != nil {
 		jsonReply(w, http.StatusOK, map[string]interface{}{
 			"compatible":       true,
 			"missingModules":   []string{},
@@ -1001,6 +1258,7 @@ func (s *HTTPServer) handleDevServerCompatibility(w http.ResponseWriter, r *http
 
 	manifest, manifestErr := loadSDKManifest()
 	buildState := readNativeBuildStatus(workDir)
+	prep := detectProjectPreparation(workDir, pkg)
 
 	available := make(map[string]bool)
 	for _, m := range req.AvailableModules {
@@ -1078,6 +1336,19 @@ func (s *HTTPServer) handleDevServerCompatibility(w http.ResponseWriter, r *http
 	needsYaverCLI := false
 	recommendedFlow := "agent-open-in-yaver"
 	guidance := "Open in Yaver should work from Linux, WSL, macOS, or a remote host. No project injection is required. yaver-cli is optional for direct CLI push/watch workflows. Add the Feedback SDK only for in-app bug reports or remote reload inside your own app."
+	if len(prep.MissingTools) > 0 {
+		errors = append(errors, fmt.Sprintf("Missing local build tools: %s.", strings.Join(prep.MissingTools, ", ")))
+	}
+	if prep.NeedsDependencyInstall {
+		if prep.CanAutoInstallDependencies {
+			warnings = append(warnings, fmt.Sprintf("Dependencies are not installed yet. Yaver can install them automatically with %s on first build.", prep.PackageManager))
+		} else {
+			errors = append(errors, fmt.Sprintf("Dependencies are not installed and Yaver cannot auto-install them with %s on this machine.", prep.PackageManager))
+		}
+	}
+	if prep.HermesCompiler == "missing" && prep.HermesCompilerError != "" {
+		errors = append(errors, prep.HermesCompilerError)
+	}
 	if len(errors) > 0 {
 		needsYaverCLI = true
 		guidance = strings.Join(errors, " ") + " yaver-cli is not required for the agent flow, but its compatibility check/watch workflow may help. The Feedback SDK is still optional."
@@ -1091,24 +1362,31 @@ func (s *HTTPServer) handleDevServerCompatibility(w http.ResponseWriter, r *http
 	}
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{
-		"compatible":         len(errors) == 0,
-		"missingModules":     missing,
-		"availableModules":   present,
-		"warnings":           warnings,
-		"errors":             errors,
-		"projectReactNative": projectRN,
-		"sdkReactNative":     sdkRN,
-		"needsYaverCLI":      needsYaverCLI,
-		"needsFeedbackSDK":   needsFeedbackSDK,
-		"recommendedFlow":    recommendedFlow,
-		"guidance":           guidance,
-		"buildState":         buildState.State,
-		"canBuildInYaver":    len(errors) == 0,
-		"lastBuildAt":        buildState.LastBuiltAt,
-		"lastBuildFailedAt":  buildState.LastFailedAt,
-		"lastBuildError":     buildState.LastError,
-		"compiledBundleSize": buildState.BundleSize,
-		"compiledModuleName": buildState.ModuleName,
+		"compatible":                 len(errors) == 0,
+		"missingModules":             missing,
+		"availableModules":           present,
+		"warnings":                   warnings,
+		"errors":                     errors,
+		"projectReactNative":         projectRN,
+		"sdkReactNative":             sdkRN,
+		"needsYaverCLI":              needsYaverCLI,
+		"needsFeedbackSDK":           needsFeedbackSDK,
+		"recommendedFlow":            recommendedFlow,
+		"guidance":                   guidance,
+		"buildState":                 buildState.State,
+		"canBuildInYaver":            len(errors) == 0,
+		"lastBuildAt":                buildState.LastBuiltAt,
+		"lastBuildFailedAt":          buildState.LastFailedAt,
+		"lastBuildError":             buildState.LastError,
+		"compiledBundleSize":         buildState.BundleSize,
+		"compiledModuleName":         buildState.ModuleName,
+		"packageManager":             prep.PackageManager,
+		"dependenciesInstalled":      prep.DependenciesInstalled,
+		"needsDependencyInstall":     prep.NeedsDependencyInstall,
+		"canAutoInstallDependencies": prep.CanAutoInstallDependencies,
+		"missingLocalTools":          prep.MissingTools,
+		"hermesCompiler":             prep.HermesCompiler,
+		"hermesCompilerError":        prep.HermesCompilerError,
 	})
 }
 

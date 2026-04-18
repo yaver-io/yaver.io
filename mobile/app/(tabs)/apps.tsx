@@ -999,6 +999,27 @@ export default function AppsScreen() {
                 {actionSheet.compatibility.lastBuildError}
               </Text>
             ) : null}
+            {actionSheet?.compatibility?.packageManager ? (
+              <Text style={[s.actionSheetSubtitle, { color: "#94a3b8", marginTop: -8 }]}>
+                {actionSheet.compatibility.packageManager}
+                {actionSheet.compatibility.needsDependencyInstall
+                  ? actionSheet.compatibility.canAutoInstallDependencies
+                    ? " · deps will auto-install on first build"
+                    : " · deps missing"
+                  : " · deps ready"}
+                {actionSheet.compatibility.hermesCompiler ? ` · hermesc ${actionSheet.compatibility.hermesCompiler}` : ""}
+              </Text>
+            ) : null}
+            {!!actionSheet?.compatibility?.missingLocalTools?.length && (
+              <Text style={[s.actionSheetSubtitle, { color: "#fca5a5", marginTop: -8 }]}>
+                Missing on machine: {actionSheet.compatibility.missingLocalTools.join(", ")}
+              </Text>
+            )}
+            {actionSheet?.compatibility?.hermesCompilerError ? (
+              <Text style={[s.actionSheetSubtitle, { color: "#fca5a5", marginTop: -8 }]}>
+                {actionSheet.compatibility.hermesCompilerError}
+              </Text>
+            ) : null}
             <ScrollView style={s.actionSheetScroll}>
               {actionSheet?.actions.map((action, i) => {
                 const disabled = action.supported === false;

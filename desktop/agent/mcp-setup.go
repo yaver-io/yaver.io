@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 )
@@ -14,6 +15,7 @@ func runMCPSetup(args []string) {
 
 Usage:
   yaver mcp setup claude       Add to Claude Desktop config
+  yaver mcp setup claude-code  Add to Claude Code user MCP config
   yaver mcp setup cursor       Add to Cursor MCP config
   yaver mcp setup vscode       Add to VS Code MCP config
   yaver mcp setup windsurf     Add to Windsurf MCP config
@@ -31,6 +33,8 @@ Yaver exposes 48 tools: task management, file search, git, exec, screenshots, an
 	switch args[0] {
 	case "claude":
 		setupMCPEditor("Claude Desktop", claudeDesktopConfigPath(), yaverPath)
+	case "claude-code":
+		setupClaudeCode(yaverPath, false)
 	case "cursor":
 		setupMCPEditor("Cursor", cursorConfigPath(), yaverPath)
 	case "vscode":
@@ -44,6 +48,36 @@ Yaver exposes 48 tools: task management, file search, git, exec, screenshots, an
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown editor: %s\n", args[0])
 		os.Exit(1)
+	}
+}
+
+func setupClaudeCode(yaverPath string, quiet bool) {
+	if _, err := exec.LookPath("claude"); err != nil {
+		if !quiet {
+			fmt.Println("Claude Code CLI not found on PATH; skipping Claude Code MCP setup.")
+		}
+		return
+	}
+
+	getCmd := exec.Command("claude", "mcp", "get", "yaver")
+	if err := getCmd.Run(); err == nil {
+		if !quiet {
+			fmt.Println("Yaver is already configured in Claude Code.")
+		}
+		return
+	}
+
+	addCmd := exec.Command("claude", "mcp", "add", "--scope", "user", "yaver", "--", yaverPath, "mcp")
+	out, err := addCmd.CombinedOutput()
+	if err != nil {
+		if !quiet {
+			fmt.Fprintf(os.Stderr, "Claude Code MCP setup failed: %v\n%s\n", err, string(out))
+		}
+		return
+	}
+
+	if !quiet {
+		fmt.Println("  MCP: Added Yaver to Claude Code user MCP config")
 	}
 }
 
@@ -209,6 +243,7 @@ func setupZed(yaverPath string) {
 // aren't already configured. Runs silently during `yaver serve`.
 func autoSetupMCP() {
 	yaverPath := findYaverBinary()
+	setupClaudeCode(yaverPath, true)
 
 	type editor struct {
 		name       string

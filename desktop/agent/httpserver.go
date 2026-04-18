@@ -5664,6 +5664,40 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		json.Unmarshal(call.Arguments, &args)
 		return mcpToolJSON(mcpDepsList(args.Directory, args.Manager))
+	case "mobile_project_status":
+		var args struct {
+			Directory string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.Directory) == "" {
+			args.Directory = s.taskMgr.workDir
+		}
+		return mcpToolJSON(mobileProjectStatus(args.Directory))
+	case "mobile_project_prepare":
+		var args struct {
+			Directory string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.Directory) == "" {
+			args.Directory = s.taskMgr.workDir
+		}
+		manifest, err := readProjectPackageManifest(args.Directory)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("package.json missing or invalid: %v", err))
+		}
+		prep := detectProjectPreparation(args.Directory, manifest)
+		if len(prep.MissingTools) > 0 {
+			return mcpToolJSON(mobileProjectStatus(args.Directory))
+		}
+		if prep.NeedsDependencyInstall {
+			if !prep.CanAutoInstallDependencies {
+				return mcpToolJSON(mobileProjectStatus(args.Directory))
+			}
+			if err := installProjectDependencies(args.Directory, prep); err != nil {
+				return mcpToolError(fmt.Sprintf("dependency install failed: %v", err))
+			}
+		}
+		return mcpToolJSON(mobileProjectStatus(args.Directory))
 
 	// --- GitHub ---
 	case "github_prs":
