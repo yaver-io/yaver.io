@@ -1,6 +1,6 @@
 {
   "name": "yaver-cli",
-  "version": "1.96.4",
+  "version": "1.96.5",
   "mcpName": "io.github.kivanccakmak/yaver",
   "description": "Unified npm bootstrap for the Yaver agent and push-to-device React Native tooling",
   "bin": {
@@ -10,6 +10,10 @@
     "yaver-cli": "bin/yaver-mcp"
   },
   "main": "src/index.js",
+  "scripts": {
+    "postinstall": "node src/postinstall.js",
+    "preuninstall": "node src/preuninstall.js"
+  },
   "files": [
     "bin/",
     "src/",
