@@ -249,23 +249,30 @@ function collapseAliasDevices(devices: Device[]): Device[] {
       byAlias.set(alias, device);
       continue;
     }
+    // Same hostname + OS = same physical machine as far as the user
+    // is concerned, even if hwid/publicKey differ. That split
+    // happens naturally when the agent re-pairs (new config), when
+    // the same machine registers once via LAN and once via a VPN
+    // IP, or when a stale Convex row lingers after a wipe.
+    // Collapsing these into one card stops the picker showing
+    // "Kvancs-MacBook-Air.local" twice with different IPs.
+    //
+    // Two genuinely separate machines sharing a hostname is rare
+    // enough (users almost never rename their Mac) that we accept
+    // the edge case in exchange for a clean list. If it ever
+    // matters we can surface it via the strong-identity path
+    // behind a user flag.
     const hasStrongIdentity =
       (!!existing.hwid && !!device.hwid && existing.hwid !== device.hwid) ||
       (!!existing.publicKey && !!device.publicKey && existing.publicKey !== device.publicKey);
     if (hasStrongIdentity) {
-      // Same hostname / OS but distinct strong identities. Normally
-      // these are two separate machines and we keep both visible.
-      // BUT if one is a stale "needs auth" record that hasn't been
-      // seen in over 24h while the other is authenticated and recent,
-      // the stale one is leftover from a prior install (re-paired
-      // agent, wiped config) and just confuses the picker. Drop it.
+      // Prefer the authenticated + online record when the other
+      // side is a stale "needs auth" leftover.
       const winner = pickActiveOverStaleNeedsAuth(existing, device);
       if (winner) {
         byAlias.set(alias, winner);
         continue;
       }
-      byAlias.set(`id:${device.id}`, device);
-      continue;
     }
     byAlias.set(alias, mergeDeviceEntries(existing, device));
   }
