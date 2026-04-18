@@ -408,6 +408,12 @@ jobs:
         run: |
           REPO="${{ secrets.YAVER_CLI_REPO || github.repository }}"
           git clone "https://x-access-token:${GH_TOKEN}@github.com/kivanccakmak/scoop-yaver.git" scoop-yaver
+          # Scoop scans the repo root AND bucket/ when both exist. We
+          # wrote to the root historically, but an older manifest at
+          # bucket/yaver.json still existed and shadowed ours for
+          # users whose scoop client prefers bucket/. Keep both files
+          # identical from now on (write to root, copy to bucket/).
+          mkdir -p scoop-yaver/bucket
           cat > scoop-yaver/yaver.json <<MANIFEST
           {
             "version": "${VERSION}",
@@ -433,6 +439,7 @@ jobs:
             }
           }
           MANIFEST
+          cp scoop-yaver/yaver.json scoop-yaver/bucket/yaver.json
           cd scoop-yaver
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
