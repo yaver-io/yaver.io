@@ -1,0 +1,54 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.kivanccakmak/yaver",
+  "title": "Yaver",
+  "description": "P2P dev-machine MCP for phone-driven coding agents: hot reload, builds, deploys.",
+  "websiteUrl": "https://yaver.io/docs/mcp",
+  "icons": [
+    {
+      "src": "https://yaver.io/icon-512.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "512x512"
+      ]
+    }
+  ],
+  "repository": {
+    "url": "https://github.com/kivanccakmak/yaver.io",
+    "source": "github",
+    "id": "1186019621"
+  },
+  "version": "1.95.7",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "yaver-cli",
+      "version": "1.95.7",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "YAVER_HEADLESS",
+          "description": "Set to 1 to force device-code OAuth instead of opening a browser (useful in remote / WSL / sandboxed environments).",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "tool": "yaver-release-ci",
+      "install_guide": "https://yaver.io/docs/mcp",
+      "highlights": [
+        "Resumable headless OAuth: the device-code flow survives agent tool-call timeouts without re-prompting the human.",
+        "Auto-registers in Claude Code, Claude Desktop, Codex, Cursor, Windsurf, and Zed on first sign-in.",
+        "Phone-to-dev-machine P2P control plane with MCP tools for hot reload, builds, deploys, git, tunnels, and sessions.",
+        "Works with any coding agent — provider-agnostic by design."
+      ]
+    }
+  }
+}

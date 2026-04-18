@@ -1,0 +1,14 @@
+#!/usr/bin/env node
+// yaver-mcp — one-shot entry point that launches the Yaver MCP stdio
+// server. Equivalent to running `yaver mcp`, but exposed as its own
+// bin so MCP clients + the MCP Registry can invoke it as
+//
+//   npx -y yaver-cli yaver-mcp
+//
+// or by adding `"command": "yaver-mcp"` directly to their mcpServers
+// config (once yaver-cli is installed globally). Forwards any extra
+// arguments transparently.
+
+const { runUnified } = require('../src/index');
+
+runUnified(['mcp', ...process.argv.slice(2)]);

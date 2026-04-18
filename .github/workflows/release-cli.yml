@@ -62,6 +62,54 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+  publish-mcp-registry:
+    # Publish Yaver's server.json to the official MCP Registry
+    # (registry.modelcontextprotocol.io). Uses GitHub's OIDC token so we
+    # don't need a stored secret — the registry verifies the token proves
+    # ownership of the io.github.kivanccakmak/* namespace.
+    # Depends on publish-npm so the package + version are live on npm
+    # before the registry tries to verify them.
+    needs: [validate, publish-npm]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync server.json + cli/package.json to release version
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          jq --arg v "$VERSION" '.version = $v | (.packages[] | select(.registryType == "npm") | .version) = $v' server.json > /tmp/server.json
+          mv /tmp/server.json server.json
+          echo "--- server.json ---"
+          cat server.json
+      - name: Wait for npm package availability
+        # npm registry can take ~30s to propagate the new version after
+        # publish; mcp-publisher hits the npm metadata endpoint to verify
+        # package ownership, so make sure our just-published version
+        # shows up before we try.
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsSL "https://registry.npmjs.org/yaver-cli/$VERSION" >/dev/null 2>&1; then
+              echo "yaver-cli@$VERSION is live on npm"
+              exit 0
+            fi
+            echo "attempt $i: yaver-cli@$VERSION not on npm yet, sleeping 10s..."
+            sleep 10
+          done
+          echo "Warning: could not confirm yaver-cli@$VERSION on npm after 100s; proceeding anyway"
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
+            | tar xz mcp-publisher
+          chmod +x mcp-publisher
+      - name: Authenticate to MCP Registry (GitHub OIDC)
+        run: ./mcp-publisher login github-oidc
+      - name: Publish server.json to MCP Registry
+        run: ./mcp-publisher publish
+
   build:
     needs: validate
     strategy:

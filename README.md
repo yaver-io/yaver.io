@@ -559,6 +559,8 @@ yaver mcp setup zed          # Zed
 yaver mcp setup show         # Show config JSON (copy/paste manually)
 ```
 
+The repo also ships registry metadata in [`server.json`](server.json) and [`glama.json`](glama.json) so Yaver can be indexed by the official MCP Registry and Glama.
+
 ### Manual Setup — Claude Desktop
 
 Add to your `claude_desktop_config.json`:
