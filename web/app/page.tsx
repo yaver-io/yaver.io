@@ -804,7 +804,16 @@ function MCPIntegrationSection() {
               <span className="ml-3 text-xs text-surface-500">terminal</span>
             </div>
             <div className="terminal-body space-y-3 text-[13px]">
-              <div className="text-surface-500"># Install</div>
+              <div className="text-surface-500"># Fastest start</div>
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200 select-all">
+                  npm install -g yaver-cli
+                </span>
+              </div>
+              <div className="text-surface-500 pl-2"># installs `yaver` for agent + RN push-to-device</div>
+              <div className="h-px bg-surface-800/60" />
+              <div className="text-surface-500"># Native package-manager alternative</div>
               <div>
                 <span className="text-surface-400">$</span>{" "}
                 <span className="text-surface-200 select-all">
@@ -914,14 +923,17 @@ export default function HomePage() {
                   <div className="terminal-dot bg-[#28c840]" />
                 </div>
                 <div className="terminal-body space-y-1 text-[12px]">
-                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">brew install kivanccakmak/yaver/yaver</span></div>
+                  <div><span className="text-surface-400">$</span> <span className="text-surface-200">npm install -g yaver-cli</span></div>
                   <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver auth</span></div>
                   <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver serve</span></div>
                 </div>
               </div>
               <p className="mt-3 text-[11px] text-surface-500">
-                The Go agent is available as Homebrew CLI, Linux `apt` package, AppImage, `.deb`, `.rpm`, tarball, and install script.
+                Fastest start: `npm install -g yaver-cli`. It installs the `yaver` command for both the Go agent (`yaver serve`) and third-party React Native push (`yaver push`).
                 {" "}<Link href="/download" className="underline hover:text-surface-300">See install methods</Link>.
+              </p>
+              <p className="mt-2 text-[11px] text-surface-500">
+                Prefer native package managers? Homebrew, Linux `apt`, AppImage, `.deb`, `.rpm`, tarball, and install script paths are still available.
               </p>
               <p className="mt-2 text-[11px] text-surface-500">
                 WSL is supported through the same Linux/Hermes bundle path when the phone uses the Yaver mobile app as the container.
