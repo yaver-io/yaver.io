@@ -1,6 +1,6 @@
 {
   "name": "yaver-cli",
-  "version": "1.95.6",
+  "version": "1.95.7",
   "description": "Unified npm bootstrap for the Yaver agent and push-to-device React Native tooling",
   "bin": {
     "yaver": "bin/yaver",
