@@ -6,7 +6,46 @@ cd "$(dirname "$0")/../mobile/android"
 # Bump versionCode
 GRADLE_FILE="app/build.gradle"
 CURRENT_VERSION_CODE=$(grep 'versionCode ' "$GRADLE_FILE" | head -1 | sed 's/[^0-9]//g')
+OVERRIDE_VERSION_CODE="${ANDROID_VERSION_CODE:-}"
+REMOTE_MAX_VERSION_CODE=""
+
+if [ -z "$OVERRIDE_VERSION_CODE" ] && [ -n "${PLAY_STORE_KEY_FILE:-}" ] && [ -f "${PLAY_STORE_KEY_FILE}" ]; then
+REMOTE_MAX_VERSION_CODE=$(PLAY_STORE_KEY_FILE="$PLAY_STORE_KEY_FILE" python3 - <<'PY'
+import os
+from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+
+key = os.environ.get("PLAY_STORE_KEY_FILE")
+if not key:
+    raise SystemExit("")
+
+creds = Credentials.from_service_account_file(
+    key,
+    scopes=["https://www.googleapis.com/auth/androidpublisher"],
+)
+service = build("androidpublisher", "v3", credentials=creds)
+edit = service.edits().insert(body={}, packageName="io.yaver.mobile").execute()
+edit_id = edit["id"]
+try:
+    bundles = service.edits().bundles().list(
+        packageName="io.yaver.mobile",
+        editId=edit_id,
+    ).execute().get("bundles", [])
+    max_version = max((int(bundle["versionCode"]) for bundle in bundles), default=0)
+    print(max_version)
+finally:
+    service.edits().delete(packageName="io.yaver.mobile", editId=edit_id).execute()
+PY
+)
+fi
+
+if [ -n "$OVERRIDE_VERSION_CODE" ]; then
+NEW_VERSION_CODE="$OVERRIDE_VERSION_CODE"
+elif [ -n "$REMOTE_MAX_VERSION_CODE" ] && [ "$REMOTE_MAX_VERSION_CODE" -ge "$CURRENT_VERSION_CODE" ]; then
+NEW_VERSION_CODE=$((REMOTE_MAX_VERSION_CODE + 1))
+else
 NEW_VERSION_CODE=$((CURRENT_VERSION_CODE + 1))
+fi
 sed -i '' "s/versionCode $CURRENT_VERSION_CODE/versionCode $NEW_VERSION_CODE/" "$GRADLE_FILE"
 echo "versionCode $CURRENT_VERSION_CODE -> $NEW_VERSION_CODE"
 
