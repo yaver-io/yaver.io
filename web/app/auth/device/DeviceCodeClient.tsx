@@ -44,7 +44,7 @@ export default function DeviceCodeClient({
 
   const [token, setToken] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
-  const [applePreferred, setApplePreferred] = useState(false);
+  const [preferredProvider, setPreferredProvider] = useState<"apple" | "github" | "google" | "microsoft" | null>(null);
 
   useEffect(() => {
     const stored = localStorage.getItem("yaver_auth_token");
@@ -98,17 +98,13 @@ export default function DeviceCodeClient({
 
   useEffect(() => {
     const hintedProvider = providerHint || deviceInfo?.preferredProvider || "";
-    if (hintedProvider === "apple") {
-      setApplePreferred(true);
-      return;
-    }
-    if (hintedProvider === "google" || hintedProvider === "microsoft") {
-      setApplePreferred(false);
+    if (hintedProvider === "apple" || hintedProvider === "github" || hintedProvider === "google" || hintedProvider === "microsoft") {
+      setPreferredProvider(hintedProvider);
       return;
     }
     if (typeof navigator === "undefined") return;
     const ua = navigator.userAgent || "";
-    setApplePreferred(/iPhone|iPad|Macintosh|Mac OS X/i.test(ua));
+    setPreferredProvider(/iPhone|iPad|Macintosh|Mac OS X/i.test(ua) ? "apple" : "github");
   }, [deviceInfo?.preferredProvider, providerHint]);
 
   useEffect(() => {
@@ -125,7 +121,7 @@ export default function DeviceCodeClient({
     }
   }, [alreadyAuthorized]);
 
-  const authUrlFor = (provider: "apple" | "google" | "microsoft") => {
+  const authUrlFor = (provider: "apple" | "github" | "google" | "microsoft") => {
     const qs = new URLSearchParams({ client: "web" });
     const returnParams = new URLSearchParams();
     if (prefillCode) returnParams.set("code", prefillCode);
@@ -137,7 +133,7 @@ export default function DeviceCodeClient({
   };
 
   const providers: Array<{
-    key: "apple" | "google" | "microsoft";
+    key: "apple" | "github" | "google" | "microsoft";
     label: string;
     href: string;
     icon: ReactNode;
@@ -147,7 +143,7 @@ export default function DeviceCodeClient({
       key: "apple",
       label: "Continue with Apple",
       href: authUrlFor("apple"),
-      primary: applePreferred,
+      primary: preferredProvider === "apple",
       icon: (
         <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
           <path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z" />
@@ -155,9 +151,21 @@ export default function DeviceCodeClient({
       ),
     },
     {
+      key: "github",
+      label: "Continue with GitHub",
+      href: authUrlFor("github"),
+      primary: preferredProvider === "github",
+      icon: (
+        <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 .5C5.65.5.5 5.7.5 12.12c0 5.14 3.3 9.5 7.88 11.03.58.11.79-.25.79-.57 0-.28-.01-1.02-.02-2-3.2.71-3.88-1.57-3.88-1.57-.52-1.35-1.28-1.71-1.28-1.71-1.04-.73.08-.72.08-.72 1.15.08 1.75 1.19 1.75 1.19 1.02 1.77 2.67 1.26 3.32.96.1-.76.4-1.27.73-1.56-2.56-.29-5.26-1.3-5.26-5.77 0-1.27.45-2.31 1.18-3.13-.12-.29-.51-1.47.11-3.06 0 0 .97-.32 3.18 1.2a10.9 10.9 0 0 1 5.8 0c2.2-1.52 3.17-1.2 3.17-1.2.63 1.59.24 2.77.12 3.06.73.82 1.18 1.86 1.18 3.13 0 4.48-2.7 5.48-5.28 5.77.41.36.78 1.08.78 2.18 0 1.58-.02 2.85-.02 3.24 0 .32.2.69.8.57A11.63 11.63 0 0 0 23.5 12.12C23.5 5.7 18.35.5 12 .5z" />
+        </svg>
+      ),
+    },
+    {
       key: "google",
       label: "Continue with Google",
       href: authUrlFor("google"),
+      primary: preferredProvider === "google",
       icon: (
         <svg className="h-5 w-5" viewBox="0 0 24 24">
           <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
@@ -171,6 +179,7 @@ export default function DeviceCodeClient({
       key: "microsoft",
       label: "Continue with Microsoft",
       href: authUrlFor("microsoft"),
+      primary: preferredProvider === "microsoft",
       icon: (
         <svg className="h-5 w-5" viewBox="0 0 24 24">
           <path fill="#F25022" d="M1 1h10v10H1z" />

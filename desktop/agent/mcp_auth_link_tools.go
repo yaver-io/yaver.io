@@ -168,9 +168,9 @@ type AuthLinkStartResult struct {
 func authLinkStart(ctx context.Context, provider string) (AuthLinkStartResult, error) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	switch provider {
-	case "apple", "google", "microsoft":
+	case "apple", "github", "google", "microsoft":
 	default:
-		return AuthLinkStartResult{}, fmt.Errorf("provider must be apple | google | microsoft, got %q", provider)
+		return AuthLinkStartResult{}, fmt.Errorf("provider must be apple | github | google | microsoft, got %q", provider)
 	}
 	convexURL, token, err := loadAuthedConfig()
 	if err != nil {

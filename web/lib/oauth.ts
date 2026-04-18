@@ -1,6 +1,6 @@
 import crypto from "crypto";
 
-export type OAuthProvider = "google" | "microsoft" | "apple";
+export type OAuthProvider = "google" | "microsoft" | "apple" | "github";
 
 type ProviderConfig = {
   authUrl: string;
@@ -49,6 +49,15 @@ function getProviderConfig(provider: OAuthProvider): ProviderConfig {
         clientId: process.env.OAUTH_APPLE_CLIENT_ID || "",
         clientSecret: process.env.OAUTH_APPLE_CLIENT_SECRET || "",
         scope: "name email",
+      };
+    case "github":
+      return {
+        authUrl: "https://github.com/login/oauth/authorize",
+        tokenUrl: "https://github.com/login/oauth/access_token",
+        userInfoUrl: "https://api.github.com/user",
+        clientId: process.env.OAUTH_GITHUB_CLIENT_ID || "",
+        clientSecret: process.env.OAUTH_GITHUB_CLIENT_SECRET || "",
+        scope: "read:user user:email",
       };
     default:
       throw new Error(`Unknown OAuth provider: ${provider}`);
@@ -130,7 +139,10 @@ export async function exchangeCodeForTokens(
 
   const res = await fetch(config.tokenUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
     body: body.toString(),
   });
 
@@ -147,6 +159,7 @@ export type OAuthUserInfo = {
   name?: string;
   providerId: string;
   avatarUrl?: string;
+  username?: string;
 };
 
 function decodeJwtPayload(jwt: string): Record<string, unknown> {
@@ -182,7 +195,11 @@ export async function getUserInfo(
   const config = getProviderConfig(provider);
 
   const res = await fetch(config.userInfoUrl, {
-    headers: { Authorization: `Bearer ${tokens.access_token}` },
+    headers: {
+      Authorization: `Bearer ${tokens.access_token}`,
+      Accept: "application/json",
+      "User-Agent": "Yaver OAuth",
+    },
   });
 
   if (!res.ok) {
@@ -197,6 +214,39 @@ export async function getUserInfo(
       name: data.name,
       providerId: data.id,
       avatarUrl: data.picture,
+    };
+  }
+
+  if (provider === "github") {
+    let email = typeof data.email === "string" ? data.email : "";
+    if (!email) {
+      const emailsRes = await fetch("https://api.github.com/user/emails", {
+        headers: {
+          Authorization: `Bearer ${tokens.access_token}`,
+          Accept: "application/json",
+          "User-Agent": "Yaver OAuth",
+        },
+      });
+      if (!emailsRes.ok) {
+        throw new Error(`GitHub email request failed: ${await emailsRes.text()}`);
+      }
+      const emails = await emailsRes.json();
+      if (Array.isArray(emails)) {
+        const primaryVerified = emails.find((entry) => entry?.primary && entry?.verified && typeof entry?.email === "string");
+        const verified = emails.find((entry) => entry?.verified && typeof entry?.email === "string");
+        const anyEmail = emails.find((entry) => typeof entry?.email === "string");
+        email = primaryVerified?.email || verified?.email || anyEmail?.email || "";
+      }
+    }
+    if (!email) {
+      throw new Error("GitHub did not return an email address");
+    }
+    return {
+      email,
+      name: data.name || data.login,
+      providerId: String(data.id),
+      avatarUrl: data.avatar_url,
+      username: data.login,
     };
   }
 

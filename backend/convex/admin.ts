@@ -83,7 +83,7 @@ export const importUserBundle = mutation({
     user: v.object({
       email: v.string(),
       fullName: v.string(),
-      provider: v.union(v.literal("google"), v.literal("microsoft"), v.literal("apple"), v.literal("email")),
+      provider: v.union(v.literal("google"), v.literal("microsoft"), v.literal("apple"), v.literal("github"), v.literal("email")),
       providerId: v.string(),
       userId: v.string(),
       createdAt: v.number(),

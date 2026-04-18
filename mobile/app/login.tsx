@@ -228,6 +228,20 @@ export default function LoginScreen() {
               { backgroundColor: c.bgCard, borderColor: c.border },
               pressed && styles.buttonPressed,
             ]}
+            onPress={() => handleOAuth("github")}
+          >
+            <View style={styles.buttonContent}>
+              <Ionicons name="logo-github" size={17} color={c.textPrimary} style={styles.buttonIcon} />
+              <Text style={[styles.buttonTextCentered, { color: c.textPrimary }]}>Continue with GitHub</Text>
+            </View>
+          </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [
+              styles.button,
+              { backgroundColor: c.bgCard, borderColor: c.border },
+              pressed && styles.buttonPressed,
+            ]}
             onPress={() => handleOAuth("microsoft")}
           >
             <View style={styles.buttonContent}>

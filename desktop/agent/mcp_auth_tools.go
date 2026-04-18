@@ -2,7 +2,7 @@ package main
 
 // mcp_auth_tools.go — headless auth MCP tools. Lets a coding agent (Claude
 // Code Remote over SSH / Claude Code local / Codex / Cursor / …) sign the
-// user into Yaver using Apple / Google / Microsoft OAuth without ever
+// user into Yaver using Apple / GitHub / Google / Microsoft OAuth without ever
 // opening a browser on the machine the daemon is running on.
 //
 // Flow for a vibe coder SSH'd into a headless Linux/WSL box:

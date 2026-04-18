@@ -6,7 +6,7 @@ export default defineSchema({
     userId: v.string(),
     email: v.string(),
     fullName: v.string(),
-    provider: v.union(v.literal("google"), v.literal("microsoft"), v.literal("apple"), v.literal("email")),
+    provider: v.union(v.literal("google"), v.literal("microsoft"), v.literal("apple"), v.literal("github"), v.literal("email")),
     passwordHash: v.optional(v.string()),
     surveyCompleted: v.optional(v.boolean()),
     providerId: v.string(),
@@ -21,7 +21,7 @@ export default defineSchema({
 
   authIdentities: defineTable({
     userId: v.id("users"),
-    provider: v.union(v.literal("google"), v.literal("microsoft"), v.literal("apple"), v.literal("email")),
+    provider: v.union(v.literal("google"), v.literal("microsoft"), v.literal("apple"), v.literal("github"), v.literal("email")),
     providerId: v.string(),
     email: v.optional(v.string()),
     createdAt: v.number(),
@@ -33,7 +33,7 @@ export default defineSchema({
   oauthLinkIntents: defineTable({
     token: v.string(),
     userId: v.id("users"),
-    provider: v.union(v.literal("google"), v.literal("microsoft"), v.literal("apple")),
+    provider: v.union(v.literal("google"), v.literal("microsoft"), v.literal("apple"), v.literal("github")),
     client: v.optional(v.string()),
     returnTo: v.optional(v.string()),
     expiresAt: v.number(),

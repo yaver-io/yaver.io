@@ -42,6 +42,8 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+      OAUTH_GITHUB_CLIENT_ID: ${{ secrets.OAUTH_GITHUB_CLIENT_ID }}
+      OAUTH_GITHUB_CLIENT_SECRET: ${{ secrets.OAUTH_GITHUB_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -50,6 +52,13 @@ jobs:
 
       - name: Install dependencies
         run: cd web && npm ci
+
+      - name: Sync runtime OAuth secrets to Cloudflare
+        if: ${{ env.OAUTH_GITHUB_CLIENT_ID != '' && env.OAUTH_GITHUB_CLIENT_SECRET != '' }}
+        run: |
+          cd web
+          printf '%s' "$OAUTH_GITHUB_CLIENT_ID" | npx wrangler secret put OAUTH_GITHUB_CLIENT_ID
+          printf '%s' "$OAUTH_GITHUB_CLIENT_SECRET" | npx wrangler secret put OAUTH_GITHUB_CLIENT_SECRET
 
       - name: Check size constraint
         run: |

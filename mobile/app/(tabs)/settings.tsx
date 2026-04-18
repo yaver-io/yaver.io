@@ -1181,7 +1181,7 @@ export default function SettingsScreen() {
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Sign-In Methods</Text>
           <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, padding: 14 }]}>
             <Text style={{ color: c.textMuted, fontSize: 12, lineHeight: 18 }}>
-              Link Apple, Google, or Microsoft to this same Yaver account. Future sign-ins with any linked provider open the same machines and devices.
+              Link Apple, GitHub, Google, or Microsoft to this same Yaver account. Future sign-ins with any linked provider open the same machines and devices.
             </Text>
             {authError && (
               <Text style={{ color: c.error, fontSize: 12, marginTop: 10 }}>{authError}</Text>
@@ -1237,7 +1237,7 @@ export default function SettingsScreen() {
               </View>
             )}
             <View style={{ marginTop: 14, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-              {(["apple", "google", "microsoft"] as const).map((provider) => {
+              {(["apple", "github", "google", "microsoft"] as const).map((provider) => {
                 const already = identities.some((i) => i.provider === provider);
                 const disabled = linkingProvider !== null || already;
                 return (

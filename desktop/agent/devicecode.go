@@ -130,7 +130,7 @@ func runDeviceCodeAuth(convexURL string) (string, error) {
 		fmt.Printf("  Authorize %s from your phone.\n", machineLabel)
 	}
 	fmt.Println()
-	fmt.Println("  Open this URL on your phone and sign in (Apple / Google / Microsoft):")
+	fmt.Println("  Open this URL on your phone and sign in (Apple / GitHub / Google / Microsoft):")
 	fmt.Println()
 	fmt.Printf("    %s\n", authURL)
 	fmt.Println()

@@ -164,7 +164,7 @@ func TestAuthLinkStart_RejectsUnknownProvider(t *testing.T) {
 	sc := newStubConvex(t)
 	defer sc.close()
 	_, err := authLinkStart(context.Background(), "facebook")
-	if err == nil || !strings.Contains(err.Error(), "apple | google | microsoft") {
+	if err == nil || !strings.Contains(err.Error(), "apple | github | google | microsoft") {
 		t.Fatalf("expected provider rejection, got %v", err)
 	}
 }

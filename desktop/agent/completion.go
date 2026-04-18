@@ -119,7 +119,7 @@ _yaver() {
     local -a commands subcommands
 
     commands=(
-        'auth:Sign in via browser (Apple/Google/Microsoft)'
+        'auth:Sign in via browser (Apple/GitHub/Google/Microsoft)'
         'signout:Sign out and clear credentials'
         'connect:Connect to a remote device'
         'serve:Start the agent server'
