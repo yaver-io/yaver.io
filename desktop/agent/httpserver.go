@@ -7365,6 +7365,19 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolError(err.Error())
 		}
 		return mcpToolJSON(result)
+	case "yaver_lazy_setup":
+		var a struct {
+			WaitSeconds int `json:"wait_seconds"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		if a.WaitSeconds > 180 {
+			a.WaitSeconds = 180
+		}
+		result, err := yaverLazySetup(context.Background(), a.WaitSeconds)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(result)
 	case "yaver_auth_list_identities":
 		result, err := authListIdentities(context.Background())
 		if err != nil {
@@ -12016,14 +12029,14 @@ Adopted tasks are automatically re-adopted if the tmux session still exists.`
 
 Yaver uses OAuth via the web app for authentication.
 
-  yaver auth          # Opens browser for sign-in (Apple/Google/Microsoft)
+  yaver auth          # Opens browser for sign-in (Apple/GitHub/Google/Microsoft)
   yaver auth --headless  # Device code flow for SSH/headless servers
   yaver signout       # Clear credentials
   yaver status        # Check auth status
 
 The auth flow:
 1. CLI opens https://yaver.io/auth?client=desktop
-2. User signs in via Apple/Google/Microsoft
+2. User signs in via Apple/GitHub/Google/Microsoft
 3. Web redirects to http://127.0.0.1:19836/callback?token=<token>
 4. CLI saves token to ~/.config/yaver/config.json
 

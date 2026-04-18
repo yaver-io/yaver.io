@@ -1199,28 +1199,24 @@ func logFilePath() string {
 	return filepath.Join(dir, "agent.log")
 }
 
-// printHeadlessNextSteps prints the post-sign-in guidance for someone
-// who just ran `yaver auth` on a remote / WSL / headless box. Three
-// things get surfaced:
+// printHeadlessNextSteps runs at the end of a successful headless
+// `yaver auth`. Surfaces the Yaver mobile app install (required for
+// the P2P client end) and — because lazy, non-developer users driven
+// through an AI coding agent almost never run follow-up commands on
+// their own — it also *enables* auto-start automatically. Rationale:
 //
-//  1. Install the Yaver mobile app on the human's phone and sign in
-//     with the same OAuth provider — without it their P2P flow has no
-//     client end. The app-install link always prints; it's cheap and
-//     the cousin-at-a-cafe path (where an AI agent is orchestrating a
-//     non-developer through install) depends on the agent relaying
-//     this line to the human.
-//  2. Enable auto-start so the box comes back after a reboot without
-//     another SSH round trip. Suppressed if already configured.
-//  3. Optional `yaver init` for a bootstrap secret so the mobile app
-//     can remotely re-auth this box from outside the LAN. Suppressed
-//     if already set.
+//   - The cousin-at-a-cafe scenario can't survive a reboot without
+//     it; expecting the agent to remember to run
+//     `yaver config set auto-start true` is wishful thinking.
+//   - Opt-out is cheap (YAVER_NO_AUTO_START=1 before auth, or run
+//     `yaver config set auto-start false` after).
+//   - We only auto-enable on headless; a developer on a GUI macOS
+//     box gets the same explicit opt-in dance as before via
+//     `yaver config set` / the desktop installer.
+//
+// The bootstrap-secret nudge still prints because that genuinely
+// needs a password-manager decision.
 func printHeadlessNextSteps() {
-	autoStartKnown := isAutoStartInstalled()
-	bootstrapKnown := false
-	if cfg, _ := LoadConfig(); cfg != nil && strings.TrimSpace(cfg.BootstrapSecretHash) != "" {
-		bootstrapKnown = true
-	}
-
 	fmt.Println("Next — on your phone:")
 	fmt.Println("  Install the Yaver app and sign in with the same account you just used.")
 	fmt.Println("    iOS (TestFlight):  https://testflight.apple.com/join/yaver")
@@ -1228,23 +1224,30 @@ func printHeadlessNextSteps() {
 	fmt.Println("  This machine will appear in its device list automatically.")
 	fmt.Println()
 
-	if autoStartKnown && bootstrapKnown {
-		return
-	}
-	fmt.Println("Optional next steps for a remote/headless machine:")
-	if !autoStartKnown {
-		if isWSL() {
-			fmt.Println("  yaver config set auto-start true   # survive WSL/Windows reboots")
-		} else {
-			fmt.Println("  yaver config set auto-start true   # survive reboots (systemd/launchd)")
+	// Auto-enable auto-start unless already installed or explicitly opted out.
+	if !isAutoStartInstalled() && !envTruthy(os.Getenv("YAVER_NO_AUTO_START")) {
+		exePath, _ := os.Executable()
+		workDir, _ := os.Getwd()
+		if exePath != "" {
+			if msg := ensureAutoStart(exePath, workDir); msg != "" {
+				fmt.Println("Reboot persistence:")
+				fmt.Println("  " + msg)
+				fmt.Println("  (opt out any time: `yaver config set auto-start false`)")
+				fmt.Println()
+			}
 		}
 	}
-	if !bootstrapKnown {
-		fmt.Println("  yaver init                         # also generates a bootstrap secret")
-		fmt.Println("                                       (lets the mobile app re-auth this box")
-		fmt.Println("                                        without another SSH session)")
+
+	// Bootstrap-secret nudge still needs a human decision — where to store it.
+	bootstrapSet := false
+	if cfg, _ := LoadConfig(); cfg != nil && strings.TrimSpace(cfg.BootstrapSecretHash) != "" {
+		bootstrapSet = true
 	}
-	fmt.Println()
+	if !bootstrapSet {
+		fmt.Println("Optional: to let the mobile app remotely re-auth this box if the token")
+		fmt.Println("ever expires while you're away from it, run: yaver init")
+		fmt.Println()
+	}
 }
 
 // startServeIfStopped forks `yaver serve` in the background if the
@@ -3657,7 +3660,7 @@ func runStatus() {
 			fmt.Printf("  Code:   %s\n", pend.UserCode)
 			fmt.Printf("  Valid:  another %s\n",
 				humanRoundDuration(time.Until(time.UnixMilli(pend.ExpiresAt))))
-			fmt.Println("  Tap the URL on your phone, sign in (Apple / Google / Microsoft),")
+			fmt.Println("  Tap the URL on your phone, sign in (Apple / GitHub / Google / Microsoft),")
 			fmt.Println("  then run `yaver auth` once more here to finalize.")
 			fmt.Println()
 		} else {
@@ -3695,7 +3698,7 @@ func runStatus() {
 
 		fmt.Println()
 		fmt.Println("To sign in, either:")
-		fmt.Println("  • Run 'yaver auth' here (opens browser for Apple/Google/Microsoft sign-in), or")
+		fmt.Println("  • Run 'yaver auth' here (opens browser for Apple/GitHub/Google/Microsoft sign-in), or")
 		fmt.Println("  • Open the Yaver mobile app — this machine will be auto-paired:")
 		fmt.Println("      - Same Wi-Fi: detected via LAN beacon, paired in ~5 seconds")
 		fmt.Println("      - Any network: detected via relay, paired with encrypted token push")

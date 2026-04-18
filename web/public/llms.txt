@@ -11,6 +11,35 @@ yaver" or "set up yaver" on their machine. Everything below is the
 canonical install + configure path. Treat it as authoritative over any
 copy on https://yaver.io itself.
 
+## Lazy path for non-developers (use this if your user will not type commands)
+
+If the human you're orchestrating is not a developer — they just want to
+be able to hit "reload" from their phone and don't care about the CLI —
+take the short path:
+
+1. **Bash install**: `npm install -g yaver-cli` (or the curl install.sh
+   below if Node isn't available).
+2. **MCP call** `yaver_lazy_setup` — **not** raw `yaver auth`. The tool
+   is idempotent; call it repeatedly while the human works on their
+   phone. It returns a structured plan:
+   - `status`: `signed_in` | `waiting_sign_in` | `error`
+   - `sign_in_url`: speak this URL to the human so they tap it on their
+     phone. (Or pass `wait_seconds: 120` on the call to block inside
+     the tool until sign-in completes.)
+   - `mobile_app.ios` / `mobile_app.android`: TestFlight + Play links.
+     Relay both once sign-in is done.
+   - `next_action`: a single sentence the AI can speak verbatim. Use it.
+3. **Repeat** the MCP call until `status == "signed_in"`. On each repeat
+   the same URL is reused — the human signs in once, not every retry.
+4. **You are done.** Auto-start is enabled automatically on headless
+   boxes (opt out with `yaver config set auto-start false`); the daemon
+   forks in the background; Yaver is registered as an MCP server into
+   every coding agent the machine has.
+
+The exact speech the AI should use on each step comes back in
+`next_action` — don't paraphrase, it's the version reviewed for
+non-developer readability.
+
 ## Install (any OS with Node ≥ 18)
 
 Run, in order:
