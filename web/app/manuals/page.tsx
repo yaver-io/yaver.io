@@ -26,6 +26,14 @@ const manuals = [
     featured: true,
   },
   {
+    title: "Raspberry Pi \u2014 Plug-and-Play Yaver Home Server",
+    description:
+      "Turn a Pi 4 or Pi 5 into an always-on Yaver target. Hardware picks, headless OAuth, systemd auto-start, power-on after outage, and every WiFi/HDMI/Bluetooth power-save knob to disable.",
+    href: "/manuals/raspberry-pi",
+    tags: ["Raspberry Pi", "Linux", "Always-on", "ARM64"],
+    featured: true,
+  },
+  {
     title: "CLI setup & usage guide",
     description:
       "Install the Yaver CLI, sign in, choose your AI agent, and learn the most useful commands.",

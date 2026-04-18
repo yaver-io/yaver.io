@@ -316,6 +316,13 @@ export default async function DownloadPage() {
           <p className="mt-3 text-xs text-surface-500">
             First Metro bundle on a Pi 4: ~30–60s. Hot reloads: under 2s. Use <code>yaver install node</code>
             once if Node isn&apos;t already on the Pi; the agent auto-installs a sudo-free LTS into <code>~/.yaver/runtimes/node</code>.
+            {" "}
+            Full walkthrough (hardware, headless OAuth, power-on after outage, disabling
+            WiFi/HDMI/Bluetooth power save):{" "}
+            <Link href="/manuals/raspberry-pi" className="underline hover:text-surface-300">
+              Raspberry Pi manual
+            </Link>
+            .
           </p>
           <div className="mt-5 rounded-xl bg-surface-950 p-4 font-mono text-[12px] text-surface-300">
             <div className="mb-2"><span className="text-surface-500">$</span> <span className="select-all">curl -fsSL https://yaver.io/install.sh | sh</span></div>
