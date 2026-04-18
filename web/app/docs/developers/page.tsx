@@ -260,8 +260,9 @@ export default function DevelopersPage() {
             <strong className="text-surface-200">Platform support boundary:</strong>{" "}
             native Linux and macOS are the primary always-on agent targets. WSL is supported for
             headless auth, MCP, and the React Native Hermes loop into the Yaver mobile app, but it
-            does not currently get the same native auto-start and reboot-persistence guarantees as a
-            real Linux or macOS host.
+            does not get the same native auto-start and reboot-persistence guarantees as a real
+            Linux or macOS host. Yaver can install a WSL startup helper, but that is still a helper
+            path rather than native systemd support.
           </Prose>
         </section>
 

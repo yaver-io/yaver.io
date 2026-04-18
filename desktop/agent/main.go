@@ -1234,8 +1234,20 @@ func isAgentRunning() (int, bool) {
 func installSystemdService() {
 	if isWSL() {
 		fmt.Println("WSL detected.")
-		fmt.Println("Systemd user service install is skipped in WSL.")
-		fmt.Println("Use `yaver serve` from your shell, tmux, or a Windows-side startup wrapper instead.")
+		fmt.Println("Systemd user service install is not available in WSL.")
+		fmt.Println("Installing the Yaver WSL startup helper instead.")
+		exePath, err := os.Executable()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return
+		}
+		workDir, _ := os.Getwd()
+		msg, err := installAutoStartWSL(exePath, workDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return
+		}
+		fmt.Println(msg)
 		return
 	}
 
@@ -2538,17 +2550,13 @@ func runConfigSet(key, value string) {
 			}
 			workDir, _ := os.Getwd()
 			if err := installAutoStart(exePath, workDir); err != nil {
-				if isWSL() {
-					fmt.Println("WSL detected.")
-					fmt.Println("Yaver does not install a native auto-start service inside WSL.")
-					fmt.Println("Use one of these instead:")
-					fmt.Println("  - start `yaver serve` from your shell profile or tmux session inside WSL")
-					fmt.Println("  - start WSL + `yaver serve` from Windows startup / Task Scheduler")
-					fmt.Println("For the supported always-on path, use native Linux or macOS.")
-					return
-				}
 				fmt.Fprintf(os.Stderr, "Error installing auto-start: %v\n", err)
 				os.Exit(1)
+			}
+			if isWSL() {
+				fmt.Println("WSL detected.")
+				fmt.Println("Installed the Yaver WSL startup helper.")
+				fmt.Println("This is not a native systemd service; it uses your shell profile and can also write a Windows Startup wrapper when available.")
 			}
 		} else {
 			removeAutoStart()

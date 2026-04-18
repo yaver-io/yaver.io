@@ -371,8 +371,9 @@ WSL support is different:
 
 - WSL is supported for the React Native / Hermes daily loop and headless auth
 - WSL is **not** the same as native Linux for reboot persistence
-- Yaver does **not** install a systemd auto-start service inside WSL
-- if you want WSL to come back after reboot, use Windows startup / Task Scheduler or your own WSL shell bootstrap
+- Yaver does **not** install a native systemd auto-start service inside WSL
+- Yaver can install a WSL startup helper that uses your shell profile and, when available, a Windows Startup wrapper
+- native Linux and macOS still have the stronger always-on path
 
 ```bash
 # Brand-new install. No `yaver auth` needed yet.
@@ -415,10 +416,10 @@ The first `yaver serve` writes the OS-native auto-start descriptor:
 |----|---------------------|
 | **macOS** | `~/Library/LaunchAgents/io.yaver.agent.plist` (RunAtLoad + KeepAlive). Loaded automatically on next login. |
 | **Linux** | `~/.config/systemd/user/yaver.service` + `loginctl enable-linger` so the unit runs without an interactive login. |
-| **WSL** | No native Yaver auto-start service is installed. Use Windows startup / Task Scheduler or launch `yaver serve` from your own WSL bootstrap. |
+| **WSL** | No native systemd service. Yaver installs a WSL startup helper and can also write a Windows Startup wrapper when available. |
 | **Windows** | A scheduled task that fires on user login. |
 
-After the first install you can reboot the machine and the agent comes back automatically on macOS, native Linux, and Windows — in bootstrap mode if no one has paired it yet, in normal mode if it already has a token. On WSL, keep the expectation narrower: the daily dev flow is supported, but always-on reboot recovery depends on Windows-side startup wiring.
+After the first install you can reboot the machine and the agent comes back automatically on macOS, native Linux, and Windows — in bootstrap mode if no one has paired it yet, in normal mode if it already has a token. On WSL, keep the expectation narrower: the daily dev flow is supported and Yaver can install a helper path, but native Linux/macOS still provide the stronger always-on reboot behavior.
 
 ## Visual Feedback Loop
 
@@ -948,13 +949,13 @@ Important boundary:
 - WSL is supported for development and phone testing
 - WSL is not the primary always-on deployment target for Yaver itself
 - if you want the machine to survive power loss and come back without touching a terminal, prefer native Linux or macOS
-- if you stay on WSL, use Windows-side startup / Task Scheduler or your own shell bootstrap to bring `yaver serve` back
+- if you stay on WSL, use Yaver's WSL startup helper and, when possible, a Windows Startup / Task Scheduler wrapper
 
 The important rule is:
 
 - **WSL iPhone reload = Hermes bundle into Yaver mobile**
 - **WSL iPhone reload != `xcodebuild`**
-- **WSL reboot persistence != native Linux systemd support**
+- **WSL reboot persistence uses a helper path, not native Linux systemd**
 
 Command-first version:
 

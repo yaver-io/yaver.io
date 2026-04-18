@@ -27,7 +27,8 @@ export default function AutoBootManual() {
         <div className="mb-12 rounded-lg border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-100">
           This guide is for native macOS, native Linux, and Windows. WSL is supported for Yaver
           development flows and Hermes reload, but not as the primary always-on auto-boot target:
-          Yaver does not install a native systemd auto-start service inside WSL.
+          Yaver does not install a native systemd auto-start service inside WSL. It can install a
+          WSL startup helper, but native Linux/macOS remain the stronger path for always-on use.
         </div>
 
         {/* Why */}

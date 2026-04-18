@@ -1252,7 +1252,7 @@ export default function TasksScreen() {
             <View style={{ flexDirection: "row", alignItems: "center", marginTop: 4, marginLeft: 18 }}>
               <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "#f59e0b" }} />
               <Text style={{ color: "#fbbf24", fontSize: 11, marginLeft: 6 }}>
-                Agent session expired — run 'yaver auth' on your machine
+                Agent session expired — open Devices and tap Recover Auth
               </Text>
             </View>
           )}

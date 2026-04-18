@@ -44,19 +44,24 @@ function buildDeviceUrl(device: Device, token: string | null): string | null {
 function DeviceCard({
   device,
   isActive,
+  authExpired,
   onSelect,
   onLongPress,
+  onRecoverAuth,
   token,
 }: {
   device: Device;
   isActive: boolean;
+  authExpired: boolean;
   onSelect: () => void;
   onLongPress: () => void;
+  onRecoverAuth: () => Promise<void>;
   token: string | null;
 }) {
   const c = useColors();
   const [pingState, setPingState] = useState<{ pinging: boolean; rttMs?: number; ok?: boolean }>({ pinging: false });
   const [killing, setKilling] = useState<string | null>(null);
+  const [recovering, setRecovering] = useState(false);
   // Seed needsAuth from Convex device record so the badge shows immediately
   // (without waiting for the /info poll to complete).
   const [needsAuth, setNeedsAuth] = useState<boolean>(device.needsAuth === true);
@@ -278,12 +283,26 @@ function DeviceCard({
                 <Text style={{ color: "#38bdf8", fontSize: 10, fontWeight: "700" }}>{workerLabel}</Text>
               </View>
             ) : null}
-            {autoPairing ? (
+            {recovering ? (
+              <View style={{
+                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+                backgroundColor: "#f59e0b22", borderWidth: 1, borderColor: "#f59e0b66",
+              }}>
+                <Text style={{ color: "#f59e0b", fontSize: 10, fontWeight: "700" }}>RECOVERING…</Text>
+              </View>
+            ) : autoPairing ? (
               <View style={{
                 paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
                 backgroundColor: "#818cf822", borderWidth: 1, borderColor: "#818cf866",
               }}>
                 <Text style={{ color: "#818cf8", fontSize: 10, fontWeight: "700" }}>PAIRING…</Text>
+              </View>
+            ) : authExpired ? (
+              <View style={{
+                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+                backgroundColor: "#f59e0b22", borderWidth: 1, borderColor: "#f59e0b66",
+              }}>
+                <Text style={{ color: "#f59e0b", fontSize: 10, fontWeight: "700" }}>AUTH EXPIRED</Text>
               </View>
             ) : needsAuth ? (
               <View style={{
@@ -305,6 +324,11 @@ function DeviceCard({
             {device.os} &middot; {device.host}:{device.port}
             {device.isGuest && device.hostName ? ` · shared from ${device.hostName}` : ""}
           </Text>
+          {authExpired ? (
+            <Text style={[styles.deviceMeta, { color: "#fbbf24", marginTop: 4 }]}>
+              This machine is reachable, but its Yaver session expired. Recover it from the phone.
+            </Text>
+          ) : null}
           {device.edgeProfile ? (
             <Text style={[styles.deviceMeta, { color: c.textMuted, marginTop: 4 }]}>
               {device.edgeProfile.supportsLocalInference ? "local inference" : "no local inference"}
@@ -379,6 +403,24 @@ function DeviceCard({
             <Text style={[styles.runnerMeta, { color: c.textMuted, paddingVertical: 4 }]}>No active runners</Text>
           )}
           <View style={[styles.menuActions, { borderTopColor: c.border }]}>
+            {(needsAuth || authExpired) && (
+              <Pressable
+                style={[styles.menuActionBtn, { backgroundColor: "#f59e0b18" }]}
+                onPress={async () => {
+                  setRecovering(true);
+                  try {
+                    await onRecoverAuth();
+                  } finally {
+                    setRecovering(false);
+                  }
+                }}
+                disabled={recovering}
+              >
+                <Text style={[styles.menuActionText, { color: "#f59e0b" }]}>
+                  {recovering ? "Recovering..." : "Recover Auth"}
+                </Text>
+              </Pressable>
+            )}
             <Pressable style={[styles.menuActionBtn, { backgroundColor: c.error + "12" }]} onPress={shutdownAgent}>
               <Text style={[styles.menuActionText, { color: c.error }]}>Shutdown Agent</Text>
             </Pressable>
@@ -572,8 +614,10 @@ export default function DevicesScreen() {
   const {
     devices,
     activeDevice,
+    agentAuthExpired,
     connectionStatus,
     isLoadingDevices,
+    recoverDeviceAuth,
     selectDevice,
     disconnect,
     refreshDevices,
@@ -760,6 +804,7 @@ export default function DevicesScreen() {
               device={item}
               isActive={activeDevice?.id === item.id}
               onSelect={() => selectDevice(item)}
+              authExpired={activeDevice?.id === item.id && connectionStatus === "connected" && agentAuthExpired}
               onLongPress={() => {
                 const actionLabel = item.isGuest ? "Detach" : "Remove";
                 const message = item.isGuest
@@ -787,6 +832,22 @@ export default function DevicesScreen() {
                     },
                   ]
                 );
+              }}
+              onRecoverAuth={async () => {
+                try {
+                  const result = await recoverDeviceAuth(item);
+                  if (result?.ok && result.mode === "device-code") {
+                    Alert.alert("Continue In Browser", "Finish sign-in in your phone browser. Yaver already opened the authorization page.");
+                    return;
+                  }
+                  if (result?.ok) {
+                    Alert.alert("Recovered", `${item.name} is signing back into Yaver now.`);
+                    return;
+                  }
+                  Alert.alert("Recovery Failed", result?.error || "Could not recover this machine from the phone.");
+                } catch (e: any) {
+                  Alert.alert("Recovery Failed", e?.message || "Could not recover this machine from the phone.");
+                }
               }}
               token={token}
             />

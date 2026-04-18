@@ -79,7 +79,8 @@ What works well:
 What is different from native Linux:
 
 - Yaver does not install a native systemd auto-start service inside WSL
-- after a Windows reboot or power loss, you need Windows-side startup wiring or your own WSL bootstrap to bring `yaver serve` back
+- Yaver can install a WSL startup helper and, when Windows is visible from WSL, a Windows Startup wrapper
+- after a Windows reboot or power loss, native Linux/macOS still provide the cleaner always-on path
 - if you want the strongest "box comes back by itself and the phone can re-auth it" behavior, use native Linux or macOS
 
 ## Open The Project On iPhone
@@ -112,6 +113,7 @@ This is the correct daily loop for projects like `sfmg` when they are standard E
 - The right button is `Open in Yaver`.
 - The right mental model is `WSL -> Hermes bundle -> Yaver mobile app`.
 - The wrong expectation is `WSL behaves exactly like native Linux for system service auto-start`.
+- The right expectation is `WSL uses a Yaver helper path, not native systemd`.
 
 ## Contributor to TestFlight Workflow
 

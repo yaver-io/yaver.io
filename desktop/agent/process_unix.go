@@ -324,7 +324,8 @@ func installAutoStartDarwin(exePath, workDir string) error {
 
 func installAutoStartLinux(exePath, workDir string) error {
 	if isWSL() {
-		return fmt.Errorf("auto-start via systemd is disabled in WSL; start the agent from your shell profile or Windows startup flow instead")
+		_, err := installAutoStartWSL(exePath, workDir)
+		return err
 	}
 
 	home, err := os.UserHomeDir()
@@ -388,7 +389,7 @@ func isAutoStartInstalled() bool {
 		return err == nil
 	case "linux":
 		if isWSL() {
-			return false
+			return isWSLAutoStartInstalled()
 		}
 		_, err := os.Stat(filepath.Join(home, ".config", "systemd", "user", "yaver.service"))
 		return err == nil
@@ -409,7 +410,8 @@ func ensureAutoStart(exePath, workDir string) string {
 		return msg
 	case "linux":
 		if isWSL() {
-			return ""
+			msg, _ := installAutoStartWSL(exePath, workDir)
+			return msg
 		}
 		msg, _ := ensureAutoStartLinux(exePath, workDir)
 		return msg
@@ -526,6 +528,10 @@ func stopAutoStartService() {
 		}
 	case "linux":
 		if isWSL() {
+			if isWSLAutoStartInstalled() {
+				fmt.Println("  WSL startup helper removed (use 'yaver serve' to re-enable).")
+			}
+			removeAutoStartWSL()
 			return
 		}
 		home, _ := os.UserHomeDir()
@@ -553,6 +559,7 @@ func removeAutoStart() {
 		os.Remove(plistPath)
 	case "linux":
 		if isWSL() {
+			removeAutoStartWSL()
 			return
 		}
 		home, err := os.UserHomeDir()

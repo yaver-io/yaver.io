@@ -12,7 +12,7 @@ import Constants from "expo-constants";
 import NetInfo from "@react-native-community/netinfo";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
-import { quicClient, RelayServer, TunnelServer } from "../lib/quic";
+import { quicClient, RecoveryResult, RelayServer, TunnelServer } from "../lib/quic";
 import { useAuth } from "./AuthContext";
 import { getLocalSecret, getUserSettings, LOCAL_KEYS } from "../lib/auth";
 import { appLog } from "../lib/logger";
@@ -307,6 +307,8 @@ interface DeviceState {
   lastError: string | null;
   /** true when agent's Convex auth session is expired (agent reachable but needs re-auth) */
   agentAuthExpired: boolean;
+  /** Trigger phone-driven auth recovery for a device. */
+  recoverDeviceAuth: (device: Device) => Promise<RecoveryResult | null>;
   selectDevice: (device: Device) => Promise<void>;
   disconnect: () => void;
   refreshDevices: () => Promise<void>;
@@ -964,6 +966,76 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(iv);
   }, [token, user?.id, activeDevice?.id, activeDevice?.host, activeDevice?.port, activeDevice?.publicKey, activeDevice?.name, refreshDevices]);
 
+  const acceptGuestInvitation = useCallback(async (hostUserId: string) => {
+    if (!token) return;
+    await apiAcceptInvitation(token, hostUserId);
+    await refreshDevices();
+  }, [token, refreshDevices]);
+
+  const acceptGuestByCode = useCallback(async (code: string) => {
+    if (!token) throw new Error("Not signed in");
+    const result = await apiAcceptByCode(token, code);
+    await refreshDevices();
+    return result;
+  }, [token, refreshDevices]);
+
+  const inviteGuest = useCallback(async (email: string) => {
+    if (!token) throw new Error("Not signed in");
+    return await apiInviteGuest(token, email);
+  }, [token]);
+
+  const recoverDeviceAuth = useCallback(async (device: Device): Promise<RecoveryResult | null> => {
+    if (!token || !user?.id) {
+      return { ok: false, error: "Not signed in" };
+    }
+
+    if (!activeDevice || activeDevice.id !== device.id) {
+      await selectDevice(device);
+    }
+
+    let recovery = await quicClient.recoverAgent(undefined, "pair");
+    if (!recovery?.ok || !recovery.pairCode) {
+      appLog("warn", `Host-token recovery did not open a pair session for ${device.name}: ${recovery?.error || "unknown error"}`);
+
+      const bootstrapSecret = await getLocalSecret(LOCAL_KEYS.bootstrapSecret);
+      if (bootstrapSecret) {
+        recovery = await quicClient.recoverAgent(bootstrapSecret, "pair");
+        if (recovery?.ok && recovery.pairCode) {
+          appLog("info", `Recovered ${device.name} using stored bootstrap secret`);
+        } else {
+          appLog("warn", `Bootstrap-secret recovery did not open a pair session for ${device.name}: ${recovery?.error || "unknown error"}`);
+        }
+      }
+    }
+
+    if (!recovery?.ok || !recovery.pairCode) {
+      const deviceCode = await quicClient.recoverAgent(undefined, "device-code");
+      if (deviceCode?.ok && deviceCode.deviceCodeUrl) {
+        appLog("info", `Opened device-code recovery for ${device.name}: ${deviceCode.userCode || "code unavailable"}`);
+        Linking.openURL(deviceCode.deviceCodeUrl).catch(() => {});
+      } else {
+        appLog("warn", `Device-code recovery did not start for ${device.name}: ${deviceCode?.error || recovery?.error || "unknown error"}`);
+      }
+      return deviceCode ?? recovery;
+    }
+
+    const pairRes = await submitPair({
+      code: recovery.pairCode,
+      targetUrl: recovery.targetUrl || quicClient.baseUrl,
+      token,
+      userId: user.id,
+    });
+    if (!pairRes.ok) {
+      appLog("warn", `Auth recovery pair submit failed for ${device.name}: ${pairRes.error || "unknown error"}`);
+      return { ok: false, error: pairRes.error || "Auth recovery pair submit failed" };
+    }
+    quicClient.agentAuthExpired = false;
+    setAgentAuthExpired(false);
+    appLog("info", `Recovered expired agent session for ${device.name} from mobile`);
+    setTimeout(() => refreshDevices(), 2000);
+    return { ...recovery, ok: true };
+  }, [token, user?.id, activeDevice, selectDevice, refreshDevices]);
+
   // Auth-expired recovery: the agent is still reachable, but its own
   // Convex session is stale. Use the PHONE'S valid bearer token to
   // authorize /auth/recover, open a one-shot pair session, then push
@@ -979,46 +1051,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       if (cancelled || recoveringAuthRef.current.has(activeDevice.id)) return;
       recoveringAuthRef.current.add(activeDevice.id);
       try {
-        let recovery = await quicClient.recoverAgent(undefined, "pair");
-        if (!recovery?.ok || !recovery.pairCode) {
-          appLog("warn", `Host-token recovery did not open a pair session for ${activeDevice.name}: ${recovery?.error || "unknown error"}`);
-
-          const bootstrapSecret = await getLocalSecret(LOCAL_KEYS.bootstrapSecret);
-          if (bootstrapSecret) {
-            recovery = await quicClient.recoverAgent(bootstrapSecret, "pair");
-            if (recovery?.ok && recovery.pairCode) {
-              appLog("info", `Recovered ${activeDevice.name} using stored bootstrap secret`);
-            } else {
-              appLog("warn", `Bootstrap-secret recovery did not open a pair session for ${activeDevice.name}: ${recovery?.error || "unknown error"}`);
-            }
-          }
-        }
-
-        if (!recovery?.ok || !recovery.pairCode) {
-          const deviceCode = await quicClient.recoverAgent(undefined, "device-code");
-          if (deviceCode?.ok && deviceCode.deviceCodeUrl) {
-            appLog("info", `Opened device-code recovery for ${activeDevice.name}: ${deviceCode.userCode || "code unavailable"}`);
-            Linking.openURL(deviceCode.deviceCodeUrl).catch(() => {});
-          } else {
-            appLog("warn", `Device-code recovery did not start for ${activeDevice.name}: ${deviceCode?.error || recovery?.error || "unknown error"}`);
-          }
-          return;
-        }
-
-        const pairRes = await submitPair({
-          code: recovery.pairCode,
-          targetUrl: recovery.targetUrl || quicClient.baseUrl,
-          token,
-          userId: user.id,
-        });
-        if (!pairRes.ok) {
-          appLog("warn", `Auth recovery pair submit failed for ${activeDevice.name}: ${pairRes.error || "unknown error"}`);
-          return;
-        }
-        quicClient.agentAuthExpired = false;
-        setAgentAuthExpired(false);
-        appLog("info", `Recovered expired agent session for ${activeDevice.name} from mobile`);
-        setTimeout(() => refreshDevices(), 2000);
+        await recoverDeviceAuth(activeDevice);
       } finally {
         if (!cancelled) {
           setTimeout(() => {
@@ -1035,7 +1068,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [token, user?.id, activeDevice, agentAuthExpired, refreshDevices]);
+  }, [token, user?.id, activeDevice, agentAuthExpired, recoverDeviceAuth]);
 
   // Fetch devices when token becomes available + poll every 30s (lightweight)
   useEffect(() => {
@@ -1092,24 +1125,6 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     return () => unsubscribe();
   }, [activeDevice, token]);
 
-  const acceptGuestInvitation = useCallback(async (hostUserId: string) => {
-    if (!token) return;
-    await apiAcceptInvitation(token, hostUserId);
-    await refreshDevices();
-  }, [token, refreshDevices]);
-
-  const acceptGuestByCode = useCallback(async (code: string) => {
-    if (!token) throw new Error("Not signed in");
-    const result = await apiAcceptByCode(token, code);
-    await refreshDevices();
-    return result;
-  }, [token, refreshDevices]);
-
-  const inviteGuest = useCallback(async (email: string) => {
-    if (!token) throw new Error("Not signed in");
-    return await apiInviteGuest(token, email);
-  }, [token]);
-
   const value = useMemo<DeviceState>(
     () => ({
       devices,
@@ -1119,6 +1134,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       userDisconnected,
       lastError,
       agentAuthExpired,
+      recoverDeviceAuth,
       selectDevice,
       disconnect,
       refreshDevices,
@@ -1129,7 +1145,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       acceptGuestByCode,
       inviteGuest,
     }),
-    [devices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest]
+    [devices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

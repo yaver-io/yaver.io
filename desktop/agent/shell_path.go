@@ -29,7 +29,7 @@ func ensureUserShellPathSetup(progress func(string)) error {
 	}
 
 	for _, target := range targets {
-		if err := ensureMarkedExportLine(target, exportLine); err != nil {
+		if err := ensureMarkedLine(target, yaverNodePathMarker, exportLine); err != nil {
 			return err
 		}
 		if progress != nil {
@@ -41,6 +41,10 @@ func ensureUserShellPathSetup(progress func(string)) error {
 }
 
 func ensureMarkedExportLine(path, exportLine string) error {
+	return ensureMarkedLine(path, yaverNodePathMarker, exportLine)
+}
+
+func ensureMarkedLine(path, marker, value string) error {
 	var text string
 	if data, err := os.ReadFile(path); err == nil {
 		text = string(data)
@@ -58,23 +62,56 @@ func ensureMarkedExportLine(path, exportLine string) error {
 			skipNext = false
 			continue
 		}
-		line := lines[i]
-		if strings.TrimSpace(line) == yaverNodePathMarker {
+		currentLine := lines[i]
+		if strings.TrimSpace(currentLine) == marker {
 			found = true
-			out = append(out, yaverNodePathMarker, exportLine)
-			if i+1 < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[i+1]), "export PATH=") {
+			out = append(out, marker, value)
+			if i+1 < len(lines) {
 				skipNext = true
 			}
 			continue
 		}
-		out = append(out, line)
+		out = append(out, currentLine)
 	}
 
 	if !found {
 		if len(out) > 0 && strings.TrimSpace(out[len(out)-1]) != "" {
 			out = append(out, "")
 		}
-		out = append(out, yaverNodePathMarker, exportLine)
+		out = append(out, marker, value)
+	}
+
+	contents := strings.Join(out, "\n")
+	if !strings.HasSuffix(contents, "\n") {
+		contents += "\n"
+	}
+	return os.WriteFile(path, []byte(contents), 0o644)
+}
+
+func removeMarkedLine(path, marker string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+
+	lines := strings.Split(string(data), "\n")
+	var out []string
+	skipNext := false
+	for i := 0; i < len(lines); i++ {
+		if skipNext {
+			skipNext = false
+			continue
+		}
+		if strings.TrimSpace(lines[i]) == marker {
+			if i+1 < len(lines) {
+				skipNext = true
+			}
+			continue
+		}
+		out = append(out, lines[i])
 	}
 
 	contents := strings.Join(out, "\n")
