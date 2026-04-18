@@ -3,6 +3,16 @@ set -e
 
 cd "$(dirname "$0")/../mobile/android"
 
+if [ -x "./gradlew" ]; then
+  GRADLE="./gradlew"
+elif command -v gradle >/dev/null 2>&1; then
+  GRADLE="gradle"
+else
+  echo "ERROR: No Gradle runner found."
+  echo "Expected ./mobile/android/gradlew or a global 'gradle' binary."
+  exit 1
+fi
+
 # Bump versionCode
 GRADLE_FILE="app/build.gradle"
 CURRENT_VERSION_CODE=$(grep 'versionCode ' "$GRADLE_FILE" | head -1 | sed 's/[^0-9]//g')
@@ -60,8 +70,8 @@ echo "versionCode $CURRENT_VERSION_CODE -> $NEW_VERSION_CODE"
 # and avoids the chicken-and-egg.
 # Build worklets prefab first — reanimated CMake configure depends on it.
 echo "Building release AAB..."
-./gradlew :react-native-worklets:prefabReleasePackage
-./gradlew bundleRelease
+"$GRADLE" :react-native-worklets:prefabReleasePackage
+"$GRADLE" bundleRelease
 
 AAB_PATH="app/build/outputs/bundle/release/app-release.aab"
 
