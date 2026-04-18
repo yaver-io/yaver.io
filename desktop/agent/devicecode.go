@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/mdp/qrterminal/v3"
@@ -49,9 +51,29 @@ func runDeviceCodeAuth(convexURL string) (string, error) {
 	// 2. Display the code and URL
 	authURL := "https://yaver.io/auth/device"
 	authURLWithCode := authURL + "?code=" + dcResp.UserCode
+	meta := buildDeviceCodeRequest()
+	machineLabel := strings.TrimSpace(meta.MachineName)
+	if machineLabel == "" {
+		machineLabel = "this machine"
+	}
 
 	fmt.Println()
-	fmt.Println("  To sign in, scan this QR code or visit the URL below:")
+	fmt.Printf("  Authorize %s from your phone or laptop.\n", machineLabel)
+	if strings.TrimSpace(meta.Platform) != "" {
+		fmt.Printf("  Waiting machine: %s", machineLabel)
+		if strings.TrimSpace(meta.Platform) != "" {
+			fmt.Printf(" • %s", strings.ToUpper(meta.Platform))
+		}
+		if strings.TrimSpace(meta.Shell) != "" {
+			fmt.Printf(" • %s", filepath.Base(meta.Shell))
+		}
+		fmt.Println()
+	}
+	fmt.Println()
+	fmt.Println("  1. Open your iPhone camera or Safari.")
+	fmt.Println("  2. Scan this QR code, or open the URL below.")
+	fmt.Println("  3. Sign in with Apple, Google, or Microsoft.")
+	fmt.Println("  4. Yaver will link the result back to this remote machine.")
 	fmt.Println()
 
 	// Render QR code in terminal
@@ -64,8 +86,8 @@ func runDeviceCodeAuth(convexURL string) (string, error) {
 	})
 
 	fmt.Println()
-	fmt.Printf("  URL:  %s\n", authURL)
-	fmt.Printf("  Code: %s\n", dcResp.UserCode)
+	fmt.Printf("  URL:       %s\n", authURLWithCode)
+	fmt.Printf("  Device ID: %s\n", dcResp.UserCode)
 	fmt.Println()
 
 	ttl := time.Until(time.UnixMilli(dcResp.ExpiresAt))
