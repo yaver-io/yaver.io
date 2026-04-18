@@ -296,9 +296,14 @@ winget install Yaver.Yaver                      # Windows (Winget)
 curl -fsSL https://yaver.io/install.sh | sh     # Quick install (macOS / Linux)
 irm https://yaver.io/install.ps1 | iex          # Quick install (Windows PowerShell)
 
-# Sign in
-yaver auth
+# Sign in — GUI machine opens a browser, headless (Pi / VPS / SSH-only / Docker) uses --headless
+yaver auth                 # opens browser automatically
+yaver auth --headless      # prints a URL + short code you approve from your phone
 # `yaver auth` starts the agent automatically if needed
+#
+# Supported sign-in providers (all 8 linkable to the same account):
+#   Google · Apple · Microsoft/O365 · GitHub · GitLab · Discord · Slack · email/password
+# See https://yaver.io/download#headless-auth for the full flow.
 
 # Adopt a project (one-time, ~3 min) — caches stack/layout/conventions into init.md
 cd ~/code/my-project

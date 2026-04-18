@@ -347,6 +347,58 @@ export default async function DownloadPage() {
           </div>
         </section>
 
+        <section id="headless-auth" className="mt-10 rounded-2xl border border-surface-800 bg-surface-900 p-6">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-lg font-semibold text-surface-50">Headless sign-in</h2>
+            <span className="rounded-full border border-indigo-700/50 bg-indigo-950/40 px-2.5 py-1 text-[11px] font-medium text-indigo-300">
+              Pi · VPS · SSH-only
+            </span>
+          </div>
+          <p className="mt-3 text-sm leading-6 text-surface-400">
+            Every install surface supports <code>yaver auth --headless</code>: the agent prints a short
+            code + URL, you open the URL on any device that has a browser (phone, laptop), sign in
+            with any supported provider, and the Pi / VPS picks up the token automatically. No
+            browser on the target machine required.
+          </p>
+          <div className="mt-5 rounded-xl bg-surface-950 p-4 font-mono text-[12px] text-surface-300">
+            <div className="mb-2 text-surface-500"># on the Pi / VPS / Docker container:</div>
+            <div className="mb-2"><span className="text-surface-500">$</span> <span className="select-all">yaver auth --headless</span></div>
+            <div className="mb-1 text-surface-500">Go to https://yaver.io/auth/device?code=XXXX-YYYY</div>
+            <div className="mb-2 text-surface-500">Approve there; this machine will pick up the token.</div>
+            <div className="mb-2 text-surface-500"># waits and polls automatically — resumable across restarts</div>
+          </div>
+          <p className="mt-4 text-sm font-semibold text-surface-200">Sign-in providers</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {[
+              { name: "Google (Gmail)", emoji: "\u{1F4E7}" },
+              { name: "Apple", emoji: "\uF8FF" },
+              { name: "Microsoft / O365", emoji: "\u{1F5C2}" },
+              { name: "GitHub", emoji: "\u{1F431}" },
+              { name: "GitLab", emoji: "\u{1F98A}" },
+              { name: "Discord", emoji: "\u{1F3AE}" },
+              { name: "Slack", emoji: "\u{1F4AC}" },
+              { name: "Email / password", emoji: "\u2709" },
+            ].map((p) => (
+              <span
+                key={p.name}
+                className="inline-flex items-center gap-1.5 rounded-full border border-surface-700 bg-surface-950 px-3 py-1 text-[12px] text-surface-300"
+              >
+                <span>{p.emoji}</span>
+                {p.name}
+              </span>
+            ))}
+          </div>
+          <p className="mt-4 text-xs text-surface-500">
+            Linking multiple identities to the same account is supported on web and mobile — one Yaver
+            account can hold any combination of these, and merging two accounts you made by accident
+            is available too. See{" "}
+            <Link href="/manuals/account-linking" className="underline hover:text-surface-300">
+              account linking
+            </Link>
+            .
+          </p>
+        </section>
+
         <section id="tarballs" className="mt-10 grid gap-5 md:grid-cols-2">
           {directArtifacts.map((artifact) => {
             const resolved = resolveArtifact(artifact.slug);
