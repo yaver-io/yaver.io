@@ -12,7 +12,23 @@ async function getInitialDeviceInfo(code: string): Promise<DeviceCodeInfo> {
     const res = await fetch(`${getConvexUrl()}/auth/device-code/info?user_code=${encodeURIComponent(code)}`, {
       cache: "no-store",
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (res.status === 404 || res.status === 410) {
+        return {
+          machineName: null,
+          platform: null,
+          arch: null,
+          shell: null,
+          environment: null,
+          runtimeVersion: null,
+          preferredProvider: null,
+          isWsl: false,
+          expiresAt: 0,
+          status: "expired",
+        };
+      }
+      return null;
+    }
     return await res.json();
   } catch {
     return null;

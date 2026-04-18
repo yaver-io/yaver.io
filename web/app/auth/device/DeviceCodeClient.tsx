@@ -19,6 +19,10 @@ export type DeviceCodeInfo = null | {
   status?: "pending" | "authorized" | "expired";
 };
 
+const expiredCodeMessage = "This code has expired. Run 'yaver auth --headless' again to get a new code.";
+const invalidOrExpiredCodeMessage = "This code is invalid or has expired. Run 'yaver auth --headless' again to get a fresh code.";
+const authorizeTimeoutMessage = "Authorization timed out. If the terminal has stopped waiting, run 'yaver auth --headless' again to get a fresh code.";
+
 export default function DeviceCodeClient({
   initialCode = "",
   initialDeviceInfo = null,
@@ -37,7 +41,7 @@ export default function DeviceCodeClient({
   );
   const [errorMsg, setErrorMsg] = useState(
     initialDeviceInfo?.status === "expired"
-      ? "This code has expired. Run 'yaver auth --headless' again to get a new code."
+      ? expiredCodeMessage
       : ""
   );
   const inputRef = useRef<HTMLInputElement>(null);
@@ -72,7 +76,13 @@ export default function DeviceCodeClient({
         const res = await fetch(`${CONVEX_URL}/auth/device-code/info?user_code=${encodeURIComponent(prefillCode)}`, {
           cache: "no-store",
         });
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (res.status === 404 || res.status === 410) {
+            setStatus("error");
+            setErrorMsg(invalidOrExpiredCodeMessage);
+          }
+          return;
+        }
         const data = await res.json();
         if (cancelled || !data) return;
         setDeviceInfo(data);
@@ -81,7 +91,7 @@ export default function DeviceCodeClient({
           setErrorMsg("");
         } else if (data.status === "expired") {
           setStatus("error");
-          setErrorMsg("This code has expired. Run 'yaver auth --headless' again to get a new code.");
+          setErrorMsg(expiredCodeMessage);
         }
       } catch {
         // Keep the current UI; polling is best-effort only.
@@ -222,6 +232,11 @@ export default function DeviceCodeClient({
         return deviceInfo.platform;
     }
   })();
+  const codeNeedsRefresh =
+    deviceInfo?.status === "expired" ||
+    errorMsg === expiredCodeMessage ||
+    errorMsg === invalidOrExpiredCodeMessage ||
+    errorMsg === authorizeTimeoutMessage;
 
   const handleAuthorize = async (userCode: string, authToken: string) => {
     const cleaned = userCode.toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -235,6 +250,8 @@ export default function DeviceCodeClient({
     setStatus("loading");
     setErrorMsg("");
 
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 12000);
     try {
       const res = await fetch(`${CONVEX_URL}/auth/device-code/authorize`, {
         method: "POST",
@@ -242,15 +259,17 @@ export default function DeviceCodeClient({
           "Content-Type": "application/json",
           Authorization: `Bearer ${authToken}`,
         },
+        signal: controller.signal,
         body: JSON.stringify({ userCode: formatted }),
       });
+      window.clearTimeout(timeout);
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: "Unknown error" }));
         if (res.status === 404) {
           setErrorMsg("Invalid code. Check the code in your terminal and try again.");
         } else if (res.status === 410) {
-          setErrorMsg("This code has expired. Run 'yaver auth' again to get a new code.");
+          setErrorMsg(expiredCodeMessage);
         } else if (res.status === 409) {
           setErrorMsg("This code has already been used.");
         } else {
@@ -261,8 +280,13 @@ export default function DeviceCodeClient({
       }
 
       setStatus("success");
-    } catch {
-      setErrorMsg("Network error. Please try again.");
+    } catch (error) {
+      window.clearTimeout(timeout);
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setErrorMsg(authorizeTimeoutMessage);
+      } else {
+        setErrorMsg("Could not reach Yaver. Check your connection and try again.");
+      }
       setStatus("error");
     }
   };
@@ -298,6 +322,46 @@ export default function DeviceCodeClient({
   if (!token) {
     const returnUrl = `/auth/device${prefillCode ? `?code=${prefillCode}` : ""}`;
     const authUrl = `/auth?client=web&return=${encodeURIComponent(returnUrl)}`;
+    if (codeNeedsRefresh) {
+      return (
+        <div className="flex min-h-[70vh] items-center justify-center px-6 py-20">
+          <div className="w-full max-w-md">
+            <div className="mb-8 text-center">
+              <span className="text-2xl font-bold tracking-tight text-surface-50">
+                yaver<span className="font-normal text-surface-500">.io</span>
+              </span>
+              <p className="mt-3 text-sm text-surface-500">
+                Remote machine authorization
+              </p>
+            </div>
+            <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-5 py-5">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300">
+                Code expired
+              </div>
+              <p className="mt-3 text-sm leading-relaxed text-surface-200">
+                {errorMsg || expiredCodeMessage}
+              </p>
+              {prefillCode ? (
+                <div className="mt-4 rounded-xl border border-surface-700 bg-surface-950/70 px-4 py-3 text-center">
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Expired Device Code</div>
+                  <div className="mt-1 font-mono text-2xl font-bold tracking-[0.28em] text-surface-50">
+                    {prefillCode}
+                  </div>
+                </div>
+              ) : null}
+              <div className="mt-5 rounded-xl border border-surface-800 bg-surface-950/70 px-4 py-4 text-sm text-surface-300">
+                <div className="font-semibold text-surface-50">Next step</div>
+                <p className="mt-2">
+                  Go back to the terminal on the remote machine and run{" "}
+                  <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-300">yaver auth --headless</code>{" "}
+                  again to generate a fresh code.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="flex min-h-[70vh] items-center justify-center px-6 py-20">
         <div className="w-full max-w-md">
@@ -406,6 +470,38 @@ export default function DeviceCodeClient({
 
           <p className="mt-6 text-center text-xs text-surface-600">
             After login, Yaver comes back here and links the remote machine automatically.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (codeNeedsRefresh) {
+    return (
+      <div className="flex min-h-[70vh] items-center justify-center px-6 py-20">
+        <div className="w-full max-w-sm">
+          <div className="mb-8 text-center">
+            <span className="text-2xl font-bold tracking-tight text-surface-50">
+              yaver<span className="font-normal text-surface-500">.io</span>
+            </span>
+            <p className="mt-3 text-sm text-surface-500">
+              Remote machine authorization
+            </p>
+          </div>
+          <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-4 text-sm text-amber-200">
+            {errorMsg || expiredCodeMessage}
+          </div>
+          {prefillCode ? (
+            <div className="mt-4 rounded-xl border border-surface-700 bg-surface-950/70 px-4 py-3 text-center">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Expired Device Code</div>
+              <div className="mt-1 font-mono text-2xl font-bold tracking-[0.28em] text-surface-50">
+                {prefillCode}
+              </div>
+            </div>
+          ) : null}
+          <p className="mt-6 text-center text-sm text-surface-400">
+            Generate a fresh code from the terminal with{" "}
+            <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-300">yaver auth --headless</code>.
           </p>
         </div>
       </div>
