@@ -2,71 +2,37 @@ import Image from "next/image";
 import Link from "next/link";
 import {
   DOWNLOAD_SLUGS,
-  fetchClientConfig,
+  fetchDownloadFallbacks,
   fetchDownloads,
   findDownload,
   formatFileSize,
+  type DownloadSlug,
 } from "@/lib/downloads";
 
-const GITHUB_RELEASE = "https://github.com/kivanccakmak/yaver.io/releases/latest";
-const APT_REPO = "https://raw.githubusercontent.com/kivanccakmak/apt-yaver/main";
-
-const linuxArtifacts = [
+const directArtifacts = [
   {
-    title: "Linux ARM64 AppImage",
-    description: "Portable desktop app for ARM64 Linux. No package manager required.",
-    slug: "linux-appimage-arm64" as const,
-    fallbackLabel: "arm64",
-    installHint: "chmod +x Yaver-arm64.AppImage && ./Yaver-arm64.AppImage",
-  },
-  {
-    title: "Linux ARM64 .deb",
-    description: "Native Debian and Ubuntu package for ARM64 Linux machines.",
-    slug: "linux-deb-arm64" as const,
-    fallbackLabel: "arm64",
-    installHint: "sudo dpkg -i yaver_*_arm64.deb  # or: sudo apt install ./yaver_*_arm64.deb",
-  },
-  {
-    title: "Linux ARM64 .rpm",
-    description: "Fedora, RHEL, openSUSE — CLI package for aarch64 machines.",
-    slug: "linux-rpm-arm64" as const,
-    fallbackLabel: "arm64",
-    installHint: "sudo rpm -i yaver_*_aarch64.rpm  # or: sudo dnf install ./yaver_*_aarch64.rpm",
+    title: "Linux x64 tarball",
+    description: "Raw amd64 agent binary tarball for Linux hosts.",
+    slug: "linux-tarball-amd64" as const,
+    installHint: "tar xzf yaver-*-linux-amd64.tar.gz && sudo mv yaver-linux-amd64 /usr/local/bin/yaver",
   },
   {
     title: "Linux ARM64 tarball",
-    description: "Raw binary tarball for any ARM64 Linux. Unzip and move to PATH.",
+    description: "Raw arm64 agent binary tarball for Linux hosts.",
     slug: "linux-tarball-arm64" as const,
-    fallbackLabel: "arm64",
     installHint: "tar xzf yaver-*-linux-arm64.tar.gz && sudo mv yaver-linux-arm64 /usr/local/bin/yaver",
   },
   {
-    title: "Linux x64 AppImage",
-    description: "Portable desktop app. No package manager required.",
-    slug: "linux-appimage-amd64" as const,
-    fallbackLabel: "x64 fallback",
-    installHint: "chmod +x Yaver-amd64.AppImage && ./Yaver-amd64.AppImage",
+    title: "macOS Apple Silicon tarball",
+    description: "Direct agent binary archive for Apple Silicon Macs.",
+    slug: "macos-arm64" as const,
+    installHint: "tar xzf yaver-*-darwin-arm64.tar.gz && sudo mv yaver-darwin-arm64 /usr/local/bin/yaver",
   },
   {
-    title: "Linux x64 .deb",
-    description: "Native Debian and Ubuntu package for direct install.",
-    slug: "linux-deb-amd64" as const,
-    fallbackLabel: "x64 fallback",
-    installHint: "sudo dpkg -i yaver_*_amd64.deb  # or: sudo apt install ./yaver_*_amd64.deb",
-  },
-  {
-    title: "Linux x64 .rpm",
-    description: "Fedora, RHEL, openSUSE — CLI package for x86_64 machines.",
-    slug: "linux-rpm-amd64" as const,
-    fallbackLabel: "x64 fallback",
-    installHint: "sudo rpm -i yaver_*_x86_64.rpm  # or: sudo dnf install ./yaver_*_x86_64.rpm",
-  },
-  {
-    title: "Linux x64 tarball",
-    description: "Raw binary tarball for any x86_64 Linux. Unzip and move to PATH.",
-    slug: "linux-tarball-amd64" as const,
-    fallbackLabel: "x64 fallback",
-    installHint: "tar xzf yaver-*-linux-amd64.tar.gz && sudo mv yaver-linux-amd64 /usr/local/bin/yaver",
+    title: "macOS Intel tarball",
+    description: "Direct agent binary archive for Intel Macs.",
+    slug: "macos-x64" as const,
+    installHint: "tar xzf yaver-*-darwin-amd64.tar.gz && sudo mv yaver-darwin-amd64 /usr/local/bin/yaver",
   },
 ];
 
@@ -109,78 +75,24 @@ function CommandCard({ label, commands }: { label: string; commands: string[] })
 }
 
 export default async function DownloadPage() {
-  const [downloadsResult, configResult] = await Promise.allSettled([
+  const [downloadsResult, fallbacksResult] = await Promise.allSettled([
     fetchDownloads(),
-    fetchClientConfig(),
+    fetchDownloadFallbacks(),
   ]);
   const downloads = downloadsResult.status === "fulfilled" ? downloadsResult.value : [];
-  const config = configResult.status === "fulfilled" ? configResult.value : {};
-  const cliVersion = config.cliVersion;
-  const armAppImage = findDownload(downloads, DOWNLOAD_SLUGS["linux-appimage-arm64"]);
-  const x64AppImage = findDownload(downloads, DOWNLOAD_SLUGS["linux-appimage-amd64"]);
-  const armDeb = findDownload(downloads, DOWNLOAD_SLUGS["linux-deb-arm64"]);
-  const x64Deb = findDownload(downloads, DOWNLOAD_SLUGS["linux-deb-amd64"]);
-  const appImageSlug = armAppImage ? "linux-appimage-arm64" : "linux-appimage-amd64";
-  const appImageName = armAppImage ? "Yaver-arm64.AppImage" : "Yaver-amd64.AppImage";
-  const debSlug = armDeb ? "linux-deb-arm64" : "linux-deb-amd64";
-  const debName = armDeb ? "yaver-arm64.deb" : "yaver-amd64.deb";
-  const commandBlocks = [
-    {
-      label: "Fastest start (npm bootstrap)",
-      commands: [
-        "npm install -g yaver-cli",
-        "yaver auth",
-        "yaver serve",
-        "# same install also supports: yaver push",
-      ],
-    },
-    {
-      label: "apt (Debian / Ubuntu)",
-      commands: [
-        "curl -fsSL https://raw.githubusercontent.com/kivanccakmak/apt-yaver/main/KEY.gpg | sudo gpg --dearmor -o /usr/share/keyrings/yaver.gpg",
-        'echo "deb [signed-by=/usr/share/keyrings/yaver.gpg] https://raw.githubusercontent.com/kivanccakmak/apt-yaver/main ./ stable main" | sudo tee /etc/apt/sources.list.d/yaver.list',
-        "sudo apt update && sudo apt install yaver",
-      ],
-    },
-    {
-      label: "AppImage quick start",
-      commands: [
-        `curl -L https://yaver.io/download/${appImageSlug} -o ${appImageName}`,
-        `chmod +x ${appImageName}`,
-        `./${appImageName}`,
-      ],
-    },
-    {
-      label: "Native CLI on Linux",
-      commands: [
-        "brew install kivanccakmak/yaver/yaver",
-        "yaver auth",
-        "yaver serve",
-      ],
-    },
-    {
-      label: "One-liner (any Linux, auto-detect arch)",
-      commands: [
-        "curl -fsSL https://yaver.io/install.sh | sh",
-        "yaver auth && yaver serve",
-      ],
-    },
-    {
-      label: "dnf / rpm (Fedora / RHEL / openSUSE)",
-      commands: [
-        `curl -L https://yaver.io/download/linux-rpm-amd64 -o yaver.rpm`,
-        "sudo dnf install ./yaver.rpm  # or: sudo rpm -i yaver.rpm",
-      ],
-    },
-    {
-      label: "dpkg (offline .deb install)",
-      commands: [
-        `curl -L https://yaver.io/download/${debSlug} -o ${debName}`,
-        `sudo dpkg -i ${debName}`,
-        "sudo apt-get install -f  # resolve any missing deps",
-      ],
-    },
-  ];
+  const fallbacks = fallbacksResult.status === "fulfilled" ? fallbacksResult.value : {};
+
+  function resolveArtifact(slug: DownloadSlug) {
+    const storage = findDownload(downloads, DOWNLOAD_SLUGS[slug]);
+    const fallback = fallbacks[slug];
+    return {
+      href: storage?.url ?? fallback?.href ?? "/download",
+      filename: storage?.filename ?? fallback?.filename ?? "Open download page",
+      size: storage?.size ?? fallback?.size ?? 0,
+      version: storage?.version ?? fallback?.version,
+      direct: Boolean(storage?.url) || Boolean(fallback?.direct),
+    };
+  }
 
   return (
     <div className="px-6 py-16 md:py-20">
@@ -205,54 +117,50 @@ export default async function DownloadPage() {
                 Install the Yaver agent without guessing.
               </h1>
               <p className="mt-4 max-w-2xl text-sm leading-6 text-surface-400 md:text-base">
-                Fastest start: `npm install -g yaver-cli`. It installs the `yaver` command for both
-                the Go agent and third-party React Native push-to-device. Native package-manager and
-                direct-download paths are still available for Linux, macOS, or WSL.
+                The supported landing-page paths are the install script plus direct agent tarballs. I
+                verified the script on fresh Hetzner Linux hosts and trimmed out the broken package-manager
+                and HTML-fallback routes.
               </p>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-surface-500">
-                Use package-manager installs when you want upgrades. Use direct artifacts when you just need a file fast.
+                Native Windows is not a main path here. Use WSL2 on Windows, and use the Yaver mobile app
+                on your phone for the Hermes runtime container.
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
-                <DownloadButton href={`/download/${debSlug}`} primary>
-                  Linux
+                <DownloadButton href="#script" primary>
+                  Install script
                 </DownloadButton>
-                <DownloadButton href="/download/macos-arm64">
-                  macOS
+                <DownloadButton href="#tarballs">
+                  Direct tarballs
                 </DownloadButton>
                 <DownloadButton href="#wsl">
-                  WSL
+                  WSL2
                 </DownloadButton>
               </div>
             </div>
 
             <div className="rounded-[1.5rem] border border-surface-800 bg-surface-950/80 p-5">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-surface-500">
-                Main paths
+                Verified paths
               </p>
               <div className="mt-4 space-y-4">
                 <div className="rounded-xl border border-surface-800 bg-surface-900/80 p-4">
-                  <p className="text-sm font-semibold text-surface-100">Fastest start</p>
+                  <p className="text-sm font-semibold text-surface-100">Linux / WSL</p>
                   <p className="mt-1 text-sm text-surface-400">
-                    Use `npm install -g yaver-cli` when you want one install that covers `yaver serve`
-                    and `yaver push`.
+                    Use <code>curl -fsSL https://yaver.io/install.sh | sh</code>. This is the path I verified on
+                    fresh amd64 and arm64 Linux VMs.
                   </p>
                 </div>
                 <div className="rounded-xl border border-surface-800 bg-surface-900/80 p-4">
-                  <p className="text-sm font-semibold text-surface-100">Linux</p>
+                  <p className="text-sm font-semibold text-surface-100">Direct binaries</p>
                   <p className="mt-1 text-sm text-surface-400">
-                    Use `apt`, the install script, or a direct artifact when Yaver runs on the machine itself.
-                  </p>
-                </div>
-                <div className="rounded-xl border border-surface-800 bg-surface-900/80 p-4">
-                  <p className="text-sm font-semibold text-surface-100">macOS</p>
-                  <p className="mt-1 text-sm text-surface-400">
-                    Homebrew is the fast path when you want the Go agent on a Mac.
+                    Use the tarball routes below when you want an exact agent binary file instead of an installer.
                   </p>
                 </div>
                 <div id="wsl" className="rounded-xl border border-surface-800 bg-surface-900/80 p-4">
-                  <p className="text-sm font-semibold text-surface-100">WSL</p>
+                  <p className="text-sm font-semibold text-surface-100">WSL2 only</p>
                   <p className="mt-1 text-sm text-surface-400">
-                    Use the CLI inside WSL. Authenticate through Windows and load Hermes builds into Yaver on your phone.
+                    Run Yaver inside WSL2, let <code>yaver auth</code> hand browser sign-in off to Windows,
+                    and use the Yaver mobile app on the phone. The WSL path is Hermes bundle reload, not Xcode.
                   </p>
                 </div>
               </div>
@@ -260,110 +168,57 @@ export default async function DownloadPage() {
           </div>
         </section>
 
-        <section className="mt-10 grid gap-5 md:grid-cols-3">
-          {linuxArtifacts.map((artifact) => {
-            const resolved = findDownload(downloads, DOWNLOAD_SLUGS[artifact.slug]);
-            const size = resolved ? formatFileSize(resolved.size) : null;
-            return (
-              <div key={artifact.slug} className="rounded-2xl border border-surface-800 bg-surface-900 p-6">
-                <div className="flex items-center justify-between gap-4">
-                  <h2 className="text-lg font-semibold text-surface-50">{artifact.title}</h2>
-                  <span className="rounded-full border border-surface-700 px-2.5 py-1 text-[11px] font-medium text-surface-400">
-                    {resolved?.version ? `v${resolved.version}` : artifact.fallbackLabel}
-                  </span>
-                </div>
-                <p className="mt-3 text-sm leading-6 text-surface-400">{artifact.description}</p>
-                <p className="mt-3 text-xs text-surface-500">
-                  {size ? `${size} • ` : ""}
-                  {resolved?.filename ?? "Redirects to latest release artifact"}
-                </p>
-                <div className="mt-5 flex flex-wrap gap-3">
-                  <DownloadButton href={`/download/${artifact.slug}`} primary>
-                    Direct download
-                  </DownloadButton>
-                  {resolved?.url ? (
-                    <DownloadButton href={resolved.url}>Storage URL</DownloadButton>
-                  ) : (
-                    <DownloadButton href={GITHUB_RELEASE}>Release page</DownloadButton>
-                  )}
-                </div>
-                <div className="mt-5 rounded-xl bg-surface-950 p-4 font-mono text-[12px] text-surface-300">
-                  <div>
-                    <span className="text-surface-500">$</span>{" "}
-                    <span className="select-all">{artifact.installHint}</span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </section>
-
-        <section className="mt-10 grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
+        <section id="script" className="mt-10 grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
           <div className="rounded-2xl border border-surface-800 bg-surface-900 p-6">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-surface-500">
-                  apt repository
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold text-surface-50">
-                  Install Yaver with `apt`
-                </h2>
-              </div>
-              {cliVersion ? (
-                <span className="rounded-full border border-surface-700 px-3 py-1 text-xs font-medium text-surface-400">
-                  CLI v{cliVersion}
-                </span>
-              ) : null}
-            </div>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-surface-500">
+              Recommended
+            </p>
+            <h2 className="mt-2 text-2xl font-semibold text-surface-50">
+              Install with the auto-detect script
+            </h2>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-surface-400">
-              This path is for Debian and Ubuntu machines where you want `sudo apt install yaver`
-              and normal package upgrades later.
+              This is the main landing-page install method now. It auto-detects Linux vs macOS and amd64 vs
+              arm64, downloads the matching agent tarball, and installs <code>yaver</code> for you.
             </p>
-            {armDeb || x64Deb ? null : (
-              <p className="mt-3 text-sm leading-6 text-amber-300">
-                Direct `.deb` downloads are not published right now, so the button above falls back to the release page.
-              </p>
-            )}
             <div className="mt-6 space-y-4">
-              <CommandCard key={commandBlocks[0].label} label={commandBlocks[0].label} commands={commandBlocks[0].commands} />
-              <CommandCard key={commandBlocks[5].label} label={commandBlocks[5].label} commands={commandBlocks[5].commands} />
-              <CommandCard key={commandBlocks[4].label} label={commandBlocks[4].label} commands={commandBlocks[4].commands} />
-              <CommandCard key={commandBlocks[1].label} label={commandBlocks[1].label} commands={commandBlocks[1].commands} />
+              <CommandCard
+                label="Linux / macOS / WSL"
+                commands={[
+                  "curl -fsSL https://yaver.io/install.sh | sh",
+                  "yaver auth",
+                  "yaver serve",
+                ]}
+              />
             </div>
-            <p className="mt-4 text-xs text-surface-500">
-              Repo source:{" "}
-              <a
-                href={APT_REPO}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-surface-300 underline underline-offset-2 hover:text-surface-100"
-              >
-                {APT_REPO}
-              </a>
-            </p>
           </div>
 
           <div className="space-y-5">
-            <CommandCard label={commandBlocks[3].label} commands={commandBlocks[3].commands} />
-            <CommandCard
-              label="CLI on macOS"
-              commands={[
-                "brew install kivanccakmak/yaver/yaver",
-                "yaver auth",
-                "yaver serve",
-              ]}
-            />
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-6">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">
+                Removed from landing page
+              </p>
+              <div className="mt-4 space-y-3 text-sm leading-6 text-amber-100/90">
+                <p>
+                  <code>npm install -g yaver-cli</code> is temporarily not a landing-page recommendation because the
+                  published npm package and the published agent release assets are out of sync.
+                </p>
+                <p>
+                  The old <code>apt</code>, <code>rpm</code>, <code>.deb</code>, and AppImage entries were removed because
+                  several public routes were returning HTML fallbacks or installer packages instead of a clean agent install.
+                </p>
+              </div>
+            </div>
 
             <div className="rounded-2xl border border-surface-800 bg-surface-900 p-6">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-surface-500">
-                WSL
+                WSL2
               </p>
               <h2 className="mt-2 text-xl font-semibold text-surface-50">
                 Use Yaver from Windows Subsystem for Linux
               </h2>
               <p className="mt-3 text-sm leading-6 text-surface-400">
-                Run the Go agent inside WSL, let `yaver auth` hand browser sign-in off to Windows,
-                and use the Yaver mobile app on your phone for Hermes reload.
+                WSL2 is the supported Windows-hosted path. The right model is{" "}
+                <code>WSL -&gt; Hermes bundle -&gt; Yaver mobile app</code>.
               </p>
               <div className="mt-5 rounded-xl bg-surface-950 p-4 font-mono text-[13px] text-surface-300">
                 <div className="mb-2">
@@ -380,57 +235,80 @@ export default async function DownloadPage() {
                 </div>
                 <div>
                   <span className="text-surface-500">#</span>{" "}
-                  <span>Build Hermes in WSL, then load it into Yaver on your phone.</span>
+                  <span>Open the project in Yaver on the phone. WSL uses the Hermes bundle path, not Xcode.</span>
                 </div>
               </div>
-              <p className="mt-4 text-xs leading-6 text-surface-500">
-                WSL is for the agent and CLI path. Use the Windows browser for auth and the mobile app
-                as the runtime container on the phone.
-              </p>
             </div>
+          </div>
+        </section>
 
-            <div className="rounded-2xl border border-surface-800 bg-surface-900 p-6">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-surface-500">
-                Notes
-              </p>
-              <div className="mt-4 space-y-3 text-sm leading-6 text-surface-400">
-                <p>
-                  If one Linux artifact fails on your machine, try the other packaging format first.
-                  AppImage is usually the least fragile across distros.
+        <section id="tarballs" className="mt-10 grid gap-5 md:grid-cols-2">
+          {directArtifacts.map((artifact) => {
+            const resolved = resolveArtifact(artifact.slug);
+            const size = formatFileSize(resolved.size);
+            return (
+              <div key={artifact.slug} className="rounded-2xl border border-surface-800 bg-surface-900 p-6">
+                <div className="flex items-center justify-between gap-4">
+                  <h2 className="text-lg font-semibold text-surface-50">{artifact.title}</h2>
+                  <span className="rounded-full border border-surface-700 px-2.5 py-1 text-[11px] font-medium text-surface-400">
+                    {resolved.version ? `v${resolved.version}` : "tarball"}
+                  </span>
+                </div>
+                <p className="mt-3 text-sm leading-6 text-surface-400">{artifact.description}</p>
+                <p className="mt-3 text-xs text-surface-500">
+                  {size ? `${size} • ` : ""}
+                  {resolved.filename}
                 </p>
-                <p>
-                  If you only need the agent binary and not the desktop shell, the CLI install path is
-                  lighter than the Electron app.
-                </p>
-                <p>
-                  On Windows Subsystem for Linux, use the CLI path inside WSL rather than the Linux
-                  desktop AppImage. `yaver auth` now hands browser sign-in off to Windows when possible.
-                </p>
-                <p>
-                  Static docs and direct links now point at stable public routes under{" "}
-                  <code>/download/...</code>, not one-off storage URLs.
-                </p>
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <DownloadButton href={`/download/${artifact.slug}`} primary>
+                    Stable route
+                  </DownloadButton>
+                  <DownloadButton href={resolved.href}>
+                    {resolved.direct ? "Direct file" : "Download page"}
+                  </DownloadButton>
+                </div>
+                <div className="mt-5 rounded-xl bg-surface-950 p-4 font-mono text-[12px] text-surface-300">
+                  <div>
+                    <span className="text-surface-500">$</span>{" "}
+                    <span className="select-all">{artifact.installHint}</span>
+                  </div>
+                </div>
               </div>
-            </div>
+            );
+          })}
+        </section>
 
-            <div className="rounded-2xl border border-surface-800 bg-surface-900 p-6">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-surface-500">
-                Other links
-              </p>
-              <p className="mt-3 text-sm leading-6 text-surface-400">
-                Linux, macOS, and WSL are the main paths here. Keep the rest secondary.
-              </p>
-              <div className="mt-4 flex flex-wrap gap-3">
-                <DownloadButton href="/download/macos-arm64">macOS</DownloadButton>
-                <DownloadButton href={`/download/${debSlug}`}>Linux</DownloadButton>
-                <Link
-                  href="/manuals/cli-setup"
-                  className="inline-flex items-center justify-center rounded-xl border border-surface-700 px-4 py-2.5 text-sm font-semibold text-surface-200 transition hover:border-surface-500 hover:text-surface-50"
-                >
-                  WSL / CLI setup
-                </Link>
-              </div>
-            </div>
+        <section className="mt-10 rounded-2xl border border-surface-800 bg-surface-900 p-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-surface-500">
+            Notes
+          </p>
+          <div className="mt-4 space-y-3 text-sm leading-6 text-surface-400">
+            <p>
+              The download routes above are restricted to exact agent tarballs so <code>/download/...</code> does not
+              silently hand back HTML when a package file is missing.
+            </p>
+            <p>
+              If you only need a Linux or macOS agent quickly, use the install script. If you need a specific file for
+              packaging or mirroring, use the tarball routes.
+            </p>
+            <p>
+              WSL2 is for the agent and CLI path. Use the Windows browser for auth and the Yaver mobile app on your
+              phone as the runtime container.
+            </p>
+          </div>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <Link
+              href="/manuals/cli-setup"
+              className="inline-flex items-center justify-center rounded-xl border border-surface-700 px-4 py-2.5 text-sm font-semibold text-surface-200 transition hover:border-surface-500 hover:text-surface-50"
+            >
+              CLI setup
+            </Link>
+            <Link
+              href="/manuals/relay-setup"
+              className="inline-flex items-center justify-center rounded-xl border border-surface-700 px-4 py-2.5 text-sm font-semibold text-surface-200 transition hover:border-surface-500 hover:text-surface-50"
+            >
+              Relay setup
+            </Link>
           </div>
         </section>
       </div>

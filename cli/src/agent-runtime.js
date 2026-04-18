@@ -4,20 +4,23 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { pipeline } = require('stream/promises');
 const https = require('https');
+const semver = require('semver');
 
 const PACKAGE = require('../package.json');
 
 const DEFAULT_REPO = process.env.YAVER_AGENT_REPO || 'kivanccakmak/yaver.io';
-const AGENT_VERSION = process.env.YAVER_AGENT_VERSION || PACKAGE.version;
+const WINDOWS_REPO = process.env.YAVER_WINDOWS_AGENT_REPO || 'kivanccakmak/yaver-cli';
 const CACHE_ROOT = process.env.YAVER_AGENT_CACHE_DIR || path.join(os.homedir(), '.yaver', 'bin');
+let resolvedAgentVersionPromise = null;
+const resolvedAssetPromiseByKey = new Map();
 
 async function ensureAgentBinary({ quiet = false } = {}) {
-  const asset = resolveAsset();
+  const asset = await resolveAsset();
   const localAgentPath = resolveLocalAgentBinary(asset);
   if (localAgentPath) {
     return localAgentPath;
   }
-  const installDir = path.join(CACHE_ROOT, AGENT_VERSION, asset.cacheKey);
+  const installDir = path.join(CACHE_ROOT, asset.version, asset.cacheKey);
   const binaryPath = path.join(installDir, asset.binaryName);
 
   if (fs.existsSync(binaryPath)) {
@@ -31,7 +34,7 @@ async function ensureAgentBinary({ quiet = false } = {}) {
   const tmpPath = path.join(installDir, asset.downloadName);
 
   if (!quiet) {
-    console.error(`Installing Yaver agent ${AGENT_VERSION} for ${asset.cacheKey}...`);
+    console.error(`Installing Yaver agent ${asset.version} for ${asset.cacheKey}...`);
   }
 
   await downloadToFile(asset.url, tmpPath);
@@ -39,6 +42,12 @@ async function ensureAgentBinary({ quiet = false } = {}) {
   if (asset.archiveType === 'tar.gz') {
     await extractTarball(tmpPath, installDir);
     fs.rmSync(tmpPath, { force: true });
+    if (!fs.existsSync(binaryPath) && asset.extractedBinaryName) {
+      const extractedPath = path.join(installDir, asset.extractedBinaryName);
+      if (fs.existsSync(extractedPath)) {
+        fs.renameSync(extractedPath, binaryPath);
+      }
+    }
   } else {
     fs.renameSync(tmpPath, binaryPath);
   }
@@ -82,14 +91,10 @@ async function runAgentCommand(args, options = {}) {
 }
 
 function resolveAgentInfo() {
-  const asset = resolveAsset();
   return {
-    version: AGENT_VERSION,
+    version: process.env.YAVER_AGENT_VERSION || PACKAGE.version,
     repo: DEFAULT_REPO,
-    asset: asset.downloadName,
-    binaryName: asset.binaryName,
-    cacheDir: path.join(CACHE_ROOT, AGENT_VERSION, asset.cacheKey),
-    downloadUrl: asset.url,
+    note: 'Run a real agent command once to resolve the current published agent release.',
   };
 }
 
@@ -109,7 +114,7 @@ function resolveLocalAgentCommand(agentArgs) {
     return { command: process.env.YAVER_AGENT_BIN, args: agentArgs };
   }
 
-  const asset = resolveAsset();
+  const asset = resolveLocalAsset();
   const localBinary = resolveLocalAgentBinary(asset);
   if (localBinary) {
     return { command: localBinary, args: agentArgs };
@@ -128,7 +133,7 @@ function resolveLocalAgentCommand(agentArgs) {
   return null;
 }
 
-function resolveAsset() {
+function resolveLocalAsset() {
   const platform = process.platform;
   const arch = process.arch;
   const goArch = arch === 'x64' ? 'amd64' : arch === 'arm64' ? 'arm64' : null;
@@ -143,7 +148,8 @@ function resolveAsset() {
       binaryName: 'yaver.exe',
       downloadName: `yaver-windows-${goArch}.exe`,
       archiveType: 'exe',
-      url: releaseUrl(`yaver-windows-${goArch}.exe`),
+      url: '',
+      version: process.env.YAVER_AGENT_VERSION || PACKAGE.version,
     };
   }
 
@@ -151,17 +157,111 @@ function resolveAsset() {
     return {
       cacheKey: `${platform}-${goArch}`,
       binaryName: 'yaver',
+      extractedBinaryName: `yaver-${platform}-${goArch}`,
       downloadName: `yaver-${platform}-${goArch}.tar.gz`,
       archiveType: 'tar.gz',
-      url: releaseUrl(`yaver-${platform}-${goArch}.tar.gz`),
+      url: '',
+      version: process.env.YAVER_AGENT_VERSION || PACKAGE.version,
     };
   }
 
   throw new Error(`unsupported platform for npm bootstrap: ${platform}`);
 }
 
-function releaseUrl(assetName) {
-  return `https://github.com/${DEFAULT_REPO}/releases/download/v${AGENT_VERSION}/${assetName}`;
+async function resolveAsset() {
+  const platform = process.platform;
+  const arch = process.arch;
+  const goArch = arch === 'x64' ? 'amd64' : arch === 'arm64' ? 'arm64' : null;
+
+  if (!goArch) {
+    throw new Error(`unsupported architecture for npm bootstrap: ${arch}`);
+  }
+
+  const cacheKey = `${platform}-${goArch}`;
+  if (!resolvedAssetPromiseByKey.has(cacheKey)) {
+    resolvedAssetPromiseByKey.set(cacheKey, fetchRemoteAsset(platform, goArch));
+  }
+  return resolvedAssetPromiseByKey.get(cacheKey);
+}
+
+async function fetchRemoteAsset(platform, goArch) {
+  if (platform === 'win32') {
+    const release = await fetchLatestRelease(WINDOWS_REPO);
+    const asset = findReleaseAsset(release, [`yaver-windows-${goArch}.exe`]);
+    if (!asset) {
+      throw new Error(`could not find Windows agent asset for ${goArch} in ${WINDOWS_REPO}`);
+    }
+    return {
+      cacheKey: `${platform}-${goArch}`,
+      binaryName: 'yaver.exe',
+      downloadName: asset.name,
+      archiveType: 'exe',
+      url: asset.browser_download_url,
+      version: release.tag_name.replace(/^v/, ''),
+    };
+  }
+
+  if (platform === 'darwin' || platform === 'linux') {
+    const release = await fetchLatestRelease(DEFAULT_REPO);
+    const version = release.tag_name.replace(/^v/, '');
+    const asset = findReleaseAsset(release, [
+      `yaver-v${version}-${platform}-${goArch}.tar.gz`,
+      `yaver-${platform}-${goArch}.tar.gz`,
+    ]);
+    if (!asset) {
+      throw new Error(`could not find ${platform}/${goArch} agent tarball in ${DEFAULT_REPO}`);
+    }
+    return {
+      cacheKey: `${platform}-${goArch}`,
+      binaryName: 'yaver',
+      extractedBinaryName: `yaver-${platform}-${goArch}`,
+      downloadName: asset.name,
+      archiveType: 'tar.gz',
+      url: asset.browser_download_url,
+      version,
+    };
+  }
+
+  throw new Error(`unsupported platform for npm bootstrap: ${platform}`);
+}
+
+async function fetchLatestRelease(repo) {
+  const response = await request(`https://api.github.com/repos/${repo}/releases?per_page=20`, {
+    headers: {
+      'User-Agent': `yaver-cli/${PACKAGE.version}`,
+      Accept: 'application/vnd.github+json',
+    },
+  });
+  const body = await readResponseBody(response);
+  if (response.statusCode && response.statusCode >= 400) {
+    throw new Error(`failed to resolve latest release (${response.statusCode}) from ${repo}`);
+  }
+
+  let releases;
+  try {
+    releases = JSON.parse(body);
+  } catch (error) {
+    throw new Error(`invalid release metadata from ${repo}: ${error.message}`);
+  }
+
+  const latest = Array.isArray(releases)
+    ? releases.find((release) => !release.draft && !release.prerelease && semver.valid(String(release.tag_name || '').replace(/^v/, '')))
+    : null;
+
+  if (!latest || !latest.tag_name) {
+    throw new Error(`could not find a published semver release in ${repo}`);
+  }
+
+  return latest;
+}
+
+function findReleaseAsset(release, names) {
+  const byName = new Map((release.assets || []).map((asset) => [asset.name, asset]));
+  for (const name of names) {
+    const asset = byName.get(name);
+    if (asset) return asset;
+  }
+  return null;
 }
 
 async function downloadToFile(url, destPath) {
@@ -172,15 +272,27 @@ async function downloadToFile(url, destPath) {
   await pipeline(response, fs.createWriteStream(destPath));
 }
 
-function request(url) {
+function request(url, options = {}) {
   return new Promise((resolve, reject) => {
-    https.get(url, (response) => {
+    https.get(url, options, (response) => {
       if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-        resolve(request(response.headers.location));
+        resolve(request(response.headers.location, options));
         return;
       }
       resolve(response);
     }).on('error', reject);
+  });
+}
+
+function readResponseBody(response) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    response.setEncoding('utf8');
+    response.on('data', (chunk) => {
+      body += chunk;
+    });
+    response.on('end', () => resolve(body));
+    response.on('error', reject);
   });
 }
 
