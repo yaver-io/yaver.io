@@ -34,7 +34,7 @@ import (
 const version = "1.95.5"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
-const defaultConvexSiteURL = "https://shocking-echidna-394.eu-west-1.convex.site"
+const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
 
 func augmentAgentPATH() {
 	home, err := os.UserHomeDir()
