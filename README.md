@@ -341,7 +341,7 @@ the resulting token back through the device-code flow.
 | **Winget** | `winget install Yaver.Yaver` |
 | **Chocolatey** | `choco install yaver` |
 | **AUR** | `git clone https://github.com/kivanccakmak/aur-yaver.git && cd aur-yaver && makepkg -si` |
-| **apt** (Debian/Ubuntu) | See [download page](https://yaver.io/download) for signed-repo setup, or grab a `.deb` from [releases](https://github.com/kivanccakmak/yaver.io/releases) and `sudo dpkg -i yaver_*_amd64.deb` |
+| **apt** (Debian/Ubuntu) | `echo "deb [arch=$(dpkg --print-architecture) trusted=yes] https://cdn.jsdelivr.net/gh/kivanccakmak/apt-yaver@main stable main" \| sudo tee /etc/apt/sources.list.d/yaver.list && sudo apt update && sudo apt install yaver` |
 | **dnf/rpm** (Fedora/RHEL) | Download `yaver_<version>_x86_64.rpm` from [releases](https://github.com/kivanccakmak/yaver.io/releases) and `sudo rpm -i yaver_*.rpm` (or `sudo dnf install ./yaver_*.rpm`) |
 | **AppImage** | Download from [download page](https://yaver.io/download), `chmod +x Yaver-*.AppImage && ./Yaver-*.AppImage` |
 | **Tarball** | `curl -fsSL https://yaver.io/install.sh \| sh` — auto-detects arch, downloads the right tarball, installs to `~/.local/bin/yaver` |

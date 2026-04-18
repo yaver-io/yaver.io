@@ -82,6 +82,18 @@ export default function CLISetupManual() {
               <div>
                 <span className="text-surface-400">$</span>{" "}
                 <span className="text-surface-200 select-all">
+                  {`echo "deb [arch=$(dpkg --print-architecture) trusted=yes] https://cdn.jsdelivr.net/gh/kivanccakmak/apt-yaver@main stable main" | sudo tee /etc/apt/sources.list.d/yaver.list`}
+                </span>
+              </div>
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200 select-all">
+                  sudo apt update && sudo apt install yaver
+                </span>
+              </div>
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200 select-all">
                   yaver auth
                 </span>
               </div>
@@ -95,7 +107,7 @@ export default function CLISetupManual() {
           </div>
 
           <h3 className="mb-2 mt-6 text-sm font-semibold text-surface-200">
-            Windows (Scoop)
+            Other package managers
           </h3>
           <div className="terminal mb-4">
             <div className="terminal-header">
