@@ -135,6 +135,58 @@ func TestCreatePhoneProject_FromPromptUsesGeneratedSpec(t *testing.T) {
 	}
 }
 
+func TestCreatePhoneProject_FromImportedConversationUsesAnalysis(t *testing.T) {
+	setupPhoneTestHome(t)
+	oldImport := runConversationImportGenerator
+	oldPrompt := runPhonePromptGenerator
+	t.Cleanup(func() {
+		runConversationImportGenerator = oldImport
+		runPhonePromptGenerator = oldPrompt
+	})
+	runConversationImportGenerator = func(spec AIGeneratorSpec) (string, error) {
+		return `{
+			"suggestedName":"Imported Planner",
+			"productGoal":"Turn a pasted thread into a real app plan.",
+			"technicalPlan":["analyze thread","generate prompt"],
+			"nextPrompt":"Build the imported-thread intake flow."
+		}`, nil
+	}
+	runPhonePromptGenerator = func(spec AIGeneratorSpec) (string, error) {
+		if !strings.Contains(spec.Prompt, "Build the imported-thread intake flow.") {
+			t.Fatalf("expected analyzed import prompt, got: %s", spec.Prompt)
+		}
+		return `{
+  "name": "Imported Planner",
+  "schema": {
+    "tables": [
+      {"name":"users","columns":[{"name":"id","type":"text","primary":true}]},
+      {"name":"ideas","columns":[{"name":"id","type":"text","primary":true,"default":"uuid"},{"name":"title","type":"text","required":true}]}
+    ]
+  },
+  "auth": { "personas": [] },
+  "seed": { "ideas": [{"id":"welcome","title":"Imported brief ready"}] },
+  "app": {
+    "summary": "Import-driven planner.",
+    "primaryEntity": "ideas",
+    "screens": [{"id":"ideas","title":"Ideas","kind":"list","table":"ideas"}]
+  }
+}`, nil
+	}
+
+	p, err := CreatePhoneProject(PhoneCreateSpec{
+		ImportContent: "user pasted a long Claude thread",
+	})
+	if err != nil {
+		t.Fatalf("create from import: %v", err)
+	}
+	if p.Name != "Imported Planner" {
+		t.Fatalf("name = %q", p.Name)
+	}
+	if p.Template != "prompt" {
+		t.Fatalf("template = %q", p.Template)
+	}
+}
+
 func TestExtractJSONObject_StripsFences(t *testing.T) {
 	got := extractJSONObject("```json\n{\"name\":\"demo\"}\n```")
 	if got != "{\"name\":\"demo\"}" {

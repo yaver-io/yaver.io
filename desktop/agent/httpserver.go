@@ -311,6 +311,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/project/wizard/generate", s.auth(s.handleWizardGenerate))
 	mux.HandleFunc("/project/wizard/session", s.auth(s.handleWizardSession))
 	mux.HandleFunc("/project/wizard/questions", s.auth(s.handleWizardQuestions))
+	mux.HandleFunc("/imports/conversation/plan", s.auth(s.handleConversationImportPlan))
 
 	// Forms — public submit endpoint, owner-managed CRUD
 	mux.HandleFunc("/forms", s.auth(s.handleForms))

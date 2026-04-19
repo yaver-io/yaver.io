@@ -138,6 +138,27 @@ export interface HybridReport {
   failedSteps: number;
 }
 
+export interface ConversationImportPlan {
+  sourceLabel: string;
+  sourceUrl?: string;
+  fetchedUrl?: string;
+  detectedTitle?: string;
+  suggestedName?: string;
+  normalizedText: string;
+  productGoal: string;
+  userProblem?: string;
+  summary?: string;
+  researchTopics?: string[];
+  surfaces?: string[];
+  technicalPlan?: string[];
+  dataFlow?: string[];
+  mvpScope?: string[];
+  risks?: string[];
+  assumptions?: string[];
+  nextPrompt?: string;
+  generatedPrompt: string;
+}
+
 export interface HybridEvent {
   type:
     | "plan_started"
@@ -4579,6 +4600,26 @@ export class QuicClient {
       if (!res.ok) return null;
       const data = await res.json();
       return Array.isArray(data?.questions) ? (data.questions as WizardQuestion[]) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async analyzeConversationImport(body: {
+    url?: string;
+    content?: string;
+    title?: string;
+    runner?: string;
+    workDir?: string;
+  }): Promise<ConversationImportPlan | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/imports/conversation/plan`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as ConversationImportPlan;
     } catch {
       return null;
     }

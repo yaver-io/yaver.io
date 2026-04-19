@@ -20,6 +20,9 @@ import { useDevice, type Device } from "../src/context/DeviceContext";
 import { AppBackButton } from "../src/components/AppBackButton";
 import { useAuth } from "../src/context/AuthContext";
 import { getLocalSecret, getUserSettings, LOCAL_KEYS, saveLocalSecret } from "../src/lib/auth";
+import { isCloudPreviewUser } from "../src/lib/cloudPreview";
+import { buildImportedConversationBrief, mergeImportedConversationPrompt } from "../src/lib/conversationImport";
+import { getYaverCloudBaseUrl } from "../src/lib/yaverCloud";
 import { quicClient } from "../src/lib/quic";
 import {
   PhoneProject,
@@ -41,7 +44,7 @@ type GitMode = "skip" | "later" | "providers-now";
 type CodingMode = "phone" | "runner";
 type MobileAiProvider = "openai" | "glm";
 
-const YAVER_CLOUD_BASE = "https://cloud.yaver.io";
+const YAVER_CLOUD_BASE = getYaverCloudBaseUrl();
 
 function pickDevMachines(all: Device[], currentId: string | undefined): Device[] {
   return all.filter(
@@ -61,9 +64,10 @@ export default function PhoneProjectsScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { connectionStatus, devices, activeDevice } = useDevice();
   const connected = connectionStatus === "connected";
+  const canUseCloudPreview = isCloudPreviewUser(user?.email);
 
   const [projects, setProjects] = useState<PhoneProject[]>([]);
   const [templates, setTemplates] = useState<PhoneTemplate[]>([]);
@@ -75,6 +79,8 @@ export default function PhoneProjectsScreen() {
   const [name, setName] = useState("");
   const [template, setTemplate] = useState("todos");
   const [prompt, setPrompt] = useState("");
+  const [importedConversation, setImportedConversation] = useState("");
+  const [analyzingImport, setAnalyzingImport] = useState(false);
   const [runner, setRunner] = useState<string>("");
   const [creating, setCreating] = useState(false);
   const [gitMode, setGitMode] = useState<GitMode>("skip");
@@ -98,6 +104,10 @@ export default function PhoneProjectsScreen() {
   const selectedDevMachine = useMemo(
     () => devMachines.find((d) => d.id === selectedDevMachineId) ?? null,
     [devMachines, selectedDevMachineId],
+  );
+  const importedBrief = useMemo(
+    () => (importedConversation.trim() ? buildImportedConversationBrief(importedConversation) : null),
+    [importedConversation],
   );
   const availableRunners = useMemo(() => {
     const runners = activeDevice?.runners ?? [];
@@ -168,16 +178,51 @@ export default function PhoneProjectsScreen() {
     void load();
   }, [load]);
 
+  const applyImportedConversation = useCallback(async () => {
+    if (!importedBrief) {
+      Alert.alert("Import conversation", "Paste a Claude, ChatGPT, or Codex thread first.");
+      return;
+    }
+    if (connected) {
+      setAnalyzingImport(true);
+      try {
+        const plan = await quicClient.analyzeConversationImport({
+          url: importedBrief.sourceUrl,
+          content: importedConversation,
+          title: importedBrief.title,
+          runner: runner || undefined,
+        });
+        if (!plan) {
+          throw new Error("Analysis failed");
+        }
+        if (!name.trim() && plan.suggestedName) {
+          setName(plan.suggestedName);
+        }
+        setPrompt(plan.generatedPrompt);
+        return;
+      } catch (e: any) {
+        Alert.alert("Import analysis", e?.message ?? "Analysis failed. Falling back to local brief generation.");
+      } finally {
+        setAnalyzingImport(false);
+      }
+    }
+    if (!name.trim() && importedBrief.suggestedName) {
+      setName(importedBrief.suggestedName);
+    }
+    setPrompt((prev) => mergeImportedConversationPrompt(prev, importedConversation));
+  }, [connected, importedBrief, importedConversation, name, runner]);
+
   async function create() {
-    if (!name.trim()) {
+    if (!name.trim() && !importedBrief?.suggestedName) {
       Alert.alert("Phone Backend", "Project name is required");
       return;
     }
+    const effectivePrompt = mergeImportedConversationPrompt(prompt, importedConversation);
     const activePhoneKey = mobileAiProvider === "glm" ? glmKey.trim() : openAiKey.trim();
-    if (codingMode === "phone" && !activePhoneKey) {
+    if (codingMode === "phone" && effectivePrompt.trim() && !activePhoneKey) {
       Alert.alert(
         `${mobileAiProvider === "glm" ? "GLM" : "OpenAI"} key required`,
-        `On-phone coding needs your ${mobileAiProvider === "glm" ? "GLM" : "OpenAI"} API key.`,
+        `On-phone prompt or thread import needs your ${mobileAiProvider === "glm" ? "GLM" : "OpenAI"} API key.`,
       );
       return;
     }
@@ -188,40 +233,43 @@ export default function PhoneProjectsScreen() {
     if (codingMode === "runner" && startMode === "this-phone") {
       Alert.alert(
         "Pick a backend",
-        "Remote runner coding starts after you create this project on a Yaver agent, your dev machine, or Yaver Cloud.",
+        "Remote runner coding starts after you create this project on a Yaver agent or your dev machine.",
       );
       return;
     }
     setCreating(true);
     try {
-      if (codingMode === "phone" && openAiKey.trim()) {
+      if (codingMode === "phone" && effectivePrompt.trim() && openAiKey.trim()) {
         await saveLocalSecret(LOCAL_KEYS.openAiApiKey, openAiKey.trim());
       }
-      if (codingMode === "phone" && glmKey.trim()) {
+      if (codingMode === "phone" && effectivePrompt.trim() && glmKey.trim()) {
         await saveLocalSecret(LOCAL_KEYS.glmApiKey, glmKey.trim());
       }
-      if (codingMode === "phone") {
+      if (codingMode === "phone" && effectivePrompt.trim()) {
         await saveLocalSecret(LOCAL_KEYS.mobileCodingProvider, mobileAiProvider);
       }
       const draft =
-        codingMode === "phone" && prompt.trim()
+        codingMode === "phone" && effectivePrompt.trim()
           ? await generatePhoneProjectDraftFromPrompt({
               provider: mobileAiProvider,
               apiKey: activePhoneKey,
               name: name.trim(),
-              prompt: prompt.trim(),
+              prompt: effectivePrompt,
               template,
             })
           : {};
       const spec = {
-        name: name.trim(),
+        name: name.trim() || importedBrief?.suggestedName || "Imported Project",
         template: draft.template ?? (prompt.trim() ? undefined : template),
         schema: draft.schema,
         auth: draft.auth,
         seed: draft.seed,
         app: draft.app,
-        prompt: prompt.trim() || undefined,
-        runner: prompt.trim() && codingMode === "runner" ? runner || undefined : undefined,
+        prompt: effectivePrompt || undefined,
+        runner: effectivePrompt && codingMode === "runner" ? runner || undefined : undefined,
+        importUrl: !effectivePrompt && importedConversation.trim() ? importedBrief?.sourceUrl : undefined,
+        importContent: !effectivePrompt && importedConversation.trim() ? importedConversation.trim() : undefined,
+        importTitle: !effectivePrompt && importedConversation.trim() ? importedBrief?.title : undefined,
       };
       let p: PhoneProject | null = null;
 
@@ -261,6 +309,7 @@ export default function PhoneProjectsScreen() {
       if (!p) throw new Error("target returned no project");
       setName("");
       setPrompt("");
+      setImportedConversation("");
       setRunner(availableRunners[0]?.runnerId ?? "");
       setGitMode("skip");
       setStep(0);
@@ -389,7 +438,7 @@ export default function PhoneProjectsScreen() {
                 <TextInput
                   value={prompt}
                   onChangeText={setPrompt}
-                  placeholder="Todo app with login"
+                  placeholder="A simple app idea is enough. Example: Todo app with login"
                   placeholderTextColor={c.textMuted}
                   multiline
                   style={[styles.input, styles.promptInput, { color: c.textPrimary, borderColor: c.border }]}
@@ -417,6 +466,42 @@ export default function PhoneProjectsScreen() {
                     </Pressable>
                   ))}
                 </ScrollView>
+                <View style={[styles.importCard, { backgroundColor: c.bg, borderColor: c.border }]}>
+                  <Text style={[styles.label, { color: c.textMuted }]}>Add conversation or share URL (optional)</Text>
+                  <TextInput
+                    value={importedConversation}
+                    onChangeText={setImportedConversation}
+                    placeholder="Optional: paste a Claude/ChatGPT/Codex share URL or copied conversation."
+                    placeholderTextColor={c.textMuted}
+                    multiline
+                    style={[styles.input, styles.importInput, { color: c.textPrimary, borderColor: c.border }]}
+                  />
+                  {importedBrief ? (
+                    <View style={styles.importMetaRow}>
+                      <View style={[styles.importPill, { backgroundColor: c.accent + "18", borderColor: c.accent + "33" }]}>
+                        <Text style={[styles.importPillText, { color: c.textPrimary }]}>{importedBrief.sourceLabel}</Text>
+                      </View>
+                      <Text style={[styles.muted, { color: c.textMuted, flex: 1 }]}>
+                        {importedBrief.title || `${importedBrief.charCount} chars imported`}
+                      </Text>
+                    </View>
+                  ) : (
+                    <Text style={[styles.muted, { color: c.textMuted, marginTop: 8 }]}>
+                      Start with just your own app brief, or add a conversation/share URL if you want Yaver to infer the technical plan from it.
+                    </Text>
+                  )}
+                  <Pressable
+                    onPress={() => void applyImportedConversation()}
+                    disabled={analyzingImport}
+                    style={[styles.btnSecondary, { borderColor: c.border, marginTop: 10, opacity: analyzingImport ? 0.6 : 1 }]}
+                  >
+                    {analyzingImport ? (
+                      <ActivityIndicator color={c.textPrimary} />
+                    ) : (
+                      <Text style={[styles.btnText, { color: c.textPrimary }]}>Analyze thread and generate technical plan</Text>
+                    )}
+                  </Pressable>
+                </View>
               </>
             ) : null}
 
@@ -497,7 +582,7 @@ export default function PhoneProjectsScreen() {
                       style={[styles.input, { color: c.textPrimary, borderColor: c.border }]}
                     />
                     <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
-                      Required for phone-side AI kickoff. Save longer-term keys in Settings → Integrations.
+                      Only needed when you want Yaver to turn a prompt or imported thread into the first draft. Pure template starts work without it.
                     </Text>
                   </>
                 ) : null}
@@ -563,12 +648,14 @@ export default function PhoneProjectsScreen() {
                       disabled: !connected || devMachines.length === 0,
                       onLongPress: pickDevMachine,
                     },
-                    {
-                      id: "yaver-cloud" as StartMode,
-                      label: "Yaver Cloud",
-                      sub: "Managed cloud",
-                      disabled: !connected,
-                    },
+                    ...(canUseCloudPreview
+                      ? [{
+                          id: "yaver-cloud" as StartMode,
+                          label: "Yaver Cloud",
+                          sub: "Private preview",
+                          disabled: !connected,
+                        }]
+                      : []),
                   ] as const
                 ).map((opt) => (
                   <Pressable
@@ -698,11 +785,16 @@ export default function PhoneProjectsScreen() {
       templates,
       step,
       startMode,
+      canUseCloudPreview,
       codingMode,
       openAiKey,
       activeDevice,
+      applyImportedConversation,
+      analyzingImport,
       selectedDevMachine,
       devMachines.length,
+      importedConversation,
+      importedBrief,
     ],
   );
 
@@ -826,6 +918,32 @@ const styles = StyleSheet.create({
   promptInput: {
     minHeight: 84,
     textAlignVertical: "top",
+  },
+  importCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 12,
+  },
+  importInput: {
+    minHeight: 110,
+    textAlignVertical: "top",
+  },
+  importMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 8,
+  },
+  importPill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  importPillText: {
+    fontSize: 12,
+    fontWeight: "600",
   },
   choiceCard: {
     borderWidth: 1,

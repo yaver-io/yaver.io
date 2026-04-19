@@ -131,15 +131,18 @@ type PhoneStats struct {
 
 // PhoneCreateSpec is the payload for creating a new project.
 type PhoneCreateSpec struct {
-	Slug     string        `json:"slug"`
-	Name     string        `json:"name"`
-	Template string        `json:"template,omitempty"`
-	Schema   *PhoneSchema  `json:"schema,omitempty"`
-	Auth     *PhoneAuth    `json:"auth,omitempty"`
-	Seed     PhoneSeed     `json:"seed,omitempty"`
-	App      *PhoneAppSpec `json:"app,omitempty"`
-	Prompt   string        `json:"prompt,omitempty"`
-	Runner   string        `json:"runner,omitempty"`
+	Slug          string        `json:"slug"`
+	Name          string        `json:"name"`
+	Template      string        `json:"template,omitempty"`
+	Schema        *PhoneSchema  `json:"schema,omitempty"`
+	Auth          *PhoneAuth    `json:"auth,omitempty"`
+	Seed          PhoneSeed     `json:"seed,omitempty"`
+	App           *PhoneAppSpec `json:"app,omitempty"`
+	Prompt        string        `json:"prompt,omitempty"`
+	Runner        string        `json:"runner,omitempty"`
+	ImportURL     string        `json:"importUrl,omitempty"`
+	ImportContent string        `json:"importContent,omitempty"`
+	ImportTitle   string        `json:"importTitle,omitempty"`
 }
 
 var runPhonePromptGenerator = RunAIGenerator
@@ -185,6 +188,25 @@ func PhoneProjectDir(slug string) (string, error) {
 var ErrPhoneProjectExists = fmt.Errorf("phone project already exists")
 
 func CreatePhoneProject(spec PhoneCreateSpec) (*PhoneProject, error) {
+	if strings.TrimSpace(spec.Prompt) == "" && (strings.TrimSpace(spec.ImportURL) != "" || strings.TrimSpace(spec.ImportContent) != "") {
+		plan, err := AnalyzeConversationImport(ConversationImportRequest{
+			URL:     spec.ImportURL,
+			Content: spec.ImportContent,
+			Title:   spec.ImportTitle,
+			Runner:  spec.Runner,
+			WorkDir: ".",
+		})
+		if err != nil {
+			return nil, fmt.Errorf("analyze imported conversation: %w", err)
+		}
+		spec.Prompt = strings.TrimSpace(plan.GeneratedPrompt)
+		if strings.TrimSpace(spec.Name) == "" {
+			spec.Name = strings.TrimSpace(plan.SuggestedName)
+		}
+		if strings.TrimSpace(spec.Template) == "" {
+			spec.Template = "prompt"
+		}
+	}
 	if strings.TrimSpace(spec.Prompt) != "" && spec.Schema == nil && spec.Auth == nil && spec.Seed == nil {
 		gen, err := generatePhoneProjectFromPrompt(spec)
 		if err != nil {

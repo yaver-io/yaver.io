@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { agentClient, type AutoDevLoop } from "@/lib/agent-client";
+import { buildImportedConversationBrief, mergeImportedConversationPrompt } from "@/lib/conversation-import";
 import TerminalView from "./TerminalView";
 
 type Tab = "overview" | "autodev" | "agent" | "machines" | "containers" | "terminal" | "catalog" | "images" | "multiregion";
@@ -37,6 +38,8 @@ function AutodevWorkbench() {
   const [workDir, setWorkDir] = useState("");
   const [project, setProject] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [importedConversation, setImportedConversation] = useState("");
+  const [analyzingImport, setAnalyzingImport] = useState(false);
   const [runner, setRunner] = useState("");
   const [runners, setRunners] = useState<any[]>([]);
   const [busy, setBusy] = useState("");
@@ -48,6 +51,10 @@ function AutodevWorkbench() {
   const [picked, setPicked] = useState<number[]>([]);
   const [streamEvents, setStreamEvents] = useState<Array<{ id: string; type?: string; text?: string; runner?: string; tool?: string; detail?: string; status?: string }>>([]);
   const [connected, setConnected] = useState(agentClient.connectionState === "connected");
+  const importedBrief = useMemo(
+    () => (importedConversation.trim() ? buildImportedConversationBrief(importedConversation) : null),
+    [importedConversation],
+  );
 
   const activeLoop = useMemo(
     () =>
@@ -118,11 +125,28 @@ function AutodevWorkbench() {
       setBusy("Work dir is required.");
       return;
     }
+    let effectivePrompt = mergeImportedConversationPrompt(prompt, importedConversation);
+    if (!effectivePrompt && importedConversation.trim()) {
+      try {
+        const plan = await agentClient.analyzeConversationImport({
+          url: importedBrief?.sourceUrl,
+          content: importedConversation.trim(),
+          title: importedBrief?.title,
+          runner: runner || undefined,
+          workDir,
+        });
+        if (!project.trim() && plan.suggestedName) setProject(plan.suggestedName);
+        effectivePrompt = plan.generatedPrompt;
+      } catch (e) {
+        setBusy(e instanceof Error ? e.message : String(e));
+        return;
+      }
+    }
     setBusy("Starting autodev…");
     const res = await agentClient.autodevStart({
-      project: project || undefined,
+      project: project || importedBrief?.suggestedName || undefined,
       workDir,
-      prompt: prompt || undefined,
+      prompt: effectivePrompt || undefined,
       runner: runner || undefined,
       deploy: "auto",
       hours: "8",
@@ -136,6 +160,7 @@ function AutodevWorkbench() {
     }
     setBusy(`Started ${res.loopName}.`);
     setPrompt("");
+    setImportedConversation("");
     refresh();
   }
 
@@ -158,6 +183,26 @@ function AutodevWorkbench() {
     }
     setBusy("Idea generation started.");
     setTimeout(() => refresh(), 1500);
+  }
+
+  async function analyzeImportedConversation() {
+    if (!importedBrief) return;
+    setAnalyzingImport(true);
+    try {
+      const plan = await agentClient.analyzeConversationImport({
+        url: importedBrief.sourceUrl,
+        content: importedConversation,
+        title: importedBrief.title,
+        runner: runner || undefined,
+        workDir: workDir || undefined,
+      });
+      if (!project.trim() && plan.suggestedName) setProject(plan.suggestedName);
+      setPrompt(plan.generatedPrompt);
+    } catch (e) {
+      setBusy(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAnalyzingImport(false);
+    }
   }
 
   async function implementSelected() {
@@ -307,6 +352,36 @@ function AutodevWorkbench() {
                 placeholder="Ship onboarding, fix the rough edges, and keep tests green."
                 className="min-h-28 w-full rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-sm text-surface-100"
               />
+                <div className="rounded-xl border border-surface-800 bg-surface-950/70 p-3">
+                <div className="text-xs font-medium uppercase tracking-wide text-surface-400">Add conversation or share URL</div>
+                <div className="mt-1 text-xs text-surface-500">
+                  Optional. Start from your own prompt, or paste a Claude/ChatGPT/Codex thread so Yaver can derive the technical plan first.
+                </div>
+                <textarea
+                  value={importedConversation}
+                  onChange={(e) => setImportedConversation(e.target.value)}
+                  placeholder="Optional: paste a share URL or copied conversation."
+                  className="mt-3 min-h-28 w-full rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-sm text-surface-100"
+                />
+                {importedBrief ? (
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <div className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3 py-1 text-xs text-indigo-100">
+                      {importedBrief.sourceLabel}
+                    </div>
+                    <div className="text-xs text-surface-400">
+                      {importedBrief.title || `${importedBrief.charCount} chars imported`}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void analyzeImportedConversation()}
+                      disabled={analyzingImport || !connected}
+                      className="rounded-lg border border-surface-700 px-3 py-1.5 text-xs text-surface-200 hover:bg-surface-800 disabled:opacity-50"
+                    >
+                      {analyzingImport ? "Analyzing…" : "Analyze thread and generate technical plan"}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
               <select
                 value={runner}
                 onChange={(e) => setRunner(e.target.value)}

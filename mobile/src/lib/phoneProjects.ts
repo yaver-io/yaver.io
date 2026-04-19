@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { quicClient } from "./quic";
+import { getYaverCloudBaseUrl } from "./yaverCloud";
 import {
   browseLocalPhoneTable,
   deleteLocalPhoneProject,
@@ -127,6 +128,9 @@ export interface PhoneCreateSpec {
   app?: PhoneAppSpec;
   prompt?: string;
   runner?: string;
+  importUrl?: string;
+  importContent?: string;
+  importTitle?: string;
 }
 
 export type PhonePromoteTarget = string;
@@ -730,7 +734,7 @@ function resolvePhonePushTargetBase(target: PhonePushTarget): string {
     case "dev-hw":
       return `${target.relayHttpUrl.replace(/\/$/, "")}/d/${target.deviceId}`;
     case "yaver-cloud":
-      return (target.cloudBaseUrl ?? "https://cloud.yaver.io").replace(/\/$/, "");
+      return (target.cloudBaseUrl ?? getYaverCloudBaseUrl()).replace(/\/$/, "");
     case "custom":
       return target.baseUrl.replace(/\/$/, "");
   }
@@ -1314,7 +1318,7 @@ export interface PhonePushResult {
   project: PhoneProject;
 }
 
-const DEFAULT_YAVER_CLOUD_BASE = "https://cloud.yaver.io";
+const DEFAULT_YAVER_CLOUD_BASE = getYaverCloudBaseUrl();
 
 function resolveTargetBase(target: PhonePushTarget): string {
   switch (target.kind) {
@@ -1352,7 +1356,7 @@ export async function pushPhoneProject(
   // 1. Pull the bundle from the source (the phone-backend we're connected to).
   const exportParams = new URLSearchParams({ slug });
   if (opts.includeData) exportParams.set("includeData", "true");
-  if (opts.containerize) exportParams.set("containerize", "true");
+  if (target.kind === "yaver-cloud" || opts.containerize) exportParams.set("containerize", "true");
   const exportRes = await fetch(
     `${srcBase}/phone/projects/export?${exportParams.toString()}`,
     { headers: h },

@@ -6,6 +6,8 @@
  * Supports relay-first connection strategy with direct fallback.
  */
 
+import { getYaverCloudBaseUrl } from "@/lib/yaver-cloud";
+
 // ── Types ────────────────────────────────────────────────────────────
 
 export type TaskStatus = "queued" | "running" | "completed" | "failed" | "stopped";
@@ -97,6 +99,27 @@ export interface HybridEvent {
   plan?: HybridSubtask[];
   report?: HybridReport;
   retry?: number;
+}
+
+export interface ConversationImportPlan {
+  sourceLabel: string;
+  sourceUrl?: string;
+  fetchedUrl?: string;
+  detectedTitle?: string;
+  suggestedName?: string;
+  normalizedText: string;
+  productGoal: string;
+  userProblem?: string;
+  summary?: string;
+  researchTopics?: string[];
+  surfaces?: string[];
+  technicalPlan?: string[];
+  dataFlow?: string[];
+  mvpScope?: string[];
+  risks?: string[];
+  assumptions?: string[];
+  nextPrompt?: string;
+  generatedPrompt: string;
 }
 
 export interface AgentInfo {
@@ -2623,6 +2646,24 @@ class AgentClient {
     return res.json();
   }
 
+  async analyzeConversationImport(body: {
+    url?: string;
+    content?: string;
+    title?: string;
+    runner?: string;
+    workDir?: string;
+  }): Promise<ConversationImportPlan> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/imports/conversation/plan`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+    return data as ConversationImportPlan;
+  }
+
   // ── Schema / storage / jobs / logs SSE ───────────────────────────
 
   async backendSchema(directory?: string): Promise<any> {
@@ -3243,10 +3284,13 @@ class AgentClient {
   }
 
   /** Returns a blob of the tgz export so callers can .click() to download. */
-  async exportPhoneProjectBlob(slug: string, includeData = false): Promise<Blob | null> {
+  async exportPhoneProjectBlob(slug: string, includeData = false, containerize = false): Promise<Blob | null> {
     if (!this.isConnected || !this.baseUrl) return null;
+    const params = new URLSearchParams({ slug });
+    if (includeData) params.set("includeData", "true");
+    if (containerize) params.set("containerize", "true");
     const res = await fetch(
-      `${this.baseUrl}/phone/projects/export?slug=${encodeURIComponent(slug)}${includeData ? "&includeData=true" : ""}`,
+      `${this.baseUrl}/phone/projects/export?${params.toString()}`,
       { headers: this.authHeaders },
     );
     if (!res.ok) return null;
@@ -3266,10 +3310,14 @@ class AgentClient {
   async pushPhoneProject(
     slug: string,
     target: PhonePushTarget,
-    opts: { onConflict?: "reject" | "rename" | "overwrite"; skipSeed?: boolean; includeData?: boolean } = {},
+    opts: { onConflict?: "reject" | "rename" | "overwrite"; skipSeed?: boolean; includeData?: boolean; containerize?: boolean } = {},
   ): Promise<PhonePushResult> {
     this.assertConnected();
-    const blob = await this.exportPhoneProjectBlob(slug, opts.includeData);
+    const blob = await this.exportPhoneProjectBlob(
+      slug,
+      opts.includeData,
+      target.kind === "yaver-cloud" ? true : !!opts.containerize,
+    );
     if (!blob) throw new Error("export failed — agent not reachable");
 
     const form = new FormData();
@@ -3345,6 +3393,26 @@ export interface PhoneStats {
   perTable: Record<string, number>;
   dbBytes: number;
 }
+export interface PhoneScreenAction {
+  label: string;
+  kind: string;
+  target?: string;
+  table?: string;
+  description?: string;
+}
+export interface PhoneScreenSpec {
+  id: string;
+  title: string;
+  kind: string;
+  table?: string;
+  emptyState?: string;
+  actions?: PhoneScreenAction[];
+}
+export interface PhoneAppSpec {
+  summary?: string;
+  primaryEntity?: string;
+  screens?: PhoneScreenSpec[];
+}
 export interface PhoneProject {
   slug: string;
   name: string;
@@ -3369,6 +3437,12 @@ export interface PhoneCreateSpec {
   schema?: PhoneSchema;
   auth?: PhoneAuth;
   seed?: PhoneSeed;
+  app?: PhoneAppSpec;
+  prompt?: string;
+  runner?: string;
+  importUrl?: string;
+  importContent?: string;
+  importTitle?: string;
 }
 export interface PhonePromoteResult {
   state?: {
@@ -3454,7 +3528,7 @@ export interface PhonePushResult {
   project: PhoneProject;
 }
 
-const DEFAULT_YAVER_CLOUD_BASE = "https://cloud.yaver.io";
+const DEFAULT_YAVER_CLOUD_BASE = getYaverCloudBaseUrl();
 
 function resolvePhonePushBase(target: PhonePushTarget): string {
   switch (target.kind) {

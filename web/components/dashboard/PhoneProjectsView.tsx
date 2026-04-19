@@ -15,6 +15,9 @@ import {
 } from "@/lib/agent-client";
 import { useDevices, type Device } from "@/lib/use-devices";
 import { useAuth } from "@/lib/use-auth";
+import { isCloudPreviewUser } from "@/lib/cloud-preview";
+import { buildImportedConversationBrief, mergeImportedConversationPrompt } from "@/lib/conversation-import";
+import { getYaverCloudBaseUrl } from "@/lib/yaver-cloud";
 
 const ADVANCED_PROMOTE_TARGETS: Array<{ id: string; label: string; sub: string }> = [
   { id: "sqlite-local", label: "SQLite file", sub: "Copy to a real project dir" },
@@ -25,7 +28,7 @@ const ADVANCED_PROMOTE_TARGETS: Array<{ id: string; label: string; sub: string }
   { id: "convex-cloud", label: "Convex Cloud", sub: "AI-rewrite complexity" },
 ];
 
-const YAVER_CLOUD_BASE = "https://cloud.yaver.io";
+const YAVER_CLOUD_BASE = getYaverCloudBaseUrl();
 
 function pickDevMachines(all: Device[], currentId: string | undefined): Device[] {
   return all.filter(
@@ -65,6 +68,9 @@ export default function PhoneProjectsView() {
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [templateId, setTemplateId] = useState("todos");
+  const [prompt, setPrompt] = useState("");
+  const [importedConversation, setImportedConversation] = useState("");
+  const [analyzingImport, setAnalyzingImport] = useState(false);
   const [creating, setCreating] = useState(false);
 
   const [selected, setSelected] = useState<PhoneProject | null>(null);
@@ -75,8 +81,9 @@ export default function PhoneProjectsView() {
   const [promoting, setPromoting] = useState<string | null>(null);
 
   // Deploy state (yc.md §Wedge Demo)
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { devices } = useDevices(token);
+  const canUseCloudPreview = isCloudPreviewUser(user?.email);
   const [currentDeviceId] = useState<string | undefined>(undefined);
   const devMachines = useMemo(
     () => pickDevMachines(devices, currentDeviceId),
@@ -95,6 +102,10 @@ export default function PhoneProjectsView() {
   const [deploying, setDeploying] = useState<"dev-hw" | "yaver-cloud" | null>(null);
   const [lastDeploy, setLastDeploy] = useState<{ kind: "dev-hw" | "yaver-cloud"; url: string; via: string } | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const importedBrief = useMemo(
+    () => (importedConversation.trim() ? buildImportedConversationBrief(importedConversation) : null),
+    [importedConversation],
+  );
 
   const load = useCallback(async () => {
     setErr(null);
@@ -141,11 +152,23 @@ export default function PhoneProjectsView() {
   }, [selected]);
 
   async function create() {
-    if (!name.trim()) return;
+    const suggestedName = importedBrief?.suggestedName ?? "";
+    const projectName = name.trim() || suggestedName;
+    if (!projectName) return;
     setCreating(true);
     try {
-      const p = await agentClient.createPhoneProject({ name: name.trim(), template: templateId });
+      const effectivePrompt = mergeImportedConversationPrompt(prompt, importedConversation);
+      const p = await agentClient.createPhoneProject({
+        name: projectName,
+        template: effectivePrompt ? undefined : templateId,
+        prompt: effectivePrompt || undefined,
+        importUrl: !effectivePrompt && importedConversation.trim() ? importedBrief?.sourceUrl : undefined,
+        importContent: !effectivePrompt && importedConversation.trim() ? importedConversation.trim() : undefined,
+        importTitle: !effectivePrompt && importedConversation.trim() ? importedBrief?.title : undefined,
+      });
       setName("");
+      setPrompt("");
+      setImportedConversation("");
       setShowForm(false);
       await load();
       await loadDetail(p.slug);
@@ -153,6 +176,24 @@ export default function PhoneProjectsView() {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function analyzeImportedConversation() {
+    if (!importedBrief) return;
+    setAnalyzingImport(true);
+    try {
+      const plan = await agentClient.analyzeConversationImport({
+        url: importedBrief.sourceUrl,
+        content: importedConversation,
+        title: importedBrief.title,
+      });
+      if (!name.trim() && plan.suggestedName) setName(plan.suggestedName);
+      setPrompt(plan.generatedPrompt);
+    } catch (e) {
+      alert(`Analysis failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setAnalyzingImport(false);
     }
   }
 
@@ -298,6 +339,11 @@ export default function PhoneProjectsView() {
             placeholder="My app"
             className="mt-1 w-full rounded border border-surface-700 bg-surface-950 px-3 py-2 text-sm text-surface-100"
           />
+          {importedBrief?.suggestedName && !name.trim() ? (
+            <div className="mt-2 text-xs text-emerald-300">
+              Suggested name from import: {importedBrief.suggestedName}
+            </div>
+          ) : null}
           <label className="mt-4 block text-xs uppercase tracking-wide text-surface-400">Template</label>
           <div className="mt-2 grid grid-cols-2 gap-2">
             {templates.map((t) => (
@@ -315,6 +361,40 @@ export default function PhoneProjectsView() {
               </button>
             ))}
           </div>
+          <label className="mt-4 block text-xs uppercase tracking-wide text-surface-400">Project brief</label>
+          <textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="Describe the app directly, or leave this empty and add a conversation/share URL below."
+            className="mt-1 min-h-24 w-full rounded border border-surface-700 bg-surface-950 px-3 py-2 text-sm text-surface-100"
+          />
+          <label className="mt-4 block text-xs uppercase tracking-wide text-surface-400">Add Conversation Or Share URL (Optional)</label>
+          <textarea
+            value={importedConversation}
+            onChange={(e) => setImportedConversation(e.target.value)}
+            placeholder="Optional: paste a share URL or copied conversation."
+            className="mt-1 min-h-32 w-full rounded border border-surface-700 bg-surface-950 px-3 py-2 text-sm text-surface-100"
+          />
+          {importedBrief ? (
+            <div className="mt-2 rounded border border-indigo-500/30 bg-indigo-500/10 p-3 text-xs text-indigo-100">
+              <div className="font-medium">{importedBrief.sourceLabel}</div>
+              <div className="mt-1 text-indigo-200/80">
+                {importedBrief.title || `${importedBrief.charCount} chars imported`}
+              </div>
+              <button
+                type="button"
+                onClick={() => void analyzeImportedConversation()}
+                disabled={analyzingImport}
+                className="mt-3 rounded border border-indigo-400/40 px-3 py-1.5 text-xs font-medium text-indigo-100 hover:bg-indigo-500/10 disabled:opacity-50"
+              >
+                {analyzingImport ? "Analyzing…" : "Analyze thread and generate technical plan"}
+              </button>
+            </div>
+          ) : (
+            <div className="mt-2 text-xs text-surface-500">
+              You can create from a plain app brief, or add a conversation/share URL if you want Yaver to infer the technical plan from it.
+            </div>
+          )}
           <div className="mt-4 flex justify-end gap-2">
             <button
               onClick={() => setShowForm(false)}
@@ -323,7 +403,7 @@ export default function PhoneProjectsView() {
               Cancel
             </button>
             <button
-              disabled={creating || !name.trim()}
+              disabled={creating || (!name.trim() && !importedBrief?.suggestedName)}
               onClick={create}
               className="rounded bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50 hover:bg-indigo-500"
             >
@@ -490,7 +570,7 @@ export default function PhoneProjectsView() {
               <div>
                 <div className="mb-2 text-xs uppercase tracking-wide text-surface-500">Deploy</div>
                 <p className="mb-3 text-xs text-surface-400">
-                  Ship this mini-backend in one tap. Your dev machine is free; Yaver Cloud is a managed Hetzner tenant.
+                  Ship this mini-backend in one tap to your own machine.
                 </p>
 
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -526,22 +606,23 @@ export default function PhoneProjectsView() {
                     </div>
                   </div>
 
-                  {/* [Yaver Cloud] */}
-                  <div className="rounded-lg border-2 border-surface-700 bg-surface-950 p-4">
-                    <div className="text-base font-semibold text-surface-100">Yaver Cloud</div>
-                    <div className="mt-0.5 text-xs text-surface-400">
-                      Managed — shareable URL at {YAVER_CLOUD_BASE.replace(/^https?:\/\//, "")}
+                  {canUseCloudPreview ? (
+                    <div className="rounded-lg border-2 border-surface-700 bg-surface-950 p-4">
+                      <div className="text-base font-semibold text-surface-100">Yaver Cloud</div>
+                      <div className="mt-0.5 text-xs text-surface-400">
+                        Private preview at {YAVER_CLOUD_BASE.replace(/^https?:\/\//, "")}
+                      </div>
+                      <div className="mt-3">
+                        <button
+                          disabled={deploying !== null}
+                          onClick={() => void deployToCloud()}
+                          className="rounded border border-indigo-500 px-3 py-1.5 text-xs font-medium text-indigo-200 hover:bg-indigo-500/10 disabled:opacity-50"
+                        >
+                          {deploying === "yaver-cloud" ? "Deploying…" : "Deploy →"}
+                        </button>
+                      </div>
                     </div>
-                    <div className="mt-3">
-                      <button
-                        disabled={deploying !== null}
-                        onClick={() => void deployToCloud()}
-                        className="rounded border border-indigo-500 px-3 py-1.5 text-xs font-medium text-indigo-200 hover:bg-indigo-500/10 disabled:opacity-50"
-                      >
-                        {deploying === "yaver-cloud" ? "Deploying…" : "Deploy →"}
-                      </button>
-                    </div>
-                  </div>
+                  ) : null}
                 </div>
 
                 {lastDeploy ? (
