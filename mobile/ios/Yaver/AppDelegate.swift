@@ -231,6 +231,12 @@ public class AppDelegate: ExpoAppDelegate {
   private var backOverlay: UIView?
   private var overlayDismissTimer: Timer?
 
+  /// Exposed so ShakeDetectingWindow can decide whether to swallow the
+  /// motionShake event instead of letting RN / the guest JS also react.
+  func isGuestModeActive() -> Bool {
+    return isGuestAppRunning
+  }
+
   // MARK: - Shake to reveal Back to Yaver
 
   /// Called by ShakeDetectingWindow when device is shaken while guest app is running.
@@ -641,14 +647,26 @@ public class AppDelegate: ExpoAppDelegate {
 // MARK: - Shake-detecting window
 // Intercepts device shake at the UIWindow level (before any responder chain).
 // Works even when a guest RN bridge is running — the guest can't block this.
+//
+// When a guest app is running we deliberately DO NOT forward motionShake up
+// the responder chain. That blocks:
+//   • RN's built-in dev menu (RCTDevMenu in Debug) from opening over our
+//     2-button "Reload / Back to Yaver" overlay.
+//   • DeviceEventEmitter 'shakeEvent' from firing inside the guest's JS
+//     context (yaver-feedback-react-native's ShakeDetector, guest-side
+//     dev helpers, etc.). The only thing a shake can do inside a third-
+//     party app loaded through Yaver is show our two buttons.
+// Other motion events (rotation, etc.) still flow normally so we do not
+// break unrelated guest behaviour.
 class ShakeDetectingWindow: UIWindow {
   override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
-    super.motionEnded(motion, with: event)
     if motion == .motionShake {
       if let appDelegate = UIApplication.shared.delegate as? AppDelegate {
         appDelegate.handleShakeGesture()
+        if appDelegate.isGuestModeActive() { return }
       }
     }
+    super.motionEnded(motion, with: event)
   }
 }
 
