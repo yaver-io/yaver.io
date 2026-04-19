@@ -6,10 +6,19 @@ import { useRef, useState, useEffect } from "react";
 import { useAuth } from "@/lib/use-auth";
 
 // Canonical definitional one-liner — picked up by AI search (Perplexity,
-// ChatGPT, Claude) as the answer to "what is Yaver?". Rendered as sr-only
-// text under the H1 so we don't change the visible hero design.
+// ChatGPT, Claude) and SEO as the answer to "what is Yaver?". Current
+// launch wedge: "free self-hosted Expo Go + CodePush replacement, with
+// AI coding agents built in." Focused, one-sentence pitch is critical —
+// everything else on the page reinforces it.
 const LANDING_TAGLINE =
-  "Yaver is an open-source (AGPL-3.0-only) peer-to-peer control plane for AI coding agents — Codex, Claude Code, Aider, Ollama, and other terminal-first agents — that lets developers run, supervise, and deploy them from their phone, connecting directly to their own machines with no cloud middleman. Starts at $0 on your own hardware.";
+  "Yaver is a free, open-source (AGPL core + Apache-2.0 SDKs) self-hosted replacement for Expo Go and CodePush. Push your React Native code to any phone in 4 seconds — no TestFlight, no EAS, no App Center, no rate limits, no Apple Developer account. Works with any AI coding agent (Claude Code, Codex, Aider, Ollama) and runs P2P on your own machines.";
+
+// Option B (Phone-first BaaS) is the YC-application framing, not the
+// launch hero. When closer to the 2026-05-04 YC submission, swap
+// LANDING_TAGLINE + the hero H1/subline to Option B (see LICENSING.md
+// blog post and the competitive audit in the repo for the full pitch).
+// Keeping it out of the page for now so the Show HN + viral launch has
+// a single narrow wedge.
 
 const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   {
@@ -65,17 +74,17 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
 const LANDING_HOWTO_STEPS: ReadonlyArray<{ name: string; text: string; url?: string }> = [
   {
     name: "Install the Yaver CLI",
-    text: "Run npm install -g yaver-cli (or the curl install.sh on a box without Node), then yaver auth to sign in with Apple, Google, or Microsoft SSO.",
+    text: "Run npm install -g yaver-cli (or the curl install.sh on a box without Node).",
     url: "https://yaver.io/download",
   },
   {
     name: "Install the Yaver mobile app",
-    text: "Download Yaver from the App Store or Google Play and sign in with the same account.",
+    text: "Download Yaver from the App Store or Google Play and sign in with Apple, Google, or Microsoft SSO.",
     url: "https://yaver.io/download",
   },
   {
-    name: "Connect the phone to your machine",
-    text: "Your dev machine appears automatically via LAN beacon or the optional relay. Tap to pair — task data flows P2P over QUIC, never through yaver.io servers.",
+    name: "Push your React Native project to your phone",
+    text: "In your existing RN project: yaver-cli push. The CLI compiles your JS to Hermes bytecode, validates the bundle, and pushes it to the Yaver app on your phone — which loads it in a native container with full TurboModules + Fabric + New Architecture support. No Xcode rebuild, no TestFlight, no EAS.",
     url: "https://yaver.io/manuals/cli-setup",
   },
 ];
@@ -667,20 +676,20 @@ const VIDEO_CDN = "https://github.com/kivanccakmak/yaver.io/releases/download";
 
 const DEMO_TABS = [
   {
+    id: "push-fix",
+    label: "Push to Phone",
+    icon: "\uD83D\uDCF1",
+    desc: "yaver-cli push &mdash; your RN project lands on a real iPhone in 4 seconds. Shake to report a crash. AI fixes it. Hot reload.",
+    header: "Bento running on device + Yaver Debug Console",
+    video: null,
+  },
+  {
     id: "full-loop",
     label: "Full Loop",
     icon: "\uD83D\uDD04",
     desc: "Create a project, browse your database, vibe code a feature \u2014 all from your phone.",
     header: "Yaver scaffolds Bento + Bento running live on iPhone 16 Pro sim",
     video: `${VIDEO_CDN}/bento-demo-v1/bento-demo.mp4`,
-  },
-  {
-    id: "push-fix",
-    label: "Push & Fix",
-    icon: "\uD83D\uDCF1",
-    desc: "Push Bento to your phone in 4s. Shake to report a crash. AI fixes it. Hot reload.",
-    header: "Bento running on device + Yaver Debug Console",
-    video: null,
   },
   {
     id: "auto-test",
@@ -693,7 +702,7 @@ const DEMO_TABS = [
 ];
 
 function DemoSection() {
-  const [activeDemo, setActiveDemo] = useState("full-loop");
+  const [activeDemo, setActiveDemo] = useState("push-fix");
   const demo = DEMO_TABS.find((d) => d.id === activeDemo)!;
 
   return (
@@ -1002,41 +1011,92 @@ export default function HomePage() {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationLd) }}
       />
-      {/* ── Section 1: Hero — three legs (power / simplicity / free) ── */}
-      <section className="px-6 pb-12 pt-20 md:pt-32">
-        <div className="mx-auto max-w-4xl text-center">
-          <h1 className="mb-6 text-5xl font-bold leading-[1.05] tracking-tight text-surface-50 sm:text-6xl md:text-7xl lg:text-8xl">
-            Start on your{" "}
-            <span className="bg-gradient-to-r from-indigo-400 to-emerald-400 bg-clip-text text-transparent">phone.</span>
+      {/* ── Section 1: Hero — single wedge: free self-hosted Expo Go + CodePush ── */}
+      <section className="px-6 pb-10 pt-20 md:pt-28">
+        <div className="mx-auto max-w-5xl text-center">
+          <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-4 py-1.5 text-xs font-medium text-emerald-300">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            Free, self-hosted, open source
+          </div>
+
+          <h1 className="mb-6 text-5xl font-bold leading-[1.05] tracking-tight text-surface-50 sm:text-6xl md:text-7xl">
+            Skip Expo Go.{" "}
+            <br className="hidden sm:block" />
+            <span className="bg-gradient-to-r from-indigo-400 to-emerald-400 bg-clip-text text-transparent">
+              Skip CodePush.
+            </span>
           </h1>
 
-          {/* AI / screen-reader description — hidden from sighted users so
-              the visual hero is unchanged, but picked up by Google,
-              Perplexity, ChatGPT, and Claude when answering "what is Yaver?". */}
+          {/* AI / screen-reader description — canonical one-liner for AI
+              search answers to "what is Yaver?". */}
           <p className="sr-only">{LANDING_TAGLINE}</p>
 
-          <p className="mx-auto max-w-2xl text-base leading-relaxed text-surface-400 md:text-lg">
-            Vibe code full-stack apps locally. Move to your machine or cloud later.
+          <p className="mx-auto max-w-2xl text-base leading-relaxed text-surface-300 md:text-lg">
+            Push your React Native code to any phone in 4 seconds. Free forever,
+            self-hosted, open source. No TestFlight. No EAS. No App Center.
+            No Apple Developer account.
           </p>
 
-          <p className="mx-auto mt-3 text-[11px] uppercase tracking-[0.18em] text-surface-600">
-            Phone &middot; machine &middot; cloud
+          <p className="mx-auto mt-4 max-w-xl text-sm text-surface-500">
+            Works with any AI coding agent — Claude Code, Codex, Aider, Ollama —
+            all peer-to-peer on your own machines.
           </p>
-          <div className="mt-7 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <a href="#get-started" className="btn-primary inline-flex items-center gap-2 px-10 py-3.5 text-base font-semibold">
-              See the flow {"\u2192"}
+
+          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <div className="terminal inline-flex w-full max-w-sm items-center gap-3 rounded-lg border border-surface-800 bg-surface-950 px-4 py-3 font-mono text-sm text-surface-200 sm:w-auto">
+              <span className="text-emerald-400">$</span>
+              <span className="flex-1 select-all">npm install -g yaver-cli</span>
+            </div>
+            <a
+              href="#demo"
+              className="btn-primary inline-flex items-center gap-2 px-8 py-3 text-base font-semibold"
+            >
+              Watch 15-second demo &rarr;
             </a>
-            <Link href="/download" className="btn-secondary inline-flex items-center gap-2 px-10 py-3.5 text-base font-semibold">
-              Install Yaver
-            </Link>
           </div>
-          <p className="mt-6 text-xs text-surface-500">
-            Works with Codex, Claude Code, Aider, Ollama, and other terminal-first agents
+
+          <p className="mt-6 text-xs uppercase tracking-[0.18em] text-surface-600">
+            RN 0.81+ &middot; New Architecture &middot; Full TurboModules &middot; Hermes bytecode
           </p>
         </div>
       </section>
 
-      {/* ── Section 2: Demo ── */}
+      {/* ── Section 2: Hero video — the ONE viral artifact ── */}
+      <section id="demo" className="px-6 pb-16 pt-2">
+        <div className="mx-auto max-w-4xl">
+          <div className="overflow-hidden rounded-2xl border border-surface-800 bg-surface-950 shadow-2xl shadow-black/40">
+            <div className="flex items-center gap-2 border-b border-surface-800/60 bg-surface-900/50 px-4 py-2">
+              <div className="flex gap-1.5">
+                <div className="h-3 w-3 rounded-full bg-[#ff5f57]" />
+                <div className="h-3 w-3 rounded-full bg-[#febc2e]" />
+                <div className="h-3 w-3 rounded-full bg-[#28c840]" />
+              </div>
+              <p className="ml-2 text-xs text-surface-500">
+                yaver-cli push &mdash; React Native bundle to device in 4 seconds
+              </p>
+            </div>
+            <video
+              className="aspect-video w-full bg-black"
+              src="/demo-push.mp4"
+              autoPlay
+              muted
+              loop
+              playsInline
+              preload="metadata"
+            />
+            {/* 231 KB bundled in web/public; the Playwright scene that
+                generated it is at scripts/generate-demo-videos/scenes/
+                video4-push.html — re-run `node generate.mjs --video4` to
+                regenerate from source. */}
+          </div>
+          <p className="mx-auto mt-4 max-w-2xl text-center text-xs text-surface-500">
+            The phone on the right is a real iPhone running a production React Native app &mdash;
+            no Xcode rebuild, no App Store, no EAS build. Just <code>yaver-cli push</code>.
+          </p>
+        </div>
+      </section>
+
+      {/* ── Section 3: Deeper demos (3 tabs) ── */}
       <DemoSection />
 
       {/* ── Section 3: Get Started ── */}

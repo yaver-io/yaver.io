@@ -24,8 +24,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCENES_DIR = join(__dirname, 'scenes');
 
 const args = process.argv.slice(2);
-const genVideo2 = args.includes('--video2') || (!args.includes('--video3'));
-const genVideo3 = args.includes('--video3') || (!args.includes('--video2'));
+const only4 = args.includes('--video4');
+const only2 = args.includes('--video2');
+const only3 = args.includes('--video3');
+const anyFlag = only2 || only3 || only4;
+const genVideo2 = only2 || !anyFlag;
+const genVideo3 = only3 || !anyFlag;
+const genVideo4 = only4 || !anyFlag;
 const outputIdx = args.indexOf('--output-dir');
 const OUTPUT_DIR = outputIdx >= 0 ? resolve(args[outputIdx + 1]) : join(__dirname, 'output');
 
@@ -109,6 +114,10 @@ async function main() {
 
   if (genVideo3) {
     await recordScene('video3-autotest.html', 'demo-autotest.mp4', 75);
+  }
+
+  if (genVideo4) {
+    await recordScene('video4-push.html', 'demo-push.mp4', 15);
   }
 
   console.log(`\nDone! Videos in: ${OUTPUT_DIR}`);

@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Video 4 — Push to Device</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+body {
+  width: 1440px; height: 1080px; overflow: hidden;
+  background: radial-gradient(ellipse at top, #0f1419 0%, #050508 60%);
+  font-family: 'Inter', -apple-system, sans-serif;
+  color: #e5e7eb;
+  display: flex; align-items: center; justify-content: center;
+}
+
+.container {
+  width: 1440px; height: 1080px;
+  display: grid;
+  grid-template-columns: 1fr 520px;
+  gap: 60px;
+  padding: 80px 90px;
+  align-items: center;
+}
+
+/* Title banner */
+.banner {
+  position: absolute; top: 40px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 14px; align-items: center;
+  padding: 12px 24px; border-radius: 999px;
+  background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.25);
+  color: #6ee7b7; font-size: 14px; font-weight: 500;
+  opacity: 0;
+  animation: fadeIn 0.6s ease-out 0.3s forwards;
+}
+.banner-dot { width: 8px; height: 8px; border-radius: 50%; background: #34d399; box-shadow: 0 0 12px #34d399; }
+
+/* ── Terminal panel ── */
+.terminal {
+  width: 100%; max-width: 720px; justify-self: end;
+  border-radius: 18px; overflow: hidden;
+  background: #0c0f14; border: 1px solid #1f2937;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+.terminal-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 14px 18px; background: #131820; border-bottom: 1px solid #1f2937;
+}
+.dot { width: 12px; height: 12px; border-radius: 50%; }
+.dot.r { background: #ff5f57; }
+.dot.y { background: #febc2e; }
+.dot.g { background: #28c840; }
+.terminal-title {
+  margin-left: 12px; font-size: 13px; color: #6b7280; font-family: 'JetBrains Mono', monospace;
+}
+
+.terminal-body {
+  padding: 28px 30px; font-family: 'JetBrains Mono', monospace;
+  font-size: 20px; line-height: 1.8; min-height: 420px;
+}
+.line { opacity: 0; }
+.prompt { color: #6ee7b7; }
+.cmd { color: #e5e7eb; }
+.comment { color: #6b7280; font-style: italic; }
+.ok { color: #34d399; }
+.info { color: #a5b4fc; }
+.warn { color: #fbbf24; }
+
+.caret {
+  display: inline-block; width: 10px; height: 22px;
+  background: #e5e7eb; margin-left: 4px; vertical-align: text-bottom;
+  animation: blink 1s step-end infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* Phone mockup */
+.phone {
+  width: 360px; height: 760px; position: relative;
+  border-radius: 52px;
+  background: #0a0a0a;
+  border: 3px solid #111827;
+  box-shadow: 0 30px 80px rgba(0,0,0,0.6), inset 0 0 0 2px #1f2937;
+  padding: 14px;
+  justify-self: center;
+}
+.phone-notch {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+  width: 120px; height: 28px; border-radius: 20px; background: #000; z-index: 10;
+}
+.phone-screen {
+  width: 100%; height: 100%; border-radius: 40px;
+  background: #030712;
+  overflow: hidden; position: relative;
+}
+
+/* Status bar */
+.status-bar {
+  position: absolute; top: 0; left: 0; right: 0;
+  display: flex; justify-content: space-between;
+  padding: 14px 26px 0; font-size: 14px; color: #e5e7eb;
+  font-weight: 600; z-index: 5;
+}
+
+/* Yaver "waiting" state */
+.yaver-home {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: #6b7280; text-align: center; padding: 0 30px;
+  opacity: 1;
+}
+.yaver-logo {
+  width: 72px; height: 72px; border-radius: 20px;
+  background: linear-gradient(135deg, #6366f1, #10b981);
+  display: flex; align-items: center; justify-content: center;
+  color: white; font-size: 32px; font-weight: 700;
+  margin-bottom: 22px;
+  box-shadow: 0 8px 30px rgba(99,102,241,0.35);
+}
+.yaver-home h2 { color: #e5e7eb; font-size: 22px; font-weight: 600; margin-bottom: 8px; }
+.yaver-home p { font-size: 14px; color: #6b7280; line-height: 1.5; }
+
+/* Progress state */
+.progress-state {
+  position: absolute; inset: 0; padding: 80px 30px 40px;
+  display: flex; flex-direction: column; align-items: center;
+  opacity: 0;
+}
+.progress-title { font-size: 16px; color: #a5b4fc; margin-bottom: 10px; font-weight: 500; }
+.progress-filename {
+  font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #6b7280;
+  margin-bottom: 40px; word-break: break-all; text-align: center;
+}
+.progress-bar-outer {
+  width: 100%; height: 8px; border-radius: 999px;
+  background: rgba(255,255,255,0.06); overflow: hidden;
+  margin-bottom: 24px;
+}
+.progress-bar-inner {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, #6366f1, #10b981);
+  border-radius: 999px;
+  box-shadow: 0 0 12px rgba(99,102,241,0.4);
+}
+.progress-stats {
+  display: flex; gap: 20px; font-size: 12px; color: #9ca3af;
+  font-family: 'JetBrains Mono', monospace;
+}
+.progress-stat { display: flex; flex-direction: column; align-items: center; }
+.progress-stat-v { color: #e5e7eb; font-size: 18px; font-weight: 600; }
+.progress-stat-l { font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; opacity: 0.6; margin-top: 4px; }
+
+/* Bento app (loaded RN app shown after push) */
+.app-state {
+  position: absolute; inset: 0; padding: 70px 22px 22px;
+  background: linear-gradient(180deg, #0f172a 0%, #020617 100%);
+  opacity: 0;
+}
+.app-header {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 20px;
+}
+.app-logo {
+  width: 40px; height: 40px; border-radius: 12px;
+  background: linear-gradient(135deg, #f59e0b, #ef4444);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px;
+}
+.app-title h3 { font-size: 18px; font-weight: 700; color: #f9fafb; line-height: 1; }
+.app-title p { font-size: 11px; color: #6b7280; margin-top: 3px; }
+
+.product-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px;
+}
+.product-card {
+  border-radius: 14px; overflow: hidden;
+  background: #1f2937; aspect-ratio: 1;
+  position: relative;
+  border: 1px solid rgba(255,255,255,0.04);
+  transition: background 0.6s ease;
+}
+.product-card.salmon { background: linear-gradient(135deg, #7f1d1d, #431407); }
+.product-card.veggie { background: linear-gradient(135deg, #064e3b, #022c22); }
+.product-card.chicken { background: linear-gradient(135deg, #78350f, #431407); }
+.product-card.salad  { background: linear-gradient(135deg, #1e3a8a, #0f172a); }
+
+/* After hot reload — theme changes color */
+.product-card.themed.salmon { background: linear-gradient(135deg, #4338ca, #0f172a); }
+.product-card.themed.veggie { background: linear-gradient(135deg, #0891b2, #083344); }
+.product-card.themed.chicken { background: linear-gradient(135deg, #5b21b6, #1e1b4b); }
+.product-card.themed.salad { background: linear-gradient(135deg, #0369a1, #0c1d37); }
+
+.product-card .name {
+  position: absolute; bottom: 10px; left: 10px; right: 10px;
+  font-size: 12px; font-weight: 600; color: #f9fafb;
+}
+.product-card .price {
+  position: absolute; top: 10px; right: 10px;
+  font-size: 11px; font-weight: 700; color: #10b981;
+  background: rgba(0,0,0,0.35); padding: 2px 8px; border-radius: 999px;
+}
+
+.hot-reload-flash {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(16,185,129,0.9); color: white;
+  padding: 10px 20px; border-radius: 999px;
+  font-size: 13px; font-weight: 600;
+  opacity: 0; z-index: 20;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 30px rgba(16,185,129,0.4);
+}
+
+/* ── Animation timing ──
+   0-1s   : banner fades in, terminal+phone visible; phone shows "Waiting" screen
+   1-4s   : type `yaver-cli push` lines in terminal
+   4-8s   : progress bar on phone (0 -> 100%)
+   8-9s   : switch phone to loaded Bento app
+   9-11s  : terminal shows edit command; phone product cards original colors
+   11-13s : hot reload — cards transition colors + flash toast
+   13-15s : settle, final "done" line
+*/
+
+/* Terminal lines appear */
+.l1 { animation: fadeIn 0.3s ease-out 1.0s forwards; }
+.l2 { animation: fadeIn 0.3s ease-out 1.8s forwards; }
+.l3 { animation: fadeIn 0.3s ease-out 2.6s forwards; }
+.l4 { animation: fadeIn 0.3s ease-out 4.0s forwards; }
+.l5 { animation: fadeIn 0.3s ease-out 5.2s forwards; }
+.l6 { animation: fadeIn 0.3s ease-out 6.4s forwards; }
+.l7 { animation: fadeIn 0.3s ease-out 7.4s forwards; }
+.l8 { animation: fadeIn 0.3s ease-out 9.0s forwards; }
+.l9 { animation: fadeIn 0.3s ease-out 10.0s forwards; }
+.l10 { animation: fadeIn 0.3s ease-out 11.0s forwards; }
+.l11 { animation: fadeIn 0.3s ease-out 13.2s forwards; }
+
+/* Phone progress bar */
+.progress-state { animation: fadeIn 0.4s ease-out 3.8s forwards; }
+.progress-bar-inner { animation: progress 4s cubic-bezier(0.4,0,0.2,1) 4.0s forwards; }
+
+.progress-state-hide { animation: fadeOut 0.4s ease-out 8.5s forwards; }
+.yaver-home { animation: fadeOut 0.3s ease-out 3.8s forwards; }
+
+/* Phone: loaded RN app */
+.app-state { animation: fadeIn 0.5s ease-out 8.6s forwards; }
+
+/* Hot reload */
+.product-card { animation-fill-mode: forwards; }
+.card-theme-shift {
+  animation: themeShift 0.6s cubic-bezier(0.4,0,0.2,1) 12.0s forwards;
+}
+.hot-reload-flash-show {
+  animation: flashPop 2s ease-out 11.8s forwards;
+}
+
+@keyframes fadeIn { to { opacity: 1; } }
+@keyframes fadeOut { to { opacity: 0; } }
+@keyframes progress {
+  0% { width: 0%; }
+  25% { width: 18%; }
+  55% { width: 62%; }
+  85% { width: 92%; }
+  100% { width: 100%; }
+}
+@keyframes themeShift {
+  0% { filter: hue-rotate(0deg); }
+  100% { filter: hue-rotate(200deg); }
+}
+@keyframes flashPop {
+  0% { opacity: 0; transform: translate(-50%, -40%) scale(0.9); }
+  20% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  80% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -55%) scale(0.96); }
+}
+</style>
+</head>
+<body>
+
+<div class="banner">
+  <span class="banner-dot"></span>
+  <span>yaver-cli push &mdash; React Native to real device in 4 seconds</span>
+</div>
+
+<div class="container">
+  <!-- LEFT: terminal -->
+  <div class="terminal">
+    <div class="terminal-header">
+      <span class="dot r"></span>
+      <span class="dot y"></span>
+      <span class="dot g"></span>
+      <span class="terminal-title">~/bento &mdash; yaver-cli</span>
+    </div>
+    <div class="terminal-body">
+      <div class="line l1"><span class="prompt">$</span> <span class="cmd">yaver-cli push</span></div>
+      <div class="line l2"><span class="comment"># analyzing project (Bento, RN 0.81.5)</span></div>
+      <div class="line l3"><span class="comment"># compiling JS &rarr; Hermes bytecode</span></div>
+      <div class="line l4"><span class="info">&rarr;</span> <span class="cmd">bundle ready: 3.2 MB</span></div>
+      <div class="line l5"><span class="info">&rarr;</span> <span class="cmd">pushing to phone... </span><span class="ok">done</span></div>
+      <div class="line l6"><span class="ok">&check;</span> <span class="cmd">live on device in 4.1s</span></div>
+      <div class="line l7">&nbsp;</div>
+      <div class="line l8"><span class="prompt">$</span> <span class="cmd">edit src/theme.ts &mdash; indigo &rarr; blue</span></div>
+      <div class="line l9"><span class="comment"># auto-detected change</span></div>
+      <div class="line l10"><span class="info">&rarr;</span> <span class="cmd">hot reload pushed</span> <span class="ok">&check;</span></div>
+      <div class="line l11"><span class="prompt">$</span><span class="caret"></span></div>
+    </div>
+  </div>
+
+  <!-- RIGHT: phone -->
+  <div class="phone">
+    <div class="phone-notch"></div>
+    <div class="phone-screen">
+      <div class="status-bar">
+        <span>9:41</span>
+        <span>&#x1F4F6;&nbsp;&nbsp;&#x1F50B;</span>
+      </div>
+
+      <!-- Waiting home -->
+      <div class="yaver-home">
+        <div class="yaver-logo">Y</div>
+        <h2>Yaver</h2>
+        <p>Waiting for a push from your machine&hellip;</p>
+      </div>
+
+      <!-- Progress state -->
+      <div class="progress-state progress-state-hide">
+        <div class="progress-title">Receiving bundle</div>
+        <div class="progress-filename">bento.hermes.bundle &middot; 3.2 MB</div>
+        <div class="progress-bar-outer">
+          <div class="progress-bar-inner"></div>
+        </div>
+        <div class="progress-stats">
+          <div class="progress-stat"><span class="progress-stat-v">3.2</span><span class="progress-stat-l">MB</span></div>
+          <div class="progress-stat"><span class="progress-stat-v">BC96</span><span class="progress-stat-l">Hermes</span></div>
+          <div class="progress-stat"><span class="progress-stat-v">P2P</span><span class="progress-stat-l">Direct</span></div>
+        </div>
+      </div>
+
+      <!-- Loaded RN app -->
+      <div class="app-state">
+        <div class="app-header">
+          <div class="app-logo">&#x1F371;</div>
+          <div class="app-title">
+            <h3>Bento</h3>
+            <p>Premium boxed meals</p>
+          </div>
+        </div>
+        <div class="product-grid">
+          <div class="product-card salmon card-theme-shift">
+            <span class="price">$89</span>
+            <span class="name">Salmon Bento</span>
+          </div>
+          <div class="product-card veggie card-theme-shift">
+            <span class="price">$129</span>
+            <span class="name">Veggie Bento</span>
+          </div>
+          <div class="product-card chicken card-theme-shift">
+            <span class="price">$249</span>
+            <span class="name">Chicken Bento</span>
+          </div>
+          <div class="product-card salad card-theme-shift">
+            <span class="price">$65</span>
+            <span class="name">Sashimi</span>
+          </div>
+        </div>
+        <div class="hot-reload-flash hot-reload-flash-show">Hot reload &check;</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
