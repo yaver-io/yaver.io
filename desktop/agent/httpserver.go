@@ -511,6 +511,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/dev/stop", s.authOrLocalhost(s.handleDevServerStop))
 	mux.HandleFunc("/dev/reload", s.authSDK(s.handleDevServerReload))
 	mux.HandleFunc("/dev/reload-app", s.authSDK(s.handleReloadApp))
+	mux.HandleFunc("/dev/native-fingerprint", s.authSDK(s.handleNativeFingerprintGet))
+	mux.HandleFunc("/dev/native-fingerprint/refresh", s.authSDK(s.handleNativeFingerprintRefresh))
 	mux.HandleFunc("/dev/events", s.authSDK(s.handleDevServerEvents))
 	mux.HandleFunc("/dev/compatibility", s.authSDK(s.handleDevServerCompatibility))
 	mux.HandleFunc("/dev/builds", s.auth(s.handleDevServerBuilds))

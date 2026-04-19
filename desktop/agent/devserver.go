@@ -250,6 +250,12 @@ func (m *DevServerManager) Start(framework, workDir, platform string, port int, 
 	}
 	ds.PreStart(frameworkName, defaultPort, workDir)
 
+	// Snapshot the native fingerprint so /dev/reload can tell later whether a
+	// JS-only hot reload is actually enough. Cheap (stat + hash of <30 files).
+	if workDir != "" {
+		SetNativeBaseline(workDir, ComputeNativeFingerprint(workDir))
+	}
+
 	// Inject SSE log emitter into the dev server so build output streams to mobile
 	if setter, ok := ds.(interface{ SetEmitFn(func(DevServerEvent)) }); ok {
 		setter.SetEmitFn(m.emit)
@@ -352,6 +358,9 @@ func (m *DevServerManager) Stop() error {
 	}
 
 	name := m.active.server.Name()
+	if st := m.active.server.Status(); st.WorkDir != "" {
+		ClearNativeBaseline(st.WorkDir)
+	}
 	m.active.server.Stop()
 	m.active.cancel()
 	m.active = nil

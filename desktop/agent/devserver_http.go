@@ -740,10 +740,35 @@ func (s *HTTPServer) handleDevServerStop(w http.ResponseWriter, r *http.Request)
 
 // handleDevServerReload triggers a hot reload on the active dev server.
 // POST /dev/reload
+//
+// Also computes a native-change delta against the fingerprint captured at
+// dev-server start. If native-only files (app.json splash, Podfile,
+// AndroidManifest.xml, …) changed, the Hermes bundle push will silently lie
+// about the outcome — we return nativeChangesDetected=true + the list of
+// files so the client can surface "rebuild required" instead of pretending
+// the reload worked. We still do the JS reload; the mobile UX decides what
+// to show the user.
 func (s *HTTPServer) handleDevServerReload(w http.ResponseWriter, r *http.Request) {
 	if s.devServerMgr == nil {
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
 		return
+	}
+
+	// Compute the native change delta BEFORE triggering the reload so we
+	// capture exactly the state the user is asking us to reload against.
+	var nativeChanges []NativeFingerprintChange
+	var changeClass string
+	if st := s.devServerMgr.Status(); st != nil && st.WorkDir != "" {
+		if baseline, ok := GetNativeBaseline(st.WorkDir); ok {
+			current := ComputeNativeFingerprint(st.WorkDir)
+			delta := DiffNativeFingerprints(baseline, current)
+			nativeChanges = delta.Changed
+			if len(nativeChanges) > 0 {
+				changeClass = "native_rebuild_required"
+			} else {
+				changeClass = "js_only"
+			}
+		}
 	}
 
 	if err := s.devServerMgr.Reload(); err != nil {
@@ -756,19 +781,100 @@ func (s *HTTPServer) handleDevServerReload(w http.ResponseWriter, r *http.Reques
 		s.taskMgr.BroadcastControlSignal(`{"yaver_control":"hot_reload"}`)
 	}
 
-	// Push reload command to all connected SDK devices (third-party apps with Feedback SDK)
+	// Push reload command to all connected SDK devices (third-party apps with Feedback SDK).
+	// If we detected native changes, send the device a distinct command so the super-host
+	// can show "rebuild required" instead of pretending the JS reload fixed everything.
 	if s.blackboxMgr != nil {
-		if sent := s.sendPreviewWorkerReloadCommand(); sent {
+		if len(nativeChanges) > 0 {
+			paths := make([]string, 0, len(nativeChanges))
+			reasons := make([]string, 0, len(nativeChanges))
+			for _, c := range nativeChanges {
+				paths = append(paths, c.Path)
+				reasons = append(reasons, c.Reason)
+			}
+			cmd := BlackBoxCommand{
+				Command: "native_rebuild_required",
+				Data: map[string]interface{}{
+					"changedPaths":   paths,
+					"changedReasons": reasons,
+				},
+			}
+			if sent := s.sendCommandToPreviewTarget(cmd); sent {
+				log.Printf("[dev] reload: native change detected (%d files) — sent native_rebuild_required to preview worker", len(nativeChanges))
+			} else {
+				s.blackboxMgr.BroadcastCommand(cmd)
+				log.Printf("[dev] reload: native change detected (%d files) — broadcast native_rebuild_required", len(nativeChanges))
+			}
+		} else if sent := s.sendPreviewWorkerReloadCommand(); sent {
 			log.Printf("[dev] Sent targeted preview reload command to preview worker")
 		} else {
-			s.blackboxMgr.BroadcastCommand(BlackBoxCommand{
-				Command: "reload",
-			})
+			s.blackboxMgr.BroadcastCommand(BlackBoxCommand{Command: "reload"})
 			log.Printf("[dev] Broadcast reload command to connected SDK devices")
 		}
 	}
 
-	jsonReply(w, http.StatusOK, map[string]string{"ok": "true"})
+	resp := map[string]interface{}{
+		"ok":                    true,
+		"nativeChangesDetected": len(nativeChanges) > 0,
+		"nativeChanges":         nativeChanges,
+		"changeClass":           changeClass, // "js_only" | "native_rebuild_required" | "" (no baseline)
+	}
+	jsonReply(w, http.StatusOK, resp)
+}
+
+// handleNativeFingerprintGet reports the current native fingerprint + delta
+// vs. baseline without triggering any reload. Mobile / CLI can poll this to
+// show a "rebuild required" indicator passively.
+// GET /dev/native-fingerprint
+func (s *HTTPServer) handleNativeFingerprintGet(w http.ResponseWriter, r *http.Request) {
+	if s.devServerMgr == nil {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
+		return
+	}
+	st := s.devServerMgr.Status()
+	if st == nil || st.WorkDir == "" {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "no active dev server"})
+		return
+	}
+	current := ComputeNativeFingerprint(st.WorkDir)
+	resp := map[string]interface{}{
+		"workDir":       st.WorkDir,
+		"current":       current,
+		"hasBaseline":   false,
+		"changedFiles":  []NativeFingerprintChange{},
+		"nativeChanges": false,
+	}
+	if baseline, ok := GetNativeBaseline(st.WorkDir); ok {
+		delta := DiffNativeFingerprints(baseline, current)
+		resp["hasBaseline"] = true
+		resp["baseline"] = baseline
+		resp["changedFiles"] = delta.Changed
+		resp["nativeChanges"] = len(delta.Changed) > 0
+	}
+	jsonReply(w, http.StatusOK, resp)
+}
+
+// handleNativeFingerprintRefresh resets the baseline to the current state.
+// Intended to be called right after a successful native rebuild, so the next
+// /dev/reload no longer says "rebuild required".
+// POST /dev/native-fingerprint/refresh
+func (s *HTTPServer) handleNativeFingerprintRefresh(w http.ResponseWriter, r *http.Request) {
+	if s.devServerMgr == nil {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
+		return
+	}
+	st := s.devServerMgr.Status()
+	if st == nil || st.WorkDir == "" {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "no active dev server"})
+		return
+	}
+	fp := ComputeNativeFingerprint(st.WorkDir)
+	SetNativeBaseline(st.WorkDir, fp)
+	log.Printf("[dev] native fingerprint baseline refreshed for %s", st.WorkDir)
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":       true,
+		"baseline": fp,
+	})
 }
 
 // handleReloadApp triggers a reload of the third-party app running inside the Yaver container.
