@@ -189,6 +189,8 @@ jobs:
           Homepage: https://yaver.io
           Section: devel
           Priority: optional
+          Depends: nodejs (>= 18)
+          Recommends: npm
           CONTROL
           dpkg-deb --build "$DEB_DIR" "yaver_${VERSION}_${DEB_ARCH}.deb"
 
@@ -202,9 +204,11 @@ jobs:
           Summary: AI coding agent — P2P remote control for Claude Code, Codex, Aider, Ollama
           License: AGPL-3.0-only
           URL: https://yaver.io
+          Requires: nodejs >= 18
 
           %description
           Run AI coding agents from your phone — Claude Code, Codex, Aider, or custom.
+          Requires Node.js at runtime for \`yaver push\` (React Native to device).
 
           %install
           mkdir -p %{buildroot}/usr/local/bin
@@ -366,6 +370,13 @@ jobs:
             version "${VERSION}"
             license "AGPL-3.0-only"
 
+            # Runtime dep: \`yaver push\` shells out to \`npm exec --package
+            # yaver-cli@<version>\` which pulls hermesc + the RN bundler on
+            # first use (see runPushBridge in desktop/agent/main.go). The
+            # Go binary itself doesn't embed hermesc, so we depend on Node
+            # to make Homebrew installs self-contained for push-to-device.
+            depends_on "node"
+
             on_macos do
               if Hardware::CPU.arm?
                 url "https://github.com/${REPO}/releases/download/v${VERSION}/yaver-darwin-arm64.tar.gz"
@@ -465,6 +476,8 @@ jobs:
           url="https://yaver.io"
           license=('AGPL-3.0-only')
           provides=('yaver')
+          depends=('nodejs')
+          optdepends=('npm: for yaver push (React Native to device)')
 
           source_x86_64=("https://github.com/${REPO}/releases/download/v\${pkgver}/yaver-linux-amd64.tar.gz")
           source_aarch64=("https://github.com/${REPO}/releases/download/v\${pkgver}/yaver-linux-arm64.tar.gz")

@@ -86,3 +86,13 @@ if [ "$OS" = "linux" ] && ! printf "%s" ":$PATH:" | grep -q ":$INSTALL_DIR:"; th
   echo "Add ${INSTALL_DIR} to PATH if needed:"
   echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
 fi
+
+# `yaver push` (React Native to device) shells out to `npm exec --package
+# yaver-cli@<version>` to pull the hermes bundler on first use. Warn if
+# Node/npm is missing so users know they'll need it for push-to-device.
+if ! command -v npm >/dev/null 2>&1; then
+  echo ""
+  echo "Note: yaver push (React Native to device) requires Node.js/npm."
+  echo "      The agent, relay, and AI-runner features work without it."
+  echo "      Install Node: https://nodejs.org or your package manager."
+fi

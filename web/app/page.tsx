@@ -1128,11 +1128,19 @@ export default function HomePage() {
                 </div>
               </div>
               <p className="mt-3 text-[11px] text-surface-500">
-                Fastest start: `npm install -g yaver-cli`. It installs the `yaver` command for both the Go agent and third-party React Native push (`yaver push`). `yaver auth` starts the agent automatically if needed. Also available via Homebrew, `apt`, AppImage, `.deb`/`.rpm`, tarball, or install script.{" "}
-                <Link href="/download" className="underline hover:text-surface-300">See install methods</Link>.
+                Recommended: <code>npm install -g yaver-cli</code>. Installs the
+                agent and the RN push toolchain in one go; <code>yaver auth</code>
+                starts the agent if needed. Homebrew, <code>apt</code>, AppImage,
+                <code>.deb</code>/<code>.rpm</code>, tarball, and install script
+                work too &mdash; <code>yaver push</code> on those paths
+                auto-fetches the hermes bundler via npm on first use.{" "}
+                <Link href="/download" className="underline hover:text-surface-300">
+                  See install methods
+                </Link>.
               </p>
               <p className="mt-2 text-[11px] text-surface-500">
-                WSL is supported for the Linux/Hermes phone-testing path when the phone uses the Yaver mobile app as the container. For always-on reboot persistence, native Linux or macOS remain the primary targets.
+                Native macOS and Linux are the primary targets for always-on use;
+                WSL works for the phone-testing path.
               </p>
 
               <div className="mt-4 rounded-lg border border-[#6366f1]/30 bg-[#6366f1]/5 p-3">
