@@ -1,0 +1,13 @@
+{
+  "react-native": {
+    "app_disable_auto_init": true,
+    "analytics_auto_collection_enabled": false,
+    "analytics_collection_deactivated": true,
+    "crashlytics_is_error_generation_on_js_crash_enabled": false,
+    "crashlytics_disable_auto_disabler": true,
+    "crashlytics_javascript_exception_handler_chaining_enabled": false,
+    "messaging_auto_init_enabled": false,
+    "messaging_ios_auto_register_for_remote_messages": false,
+    "perf_auto_collection_enabled": false
+  }
+}
