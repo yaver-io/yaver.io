@@ -215,10 +215,16 @@ jobs:
       - name: Build arm64 agent for image injection
         run: cd desktop/agent && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/yaver-linux-arm64 .
 
-  # Deep agent E2E — builds agent, authenticates, tests every API surface
+  # Deep agent E2E — builds agent, authenticates, tests every API surface.
+  # Gated to same-repo PRs: fork PR authors cannot read secrets regardless
+  # (GitHub blocks this), but skipping the job entirely on fork PRs avoids
+  # a red "failed" check that's actually a can't-run-without-secrets check.
   agent-e2e:
     needs: changes
-    if: needs.changes.outputs.cli == 'true'
+    if: |
+      needs.changes.outputs.cli == 'true' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

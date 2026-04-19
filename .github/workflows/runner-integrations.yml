@@ -12,6 +12,9 @@ on:
       - "scripts/test-runner-integration.sh"
       - ".github/workflows/runner-integrations.yml"
 
+permissions:
+  contents: read
+
 jobs:
   frontier-runners:
     runs-on: ubuntu-latest

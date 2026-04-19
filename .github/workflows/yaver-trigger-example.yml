@@ -31,6 +31,9 @@ on:
         required: false
         default: "claude"
 
+permissions:
+  contents: read
+
 jobs:
   trigger-yaver-task:
     runs-on: ubuntu-latest

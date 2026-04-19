@@ -1,0 +1,42 @@
+# Yaver — CODEOWNERS
+#
+# Forces explicit owner review on PRs that touch CI pipelines,
+# deploy scripts, or anything that can write to production
+# infrastructure. Combined with the repo's branch protection
+# ruleset on `main`, a malicious PR that tries to modify a
+# workflow to exfiltrate secrets cannot land without
+# @kivanccakmak's approval.
+#
+# Fallback rule: any path not matched below inherits the last
+# matching rule. Placing @kivanccakmak at the catch-all ensures
+# every PR gets an owner review by default.
+
+# Last matching rule wins — catch-all at the top
+*                                       @kivanccakmak
+
+# CI / deploy / release infrastructure (explicit, for clarity)
+/.github/                               @kivanccakmak
+/.github/workflows/                     @kivanccakmak
+/scripts/                               @kivanccakmak
+/scripts/deploy-*.sh                    @kivanccakmak
+/scripts/upload-*.py                    @kivanccakmak
+/scripts/release-*.sh                   @kivanccakmak
+
+# Licensing, legal, security docs
+/LICENSE                                @kivanccakmak
+/LICENSING.md                           @kivanccakmak
+/LEGAL_SAFETY.md                        @kivanccakmak
+/SECURITY.md                            @kivanccakmak
+/CONTRIBUTING.md                        @kivanccakmak
+
+# Runtime auth / secrets-touching code
+/desktop/agent/auth*.go                 @kivanccakmak
+/desktop/agent/vault*.go                @kivanccakmak
+/desktop/agent/tls*.go                  @kivanccakmak
+/desktop/agent/sdk_token*.go            @kivanccakmak
+/backend/convex/auth.ts                 @kivanccakmak
+/backend/convex/http.ts                 @kivanccakmak
+/backend/convex/schema.ts               @kivanccakmak
+
+# Keys directory must never change without explicit review
+/keys/                                  @kivanccakmak

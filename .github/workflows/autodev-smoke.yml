@@ -21,6 +21,9 @@ on:
       - 'desktop/agent/**'
       - '.github/workflows/autodev-smoke.yml'
 
+permissions:
+  contents: read
+
 jobs:
   smoke:
     runs-on: ubuntu-latest
