@@ -1040,14 +1040,12 @@ export default function HomePage() {
           <p className="sr-only">{LANDING_TAGLINE}</p>
 
           <p className="mx-auto max-w-2xl text-base leading-relaxed text-surface-300 md:text-lg">
-            A self-hosted development client for React Native. Push app bundles
-            from your own machine to any paired device &mdash; no third-party
-            developer portal, no cloud build minutes, no daily upload limits.
+            Push bundles from your machine to any paired device. No developer
+            portal, no cloud build minutes, no upload limits.
           </p>
 
           <p className="mx-auto mt-4 max-w-xl text-sm text-surface-500">
-            Works with any terminal AI coding agent &mdash; Claude Code, Codex,
-            Aider, Ollama &mdash; peer-to-peer on your own hardware.
+            Peer-to-peer. Works with Claude Code, Codex, Aider, and Ollama.
           </p>
 
           <div className="mt-8 flex items-center justify-center">
