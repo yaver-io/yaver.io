@@ -7,6 +7,10 @@
 // Must NEVER fail npm install. This is best-effort bootstrap only.
 
 const { ensureAgentBinary, runAgentCommand } = require("./agent-runtime");
+const { execSync } = require("child_process");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 
 function envEnabled(name) {
   const raw = String(process.env[name] || "").trim().toLowerCase();
@@ -24,6 +28,58 @@ function log(message) {
   console.error(`[yaver postinstall] ${message}`);
 }
 
+// Make sure `yaver` resolves on PATH for the next shell session. npm's
+// global prefix (e.g. ~/.npm-global/bin) is not on PATH by default on
+// most Linux distros — so `npm install -g yaver-cli` succeeds but
+// `yaver auth` then exits with command-not-found. That is the #1 fail
+// mode on fresh machines, so we self-heal by appending a one-line,
+// idempotent PATH export into the user's shell rc files. Never throws.
+function ensurePathOnUnix() {
+  try {
+    if (process.platform === "win32") return; // Windows users have Scoop/Winget
+    const prefix = (process.env.npm_config_prefix || "").trim();
+    if (!prefix) return;
+    const binDir = path.join(prefix, "bin");
+    if (!fs.existsSync(path.join(binDir, "yaver"))) return;
+
+    const currentPath = (process.env.PATH || "").split(path.delimiter);
+    if (currentPath.includes(binDir)) return;
+
+    // Also confirm `yaver` isn't already findable under a different name
+    // (e.g. brew-installed /opt/homebrew/bin/yaver takes precedence).
+    try {
+      const found = execSync("command -v yaver", { stdio: ["ignore", "pipe", "ignore"] })
+        .toString()
+        .trim();
+      if (found) return;
+    } catch (_) {
+      // `command -v` returns nonzero when not found — fall through and patch PATH.
+    }
+
+    const home = os.homedir();
+    const rcFiles = [".bashrc", ".zshrc", ".profile"]
+      .map((f) => path.join(home, f))
+      .filter((p) => fs.existsSync(p));
+
+    const marker = "# yaver-cli PATH";
+    const line = `case \":$PATH:\" in *\":${binDir}:\"*) ;; *) export PATH=\"${binDir}:$PATH\" ;; esac`;
+    const block = `\n${marker} (added by yaver-cli postinstall)\n${line}\n`;
+
+    let patched = false;
+    for (const rc of rcFiles) {
+      const content = fs.readFileSync(rc, "utf8");
+      if (content.includes(marker)) continue;
+      fs.appendFileSync(rc, block);
+      patched = true;
+    }
+    if (patched) {
+      log(`Added ${binDir} to PATH in shell rc files. Run 'exec $SHELL -l' or open a new terminal.`);
+    }
+  } catch (err) {
+    // Best-effort only.
+  }
+}
+
 async function main() {
   if (envEnabled("YAVER_SKIP_POSTINSTALL") || envEnabled("YAVER_SKIP_POSTINSTALL_BOOTSTRAP")) {
     return;
@@ -38,6 +94,8 @@ async function main() {
     log(`Skipping agent prefetch: ${error.message}`);
     return;
   }
+
+  ensurePathOnUnix();
 
   if (process.platform !== "linux" && process.platform !== "darwin") {
     return;

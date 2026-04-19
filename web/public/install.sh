@@ -81,10 +81,27 @@ echo ""
 echo ""
 echo "Get started:"
 echo "  yaver auth    Sign in & start the agent"
-if [ "$OS" = "linux" ] && ! printf "%s" ":$PATH:" | grep -q ":$INSTALL_DIR:"; then
+
+# Auto-wire PATH for non-standard INSTALL_DIR so `yaver` works in the
+# NEXT shell without the user having to read the hint below.
+ensure_path_in_rc() {
+  rc="$1"
+  [ -f "$rc" ] || return 0
+  grep -Fq "# yaver-cli PATH" "$rc" 2>/dev/null && return 0
+  {
+    echo ""
+    echo "# yaver-cli PATH (added by https://yaver.io/install.sh)"
+    echo "case \":\$PATH:\" in *\":${INSTALL_DIR}:\"*) ;; *) export PATH=\"${INSTALL_DIR}:\$PATH\" ;; esac"
+  } >> "$rc"
+  echo "Added ${INSTALL_DIR} to PATH in ${rc}"
+}
+
+if ! printf "%s" ":$PATH:" | grep -q ":$INSTALL_DIR:"; then
   echo ""
-  echo "Add ${INSTALL_DIR} to PATH if needed:"
-  echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
+  for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
+    ensure_path_in_rc "$rc"
+  done
+  echo "Restart your shell (or 'exec \$SHELL -l') so 'yaver' is on PATH."
 fi
 
 # `yaver push` (React Native to device) shells out to `npm exec --package
