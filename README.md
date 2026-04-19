@@ -375,6 +375,7 @@ Download the desktop app with full GUI from the [download page](https://yaver.io
 
 The download page also exposes the new **Raspberry Pi 5 dev-node image** through the same Convex-backed public artifact pipeline as the CLI/download assets.
 The image build itself is Linux-native; from macOS use `./scripts/build-pi-image.sh --docker` once Docker is running, or let the `pi-image/vX.Y.Z` GitHub workflow build and publish it.
+The Pi image is intentionally a **hybrid appliance**: it bakes in the OS image, the `yaver` binary, first-boot provisioning, cloud-init, and systemd services, then uses first boot to install the heavier dev/backend stack (`ollama`, `aider`, `opencode`, TDD tools, `sqlite3`, `vercel`, `convex`, PostgreSQL, Redis, Supabase, MQTT). That keeps the downloadable image smaller and easier to update while still shipping a full dev-node product.
 
 ## Always-Up Mode (Boots Without Auth)
 

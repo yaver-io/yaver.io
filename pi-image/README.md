@@ -9,6 +9,12 @@ Current approach:
 - first boot: cloud-init enables a one-shot bootstrap service
 - runtime: `yaver-agent.service` runs `yaver serve` as a system service in bootstrap mode until the device is paired
 
+Provisioning model:
+
+- baked into the raw image: base OS, `yaver`, cloud-init payload, first-boot scripts, systemd units
+- installed automatically on first boot: the heavy `pi-dev-node` stack such as `ollama`, `aider`, `opencode`, TDD tools, `sqlite3`, `vercel`, `convex`, PostgreSQL, Redis, Supabase, and MQTT tooling
+- rationale: keep the downloadable image smaller and let the dev stack update independently after release
+
 The built artifact is:
 
 - `yaver-pi5-devnode-arm64.img.xz`

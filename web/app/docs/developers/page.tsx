@@ -1262,6 +1262,22 @@ CLI Agent ◄──QUIC──────────────── Relay (:
               the web and mobile projects to point to your instance.
             </p>
           </div>
+
+          <div className="mt-6 rounded-xl border border-surface-800 bg-surface-900 p-6">
+            <h4 className="mb-2 text-sm font-medium text-surface-200">
+              Note on the Raspberry Pi image lane
+            </h4>
+            <p className="text-sm leading-relaxed text-surface-400">
+              The Pi image is a hybrid appliance image, not a giant fully preloaded
+              snapshot of every tool. The raw <InlineCode>.img.xz</InlineCode> bakes in
+              the base Ubuntu image, the <InlineCode>yaver</InlineCode> binary,
+              cloud-init, first-boot provisioning scripts, and the systemd services.
+              On first boot, <InlineCode>yaver install pi-dev-node</InlineCode> installs
+              the heavier AI/dev/backend stack automatically, including Ollama,
+              Aider, OpenCode, the TDD toolchain, and the promoted backend tools such
+              as SQLite, Vercel, Convex, PostgreSQL, Redis, Supabase, and MQTT.
+            </p>
+          </div>
         </section>
 
         {/* ─── Section 3: Backend API Reference ─── */}
