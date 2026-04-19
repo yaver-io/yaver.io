@@ -1101,11 +1101,17 @@ export default function HomePage() {
             Peer-to-peer. Works with Claude Code, Codex, Aider, and Ollama.
           </p>
 
-          <div className="mt-8 flex items-center justify-center">
+          <div className="mt-8 flex flex-col items-center justify-center gap-2">
             <div className="terminal inline-flex w-full max-w-sm items-center gap-3 rounded-lg border border-surface-800 bg-surface-950 px-4 py-3 font-mono text-sm text-surface-200 sm:w-auto">
               <span className="text-emerald-400">$</span>
               <span className="flex-1 select-all">npm install -g yaver-cli</span>
             </div>
+            <p className="text-[11px] text-surface-600">
+              Update later with{" "}
+              <code className="select-all rounded bg-surface-900 px-1.5 py-0.5 text-surface-400">
+                npm install -g yaver-cli@latest
+              </code>
+            </p>
           </div>
 
           <p className="mt-6 text-xs uppercase tracking-[0.18em] text-surface-600">

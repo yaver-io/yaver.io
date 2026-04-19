@@ -466,6 +466,76 @@ export default function CLISetupManual() {
           </div>
         </section>
 
+        {/* Update */}
+        <section className="mb-12">
+          <h2 className="mb-3 text-lg font-semibold text-surface-100">
+            Updating Yaver
+          </h2>
+          <p className="mb-4 text-sm text-surface-400">
+            Match the upgrade command to the path you installed with. All paths
+            resolve to the same underlying Go agent binary from the latest
+            GitHub release.
+          </p>
+          <div className="terminal mb-4">
+            <div className="terminal-header">
+              <div className="terminal-dot bg-[#ff5f57]" />
+              <div className="terminal-dot bg-[#febc2e]" />
+              <div className="terminal-dot bg-[#28c840]" />
+              <span className="ml-3 text-xs text-surface-500">terminal</span>
+            </div>
+            <div className="terminal-body space-y-2 text-[13px]">
+              <div className="text-surface-500"># npm (all platforms)</div>
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200 select-all">
+                  npm install -g yaver-cli@latest
+                </span>
+              </div>
+              <div className="h-px bg-surface-800/60" />
+              <div className="text-surface-500"># Homebrew (macOS &amp; Linux)</div>
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200 select-all">
+                  brew update &amp;&amp; brew upgrade yaver
+                </span>
+              </div>
+              <div className="h-px bg-surface-800/60" />
+              <div className="text-surface-500"># apt (Debian / Ubuntu)</div>
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200 select-all">
+                  sudo apt update &amp;&amp; sudo apt install --only-upgrade yaver
+                </span>
+              </div>
+              <div className="h-px bg-surface-800/60" />
+              <div className="text-surface-500"># Scoop (Windows)</div>
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200 select-all">
+                  scoop update yaver
+                </span>
+              </div>
+              <div className="h-px bg-surface-800/60" />
+              <div className="text-surface-500"># One-liner installer (re-run to refresh)</div>
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200 select-all">
+                  curl -fsSL https://yaver.io/install.sh | sh
+                </span>
+              </div>
+              <div className="h-px bg-surface-800/60" />
+              <div className="text-surface-500"># Verify — should print the version you just installed</div>
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200">yaver version</span>
+              </div>
+            </div>
+          </div>
+          <p className="text-xs text-surface-500">
+            Built-in auto-updater: <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-400">yaver serve</code> checks GitHub for new releases every 6 hours and hot-swaps the binary in place. Running Yaver as a <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-400">systemd</code> user service (Linux) or as a login item (macOS) means you generally do not need to upgrade by hand.
+          </p>
+        </section>
+
         {/* Cleanup */}
         <section className="mb-12">
           <h2 className="mb-3 text-lg font-semibold text-surface-100">

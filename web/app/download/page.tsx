@@ -202,6 +202,15 @@ export default async function DownloadPage() {
                   "yaver serve",
                 ]}
               />
+              <CommandCard
+                label="Update later"
+                commands={[
+                  "npm install -g yaver-cli@latest",
+                  "# or: brew upgrade yaver",
+                  "# or: sudo apt install --only-upgrade yaver",
+                  "yaver version",
+                ]}
+              />
             </div>
           </div>
 

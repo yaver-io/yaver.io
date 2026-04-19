@@ -322,11 +322,10 @@ jobs:
           gh release create "v${VERSION}" \
             --repo "$REPO" \
             --title "Yaver CLI v${VERSION}" \
-            --draft \
             --generate-notes \
             release/*
 
-          echo "Draft release created: v${VERSION}"
+          echo "Release published: v${VERSION}"
           echo "Windows EXE is unsigned — sign with SimplySign before publishing."
 
   update-package-managers:
