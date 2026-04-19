@@ -297,8 +297,6 @@ func main() {
 		runFeedback(os.Args[2:])
 	case "sdk":
 		runSDK(os.Args[2:])
-	case "ci":
-		runCI(os.Args[2:])
 	case "voice":
 		runVoice(os.Args[2:])
 	case "clean":
@@ -458,9 +456,6 @@ Usage:
   yaver feedback list   List visual bug reports from device testing
   yaver feedback show <id>  Show feedback details + transcript
   yaver feedback fix <id>   Create AI task from feedback report
-  yaver sdk add <core|feedback>  Inject the Yaver SDK into this project
-  yaver ci add <hermes|feedback|push-to-device>  Scaffold a GitHub Actions workflow
-  yaver ci list             List available CI targets
   yaver cloud buy      Open the hosted cloud checkout flow
   yaver cloud create   Start the cloud flow and wait for the machine
   yaver cloud status   Show cloud machine status
@@ -5767,81 +5762,6 @@ func getLocalIP() string {
 	return localAddr.IP.String()
 }
 
-// getLocalIPs enumerates every reachable IPv4 address this host has —
-// Wi-Fi LAN (192.168.x / 10.x / 172.16-31.x), Tailscale (100.x in the
-// CGNAT range), Ethernet, anything else on an UP, non-loopback interface.
-// Mobile clients race all of these in parallel during connect so the
-// session attaches via whichever path actually has a route from the
-// phone (e.g. Tailscale when the phone is on cellular, plain Wi-Fi when
-// they share a LAN). The preferred outbound IP is returned first;
-// remaining unique addresses follow in interface-enumeration order.
-// Loopback, link-local (169.254.x), and IPv6 are excluded — they are
-// never useful from a remote phone.
-func getLocalIPs() []string {
-	preferred := getLocalIP()
-	seen := make(map[string]struct{})
-	var ips []string
-	if preferred != "" && preferred != "0.0.0.0" {
-		seen[preferred] = struct{}{}
-		ips = append(ips, preferred)
-	}
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return ips
-	}
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, addr := range addrs {
-			var ip net.IP
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-			if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
-				continue
-			}
-			ip4 := ip.To4()
-			if ip4 == nil {
-				continue
-			}
-			s := ip4.String()
-			if _, dup := seen[s]; dup {
-				continue
-			}
-			seen[s] = struct{}{}
-			ips = append(ips, s)
-		}
-	}
-	return ips
-}
-
-// sameStringSet returns true when both slices contain the same elements
-// regardless of order. Used to suppress noisy "LAN set changed" log lines
-// when the heartbeat just re-enumerates the same interfaces.
-func sameStringSet(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	m := make(map[string]struct{}, len(a))
-	for _, s := range a {
-		m[s] = struct{}{}
-	}
-	for _, s := range b {
-		if _, ok := m[s]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
 func openBrowser(url string) {
 	switch runtime.GOOS {
 	case "darwin":
@@ -5902,12 +5822,11 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 	defer refreshTicker.Stop()
 
 	lastIP := getLocalIP()
-	lastIPs := getLocalIPs()
 	authExpiredLogged := false
 
 	// Send first heartbeat immediately (don't wait 2 min for ticker)
 	runners := taskMgr.GetRunnerInfos()
-	if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, lastIP, lastIPs); err != nil {
+	if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, lastIP); err != nil {
 		if errors.Is(err, ErrAuthExpired) {
 			log.Println("[auth] WARNING: Auth token expired! Run 'yaver auth' to re-authenticate.")
 			authExpiredLogged = true
@@ -5937,19 +5856,14 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 			}
 		case <-ticker.C:
 			currentIP := getLocalIP()
-			currentIPs := getLocalIPs()
 			runners := taskMgr.GetRunnerInfos()
 
 			if currentIP != lastIP {
 				log.Printf("[heartbeat] Local IP changed: %s → %s", lastIP, currentIP)
 				lastIP = currentIP
 			}
-			if !sameStringSet(currentIPs, lastIPs) {
-				log.Printf("[heartbeat] LAN/Tailscale set changed: %v → %v", lastIPs, currentIPs)
-				lastIPs = currentIPs
-			}
 
-			if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP, currentIPs); err != nil {
+			if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP); err != nil {
 				if errors.Is(err, ErrAuthExpired) {
 					// Try to refresh token first
 					if refreshErr := RefreshToken(baseURL, currentToken()); refreshErr != nil {
@@ -5969,7 +5883,7 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 							httpServer.authExpired.Store(false)
 						}
 						// Retry heartbeat
-						if retryErr := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP, currentIPs); retryErr != nil {
+						if retryErr := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP); retryErr != nil {
 							log.Printf("heartbeat retry failed: %v", retryErr)
 						}
 					}
