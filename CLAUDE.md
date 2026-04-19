@@ -420,6 +420,12 @@ Two tiers (all dedicated, no sharing):
 
 The Feedback SDK captures visual bug reports from device testing and sends them to the AI agent. Available for React Native, Flutter, and Web.
 
+### Suppress-when-inside-Yaver layer (RN SDK only, 0.5.5+)
+
+When a third-party RN app is loaded through the Yaver mobile app's super-host (Hermes push), `YaverFeedback.init()` + `ShakeDetector.start()` silently no-op. The SDK detects the runtime via the `YaverInfo` native module (only registered in Yaver's container at `mobile/ios/Yaver/YaverInfo.swift` + the Android counterpart) and yields every side-effect — shake detection, FeedbackModal mount, BlackBox HTTP + SSE command channel — to Yaver's native UX. The user only ever sees Yaver's 2-button overlay ("Reload" + "Back to Yaver"); the guest bundle never pops its own feedback modal or fires double P2P sessions. Standalone builds (TestFlight / App Store / Play via the developer's own account) are unaffected. Gate lives in `sdk/feedback/react-native/src/YaverFeedback.ts::isRunningInsideYaverHost()` + `ShakeDetector.ts::start()`.
+
+The native super-host also enforces this on iOS: `ShakeDetectingWindow.motionEnded` does not forward `motionShake` up the responder chain while a guest bundle is active, so RN's built-in `RCTDevMenu` (Debug) and `DeviceEventEmitter.shakeEvent` listeners in the guest bundle are never reached.
+
 ### Error Capture (observe-only, no conflicts)
 The SDK **never hijacks global error handlers** — no conflicts with Sentry, Crashlytics, Bugsnag, or any other tool. Two explicit patterns:
 - `wrapErrorHandler(existing)` — pass-through wrapper for the error handler chain

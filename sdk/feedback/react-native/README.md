@@ -574,11 +574,33 @@ YaverFeedback.init({
 });
 ```
 
+## Running Inside the Yaver Mobile App (super-host)
+
+When a third-party app is loaded through Yaver's Hermes-push flow (so the
+Yaver mobile app is the runtime container for your app), the SDK detects
+that situation via the `YaverInfo` native module and **automatically
+no-ops `YaverFeedback.init()`** — no ShakeDetector, no FeedbackModal, no
+BlackBox stream from inside the guest. The user only ever sees Yaver's
+native shake overlay ("Reload" + "Back to Yaver") and uses Yaver's
+built-in feedback flow instead.
+
+Standalone installs (TestFlight / App Store / Play from your own dev
+account) are unaffected — the SDK behaves exactly as it did before.
+
+If you need to opt out of the auto-suppression in a specific build (for
+example, to compare behaviour in a super-host smoke test), set
+`enabled: true` explicitly — the Yaver-host gate runs before the
+`enabled` flag is evaluated on purpose.
+
 ## Trigger Modes
 
 ### Shake (default)
 
 Shake the device to open the feedback modal. Uses the built-in shake event on iOS and `ShakeEvent` on Android.
+
+When the app is loaded inside the Yaver mobile app (super-host), the
+SDK yields shake handling to Yaver's native overlay — see the
+"Running Inside the Yaver Mobile App" section above.
 
 ```typescript
 YaverFeedback.init({ authToken, trigger: 'shake' });

@@ -327,6 +327,40 @@ if (isDev) {
           </div>
         </section>
 
+        {/* ─── Running inside the Yaver mobile app ─── */}
+        <section className="mb-20">
+          <SectionHeading id="yaver-host-suppress">
+            Running inside the Yaver mobile app
+          </SectionHeading>
+          <Prose>
+            When your app is pushed into the Yaver mobile app as a Hermes
+            bundle (the &quot;Open in Yaver&quot; / super-host flow), the
+            Feedback SDK detects that environment via the{" "}
+            <code className="rounded bg-surface-900 px-1 text-surface-400">
+              YaverInfo
+            </code>{" "}
+            native module and silently no-ops{" "}
+            <code className="rounded bg-surface-900 px-1 text-surface-400">
+              YaverFeedback.init()
+            </code>. No ShakeDetector is registered, no FeedbackModal is
+            mounted, no BlackBox stream is opened from inside the guest
+            bundle. The user sees only Yaver&apos;s native overlay
+            (&quot;Reload&quot; / &quot;Back to Yaver&quot;) and uses
+            Yaver&apos;s built-in feedback flow.
+          </Prose>
+          <Prose>
+            Standalone installs through your own TestFlight / Play / App
+            Store entry are unaffected — the SDK behaves exactly as it
+            did before. This gate runs <em>before</em> the{" "}
+            <code className="rounded bg-surface-900 px-1 text-surface-400">
+              enabled
+            </code>{" "}
+            flag so that the SDK never activates twice in the same
+            runtime (Yaver super-host already owns shake, feedback, and
+            BlackBox).
+          </Prose>
+        </section>
+
         {/* ─── Error Capture ─── */}
         <section className="mb-20">
           <SectionHeading id="error-capture">Error Capture</SectionHeading>

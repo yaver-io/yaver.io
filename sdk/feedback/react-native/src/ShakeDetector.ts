@@ -1,4 +1,20 @@
-import { DeviceEventEmitter, Platform } from 'react-native';
+import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
+
+// Detects that the surrounding runtime is Yaver's super-host bridge. The
+// YaverInfo native module is only registered inside Yaver's container
+// (see mobile/ios/Yaver/YaverInfo.{swift,m} and the Android equivalent),
+// so it is undefined in a standalone third-party app. When the SDK runs
+// inside Yaver we yield shake handling to Yaver's native
+// ShakeDetectingWindow — the user should only ever see the 2-button
+// "Reload / Back to Yaver" overlay, never a FeedbackModal popped from
+// inside the guest bundle.
+function isRunningInsideYaverHost(): boolean {
+  try {
+    return !!(NativeModules as any)?.YaverInfo;
+  } catch {
+    return false;
+  }
+}
 
 const SHAKE_TIMEOUT_MS = 1000; // minimum time between shakes
 const ACCEL_THRESHOLD_G = 1.8; // peak g-force that qualifies as a shake event
@@ -32,6 +48,11 @@ export class ShakeDetector {
 
   start(onShake: () => void): void {
     this.stop();
+    // When the app is loaded inside Yaver's super-host (Hermes push),
+    // Yaver owns the shake gesture and shows its own "Reload / Back to
+    // Yaver" overlay. We must not also fire the guest-side callback,
+    // otherwise the user gets both UIs at once.
+    if (isRunningInsideYaverHost()) return;
     this.subscribeDevMenu(onShake);
     this.subscribeAccelerometer(onShake);
   }

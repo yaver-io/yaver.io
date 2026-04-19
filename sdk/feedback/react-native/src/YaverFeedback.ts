@@ -1,3 +1,4 @@
+import { NativeModules } from 'react-native';
 import { FeedbackConfig, CapturedError } from './types';
 import { YaverDiscovery } from './Discovery';
 import { BlackBox } from './BlackBox';
@@ -11,6 +12,29 @@ import {
   clearSelectedDeviceId,
   DEFAULT_CONVEX_SITE_URL,
 } from './auth';
+
+// Is this JS runtime the Yaver mobile app's super-host bridge? The
+// YaverInfo native module is only registered inside Yaver's container
+// (mobile/ios/Yaver/YaverInfo.{swift,m} + Android counterpart); a
+// standalone app bundled by its own developer has no such module.
+// When the SDK is loaded through Yaver's Hermes-push guest runtime we
+// deliberately no-op every public entry point — Yaver owns the shake
+// gesture ("Reload / Back to Yaver" overlay), the feedback capture
+// flow, and the BlackBox streaming; running a second copy from inside
+// the guest just produces duplicate UIs and double P2P sessions.
+function isRunningInsideYaverHost(): boolean {
+  try {
+    return !!(NativeModules as any)?.YaverInfo;
+  } catch {
+    return false;
+  }
+}
+
+// Suppresses SDK activation when inside Yaver super-host. Callers of
+// YaverFeedback.init / startReport / startBatchRecording / … early-out
+// by checking this first so the SDK's side effects (accelerometer,
+// BlackBox HTTP, SSE command channel, FeedbackModal mount) never start.
+const YAVER_HOST_SUPPRESS = isRunningInsideYaverHost();
 
 let config: FeedbackConfig | null = null;
 let enabled = false;
@@ -44,6 +68,11 @@ export class YaverFeedback {
    * via `YaverDiscovery` on the first `startReport()` call.
    */
   static init(cfg: FeedbackConfig): void {
+    if (YAVER_HOST_SUPPRESS) {
+      // Running inside Yaver's super-host — yield to Yaver's native UX.
+      enabled = false;
+      return;
+    }
     config = {
       trigger: 'shake',
       maxRecordingDuration: 120,
