@@ -22,12 +22,6 @@
     "@react-native-community/datetimepicker": "8.4.4",
     "@react-native-community/netinfo": "11.4.1",
     "@react-native-community/slider": "5.0.1",
-    "@react-native-firebase/analytics": "24.0.0",
-    "@react-native-firebase/app": "24.0.0",
-    "@react-native-firebase/auth": "24.0.0",
-    "@react-native-firebase/crashlytics": "24.0.0",
-    "@react-native-firebase/firestore": "24.0.0",
-    "@react-native-firebase/messaging": "24.0.0",
     "@react-native-google-signin/google-signin": "16.1.2",
     "@react-native-masked-view/masked-view": "0.3.2",
     "@react-native-menu/menu": "2.0.0",
@@ -194,48 +188,6 @@
     },
     "@react-native-community/slider": {
       "version": "5.0.1",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
-    "@react-native-firebase/analytics": {
-      "version": "24.0.0",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
-    "@react-native-firebase/app": {
-      "version": "24.0.0",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
-    "@react-native-firebase/auth": {
-      "version": "24.0.0",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
-    "@react-native-firebase/crashlytics": {
-      "version": "24.0.0",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
-    "@react-native-firebase/firestore": {
-      "version": "24.0.0",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
-    "@react-native-firebase/messaging": {
-      "version": "24.0.0",
       "hostApp": true,
       "cliPush": true,
       "agentOpenInYaver": true,
