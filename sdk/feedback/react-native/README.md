@@ -5,6 +5,14 @@ Visual feedback SDK for Yaver. Lets testers and developers shake their phone (or
 ## Installation
 
 ```bash
+npm install -g yaver-cli
+cd your-app
+yaver feedback setup
+```
+
+Manual fallback:
+
+```bash
 npm install yaver-feedback-react-native
 ```
 
