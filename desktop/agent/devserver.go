@@ -55,6 +55,7 @@ type DevServerOpts struct {
 	WorkDir  string
 	Port     int               // override default port (0 = framework default)
 	Platform string            // "ios", "android", "web"
+	Target   DevServerTarget   // selected Yaver preview target, if any
 	Env      map[string]string // extra environment variables
 	Args     []string          // extra args passed to the dev server command
 }
@@ -261,6 +262,7 @@ func (m *DevServerManager) Start(framework, workDir, platform string, port int, 
 		WorkDir:  workDir,
 		Port:     port,
 		Platform: platform,
+		Target:   target,
 	}
 
 	// Pass the agent's reachable URL so Metro can tell dev clients to connect
@@ -1047,8 +1049,14 @@ func (f *FlutterDevServer) Start(ctx context.Context, opts DevServerOpts) error 
 	// Find a real mobile device (iOS/Android) for native hot reload.
 	// Flutter is a mobile framework — run natively, not as web.
 	deviceID := opts.Platform
+	preferredPlatform := ""
+	switch deviceID {
+	case "ios", "android":
+		preferredPlatform = deviceID
+		deviceID = ""
+	}
 	if deviceID == "" || deviceID == "web" || deviceID == "chrome" || deviceID == "web-server" {
-		detected := detectFlutterMobileDevice(ctx)
+		detected := detectFlutterMobileDevice(ctx, preferredPlatform, opts.Target)
 		if detected != "" {
 			deviceID = detected
 		} else {
@@ -1077,8 +1085,38 @@ func (f *FlutterDevServer) Start(ctx context.Context, opts DevServerOpts) error 
 	return f.startNativeProcess(ctx, "flutter", args, opts.WorkDir)
 }
 
-// detectFlutterMobileDevice runs `flutter devices --machine` and returns the first iOS/Android device ID.
-func detectFlutterMobileDevice(ctx context.Context) string {
+func normalizeDeviceName(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	replacer := strings.NewReplacer(
+		"’", "",
+		"'", "",
+		"`", "",
+		"“", "",
+		"”", "",
+		"\"", "",
+		"(", " ",
+		")", " ",
+		"-", " ",
+		"_", " ",
+	)
+	value = replacer.Replace(value)
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func flutterDeviceMatchesTarget(deviceName string, target DevServerTarget) bool {
+	if strings.TrimSpace(target.DeviceName) == "" {
+		return false
+	}
+	deviceNorm := normalizeDeviceName(deviceName)
+	targetNorm := normalizeDeviceName(target.DeviceName)
+	return deviceNorm != "" && targetNorm != "" &&
+		(strings.Contains(deviceNorm, targetNorm) || strings.Contains(targetNorm, deviceNorm))
+}
+
+// detectFlutterMobileDevice runs `flutter devices --machine` and returns a mobile device ID.
+// If preferredPlatform is "ios" or "android", it prefers that class first.
+// If a Yaver preview target is selected, it tries to match by device name first.
+func detectFlutterMobileDevice(ctx context.Context, preferredPlatform string, target DevServerTarget) string {
 	out, err := exec.CommandContext(ctx, "flutter", "devices", "--machine").Output()
 	if err != nil {
 		return ""
@@ -1093,9 +1131,48 @@ func detectFlutterMobileDevice(ctx context.Context) string {
 		return ""
 	}
 
-	// Prefer iOS, then Android — skip desktop/web
+	matchesPreferred := func(target string) bool {
+		switch preferredPlatform {
+		case "ios":
+			return target == "ios"
+		case "android":
+			return strings.HasPrefix(target, "android")
+		default:
+			return false
+		}
+	}
+
+	isMobile := func(target string) bool {
+		return target == "ios" || strings.HasPrefix(target, "android")
+	}
+
+	if target.DeviceName != "" {
+		for _, d := range devices {
+			if !isMobile(d.TargetPlatform) {
+				continue
+			}
+			if preferredPlatform != "" && !matchesPreferred(d.TargetPlatform) {
+				continue
+			}
+			if flutterDeviceMatchesTarget(d.Name, target) {
+				log.Printf("[dev:flutter] Matched selected Yaver target %q to Flutter device %s (%s) [%s]", target.DeviceName, d.Name, d.ID, d.TargetPlatform)
+				return d.ID
+			}
+		}
+	}
+
+	if preferredPlatform != "" {
+		for _, d := range devices {
+			if matchesPreferred(d.TargetPlatform) {
+				log.Printf("[dev:flutter] Found preferred mobile device: %s (%s) [%s]", d.Name, d.ID, d.TargetPlatform)
+				return d.ID
+			}
+		}
+	}
+
+	// Otherwise prefer iOS, then Android — skip desktop/web.
 	for _, d := range devices {
-		if d.TargetPlatform == "ios" || strings.HasPrefix(d.TargetPlatform, "android") {
+		if isMobile(d.TargetPlatform) {
 			log.Printf("[dev:flutter] Found mobile device: %s (%s) [%s]", d.Name, d.ID, d.TargetPlatform)
 			return d.ID
 		}

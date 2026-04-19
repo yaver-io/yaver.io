@@ -8921,6 +8921,75 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		})
 		return mcpToolResult(fmt.Sprintf("Guest access revoked for %s", args.Email))
 
+	// --- Primary device preference ---
+	case "device_primary_get":
+		ctx := context.Background()
+		current, err := primaryGetCurrent(ctx, s.token, s.convexURL)
+		if err != nil {
+			return mcpToolError("failed to read settings: " + err.Error())
+		}
+		devices, err := primaryListDevices(ctx, s.token, s.convexURL)
+		if err != nil {
+			return mcpToolError("failed to list devices: " + err.Error())
+		}
+		if current == "" {
+			return mcpToolResult(fmt.Sprintf("No primary device set. %d device(s) registered — multi-device users must pick manually when connecting.", len(devices)))
+		}
+		name := "(unknown)"
+		for _, d := range devices {
+			if d.DeviceID == current {
+				name = d.Name
+				break
+			}
+		}
+		return mcpToolResult(fmt.Sprintf("Primary device: %s (deviceId=%s)", name, current))
+
+	case "device_primary_set":
+		var args struct {
+			DeviceID string `json:"deviceId"`
+			Clear    bool   `json:"clear"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		ctx := context.Background()
+		if args.Clear {
+			if err := primarySaveRaw(ctx, s.token, s.convexURL, "", true); err != nil {
+				return mcpToolError(err.Error())
+			}
+			return mcpToolResult("Primary device cleared.")
+		}
+		target := strings.TrimSpace(args.DeviceID)
+		if target == "" {
+			return mcpToolError("deviceId or clear=true is required")
+		}
+		devices, err := primaryListDevices(ctx, s.token, s.convexURL)
+		if err != nil {
+			return mcpToolError("failed to list devices: " + err.Error())
+		}
+		var matches []primaryDevice
+		for _, d := range devices {
+			if d.DeviceID == target {
+				matches = []primaryDevice{d}
+				break
+			}
+			if strings.HasPrefix(d.DeviceID, target) {
+				matches = append(matches, d)
+			}
+		}
+		if len(matches) == 0 {
+			return mcpToolError(fmt.Sprintf("No device matches %q — run device_primary_get to list available devices", target))
+		}
+		if len(matches) > 1 {
+			return mcpToolError(fmt.Sprintf("%q matches %d devices — use a longer prefix", target, len(matches)))
+		}
+		chosen := matches[0]
+		if chosen.IsGuest {
+			return mcpToolError("shared (guest) devices cannot be marked primary — the host can revoke access at any time")
+		}
+		if err := primarySaveRaw(ctx, s.token, s.convexURL, chosen.DeviceID, false); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult(fmt.Sprintf("Primary device set to %s (%s).", chosen.Name, chosen.DeviceID))
+
 	// --- Remote Support Sessions ---
 	case "support_start":
 		var args struct {

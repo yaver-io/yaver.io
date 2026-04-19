@@ -27,13 +27,13 @@ type VibingSuggestion struct {
 
 // VibingState holds the state of a vibing session for a project.
 type VibingState struct {
-	Project     string             `json:"project"`
-	Path        string             `json:"path"`
-	Framework   string             `json:"framework,omitempty"`
-	Suggestions []VibingSuggestion `json:"suggestions"`
+	Project      string             `json:"project"`
+	Path         string             `json:"path"`
+	Framework    string             `json:"framework,omitempty"`
+	Suggestions  []VibingSuggestion `json:"suggestions"`
 	QuickActions []VibingSuggestion `json:"quickActions"` // always-available actions
-	History     []string           `json:"history"`       // recent task titles
-	GeneratedAt string             `json:"generatedAt"`
+	History      []string           `json:"history"`      // recent task titles
+	GeneratedAt  string             `json:"generatedAt"`
 }
 
 // generateQuickActions returns always-available actions for any project.
@@ -56,10 +56,18 @@ func generateQuickActions(projectPath, projectName, framework string) []VibingSu
 	// Add deploy actions based on framework
 	if framework == "expo" || framework == "flutter" || framework == "react-native" {
 		actions = append([]VibingSuggestion{
+			{ID: "mobile-flush", Icon: "\U0001F4F1", Label: "Push To Phone", Desc: "Use the right Yaver mobile path", Category: "deploy",
+				Prompt: fmt.Sprintf("Push %s to the selected phone using Yaver's framework-aware mobile flow. If it is React Native or Expo, use the Hermes first-class path. If it is Flutter, use the second-class LAN-only Flutter flush path. If it is not LAN-eligible, explain why and do not fake a remote push.", projectName), Priority: 1},
 			{ID: "testflight", Icon: "\U0001F34E", Label: "Ship to TestFlight", Desc: "Build + upload to TestFlight", Category: "deploy",
 				Prompt: fmt.Sprintf("Build %s for iOS, archive, and upload to TestFlight. Auto-increment build number. Report progress.", projectName), Priority: 1},
 			{ID: "playstore", Icon: "\U0001F916", Label: "Ship to Play Store", Desc: "Build AAB + upload to internal testing", Category: "deploy",
 				Prompt: fmt.Sprintf("Build %s for Android (release AAB) and upload to Google Play internal testing. Auto-increment versionCode.", projectName), Priority: 1},
+		}, actions...)
+	}
+	if framework == "swift" || framework == "kotlin" {
+		actions = append([]VibingSuggestion{
+			{ID: "mobile-flush", Icon: "\U0001F4F1", Label: "Push To Phone", Desc: "Use the second-class native mobile flow", Category: "deploy",
+				Prompt: fmt.Sprintf("Push %s to the selected phone using Yaver's framework-aware native mobile flow. If it is Swift or Kotlin, use the second-class LAN-only build/install path for the selected target phone. If it is not LAN-eligible, explain why and stop.", projectName), Priority: 1},
 		}, actions...)
 	}
 	if framework == "nextjs" || framework == "vite" {
@@ -70,6 +78,36 @@ func generateQuickActions(projectPath, projectName, framework string) []VibingSu
 	}
 
 	return actions
+}
+
+func vibingExecutionContext(projectPath, framework string, target DevServerTarget, direct bool) string {
+	var lines []string
+	lines = append(lines, "Yaver mobile execution context:")
+	if framework != "" {
+		lines = append(lines, fmt.Sprintf("- Project framework: %s", framework))
+	}
+	if target.DeviceID != "" || target.DeviceName != "" || target.DeviceClass != "" {
+		lines = append(lines, fmt.Sprintf("- Selected target phone: %s (%s, class=%s)",
+			firstNonEmpty(target.DeviceName, "unknown"),
+			firstNonEmpty(target.DeviceID, "unknown"),
+			firstNonEmpty(target.DeviceClass, "unknown"),
+		))
+	} else {
+		lines = append(lines, "- Selected target phone: current/default phone")
+	}
+	if direct {
+		lines = append(lines, "- Current control connection to this machine: direct/LAN-capable")
+	} else {
+		lines = append(lines, "- Current control connection to this machine: relay/remote")
+	}
+	lines = append(lines, "- Hermes is the only first-class mobile runtime path and works over LAN, relay, and 4G.")
+	lines = append(lines, "- Flutter, Swift, and Kotlin are second-class mobile paths and are LAN-only.")
+	lines = append(lines, "- Do not suggest manual CLI flags like `--platform ios` to the user.")
+	lines = append(lines, "- Let Yaver route by framework and selected target phone.")
+	lines = append(lines, "- If framework is expo/react-native, prefer Hermes/Open in Yaver.")
+	lines = append(lines, "- If framework is flutter/swift/kotlin, only use flush/build-install flows when LAN-eligible; otherwise explain the limitation.")
+	lines = append(lines, fmt.Sprintf("- Project path: %s", projectPath))
+	return strings.Join(lines, "\n")
 }
 
 // getRecentGitActivity returns recent commit messages and active files for smart suggestions.
@@ -124,7 +162,7 @@ func generateAISuggestions(projectPath, projectName string) []VibingSuggestion {
 		}
 		suggestions = append(suggestions, VibingSuggestion{
 			ID: "whats-next", Icon: "\U0001F52E", Label: "What's Next?",
-			Desc: fmt.Sprintf("Based on recent work: %s", commits[0]),
+			Desc:     fmt.Sprintf("Based on recent work: %s", commits[0]),
 			Category: "feature", Priority: 1,
 			Prompt: fmt.Sprintf("I've been working on %s. Recent commits: %s\n\nBased on this momentum, what should I build next? Suggest 3 concrete features or improvements that naturally follow from what I've been doing. For each one, give a one-liner and ask which one to start.", projectName, recentWork),
 		})
@@ -135,7 +173,7 @@ func generateAISuggestions(projectPath, projectName string) []VibingSuggestion {
 		area := filepath.Dir(activeFiles[0])
 		suggestions = append(suggestions, VibingSuggestion{
 			ID: "active-area", Icon: "\U0001F525", Label: fmt.Sprintf("Hot area: %s", area),
-			Desc: fmt.Sprintf("%d files changed recently", len(activeFiles)),
+			Desc:     fmt.Sprintf("%d files changed recently", len(activeFiles)),
 			Category: "feature", Priority: 2,
 			Prompt: fmt.Sprintf("The most active area in %s is around %s (%d files changed recently). Look at this area, understand what's being built, and suggest improvements or the next logical step.", projectName, area, len(activeFiles)),
 		})
@@ -147,7 +185,7 @@ func generateAISuggestions(projectPath, projectName string) []VibingSuggestion {
 		recentWork := strings.Join(commits[:min(5, len(commits))], "; ")
 		suggestions = append(suggestions, VibingSuggestion{
 			ID: "next-feature", Icon: "\U0001F4A1", Label: "Continue momentum",
-			Desc: fmt.Sprintf("You've been working on: %s", commits[0]),
+			Desc:     fmt.Sprintf("You've been working on: %s", commits[0]),
 			Category: "feature", Priority: 1,
 			Prompt: fmt.Sprintf("I've been working on %s. Recent commits: %s\n\nWhat's the most impactful thing to build next? Give me ONE concrete feature that follows from this work. Describe it in 2 sentences and start implementing it.", projectName, recentWork),
 		})
@@ -161,7 +199,7 @@ func generateAISuggestions(projectPath, projectName string) []VibingSuggestion {
 		}
 		suggestions = append(suggestions, VibingSuggestion{
 			ID: "readme-feature", Icon: "\U0001F52E", Label: "What's missing?",
-			Desc: "AI analyzes your project and finds gaps",
+			Desc:     "AI analyzes your project and finds gaps",
 			Category: "feature", Priority: 1,
 			Prompt: fmt.Sprintf("Read the codebase and README of %s:\n\n%s\n\nWhat's the most obvious missing feature that users would expect? Describe it and implement it.", projectName, truncatedReadme),
 		})
@@ -172,7 +210,7 @@ func generateAISuggestions(projectPath, projectName string) []VibingSuggestion {
 		area := filepath.Dir(activeFiles[0])
 		suggestions = append(suggestions, VibingSuggestion{
 			ID: "hot-area", Icon: "\U0001F525", Label: fmt.Sprintf("Improve %s", area),
-			Desc: fmt.Sprintf("%d files changed recently in this area", len(activeFiles)),
+			Desc:     fmt.Sprintf("%d files changed recently in this area", len(activeFiles)),
 			Category: "feature", Priority: 2,
 			Prompt: fmt.Sprintf("The hottest area in %s is %s (%d files changed recently: %s). Look at what's being built there and make it better — add error handling, improve the UX, or add a missing feature.", projectName, area, len(activeFiles), strings.Join(activeFiles[:min(5, len(activeFiles))], ", ")),
 		})
@@ -881,7 +919,7 @@ func (s *HTTPServer) handleVibingExecute(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req struct {
-		Prompt    string `json:"prompt"`
+		Prompt      string `json:"prompt"`
 		ProjectPath string `json:"projectPath"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -895,7 +933,17 @@ func (s *HTTPServer) handleVibingExecute(w http.ResponseWriter, r *http.Request)
 		s.taskMgr.mu.Unlock()
 	}
 
-	task, err := s.taskMgr.CreateTask(req.Prompt, "", "", "vibing", "", "", nil)
+	info := DetectProjectInfo(req.ProjectPath)
+	target := DevServerTarget{}
+	if s.devServerMgr != nil {
+		target = s.devServerMgr.PreferredTarget()
+	}
+	prompt := req.Prompt
+	if ctx := vibingExecutionContext(req.ProjectPath, info.Framework, target, isDirectConnection(r)); ctx != "" {
+		prompt = ctx + "\n\nUser request:\n" + req.Prompt
+	}
+
+	task, err := s.taskMgr.CreateTask(prompt, "", "", "vibing", "", "", nil)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return

@@ -920,9 +920,11 @@ func RegisterDevice(baseURL string, r RegisterDeviceRequest) (string, error) {
 var ErrAuthExpired = fmt.Errorf("auth token expired (401)")
 
 // SendHeartbeat sends a heartbeat to the Convex backend so the device stays
-// marked as online. Includes active runner info if any.
+// marked as online. Includes active runner info, the preferred outbound IP
+// (quicHost), and every reachable LAN/Tailscale/Ethernet address the agent
+// has (localIps) so mobile clients can race them in parallel during connect.
 // Returns ErrAuthExpired if the server returns 401.
-func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, quicHost string) error {
+func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, quicHost string, localIps []string) error {
 	payload := map[string]interface{}{
 		"deviceId":   deviceID,
 		"runners":    runners,
@@ -930,6 +932,9 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, quicHo
 	}
 	if quicHost != "" {
 		payload["quicHost"] = quicHost
+	}
+	if len(localIps) > 0 {
+		payload["localIps"] = localIps
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

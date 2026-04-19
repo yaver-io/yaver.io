@@ -2010,6 +2010,36 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, guestTools...)
 
+	// --- Primary-device preference (auto-connect) ---
+	primaryTools := []map[string]interface{}{
+		{
+			"name":        "device_primary_get",
+			"description": "Get the user's preferred device for auto-connect. Mobile, web, and the CLI use this when the user has multiple machines registered — single-device users auto-connect regardless.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "device_primary_set",
+			"description": "Mark a device as the primary (auto-connect) target. Accepts a deviceId or unique prefix. Pass clear:true instead to unset the preference.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"deviceId": map[string]interface{}{
+						"type":        "string",
+						"description": "Full deviceId or unique prefix. Ignored when clear=true.",
+					},
+					"clear": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Unset the preference instead of picking a device.",
+					},
+				},
+			},
+		},
+	}
+	tools = append(tools, primaryTools...)
+
 	// --- Remote Support Sessions ---
 	// In-memory, TTL'd, owner-initiated remote-control grant. Think
 	// TeamViewer, not Convex-tied guest access.
