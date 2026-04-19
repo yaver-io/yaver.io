@@ -254,7 +254,7 @@ function PricingContent() {
             <span className="px-3 py-1 rounded-full bg-surface-900 text-surface-300 border border-surface-800">✓ unlimited projects</span>
             <span className="px-3 py-1 rounded-full bg-surface-900 text-surface-300 border border-surface-800">✓ unlimited machines</span>
             <span className="px-3 py-1 rounded-full bg-surface-900 text-surface-300 border border-surface-800">✓ unlimited deploys</span>
-            <span className="px-3 py-1 rounded-full bg-surface-900 text-surface-300 border border-surface-800">✓ MIT license</span>
+            <span className="px-3 py-1 rounded-full bg-surface-900 text-surface-300 border border-surface-800">✓ AGPL-3.0 license</span>
           </div>
         </div>
 
@@ -275,7 +275,7 @@ function PricingContent() {
           <div className="relative flex flex-col rounded-2xl border border-surface-800 bg-[#1a1d27] p-6">
             <div className="mb-5">
               <h2 className="text-base font-semibold text-surface-100">Self-Hosted</h2>
-              <p className="mt-1 text-xs text-surface-500">MIT licensed</p>
+              <p className="mt-1 text-xs text-surface-500">AGPL-3.0 licensed</p>
             </div>
             <div className="mb-5">
               <span className="text-3xl font-bold text-surface-50">$0</span>
@@ -487,7 +487,7 @@ curl http://localhost:8080/health`}</code>
           <div className="mx-auto max-w-2xl">
             <FAQItem
               question="Do I need a card to self-host?"
-              answer="No. The self-hosted version is MIT licensed and completely free. You can run it forever without signing up or paying anything."
+              answer="No. The self-hosted version is AGPL-3.0 licensed and completely free. You can run it forever without signing up or paying anything."
             />
             <FAQItem
               question="What happens when I subscribe to a machine plan?"

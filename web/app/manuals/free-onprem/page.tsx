@@ -138,7 +138,7 @@ export default function FreeOnPremManual() {
                   Yaver CLI
                 </h3>
                 <span className="rounded-full bg-green-500/10 px-2 py-0.5 text-[10px] font-medium text-green-400">
-                  MIT
+                  AGPL-3.0
                 </span>
               </div>
               <p className="mt-1 text-sm text-surface-400">
@@ -695,11 +695,14 @@ export default function FreeOnPremManual() {
                 Open-source vs. open-weight vs. proprietary
               </h3>
               <p className="text-sm leading-relaxed text-surface-400">
-                <strong className="text-surface-200">Open-source</strong>{" "}
+                <strong className="text-surface-200">Permissive open-source</strong>{" "}
                 (MIT, Apache 2.0): code and weights are free to use, modify,
                 and redistribute for any purpose, including commercial.
-                GLM-4.7-Flash, Ollama, Aider, and Yaver are all in this
-                category.
+                GLM-4.7-Flash, Ollama, and Aider are in this category. Yaver
+                itself is <strong className="text-surface-200">copyleft open-source</strong>{" "}
+                (AGPL-3.0-only) &mdash; same freedoms, but if you expose a
+                modified Yaver as a network service you must publish your
+                changes.
               </p>
               <p className="mt-2 text-sm text-surface-400">
                 <strong className="text-surface-200">Open-weight</strong>: model
@@ -1222,13 +1225,13 @@ export default function FreeOnPremManual() {
                 </tr>
                 <tr className="border-b border-surface-800/60">
                   <td className="py-3 pr-4 text-surface-300">Yaver CLI</td>
-                  <td className="py-3 pr-4">MIT</td>
+                  <td className="py-3 pr-4">AGPL-3.0</td>
                   <td className="py-3 pr-4 text-green-400">Yes</td>
                   <td className="py-3">Free</td>
                 </tr>
                 <tr className="border-b border-surface-800/60">
                   <td className="py-3 pr-4 text-surface-300">Yaver Mobile</td>
-                  <td className="py-3 pr-4">MIT</td>
+                  <td className="py-3 pr-4">AGPL-3.0</td>
                   <td className="py-3 pr-4 text-green-400">Yes</td>
                   <td className="py-3">Free</td>
                 </tr>
@@ -1259,11 +1262,12 @@ export default function FreeOnPremManual() {
           </div>
 
           <p className="mt-4 text-sm text-surface-400">
-            Every component in this stack is permissively licensed (MIT or
-            Apache 2.0). You can use it for personal projects, startups,
-            enterprise &mdash; no restrictions. The model weights (GLM-4.7-Flash)
-            are MIT-licensed by Zhipu AI, meaning you can modify, redistribute,
-            and use them commercially without limitation.
+            Every component is open-source: MIT / Apache 2.0 for the dependencies
+            (Ollama, GLM-4.7-Flash, Aider), and AGPL-3.0-only for Yaver itself.
+            You can self-host, modify, and redistribute the whole stack. If you
+            offer Yaver as a network service to third parties, AGPL-3.0 requires
+            you to publish your modifications &mdash; personal and internal team
+            use have no such obligation.
           </p>
         </section>
 

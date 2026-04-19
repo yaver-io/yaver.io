@@ -94,7 +94,7 @@ export default function ContributingPage() {
             Contributing to Yaver
           </h1>
           <p className="text-sm leading-relaxed text-surface-400">
-            Yaver is open source (MIT). You can develop features, fix bugs, add
+            Yaver is open source (AGPL-3.0-only). You can develop features, fix bugs, add
             new AI runner integrations, improve docs, and run your own backend
             instance. This guide covers everything you need to get started.
           </p>

@@ -1,28 +1,60 @@
-import type { MetadataRoute } from 'next';
+import type { MetadataRoute } from "next";
+import { blogPosts } from "@/lib/blog";
+
+const SITE = "https://yaver.io";
+
+type StaticRoute = {
+  path: string;
+  changeFrequency: MetadataRoute.Sitemap[number]["changeFrequency"];
+  priority: number;
+};
+
+const staticRoutes: StaticRoute[] = [
+  { path: "", changeFrequency: "weekly", priority: 1.0 },
+  { path: "/download", changeFrequency: "weekly", priority: 0.9 },
+  { path: "/pricing", changeFrequency: "monthly", priority: 0.8 },
+  { path: "/integrations", changeFrequency: "monthly", priority: 0.8 },
+  { path: "/blog", changeFrequency: "weekly", priority: 0.8 },
+  { path: "/docs", changeFrequency: "weekly", priority: 0.8 },
+  { path: "/docs/developers", changeFrequency: "weekly", priority: 0.8 },
+  { path: "/docs/mcp", changeFrequency: "weekly", priority: 0.7 },
+  { path: "/docs/self-hosting", changeFrequency: "monthly", priority: 0.7 },
+  { path: "/docs/contributing", changeFrequency: "monthly", priority: 0.6 },
+  { path: "/docs/feedback-sdk", changeFrequency: "monthly", priority: 0.6 },
+  { path: "/docs/cloud-machines", changeFrequency: "monthly", priority: 0.6 },
+  { path: "/faq", changeFrequency: "monthly", priority: 0.7 },
+  { path: "/manuals", changeFrequency: "monthly", priority: 0.7 },
+  { path: "/manuals/cli-setup", changeFrequency: "monthly", priority: 0.6 },
+  { path: "/manuals/relay-setup", changeFrequency: "monthly", priority: 0.6 },
+  { path: "/manuals/raspberry-pi", changeFrequency: "monthly", priority: 0.6 },
+  { path: "/manuals/auto-boot", changeFrequency: "monthly", priority: 0.5 },
+  { path: "/manuals/free-onprem", changeFrequency: "monthly", priority: 0.6 },
+  { path: "/manuals/local-llm", changeFrequency: "monthly", priority: 0.6 },
+  { path: "/manuals/voice-ai", changeFrequency: "monthly", priority: 0.5 },
+  { path: "/manuals/feedback-loop", changeFrequency: "monthly", priority: 0.5 },
+  { path: "/manuals/code-from-beach", changeFrequency: "monthly", priority: 0.5 },
+  { path: "/manuals/integrations", changeFrequency: "monthly", priority: 0.6 },
+  { path: "/hybrid", changeFrequency: "monthly", priority: 0.5 },
+  { path: "/support", changeFrequency: "monthly", priority: 0.4 },
+  { path: "/privacy", changeFrequency: "yearly", priority: 0.3 },
+  { path: "/terms", changeFrequency: "yearly", priority: 0.3 },
+];
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = 'https://yaver.io';
-  const now = new Date().toISOString();
-
-  return [
-    { url: baseUrl, lastModified: now, changeFrequency: 'weekly', priority: 1.0 },
-    { url: `${baseUrl}/download`, lastModified: now, changeFrequency: 'weekly', priority: 0.9 },
-    { url: `${baseUrl}/docs`, lastModified: now, changeFrequency: 'weekly', priority: 0.8 },
-    { url: `${baseUrl}/docs/developers`, lastModified: now, changeFrequency: 'weekly', priority: 0.8 },
-    { url: `${baseUrl}/docs/mcp`, lastModified: now, changeFrequency: 'weekly', priority: 0.7 },
-    { url: `${baseUrl}/docs/self-hosting`, lastModified: now, changeFrequency: 'monthly', priority: 0.7 },
-    { url: `${baseUrl}/docs/contributing`, lastModified: now, changeFrequency: 'monthly', priority: 0.6 },
-    { url: `${baseUrl}/faq`, lastModified: now, changeFrequency: 'monthly', priority: 0.7 },
-    { url: `${baseUrl}/manuals`, lastModified: now, changeFrequency: 'monthly', priority: 0.7 },
-    { url: `${baseUrl}/manuals/cli-setup`, lastModified: now, changeFrequency: 'monthly', priority: 0.6 },
-    { url: `${baseUrl}/manuals/relay-setup`, lastModified: now, changeFrequency: 'monthly', priority: 0.6 },
-    { url: `${baseUrl}/manuals/auto-boot`, lastModified: now, changeFrequency: 'monthly', priority: 0.5 },
-    { url: `${baseUrl}/manuals/free-onprem`, lastModified: now, changeFrequency: 'monthly', priority: 0.6 },
-    { url: `${baseUrl}/manuals/local-llm`, lastModified: now, changeFrequency: 'monthly', priority: 0.6 },
-    { url: `${baseUrl}/manuals/integrations`, lastModified: now, changeFrequency: 'monthly', priority: 0.6 },
-    { url: `${baseUrl}/integrations`, lastModified: now, changeFrequency: 'monthly', priority: 0.8 },
-    { url: `${baseUrl}/pricing`, lastModified: now, changeFrequency: 'monthly', priority: 0.8 },
-    { url: `${baseUrl}/privacy`, lastModified: now, changeFrequency: 'yearly', priority: 0.3 },
-    { url: `${baseUrl}/terms`, lastModified: now, changeFrequency: 'yearly', priority: 0.3 },
-  ];
+  const now = new Date();
+  const entries: MetadataRoute.Sitemap = staticRoutes.map((r) => ({
+    url: `${SITE}${r.path}`,
+    lastModified: now,
+    changeFrequency: r.changeFrequency,
+    priority: r.priority,
+  }));
+  for (const post of blogPosts) {
+    entries.push({
+      url: `${SITE}/blog/${post.slug}`,
+      lastModified: new Date(post.date),
+      changeFrequency: "monthly",
+      priority: 0.7,
+    });
+  }
+  return entries;
 }

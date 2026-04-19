@@ -142,5 +142,7 @@ yaver init                         # one-time wizard; sets a bootstrap secret
   https://yaver.io/auth/device
 - Deep docs: https://yaver.io/docs/developers
 - FAQ: https://yaver.io/faq
+- Blog (releases, announcements): https://yaver.io/blog
+- Sitemap: https://yaver.io/sitemap.xml
 - Install scripts: https://yaver.io/install.sh, https://yaver.io/install.ps1
-- Open source: https://github.com/kivanccakmak/yaver.io
+- Open source: https://github.com/kivanccakmak/yaver.io (AGPL-3.0-only)

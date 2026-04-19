@@ -125,9 +125,9 @@ export default function SelfHostingPage() {
             Self-Hosting Guide
           </h1>
           <p className="text-sm leading-relaxed text-surface-400">
-            Yaver is fully self-hostable. Every component is open source under
-            the MIT license. Choose the networking option that fits your setup
-            &mdash; from zero-config to fully custom infrastructure.
+            Yaver is fully self-hostable. Every Yaver component is open source
+            under the AGPL-3.0-only license. Choose the networking option that
+            fits your setup &mdash; from zero-config to fully custom infrastructure.
           </p>
         </div>
 
