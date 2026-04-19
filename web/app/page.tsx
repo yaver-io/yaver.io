@@ -6,12 +6,12 @@ import { useRef, useState, useEffect } from "react";
 import { useAuth } from "@/lib/use-auth";
 
 // Canonical definitional one-liner — picked up by AI search (Perplexity,
-// ChatGPT, Claude) and SEO as the answer to "what is Yaver?". Current
-// launch wedge: "free self-hosted Expo Go + CodePush replacement, with
-// AI coding agents built in." Focused, one-sentence pitch is critical —
-// everything else on the page reinforces it.
+// ChatGPT, Claude) and SEO as the answer to "what is Yaver?". Framed
+// around the factual wedge (self-hosted on-device RN dev client, no
+// third-party dev-portal gate) rather than specific competitor names,
+// per LEGAL_SAFETY.md §2 (trademark) and §3 (comparative claims).
 const LANDING_TAGLINE =
-  "Yaver is a free, open-source (AGPL core + Apache-2.0 SDKs) self-hosted replacement for Expo Go and CodePush. Push your React Native code to any phone in 4 seconds — no TestFlight, no EAS, no App Center, no rate limits, no Apple Developer account. Works with any AI coding agent (Claude Code, Codex, Aider, Ollama) and runs P2P on your own machines.";
+  "Yaver is a free, open-source (AGPL core + Apache-2.0 SDKs) self-hosted development client for React Native. Push your app bundles from your own machine to any paired device in seconds — no third-party developer portal, no cloud build minutes, no daily upload limits. Works with any terminal AI coding agent (Claude Code, Codex, Aider, Ollama) and runs peer-to-peer on your own hardware.";
 
 // Option B (Phone-first BaaS) is the YC-application framing, not the
 // launch hero. When closer to the 2026-05-04 YC submission, swap
@@ -84,7 +84,7 @@ const LANDING_HOWTO_STEPS: ReadonlyArray<{ name: string; text: string; url?: str
   },
   {
     name: "Push your React Native project to your phone",
-    text: "In your existing RN project: yaver-cli push. The CLI compiles your JS to Hermes bytecode, validates the bundle, and pushes it to the Yaver app on your phone — which loads it in a native container with full TurboModules + Fabric + New Architecture support. No Xcode rebuild, no TestFlight, no EAS.",
+    text: "In your existing RN project: yaver-cli push. The CLI compiles your JS to Hermes bytecode, validates the bundle, and pushes it to the Yaver app on a paired device — which loads it in a native container with full TurboModules, Fabric, and New Architecture support. No native rebuild, no third-party developer-portal gate.",
     url: "https://yaver.io/manuals/cli-setup",
   },
 ];
@@ -679,7 +679,7 @@ const DEMO_TABS = [
     id: "push-fix",
     label: "Push to Phone",
     icon: "\uD83D\uDCF1",
-    desc: "yaver-cli push &mdash; your RN project lands on a real iPhone in 4 seconds. Shake to report a crash. AI fixes it. Hot reload.",
+    desc: "yaver-cli push — send your RN project to a paired iPhone in seconds. Shake to report a crash. AI fixes it. Hot reload.",
     header: "Bento running on device + Yaver Debug Console",
     video: null,
   },
@@ -1016,7 +1016,10 @@ export default function HomePage() {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationLd) }}
       />
-      {/* ── Section 1: Hero — single wedge: free self-hosted Expo Go + CodePush ── */}
+      {/* ── Section 1: Hero — self-hosted RN dev client wedge ──
+          Copy complies with LEGAL_SAFETY.md §2 (no "Expo Go alternative"
+          framing, no disparagement of named competitor products) and
+          §3 (no unverifiable time claims without a cited benchmark). */}
       <section className="px-6 pb-10 pt-20 md:pt-28">
         <div className="mx-auto max-w-5xl text-center">
           <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-4 py-1.5 text-xs font-medium text-emerald-300">
@@ -1025,10 +1028,10 @@ export default function HomePage() {
           </div>
 
           <h1 className="mb-6 text-5xl font-bold leading-[1.05] tracking-tight text-surface-50 sm:text-6xl md:text-7xl">
-            Skip Expo Go.{" "}
+            Your React Native app{" "}
             <br className="hidden sm:block" />
             <span className="bg-gradient-to-r from-indigo-400 to-emerald-400 bg-clip-text text-transparent">
-              Skip CodePush.
+              on any phone.
             </span>
           </h1>
 
@@ -1037,14 +1040,14 @@ export default function HomePage() {
           <p className="sr-only">{LANDING_TAGLINE}</p>
 
           <p className="mx-auto max-w-2xl text-base leading-relaxed text-surface-300 md:text-lg">
-            Push your React Native code to any phone in 4 seconds. Free forever,
-            self-hosted, open source. No TestFlight. No EAS. No App Center.
-            No Apple Developer account.
+            A self-hosted development client for React Native. Push app bundles
+            from your own machine to any paired device &mdash; no third-party
+            developer portal, no cloud build minutes, no daily upload limits.
           </p>
 
           <p className="mx-auto mt-4 max-w-xl text-sm text-surface-500">
-            Works with any AI coding agent — Claude Code, Codex, Aider, Ollama —
-            all peer-to-peer on your own machines.
+            Works with any terminal AI coding agent &mdash; Claude Code, Codex,
+            Aider, Ollama &mdash; peer-to-peer on your own hardware.
           </p>
 
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
@@ -1056,7 +1059,7 @@ export default function HomePage() {
               href="#demo"
               className="btn-primary inline-flex items-center gap-2 px-8 py-3 text-base font-semibold"
             >
-              Watch 15-second demo &rarr;
+              Watch the demo &rarr;
             </a>
           </div>
 
@@ -1077,7 +1080,7 @@ export default function HomePage() {
                 <div className="h-3 w-3 rounded-full bg-[#28c840]" />
               </div>
               <p className="ml-2 text-xs text-surface-500">
-                yaver-cli push &mdash; React Native bundle to device in 4 seconds
+                yaver-cli push &mdash; send your React Native bundle to a paired device
               </p>
             </div>
             <video
@@ -1095,8 +1098,9 @@ export default function HomePage() {
                 regenerate from source. */}
           </div>
           <p className="mx-auto mt-4 max-w-2xl text-center text-xs text-surface-500">
-            The phone on the right is a real iPhone running a production React Native app &mdash;
-            no Xcode rebuild, no App Store, no EAS build. Just <code>yaver-cli push</code>.
+            A real iPhone loading a React Native bundle pushed from a paired
+            developer machine &mdash; no rebuild, no app-store round trip.
+            Just <code>yaver-cli push</code>.
           </p>
         </div>
       </section>
@@ -1313,11 +1317,12 @@ export default function HomePage() {
             <span className="inline-block rounded-full bg-[#6366f1]/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#a5b4fc]">Device Testing</span>
           </div>
           <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Push to device in 4 seconds
+            Push to device, in seconds
           </h2>
           <p className="mx-auto mb-10 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
-            Like Expo Go, but for any existing React Native project. Real native views, not WebView.
-            40+ pre-installed modules. Works over WiFi, 4G, or through relay.
+            A self-hosted native container for any existing React Native project.
+            Real native views, not WebView. 40+ pre-installed modules. Works over
+            WiFi, 4G, or through a relay.
           </p>
 
           {/* Terminal demo */}
