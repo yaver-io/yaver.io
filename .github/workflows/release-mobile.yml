@@ -5,6 +5,19 @@ on:
     tags:
       - "mobile/v*"
   workflow_dispatch:
+    inputs:
+      upload_testflight:
+        description: "Upload iOS build to TestFlight"
+        required: false
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+      upload_playstore:
+        description: "Upload Android AAB to Google Play internal testing"
+        required: false
+        default: "true"
+        type: choice
+        options: ["true", "false"]
 
 # Only repo owner can push tags (configure tag protection rules in GitHub).
 # All jobs require the "production" environment (configure required reviewers in GitHub).
@@ -129,6 +142,9 @@ jobs:
             -derivedDataPath /tmp/YaverBuild
 
       - name: Export and upload to TestFlight
+        # Tag-triggered runs always upload. workflow_dispatch runs honour the
+        # upload_testflight input so manual runs can build-only for testing.
+        if: github.event_name == 'push' || github.event.inputs.upload_testflight == 'true'
         env:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
@@ -247,6 +263,34 @@ jobs:
           name: android-aab
           path: mobile/android/app/build/outputs/bundle/release/app-release.aab
           retention-days: 30
+
+      - name: Upload AAB to Google Play (internal testing)
+        # Tag-triggered runs always upload. workflow_dispatch runs honour the
+        # upload_playstore input so manual runs can build-only for testing.
+        # If PLAY_STORE_SERVICE_ACCOUNT_JSON isn't set the step fails loudly.
+        if: github.event_name == 'push' || github.event.inputs.upload_playstore == 'true'
+        env:
+          PLAY_STORE_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$PLAY_STORE_SERVICE_ACCOUNT_JSON" ]; then
+            echo "ERROR: PLAY_STORE_SERVICE_ACCOUNT_JSON secret is not set."
+            echo "Set it with:  gh secret set PLAY_STORE_SERVICE_ACCOUNT_JSON < keys/google-play-service-account.json"
+            exit 1
+          fi
+          python3 -m pip install --quiet --upgrade google-auth google-api-python-client
+          KEYFILE="$RUNNER_TEMP/play-service-account.json"
+          # The secret may be stored as raw JSON or base64. Try base64 first,
+          # fall back to raw when the decoded value doesn't look like JSON.
+          python3 -c "import base64, os, sys; sys.stdout.buffer.write(base64.b64decode(os.environ['PLAY_STORE_SERVICE_ACCOUNT_JSON']))" > "$KEYFILE" 2>/dev/null || true
+          if ! head -c1 "$KEYFILE" | grep -q '{'; then
+            printf '%s' "$PLAY_STORE_SERVICE_ACCOUNT_JSON" > "$KEYFILE"
+          fi
+          if ! head -c1 "$KEYFILE" | grep -q '{'; then
+            echo "ERROR: PLAY_STORE_SERVICE_ACCOUNT_JSON is neither base64 nor raw JSON."
+            exit 1
+          fi
+          chmod 600 "$KEYFILE"
+          PLAY_STORE_KEY_FILE="$KEYFILE" python3 scripts/upload-playstore.py
 
   update-versions:
     needs: [validate, ios, android]
