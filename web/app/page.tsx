@@ -733,8 +733,8 @@ const DEMO_TABS = [
     label: "Push to Phone",
     icon: "\uD83D\uDCF1",
     desc: "yaver push — send your RN project to a paired iPhone in seconds. Shake to report a crash. AI fixes it. Hot reload.",
-    header: "Bento running on device + Yaver Debug Console",
-    video: null,
+    header: "SFMG on iPhone + Claude editing splash color on the Mac",
+    video: `${VIDEO_CDN}/yaver-hosting-demo-v1/yaver-hosting-demo.mp4`,
   },
   {
     id: "full-loop",
