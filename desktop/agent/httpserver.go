@@ -915,7 +915,18 @@ type cachedTokenInfo struct {
 	isSdk        bool
 	scopes       []string
 	allowedCIDRs []string
+	// storedAt records when the cache entry was minted. The auth() middleware
+	// uses this to force a Convex re-validation of any non-owner, non-SDK,
+	// non-paired token (i.e. guest tokens) older than guestTokenCacheTTL —
+	// so host-side revocations show up within a handful of seconds, even if
+	// the 10s refreshGuestList loop is the only channel.
+	storedAt time.Time
 }
+
+// guestTokenCacheTTL is how long a guest's token can live in the validation
+// cache before we re-check with Convex. Keep short so host revocations are
+// effectively immediate.
+const guestTokenCacheTTL = 15 * time.Second
 
 // Scope-to-path mapping: which URL paths each scope grants access to.
 var scopePathPrefixes = map[string][]string{
@@ -1072,39 +1083,59 @@ func (s *HTTPServer) isApprovedGuest(userID string) bool {
 }
 
 // refreshGuestList periodically fetches the approved guest list and configs from Convex.
+// Uses a short interval (10s) so host-side revocations propagate quickly —
+// combined with per-request cache TTL (see cachedTokenInfo) the end-to-end
+// cutoff is a handful of seconds even if the mobile app never talks to this agent.
 func (s *HTTPServer) refreshGuestList(ctx context.Context) {
-	if ids, err := FetchGuestUserIds(s.convexURL, s.token, s.deviceID); err == nil {
-		s.guestUserIDsMu.Lock()
-		s.guestUserIDs = ids
-		s.guestUserIDsMu.Unlock()
-		if len(ids) > 0 {
-			log.Printf("[GUESTS] Loaded %d approved guest(s)", len(ids))
+	prevGuests := map[string]bool{}
+	fetchOnce := func() {
+		if ids, err := FetchGuestUserIds(s.convexURL, s.token, s.deviceID); err == nil {
+			s.guestUserIDsMu.Lock()
+			s.guestUserIDs = ids
+			s.guestUserIDsMu.Unlock()
+			if len(ids) > 0 {
+				log.Printf("[GUESTS] Loaded %d approved guest(s)", len(ids))
+			}
+			// Detect removals and flush affected token-cache entries so sessions
+			// already in flight get kicked on the next request.
+			newSet := map[string]bool{}
+			for _, id := range ids {
+				newSet[id] = true
+			}
+			for prev := range prevGuests {
+				if !newSet[prev] {
+					s.tokenCache.Range(func(key, value interface{}) bool {
+						info := value.(*cachedTokenInfo)
+						if info.userID == prev {
+							s.tokenCache.Delete(key)
+						}
+						return true
+					})
+				}
+			}
+			prevGuests = newSet
+		}
+		if s.guestConfigMgr != nil {
+			if cfgs, err := FetchGuestConfigs(s.convexURL, s.token); err == nil {
+				s.guestConfigMgr.UpdateConfigs(cfgs)
+			}
 		}
 	}
-	// Also refresh guest configs
-	if s.guestConfigMgr != nil {
-		if cfgs, err := FetchGuestConfigs(s.convexURL, s.token); err == nil {
-			s.guestConfigMgr.UpdateConfigs(cfgs)
-		}
-	}
+	fetchOnce()
 
-	ticker := time.NewTicker(60 * time.Second)
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
+	// Flush usage less often than the guest-list check — usage is write-heavy.
+	usageTicker := time.NewTicker(60 * time.Second)
+	defer usageTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if ids, err := FetchGuestUserIds(s.convexURL, s.token, s.deviceID); err == nil {
-				s.guestUserIDsMu.Lock()
-				s.guestUserIDs = ids
-				s.guestUserIDsMu.Unlock()
-			}
+			fetchOnce()
+		case <-usageTicker.C:
 			if s.guestConfigMgr != nil {
-				if cfgs, err := FetchGuestConfigs(s.convexURL, s.token); err == nil {
-					s.guestConfigMgr.UpdateConfigs(cfgs)
-				}
-				// Flush accumulated usage to Convex
 				s.guestConfigMgr.FlushUsage(s.convexURL, s.token)
 			}
 		}
@@ -1216,22 +1247,31 @@ func (s *HTTPServer) auth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// Check token cache
+		// Check token cache. Guest entries have a TTL so host-side
+		// revocations are honored within guestTokenCacheTTL even if
+		// the revoke doesn't travel through this agent's own API.
 		if cached, ok := s.tokenCache.Load(token); ok {
 			info := cached.(*cachedTokenInfo)
 			if info.isSdk {
 				jsonError(w, http.StatusForbidden, "SDK tokens cannot access this endpoint")
 				return
 			}
-			if info.userID == s.ownerUserID {
-				next(w, r)
+			stale := info.userID != s.ownerUserID &&
+				!info.storedAt.IsZero() &&
+				time.Since(info.storedAt) > guestTokenCacheTTL
+			if stale {
+				s.tokenCache.Delete(token)
+			} else {
+				if info.userID == s.ownerUserID {
+					next(w, r)
+					return
+				}
+				if s.allowGuest(w, r, info.userID, next) {
+					return
+				}
+				jsonError(w, http.StatusForbidden, "token belongs to a different user")
 				return
 			}
-			if s.allowGuest(w, r, info.userID, next) {
-				return
-			}
-			jsonError(w, http.StatusForbidden, "token belongs to a different user")
-			return
 		}
 
 		// Validate session token via Convex
@@ -1242,7 +1282,7 @@ func (s *HTTPServer) auth(next http.HandlerFunc) http.HandlerFunc {
 			jsonError(w, http.StatusForbidden, "invalid token")
 			return
 		}
-		s.tokenCache.Store(token, &cachedTokenInfo{userID: uid, isSdk: false})
+		s.tokenCache.Store(token, &cachedTokenInfo{userID: uid, isSdk: false, storedAt: time.Now()})
 
 		if uid != s.ownerUserID {
 			if s.allowGuest(w, r, uid, next) {
@@ -4769,7 +4809,8 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolResult("No devices registered. Run 'yaver serve' on your dev machine to register it.")
 		}
 		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("%-10s  %-20s  %-8s  %-8s  %s\n", "ID", "NAME", "PLATFORM", "STATUS", "ADDRESS"))
+		sb.WriteString(fmt.Sprintf("%-10s  %-22s  %-8s  %-8s  %-22s  %s\n",
+			"ID", "NAME", "PLATFORM", "STATUS", "ACCESS", "ADDRESS"))
 		for _, d := range devices {
 			status := "offline"
 			if d.IsOnline {
@@ -4779,8 +4820,21 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			if len(id) > 8 {
 				id = id[:8] + "..."
 			}
-			sb.WriteString(fmt.Sprintf("%-10s  %-20s  %-8s  %-8s  %s:%d\n",
-				id, d.Name, d.Platform, status, d.QuicHost, d.QuicPort))
+			access := "OWN"
+			if d.IsGuest {
+				label := "SHARED"
+				if d.HostName != "" {
+					label = "SHARED:" + d.HostName
+				} else if d.HostEmail != "" {
+					label = "SHARED:" + d.HostEmail
+				}
+				if len(label) > 22 {
+					label = label[:21] + "…"
+				}
+				access = label
+			}
+			sb.WriteString(fmt.Sprintf("%-10s  %-22s  %-8s  %-8s  %-22s  %s:%d\n",
+				id, d.Name, d.Platform, status, access, d.QuicHost, d.QuicPort))
 		}
 		return mcpToolResult(sb.String())
 

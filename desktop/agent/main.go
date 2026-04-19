@@ -31,7 +31,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.96.12"
+const version = "1.97.0"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -452,7 +452,8 @@ Usage:
   yaver feedback list   List visual bug reports from device testing
   yaver feedback show <id>  Show feedback details + transcript
   yaver feedback fix <id>   Create AI task from feedback report
-  yaver cloud create   Create a cloud dev machine (subscription required)
+  yaver cloud buy      Open the hosted cloud checkout flow
+  yaver cloud create   Start the cloud flow and wait for the machine
   yaver cloud status   Show cloud machine status
   yaver cloud ssh      SSH into your cloud machine
   yaver cloud destroy  Tear down your cloud machine
@@ -583,6 +584,10 @@ func runAuth(args []string) {
 	fs := flag.NewFlagSet("auth", flag.ExitOnError)
 	convexURL := fs.String("convex-url", defaultConvexSiteURL, "Convex site URL")
 	token := fs.String("token", "", "Provide token directly (skip browser)")
+	email := fs.String("email", "", "Email for direct email/password auth")
+	password := fs.String("password", "", "Password for direct email/password auth")
+	fullName := fs.String("name", "", "Full name for email/password signup")
+	signup := fs.Bool("signup", false, "Create an email/password account instead of logging in")
 	headless := fs.Bool("headless", false, "Use device code flow (for headless/SSH servers)")
 	backgroundWait := fs.Bool("background-wait", false, "Internal: continue polling a pending headless sign-in in the background")
 	fs.Parse(args)
@@ -613,6 +618,33 @@ func runAuth(args []string) {
 
 	if *token != "" {
 		if err := finalizeAuthConfig(cfg, *convexURL, *token, true, false); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if strings.TrimSpace(*email) != "" || strings.TrimSpace(*password) != "" || *signup {
+		if strings.TrimSpace(*email) == "" || strings.TrimSpace(*password) == "" {
+			fmt.Fprintln(os.Stderr, "Error: --email and --password are required for direct email/password auth")
+			os.Exit(1)
+		}
+		var authToken string
+		var authErr error
+		if *signup {
+			name := strings.TrimSpace(*fullName)
+			if name == "" {
+				name = strings.TrimSpace(strings.Split(strings.TrimSpace(*email), "@")[0])
+			}
+			authToken, authErr = SignupWithEmail(*convexURL, name, strings.TrimSpace(*email), *password)
+		} else {
+			authToken, authErr = LoginWithEmail(*convexURL, strings.TrimSpace(*email), *password)
+		}
+		if authErr != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", authErr)
+			os.Exit(1)
+		}
+		if err := finalizeAuthConfig(cfg, *convexURL, authToken, true, false); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -5232,14 +5264,27 @@ func runDevices(args []string) {
 		return
 	}
 
-	fmt.Printf("%-10s  %-20s  %-8s  %-8s  %-14s  %s\n", "ID", "NAME", "PLATFORM", "STATUS", "SESSION", "ADDRESS")
+	fmt.Printf("%-10s  %-20s  %-8s  %-8s  %-22s  %-14s  %s\n",
+		"ID", "NAME", "PLATFORM", "STATUS", "ACCESS", "SESSION", "ADDRESS")
 	for _, d := range devices {
 		status := "offline"
 		if d.IsOnline {
 			status = "online"
 		}
 		sessionBinding := "-"
-		if !d.IsGuest {
+		access := "OWN"
+		if d.IsGuest {
+			label := "SHARED"
+			if d.HostName != "" {
+				label = "SHARED:" + d.HostName
+			} else if d.HostEmail != "" {
+				label = "SHARED:" + d.HostEmail
+			}
+			if len(label) > 22 {
+				label = label[:21] + "…"
+			}
+			access = label
+		} else {
 			if d.SessionBinding != "" {
 				sessionBinding = d.SessionBinding
 			} else {
@@ -5250,8 +5295,8 @@ func runDevices(args []string) {
 		if len(id) > 8 {
 			id = id[:8] + "..."
 		}
-		fmt.Printf("%-10s  %-20s  %-8s  %-8s  %-14s  %s:%d\n",
-			id, d.Name, d.Platform, status, sessionBinding, d.QuicHost, d.QuicPort)
+		fmt.Printf("%-10s  %-20s  %-8s  %-8s  %-22s  %-14s  %s:%d\n",
+			id, d.Name, d.Platform, status, access, sessionBinding, d.QuicHost, d.QuicPort)
 	}
 }
 

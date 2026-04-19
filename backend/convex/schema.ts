@@ -499,10 +499,14 @@ export default defineSchema({
   // Guest access — let other users connect to your agent (peer-to-peer sharing)
   guestInvitations: defineTable({
     hostUserId: v.id("users"),       // who is sharing their machine
-    guestEmail: v.string(),          // invited user's email (hint — code also works)
+    guestEmail: v.string(),          // invited user's email (hint — code also works). Empty string when invited by userId.
     inviteCode: v.string(),          // 6-char code for acceptance (works even if emails differ)
     status: v.union(v.literal("pending"), v.literal("accepted"), v.literal("revoked")),
-    guestUserId: v.optional(v.id("users")),  // set when accepted
+    guestUserId: v.optional(v.id("users")),  // set when accepted, OR pre-set when host invited by userId
+    invitedByUserId: v.optional(v.boolean()), // true if the host typed a userId (not an email)
+    // Host's proposed device scope at invite time. Guest sees this and can trim it on accept.
+    // Absent / empty = propose all host devices.
+    proposedDeviceIds: v.optional(v.array(v.string())),
     createdAt: v.number(),
     expiresAt: v.number(),           // pending invitations expire after 2 days
     acceptedAt: v.optional(v.number()),
@@ -511,6 +515,8 @@ export default defineSchema({
     .index("by_hostUserId", ["hostUserId"])
     .index("by_guestEmail", ["guestEmail"])
     .index("by_host_guest", ["hostUserId", "guestEmail"])
+    .index("by_host_guestUser", ["hostUserId", "guestUserId"])
+    .index("by_guestUserId", ["guestUserId"])
     .index("by_inviteCode", ["inviteCode"]),
 
   guestAccess: defineTable({

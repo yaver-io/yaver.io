@@ -20,23 +20,76 @@ function generateInviteCode(): string {
 // ─── Mutations ──────────────────────────────────────────────────
 
 /**
- * Invite a guest by email. Only the host can invite.
- * Creates a pending invitation that expires in 2 days.
+ * Invite a guest. Only the host can invite. The host may target:
+ *   - an email (guestEmail) — invitee signs in with a matching email to auto-accept,
+ *     or uses the 6-char invite code if their email differs.
+ *   - a public userId string (guestUserId) — the invitation is pinned to that user's
+ *     account, code works too. Email is empty. This is what you tell a friend to
+ *     type: "open your Yaver app, settings, copy user id, send it to me".
+ *
+ * Optionally, the host may pre-scope the invitation to a subset of their devices
+ * (proposedDeviceIds). The guest can trim this further at accept time.
  */
 export const invite = mutation({
   args: {
     tokenHash: v.string(),
-    guestEmail: v.string(),
+    guestEmail: v.optional(v.string()),
+    guestUserId: v.optional(v.string()),
+    proposedDeviceIds: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
     if (!session) throw new Error("Unauthorized");
 
     const hostUserId = session.user._id;
+    const rawEmail = (args.guestEmail ?? "").trim().toLowerCase();
+    const rawUserId = (args.guestUserId ?? "").trim();
+
+    if (!rawEmail && !rawUserId) {
+      throw new Error("Provide either guestEmail or guestUserId");
+    }
+
+    // Resolve guest user (if any). Precedence: userId > email.
+    let guestUser: Awaited<ReturnType<typeof ctx.db.get>> extends infer T ? (T | null) : never = null;
+    if (rawUserId) {
+      const matches = await ctx.db
+        .query("users")
+        .filter((q) => q.eq(q.field("userId"), rawUserId))
+        .collect();
+      guestUser = matches[0] ?? null;
+      if (!guestUser) throw new Error("No Yaver user found with that user id");
+    } else if (rawEmail) {
+      guestUser = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", rawEmail))
+        .first();
+    }
+
+    // Resolved email (for storage): prefer the host's-stated email; fall back to the
+    // resolved guest's own email when invited by userId.
+    const storedEmail = rawEmail || (guestUser?.email?.toLowerCase() ?? "");
 
     // Can't invite yourself
-    if (args.guestEmail.toLowerCase() === session.user.email.toLowerCase()) {
+    if (
+      (storedEmail && storedEmail === session.user.email.toLowerCase()) ||
+      (guestUser && guestUser._id === hostUserId)
+    ) {
       throw new Error("Cannot invite yourself");
+    }
+
+    // Validate proposed device scope — only the host's own devices
+    const proposed = (args.proposedDeviceIds ?? []).map((s) => s.trim()).filter(Boolean);
+    if (proposed.length > 0) {
+      const hostDevices = await ctx.db
+        .query("devices")
+        .withIndex("by_userId", (q) => q.eq("userId", hostUserId))
+        .collect();
+      const ownedIds = new Set(hostDevices.map((d) => d.deviceId));
+      for (const id of proposed) {
+        if (!ownedIds.has(id)) {
+          throw new Error(`Device not owned by host: ${id}`);
+        }
+      }
     }
 
     // Check active guest count (accepted + pending, excluding revoked/expired)
@@ -50,34 +103,44 @@ export const invite = mutation({
       throw new Error(`Maximum ${MAX_GUESTS_PER_HOST} guests allowed`);
     }
 
-    // Check for existing active invitation or access for this email
-    const existingInvitations = await ctx.db
-      .query("guestInvitations")
-      .withIndex("by_host_guest", (q) =>
-        q.eq("hostUserId", hostUserId).eq("guestEmail", args.guestEmail.toLowerCase())
-      )
-      .collect();
+    // Check for existing active invitation for this email (if email-routed)
+    if (storedEmail) {
+      const existingInvitations = await ctx.db
+        .query("guestInvitations")
+        .withIndex("by_host_guest", (q) =>
+          q.eq("hostUserId", hostUserId).eq("guestEmail", storedEmail)
+        )
+        .collect();
 
-    for (const inv of existingInvitations) {
-      if (inv.status === "pending" && inv.expiresAt > Date.now()) {
-        throw new Error("Pending invitation already exists for this email");
-      }
-      if (inv.status === "accepted") {
-        throw new Error("This user already has guest access");
+      for (const inv of existingInvitations) {
+        if (inv.status === "pending" && inv.expiresAt > Date.now()) {
+          throw new Error("Pending invitation already exists for this email");
+        }
+        if (inv.status === "accepted") {
+          throw new Error("This user already has guest access");
+        }
       }
     }
 
-    // Also check guestAccess table for active access
-    const guestUser = await ctx.db
-      .query("users")
-      .withIndex("by_email", (q) => q.eq("email", args.guestEmail.toLowerCase()))
-      .first();
-
+    // Pending invitation targeted at the same userId?
     if (guestUser) {
+      const pendingForUser = await ctx.db
+        .query("guestInvitations")
+        .withIndex("by_host_guestUser", (q) =>
+          q.eq("hostUserId", hostUserId).eq("guestUserId", guestUser!._id)
+        )
+        .collect();
+      for (const inv of pendingForUser) {
+        if (inv.status === "pending" && inv.expiresAt > Date.now()) {
+          throw new Error("Pending invitation already exists for this user");
+        }
+      }
+
+      // Active access?
       const existingAccess = await ctx.db
         .query("guestAccess")
         .withIndex("by_host_guest", (q) =>
-          q.eq("hostUserId", hostUserId).eq("guestUserId", guestUser._id)
+          q.eq("hostUserId", hostUserId).eq("guestUserId", guestUser!._id)
         )
         .filter((q) => q.eq(q.field("revokedAt"), undefined))
         .first();
@@ -89,39 +152,121 @@ export const invite = mutation({
 
     const inviteCode = generateInviteCode();
     const now = Date.now();
-    await ctx.db.insert("guestInvitations", {
+    const invitationDoc: Record<string, unknown> = {
       hostUserId,
-      guestEmail: args.guestEmail.toLowerCase(),
+      guestEmail: storedEmail,
       inviteCode,
       status: "pending",
       createdAt: now,
       expiresAt: now + INVITATION_TTL_MS,
-    });
+    };
+    if (guestUser) invitationDoc.guestUserId = guestUser._id;
+    if (rawUserId) invitationDoc.invitedByUserId = true;
+    if (proposed.length > 0) invitationDoc.proposedDeviceIds = proposed;
+    await ctx.db.insert("guestInvitations", invitationDoc as any);
 
-    // Send invite email (fire-and-forget — won't block or fail the mutation)
-    await ctx.scheduler.runAfter(0, internal.email.send, {
-      from: "Yaver <hello@yaver.io>",
-      to: args.guestEmail.toLowerCase(),
-      subject: `${session.user.fullName} invited you to Yaver`,
-      html: guestInviteHtml(session.user.fullName, inviteCode),
-    });
+    // Send invite email if we have a destination address and this was email-targeted.
+    // When invited-by-userId we still email them if we know the email, but skip when none.
+    if (storedEmail) {
+      await ctx.scheduler.runAfter(0, internal.email.send, {
+        from: "Yaver <hello@yaver.io>",
+        to: storedEmail,
+        subject: `${session.user.fullName} invited you to Yaver`,
+        html: guestInviteHtml(session.user.fullName, inviteCode),
+      });
+    }
 
     return {
       ok: true,
       inviteCode,
-      guestRegistered: !!guestUser, // whether the invited email already has a Yaver account
+      guestRegistered: !!guestUser,
+      guestUserId: guestUser?.userId,
+      guestEmail: storedEmail || undefined,
     };
   },
 });
 
 /**
+ * Shared materializer: turn an accepted invitation into the live access/grant
+ * rows. If the guest passed approvedDeviceIds (a subset of proposedDeviceIds
+ * when present, otherwise arbitrary host devices), the scope is honored —
+ * otherwise the default is "all host devices" (current behavior).
+ */
+async function materializeInvitationAccept(
+  ctx: any,
+  invitation: any,
+  guestUserDocId: any,
+  approvedDeviceIds: string[] | undefined,
+  now: number,
+) {
+  await ctx.db.patch(invitation._id, {
+    status: "accepted",
+    guestUserId: guestUserDocId,
+    acceptedAt: now,
+  });
+
+  await ctx.db.insert("guestAccess", {
+    hostUserId: invitation.hostUserId,
+    guestUserId: guestUserDocId,
+    grantedAt: now,
+  });
+
+  // Normalize + clamp approved list against proposal (if any) and ownership.
+  const proposed: string[] = Array.isArray(invitation.proposedDeviceIds) ? invitation.proposedDeviceIds : [];
+  const chosenRaw = (approvedDeviceIds ?? []).map((s) => String(s).trim()).filter(Boolean);
+  // If the host proposed a specific scope and the guest didn't trim, honor the proposal.
+  const chosen = chosenRaw.length > 0
+    ? chosenRaw
+    : (proposed.length > 0 ? proposed : []);
+
+  // No scoping = legacy behavior ("shareAllDevices" default in access checks).
+  if (chosen.length === 0) return;
+
+  // Verify every chosen id is owned by the host.
+  const hostDevices = await ctx.db
+    .query("devices")
+    .withIndex("by_userId", (q: any) => q.eq("userId", invitation.hostUserId))
+    .collect();
+  const ownedIds = new Set(hostDevices.map((d: any) => d.deviceId));
+
+  // If host pre-scoped, clamp chosen to proposed ∩ owned.
+  const allowedSet = proposed.length > 0
+    ? new Set(proposed.filter((id: string) => ownedIds.has(id)))
+    : ownedIds;
+  const finalIds = chosen.filter((id) => allowedSet.has(id));
+  if (finalIds.length === 0) return; // nothing to grant
+
+  // Create an explicit infraAccessGrant + links so the access-check path
+  // in access.ts recognizes the narrow scope.
+  const grantId = await ctx.db.insert("infraAccessGrants", {
+    hostUserId: invitation.hostUserId,
+    guestUserId: guestUserDocId,
+    status: "active",
+    shareAllDevices: false,
+    grantedAt: now,
+    updatedAt: now,
+  });
+  for (const deviceId of finalIds) {
+    await ctx.db.insert("infraAccessGrantDevices", {
+      grantId,
+      hostUserId: invitation.hostUserId,
+      guestUserId: guestUserDocId,
+      deviceId,
+      createdAt: now,
+    });
+  }
+}
+
+/**
  * Accept a pending invitation. Called by the guest.
  * The guest must be signed in and their email must match the invitation.
+ * Optional approvedDeviceIds narrows the accepted device scope.
  */
 export const accept = mutation({
   args: {
     tokenHash: v.string(),
     hostUserId: v.id("users"),
+    approvedDeviceIds: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -129,14 +274,25 @@ export const accept = mutation({
 
     const guestEmail = session.user.email.toLowerCase();
 
-    // Find the pending invitation
-    const invitation = await ctx.db
+    // Find the pending invitation — match by (host, email) first, then fall back
+    // to (host, guestUserId) for invites that were pinned to this user's id.
+    let invitation = await ctx.db
       .query("guestInvitations")
       .withIndex("by_host_guest", (q) =>
         q.eq("hostUserId", args.hostUserId).eq("guestEmail", guestEmail)
       )
       .filter((q) => q.eq(q.field("status"), "pending"))
       .first();
+
+    if (!invitation) {
+      invitation = await ctx.db
+        .query("guestInvitations")
+        .withIndex("by_host_guestUser", (q) =>
+          q.eq("hostUserId", args.hostUserId).eq("guestUserId", session.user._id)
+        )
+        .filter((q) => q.eq(q.field("status"), "pending"))
+        .first();
+    }
 
     if (!invitation) {
       throw new Error("No pending invitation found");
@@ -149,21 +305,7 @@ export const accept = mutation({
     }
 
     const now = Date.now();
-
-    // Update invitation status
-    await ctx.db.patch(invitation._id, {
-      status: "accepted",
-      guestUserId: session.user._id,
-      acceptedAt: now,
-    });
-
-    // Create guestAccess record
-    await ctx.db.insert("guestAccess", {
-      hostUserId: args.hostUserId,
-      guestUserId: session.user._id,
-      grantedAt: now,
-    });
-
+    await materializeInvitationAccept(ctx, invitation, session.user._id, args.approvedDeviceIds, now);
     return { ok: true };
   },
 });
@@ -178,6 +320,7 @@ export const acceptByCode = mutation({
   args: {
     tokenHash: v.string(),
     inviteCode: v.string(),
+    approvedDeviceIds: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -208,6 +351,11 @@ export const acceptByCode = mutation({
       throw new Error("Cannot accept your own invitation");
     }
 
+    // If host pinned the invite to a specific userId, only that user may accept.
+    if (invitation.guestUserId && invitation.guestUserId !== session.user._id) {
+      throw new Error("This invite code is reserved for a different account");
+    }
+
     // Check if already have access from this host
     const existingAccess = await ctx.db
       .query("guestAccess")
@@ -222,18 +370,7 @@ export const acceptByCode = mutation({
     }
 
     const now = Date.now();
-
-    await ctx.db.patch(invitation._id, {
-      status: "accepted",
-      guestUserId: session.user._id,
-      acceptedAt: now,
-    });
-
-    await ctx.db.insert("guestAccess", {
-      hostUserId: invitation.hostUserId,
-      guestUserId: session.user._id,
-      grantedAt: now,
-    });
+    await materializeInvitationAccept(ctx, invitation, session.user._id, args.approvedDeviceIds, now);
 
     // Get host info to return
     const host = await ctx.db.get(invitation.hostUserId);
@@ -247,47 +384,166 @@ export const acceptByCode = mutation({
 });
 
 /**
+ * Look up a pending invitation by code so the guest can preview host info + the
+ * host's proposed device scope before committing. Callable by any signed-in user.
+ */
+export const findByCode = query({
+  args: {
+    tokenHash: v.string(),
+    inviteCode: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) return null;
+
+    const code = args.inviteCode.toUpperCase().trim();
+    const invitation = await ctx.db
+      .query("guestInvitations")
+      .withIndex("by_inviteCode", (q) => q.eq("inviteCode", code))
+      .first();
+    if (!invitation) return null;
+    if (invitation.status !== "pending") return null;
+    if (invitation.expiresAt < Date.now()) return null;
+    if (invitation.guestUserId && invitation.guestUserId !== session.user._id) {
+      // Not for this user — don't leak details.
+      return null;
+    }
+
+    const host = await ctx.db.get(invitation.hostUserId);
+    const proposed: string[] = Array.isArray(invitation.proposedDeviceIds) ? invitation.proposedDeviceIds : [];
+
+    // Enumerate host devices so the guest UI can render the picker.
+    const hostDevices = await ctx.db
+      .query("devices")
+      .withIndex("by_userId", (q) => q.eq("userId", invitation.hostUserId))
+      .collect();
+    const hostDeviceSummaries = hostDevices.map((d) => ({
+      deviceId: d.deviceId,
+      name: d.name,
+      platform: d.platform,
+      lastHeartbeat: d.lastHeartbeat,
+      proposed: proposed.length === 0 || proposed.includes(d.deviceId),
+    }));
+
+    return {
+      inviteCode: code,
+      hostUserId: invitation.hostUserId,
+      hostName: host?.fullName ?? "Unknown",
+      hostEmail: host?.email ?? "",
+      hostUserIdString: host?.userId ?? "",
+      proposedDeviceIds: proposed,
+      hostDevices: hostDeviceSummaries,
+      invitedByUserId: !!invitation.invitedByUserId,
+      expiresAt: invitation.expiresAt,
+      createdAt: invitation.createdAt,
+    };
+  },
+});
+
+/**
+ * Look up a user's public userId → minimal profile (used by the host UI to
+ * confirm "yes this is my cousin" before firing an invite).
+ */
+export const lookupPublicUser = query({
+  args: {
+    tokenHash: v.string(),
+    userId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) return null;
+    const needle = args.userId.trim();
+    if (!needle) return null;
+    const matches = await ctx.db
+      .query("users")
+      .filter((q) => q.eq(q.field("userId"), needle))
+      .collect();
+    const user = matches[0];
+    if (!user) return null;
+    // Redact: return only display-safe fields. Do NOT leak email full name if
+    // user marked private — for now we return them; privacy toggles can be
+    // layered later.
+    return {
+      userId: user.userId,
+      fullName: user.fullName,
+      email: user.email,
+    };
+  },
+});
+
+/**
  * Revoke guest access. Called by the host.
  * Works for both pending invitations and active access.
+ * Accepts either guestEmail (legacy) or guestUserId (public userId string)
+ * — the latter is required when the guest was invited via userId (no email).
  */
 export const revoke = mutation({
   args: {
     tokenHash: v.string(),
-    guestEmail: v.string(),
+    guestEmail: v.optional(v.string()),
+    guestUserId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
     if (!session) throw new Error("Unauthorized");
 
     const hostUserId = session.user._id;
-    const guestEmail = args.guestEmail.toLowerCase();
+    const guestEmail = (args.guestEmail ?? "").trim().toLowerCase();
+    const guestUserIdStr = (args.guestUserId ?? "").trim();
 
-    // Revoke any pending invitations
-    const invitations = await ctx.db
-      .query("guestInvitations")
-      .withIndex("by_host_guest", (q) =>
-        q.eq("hostUserId", hostUserId).eq("guestEmail", guestEmail)
-      )
-      .collect();
-
-    for (const inv of invitations) {
-      if (inv.status === "pending" || inv.status === "accepted") {
-        await ctx.db.patch(inv._id, { status: "revoked", revokedAt: Date.now() });
-      }
+    if (!guestEmail && !guestUserIdStr) {
+      throw new Error("guestEmail or guestUserId is required");
     }
 
-    // Revoke active guestAccess
-    const guestUser = await ctx.db
-      .query("users")
-      .withIndex("by_email", (q) => q.eq("email", guestEmail))
-      .first();
+    // Resolve guest user first (prefer userId when provided).
+    let guestUser: Awaited<ReturnType<typeof ctx.db.get>> extends infer T ? (T | null) : never = null;
+    if (guestUserIdStr) {
+      const matches = await ctx.db
+        .query("users")
+        .filter((q) => q.eq(q.field("userId"), guestUserIdStr))
+        .collect();
+      guestUser = matches[0] ?? null;
+    } else if (guestEmail) {
+      guestUser = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", guestEmail))
+        .first();
+    }
+
+    // Revoke any pending invitations, indexed by whichever we have.
+    const toRevoke = new Set<string>();
+    if (guestEmail) {
+      const byEmail = await ctx.db
+        .query("guestInvitations")
+        .withIndex("by_host_guest", (q) =>
+          q.eq("hostUserId", hostUserId).eq("guestEmail", guestEmail)
+        )
+        .collect();
+      byEmail.forEach((i) => toRevoke.add(String(i._id)));
+    }
+    if (guestUser) {
+      const byUser = await ctx.db
+        .query("guestInvitations")
+        .withIndex("by_host_guestUser", (q) =>
+          q.eq("hostUserId", hostUserId).eq("guestUserId", guestUser!._id)
+        )
+        .collect();
+      byUser.forEach((i) => toRevoke.add(String(i._id)));
+    }
+    for (const idStr of toRevoke) {
+      const inv = await ctx.db.get(idStr as any);
+      if (!inv) continue;
+      if ((inv as any).status === "pending" || (inv as any).status === "accepted") {
+        await ctx.db.patch((inv as any)._id, { status: "revoked", revokedAt: Date.now() });
+      }
+    }
 
     if (guestUser) {
       const now = Date.now();
       const accessRecords = await ctx.db
         .query("guestAccess")
         .withIndex("by_host_guest", (q) =>
-          q.eq("hostUserId", hostUserId).eq("guestUserId", guestUser._id)
+          q.eq("hostUserId", hostUserId).eq("guestUserId", guestUser!._id)
         )
         .filter((q) => q.eq(q.field("revokedAt"), undefined))
         .collect();
@@ -329,10 +585,14 @@ export const listGuests = query({
       email: string;
       status: "pending" | "accepted" | "revoked" | "expired";
       fullName?: string;
+      userId?: string;
       createdAt: number;
       expiresAt?: number;
       acceptedAt?: number;
       revokedAt?: number;
+      inviteCode?: string;
+      invitedByUserId?: boolean;
+      proposedDeviceIds?: string[];
     }> = [];
 
     for (const inv of invitations) {
@@ -342,19 +602,25 @@ export const listGuests = query({
       }
 
       let fullName: string | undefined;
+      let userIdStr: string | undefined;
       if (inv.guestUserId) {
         const guest = await ctx.db.get(inv.guestUserId);
         fullName = guest?.fullName;
+        userIdStr = guest?.userId;
       }
 
       result.push({
         email: inv.guestEmail,
         status,
         fullName,
+        userId: userIdStr,
         createdAt: inv.createdAt,
         expiresAt: inv.expiresAt,
         acceptedAt: inv.acceptedAt,
         revokedAt: inv.revokedAt,
+        inviteCode: status === "pending" ? inv.inviteCode : undefined,
+        invitedByUserId: inv.invitedByUserId,
+        proposedDeviceIds: inv.proposedDeviceIds,
       });
     }
 
@@ -377,19 +643,36 @@ export const listHosts = query({
     const guestUserId = session.user._id;
     const guestEmail = session.user.email.toLowerCase();
 
-    // Get pending invitations for this email
-    const pendingInvitations = await ctx.db
+    // Get pending invitations for this email OR pinned to our userId.
+    const byEmail = await ctx.db
       .query("guestInvitations")
       .withIndex("by_guestEmail", (q) => q.eq("guestEmail", guestEmail))
       .filter((q) => q.eq(q.field("status"), "pending"))
       .collect();
+    const byUserId = await ctx.db
+      .query("guestInvitations")
+      .withIndex("by_guestUserId", (q) => q.eq("guestUserId", guestUserId))
+      .filter((q) => q.eq(q.field("status"), "pending"))
+      .collect();
+    const seen = new Set<string>();
+    const pendingInvitations = [...byEmail, ...byUserId].filter((inv) => {
+      const id = String(inv._id);
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
 
     const pending: Array<{
+      inviteId: string;
+      inviteCode: string;
       hostUserId: string;
       hostName: string;
       hostEmail: string;
+      hostUserIdString?: string;
       createdAt: number;
       expiresAt: number;
+      invitedByUserId?: boolean;
+      proposedDeviceIds?: string[];
     }> = [];
 
     for (const inv of pendingInvitations) {
@@ -397,11 +680,16 @@ export const listHosts = query({
       const host = await ctx.db.get(inv.hostUserId);
       if (!host) continue;
       pending.push({
+        inviteId: String(inv._id),
+        inviteCode: inv.inviteCode,
         hostUserId: inv.hostUserId,
         hostName: host.fullName,
         hostEmail: host.email,
+        hostUserIdString: host.userId,
         createdAt: inv.createdAt,
         expiresAt: inv.expiresAt,
+        invitedByUserId: inv.invitedByUserId,
+        proposedDeviceIds: inv.proposedDeviceIds,
       });
     }
 

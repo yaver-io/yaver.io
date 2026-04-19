@@ -16,6 +16,8 @@ func runGuests(args []string) {
 	switch args[0] {
 	case "invite":
 		runGuestsInvite(args[1:])
+	case "accept":
+		runGuestsAccept(args[1:])
 	case "list", "ls":
 		runGuestsList()
 	case "remove", "revoke", "rm":
@@ -38,11 +40,50 @@ func runGuests(args []string) {
 }
 
 func runGuestsInvite(args []string) {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: yaver guests invite <email>")
+	opts := InviteGuestOpts{}
+	var positional []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--user-id" || a == "--userid":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "--user-id requires a value")
+				os.Exit(1)
+			}
+			opts.UserID = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--user-id="):
+			opts.UserID = strings.TrimPrefix(a, "--user-id=")
+		case a == "--machines" || a == "--devices":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "--machines requires a value")
+				os.Exit(1)
+			}
+			opts.ProposedDeviceIDs = splitComma(args[i+1])
+			i++
+		case strings.HasPrefix(a, "--machines="):
+			opts.ProposedDeviceIDs = splitComma(strings.TrimPrefix(a, "--machines="))
+		case strings.HasPrefix(a, "--devices="):
+			opts.ProposedDeviceIDs = splitComma(strings.TrimPrefix(a, "--devices="))
+		default:
+			positional = append(positional, a)
+		}
+	}
+
+	if len(positional) > 0 && opts.Email == "" && opts.UserID == "" {
+		// First positional is treated as email unless it looks like a userId (no @).
+		v := strings.TrimSpace(positional[0])
+		if strings.Contains(v, "@") {
+			opts.Email = v
+		} else {
+			opts.UserID = v
+		}
+	}
+
+	if opts.Email == "" && opts.UserID == "" {
+		fmt.Fprintln(os.Stderr, "Usage: yaver guests invite <email | --user-id <id>> [--machines id1,id2]")
 		os.Exit(1)
 	}
-	email := args[0]
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -55,27 +96,119 @@ func runGuestsInvite(args []string) {
 		convexURL = defaultConvexSiteURL
 	}
 
-	result, err := InviteGuest(convexURL, cfg.AuthToken, email)
+	result, err := InviteGuestWith(convexURL, cfg.AuthToken, opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to invite: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Invitation sent to %s\n", email)
+	target := opts.Email
+	if target == "" {
+		target = "user " + opts.UserID
+	}
+	fmt.Printf("Invitation sent to %s\n", target)
 	fmt.Printf("Invite code: %s\n", result.InviteCode)
+	if len(opts.ProposedDeviceIDs) > 0 {
+		fmt.Printf("Proposed machines: %s\n", strings.Join(opts.ProposedDeviceIDs, ", "))
+	}
 	fmt.Println()
 	if result.GuestRegistered {
-		fmt.Println("This email is already registered on Yaver.")
+		fmt.Println("This person is already registered on Yaver.")
 		fmt.Println("They'll see the invitation in the Yaver app automatically.")
 	} else {
-		fmt.Println("This email is not yet registered on Yaver.")
+		fmt.Println("This person is not yet registered on Yaver.")
 		fmt.Println("Tell them to:")
 		fmt.Println("  1. Download the Yaver app")
 		fmt.Println("  2. Sign in with any method (Apple, Google, Microsoft, or email)")
-		fmt.Println("  3. Enter the invite code above (or sign in with the invited email)")
+		fmt.Println("  3. Enter the invite code above (or, if you invited an email, just sign in with it)")
 	}
 	fmt.Println()
 	fmt.Println("The invitation expires in 2 days.")
+}
+
+// runGuestsAccept accepts a pending invitation as the signed-in user.
+// Usage: yaver guests accept <code> [--machines id1,id2]
+func runGuestsAccept(args []string) {
+	var code string
+	var approved []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--machines" || a == "--devices":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "--machines requires a value")
+				os.Exit(1)
+			}
+			approved = splitComma(args[i+1])
+			i++
+		case strings.HasPrefix(a, "--machines="):
+			approved = splitComma(strings.TrimPrefix(a, "--machines="))
+		case strings.HasPrefix(a, "--devices="):
+			approved = splitComma(strings.TrimPrefix(a, "--devices="))
+		case a == "--help" || a == "-h":
+			fmt.Println("Usage: yaver guests accept <code> [--machines id1,id2]")
+			return
+		default:
+			if code == "" {
+				code = a
+			}
+		}
+	}
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if code == "" {
+		fmt.Fprintln(os.Stderr, "Usage: yaver guests accept <code> [--machines id1,id2]")
+		os.Exit(1)
+	}
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Not signed in. Run 'yaver auth' first.\n")
+		os.Exit(1)
+	}
+	convexURL := cfg.ConvexSiteURL
+	if convexURL == "" {
+		convexURL = defaultConvexSiteURL
+	}
+
+	preview, err := FindInviteByCode(convexURL, cfg.AuthToken, code)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Could not load invitation: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("From: %s <%s>\n", preview.HostName, preview.HostEmail)
+	if len(preview.HostDevices) == 0 {
+		fmt.Println("Host has no registered devices yet — accepting gives you access to whatever they register later.")
+	} else {
+		fmt.Println("Host devices:")
+		for _, d := range preview.HostDevices {
+			marker := " "
+			if d.Proposed {
+				marker = "*"
+			}
+			fmt.Printf("  %s %s  (%s, %s)\n", marker, d.DeviceID, d.Name, d.Platform)
+		}
+		if len(preview.ProposedDeviceIDs) > 0 {
+			fmt.Printf("Host proposed scope: %s (starred above)\n", strings.Join(preview.ProposedDeviceIDs, ", "))
+		}
+	}
+
+	// If the caller didn't pass --machines, default to the host's proposal if present,
+	// otherwise empty (= all).
+	if len(approved) == 0 {
+		approved = preview.ProposedDeviceIDs
+	}
+	if len(approved) > 0 {
+		fmt.Printf("Accepting scope: %s\n", strings.Join(approved, ", "))
+	} else {
+		fmt.Println("Accepting scope: all host devices")
+	}
+
+	result, err := AcceptGuestByCode(convexURL, cfg.AuthToken, code, approved)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to accept: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Joined %s's machine(s) via %s\n", result.HostName, result.HostEmail)
 }
 
 func runGuestsList() {
@@ -532,9 +665,12 @@ from their Yaver mobile app to run tasks, but cannot access shell,
 vault, sessions, or terminals.
 
 Commands:
-  invite <email>    Invite a guest (max 5, expires in 2 days if not accepted)
-  list              List all guests and their status
-  remove <email>    Revoke guest access
+  invite <email>                          Invite by email (host side)
+  invite --user-id <id> [--machines ids]  Invite by public user id
+  invite <email|id> --machines <id1,id2>  Propose a limited machine scope
+  accept <code> [--machines id1,id2]      Accept a pending invite (guest side)
+  list                                    List all guests and their status
+  remove <email>                          Revoke guest access
   unshare-machine <email> <machine-id>  Stop sharing one machine with a guest
   hostkeys <email> <on|off>  Toggle host-managed keys for a guest
   config            Show all guest configs

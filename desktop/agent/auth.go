@@ -34,6 +34,64 @@ func RefreshToken(baseURL, token string) error {
 	return nil
 }
 
+func SignupWithEmail(baseURL, fullName, email, password string) (string, error) {
+	payload, _ := json.Marshal(map[string]string{
+		"fullName": fullName,
+		"email":    email,
+		"password": password,
+	})
+	resp, err := httpClient.Post(baseURL+"/auth/signup", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		return "", fmt.Errorf("signup request: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("signup failed (status %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var result struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("decode signup response: %w", err)
+	}
+	if strings.TrimSpace(result.Token) == "" {
+		return "", fmt.Errorf("signup response missing token")
+	}
+	return result.Token, nil
+}
+
+func LoginWithEmail(baseURL, email, password string) (string, error) {
+	payload, _ := json.Marshal(map[string]string{
+		"email":    email,
+		"password": password,
+	})
+	resp, err := httpClient.Post(baseURL+"/auth/login", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		return "", fmt.Errorf("login request: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("login failed (status %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var result struct {
+		Token        string `json:"token"`
+		Requires2FA  bool   `json:"requires2fa"`
+		PendingToken string `json:"pendingToken"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("decode login response: %w", err)
+	}
+	if result.Requires2FA {
+		return "", fmt.Errorf("login requires 2FA; CLI email/password shortcut does not support that flow")
+	}
+	if strings.TrimSpace(result.Token) == "" {
+		return "", fmt.Errorf("login response missing token")
+	}
+	return result.Token, nil
+}
+
 // RunnerInfo describes an active runner process for heartbeat reporting.
 type RunnerInfo struct {
 	TaskID   string `json:"taskId"`
@@ -290,12 +348,37 @@ func FetchGuestUserIds(baseURL, token string, deviceID ...string) ([]string, err
 type InviteResult struct {
 	InviteCode      string `json:"inviteCode"`
 	GuestRegistered bool   `json:"guestRegistered"`
+	GuestUserID     string `json:"guestUserId,omitempty"`
+	GuestEmail      string `json:"guestEmail,omitempty"`
 }
 
-// InviteGuest sends a guest invitation via Convex.
-// Returns the invite code and whether the guest email is already registered.
+// InviteGuestOpts controls the destination and optional scoping of an invitation.
+// Exactly one of Email / UserID should be set. ProposedDeviceIDs narrows the
+// invitation to a subset of the host's devices; the guest can trim this
+// further on accept.
+type InviteGuestOpts struct {
+	Email             string
+	UserID            string
+	ProposedDeviceIDs []string
+}
+
+// InviteGuest sends a guest invitation via Convex by email.
 func InviteGuest(baseURL, token, email string) (*InviteResult, error) {
-	payload := map[string]string{"email": email}
+	return InviteGuestWith(baseURL, token, InviteGuestOpts{Email: email})
+}
+
+// InviteGuestWith sends a guest invitation with full options.
+func InviteGuestWith(baseURL, token string, opts InviteGuestOpts) (*InviteResult, error) {
+	payload := map[string]interface{}{}
+	if e := strings.TrimSpace(opts.Email); e != "" {
+		payload["email"] = e
+	}
+	if u := strings.TrimSpace(opts.UserID); u != "" {
+		payload["userId"] = u
+	}
+	if len(opts.ProposedDeviceIDs) > 0 {
+		payload["deviceIds"] = opts.ProposedDeviceIDs
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal invite: %w", err)
@@ -324,9 +407,20 @@ func InviteGuest(baseURL, token, email string) (*InviteResult, error) {
 	return &result, nil
 }
 
-// RevokeGuest revokes guest access via Convex.
+// RevokeGuest revokes guest access via Convex by email.
 func RevokeGuest(baseURL, token, email string) error {
-	payload := map[string]string{"email": email}
+	return RevokeGuestWith(baseURL, token, email, "")
+}
+
+// RevokeGuestWith revokes guest access by email or by public userId.
+func RevokeGuestWith(baseURL, token, email, userID string) error {
+	payload := map[string]string{}
+	if e := strings.TrimSpace(email); e != "" {
+		payload["email"] = e
+	}
+	if u := strings.TrimSpace(userID); u != "" {
+		payload["userId"] = u
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal revoke: %w", err)
@@ -348,6 +442,118 @@ func RevokeGuest(baseURL, token, email string) error {
 		return fmt.Errorf("%s", string(respBody))
 	}
 	return nil
+}
+
+// AcceptInviteResult is returned from the accept-code endpoint.
+type AcceptInviteResult struct {
+	OK        bool   `json:"ok"`
+	HostName  string `json:"hostName"`
+	HostEmail string `json:"hostEmail"`
+}
+
+// AcceptGuestByCode accepts a pending invitation by 6-char code.
+// When approvedDeviceIDs is non-empty, the grant is scoped to those devices.
+func AcceptGuestByCode(baseURL, token, code string, approvedDeviceIDs []string) (*AcceptInviteResult, error) {
+	payload := map[string]interface{}{"code": strings.ToUpper(strings.TrimSpace(code))}
+	if len(approvedDeviceIDs) > 0 {
+		payload["approvedDeviceIds"] = approvedDeviceIDs
+	}
+	body, _ := json.Marshal(payload)
+	req, err := newBearerRequest("POST", baseURL+"/guests/accept-code", token, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create accept request: %w", err)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("accept request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("%s", string(respBody))
+	}
+	var result AcceptInviteResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode accept response: %w", err)
+	}
+	return &result, nil
+}
+
+// InvitationHostDevice describes one of the host's devices from the guest's
+// preview payload.
+type InvitationHostDevice struct {
+	DeviceID      string `json:"deviceId"`
+	Name          string `json:"name"`
+	Platform      string `json:"platform"`
+	LastHeartbeat int64  `json:"lastHeartbeat"`
+	Proposed      bool   `json:"proposed"`
+}
+
+// InvitationPreview is the response from /guests/find-by-code.
+type InvitationPreview struct {
+	InviteCode        string                 `json:"inviteCode"`
+	HostUserID        string                 `json:"hostUserId"`
+	HostName          string                 `json:"hostName"`
+	HostEmail         string                 `json:"hostEmail"`
+	HostUserIDString  string                 `json:"hostUserIdString"`
+	ProposedDeviceIDs []string               `json:"proposedDeviceIds"`
+	HostDevices       []InvitationHostDevice `json:"hostDevices"`
+	InvitedByUserID   bool                   `json:"invitedByUserId"`
+	ExpiresAt         int64                  `json:"expiresAt"`
+	CreatedAt         int64                  `json:"createdAt"`
+}
+
+// FindInviteByCode previews an invitation before accepting.
+func FindInviteByCode(baseURL, token, code string) (*InvitationPreview, error) {
+	url := baseURL + "/guests/find-by-code?code=" + urlpkg.QueryEscape(strings.ToUpper(strings.TrimSpace(code)))
+	req, err := newBearerRequest("GET", url, token, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create find request: %w", err)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("find request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("%s", string(respBody))
+	}
+	var preview InvitationPreview
+	if err := json.NewDecoder(resp.Body).Decode(&preview); err != nil {
+		return nil, fmt.Errorf("decode preview: %w", err)
+	}
+	return &preview, nil
+}
+
+// PublicUser is a redacted user profile from /users/lookup.
+type PublicUser struct {
+	UserID   string `json:"userId"`
+	FullName string `json:"fullName"`
+	Email    string `json:"email"`
+}
+
+// LookupPublicUser resolves a userId string to a user profile.
+func LookupPublicUser(baseURL, token, userID string) (*PublicUser, error) {
+	url := baseURL + "/users/lookup?userId=" + urlpkg.QueryEscape(strings.TrimSpace(userID))
+	req, err := newBearerRequest("GET", url, token, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create lookup request: %w", err)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("lookup request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("%s", string(respBody))
+	}
+	var user PublicUser
+	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
+		return nil, fmt.Errorf("decode lookup: %w", err)
+	}
+	return &user, nil
 }
 
 // RemoveDevice removes one device from the authenticated user's registry.

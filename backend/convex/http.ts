@@ -321,8 +321,9 @@ for (const path of [
   "/billing/yaver-cloud/checkout",
   "/billing/yaver-cloud/dev-activate",
   "/guests/invite", "/guests/accept", "/guests/accept-code",
-  "/guests/revoke", "/guests/list", "/guests/hosts", "/guests/allowed",
-  "/guests/config", "/guests/usage",
+  "/guests/find-by-code", "/guests/revoke", "/guests/list", "/guests/hosts",
+  "/guests/allowed", "/guests/config", "/guests/usage",
+  "/users/lookup",
 ]) {
   http.route({
     path,
@@ -365,7 +366,14 @@ http.route({
     }
 
     const token = await createSessionToken(ctx, userId);
-    return jsonResponse({ token, userId: String(userId) });
+    // userId returned to the client is the public userId string (stable,
+    // shareable). Keep userDocId in its own field for back-compat.
+    const publicUser = await ctx.runQuery(api.auth.getUserPublicProfile, { userDocId: userId });
+    return jsonResponse({
+      token,
+      userId: publicUser?.userId ?? String(userId),
+      userDocId: String(userId),
+    });
   }),
 });
 
@@ -2784,17 +2792,26 @@ http.route({
     const tokenHash = await sha256Hex(token);
 
     const body = await request.json();
-    if (!body.email) return errorResponse("email is required");
+    const email = typeof body.email === "string" ? body.email : undefined;
+    const userId = typeof body.userId === "string" ? body.userId : undefined;
+    const proposedDeviceIds = Array.isArray(body.deviceIds) ? body.deviceIds.map(String) : undefined;
+    if (!email && !userId) {
+      return errorResponse("email or userId is required");
+    }
 
     try {
       const result = await ctx.runMutation(api.guests.invite, {
         tokenHash,
-        guestEmail: body.email,
+        guestEmail: email,
+        guestUserId: userId,
+        proposedDeviceIds,
       });
       return jsonResponse({
         ok: true,
         inviteCode: result.inviteCode,
         guestRegistered: result.guestRegistered,
+        guestUserId: result.guestUserId,
+        guestEmail: result.guestEmail,
       });
     } catch (e: any) {
       return errorResponse(e.message || "Failed to invite guest", 400);
@@ -2816,11 +2833,15 @@ http.route({
 
     const body = await request.json();
     if (!body.hostUserId) return errorResponse("hostUserId is required");
+    const approvedDeviceIds = Array.isArray(body.approvedDeviceIds)
+      ? body.approvedDeviceIds.map(String)
+      : undefined;
 
     try {
       await ctx.runMutation(api.guests.accept, {
         tokenHash,
         hostUserId: body.hostUserId,
+        approvedDeviceIds,
       });
       return jsonResponse({ ok: true });
     } catch (e: any) {
@@ -2843,16 +2864,64 @@ http.route({
 
     const body = await request.json();
     if (!body.code) return errorResponse("code is required");
+    const approvedDeviceIds = Array.isArray(body.approvedDeviceIds)
+      ? body.approvedDeviceIds.map(String)
+      : undefined;
 
     try {
       const result = await ctx.runMutation(api.guests.acceptByCode, {
         tokenHash,
         inviteCode: body.code,
+        approvedDeviceIds,
       });
       return jsonResponse(result);
     } catch (e: any) {
       return errorResponse(e.message || "Failed to accept invitation", 400);
     }
+  }),
+});
+
+/** GET /guests/find-by-code?code=XXXX — Preview invitation before accepting. */
+http.route({
+  path: "/guests/find-by-code",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+
+    const url = new URL(request.url);
+    const code = url.searchParams.get("code") ?? "";
+    if (!code) return errorResponse("code is required");
+
+    const info = await ctx.runQuery(api.guests.findByCode, { tokenHash, inviteCode: code });
+    if (!info) return errorResponse("Invite not found or expired", 404);
+    return jsonResponse(info);
+  }),
+});
+
+/** GET /users/lookup?userId=XXXX — Resolve a public user id to a display profile. */
+http.route({
+  path: "/users/lookup",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+
+    const url = new URL(request.url);
+    const userId = url.searchParams.get("userId") ?? "";
+    if (!userId) return errorResponse("userId is required");
+
+    const user = await ctx.runQuery(api.guests.lookupPublicUser, { tokenHash, userId });
+    if (!user) return errorResponse("User not found", 404);
+    return jsonResponse(user);
   }),
 });
 
@@ -2869,12 +2938,15 @@ http.route({
     const tokenHash = await sha256Hex(token);
 
     const body = await request.json();
-    if (!body.email) return errorResponse("email is required");
+    const email = typeof body.email === "string" ? body.email : undefined;
+    const userId = typeof body.userId === "string" ? body.userId : undefined;
+    if (!email && !userId) return errorResponse("email or userId is required");
 
     try {
       await ctx.runMutation(api.guests.revoke, {
         tokenHash,
-        guestEmail: body.email,
+        guestEmail: email,
+        guestUserId: userId,
       });
       return jsonResponse({ ok: true });
     } catch (e: any) {

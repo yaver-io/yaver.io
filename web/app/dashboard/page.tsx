@@ -21,6 +21,7 @@ import OpsView from "@/components/dashboard/OpsView";
 import OverviewView from "@/components/dashboard/OverviewView";
 import ExtrasView from "@/components/dashboard/ExtrasView";
 import ShareView from "@/components/dashboard/ShareView";
+import GuestsStatusView from "@/components/dashboard/GuestsStatusView";
 import InfraView from "@/components/dashboard/InfraView";
 import PreviewPane from "@/components/dashboard/PreviewPane";
 import TwoFactorView from "@/components/dashboard/TwoFactorView";
@@ -55,7 +56,7 @@ export default function DashboardPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [guestCode, setGuestCode] = useState("");
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "infra" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "domains">("home");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "domains">("home");
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [relayReady, setRelayReady] = useState(false);
@@ -225,6 +226,7 @@ export default function DashboardPage() {
     { id: "ops", label: "Ops", icon: "\uD83D\uDE80" },
     { id: "extras", label: "Extras", icon: "\u2699\uFE0F" },
     { id: "share", label: "Share", icon: "\uD83D\uDCE3" },
+    { id: "guests", label: "Guests", icon: "\uD83D\uDC65" },
     { id: "convex", label: "Convex", icon: "\u26A1" },
     { id: "storage", label: "Storage", icon: "\uD83D\uDCC2" },
     { id: "vault", label: "Vault", icon: "\uD83D\uDD12" },
@@ -465,6 +467,8 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><ExtrasView /></div>
           ) : activeTab === "share" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><ShareView /></div>
+          ) : activeTab === "guests" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><GuestsStatusView /></div>
           ) : activeTab === "convex" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full"><ConvexView /></div>
           ) : activeTab === "security" ? (

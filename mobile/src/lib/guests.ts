@@ -13,11 +13,44 @@ export interface GuestInvitation {
   /** Convex row id — present on records fetched from the backend,
    *  absent on invitations constructed client-side. */
   _id?: string;
+  inviteId?: string;
+  inviteCode?: string;
   hostUserId: string;
   hostName: string;
   hostEmail: string;
+  hostUserIdString?: string;
   createdAt: number;
   expiresAt: number;
+  invitedByUserId?: boolean;
+  /** Device ids the host pre-scoped; empty / undefined means "all host devices". */
+  proposedDeviceIds?: string[];
+}
+
+export interface InvitationHostDevice {
+  deviceId: string;
+  name: string;
+  platform: string;
+  lastHeartbeat?: number;
+  proposed: boolean;
+}
+
+export interface InvitationPreview {
+  inviteCode: string;
+  hostUserId: string;
+  hostName: string;
+  hostEmail: string;
+  hostUserIdString?: string;
+  proposedDeviceIds?: string[];
+  hostDevices: InvitationHostDevice[];
+  invitedByUserId?: boolean;
+  expiresAt: number;
+  createdAt: number;
+}
+
+export interface PublicUserLookup {
+  userId: string;
+  fullName: string;
+  email: string;
 }
 
 export interface ActiveHost {
@@ -36,6 +69,10 @@ export interface GuestInfo {
   email: string;
   status: "pending" | "accepted" | "revoked" | "expired";
   fullName?: string;
+  /** Public user id (stable across providers). Present when the guest is already
+   *  a Yaver user (invited by email that matched an existing account, or invited
+   *  directly by user id). */
+  userId?: string;
   createdAt: number;
   expiresAt?: number;
   acceptedAt?: number;
@@ -44,6 +81,10 @@ export interface GuestInfo {
   grantedAt?: number;
   /** Set when status === "pending". 6-char uppercase alphanumeric. */
   inviteCode?: string;
+  /** True when the host targeted this invite by userId instead of email. */
+  invitedByUserId?: boolean;
+  /** Host-proposed device scope (empty/undefined means "all host devices"). */
+  proposedDeviceIds?: string[];
 }
 
 export interface GuestConfigEntry {
@@ -125,11 +166,12 @@ export async function fetchGuestHosts(token: string): Promise<GuestHostsResponse
 }
 
 /**
- * Accept a pending guest invitation.
+ * Accept a pending guest invitation. Optional approvedDeviceIds narrows scope.
  */
 export async function acceptGuestInvitation(
   token: string,
-  hostUserId: string
+  hostUserId: string,
+  approvedDeviceIds?: string[]
 ): Promise<void> {
   const res = await fetch(`${CONVEX_SITE_URL}/guests/accept`, {
     method: "POST",
@@ -137,7 +179,7 @@ export async function acceptGuestInvitation(
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ hostUserId }),
+    body: JSON.stringify({ hostUserId, approvedDeviceIds }),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -149,10 +191,12 @@ export async function acceptGuestInvitation(
  * Accept a guest invitation using a 6-character invite code.
  * Works regardless of the guest's email — the code is the proof.
  * Use this when the guest signed up with a different OAuth email than the one invited.
+ * Optional approvedDeviceIds narrows scope.
  */
 export async function acceptGuestByCode(
   token: string,
-  code: string
+  code: string,
+  approvedDeviceIds?: string[]
 ): Promise<{ hostName: string; hostEmail: string }> {
   const res = await fetch(`${CONVEX_SITE_URL}/guests/accept-code`, {
     method: "POST",
@@ -160,7 +204,7 @@ export async function acceptGuestByCode(
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ code }),
+    body: JSON.stringify({ code, approvedDeviceIds }),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -170,20 +214,29 @@ export async function acceptGuestByCode(
 }
 
 /**
- * Invite a guest by email (host perspective — can be called from mobile too).
- * Returns the invite code and whether the email is already registered.
+ * Invite a guest. Either email or userId must be supplied.
+ * Optional proposedDeviceIds pre-scopes the invitation to a subset of host
+ * devices (the guest can trim further on accept).
  */
 export async function inviteGuest(
   token: string,
-  email: string
-): Promise<{ inviteCode: string; guestRegistered: boolean }> {
+  target: { email?: string; userId?: string; deviceIds?: string[] } | string
+): Promise<{ inviteCode: string; guestRegistered: boolean; guestUserId?: string; guestEmail?: string }> {
+  const body: Record<string, unknown> =
+    typeof target === "string"
+      ? { email: target }
+      : {
+          email: target.email,
+          userId: target.userId,
+          deviceIds: target.deviceIds,
+        };
   const res = await fetch(`${CONVEX_SITE_URL}/guests/invite`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -193,19 +246,60 @@ export async function inviteGuest(
 }
 
 /**
- * Revoke guest access (host perspective).
+ * Preview an invitation by code before accepting — returns host + device scope.
+ */
+export async function findInviteByCode(
+  token: string,
+  code: string
+): Promise<InvitationPreview> {
+  const res = await fetch(
+    `${CONVEX_SITE_URL}/guests/find-by-code?code=${encodeURIComponent(code.toUpperCase().trim())}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || "Invite not found");
+  }
+  return res.json();
+}
+
+/**
+ * Resolve a public user id (what the user sees in their Settings tab) to a
+ * basic profile so the host UI can confirm the target before inviting.
+ */
+export async function lookupPublicUser(
+  token: string,
+  userId: string
+): Promise<PublicUserLookup | null> {
+  const res = await fetch(
+    `${CONVEX_SITE_URL}/users/lookup?userId=${encodeURIComponent(userId.trim())}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || "Lookup failed");
+  }
+  return res.json();
+}
+
+/**
+ * Revoke guest access (host perspective). Accepts email or public userId.
+ * Pass a string (treated as email, for back-compat) or an object.
  */
 export async function revokeGuest(
   token: string,
-  email: string
+  target: string | { email?: string; userId?: string }
 ): Promise<void> {
+  const body: Record<string, unknown> =
+    typeof target === "string" ? { email: target } : { email: target.email, userId: target.userId };
   const res = await fetch(`${CONVEX_SITE_URL}/guests/revoke`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));

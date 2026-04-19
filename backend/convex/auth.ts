@@ -1230,6 +1230,23 @@ export const getUserDocId = query({
 });
 
 /**
+ * Resolve a userDocId to the public user profile (for signup/login to surface
+ * the stable, shareable userId string instead of the internal doc id).
+ */
+export const getUserPublicProfile = query({
+  args: { userDocId: v.id("users") },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userDocId);
+    if (!user) return null;
+    return {
+      userId: user.userId,
+      email: user.email,
+      fullName: user.fullName,
+    };
+  },
+});
+
+/**
  * Update user profile fields (e.g. fullName).
  */
 export const updateProfile = mutation({

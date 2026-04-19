@@ -362,11 +362,16 @@ type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 interface GuestInvitation {
   /** Convex row id — present on records fetched from the backend. */
   _id?: string;
+  inviteId?: string;
+  inviteCode?: string;
   hostUserId: string;
   hostName: string;
   hostEmail: string;
+  hostUserIdString?: string;
   createdAt: number;
   expiresAt: number;
+  invitedByUserId?: boolean;
+  proposedDeviceIds?: string[];
 }
 
 interface DeviceState {
@@ -395,12 +400,17 @@ interface DeviceState {
   stopReconnectAndBounce: () => Promise<void>;
   /** Pending guest invitations from other users */
   guestInvitations: GuestInvitation[];
-  /** Accept a guest invitation by email match */
-  acceptGuestInvitation: (hostUserId: string) => Promise<void>;
-  /** Accept a guest invitation by 6-char invite code (works with any OAuth email) */
-  acceptGuestByCode: (code: string) => Promise<{ hostName: string; hostEmail: string }>;
-  /** Invite someone as a guest to your machine */
-  inviteGuest: (email: string) => Promise<{ inviteCode: string; guestRegistered: boolean }>;
+  /** Accept a guest invitation by email match. Optional approvedDeviceIds narrows scope. */
+  acceptGuestInvitation: (hostUserId: string, approvedDeviceIds?: string[]) => Promise<void>;
+  /** Accept a guest invitation by 6-char invite code (works with any OAuth email). */
+  acceptGuestByCode: (
+    code: string,
+    approvedDeviceIds?: string[],
+  ) => Promise<{ hostName: string; hostEmail: string }>;
+  /** Invite someone as a guest to your machine. Accepts email or userId. */
+  inviteGuest: (
+    target: string | { email?: string; userId?: string; deviceIds?: string[] },
+  ) => Promise<{ inviteCode: string; guestRegistered: boolean; guestUserId?: string; guestEmail?: string }>;
 }
 
 const DeviceContext = createContext<DeviceState | undefined>(undefined);
@@ -1094,23 +1104,34 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(iv);
   }, [token, user?.id, activeDevice?.id, activeDevice?.host, activeDevice?.port, activeDevice?.publicKey, activeDevice?.name, refreshDevices]);
 
-  const acceptGuestInvitation = useCallback(async (hostUserId: string) => {
-    if (!token) return;
-    await apiAcceptInvitation(token, hostUserId);
-    await refreshDevices();
-  }, [token, refreshDevices]);
+  const acceptGuestInvitation = useCallback(
+    async (hostUserId: string, approvedDeviceIds?: string[]) => {
+      if (!token) return;
+      await apiAcceptInvitation(token, hostUserId, approvedDeviceIds);
+      await refreshDevices();
+    },
+    [token, refreshDevices]
+  );
 
-  const acceptGuestByCode = useCallback(async (code: string) => {
-    if (!token) throw new Error("Not signed in");
-    const result = await apiAcceptByCode(token, code);
-    await refreshDevices();
-    return result;
-  }, [token, refreshDevices]);
+  const acceptGuestByCode = useCallback(
+    async (code: string, approvedDeviceIds?: string[]) => {
+      if (!token) throw new Error("Not signed in");
+      const result = await apiAcceptByCode(token, code, approvedDeviceIds);
+      await refreshDevices();
+      return result;
+    },
+    [token, refreshDevices]
+  );
 
-  const inviteGuest = useCallback(async (email: string) => {
-    if (!token) throw new Error("Not signed in");
-    return await apiInviteGuest(token, email);
-  }, [token]);
+  const inviteGuest = useCallback(
+    async (
+      target: string | { email?: string; userId?: string; deviceIds?: string[] },
+    ) => {
+      if (!token) throw new Error("Not signed in");
+      return await apiInviteGuest(token, target);
+    },
+    [token]
+  );
 
   const recoverDeviceAuth = useCallback(async (device: Device): Promise<RecoveryResult | null> => {
     if (!token || !user?.id) {

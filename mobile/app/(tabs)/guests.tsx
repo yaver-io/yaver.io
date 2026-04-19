@@ -1,5 +1,15 @@
-import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import * as Clipboard from "expo-clipboard";
@@ -8,51 +18,142 @@ import { useAuth } from "../../src/context/AuthContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import {
   acceptGuestByCode,
+  acceptGuestInvitation,
+  findInviteByCode,
   inviteGuest,
   listGuests,
+  lookupPublicUser,
   revokeGuest,
   type GuestInfo,
+  type InvitationPreview,
+  type PublicUserLookup,
 } from "../../src/lib/guests";
 
-// Mobile-first guest access screen. Hosts invite someone to share their
-// machine; guests paste a 6-char code to accept. Everything native — invite
-// codes are copyable + shareable via the OS share sheet so the host can send
-// them via iMessage/WhatsApp/email without retyping.
+// Guest access — one mobile screen that covers host (my guests) and guest
+// (join as guest) flows. Hosts can invite by email OR by public user id,
+// optionally pre-scoping the invitation to a subset of their machines.
+// Guests see pending invites with the host's proposed scope and can trim it
+// further before accepting.
+
+type Tab = "my-guests" | "join";
 
 export default function GuestsScreen() {
   const c = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
-  const { guestInvitations, acceptGuestInvitation, refreshDevices } = useDevice();
+  const {
+    devices,
+    guestInvitations,
+    acceptGuestInvitation: ctxAcceptPending,
+    refreshDevices,
+  } = useDevice();
 
-  const [mode, setMode] = useState<"my-guests" | "join">("my-guests");
+  const [mode, setMode] = useState<Tab>("my-guests");
   const [guests, setGuests] = useState<GuestInfo[]>([]);
   const [loading, setLoading] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
+
+  // ─── Invite (host side) ──────────────────────────────────────
+  const [inviteKind, setInviteKind] = useState<"email" | "user-id">("email");
+  const [inviteTarget, setInviteTarget] = useState("");
+  const [inviteLookup, setInviteLookup] = useState<PublicUserLookup | null>(null);
+  const [inviteLookupErr, setInviteLookupErr] = useState<string | null>(null);
+  const [inviteProposedDeviceIds, setInviteProposedDeviceIds] = useState<string[]>([]);
   const [inviting, setInviting] = useState(false);
   const [lastCode, setLastCode] = useState<string | null>(null);
-  const [lastEmail, setLastEmail] = useState<string | null>(null);
+  const [lastTarget, setLastTarget] = useState<string | null>(null);
+
+  // Only show own (non-guest) devices in the picker.
+  const ownDevices = useMemo(() => devices.filter((d) => !d.isGuest), [devices]);
+
+  // ─── Join flow (guest side) ──────────────────────────────────
   const [joinCode, setJoinCode] = useState("");
+  const [previewing, setPreviewing] = useState(false);
+  const [preview, setPreview] = useState<InvitationPreview | null>(null);
+  const [previewErr, setPreviewErr] = useState<string | null>(null);
+  const [approvedDeviceIds, setApprovedDeviceIds] = useState<string[]>([]);
   const [joining, setJoining] = useState(false);
+
+  // ─── Pending invite approval (guest side) ─────────────────────
+  const [approveCtx, setApproveCtx] = useState<{
+    inviteId: string;
+    hostUserId: string;
+    code?: string;
+    hostName: string;
+    hostEmail: string;
+    preview: InvitationPreview | null;
+    approvedDeviceIds: string[];
+    loading: boolean;
+  } | null>(null);
 
   const loadGuests = useCallback(async () => {
     if (!token) return;
     setLoading(true);
-    try { setGuests(await listGuests(token)); } catch {}
+    try {
+      setGuests(await listGuests(token));
+    } catch {
+      /* ignore */
+    }
     setLoading(false);
   }, [token]);
 
-  useEffect(() => { loadGuests(); }, [loadGuests]);
+  useEffect(() => {
+    loadGuests();
+  }, [loadGuests]);
+
+  // Debounced user-id lookup whenever the host is inviting by user id.
+  useEffect(() => {
+    if (inviteKind !== "user-id") {
+      setInviteLookup(null);
+      setInviteLookupErr(null);
+      return;
+    }
+    const v = inviteTarget.trim();
+    if (!token || v.length < 3) {
+      setInviteLookup(null);
+      setInviteLookupErr(null);
+      return;
+    }
+    let alive = true;
+    const t = setTimeout(async () => {
+      try {
+        const r = await lookupPublicUser(token, v);
+        if (!alive) return;
+        if (r) {
+          setInviteLookup(r);
+          setInviteLookupErr(null);
+        } else {
+          setInviteLookup(null);
+          setInviteLookupErr("No Yaver user with that id");
+        }
+      } catch (e: any) {
+        if (!alive) return;
+        setInviteLookup(null);
+        setInviteLookupErr(e?.message || "Lookup failed");
+      }
+    }, 400);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [inviteKind, inviteTarget, token]);
 
   async function invite() {
-    if (!token || !inviteEmail.trim()) return;
+    if (!token) return;
+    const v = inviteTarget.trim();
+    if (!v) return;
     setInviting(true);
     try {
-      const r = await inviteGuest(token, inviteEmail.trim());
+      const payload =
+        inviteKind === "email"
+          ? { email: v, deviceIds: inviteProposedDeviceIds }
+          : { userId: v, deviceIds: inviteProposedDeviceIds };
+      const r = await inviteGuest(token, payload);
       setLastCode(r.inviteCode);
-      setLastEmail(inviteEmail.trim());
-      setInviteEmail("");
+      setLastTarget(inviteKind === "email" ? v : inviteLookup?.email || ("user " + v));
+      setInviteTarget("");
+      setInviteLookup(null);
+      setInviteProposedDeviceIds([]);
       loadGuests();
     } catch (e: any) {
       Alert.alert("Invite failed", e?.message || String(e));
@@ -60,14 +161,27 @@ export default function GuestsScreen() {
     setInviting(false);
   }
 
-  async function revoke(email: string) {
-    Alert.alert("Revoke access?", email, [
-      { text: "Cancel", style: "cancel" },
-      { text: "Revoke", style: "destructive", onPress: async () => {
-        if (!token) return;
-        try { await revokeGuest(token, email); loadGuests(); } catch (e: any) { Alert.alert("Failed", e?.message || String(e)); }
-      }},
-    ]);
+  async function revoke(g: GuestInfo) {
+    Alert.alert(
+      "Revoke access?",
+      g.email || `user ${g.userId}`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Revoke",
+          style: "destructive",
+          onPress: async () => {
+            if (!token) return;
+            try {
+              await revokeGuest(token, g.email ? { email: g.email } : { userId: g.userId });
+              loadGuests();
+            } catch (e: any) {
+              Alert.alert("Failed", e?.message || String(e));
+            }
+          },
+        },
+      ],
+    );
   }
 
   async function copyCode(code: string) {
@@ -75,20 +189,52 @@ export default function GuestsScreen() {
     Alert.alert("Copied", code);
   }
 
-  async function shareInvite(code: string, email?: string) {
-    const msg = email
-      ? `Hey — here's your Yaver access code for ${email}: ${code}\n\nDownload: https://yaver.io/download · expires in 2 days`
+  async function shareInvite(code: string, target?: string) {
+    const msg = target
+      ? `Hey — here's your Yaver access code for ${target}: ${code}\n\nDownload: https://yaver.io/download · expires in 2 days`
       : `Your Yaver invite code: ${code}`;
-    try { await Share.share({ message: msg }); } catch {}
+    try {
+      await Share.share({ message: msg });
+    } catch {
+      /* noop */
+    }
   }
 
-  async function acceptByCode() {
+  function toggleProposedDevice(deviceId: string) {
+    setInviteProposedDeviceIds((prev) =>
+      prev.includes(deviceId) ? prev.filter((x) => x !== deviceId) : [...prev, deviceId],
+    );
+  }
+
+  async function previewCode() {
     if (!token || joinCode.trim().length < 4) return;
-    setJoining(true);
+    setPreviewing(true);
+    setPreviewErr(null);
+    setPreview(null);
     try {
       const code = joinCode.trim().toUpperCase();
-      await acceptGuestByCode(token, code);
+      const p = await findInviteByCode(token, code);
+      setPreview(p);
+      // Default approved = proposed (or all host devices if nothing was proposed)
+      const defaults =
+        p.proposedDeviceIds && p.proposedDeviceIds.length > 0
+          ? p.proposedDeviceIds
+          : p.hostDevices.map((d) => d.deviceId);
+      setApprovedDeviceIds(defaults);
+    } catch (e: any) {
+      setPreviewErr(e?.message || String(e));
+    }
+    setPreviewing(false);
+  }
+
+  async function commitCodeAccept() {
+    if (!token || !preview) return;
+    setJoining(true);
+    try {
+      await acceptGuestByCode(token, preview.inviteCode, approvedDeviceIds);
       setJoinCode("");
+      setPreview(null);
+      setApprovedDeviceIds([]);
       Alert.alert("Joined", "Host machine should now appear in your device list.");
       refreshDevices();
     } catch (e: any) {
@@ -97,21 +243,91 @@ export default function GuestsScreen() {
     setJoining(false);
   }
 
-  async function acceptPending(id: string) {
-    try {
-      await acceptGuestInvitation(id);
-      Alert.alert("Joined", "Host machine added.");
-      refreshDevices();
-    } catch (e: any) { Alert.alert("Failed", e?.message || String(e)); }
+  function toggleApprovedDevice(deviceId: string) {
+    setApprovedDeviceIds((prev) =>
+      prev.includes(deviceId) ? prev.filter((x) => x !== deviceId) : [...prev, deviceId],
+    );
   }
+
+  async function startApprovePending(inv: typeof guestInvitations[number]) {
+    if (!token) return;
+    // Open the approval sheet. If we have a code, fetch rich preview so the guest
+    // sees the host's devices; otherwise fall back to whatever fields are on the
+    // invitation itself.
+    let p: InvitationPreview | null = null;
+    setApproveCtx({
+      inviteId: inv.inviteId || inv._id || "",
+      hostUserId: inv.hostUserId,
+      code: inv.inviteCode,
+      hostName: inv.hostName,
+      hostEmail: inv.hostEmail,
+      preview: null,
+      approvedDeviceIds: inv.proposedDeviceIds ?? [],
+      loading: true,
+    });
+    try {
+      if (inv.inviteCode) {
+        p = await findInviteByCode(token, inv.inviteCode);
+      }
+    } catch {
+      /* ignore — we'll show the fallback */
+    }
+    setApproveCtx((curr) =>
+      curr
+        ? {
+            ...curr,
+            preview: p,
+            approvedDeviceIds:
+              p
+                ? (p.proposedDeviceIds && p.proposedDeviceIds.length > 0
+                    ? p.proposedDeviceIds
+                    : p.hostDevices.map((d) => d.deviceId))
+                : curr.approvedDeviceIds,
+            loading: false,
+          }
+        : curr,
+    );
+  }
+
+  function toggleApprovePendingDevice(deviceId: string) {
+    setApproveCtx((curr) =>
+      curr
+        ? {
+            ...curr,
+            approvedDeviceIds: curr.approvedDeviceIds.includes(deviceId)
+              ? curr.approvedDeviceIds.filter((x) => x !== deviceId)
+              : [...curr.approvedDeviceIds, deviceId],
+          }
+        : curr,
+    );
+  }
+
+  async function commitPendingAccept() {
+    if (!approveCtx) return;
+    try {
+      await ctxAcceptPending(approveCtx.hostUserId, approveCtx.approvedDeviceIds);
+      Alert.alert("Joined", `You now have access to ${approveCtx.hostName}'s machine.`);
+      setApproveCtx(null);
+      refreshDevices();
+    } catch (e: any) {
+      Alert.alert("Failed", e?.message || String(e));
+    }
+  }
+
+  const sectionLabel = { color: c.textMuted, fontSize: 10, textTransform: "uppercase", fontWeight: "700" } as const;
 
   return (
     <View style={[styles.container, { backgroundColor: c.bg }]}>
       <View style={[styles.header, { borderBottomColor: c.border, paddingTop: insets.top + 12 }]}>
-        <Pressable onPress={() => router.navigate("/(tabs)/more" as any)} style={{ paddingVertical: 8 }}>
+        <Pressable
+          onPress={() => router.navigate("/(tabs)/more" as any)}
+          style={{ paddingVertical: 8 }}
+        >
           <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
         </Pressable>
-        <Text style={{ fontSize: 17, fontWeight: "700", color: c.textPrimary }}>Guest Access</Text>
+        <Text style={{ fontSize: 17, fontWeight: "700", color: c.textPrimary }}>
+          Guest Access
+        </Text>
         <View style={{ width: 50 }} />
       </View>
 
@@ -123,15 +339,117 @@ export default function GuestsScreen() {
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 12 }}>
         {mode === "my-guests" ? (
           <>
-            <View style={[card(c), { gap: 8 }]}>
-              <Text style={{ color: c.textMuted, fontSize: 10, textTransform: "uppercase", fontWeight: "700" }}>Invite a guest</Text>
-              <TextInput value={inviteEmail} onChangeText={setInviteEmail}
-                placeholder="email@example.com" placeholderTextColor={c.textMuted}
-                autoCapitalize="none" keyboardType="email-address" autoCorrect={false}
-                style={[inputStyle(c), { fontFamily: "Menlo" }]} />
-              <Pressable onPress={invite} disabled={inviting || !inviteEmail.trim()}
-                style={[actionBtn(c), { backgroundColor: c.accent, opacity: inviting || !inviteEmail.trim() ? 0.5 : 1 }]}>
-                {inviting ? <ActivityIndicator color="#fff" /> : <Text style={{ color: "#fff", fontWeight: "700" }}>Send invite</Text>}
+            <View style={[card(c), { gap: 10 }]}>
+              <Text style={sectionLabel as any}>Invite a guest</Text>
+
+              {/* Choose email vs userId */}
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                <ChipToggle
+                  c={c}
+                  label="By email"
+                  active={inviteKind === "email"}
+                  onPress={() => {
+                    setInviteKind("email");
+                    setInviteTarget("");
+                    setInviteLookup(null);
+                  }}
+                />
+                <ChipToggle
+                  c={c}
+                  label="By user ID"
+                  active={inviteKind === "user-id"}
+                  onPress={() => {
+                    setInviteKind("user-id");
+                    setInviteTarget("");
+                    setInviteLookup(null);
+                  }}
+                />
+              </View>
+
+              <TextInput
+                value={inviteTarget}
+                onChangeText={setInviteTarget}
+                placeholder={inviteKind === "email" ? "email@example.com" : "user id (ask them to copy from Settings)"}
+                placeholderTextColor={c.textMuted}
+                autoCapitalize="none"
+                keyboardType={inviteKind === "email" ? "email-address" : "default"}
+                autoCorrect={false}
+                style={[inputStyle(c), { fontFamily: "Menlo" }]}
+              />
+
+              {/* Resolved user preview */}
+              {inviteKind === "user-id" && inviteLookup && (
+                <Text style={{ color: c.textMuted, fontSize: 12 }}>
+                  → {inviteLookup.fullName} ({inviteLookup.email})
+                </Text>
+              )}
+              {inviteKind === "user-id" && inviteLookupErr && (
+                <Text style={{ color: "#ef4444", fontSize: 12 }}>{inviteLookupErr}</Text>
+              )}
+
+              {/* Machine picker */}
+              {ownDevices.length > 0 && (
+                <View style={{ gap: 6 }}>
+                  <Text style={sectionLabel as any}>Share which machines?</Text>
+                  <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                    Leave all unchecked to propose all of your machines. The guest can trim further when they accept.
+                  </Text>
+                  {ownDevices.map((d) => {
+                    const selected = inviteProposedDeviceIds.includes(d.id);
+                    return (
+                      <Pressable
+                        key={d.id}
+                        onPress={() => toggleProposedDevice(d.id)}
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          padding: 8,
+                          borderRadius: 8,
+                          backgroundColor: selected ? c.accent + "15" : c.bg,
+                          borderWidth: 1,
+                          borderColor: selected ? c.accent : c.border,
+                          gap: 10,
+                        }}
+                      >
+                        <View
+                          style={{
+                            width: 18,
+                            height: 18,
+                            borderRadius: 4,
+                            borderWidth: 2,
+                            borderColor: selected ? c.accent : c.border,
+                            backgroundColor: selected ? c.accent : "transparent",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          {selected && <Text style={{ color: "#fff", fontSize: 12 }}>✓</Text>}
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: c.textPrimary, fontSize: 13 }}>{d.name}</Text>
+                          <Text style={{ color: c.textMuted, fontSize: 10, fontFamily: "Menlo" }}>
+                            {d.id} · {d.os}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              )}
+
+              <Pressable
+                onPress={invite}
+                disabled={inviting || !inviteTarget.trim()}
+                style={[actionBtn(c), {
+                  backgroundColor: c.accent,
+                  opacity: inviting || !inviteTarget.trim() ? 0.5 : 1,
+                }]}
+              >
+                {inviting ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={{ color: "#fff", fontWeight: "700" }}>Send invite</Text>
+                )}
               </Pressable>
               <Text style={{ color: c.textMuted, fontSize: 10 }}>
                 Max 5 guests. Codes expire in 2 days. Guests can create tasks + use Data/Ops but can't touch vault, session, or exec.
@@ -139,37 +457,75 @@ export default function GuestsScreen() {
             </View>
 
             {lastCode && (
-              <View style={[card(c), { backgroundColor: c.accent + "15", borderColor: c.accent, borderWidth: 1, gap: 10 }]}>
-                <Text style={{ color: c.accent, fontSize: 11, fontWeight: "700", textTransform: "uppercase" }}>New invite for {lastEmail}</Text>
-                <Text selectable style={{ color: c.textPrimary, fontFamily: "Menlo", fontSize: 26, letterSpacing: 4, fontWeight: "700", textAlign: "center" }}>{lastCode}</Text>
+              <View
+                style={[card(c), {
+                  backgroundColor: c.accent + "15",
+                  borderColor: c.accent,
+                  borderWidth: 1,
+                  gap: 10,
+                }]}
+              >
+                <Text style={{ color: c.accent, fontSize: 11, fontWeight: "700", textTransform: "uppercase" }}>
+                  New invite for {lastTarget}
+                </Text>
+                <Text
+                  selectable
+                  style={{
+                    color: c.textPrimary,
+                    fontFamily: "Menlo",
+                    fontSize: 26,
+                    letterSpacing: 4,
+                    fontWeight: "700",
+                    textAlign: "center",
+                  }}
+                >
+                  {lastCode}
+                </Text>
                 <View style={{ flexDirection: "row", gap: 8 }}>
-                  <Pressable onPress={() => copyCode(lastCode)} style={[actionBtn(c), { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, flex: 1 }]}>
+                  <Pressable
+                    onPress={() => copyCode(lastCode)}
+                    style={[actionBtn(c), { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, flex: 1 }]}
+                  >
                     <Text style={{ color: c.textPrimary, fontSize: 13 }}>Copy code</Text>
                   </Pressable>
-                  <Pressable onPress={() => shareInvite(lastCode, lastEmail || undefined)} style={[actionBtn(c), { backgroundColor: c.accent, flex: 1 }]}>
+                  <Pressable
+                    onPress={() => shareInvite(lastCode, lastTarget || undefined)}
+                    style={[actionBtn(c), { backgroundColor: c.accent, flex: 1 }]}
+                  >
                     <Text style={{ color: "#fff", fontWeight: "700" }}>Share…</Text>
                   </Pressable>
                 </View>
               </View>
             )}
 
-            <Text style={{ color: c.textMuted, fontSize: 10, textTransform: "uppercase", fontWeight: "700", marginTop: 4 }}>
+            <Text style={[sectionLabel as any, { marginTop: 4 }]}>
               Active guests {guests.length > 0 && `(${guests.length}/5)`}
             </Text>
             {loading && <ActivityIndicator color={c.accent} />}
-            {!loading && guests.length === 0 && <Text style={{ color: c.textMuted, fontSize: 12 }}>No active guests.</Text>}
-            {guests.map((g) => (
-              <View key={g.email} style={[card(c), { flexDirection: "row", alignItems: "center" }]}>
+            {!loading && guests.length === 0 && (
+              <Text style={{ color: c.textMuted, fontSize: 12 }}>No active guests.</Text>
+            )}
+            {guests.map((g, idx) => (
+              <View
+                key={g.email || g.userId || String(idx)}
+                style={[card(c), { flexDirection: "row", alignItems: "center" }]}
+              >
                 <View style={{ flex: 1 }}>
-                  <Text style={{ color: c.textPrimary, fontSize: 13 }}>{g.email}</Text>
-                  {g.status && <Text style={{ color: c.textMuted, fontSize: 10 }}>{g.status}{g.grantedAt ? ` · granted ${new Date(g.grantedAt).toLocaleDateString()}` : ""}</Text>}
+                  <Text style={{ color: c.textPrimary, fontSize: 13 }}>
+                    {g.fullName || g.email || `user ${g.userId ?? ""}`}
+                  </Text>
+                  <Text style={{ color: c.textMuted, fontSize: 10 }}>
+                    {g.email ? g.email + " · " : ""}
+                    {g.status}
+                    {g.acceptedAt ? ` · granted ${new Date(g.acceptedAt).toLocaleDateString()}` : ""}
+                  </Text>
                 </View>
                 {g.status === "pending" && g.inviteCode && (
                   <Pressable onPress={() => shareInvite(g.inviteCode!, g.email)}>
                     <Text style={{ color: c.accent, fontSize: 12, marginRight: 10 }}>Share</Text>
                   </Pressable>
                 )}
-                <Pressable onPress={() => revoke(g.email)}>
+                <Pressable onPress={() => revoke(g)}>
                   <Text style={{ color: "#ef4444", fontSize: 12 }}>Revoke</Text>
                 </Pressable>
               </View>
@@ -179,31 +535,237 @@ export default function GuestsScreen() {
           <>
             {guestInvitations && guestInvitations.length > 0 && (
               <View style={[card(c), { gap: 8 }]}>
-                <Text style={{ color: c.textMuted, fontSize: 10, textTransform: "uppercase", fontWeight: "700" }}>Pending invites</Text>
+                <Text style={sectionLabel as any}>Pending invites</Text>
                 {guestInvitations.map((inv) => (
-                  <View key={inv._id} style={{ padding: 10, backgroundColor: c.accent + "15", borderRadius: 8, gap: 6 }}>
-                    <Text style={{ color: c.textPrimary, fontSize: 13 }}>From <Text style={{ fontFamily: "Menlo" }}>{inv.hostEmail || inv.hostName}</Text></Text>
-                    <Pressable onPress={() => inv._id && acceptPending(inv._id)} style={[actionBtn(c), { backgroundColor: c.accent, paddingVertical: 8 }]}>
-                      <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>Accept</Text>
+                  <View
+                    key={inv._id || inv.inviteId || inv.hostUserId}
+                    style={{
+                      padding: 10,
+                      backgroundColor: c.accent + "15",
+                      borderRadius: 8,
+                      gap: 6,
+                    }}
+                  >
+                    <Text style={{ color: c.textPrimary, fontSize: 13 }}>
+                      From{" "}
+                      <Text style={{ fontFamily: "Menlo" }}>
+                        {inv.hostEmail || inv.hostName}
+                      </Text>
+                    </Text>
+                    {inv.proposedDeviceIds && inv.proposedDeviceIds.length > 0 && (
+                      <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                        Scoped to {inv.proposedDeviceIds.length} machine
+                        {inv.proposedDeviceIds.length === 1 ? "" : "s"}
+                      </Text>
+                    )}
+                    <Pressable
+                      onPress={() => startApprovePending(inv)}
+                      style={[actionBtn(c), { backgroundColor: c.accent, paddingVertical: 8 }]}
+                    >
+                      <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>
+                        Review & accept
+                      </Text>
                     </Pressable>
                   </View>
                 ))}
               </View>
             )}
 
+            {/* Approval sheet (inline) */}
+            {approveCtx && (
+              <View
+                style={[card(c), {
+                  gap: 10,
+                  borderColor: c.accent,
+                  borderWidth: 1,
+                }]}
+              >
+                <Text style={sectionLabel as any}>
+                  Accepting invite from {approveCtx.hostName}
+                </Text>
+                <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                  {approveCtx.hostEmail}
+                </Text>
+                {approveCtx.loading ? (
+                  <ActivityIndicator color={c.accent} />
+                ) : approveCtx.preview && approveCtx.preview.hostDevices.length > 0 ? (
+                  <>
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                      Uncheck any machines you do not want access to.
+                    </Text>
+                    {approveCtx.preview.hostDevices.map((d) => {
+                      const selected = approveCtx.approvedDeviceIds.includes(d.deviceId);
+                      return (
+                        <Pressable
+                          key={d.deviceId}
+                          onPress={() => toggleApprovePendingDevice(d.deviceId)}
+                          style={{
+                            flexDirection: "row",
+                            alignItems: "center",
+                            padding: 8,
+                            borderRadius: 8,
+                            backgroundColor: selected ? c.accent + "10" : c.bg,
+                            borderWidth: 1,
+                            borderColor: selected ? c.accent : c.border,
+                            gap: 10,
+                          }}
+                        >
+                          <View
+                            style={{
+                              width: 18,
+                              height: 18,
+                              borderRadius: 4,
+                              borderWidth: 2,
+                              borderColor: selected ? c.accent : c.border,
+                              backgroundColor: selected ? c.accent : "transparent",
+                              alignItems: "center",
+                              justifyContent: "center",
+                            }}
+                          >
+                            {selected && <Text style={{ color: "#fff", fontSize: 12 }}>✓</Text>}
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ color: c.textPrimary, fontSize: 13 }}>{d.name}</Text>
+                            <Text style={{ color: c.textMuted, fontSize: 10, fontFamily: "Menlo" }}>
+                              {d.deviceId} · {d.platform}
+                              {d.proposed ? " · proposed" : ""}
+                            </Text>
+                          </View>
+                        </Pressable>
+                      );
+                    })}
+                  </>
+                ) : (
+                  <Text style={{ color: c.textMuted, fontSize: 12 }}>
+                    Host has no registered devices yet — you'll see them in your list as they come online.
+                  </Text>
+                )}
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  <Pressable
+                    onPress={() => setApproveCtx(null)}
+                    style={[actionBtn(c), { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, flex: 1 }]}
+                  >
+                    <Text style={{ color: c.textPrimary }}>Cancel</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={commitPendingAccept}
+                    style={[actionBtn(c), { backgroundColor: c.accent, flex: 1 }]}
+                  >
+                    <Text style={{ color: "#fff", fontWeight: "700" }}>Accept</Text>
+                  </Pressable>
+                </View>
+              </View>
+            )}
+
             <View style={[card(c), { gap: 8 }]}>
-              <Text style={{ color: c.textMuted, fontSize: 10, textTransform: "uppercase", fontWeight: "700" }}>Enter invite code</Text>
+              <Text style={sectionLabel as any}>Enter invite code</Text>
               <Text style={{ color: c.textMuted, fontSize: 11 }}>
-                If you signed in with a different email than the host invited, or just got the code by text/message, paste it here.
+                Signed in with a different email than the host invited, or got the code by text? Paste it here.
               </Text>
-              <TextInput value={joinCode} onChangeText={setJoinCode}
-                placeholder="ABC123" placeholderTextColor={c.textMuted}
-                autoCapitalize="characters" autoCorrect={false} maxLength={10}
-                style={[inputStyle(c), { fontFamily: "Menlo", fontSize: 22, letterSpacing: 4, textAlign: "center" }]} />
-              <Pressable onPress={acceptByCode} disabled={joining || joinCode.trim().length < 4}
-                style={[actionBtn(c), { backgroundColor: c.accent, opacity: joining || joinCode.trim().length < 4 ? 0.5 : 1 }]}>
-                {joining ? <ActivityIndicator color="#fff" /> : <Text style={{ color: "#fff", fontWeight: "700" }}>Join</Text>}
-              </Pressable>
+              <TextInput
+                value={joinCode}
+                onChangeText={(v) => {
+                  setJoinCode(v);
+                  setPreview(null);
+                  setPreviewErr(null);
+                }}
+                placeholder="ABC123"
+                placeholderTextColor={c.textMuted}
+                autoCapitalize="characters"
+                autoCorrect={false}
+                maxLength={10}
+                style={[inputStyle(c), { fontFamily: "Menlo", fontSize: 22, letterSpacing: 4, textAlign: "center" }]}
+              />
+              {!preview && (
+                <Pressable
+                  onPress={previewCode}
+                  disabled={previewing || joinCode.trim().length < 4}
+                  style={[actionBtn(c), {
+                    backgroundColor: c.accent,
+                    opacity: previewing || joinCode.trim().length < 4 ? 0.5 : 1,
+                  }]}
+                >
+                  {previewing ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={{ color: "#fff", fontWeight: "700" }}>Preview</Text>
+                  )}
+                </Pressable>
+              )}
+              {previewErr && (
+                <Text style={{ color: "#ef4444", fontSize: 12 }}>{previewErr}</Text>
+              )}
+              {preview && (
+                <View style={{ gap: 10 }}>
+                  <Text style={{ color: c.textPrimary, fontSize: 13 }}>
+                    From <Text style={{ fontFamily: "Menlo" }}>{preview.hostName}</Text>{" "}
+                    <Text style={{ color: c.textMuted }}>({preview.hostEmail})</Text>
+                  </Text>
+                  {preview.hostDevices.length > 0 ? (
+                    <>
+                      <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                        Accept which machines?
+                      </Text>
+                      {preview.hostDevices.map((d) => {
+                        const selected = approvedDeviceIds.includes(d.deviceId);
+                        return (
+                          <Pressable
+                            key={d.deviceId}
+                            onPress={() => toggleApprovedDevice(d.deviceId)}
+                            style={{
+                              flexDirection: "row",
+                              alignItems: "center",
+                              padding: 8,
+                              borderRadius: 8,
+                              backgroundColor: selected ? c.accent + "10" : c.bg,
+                              borderWidth: 1,
+                              borderColor: selected ? c.accent : c.border,
+                              gap: 10,
+                            }}
+                          >
+                            <View
+                              style={{
+                                width: 18,
+                                height: 18,
+                                borderRadius: 4,
+                                borderWidth: 2,
+                                borderColor: selected ? c.accent : c.border,
+                                backgroundColor: selected ? c.accent : "transparent",
+                                alignItems: "center",
+                                justifyContent: "center",
+                              }}
+                            >
+                              {selected && <Text style={{ color: "#fff", fontSize: 12 }}>✓</Text>}
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ color: c.textPrimary, fontSize: 13 }}>{d.name}</Text>
+                              <Text style={{ color: c.textMuted, fontSize: 10, fontFamily: "Menlo" }}>
+                                {d.deviceId} · {d.platform}
+                                {d.proposed ? " · proposed" : ""}
+                              </Text>
+                            </View>
+                          </Pressable>
+                        );
+                      })}
+                    </>
+                  ) : (
+                    <Text style={{ color: c.textMuted, fontSize: 12 }}>
+                      Host has no registered devices yet.
+                    </Text>
+                  )}
+                  <Pressable
+                    onPress={commitCodeAccept}
+                    disabled={joining}
+                    style={[actionBtn(c), { backgroundColor: c.accent, opacity: joining ? 0.5 : 1 }]}
+                  >
+                    {joining ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={{ color: "#fff", fontWeight: "700" }}>Accept</Text>
+                    )}
+                  </Pressable>
+                </View>
+              )}
             </View>
           </>
         )}
@@ -214,17 +776,83 @@ export default function GuestsScreen() {
 
 function ModeBtn({ c, label, active, onPress }: { c: any; label: string; active: boolean; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} style={{ flex: 1, paddingVertical: 8, borderRadius: 8, backgroundColor: active ? c.accent + "20" : c.bgCard, borderWidth: 1, borderColor: active ? c.accent : c.border, alignItems: "center" }}>
-      <Text style={{ color: active ? c.accent : c.textMuted, fontSize: 13, fontWeight: "700" }}>{label}</Text>
+    <Pressable
+      onPress={onPress}
+      style={{
+        flex: 1,
+        paddingVertical: 8,
+        borderRadius: 8,
+        backgroundColor: active ? c.accent + "20" : c.bgCard,
+        borderWidth: 1,
+        borderColor: active ? c.accent : c.border,
+        alignItems: "center",
+      }}
+    >
+      <Text style={{ color: active ? c.accent : c.textMuted, fontSize: 13, fontWeight: "700" }}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
 
-function card(c: any) { return { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 10, padding: 12 } as const; }
-function actionBtn(c: any) { return { paddingVertical: 10, borderRadius: 8, alignItems: "center", justifyContent: "center" } as const; }
-function inputStyle(c: any) { return { backgroundColor: c.bg, borderColor: c.border, borderWidth: 1, borderRadius: 8, padding: 10, color: c.textPrimary } as const; }
+function ChipToggle({ c, label, active, onPress }: { c: any; label: string; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={{
+        paddingVertical: 6,
+        paddingHorizontal: 12,
+        borderRadius: 16,
+        backgroundColor: active ? c.accent + "20" : "transparent",
+        borderWidth: 1,
+        borderColor: active ? c.accent : c.border,
+      }}
+    >
+      <Text style={{ color: active ? c.accent : c.textMuted, fontSize: 12, fontWeight: "600" }}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function card(c: any) {
+  return {
+    backgroundColor: c.bgCard,
+    borderColor: c.border,
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
+  } as const;
+}
+
+function actionBtn(c: any) {
+  return {
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  } as const;
+}
+
+function inputStyle(c: any) {
+  return {
+    backgroundColor: c.bg,
+    borderColor: c.border,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    color: c.textPrimary,
+  } as const;
+}
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1 },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+  },
 });

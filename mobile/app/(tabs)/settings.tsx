@@ -1273,6 +1273,49 @@ export default function SettingsScreen() {
               </Text>
             </View>
           </View>
+
+          {user?.id ? (
+            <Pressable
+              onPress={async () => {
+                await ExpoClipboard.setStringAsync(user.id);
+                Alert.alert(
+                  "User ID copied",
+                  "Paste this in WhatsApp / iMessage / email so someone can invite you to share their machine.",
+                );
+              }}
+              style={{
+                marginTop: 8,
+                backgroundColor: c.bgCard,
+                borderColor: c.border,
+                borderWidth: 1,
+                borderRadius: 10,
+                padding: 12,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 10,
+              }}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: c.textMuted, fontSize: 10, textTransform: "uppercase", fontWeight: "700" }}>
+                  Your user ID
+                </Text>
+                <Text
+                  selectable
+                  style={{ color: c.textPrimary, fontFamily: "Menlo", fontSize: 13, marginTop: 4 }}
+                  numberOfLines={1}
+                >
+                  {user.id}
+                </Text>
+                <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
+                  Share this with a friend so they can invite you without knowing your email.
+                </Text>
+              </View>
+              <View style={{ alignItems: "center", gap: 4 }}>
+                <Ionicons name="copy-outline" size={20} color={c.accent} />
+                <Text style={{ color: c.accent, fontSize: 10, fontWeight: "700" }}>COPY</Text>
+              </View>
+            </Pressable>
+          ) : null}
         </View>
 
         {/* Developer Profile section removed — survey no longer required */}
@@ -3073,16 +3116,8 @@ export default function SettingsScreen() {
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>About Relay Servers</Text>
           <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, padding: 16 }]}>
             <Text style={{ fontSize: 13, color: c.textSecondary, lineHeight: 19 }}>
-              Yaver includes a free shared relay. For a dedicated relay server with more bandwidth, visit yaver.io/pricing from your computer.
+              Yaver includes a free shared relay. If you need a dedicated relay or a managed box later, use the web app. Billing is intentionally web-only.
             </Text>
-            <Pressable
-              style={({ pressed }) => [{ marginTop: 12, opacity: pressed ? 0.7 : 1 }]}
-              onPress={() => Linking.openURL("https://yaver.io/pricing").catch(() => {})}
-            >
-              <Text style={{ fontSize: 13, color: c.accent }}>
-                Learn more {"\u203A"}
-              </Text>
-            </Pressable>
           </View>
         </View>
 
