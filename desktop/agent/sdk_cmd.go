@@ -51,7 +51,8 @@ Examples:
 Yaver is the single entry point:
   1. Install Yaver once (for example: npm install -g yaver-cli)
   2. Use 'yaver sdk add ...' to inject the right SDK into each project
-  3. Use 'yaver install ...' for machine-wide toolchains like Hermes, CI tools, browsers, and Android SDK
+  3. Use 'yaver ci add ...' to drop a GitHub Actions workflow that runs the same umbrella install on CI
+  4. Use 'yaver install ...' for machine-wide toolchains like Hermes, CI tools, browsers, and Android SDK
 `)
 }
 

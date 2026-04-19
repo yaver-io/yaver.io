@@ -297,6 +297,8 @@ func main() {
 		runFeedback(os.Args[2:])
 	case "sdk":
 		runSDK(os.Args[2:])
+	case "ci":
+		runCI(os.Args[2:])
 	case "voice":
 		runVoice(os.Args[2:])
 	case "clean":
@@ -456,6 +458,9 @@ Usage:
   yaver feedback list   List visual bug reports from device testing
   yaver feedback show <id>  Show feedback details + transcript
   yaver feedback fix <id>   Create AI task from feedback report
+  yaver sdk add <core|feedback>  Inject the Yaver SDK into this project
+  yaver ci add <hermes|feedback|push-to-device>  Scaffold a GitHub Actions workflow
+  yaver ci list             List available CI targets
   yaver cloud buy      Open the hosted cloud checkout flow
   yaver cloud create   Start the cloud flow and wait for the machine
   yaver cloud status   Show cloud machine status

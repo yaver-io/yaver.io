@@ -2,7 +2,7 @@ const fs = require('fs');
 const { analyzeProject } = require('../analyzer');
 const { loadSDKManifest } = require('../sdk-manifest');
 
-async function doctor() {
+async function doctor(options = {}) {
   if (!fs.existsSync('package.json')) {
     console.error('❌ No package.json found. Run this from your RN project root.');
     process.exit(1);
@@ -84,6 +84,15 @@ async function doctor() {
   console.log(`  ${analysis.missingModules.length} missing (push with --ignore-missing)`);
   console.log(`  ${analysis.warnings.length} warnings`);
   console.log(`  ${hardErrors.length} critical issues\n`);
+
+  if (options.strict) {
+    const failCount = hardErrors.length + analysis.missingModules.length;
+    if (failCount > 0) {
+      console.error(`❌ doctor --strict: ${hardErrors.length} critical issue(s), ${analysis.missingModules.length} missing module(s)`);
+      process.exit(1);
+    }
+    console.log('✅ doctor --strict: project is Yaver-compatible');
+  }
 }
 
 module.exports = { doctor };

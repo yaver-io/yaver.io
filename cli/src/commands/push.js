@@ -12,19 +12,26 @@ async function push(options = {}) {
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
   const sdkManifest = loadSDKManifest();
 
-  // Find device
-  if (!quiet) console.log('📡 Finding device...');
-  const device = await discoverDevice(options.device);
-  if (!quiet) console.log(`✅ Found: ${device.name} (${device.ip})`);
+  let device = null;
+  let platform = options.platform || 'ios';
 
-  // Fetch health + verify SDK
-  const health = await fetchHealth(device);
-  const platform = health.platform || 'ios';
+  if (!options.bundleOnly) {
+    // Find device
+    if (!quiet) console.log('📡 Finding device...');
+    device = await discoverDevice(options.device);
+    if (!quiet) console.log(`✅ Found: ${device.name} (${device.ip})`);
 
-  if (health.hermes?.bytecodeVersion !== sdkManifest.hermes.bytecodeVersion) {
-    console.error(`�� Hermes BC mismatch: device BC${health.hermes?.bytecodeVersion}, CLI BC${sdkManifest.hermes.bytecodeVersion}`);
-    console.error('   Update the npm package or the yaver.io app.');
-    process.exit(1);
+    // Fetch health + verify SDK
+    const health = await fetchHealth(device);
+    platform = health.platform || 'ios';
+
+    if (health.hermes?.bytecodeVersion !== sdkManifest.hermes.bytecodeVersion) {
+      console.error(`❌ Hermes BC mismatch: device BC${health.hermes?.bytecodeVersion}, CLI BC${sdkManifest.hermes.bytecodeVersion}`);
+      console.error('   Update the npm package or the yaver.io app.');
+      process.exit(1);
+    }
+  } else if (!quiet) {
+    console.log(`📦 Bundle-only mode (no device push, platform=${platform})`);
   }
 
   // Analyze compatibility
@@ -65,9 +72,16 @@ async function push(options = {}) {
     process.exit(1);
   }
 
-  // Push
   const moduleName = getModuleName(pkg);
   const bundleData = fs.readFileSync(bundlePath);
+
+  if (options.bundleOnly) {
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    if (!quiet) console.log(`\n📦 Bundle ready in ${elapsed}s — ${(bundleData.length / 1024).toFixed(1)} KB at ${bundlePath}\n`);
+    return;
+  }
+
+  // Push
   if (!quiet) console.log(`📤 Pushing ${(bundleData.length / 1024).toFixed(1)} KB...`);
 
   const result = await pushBundle(device, bundleData, {

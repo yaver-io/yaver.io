@@ -15,7 +15,8 @@ Commands:
   init                              Analyze project, show compatibility, create yaver.json
   push [--device <ip>] [--watch]    Bundle + validate + push to device
   push --ignore-missing             Push even with missing native modules
-  doctor                            Deep compatibility report with fix suggestions
+  push --bundle-only [--platform P] Bundle + Hermes compile without pushing (CI)
+  doctor [--strict]                 Deep compatibility report (non-zero exit in --strict)
   devices                           List discovered devices
   modules                           List all SDK native modules
   reset [--device <ip>]             Clear pushed bundle on device
@@ -161,6 +162,12 @@ function parseArgs(args) {
       opts.watch = true;
     } else if (arg === '--ignore-missing') {
       opts.ignoreMissing = true;
+    } else if (arg === '--strict') {
+      opts.strict = true;
+    } else if (arg === '--bundle-only') {
+      opts.bundleOnly = true;
+    } else if (arg === '--platform' && args[i + 1]) {
+      opts.platform = args[++i];
     } else if (arg === '--force') {
       opts.force = true;
     } else if (arg === '--quiet' || arg === '-q') {
