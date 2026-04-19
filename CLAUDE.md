@@ -1802,6 +1802,27 @@ cd relay && ./deploy/down.sh <server-ip>
 curl https://<your-relay-domain>/health
 ```
 
+### Mobile Release Policy — Local-Only, Never CI
+
+**All mobile releases (TestFlight + Google Play) happen locally from this Mac. Never via GitHub Actions.** The iOS signing keychain, Apple `.p8` under `~/Workspace/talos/mobile/ios/`, and the upload keystore under `keys/yaver-upload.keystore` live on the host. CI cannot archive or sign; any attempt to run the release-mobile workflow should be cancelled (`gh run cancel <id>`) and the local scripts used instead. The `.github/workflows/release-mobile.yml` file stays in place only as documentation / skeleton — it is not part of the release path.
+
+Single-command release (both stores, version already bumped + committed):
+```bash
+export APP_STORE_KEY_PATH="$HOME/Workspace/talos/mobile/ios/AuthKey_77Z6B543D5.p8"
+export APP_STORE_KEY_ID="77Z6B543D5"
+export APP_STORE_KEY_ISSUER="7bd9329e-49b0-440a-97ed-873c74244c12"
+export APPLE_TEAM_ID="5SJZ4KA39A"
+
+./scripts/deploy-testflight.sh & TESTFLIGHT_PID=$!
+JAVA_HOME=$(/usr/libexec/java_home -v 17) ./scripts/deploy-playstore.sh && \
+  PLAY_STORE_KEY_FILE=keys/google-play-service-account.json \
+  python3 scripts/upload-playstore.py
+wait $TESTFLIGHT_PID
+mobile-cache-cleanup.sh mark-deployed yaver
+```
+
+TestFlight has a ~15-20 uploads/day cap per app. Do not re-run after an "Upload limit reached" failure — wait ~24 h.
+
 ### iOS — TestFlight (Local, No EAS, No Fastlane)
 
 #### First-time setup
