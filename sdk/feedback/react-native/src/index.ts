@@ -30,10 +30,44 @@ export { initExpo } from './expo';
 export { YaverDiscovery } from './Discovery';
 export { P2PClient } from './P2PClient';
 export { YaverConnectionScreen } from './ConnectionScreen';
+export { YaverLoginScreen } from './LoginScreen';
+export type { YaverLoginScreenProps } from './LoginScreen';
+export { YaverMachinePickerScreen } from './MachinePickerScreen';
+export type { YaverMachinePickerProps } from './MachinePickerScreen';
+export { AuthOverlay } from './AuthOverlay';
 export { ShakeDetector } from './ShakeDetector';
 export { FloatingButton } from './FloatingButton';
 export { FeedbackModal } from './FeedbackModal';
 export { FixReport } from './FixReport';
+export {
+  configureAuthEndpoints,
+  getConvexSiteUrl,
+  getWebBaseUrl,
+  getToken,
+  saveToken,
+  clearToken,
+  getUser,
+  saveUser,
+  getSelectedDeviceId,
+  saveSelectedDeviceId,
+  clearSelectedDeviceId,
+  validateToken,
+  startDeviceCode,
+  pollDeviceCode,
+  signupWithEmail,
+  loginWithEmail,
+  listReachableDevices,
+  DEFAULT_CONVEX_SITE_URL,
+  DEFAULT_WEB_BASE_URL,
+} from './auth';
+export type {
+  OAuthProvider,
+  User,
+  DeviceCodeStart,
+  DeviceCodePoll,
+  RemoteDevice,
+  DeviceList,
+} from './auth';
 export { captureScreenshot, startAudioRecording, stopAudioRecording } from './capture';
 export { uploadFeedback } from './upload';
 export type {

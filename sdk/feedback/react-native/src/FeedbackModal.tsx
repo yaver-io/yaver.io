@@ -16,6 +16,7 @@ import { BlackBox } from './BlackBox';
 import { captureScreenshot, startAudioRecording, stopAudioRecording } from './capture';
 import { uploadFeedback } from './upload';
 import { TimelineEvent, DeviceInfo, FeedbackBundle, AgentCommentary } from './types';
+import { AuthOverlay } from './AuthOverlay';
 
 type FeedbackMode = 'live' | 'narrated' | 'batch';
 
@@ -327,9 +328,13 @@ export const FeedbackModal: React.FC = () => {
     [],
   );
 
-  if (!visible) return null;
-
+  // The AuthOverlay must stay mounted so it can respond to login / picker
+  // events even when the feedback modal itself isn't visible. The wrapping
+  // fragment keeps the original return shape intact for the modal branch.
   return (
+    <>
+      <AuthOverlay />
+      {visible && (
     <Modal
       visible={visible}
       animationType="slide"
@@ -474,6 +479,8 @@ export const FeedbackModal: React.FC = () => {
         </View>
       </View>
     </Modal>
+      )}
+    </>
   );
 };
 

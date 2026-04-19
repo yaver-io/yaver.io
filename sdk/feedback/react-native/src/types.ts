@@ -1,8 +1,27 @@
 export interface FeedbackConfig {
   /** URL of the Yaver agent (e.g. "http://192.168.1.10:18080"). If omitted, auto-discovery is used. */
   agentUrl?: string;
-  /** Auth token for the Yaver agent */
-  authToken: string;
+  /**
+   * Auth token for the Yaver agent. Optional in 0.5+: if omitted, the SDK
+   * will hydrate one from AsyncStorage or show its in-app login screen
+   * (device-code / email / OAuth) the first time the user triggers feedback.
+   */
+  authToken?: string;
+  /**
+   * When true (default), the SDK will automatically prompt the user to sign
+   * in and pick a remote machine the first time they trigger feedback and
+   * no `authToken` / `preferredDeviceId` is cached. Set false to opt back
+   * into the pre-0.5 behavior where you manage auth yourself and pass
+   * `authToken` at init.
+   */
+  autoLogin?: boolean;
+  /**
+   * Override the public Yaver endpoints the in-app login screen talks to.
+   * Useful when running against staging. Defaults to the production
+   * yaver.io / Convex site URLs.
+   */
+  authConvexSiteUrl?: string;
+  authWebBaseUrl?: string;
   /**
    * Convex site URL for cloud IP resolution.
    * When set, the SDK fetches the agent's IP from Convex instead of

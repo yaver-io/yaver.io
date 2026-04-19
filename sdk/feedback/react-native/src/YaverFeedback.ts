@@ -3,6 +3,14 @@ import { YaverDiscovery } from './Discovery';
 import { BlackBox } from './BlackBox';
 import { P2PClient } from './P2PClient';
 import { ShakeDetector } from './ShakeDetector';
+import {
+  configureAuthEndpoints,
+  getToken,
+  getSelectedDeviceId,
+  clearToken,
+  clearSelectedDeviceId,
+  DEFAULT_CONVEX_SITE_URL,
+} from './auth';
 
 let config: FeedbackConfig | null = null;
 let enabled = false;
@@ -41,8 +49,22 @@ export class YaverFeedback {
       maxRecordingDuration: 120,
       feedbackMode: 'batch',
       agentCommentaryLevel: 0,
+      autoLogin: true,
       ...cfg,
     };
+
+    // Route the in-SDK login screen to prod yaver.io by default; callers may
+    // override for staging via authConvexSiteUrl / authWebBaseUrl.
+    configureAuthEndpoints({
+      convexSiteUrl: cfg.authConvexSiteUrl,
+      webBaseUrl: cfg.authWebBaseUrl,
+    });
+    // If no explicit convexUrl was set but we have an auth site URL, use it
+    // so Discovery.discoverFromConvex() has somewhere to look up the user's
+    // machines (works for both LAN-direct and off-LAN relay paths).
+    if (!config.convexUrl) {
+      config.convexUrl = cfg.authConvexSiteUrl ?? DEFAULT_CONVEX_SITE_URL;
+    }
 
     // Default: enabled only in dev mode
     if (cfg.enabled !== undefined) {
@@ -51,13 +73,20 @@ export class YaverFeedback {
       enabled = typeof __DEV__ !== 'undefined' ? __DEV__ : false;
     }
 
+    // Hydrate cached auth token + preferred device from AsyncStorage so the
+    // SDK reconnects silently on subsequent launches. If autoLogin is false
+    // the caller is responsible for providing authToken themselves.
+    if (config.autoLogin !== false && enabled) {
+      void YaverFeedback.hydrateSession();
+    }
+
     // Create P2P client if we have a URL
     if (config.agentUrl) {
-      p2pClient = new P2PClient(config.agentUrl, config.authToken);
+      p2pClient = new P2PClient(config.agentUrl, config.authToken ?? '');
     } else {
       p2pClient = null;
       // Auto-discover agent in the background when convexUrl or LAN is available
-      if (enabled) {
+      if (enabled && (config.authToken || config.preferredDeviceId)) {
         YaverFeedback.discoverAgent();
       }
     }
@@ -124,6 +153,7 @@ export class YaverFeedback {
   static async discoverAgent(): Promise<void> {
     if (!config || !enabled) return;
     if (config.agentUrl) return; // already have a URL
+    if (!config.authToken) return; // need auth before discovery can succeed
 
     try {
       const result = await YaverDiscovery.discover({
@@ -133,11 +163,107 @@ export class YaverFeedback {
       });
       if (result && config) {
         config.agentUrl = result.url;
-        p2pClient = new P2PClient(result.url, config.authToken);
+        p2pClient = new P2PClient(result.url, config.authToken ?? '');
       }
     } catch {
       // Discovery failed — FloatingButton will show disconnected, user can retry
     }
+  }
+
+  /**
+   * Pull a cached session token + selected device from AsyncStorage (populated
+   * by the in-SDK login + machine-picker screens). When present the SDK can
+   * reconnect silently on launch without re-prompting the user. Safe to call
+   * multiple times — it only overrides values the caller did not already set.
+   */
+  static async hydrateSession(): Promise<void> {
+    if (!config) return;
+    try {
+      if (!config.authToken) {
+        const cached = await getToken();
+        if (cached) {
+          config.authToken = cached;
+        }
+      }
+      if (!config.preferredDeviceId) {
+        const cachedDevice = await getSelectedDeviceId();
+        if (cachedDevice) {
+          config.preferredDeviceId = cachedDevice;
+        }
+      }
+      if (config.authToken && !config.agentUrl) {
+        await YaverFeedback.discoverAgent();
+      }
+    } catch {
+      // hydration best-effort
+    }
+  }
+
+  /**
+   * Update the signed-in session token (e.g. after the in-SDK login screen
+   * succeeds). Rebuilds the P2P client and kicks off agent discovery.
+   */
+  static async setAuthToken(token: string): Promise<void> {
+    if (!config) return;
+    config.authToken = token;
+    if (config.agentUrl) {
+      p2pClient = new P2PClient(config.agentUrl, token);
+    } else {
+      await YaverFeedback.discoverAgent();
+    }
+  }
+
+  /** Returns true once the SDK has a session token it can use. */
+  static isAuthed(): boolean {
+    return Boolean(config?.authToken);
+  }
+
+  /**
+   * Request the embedded FeedbackModal to show the login screen. Works by
+   * emitting an event the modal listens for — avoids forcing the host app
+   * to mount a second navigator.
+   */
+  static showLogin(): void {
+    const { DeviceEventEmitter } = require('react-native');
+    DeviceEventEmitter.emit('yaverFeedback:startLogin');
+  }
+
+  /**
+   * Request the embedded FeedbackModal to show the machine picker. Requires
+   * an active session; no-ops otherwise.
+   */
+  static showMachinePicker(): void {
+    if (!YaverFeedback.isAuthed()) return;
+    const { DeviceEventEmitter } = require('react-native');
+    DeviceEventEmitter.emit('yaverFeedback:startMachinePicker');
+  }
+
+  /**
+   * Update the selected remote device. Resets the cached agent URL so the
+   * next `startReport()` (or FloatingButton press) rediscovers against the
+   * newly-selected machine.
+   */
+  static async setPreferredDevice(deviceId: string): Promise<void> {
+    if (!config) return;
+    config.preferredDeviceId = deviceId;
+    config.agentUrl = undefined;
+    p2pClient = null;
+    await YaverFeedback.discoverAgent();
+  }
+
+  /**
+   * Sign out: clear cached token + device, tear down the P2P client. The
+   * SDK stays enabled; the next feedback trigger will re-prompt for login.
+   */
+  static async signOut(): Promise<void> {
+    await clearToken();
+    await clearSelectedDeviceId();
+    if (config) {
+      config.authToken = undefined;
+      config.preferredDeviceId = undefined;
+      config.agentUrl = undefined;
+    }
+    p2pClient = null;
   }
 
   /**
@@ -155,6 +281,18 @@ export class YaverFeedback {
       return;
     }
 
+    // If the caller has autoLogin enabled and we have no session yet, show
+    // the in-SDK login flow instead of a failing discovery + warning spam.
+    if (!config.authToken) {
+      if (config.autoLogin !== false) {
+        await YaverFeedback.hydrateSession();
+      }
+      if (!config.authToken) {
+        YaverFeedback.showLogin();
+        return;
+      }
+    }
+
     // Auto-discover if no agent URL was provided
     if (!config.agentUrl) {
       try {
@@ -165,9 +303,15 @@ export class YaverFeedback {
         });
         if (result) {
           config.agentUrl = result.url;
-          p2pClient = new P2PClient(result.url, config.authToken);
+          p2pClient = new P2PClient(result.url, config.authToken ?? '');
+        } else if (config.autoLogin !== false && !config.preferredDeviceId) {
+          // No agent discovered and no device picked yet — prompt the user
+          // to pick one of their machines (handles the non-LAN case where
+          // relay discovery requires knowing which deviceId to target).
+          YaverFeedback.showMachinePicker();
+          return;
         } else {
-          console.warn('[YaverFeedback] No agent found. Set agentUrl, convexUrl, or ensure agent is running on the network.');
+          console.warn('[YaverFeedback] No agent found. Check that `yaver serve` is running on the selected machine.');
         }
       } catch (err) {
         console.warn('[YaverFeedback] Auto-discovery failed:', err);
@@ -438,7 +582,7 @@ export class YaverFeedback {
         });
         if (result) {
           config.agentUrl = result.url;
-          p2pClient = new P2PClient(result.url, config.authToken);
+          p2pClient = new P2PClient(result.url, config.authToken ?? '');
         }
       } catch {}
     }
@@ -479,7 +623,7 @@ export class YaverFeedback {
         errors: errorBuffer.length > 0 ? [...errorBuffer] : undefined,
       };
 
-      await uploadFeedback(config.agentUrl, config.authToken, bundle);
+      await uploadFeedback(config.agentUrl, config.authToken ?? '', bundle);
       console.log('[YaverFeedback] Auto-report sent');
     } catch (err) {
       console.warn('[YaverFeedback] Auto-report failed:', err);
@@ -501,7 +645,7 @@ export class YaverFeedback {
   private static defaultReload(): void {
     if (!config?.agentUrl) return;
     const bundleUrl = `${config.agentUrl}/dev/native-bundle`;
-    const headers = { Authorization: `Bearer ${config.authToken}` };
+    const headers = { Authorization: `Bearer ${config.authToken ?? ''}` };
     YaverFeedback.loadBundleAndReload(bundleUrl, headers);
   }
 
@@ -515,7 +659,7 @@ export class YaverFeedback {
     const fullUrl = bundleUrl.startsWith('http')
       ? bundleUrl
       : `${config.agentUrl}${bundleUrl}`;
-    const headers = { Authorization: `Bearer ${config.authToken}` };
+    const headers = { Authorization: `Bearer ${config.authToken ?? ''}` };
     YaverFeedback.loadBundleAndReload(fullUrl, headers);
   }
 

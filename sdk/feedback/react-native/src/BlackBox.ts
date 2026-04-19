@@ -102,7 +102,7 @@ export class BlackBox {
     }
 
     BlackBox.baseUrl = feedbackConfig.agentUrl.replace(/\/$/, '');
-    BlackBox.authToken = feedbackConfig.authToken;
+    BlackBox.authToken = feedbackConfig.authToken ?? null;
     BlackBox.deviceId = config?.deviceId ?? BlackBox.generateDeviceId();
     BlackBox.appName = config?.appName ?? '';
     BlackBox.flushInterval = config?.flushInterval ?? 2000;

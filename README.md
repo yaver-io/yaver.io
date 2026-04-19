@@ -487,16 +487,22 @@ if (process.env.NODE_ENV === 'development') {
 }
 ```
 
-**Quick start (React Native):**
+**Quick start (React Native, 0.5+):**
 ```tsx
-import { YaverFeedback, YaverConnectionScreen } from 'yaver-feedback-react-native';
+import { YaverFeedback, FeedbackModal } from 'yaver-feedback-react-native';
 
+// 0.5 is zero-config: no agentUrl, no authToken needed.
+// The SDK ships its own login screen (Apple / Google / GitHub / GitLab /
+// Microsoft via device-code flow, plus email + password) and a remote-
+// machine picker that lists the user's own dev boxes plus guest-shared
+// machines. Works LAN-direct and over Convex/relay off-LAN so Hermes
+// bundle reloads keep working on cell data.
 if (__DEV__) {
-  YaverFeedback.init({ trigger: 'shake' }); // Shake phone to report bug
+  YaverFeedback.init({ trigger: 'shake' });
 }
 
-// In your dev settings:
-<YaverConnectionScreen />  // Shows discovery + feedback controls
+// In your root component:
+<FeedbackModal />  // Embeds login + machine-picker modals automatically
 ```
 
 **Quick start (Flutter):**

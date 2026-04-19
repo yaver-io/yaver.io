@@ -23,23 +23,28 @@ npm install react-native-view-shot
 npm install react-native-audio-recorder-player
 ```
 
-## Quick Start
+## Quick Start (0.5+: zero-config auth)
+
+Starting with **0.5.0**, the SDK ships its own login screen + remote machine picker. Drop in `<FeedbackModal />` and the first time a user triggers feedback without a cached session, they get:
+
+1. A full-screen login modal — Apple / Google / GitHub / GitLab / Microsoft via [device-code flow](https://yaver.io/auth/device), or inline email + password.
+2. A picker of the machines they can reach — **their own dev boxes** plus **guest-shared machines** (where another user invited them).
+
+Both screens persist their selection to `AsyncStorage`, so subsequent launches reconnect silently.
 
 ```tsx
 import { YaverFeedback, BlackBox, FeedbackModal } from 'yaver-feedback-react-native';
 
-// Initialize once at app startup
+// Zero-config: no agentUrl, no authToken — the SDK handles auth + discovery.
 YaverFeedback.init({
-  agentUrl: 'http://192.168.1.10:18080',
-  authToken: 'your-sdk-token',  // SDK token (recommended) or CLI token
   trigger: 'shake',
 });
 
-// Start Black Box flight recorder
+// Start Black Box flight recorder once the user has signed in
 BlackBox.start();
 BlackBox.wrapConsole();  // opt-in: stream console.log/warn/error to the agent
 
-// Add FeedbackModal to your root component
+// Add FeedbackModal to your root component — it embeds the login + picker UI.
 function App() {
   return (
     <>
@@ -50,7 +55,20 @@ function App() {
 }
 ```
 
-Shake your phone to open the feedback modal. Take screenshots, record voice notes, and send everything to your Yaver agent in one tap.
+Shake your phone to open the feedback modal. Take screenshots, record voice notes, and send everything to your Yaver agent in one tap — LAN-direct when available, Convex/relay-routed when you're on cell data.
+
+### Opt-out: bring-your-own auth (pre-0.5 behavior)
+
+If your app already authenticates against yaver.io on its own and just wants to pass a ready token:
+
+```tsx
+YaverFeedback.init({
+  agentUrl: 'http://192.168.1.10:18080',
+  authToken: 'your-sdk-token',  // SDK token (recommended) or CLI token
+  trigger: 'shake',
+  autoLogin: false,             // don't show the in-app login flow
+});
+```
 
 ## Authentication
 
