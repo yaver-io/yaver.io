@@ -1122,40 +1122,26 @@ export default function HomePage() {
 
       {/* ── Section 2: Hero video — the ONE viral artifact ── */}
       <section id="demo" className="px-6 pb-16 pt-2">
-        <div className="mx-auto max-w-4xl">
-          <div className="overflow-hidden rounded-2xl border border-surface-800 bg-surface-950 shadow-2xl shadow-black/40">
-            <div className="flex items-center gap-2 border-b border-surface-800/60 bg-surface-900/50 px-4 py-2">
-              <div className="flex gap-1.5">
-                <div className="h-3 w-3 rounded-full bg-[#ff5f57]" />
-                <div className="h-3 w-3 rounded-full bg-[#febc2e]" />
-                <div className="h-3 w-3 rounded-full bg-[#28c840]" />
-              </div>
-              <p className="ml-2 text-xs text-surface-500">
-                SFMG running on iPhone &mdash; shake to file a task, Claude edits on the Mac, Hermes hot reloads
-              </p>
-            </div>
-            <video
-              className="aspect-video w-full bg-black"
-              src="/yaver-hosting-demo.mp4"
-              autoPlay
-              muted
-              loop
-              playsInline
-              preload="metadata"
-            />
-            {/* 1.9 MB local copy in web/public; Cloudflare serves it with the
-                right Content-Type. Canonical source + raw recordings + rebuild
-                recipe live at GitHub Release yaver-hosting-demo-v1 and in
-                demo-videos/ at the repo root. Release assets use
-                application/octet-stream + Content-Disposition: attachment
-                which Safari refuses to play inline, so we can't link
-                directly to the release URL for a hero <video>. */}
-          </div>
+        <div className="mx-auto max-w-5xl">
+          <video
+            className="w-full rounded-2xl bg-black shadow-2xl shadow-black/50"
+            src="/yaver-hosting-demo.mp4"
+            autoPlay
+            muted
+            loop
+            playsInline
+            preload="metadata"
+          />
+          {/* 3.3 MB local copy in web/public; Cloudflare serves it with the
+              right Content-Type (the GitHub release CDN returns
+              application/octet-stream + Content-Disposition: attachment,
+              which Safari refuses to play inline). Canonical source + raw
+              recordings + rebuild recipe live at GitHub Release
+              yaver-hosting-demo-v1 and in demo-videos/ at the repo root. */}
           <p className="mx-auto mt-4 max-w-2xl text-center text-xs text-surface-500">
-            SFMG &mdash; a real React Native football-manager game &mdash; running
-            on a phone. The user shakes, types a task, and Claude rewrites the
-            splash color on the Mac. Hermes hot reloads the new bundle back to
-            the phone. No rebuild, no app-store round trip.
+            A real React Native app running on a phone. Shake it, type what you
+            want changed, Claude edits it on your Mac, and the phone reloads
+            with the change &mdash; live. No rebuild, no app-store round trip.
           </p>
         </div>
       </section>
