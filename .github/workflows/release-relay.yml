@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "relay/v*"
+  workflow_dispatch:
 
 # Only repo owner can push tags (configure tag protection rules in GitHub).
 # Release/deploy jobs require the "production" environment (configure required reviewers in GitHub).
@@ -29,11 +30,15 @@ jobs:
       - name: Extract and validate version
         id: version
         run: |
-          TAG_VERSION="${GITHUB_REF#refs/tags/relay/v}"
           JSON_VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('versions.json','utf8')).relay)")
-          if [ "$TAG_VERSION" != "$JSON_VERSION" ]; then
-            echo "ERROR: Tag version ($TAG_VERSION) does not match versions.json ($JSON_VERSION)"
-            exit 1
+          if [[ "$GITHUB_REF" == refs/tags/relay/v* ]]; then
+            TAG_VERSION="${GITHUB_REF#refs/tags/relay/v}"
+            if [ "$TAG_VERSION" != "$JSON_VERSION" ]; then
+              echo "ERROR: Tag version ($TAG_VERSION) does not match versions.json ($JSON_VERSION)"
+              exit 1
+            fi
+          else
+            TAG_VERSION="$JSON_VERSION"
           fi
           echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
 
