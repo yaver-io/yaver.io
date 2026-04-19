@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../src/context/AuthContext";
@@ -73,6 +73,12 @@ export default function InfraScreen() {
   const [installLog, setInstallLog] = useState<string[]>([]);
   const [installResult, setInstallResult] = useState<{ tool: string; status: string } | null>(null);
   const cancelStreamRef = useRef<(() => void) | null>(null);
+  // Sudo prompt coming from an in-flight install. When non-null the
+  // mobile sheet opens; the user types the password and we POST it
+  // back to /install/sudo. Password lives only in component state.
+  const [sudoPrompt, setSudoPrompt] = useState<{ tool: string; prompt: string; hint?: string } | null>(null);
+  const [sudoPassword, setSudoPassword] = useState("");
+  const [sudoSubmitting, setSudoSubmitting] = useState(false);
 
   async function loadCatalogue() {
     try {
@@ -112,12 +118,49 @@ export default function InfraScreen() {
       (status, err) => {
         setInstallResult({ tool, status });
         setInstallingTool(null);
+        setSudoPrompt(null);
         if (status !== "ok" && err) {
           Alert.alert(`Install ${tool} failed`, err);
         }
         void loadCatalogue();
       },
+      (event) => {
+        if (event?.type === "sudo_prompt" && event?.tool === tool) {
+          setSudoPrompt({
+            tool,
+            prompt: event.prompt || "[sudo] password:",
+            hint: event.hint,
+          });
+          setSudoPassword("");
+        }
+      },
     );
+  }
+
+  async function submitSudo() {
+    if (!sudoPrompt) return;
+    setSudoSubmitting(true);
+    try {
+      const res = await quicClient.respondInstallSudo(sudoPrompt.tool, sudoPassword, false, target);
+      if (!res.ok) {
+        Alert.alert("Password not accepted", res.error || "Failed to submit sudo password");
+        return;
+      }
+      // The PTY now gets the password and keeps going. Installer
+      // either continues or re-prompts (wrong password) — the stream
+      // will fire another sudo_prompt event in the latter case.
+      setSudoPrompt(null);
+      setSudoPassword("");
+    } finally {
+      setSudoSubmitting(false);
+    }
+  }
+
+  async function cancelSudo() {
+    if (!sudoPrompt) return;
+    await quicClient.respondInstallSudo(sudoPrompt.tool, "", true, target);
+    setSudoPrompt(null);
+    setSudoPassword("");
   }
 
   const machineOptions = useMemo(() => {
@@ -257,6 +300,97 @@ export default function InfraScreen() {
             <Metric c={c} label="Disk" value={`${(summary.metrics?.diskPct || 0).toFixed(0)}%`} sub={`${fmtBytes(summary.metrics?.diskUsed)} / ${fmtBytes(summary.metrics?.diskTotal)}`} />
             <Metric c={c} label="Uptime" value={fmtUptime(summary.metrics?.uptime)} sub={summary.metrics?.hostname || summary.machine.deviceId} />
           </View>
+
+          {/* Sudo password sheet. Only the install stream can open
+              it; the password flows through /install/sudo and never
+              through any log stream. See install_registry.go for
+              the server-side invariants. */}
+          <Modal
+            visible={!!sudoPrompt}
+            transparent
+            animationType="slide"
+            onRequestClose={() => void cancelSudo()}
+          >
+            <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" }}>
+              <View
+                style={{
+                  backgroundColor: c.bgCard,
+                  borderTopLeftRadius: 22,
+                  borderTopRightRadius: 22,
+                  padding: 22,
+                  paddingBottom: insets.bottom + 22,
+                  gap: 12,
+                }}
+              >
+                <Text style={{ color: c.textPrimary, fontSize: 18, fontWeight: "800" }}>
+                  Sudo password required
+                </Text>
+                <Text style={{ color: c.textMuted, fontSize: 13, lineHeight: 19 }}>
+                  The install for {sudoPrompt?.tool} is waiting at:
+                </Text>
+                <Text
+                  style={{
+                    color: c.textPrimary,
+                    fontSize: 13,
+                    fontFamily: "Menlo",
+                    backgroundColor: "#000",
+                    padding: 10,
+                    borderRadius: 10,
+                  }}
+                >
+                  {sudoPrompt?.prompt}
+                </Text>
+                <TextInput
+                  value={sudoPassword}
+                  onChangeText={setSudoPassword}
+                  placeholder="password"
+                  placeholderTextColor={c.textMuted}
+                  secureTextEntry
+                  autoFocus
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={{
+                    borderWidth: 1,
+                    borderColor: c.border,
+                    backgroundColor: c.bg,
+                    color: c.textPrimary,
+                    borderRadius: 12,
+                    paddingHorizontal: 14,
+                    paddingVertical: 12,
+                    fontSize: 16,
+                  }}
+                />
+                <Text style={{ color: c.textMuted, fontSize: 11, lineHeight: 16 }}>
+                  Sent once to this dev machine's stdin. Never stored, never streamed, never passed to any AI coding agent.
+                </Text>
+                <View style={{ flexDirection: "row", gap: 10 }}>
+                  <Pressable
+                    onPress={() => void cancelSudo()}
+                    disabled={sudoSubmitting}
+                    style={[actionBtn(c), { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, flex: 1 }]}
+                  >
+                    <Text style={{ color: c.textPrimary, fontWeight: "700" }}>Cancel</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => void submitSudo()}
+                    disabled={sudoSubmitting || !sudoPassword}
+                    style={[
+                      actionBtn(c),
+                      {
+                        backgroundColor: c.accent,
+                        flex: 1,
+                        opacity: sudoSubmitting || !sudoPassword ? 0.5 : 1,
+                      },
+                    ]}
+                  >
+                    <Text style={{ color: "#fff", fontWeight: "800" }}>
+                      {sudoSubmitting ? "Sending…" : "Send"}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          </Modal>
 
           <Section
             c={c}

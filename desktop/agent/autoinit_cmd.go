@@ -284,6 +284,14 @@ func autoinitAppendHistory(workDir, line string) {
 // runners (autodev / autoideas / autotest) prepend to their prompt.
 // Reads init.md, CLAUDE.md, and remained.md from workDir. Each is
 // best-effort — missing files just contribute nothing.
+//
+// SECURITY INVARIANT: This block is concatenated into prompts sent
+// to third-party coding agents (Claude Code, Codex, Aider, Ollama
+// implementers). It must never include anything secret. Do not add
+// install log streams, vault contents, sudo prompts, tokens, or any
+// other material the user might consider private. The package-manager
+// list below is safe because it only names commands — e.g. "brew",
+// "apt-get", "npm" — never their install output.
 func autoinitContextBlock(workDir string) string {
 	var sb strings.Builder
 	read := func(label, name string) {

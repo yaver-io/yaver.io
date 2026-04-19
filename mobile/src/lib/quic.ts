@@ -3497,14 +3497,45 @@ export class QuicClient {
   }
 
   /**
+   * Respond to an in-flight install that asked for a sudo password.
+   * The agent wrote `{"type":"sudo_prompt", ...}` to the install
+   * stream; the UI showed a secure sheet; the answer flows back
+   * through this endpoint. Setting `cancel: true` sends ^C instead.
+   */
+  async respondInstallSudo(
+    tool: string,
+    password: string,
+    cancel = false,
+    target?: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    this.assertConnected();
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/install/sudo`
+      : `${this.baseUrl}/install/sudo`;
+    const res = await fetch(base, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ tool, password, cancel }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
+    return { ok: true };
+  }
+
+  /**
    * Subscribe to a named log stream over SSE. Calls onLine for each
    * `{type:"line",text}` event and onResult for the terminal
    * `{type:"result",status}` event. Returns a cancel function.
+   *
+   * `onEvent` — if set — is called for every other structured event
+   * on the stream, including `{type:"sudo_prompt", prompt}` which
+   * the install catalogue uses to ask the phone for a password.
    */
   subscribeStream(
     name: string,
     onLine: (text: string) => void,
     onResult?: (status: string, error?: string) => void,
+    onEvent?: (event: any) => void,
   ): () => void {
     const ctrl = new AbortController();
     const url = `${this.baseUrl}/streams/${encodeURIComponent(name)}`;
@@ -3532,6 +3563,8 @@ export class QuicClient {
                 onLine(ev.text);
               } else if (ev.type === "result" && onResult) {
                 onResult(ev.status || "", ev.error);
+              } else if (onEvent) {
+                onEvent(ev);
               }
             } catch {
               // ignore non-JSON SSE comments / keepalives
