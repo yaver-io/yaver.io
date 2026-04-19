@@ -84,7 +84,7 @@ const LANDING_HOWTO_STEPS: ReadonlyArray<{ name: string; text: string; url?: str
   },
   {
     name: "Push your React Native project to your phone",
-    text: "In your existing RN project: yaver-cli push. The CLI compiles your JS to Hermes bytecode, validates the bundle, and pushes it to the Yaver app on a paired device — which loads it in a native container with full TurboModules, Fabric, and New Architecture support. No native rebuild, no third-party developer-portal gate.",
+    text: "In your existing RN project: yaver push. The CLI compiles your JS to Hermes bytecode, validates the bundle, and pushes it to the Yaver app on a paired device — which loads it in a native container with full TurboModules, Fabric, and New Architecture support. No native rebuild, no third-party developer-portal gate.",
     url: "https://yaver.io/manuals/cli-setup",
   },
 ];
@@ -679,7 +679,7 @@ const DEMO_TABS = [
     id: "push-fix",
     label: "Push to Phone",
     icon: "\uD83D\uDCF1",
-    desc: "yaver-cli push — send your RN project to a paired iPhone in seconds. Shake to report a crash. AI fixes it. Hot reload.",
+    desc: "yaver push — send your RN project to a paired iPhone in seconds. Shake to report a crash. AI fixes it. Hot reload.",
     header: "Bento running on device + Yaver Debug Console",
     video: null,
   },
@@ -1074,7 +1074,7 @@ export default function HomePage() {
                 <div className="h-3 w-3 rounded-full bg-[#28c840]" />
               </div>
               <p className="ml-2 text-xs text-surface-500">
-                yaver-cli push &mdash; send your React Native bundle to a paired device
+                yaver push &mdash; send your React Native bundle to a paired device
               </p>
             </div>
             <video
@@ -1094,7 +1094,7 @@ export default function HomePage() {
           <p className="mx-auto mt-4 max-w-2xl text-center text-xs text-surface-500">
             A real iPhone loading a React Native bundle pushed from a paired
             developer machine &mdash; no rebuild, no app-store round trip.
-            Just <code>yaver-cli push</code>.
+            Just <code>yaver push</code>.
           </p>
         </div>
       </section>
@@ -1130,7 +1130,7 @@ export default function HomePage() {
               <p className="mt-3 text-[11px] text-surface-500">
                 Recommended: <code>npm install -g yaver-cli</code>. Installs the
                 agent and the RN push toolchain in one go; <code>yaver auth</code>
-                starts the agent if needed. Homebrew, <code>apt</code>, AppImage,
+                starts the agent automatically. Homebrew, <code>apt</code>, AppImage,
                 <code>.deb</code>/<code>.rpm</code>, tarball, and install script
                 work too &mdash; <code>yaver push</code> on those paths
                 auto-fetches the hermes bundler via npm on first use.{" "}
@@ -1260,9 +1260,6 @@ export default function HomePage() {
             <ProjectWizardPreview />
           </div>
 
-          <div className="mt-12 rounded-xl border-l-2 border-[#6366f1]/60 bg-surface-900/50 p-5 text-sm leading-relaxed text-surface-300">
-            The YC wedge is this continuum, not a giant feature grid. Local-first stays the default until the developer explicitly promotes the project.
-          </div>
         </div>
       </section>
 
@@ -1337,7 +1334,7 @@ export default function HomePage() {
                 <div><span className="text-surface-400">$</span> <span className="text-surface-200">cd my-app &amp;&amp; npx yaver-cli init</span></div>
                 <div className="text-[12px] text-green-400/80">{"React Native 0.81 \u2705 Hermes \u2705 15/16 modules \u2705"}</div>
                 <div className="my-1 h-px bg-surface-800/60" />
-                <div><span className="text-surface-400">$</span> <span className="text-surface-200">npx yaver-cli push</span></div>
+                <div><span className="text-surface-400">$</span> <span className="text-surface-200">npx yaver push</span></div>
                 <div className="text-[12px] text-surface-400">{"\uD83D\uDCE1 Found: iPhone 15 (192.168.1.42)"}</div>
                 <div className="text-[12px] text-surface-400">{"\u26A1 Compiling Hermes bytecode..."}</div>
                 <div className="text-[12px] text-surface-400">{"\uD83D\uDCE4 Pushing 847 KB..."}</div>

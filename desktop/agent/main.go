@@ -31,7 +31,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.96.10"
+const version = "1.96.11"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -1209,6 +1209,14 @@ func finalizeAuthConfig(cfg *Config, convexURL, token string, printSuccess, prin
 		fmt.Println("  Free relay: public.yaver.io (included, no setup needed)")
 		fmt.Println()
 	}
+	// Register reboot persistence (systemd user unit on Linux, launchd
+	// LaunchAgent on macOS, Scheduled Task on Windows) before forking
+	// the agent. Done HERE — not just in the headless steps — so a
+	// browser-OAuth sign-in on a real desktop also gets "yaver starts
+	// after reboot" without an extra command. Idempotent: skipped if
+	// the unit/plist/task already exists, and opt-out via
+	// YAVER_NO_AUTO_START=1.
+	maybeRegisterAutoStartAfterAuth()
 	startServeIfStopped()
 	autoSetupMCP()
 	if printHeadlessSteps {
@@ -1217,23 +1225,77 @@ func finalizeAuthConfig(cfg *Config, convexURL, token string, printSuccess, prin
 	return nil
 }
 
+// maybeRegisterAutoStartAfterAuth runs ensureAutoStart in the shared
+// auth-success path. Prints a one-line "Reboot persistence: …" hint
+// so the user knows what happened, plus a WSL-specific note pointing
+// at the differences from a real Linux box. Idempotent + opt-out via
+// YAVER_NO_AUTO_START=1.
+func maybeRegisterAutoStartAfterAuth() {
+	if isAutoStartInstalled() {
+		return
+	}
+	if envTruthy(os.Getenv("YAVER_NO_AUTO_START")) {
+		return
+	}
+	exePath, err := os.Executable()
+	if err != nil || exePath == "" {
+		return
+	}
+	workDir, _ := os.Getwd()
+	msg := ensureAutoStart(exePath, workDir)
+	if msg == "" {
+		// Either WSL couldn't write the helper, or runtime.GOOS is
+		// outside the supported set (BSDs, etc). Warn the user so
+		// they know reboot persistence is on them — much louder than
+		// the previous silent skip.
+		warnAutoStartUnavailable()
+		return
+	}
+	fmt.Println("Reboot persistence:")
+	fmt.Println("  " + msg)
+	if isWSL() {
+		// CLAUDE.md ships docs/wsl2-relay-troubleshooting.md for
+		// related WSL gotchas; surface that hook so users debugging
+		// "agent didn't come back after Windows reboot" find it.
+		fmt.Println("  WSL note: shell-profile hook starts yaver when you open a WSL")
+		fmt.Println("  shell. For start-on-Windows-boot, the helper also tries to")
+		fmt.Println("  drop a wrapper into your Windows Startup folder; if that fails")
+		fmt.Println("  (e.g. /mnt/c not mounted, no $USER), add a Task Scheduler")
+		fmt.Println("  entry that runs `wsl.exe -d <distro> -u <user> bash -lc")
+		fmt.Println("  '~/.yaver/wsl-autostart.sh'`. See docs/wsl2-relay-troubleshooting.md.")
+	}
+	fmt.Println("  (opt out any time: `yaver config set auto-start false`)")
+	fmt.Println()
+}
+
+// warnAutoStartUnavailable prints a clear, actionable warning when
+// reboot persistence couldn't be registered — so a user on WSL
+// without /mnt/c or on a niche OS doesn't quietly end up with a
+// box that won't come back after a reboot.
+func warnAutoStartUnavailable() {
+	switch {
+	case isWSL():
+		fmt.Println("Reboot persistence: NOT registered (WSL helper write failed).")
+		fmt.Println("  This usually means /mnt/c isn't mounted or $USER is empty.")
+		fmt.Println("  Either run yaver from a tmux/screen session inside WSL, or")
+		fmt.Println("  enable systemd in WSL2 (`/etc/wsl.conf` → `[boot] systemd=true`,")
+		fmt.Println("  then `wsl --shutdown`) and re-run `yaver serve --install-systemd`.")
+		fmt.Println("  Background: docs/wsl2-relay-troubleshooting.md.")
+		fmt.Println()
+	case runtime.GOOS != "linux" && runtime.GOOS != "darwin" && runtime.GOOS != "windows":
+		fmt.Printf("Reboot persistence: NOT registered (%s isn't a supported auto-start target).\n", runtime.GOOS)
+		fmt.Println("  Run `yaver serve` from your shell startup or a process supervisor.")
+		fmt.Println()
+	}
+}
+
 // printHeadlessNextSteps runs at the end of a successful headless
 // `yaver auth`. Surfaces the Yaver mobile app install (required for
-// the P2P client end) and — because lazy, non-developer users driven
-// through an AI coding agent almost never run follow-up commands on
-// their own — it also *enables* auto-start automatically. Rationale:
-//
-//   - The cousin-at-a-cafe scenario can't survive a reboot without
-//     it; expecting the agent to remember to run
-//     `yaver config set auto-start true` is wishful thinking.
-//   - Opt-out is cheap (YAVER_NO_AUTO_START=1 before auth, or run
-//     `yaver config set auto-start false` after).
-//   - We only auto-enable on headless; a developer on a GUI macOS
-//     box gets the same explicit opt-in dance as before via
-//     `yaver config set` / the desktop installer.
-//
-// The bootstrap-secret nudge still prints because that genuinely
-// needs a password-manager decision.
+// the P2P client end) and the bootstrap-secret nudge for remote
+// re-auth. Reboot persistence is now registered earlier in
+// finalizeAuthConfig (via maybeRegisterAutoStartAfterAuth) so it
+// applies to BOTH browser-OAuth and headless sign-ins; this function
+// no longer touches systemd/launchd directly.
 func printHeadlessNextSteps() {
 	fmt.Println("Next — on your phone:")
 	fmt.Println("  Open the Yaver app and sign in with the same account you just used.")
@@ -1241,20 +1303,6 @@ func printHeadlessNextSteps() {
 	fmt.Println("    Android (Play):    https://play.google.com/store/apps/details?id=io.yaver.mobile")
 	fmt.Println("  This machine will appear in its device list automatically.")
 	fmt.Println()
-
-	// Auto-enable auto-start unless already installed or explicitly opted out.
-	if !isAutoStartInstalled() && !envTruthy(os.Getenv("YAVER_NO_AUTO_START")) {
-		exePath, _ := os.Executable()
-		workDir, _ := os.Getwd()
-		if exePath != "" {
-			if msg := ensureAutoStart(exePath, workDir); msg != "" {
-				fmt.Println("Reboot persistence:")
-				fmt.Println("  " + msg)
-				fmt.Println("  (opt out any time: `yaver config set auto-start false`)")
-				fmt.Println()
-			}
-		}
-	}
 
 	// Bootstrap-secret nudge still needs a human decision — where to store it.
 	bootstrapSet := false

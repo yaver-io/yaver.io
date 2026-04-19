@@ -470,7 +470,12 @@ func ensureAutoStartDarwin(exePath, workDir string) (string, error) {
 
 func ensureAutoStartLinux(exePath, workDir string) (string, error) {
 	if isWSL() {
-		return "", nil
+		// systemd --user under WSL only works on the few distros with
+		// systemd enabled and `[boot] systemd=true` in /etc/wsl.conf,
+		// and even then only after a `wsl --shutdown` reboot. The
+		// shell-profile + Windows Startup wrapper combo we install
+		// here is what actually works across the WSL fleet.
+		return installAutoStartWSL(exePath, workDir)
 	}
 
 	home, err := os.UserHomeDir()
