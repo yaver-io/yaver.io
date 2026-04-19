@@ -1,6 +1,6 @@
 name: yaver_feedback
 description: Visual feedback SDK for Yaver — shake-to-report, screenshots, voice annotations for vibe coding workflows
-version: 0.1.0
+version: 0.1.1
 homepage: https://yaver.io
 repository: https://github.com/kivanccakmak/yaver.io/tree/main/sdk/feedback/flutter
 
@@ -16,4 +16,4 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^5.0.0
+  flutter_lints: ^4.0.0
