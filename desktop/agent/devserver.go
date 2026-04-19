@@ -745,6 +745,8 @@ type ExpoDevServer struct {
 	building bool   // true during native compilation (expo run:ios)
 }
 
+func (e *ExpoDevServer) Name() string { return "expo" }
+
 func (e *ExpoDevServer) Detect(workDir string) bool {
 	pkg := filepath.Join(workDir, "package.json")
 	data, err := os.ReadFile(pkg)
@@ -1023,6 +1025,8 @@ type FlutterDevServer struct {
 	stdinPipe *stdinWriter
 }
 
+func (f *FlutterDevServer) Name() string { return "flutter" }
+
 // stdinWriter wraps an io.WriteCloser for sending commands to the Flutter process.
 type stdinWriter struct {
 	w interface{ Write([]byte) (int, error) }
@@ -1216,6 +1220,8 @@ type ViteDevServer struct {
 	baseDevServer
 }
 
+func (v *ViteDevServer) Name() string { return "vite" }
+
 func (v *ViteDevServer) Detect(workDir string) bool {
 	for _, name := range []string{"vite.config.ts", "vite.config.js", "vite.config.mts"} {
 		if _, err := os.Stat(filepath.Join(workDir, name)); err == nil {
@@ -1250,6 +1256,8 @@ func (v *ViteDevServer) Reload() error                    { return nil } // Vite
 type NextDevServer struct {
 	baseDevServer
 }
+
+func (n *NextDevServer) Name() string { return "nextjs" }
 
 func (n *NextDevServer) Detect(workDir string) bool {
 	for _, name := range []string{"next.config.ts", "next.config.js", "next.config.mjs"} {
