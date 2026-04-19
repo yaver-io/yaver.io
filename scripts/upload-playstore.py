@@ -2,8 +2,14 @@
 """Upload AAB to Google Play Internal Testing track."""
 
 import os
+import socket
 import subprocess
 import sys
+
+# 245 MB AABs on slow links run past httplib2's default (~60s) socket timeout.
+# Setting this BEFORE importing google clients so their httplib2.Http picks it up.
+socket.setdefaulttimeout(600)
+
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -26,13 +32,27 @@ def main():
     edit_id = edit["id"]
     print(f"Created edit: {edit_id}")
 
-    # Upload AAB
-    media = MediaFileUpload(AAB_PATH, mimetype="application/octet-stream", resumable=True)
-    bundle = service.edits().bundles().upload(
+    # Upload AAB in 5 MB chunks so we can report progress and tolerate transient stalls.
+    size = os.path.getsize(AAB_PATH)
+    print(f"AAB size: {size / 1024 / 1024:.1f} MB")
+    media = MediaFileUpload(
+        AAB_PATH,
+        mimetype="application/octet-stream",
+        resumable=True,
+        chunksize=5 * 1024 * 1024,
+    )
+    request = service.edits().bundles().upload(
         packageName=PACKAGE,
         editId=edit_id,
-        media_body=media
-    ).execute()
+        media_body=media,
+    )
+    response = None
+    while response is None:
+        status, response = request.next_chunk()
+        if status:
+            pct = status.resumable_progress * 100 // max(1, size)
+            print(f"  upload progress: {pct:3d}% ({status.resumable_progress} / {size} bytes)")
+    bundle = response
     version_code = bundle["versionCode"]
     print(f"Uploaded bundle: versionCode={version_code}")
 
