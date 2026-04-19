@@ -233,9 +233,14 @@ jobs:
             echo "PUB_CREDENTIALS_JSON secret is not set"
             exit 1
           fi
-          mkdir -p "$HOME/.pub-cache"
+          # Dart < 2.15 reads ~/.pub-cache/credentials.json; Dart 2.15+ on
+          # Linux reads $XDG_CONFIG_HOME/dart/pub-credentials.json (typically
+          # ~/.config/dart/...). Write both so the credentials are found
+          # regardless of which Dart version subosito/flutter-action installs.
+          mkdir -p "$HOME/.pub-cache" "$HOME/.config/dart"
           printf '%s' "$PUB_CREDENTIALS_JSON" > "$HOME/.pub-cache/credentials.json"
-          chmod 600 "$HOME/.pub-cache/credentials.json"
+          printf '%s' "$PUB_CREDENTIALS_JSON" > "$HOME/.config/dart/pub-credentials.json"
+          chmod 600 "$HOME/.pub-cache/credentials.json" "$HOME/.config/dart/pub-credentials.json"
 
       - name: Publish yaver to pub.dev
         run: |
@@ -260,9 +265,12 @@ jobs:
             echo "PUB_CREDENTIALS_JSON secret is not set"
             exit 1
           fi
-          mkdir -p "$HOME/.pub-cache"
+          # Write to both old (~/.pub-cache) and new (~/.config/dart) paths
+          # so the credentials are found regardless of Dart version.
+          mkdir -p "$HOME/.pub-cache" "$HOME/.config/dart"
           printf '%s' "$PUB_CREDENTIALS_JSON" > "$HOME/.pub-cache/credentials.json"
-          chmod 600 "$HOME/.pub-cache/credentials.json"
+          printf '%s' "$PUB_CREDENTIALS_JSON" > "$HOME/.config/dart/pub-credentials.json"
+          chmod 600 "$HOME/.pub-cache/credentials.json" "$HOME/.config/dart/pub-credentials.json"
 
       - name: Publish yaver_feedback to pub.dev
         run: |
