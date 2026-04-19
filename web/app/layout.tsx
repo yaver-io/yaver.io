@@ -57,8 +57,8 @@ export const metadata: Metadata = {
   alternates: {
     canonical: "https://yaver.io",
     // llms.txt is the agent-facing install guide. Declaring it as an
-    // alternate representation lets AI crawlers (Claude, ChatGPT,
-    // Perplexity, …) find a deterministic, human-free install recipe
+    // alternate representation lets AI crawlers (Claude, ChatGPT, …)
+    // find a deterministic, human-free install recipe
     // instead of scraping React markup.
     types: {
       "text/plain": [{ url: "/llms.txt", title: "Yaver AI-agent install guide (llms.txt)" }],

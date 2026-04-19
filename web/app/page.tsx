@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, useEffect } from "react";
 import { useAuth } from "@/lib/use-auth";
 
-// Canonical definitional one-liner — picked up by AI search (Perplexity,
-// ChatGPT, Claude) and SEO as the answer to "what is Yaver?". Framed
+// Canonical definitional one-liner — picked up by AI search
+// (ChatGPT, Claude) and SEO as the answer to "what is Yaver?". Framed
 // around the factual wedge (self-hosted on-device RN dev client, no
 // third-party dev-portal gate) rather than specific competitor names,
 // per LEGAL_SAFETY.md §2 (trademark) and §3 (comparative claims).
@@ -21,34 +21,87 @@ const LANDING_TAGLINE =
 // a single narrow wedge.
 
 const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
+  // ── What is it ──────────────────────────────────────────────────────
+  {
+    q: "What is Yaver?",
+    a: "A free, open-source self-hosted development client. Build React Native apps without a developer portal, run a backend that starts on your phone and grows to your own hardware, and pair it with any terminal AI agent — Claude Code, Codex, Aider, or local Ollama. Everything flows P2P between your devices; central servers are only used for sign-in and peer discovery.",
+  },
   {
     q: "How is this different from AWS or Vercel?",
-    a: "Yaver starts one step earlier. The first backend tier can live in the mobile app itself, then move to your own machine, then later to Yaver Cloud. AWS and Vercel start with cloud infrastructure; Yaver starts with the phone and your own hardware.",
-  },
-  {
-    q: "Do I need a powerful machine?",
-    a: "Any modern Mac or Linux machine works. 16GB RAM is comfortable for web development. For local AI models (Ollama), 24GB+ is better. A $5/month Hetzner or DigitalOcean VPS works great as a headless dev machine you control from your phone.",
-  },
-  {
-    q: "Is my code safe?",
-    a: "Your code never leaves your machine. All traffic is P2P encrypted (QUIC+TLS). The relay is a dumb pipe — it forwards bytes but can't read your data. Self-host the relay if you want zero third-party servers involved.",
+    a: "Yaver starts one step earlier. The first backend tier can live in the mobile app itself, then move to your own machine. AWS and Vercel start with cloud infrastructure; Yaver starts with the phone and your own hardware.",
   },
   {
     q: "Can I use this for web apps, not just mobile?",
-    a: "Yes. Yaver works with any project — Next.js, Vite, Remix, SvelteKit, APIs, Docker containers. The Push to Device feature is React Native specific, but everything else (project creation, local backends, database dashboards, deployment, AI tasks) works with any stack.",
+    a: "Yes. Yaver works with any project — Next.js, Vite, Remix, SvelteKit, APIs, Docker containers. The Push-to-Device feature is React Native specific, but everything else (project creation, local backends, database dashboards, deployment, AI tasks) works with any stack.",
+  },
+
+  // ── Push to Device (Section 6) ──────────────────────────────────────
+  {
+    q: "Do I really push apps to my phone without a developer portal or upload limits?",
+    a: "Yes. The Yaver mobile app is a self-hosted native container with 40+ pre-installed React Native modules. yaver-cli compiles your project's JavaScript to Hermes bytecode and pushes it directly to the container over WiFi, 4G, or your relay. No third-party developer-portal gate, no daily upload quotas, no cloud build minutes. Your binary stays on your machine.",
+  },
+  {
+    q: "Does push-to-device support the React Native New Architecture (TurboModules, Fabric)?",
+    a: "Yes. Bundles load through a real native bridge built with ExpoReactNativeFactory + RCTAppDependencyProvider, so TurboModules, Fabric, JSI, and TurboModuleRegistry.getEnforcing() all work. RN 0.81+ apps run the same way they would in a production Xcode build — never a WebView.",
+  },
+  {
+    q: "Can I hot-reload my app on a real phone while editing on my laptop?",
+    a: "Yes. yaver dev start runs Metro on your machine; the mobile app proxies through the agent and reloads on save. Native code changes flow through Build + Deploy (one button to TestFlight / Play Store internal track). The Feedback SDK adds a floating Hot Reload button inside any embedding app.",
+  },
+
+  // ── Phone-first backend (Section 4) ─────────────────────────────────
+  {
+    q: "Can I build a backend without provisioning a server first?",
+    a: "Yes. Phone-first projects let you scaffold a SQLite-backed backend with schema, auth personas, seed data, and CRUD routes from the mobile app or web dashboard. The whole project lives in ~/.yaver/phone-projects/<slug>/ until you decide to move it. No cloud account, no server, no DNS.",
+  },
+  {
+    q: "Can I move my project to my own machine or to the cloud later?",
+    a: "Yes. The same portable bundle promotes to your own hardware (Mac, Linux, WSL, Pi, or VPS) or to one of 19 hosted targets — Convex, Supabase, Postgres/Neon, Turso, and others. Each switch takes a snapshot first and supports rollback for 7 days. Standard Docker + Postgres at the bottom — export anytime.",
+  },
+
+  // ── Dashboard (Section 5) ───────────────────────────────────────────
+  {
+    q: "Can I browse my database from my phone?",
+    a: "Yes. Convex Dashboard, Supabase Studio, Drizzle Studio, PocketBase Admin, and pgweb are tunneled through your relay so you can browse tables, run queries, and watch logs from your phone or any browser — even when the database is on localhost.",
+  },
+
+  // ── AI agents (Section 8) ───────────────────────────────────────────
+  {
+    q: "Which AI coding agents work with Yaver?",
+    a: "Anything that runs in a terminal: Claude Code, Codex, Aider, Ollama, Goose, OpenCode, Amp, Continue, or any tmux session. Switch agents per task or set a default.",
+  },
+  {
+    q: "Can I use my own LLM keys, Claude Max plan, or a local model?",
+    a: "Yes. The agent shells out to whichever CLI you have installed, so it uses whatever auth or subscription you have already set up. Hybrid mode pairs a frontier planner (Claude or Codex) with a local Aider+Ollama implementer — typically 80–95% cheaper on long feature loops, fully air-gapped if you want.",
+  },
+
+  // ── Sharing / cost / privacy ────────────────────────────────────────
+  {
+    q: "Can I share my dev machine with teammates?",
+    a: "Yes. yaver guests invite <email> grants scoped P2P access to a teammate (max 5, invitation expires in 2 days, no shell / vault / session access). For shared dev boxes, yaver serve --multi-user --team <id> gives each team member their own isolated workspace and AI sessions on the same machine.",
+  },
+  {
+    q: "Do I need a powerful machine?",
+    a: "Any modern Mac or Linux machine works. 16 GB RAM is comfortable for web development. For local AI models (Ollama), 24 GB+ is better. A $5/month Hetzner or DigitalOcean VPS works great as a headless dev machine you control from your phone.",
+  },
+  {
+    q: "Is my code safe?",
+    a: "Your code never leaves your machine. All traffic is P2P encrypted (QUIC+TLS). The relay is a dumb pipe — it forwards bytes but cannot read your data. Self-host the relay if you want zero third-party servers involved. Convex stores only sign-in identity, peer discovery, and audit summaries — never task input, output, files, vault values, or absolute paths (enforced by tests in the repo).",
+  },
+  {
+    q: "Does Yaver manage my servers?",
+    a: "No. The default path is your phone sandbox first, then your own machine, dev box, or VPS. The only managed offering is a $10/month shared relay so you do not have to run one yourself. Everything else is self-host.",
+  },
+  {
+    q: "Is this really free?",
+    a: "Yes for the local-first path: mobile app, CLI, agent, web dashboard, SDKs, and self-hosted relay. The repo uses a split license (FSL-1.1 core that auto-converts to Apache-2.0 two years per release, Apache-2.0 SDKs from day one). The optional managed relay is $10/month.",
   },
   {
     q: "What if I already use Vercel or Supabase Cloud?",
     a: "Great — keep using them for production. Use Yaver for local development at $0, then deploy to your cloud provider when ready. Yaver bridges your local stack and your production stack.",
   },
-  {
-    q: "Does Yaver manage my servers?",
-    a: "Today the main local-first path is still your server, your dev box, or your phone sandbox. Yaver Cloud is the optional managed target when you want that convenience instead of operating your own hardware.",
-  },
-  {
-    q: "Is this really free?",
-    a: "The local-first path can start at $0: mobile app, your own machine, self-hosted flows. The paid path is optional — managed Yaver Cloud and heavier automation. The repo uses a split license (FSL-1.1 core that auto-converts to Apache-2.0 two years per release, Apache-2.0 SDKs from day one).",
-  },
+
+  // ── License ─────────────────────────────────────────────────────────
   {
     q: "What license is Yaver under?",
     a: "Split license. Core (agent, relay, backend, web, mobile app, desktop app) is FSL-1.1-Apache-2.0 — free for any non-competing use; each release auto-transitions to Apache-2.0 two years after publication. Client SDKs and CLIs are Apache-2.0 from day one. See LICENSING.md.",
@@ -59,7 +112,7 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: "What triggers the FSL restriction?",
-    a: "Hosting a commercial service that competes with Yaver Cloud. Self-hosting, modifying for your own team, research, and consulting are all permitted uses. Each release becomes Apache-2.0 after 2 years and the restriction lifts for that version.",
+    a: "Hosting a commercial service that competes with Yaver's managed offering. Self-hosting, modifying for your own team, research, and consulting are all permitted uses. Each release becomes Apache-2.0 after 2 years and the restriction lifts for that version.",
   },
   {
     q: "I'm at a company that doesn't allow non-OSI licenses. Can I still use Yaver?",
@@ -943,8 +996,8 @@ export default function HomePage() {
   // Signed-in users go straight to the dashboard. We redirect from
   // an effect instead of early-returning a spinner, because
   // early-returning turns this client page into an SEO black hole:
-  // server-rendered HTML is just a spinner, so Google / Perplexity /
-  // ChatGPT / Claude never see the hero, FAQPage JSON-LD, HowTo
+  // server-rendered HTML is just a spinner, so Google / ChatGPT /
+  // Claude never see the hero, FAQPage JSON-LD, HowTo
   // JSON-LD, or any of the AI-search copy. Rendering the landing on
   // both server and client means signed-in users see a ~200 ms flash
   // of the landing during auth resolution before the effect fires —
@@ -1215,7 +1268,7 @@ export default function HomePage() {
             </p>
             <p className="text-xs leading-relaxed text-surface-400">
               Yaver has broader features in the repo, but the near-term product story stays focused on one flow:
-              create on the phone, keep it local, promote to your own machine, then optionally promote to Yaver Cloud.
+              create on the phone, keep it local, then promote to your own machine.
             </p>
           </div>
         </div>
@@ -1231,8 +1284,8 @@ export default function HomePage() {
             One backend continuum, three tiers
           </h2>
           <p className="mx-auto mb-12 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
-            The same phone project can stay on the device, move to your own hardware, or move to Yaver Cloud.
-            The point is continuity, not forcing a cloud account on day one.
+            The same phone project can stay on the device or move to your own hardware.
+            The point is continuity, not forcing infrastructure on day one.
           </p>
 
           <div className="grid gap-10 lg:grid-cols-2 lg:items-start">
@@ -1241,7 +1294,7 @@ export default function HomePage() {
               {[
                 { n: 1, t: "Phone sandbox first", d: "Create a phone project with schema, auth personas, seed data, CRUD, and local persistence." },
                 { n: 2, t: "Run the same project on your hardware", d: "Push it to `yaver serve` on macOS, Linux, WSL, a Pi, or a VPS without changing the backend shape." },
-                { n: 3, t: "Promote to Yaver Cloud", d: "Use the same portable project bundle and the same agent binary when you want a managed target." },
+                { n: 3, t: "Promote without rewrites", d: "Use the same portable project bundle and the same agent binary when you move from phone to your own hardware." },
                 { n: 4, t: "Wire in third-party apps", d: "Mint per-project tokens and let a React Native, web, or Node app call the Yaver runtime API while the project stays local-first." },
                 { n: 5, t: "Keep exports as escape hatches", d: "Supabase, Convex, and other systems remain optional exits, not the default destination." },
               ].map((s) => (
@@ -1505,14 +1558,14 @@ return (
         </div>
       </section>
 
-      {/* ── Section 9: Local First Pricing ── */}
+      {/* ── Section 9: Local First Footprint ── */}
       <section className="border-t border-surface-800/60 px-6 py-24">
         <div className="mx-auto max-w-4xl">
           <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Start local. Pay when you need more.
+            Start local. Keep the footprint small.
           </h2>
           <p className="mx-auto mb-10 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
-            The default path is still the cheapest one: phone sandbox first, then your own machine. Managed cloud and heavier release surfaces are optional upgrades, not the entry ticket.
+            The default path is still the simplest one: phone sandbox first, then your own machine. Public docs stay centered on that route.
           </p>
 
           <div className="overflow-hidden rounded-xl border border-surface-800">
@@ -1533,8 +1586,7 @@ return (
                   ["Promoted backend on your own machine", "Your Mac / Linux / WSL / VPS", "$0 + your hardware"],
                   ["Relay server", "Self-host on any VPS", "$0"],
                   ["AI models (Ollama)", "Your GPU or CPU", "$0"],
-                  ["Managed Yaver Cloud", "Yaver-hosted", "Paid when enabled"],
-                  ["Store / CI release plumbing", "Hosted distribution surfaces", "Can become paid"],
+                  ["Store / CI release plumbing", "Hosted distribution surfaces", "Optional"],
                 ].map((row) => (
                   <tr key={row[0]} className="bg-surface-900/30">
                     <td className="px-4 py-3 text-surface-200">{row[0]}</td>
