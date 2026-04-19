@@ -202,7 +202,7 @@ jobs:
           Version: ${VERSION}
           Release: 1
           Summary: AI coding agent — P2P remote control for Claude Code, Codex, Aider, Ollama
-          License: AGPL-3.0-only
+          License: LicenseRef-FSL-1.1-Apache-2.0
           URL: https://yaver.io
           Requires: nodejs >= 18
 
@@ -368,7 +368,7 @@ jobs:
             desc "AI coding agent on your phone — P2P remote control for Claude Code, Codex, Aider, Ollama"
             homepage "https://yaver.io"
             version "${VERSION}"
-            license "AGPL-3.0-only"
+            license :cannot_represent   # FSL-1.1-Apache-2.0; see LICENSING.md
 
             # Runtime dep: \`yaver push\` shells out to \`npm exec --package
             # yaver-cli@<version>\` which pulls hermesc + the RN bundler on
@@ -430,7 +430,7 @@ jobs:
             "version": "${VERSION}",
             "description": "AI coding agent on your phone — P2P remote control for Claude Code, Codex, Aider, Ollama",
             "homepage": "https://yaver.io",
-            "license": "AGPL-3.0-only",
+            "license": "FSL-1.1-Apache-2.0",
             "architecture": {
               "64bit": {
                 "url": "https://github.com/${REPO}/releases/download/v${VERSION}/yaver-windows-amd64.exe",
@@ -474,7 +474,7 @@ jobs:
           pkgdesc="Run AI coding agents from your phone — Claude, Codex, Aider, or custom"
           arch=('x86_64' 'aarch64')
           url="https://yaver.io"
-          license=('AGPL-3.0-only')
+          license=('custom:FSL-1.1-Apache-2.0')
           provides=('yaver')
           depends=('nodejs')
           optdepends=('npm: for yaver push (React Native to device)')
@@ -510,7 +510,7 @@ jobs:
           PackageVersion: "${VERSION}"
           PackageName: Yaver CLI
           Publisher: Yaver
-          License: AGPL-3.0-only
+          License: FSL-1.1-Apache-2.0
           ShortDescription: AI coding agent on your phone — P2P remote control for Claude Code, Codex, Aider, Ollama
           PackageUrl: https://yaver.io
           Installers:

@@ -1,15 +1,67 @@
-GNU AFFERO GENERAL PUBLIC LICENSE
-Version 3, 19 November 2007
+Functional Source License, Version 1.1, Apache 2.0 Future License
 
-Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
-Everyone is permitted to copy and distribute verbatim copies
-of this license document, but changing it is not allowed.
+Abbreviation:     FSL-1.1-Apache-2.0
+Licensor:         SIMKAB ELEKTRIK ELEKTRONİK İTHALAT İHRACAT LTD. ŞTİ.
+Change Date:      Two years from the date each release of the Software
+                  is first made available by Licensor.
+Change License:   Apache License, Version 2.0
 
-This project is licensed under the GNU Affero General Public License v3.0 only.
+Copyright © 2026 SIMKAB ELEKTRIK ELEKTRONİK İTHALAT İHRACAT LTD. ŞTİ.
 
-You should have received a copy of the GNU Affero General Public License
-along with this program. If not, see <https://www.gnu.org/licenses/agpl-3.0.txt>.
+# Purpose
 
-The official license text is incorporated here by reference, and the
-canonical text is the one published by the Free Software Foundation at the
-URL above.
+The Functional Source License permits use of the Software for any
+Permitted Purpose other than Competing Use. On the Change Date the
+License automatically converts to the Change License.
+
+# Permitted Purpose
+
+Any purpose other than a Competing Use. Without limiting the
+foregoing, the following are Permitted Purposes:
+
+  • internal business operations, including hosting the Software
+    for the internal use of your organization;
+  • research, teaching, or personal projects;
+  • professional services where the Software is not the primary
+    value delivered (e.g., consulting, training, integration);
+  • developing applications and services that are distinct from,
+    and not primarily a substitute for, the Software.
+
+# Competing Use
+
+Making the Software available to others in a commercial product
+or service that:
+
+  (1) substitutes for the Software;
+  (2) substitutes for any other product or service Licensor offers
+      using the Software that exists on the date this License is
+      first applied to the Software; or
+  (3) offers the same or substantially similar functionality as
+      the Software.
+
+# Patents
+
+To the extent permitted by applicable law, Licensor grants you a
+patent license co-extensive with the copyright license granted
+above.
+
+# Redistribution
+
+You may redistribute the Software in source or binary form,
+provided every copy carries this License in full and recipients
+receive the same rights you have.
+
+# Future License
+
+On each Change Date the License for that version of the Software
+converts to the Change License. Licensor will not enforce this
+License against uses of that version after the Change Date except
+under the Change License.
+
+# Disclaimer
+
+The Software is provided "AS IS" and Licensor disclaims all
+warranties, express or implied, including merchantability,
+fitness for a particular purpose, and non-infringement. To the
+fullest extent permitted by law, Licensor is not liable for any
+damages arising from use of the Software.

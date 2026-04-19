@@ -7,7 +7,7 @@
     "email": "kivanc.cakmak@simkab.com"
   },
   "homepage": "https://yaver.io",
-  "license": "AGPL-3.0-only",
+  "license": "SEE LICENSE IN LICENSE",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
@@ -21,19 +21,29 @@
     "productName": "Yaver",
     "mac": {
       "category": "public.app-category.developer-tools",
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "icon": "assets/icon.icns"
     },
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "icon": "assets/icon.ico",
       "signtoolOptions": {
-        "signingHashAlgorithms": ["sha256"],
+        "signingHashAlgorithms": [
+          "sha256"
+        ],
         "sign": "../../keys/sign-windows.sh"
       }
     },
     "linux": {
-      "target": ["deb", "AppImage"],
+      "target": [
+        "deb",
+        "AppImage"
+      ],
       "category": "Development",
       "icon": "assets/icon.png",
       "executableName": "yaver-desktop",

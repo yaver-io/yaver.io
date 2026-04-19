@@ -1836,21 +1836,20 @@ Contact: kivanc.cakmak@simkab.com
 ## License
 
 Yaver uses a **split-license model** — see [`LICENSING.md`](./LICENSING.md)
-for the canonical mapping and [`CONTRIBUTING.md`](./CONTRIBUTING.md) for
-how contributions are licensed.
+for the full mapping and [`CONTRIBUTING.md`](./CONTRIBUTING.md) for how
+contributions are licensed.
 
-- **Server & infrastructure** (agent, relay, backend, web UI, mobile app,
-  desktop app/installer, pi-image) — [`AGPL-3.0-only`](./LICENSE).
-  Protects the core against hosted clones: if you modify these and run
-  them as a network service, you must publish your modifications.
+- **Core** (agent, relay, backend, web UI, mobile app, desktop
+  app/installer, pi-image) — [`FSL-1.1-Apache-2.0`](./LICENSE):
+  Functional Source License. Free for any non-competing use; each
+  release auto-transitions to Apache-2.0 two years after publication.
 - **Client SDKs & CLIs** (`cli/`, `sdk/js`, `sdk/feedback/*`,
   `sdk/flutter`, `sdk/python`, `sdk/go/*`, `sdk/errors-js`) —
-  [`Apache-2.0`](./LICENSING.md). You can embed these in closed-source
-  commercial applications without copyleft contamination.
+  Apache-2.0 from day one, embed in closed-source apps freely.
 
 Rule of thumb: *does your app import / bundle / invoke this code?*
-Yes → Apache-2.0. No, it runs as a network service → AGPL-3.0-only.
+Yes → Apache-2.0. No, it's a network service → FSL-1.1-Apache-2.0.
 
 A commercial license is available for organizations that need the
-AGPL-licensed core without AGPL obligations — contact
+core without the Competing Use restriction — contact
 [kivanc.cakmak@simkab.com](mailto:kivanc.cakmak@simkab.com).

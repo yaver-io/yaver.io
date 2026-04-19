@@ -145,4 +145,4 @@ yaver init                         # one-time wizard; sets a bootstrap secret
 - Blog (releases, announcements): https://yaver.io/blog
 - Sitemap: https://yaver.io/sitemap.xml
 - Install scripts: https://yaver.io/install.sh, https://yaver.io/install.ps1
-- Open source: https://github.com/kivanccakmak/yaver.io (AGPL-3.0-only)
+- Open source: https://github.com/kivanccakmak/yaver.io (FSL-1.1-Apache-2.0 core, Apache-2.0 SDKs)

@@ -401,4 +401,4 @@ The SDK provides the UI and timeline infrastructure for voice notes, but does no
 
 ## License
 
-AGPL-3.0-only
+Apache-2.0. See `LICENSING.md` in the repo root for the full split-license explanation.

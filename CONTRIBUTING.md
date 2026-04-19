@@ -25,8 +25,9 @@ By submitting a pull request, you agree that:
    package you are modifying. See [`LICENSING.md`](./LICENSING.md) for
    the mapping — briefly:
    - Client SDKs and CLIs (`cli/`, `sdk/*`) → **Apache-2.0**.
-   - Server / agent / relay / control-plane / Yaver&nbsp;UI apps →
-     **AGPL-3.0-only**.
+   - Core server / agent / relay / control-plane / Yaver&nbsp;UI apps →
+     **FSL-1.1-Apache-2.0** (Functional Source License, auto-converts
+     to Apache-2.0 two years after each release).
 2. You grant **SIMKAB ELEKTRIK** a perpetual, irrevocable, worldwide,
    royalty-free license to use, modify, sublicense, and relicense your
    contribution, including under the commercial licenses offered as

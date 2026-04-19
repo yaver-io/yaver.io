@@ -45,4 +45,4 @@ Events land in your Yaver agent's **Errors** tab (dashboard or mobile Ops screen
 
 ## License
 
-AGPL-3.0-only. Part of [Yaver](https://yaver.io).
+Apache-2.0. Part of [Yaver](https://yaver.io). See `LICENSING.md` in the repo root for the full split-license explanation.

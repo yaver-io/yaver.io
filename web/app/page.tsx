@@ -11,7 +11,7 @@ import { useAuth } from "@/lib/use-auth";
 // third-party dev-portal gate) rather than specific competitor names,
 // per LEGAL_SAFETY.md §2 (trademark) and §3 (comparative claims).
 const LANDING_TAGLINE =
-  "Yaver is a free, open-source (AGPL core + Apache-2.0 SDKs) self-hosted development client for React Native. Push your app bundles from your own machine to any paired device in seconds — no third-party developer portal, no cloud build minutes, no daily upload limits. Works with any terminal AI coding agent (Claude Code, Codex, Aider, Ollama) and runs peer-to-peer on your own hardware.";
+  "Yaver is a free, open-source (FSL-1.1 core, Apache-2.0 SDKs) self-hosted development client for React Native. Push bundles from your machine to any paired device — no developer portal, no cloud build minutes, no upload limits. Peer-to-peer. Works with Claude Code, Codex, Aider, and Ollama.";
 
 // Option B (Phone-first BaaS) is the YC-application framing, not the
 // launch hero. When closer to the 2026-05-04 YC submission, swap
@@ -47,27 +47,27 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: "Is this really free?",
-    a: "The local-first path can start at $0: mobile app, your own machine, and self-hosted flows. The business model is managed surfaces when you want them, like Yaver Cloud, release distribution, and heavier automation. The open-source repo uses a split license (AGPL-3.0-only core, Apache-2.0 client SDKs) so hosted clones can't free-ride on the core.",
+    a: "The local-first path can start at $0: mobile app, your own machine, self-hosted flows. The paid path is optional — managed Yaver Cloud and heavier automation. The repo uses a split license (FSL-1.1 core that auto-converts to Apache-2.0 two years per release, Apache-2.0 SDKs from day one).",
   },
   {
     q: "What license is Yaver under?",
-    a: "Yaver uses a split-license model. The core server components — the agent, relay, cloud control plane, and web dashboards — are AGPL-3.0-only. Client SDKs and CLIs that you import into your own app (the Feedback SDK, yaver-cli, yaver push, templates) are Apache-2.0. See LICENSING.md for the full breakdown.",
+    a: "Split license. Core (agent, relay, backend, web, mobile app, desktop app) is FSL-1.1-Apache-2.0 — free for any non-competing use; each release auto-transitions to Apache-2.0 two years after publication. Client SDKs and CLIs are Apache-2.0 from day one. See LICENSING.md.",
   },
   {
     q: "Can I use Yaver in a commercial closed-source app?",
-    a: "Yes. Using yaver-cli to scaffold, build, and deploy your app does not put your app under AGPL — you're using Yaver as a tool, the same way you'd use git or gcc. Embedding the Feedback SDK, BlackBox, or push client is also fine: those packages are Apache-2.0, so your app stays under whatever license you choose.",
+    a: "Yes. Using yaver-cli to build your app is a permitted use. Embedding the Feedback SDK, BlackBox, or push client is Apache-2.0 — your app stays under whatever license you choose.",
   },
   {
-    q: "What triggers the AGPL obligations, then?",
-    a: "Modifying the Yaver agent, relay, cloud control plane, or dashboards and running the modified version as a network service. If you fork Yaver and host a competing service based on it, you must release your changes. If you run Yaver unmodified — even commercially, even for your team — you have no obligations.",
+    q: "What triggers the FSL restriction?",
+    a: "Hosting a commercial service that competes with Yaver Cloud. Self-hosting, modifying for your own team, research, and consulting are all permitted uses. Each release becomes Apache-2.0 after 2 years and the restriction lifts for that version.",
   },
   {
-    q: "I'm at a company that doesn't allow AGPL software. Can I still use Yaver?",
-    a: "Usually yes. Most AGPL bans in large companies are about shipping or modifying AGPL code. Using Yaver as a development tool, and embedding the Apache-2.0 SDKs in your app, typically falls outside those bans. If your legal team needs the AGPL components under a different license (for example, to bundle a modified agent into a closed-source product), a commercial license is available — email kivanc.cakmak@simkab.com.",
+    q: "I'm at a company that doesn't allow non-OSI licenses. Can I still use Yaver?",
+    a: "Usually yes — most enterprise AGPL/GPL bans don't cover Fair-code. The SDKs you actually embed are Apache-2.0 anyway. If your legal team needs the core under different terms, a commercial license is available — email kivanc.cakmak@simkab.com.",
   },
   {
     q: "Can I fork Yaver?",
-    a: "Yes. Apache-2.0 forks of the client SDKs can do almost anything. AGPL forks of the core must stay AGPL and, if run as a network service with modifications, must publish those modifications.",
+    a: "Yes. SDK forks (Apache-2.0) are unrestricted. Core forks (FSL) can be modified and self-hosted freely; they just can't be sold as a Yaver-competing service for 2 years per release.",
   },
 ];
 
@@ -1175,10 +1175,10 @@ export default function HomePage() {
                 </a>
               </div>
               <p className="mt-3 text-[11px] text-surface-500">
-                The mobile app is the control surface for the sandbox, deploy targets, and remote agent.
+                Sign in with the same OAuth account you used for <code>yaver auth</code>. The app auto-pairs with your dev machine over LAN, or via relay on cellular &mdash; no QR code, no IP to type.
               </p>
               <p className="mt-2 text-[11px] text-surface-500">
-                For React Native projects, the normal WSL/Linux flow is Hermes bundle reload into Yaver on the phone, not a native Xcode install.
+                Once paired, it&apos;s the control surface for the sandbox, deploy targets, and remote agent. For React Native, the normal flow is Hermes bundle reload into Yaver on the phone, not a native Xcode install.
               </p>
             </div>
 
@@ -1551,10 +1551,9 @@ return (
             <p>The wedge is local-first: phone sandbox, then your own machine, then optional cloud.</p>
             <p>Open source and self-hosting matter. So does having a paid path for managed cloud, CI, and release distribution.</p>
             <p className="mt-4 text-surface-500">
-              The open-source repo uses a <Link href="/licensing" className="underline hover:text-surface-300">split license</Link>: the core
-              (agent, relay, cloud, dashboards) is <strong className="text-surface-300">AGPL-3.0-only</strong> to prevent hosted clones,
-              while all client SDKs and CLIs are <strong className="text-surface-300">Apache-2.0</strong> so you can embed them in
-              commercial closed-source apps with no obligations.
+              The repo uses a <Link href="/licensing" className="underline hover:text-surface-300">split license</Link>: the core is{" "}
+              <strong className="text-surface-300">FSL-1.1</strong> (blocks competing hosted services, auto-converts to Apache-2.0 after 2 years), and all client SDKs are{" "}
+              <strong className="text-surface-300">Apache-2.0</strong> so you can embed them in closed-source apps.
             </p>
           </div>
         </div>
@@ -1598,7 +1597,7 @@ return (
           <p className="mt-6 text-center text-xs text-surface-600">
             Open Source &middot;{" "}
             <Link href="/licensing" className="hover:text-surface-300">
-              AGPL-3.0 core + Apache-2.0 SDKs
+              FSL core + Apache-2.0 SDKs
             </Link>{" "}
             &middot; Local First &middot;{" "}
             <a
