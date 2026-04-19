@@ -1131,27 +1131,27 @@ export default function HomePage() {
                 <div className="h-3 w-3 rounded-full bg-[#28c840]" />
               </div>
               <p className="ml-2 text-xs text-surface-500">
-                yaver push &mdash; send your React Native bundle to a paired device
+                SFMG running on iPhone &mdash; shake to file a task, Claude edits on the Mac, Hermes hot reloads
               </p>
             </div>
             <video
               className="aspect-video w-full bg-black"
-              src="/demo-push.mp4"
+              src={`${VIDEO_CDN}/yaver-hosting-demo-v1/yaver-hosting-demo.mp4`}
               autoPlay
               muted
               loop
               playsInline
               preload="metadata"
             />
-            {/* 231 KB bundled in web/public; the Playwright scene that
-                generated it is at scripts/generate-demo-videos/scenes/
-                video4-push.html — re-run `node generate.mjs --video4` to
-                regenerate from source. */}
+            {/* Hosted on GitHub Release yaver-hosting-demo-v1 (1.9 MB). Raw
+                sources + lite re-encodes + rebuild recipe live in
+                demo-videos/ at the repo root. */}
           </div>
           <p className="mx-auto mt-4 max-w-2xl text-center text-xs text-surface-500">
-            A real iPhone loading a React Native bundle pushed from a paired
-            developer machine &mdash; no rebuild, no app-store round trip.
-            Just <code>yaver push</code>.
+            SFMG &mdash; a real React Native football-manager game &mdash; running
+            on a phone. The user shakes, types a task, and Claude rewrites the
+            splash color on the Mac. Hermes hot reloads the new bundle back to
+            the phone. No rebuild, no app-store round trip.
           </p>
         </div>
       </section>
