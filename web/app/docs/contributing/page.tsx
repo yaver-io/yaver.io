@@ -715,6 +715,83 @@ export default function ContributingPage() {
           </div>
         </section>
 
+        {/* PR policy + security */}
+        <section className="mb-20">
+          <SectionHeading id="pr-policy">
+            PR policy &amp; security
+          </SectionHeading>
+          <Prose>
+            Yaver is a public, open-source repo that also has secrets
+            configured for production deploys (npm, TestFlight, Play Store,
+            Cloudflare, Convex, PyPI). The repo is protected so those
+            secrets never reach a PR author.
+          </Prose>
+
+          <div className="space-y-3">
+            <div className="card">
+              <h4 className="mb-2 text-sm font-medium text-surface-200">
+                What external PRs can and cannot do
+              </h4>
+              <ul className="list-disc space-y-1 pl-6 text-sm text-surface-400">
+                <li>
+                  CI (<InlineCode>ci.yml</InlineCode>) runs on fork PRs with
+                  <strong className="text-surface-200"> no secret access</strong> —
+                  GitHub blocks secret passthrough for
+                  <InlineCode>pull_request</InlineCode> events from forks by default.
+                </li>
+                <li>
+                  Release workflows (<InlineCode>release-*.yml</InlineCode>) only
+                  trigger on <InlineCode>push: tags:</InlineCode>. Forks can&apos;t push
+                  tags to the base repo.
+                </li>
+                <li>
+                  Every deploy job is gated by the <InlineCode>Production</InlineCode>
+                  GitHub Environment with a required reviewer. Even if a tag is pushed,
+                  the deploy job waits for explicit owner approval before running with secrets.
+                </li>
+                <li>
+                  <InlineCode>CODEOWNERS</InlineCode> requires explicit owner review on any PR touching
+                  <InlineCode>.github/</InlineCode>, <InlineCode>scripts/</InlineCode>, auth code, vault
+                  code, TLS code, SDK tokens, or licensing files.
+                </li>
+                <li>
+                  Release tags (<InlineCode>cli/v*</InlineCode>,
+                  <InlineCode> mobile/v*</InlineCode>, <InlineCode>web/v*</InlineCode>,
+                  <InlineCode> installer/v*</InlineCode>, <InlineCode>relay/v*</InlineCode>,
+                  <InlineCode> pi-image/v*</InlineCode>) are protected by a repository ruleset — only
+                  admins can create, update, or delete them.
+                </li>
+              </ul>
+            </div>
+
+            <div className="card">
+              <h4 className="mb-2 text-sm font-medium text-surface-200">
+                Commit sign-off (DCO)
+              </h4>
+              <p className="text-sm text-surface-400">
+                Every commit must carry a <InlineCode>Signed-off-by:</InlineCode> trailer. Use
+                <InlineCode> git commit -s</InlineCode> (or <InlineCode>git rebase --signoff</InlineCode>
+                to retrofit). This certifies the contribution is yours to submit.
+                See <Link href="https://github.com/kivanccakmak/yaver.io/blob/main/CONTRIBUTING.md"
+                className="text-surface-200 underline">CONTRIBUTING.md</Link> for the full clause.
+              </p>
+            </div>
+
+            <div className="card">
+              <h4 className="mb-2 text-sm font-medium text-surface-200">
+                Reporting a security vulnerability
+              </h4>
+              <p className="text-sm text-surface-400">
+                Email <a className="text-surface-200 underline"
+                href="mailto:kivanc.cakmak@simkab.com">kivanc.cakmak@simkab.com</a> — 48-hour
+                acknowledgement, 90-day disclosure window, good-faith safe harbour.
+                Do <strong>not</strong> open a public issue. Full policy in
+                <Link className="text-surface-200 underline" href="https://github.com/kivanccakmak/yaver.io/blob/main/SECURITY.md"> SECURITY.md</Link>.
+              </p>
+            </div>
+          </div>
+        </section>
+
         {/* Bottom CTA */}
         <div className="rounded-xl border border-surface-800 bg-surface-900 p-6 text-center">
           <p className="mb-2 text-sm font-medium text-surface-200">

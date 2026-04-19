@@ -2306,9 +2306,54 @@ CLI Agent ◄──QUIC──────────────── Relay (:
                 </li>
                 <li>
                   &bull; <span className="text-surface-200">Web deploys</span> are manual:
-                  <InlineCode>./scripts/deploy-vercel.sh</InlineCode> (auto-deploy is disabled)
+                  <InlineCode>./scripts/deploy-web.sh</InlineCode> (builds with
+                  <InlineCode>@opennextjs/cloudflare</InlineCode> and pushes via{" "}
+                  <InlineCode>wrangler deploy</InlineCode>; auto-deploy is disabled)
                 </li>
               </ul>
+            </div>
+
+            <div className="card">
+              <h4 className="mb-2 text-sm font-medium text-surface-200">
+                Secrets hardening (public repo)
+              </h4>
+              <p className="mb-3 text-sm text-surface-400">
+                The repo is public, but production secrets (npm, TestFlight, Play Store,
+                Cloudflare, PyPI, Convex) stay out of fork PRs by design. Five layers:
+              </p>
+              <ul className="space-y-1.5 text-sm text-surface-400">
+                <li>
+                  &bull; <span className="text-surface-200">Production environment gate</span> —
+                  every deploy job waits for explicit owner approval before running.
+                </li>
+                <li>
+                  &bull; <span className="text-surface-200">Environment branch/tag allowlist</span> —
+                  only <InlineCode>main</InlineCode> and release tag patterns can deploy.
+                </li>
+                <li>
+                  &bull; <span className="text-surface-200">Tag ruleset</span> —
+                  only admins can create release tags (<InlineCode>cli/v*</InlineCode>,
+                  <InlineCode> mobile/v*</InlineCode>, etc.).
+                </li>
+                <li>
+                  &bull; <span className="text-surface-200"><InlineCode>CODEOWNERS</InlineCode></span> —
+                  PRs touching <InlineCode>.github/</InlineCode>, <InlineCode>scripts/</InlineCode>,
+                  auth / vault / TLS / SDK-token / licensing code need explicit owner review.
+                </li>
+                <li>
+                  &bull; <span className="text-surface-200">Main branch ruleset</span> — no force-push,
+                  no deletion, linear history, signed commits required.
+                </li>
+              </ul>
+              <p className="mt-3 text-sm text-surface-400">
+                Full policy + vulnerability disclosure details in{" "}
+                <Link
+                  href="https://github.com/kivanccakmak/yaver.io/blob/main/SECURITY.md"
+                  className="text-surface-200 underline"
+                >
+                  SECURITY.md
+                </Link>.
+              </p>
             </div>
           </div>
         </section>

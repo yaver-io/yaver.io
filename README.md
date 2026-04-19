@@ -1824,6 +1824,23 @@ Projects and tools in the same problem space. Yaver is compatible with most of t
 - [QUIC (RFC 9000)](https://www.rfc-editor.org/rfc/rfc9000.html) `[Open Standard]` — UDP-based transport protocol
 - [WireGuard](https://www.wireguard.com) `[OSS]` — modern VPN protocol
 
+## Security
+
+- **Reporting a vulnerability:** email `kivanc.cakmak@simkab.com`. 48-hour
+  acknowledgement, 90-day disclosure window, good-faith safe harbour.
+  Do **not** open a public GitHub issue for security bugs.
+  Full policy: [`SECURITY.md`](./SECURITY.md).
+- **Production is protected by a 5-layer defence:** required reviewer on
+  the `Production` environment, branch + tag allowlist on that
+  environment, `main` branch ruleset (no force-push, linear history,
+  signed commits), release-tag ruleset (only admin can create/update),
+  `CODEOWNERS` gating all CI / deploy / auth / vault code, and fork
+  PRs are blocked from reading secrets. See [`SECURITY.md`](./SECURITY.md)
+  §"How production is protected" for the full breakdown.
+- **Contributors:** sign off every commit with `git commit -s` (DCO).
+  Commits on `main` from the repo owner are GPG-signed — unsigned
+  commits by the owner name are a signal to investigate.
+
 ## Legal
 
 - [Privacy Policy](https://yaver.io/privacy)
