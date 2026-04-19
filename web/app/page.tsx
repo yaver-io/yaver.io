@@ -940,15 +940,20 @@ export default function HomePage() {
   const { isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
 
+  // Signed-in users go straight to the dashboard. We redirect from
+  // an effect instead of early-returning a spinner, because
+  // early-returning turns this client page into an SEO black hole:
+  // server-rendered HTML is just a spinner, so Google / Perplexity /
+  // ChatGPT / Claude never see the hero, FAQPage JSON-LD, HowTo
+  // JSON-LD, or any of the AI-search copy. Rendering the landing on
+  // both server and client means signed-in users see a ~200 ms flash
+  // of the landing during auth resolution before the effect fires —
+  // an acceptable trade for real SEO.
   useEffect(() => {
     if (!isLoading && isAuthenticated) {
       router.replace("/dashboard");
     }
   }, [isLoading, isAuthenticated, router]);
-
-  if (isLoading || isAuthenticated) {
-    return <div className="flex min-h-[80vh] items-center justify-center"><div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-600 border-t-emerald-400" /></div>;
-  }
 
 
   const faqLd = {
