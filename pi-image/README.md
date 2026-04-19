@@ -25,6 +25,7 @@ The first-boot service reads that file and configures a systemd timer that updat
 - the Yaver binary
 - apt-managed system/dev packages
 - selected npm/pip tools in the Pi dev-node stack
+- npx-backed cloud/backend CLIs such as Vercel, Convex, and Supabase
 
 Build locally:
 

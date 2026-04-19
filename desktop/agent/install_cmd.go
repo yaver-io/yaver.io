@@ -24,6 +24,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -107,6 +108,91 @@ var integrations = []installPlan{
 			{"curl", "curl -fsSL https://pkg.cloudflare.com/install.sh | sudo bash && sudo apt-get install -y cloudflared"},
 			{"dnf", "sudo dnf install -y cloudflared"},
 			{"pacman", "sudo pacman -S --noconfirm cloudflared"},
+		},
+	},
+	{
+		name:        "sqlite3",
+		description: "SQLite CLI and libraries — local-first app storage, migrations, and quick backend prototypes",
+		macOS:       []string{"brew install sqlite"},
+		linux: []linuxStep{
+			{"apt-get", "sudo apt-get install -y sqlite3 libsqlite3-dev"},
+			{"dnf", "sudo dnf install -y sqlite sqlite-devel"},
+			{"pacman", "sudo pacman -S --noconfirm sqlite"},
+		},
+	},
+	{
+		name:        "vercel",
+		description: "Vercel CLI — deploy web apps and edge backends from the Pi dev node",
+		runFunc:     runVercelInstall,
+	},
+	{
+		name:        "convex",
+		description: "Convex CLI — managed backend workflows and local project setup from the Pi dev node",
+		runFunc:     runConvexInstall,
+	},
+	{
+		name:        "postgresql-client",
+		description: "PostgreSQL client tools — psql, pg_dump, and migration utilities",
+		macOS:       []string{"brew install libpq"},
+		linux: []linuxStep{
+			{"apt-get", "sudo apt-get install -y postgresql-client"},
+			{"dnf", "sudo dnf install -y postgresql"},
+			{"pacman", "sudo pacman -S --noconfirm postgresql-libs postgresql"},
+		},
+	},
+	{
+		name:        "postgresql",
+		description: "PostgreSQL server — local relational backend for promoted phone-born apps",
+		macOS:       []string{"brew install postgresql@16"},
+		linux: []linuxStep{
+			{"apt-get", "sudo apt-get install -y postgresql postgresql-contrib"},
+			{"dnf", "sudo dnf install -y postgresql-server postgresql-contrib"},
+			{"pacman", "sudo pacman -S --noconfirm postgresql"},
+		},
+	},
+	{
+		name:        "redis-tools",
+		description: "Redis CLI tools — inspect and script caches, queues, and pub/sub flows",
+		macOS:       []string{"brew install redis"},
+		linux: []linuxStep{
+			{"apt-get", "sudo apt-get install -y redis-tools"},
+			{"dnf", "sudo dnf install -y redis"},
+			{"pacman", "sudo pacman -S --noconfirm redis"},
+		},
+	},
+	{
+		name:        "redis-server",
+		description: "Redis server — local cache, queue, and event bus for app backends",
+		macOS:       []string{"brew install redis"},
+		linux: []linuxStep{
+			{"apt-get", "sudo apt-get install -y redis-server"},
+			{"dnf", "sudo dnf install -y redis"},
+			{"pacman", "sudo pacman -S --noconfirm redis"},
+		},
+	},
+	{
+		name:        "supabase",
+		description: "Supabase local tooling — npx-backed CLI wrapper for Docker-based local stacks",
+		runFunc:     runSupabaseInstall,
+	},
+	{
+		name:        "mqtt-broker",
+		description: "Mosquitto MQTT broker — lightweight pub/sub for devices, automations, and app events",
+		macOS:       []string{"brew install mosquitto"},
+		linux: []linuxStep{
+			{"apt-get", "sudo apt-get install -y mosquitto"},
+			{"dnf", "sudo dnf install -y mosquitto"},
+			{"pacman", "sudo pacman -S --noconfirm mosquitto"},
+		},
+	},
+	{
+		name:        "mqtt-clients",
+		description: "Mosquitto MQTT client tools — publish/subscribe shells for local event debugging",
+		macOS:       []string{"brew install mosquitto"},
+		linux: []linuxStep{
+			{"apt-get", "sudo apt-get install -y mosquitto-clients"},
+			{"dnf", "sudo dnf install -y mosquitto-clients"},
+			{"pacman", "sudo pacman -S --noconfirm mosquitto"},
 		},
 	},
 	{
@@ -277,8 +363,13 @@ var integrations = []installPlan{
 		runFunc:     runTDDInstall,
 	},
 	{
+		name:        "backend-dev",
+		description: "Local backend stack: sqlite, Vercel, Convex, PostgreSQL, Redis, Supabase, MQTT. Meta-target.",
+		runFunc:     runBackendDevInstall,
+	},
+	{
 		name:        "pi-dev-node",
-		description: "Raspberry Pi / ARM64 headless dev-node profile: base dev tools + mobile runtime + economic hybrid stack + TDD tooling. Meta-target.",
+		description: "Raspberry Pi / ARM64 headless dev-node profile: AI coding stack + TDD + local/cloud backend tooling. Meta-target.",
 		runFunc:     runPiDevNodeInstall,
 	},
 	{
@@ -393,32 +484,49 @@ func checkInstalled(name string) string {
 			}
 		}
 		return "—"
+	case "vercel", "convex", "supabase":
+		if home, err := os.UserHomeDir(); err == nil {
+			if _, err := os.Stat(filepath.Join(home, ".local", "bin", name)); err == nil {
+				return "✓"
+			}
+		}
+		return "—"
 	}
 
 	probe := map[string][]string{
-		"git":         {"git"},
-		"gh":          {"gh"},
-		"uv":          {"uv"},
-		"docker":      {"docker"},
-		"tailscale":   {"tailscale"},
-		"cloudflared": {"cloudflared"},
-		"chrome":      {"google-chrome", "google-chrome-stable", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"},
-		"chromium":    {"chromium", "chromium-browser", "/Applications/Chromium.app/Contents/MacOS/Chromium"},
-		"firefox":     {"firefox", "/Applications/Firefox.app/Contents/MacOS/firefox"},
-		"android-sdk": {"adb"},
-		"appium":      {"appium"},
-		"ollama":      {"ollama"},
-		"aider":       {"aider"},
-		"opencode":    {"opencode"},
-		"hybrid":      {"aider"}, // presence of aider is our cheapest proxy
-		"pre-commit":  {"pre-commit"},
-		"pytest":      {"pytest"},
-		"ruff":        {"ruff"},
-		"vitest":      {"vitest"},
-		"eslint":      {"eslint"},
-		"prettier":    {"prettier"},
-		"tmux":        {"tmux"},
-		"ffmpeg":      {"ffmpeg"},
+		"git":               {"git"},
+		"gh":                {"gh"},
+		"uv":                {"uv"},
+		"docker":            {"docker"},
+		"tailscale":         {"tailscale"},
+		"cloudflared":       {"cloudflared"},
+		"sqlite3":           {"sqlite3"},
+		"vercel":            {"vercel"},
+		"convex":            {"convex"},
+		"postgresql-client": {"psql"},
+		"postgresql":        {"postgres"},
+		"redis-tools":       {"redis-cli"},
+		"redis-server":      {"redis-server"},
+		"supabase":          {"supabase"},
+		"mqtt-broker":       {"mosquitto"},
+		"mqtt-clients":      {"mosquitto_pub", "mosquitto_sub"},
+		"chrome":            {"google-chrome", "google-chrome-stable", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"},
+		"chromium":          {"chromium", "chromium-browser", "/Applications/Chromium.app/Contents/MacOS/Chromium"},
+		"firefox":           {"firefox", "/Applications/Firefox.app/Contents/MacOS/firefox"},
+		"android-sdk":       {"adb"},
+		"appium":            {"appium"},
+		"ollama":            {"ollama"},
+		"aider":             {"aider"},
+		"opencode":          {"opencode"},
+		"hybrid":            {"aider"}, // presence of aider is our cheapest proxy
+		"pre-commit":        {"pre-commit"},
+		"pytest":            {"pytest"},
+		"ruff":              {"ruff"},
+		"vitest":            {"vitest"},
+		"eslint":            {"eslint"},
+		"prettier":          {"prettier"},
+		"tmux":              {"tmux"},
+		"ffmpeg":            {"ffmpeg"},
 	}
 	candidates := probe[name]
 	for _, c := range candidates {
@@ -437,7 +545,8 @@ func checkInstalled(name string) string {
 func compositeInstallSatisfied(name string) bool {
 	required := map[string][]string{
 		"tdd":         {"pre-commit", "pytest", "ruff", "vitest", "eslint", "prettier"},
-		"pi-dev-node": {"git", "gh", "uv", "docker", "mobile", "tmux", "ffmpeg", "ollama", "aider", "opencode", "tdd"},
+		"backend-dev": {"sqlite3", "vercel", "convex", "postgresql-client", "postgresql", "redis-tools", "redis-server", "supabase", "mqtt-broker", "mqtt-clients"},
+		"pi-dev-node": {"git", "gh", "uv", "docker", "mobile", "tmux", "ffmpeg", "ollama", "aider", "opencode", "tdd", "backend-dev"},
 	}
 	targets, ok := required[name]
 	if !ok {
@@ -614,7 +723,7 @@ func integrationsHelpText(name string) string {
 }
 
 func runPiDevNodeInstall(ctx context.Context, progress func(string)) error {
-	planNames := []string{"git", "gh", "uv", "docker", "mobile", "tmux", "ffmpeg", "ollama", "aider", "opencode", "tdd"}
+	planNames := []string{"git", "gh", "uv", "docker", "mobile", "tmux", "ffmpeg", "ollama", "aider", "opencode", "tdd", "backend-dev"}
 	for _, name := range planNames {
 		plan, ok := metaInstallPlan(name)
 		if !ok {
@@ -637,6 +746,33 @@ func runPiDevNodeInstall(ctx context.Context, progress func(string)) error {
 		progress("Pi dev-node base installed.")
 		progress("Optional next steps: `yaver install tailscale`, `yaver install cloudflared`, or `yaver install hybrid` if you want qwen2.5-coder:14b pulled immediately.")
 		progress("Recommended hardware: Raspberry Pi 5, 16 GB RAM, 256 GB storage, active cooling, Ethernet.")
+	}
+	return nil
+}
+
+func runBackendDevInstall(ctx context.Context, progress func(string)) error {
+	planNames := []string{"sqlite3", "vercel", "convex", "postgresql-client", "postgresql", "redis-tools", "redis-server", "supabase", "mqtt-broker", "mqtt-clients"}
+	for _, name := range planNames {
+		plan, ok := metaInstallPlan(name)
+		if !ok {
+			return fmt.Errorf("missing install plan: %s", name)
+		}
+		if progress != nil {
+			progress("==> " + plan.name + " — " + plan.description)
+		}
+		if checkInstalled(plan.name) == "✓" {
+			if progress != nil {
+				progress("already installed, skipping")
+			}
+			continue
+		}
+		if err := runInstallPlan(ctx, plan, progress); err != nil {
+			return fmt.Errorf("%s: %w", plan.name, err)
+		}
+	}
+	if progress != nil {
+		progress("Backend dev stack installed.")
+		progress("Supabase uses Docker and a local npx-backed CLI wrapper; initialize a project with `supabase init` and start it with `supabase start`.")
 	}
 	return nil
 }
@@ -709,6 +845,101 @@ func metaInstallPlan(name string) (installPlan, bool) {
 				{"apt-get", "sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2"},
 				{"dnf", "sudo dnf install -y docker docker-compose-plugin"},
 				{"pacman", "sudo pacman -S --noconfirm docker docker-compose"},
+			},
+		}, true
+	case "sqlite3":
+		return installPlan{
+			name:        "sqlite3",
+			description: "SQLite CLI and libraries — local-first app storage, migrations, and quick backend prototypes",
+			macOS:       []string{"brew install sqlite"},
+			linux: []linuxStep{
+				{"apt-get", "sudo apt-get install -y sqlite3 libsqlite3-dev"},
+				{"dnf", "sudo dnf install -y sqlite sqlite-devel"},
+				{"pacman", "sudo pacman -S --noconfirm sqlite"},
+			},
+		}, true
+	case "vercel":
+		return installPlan{
+			name:        "vercel",
+			description: "Vercel CLI — deploy web apps and edge backends from the Pi dev node",
+			runFunc:     runVercelInstall,
+		}, true
+	case "convex":
+		return installPlan{
+			name:        "convex",
+			description: "Convex CLI — managed backend workflows and local project setup from the Pi dev node",
+			runFunc:     runConvexInstall,
+		}, true
+	case "postgresql-client":
+		return installPlan{
+			name:        "postgresql-client",
+			description: "PostgreSQL client tools — psql, pg_dump, and migration utilities",
+			macOS:       []string{"brew install libpq"},
+			linux: []linuxStep{
+				{"apt-get", "sudo apt-get install -y postgresql-client"},
+				{"dnf", "sudo dnf install -y postgresql"},
+				{"pacman", "sudo pacman -S --noconfirm postgresql-libs postgresql"},
+			},
+		}, true
+	case "postgresql":
+		return installPlan{
+			name:        "postgresql",
+			description: "PostgreSQL server — local relational backend for promoted phone-born apps",
+			macOS:       []string{"brew install postgresql@16"},
+			linux: []linuxStep{
+				{"apt-get", "sudo apt-get install -y postgresql postgresql-contrib"},
+				{"dnf", "sudo dnf install -y postgresql-server postgresql-contrib"},
+				{"pacman", "sudo pacman -S --noconfirm postgresql"},
+			},
+		}, true
+	case "redis-tools":
+		return installPlan{
+			name:        "redis-tools",
+			description: "Redis CLI tools — inspect and script caches, queues, and pub/sub flows",
+			macOS:       []string{"brew install redis"},
+			linux: []linuxStep{
+				{"apt-get", "sudo apt-get install -y redis-tools"},
+				{"dnf", "sudo dnf install -y redis"},
+				{"pacman", "sudo pacman -S --noconfirm redis"},
+			},
+		}, true
+	case "redis-server":
+		return installPlan{
+			name:        "redis-server",
+			description: "Redis server — local cache, queue, and event bus for app backends",
+			macOS:       []string{"brew install redis"},
+			linux: []linuxStep{
+				{"apt-get", "sudo apt-get install -y redis-server"},
+				{"dnf", "sudo dnf install -y redis"},
+				{"pacman", "sudo pacman -S --noconfirm redis"},
+			},
+		}, true
+	case "supabase":
+		return installPlan{
+			name:        "supabase",
+			description: "Supabase local tooling — npx-backed CLI wrapper for Docker-based local stacks",
+			runFunc:     runSupabaseInstall,
+		}, true
+	case "mqtt-broker":
+		return installPlan{
+			name:        "mqtt-broker",
+			description: "Mosquitto MQTT broker — lightweight pub/sub for devices, automations, and app events",
+			macOS:       []string{"brew install mosquitto"},
+			linux: []linuxStep{
+				{"apt-get", "sudo apt-get install -y mosquitto"},
+				{"dnf", "sudo dnf install -y mosquitto"},
+				{"pacman", "sudo pacman -S --noconfirm mosquitto"},
+			},
+		}, true
+	case "mqtt-clients":
+		return installPlan{
+			name:        "mqtt-clients",
+			description: "Mosquitto MQTT client tools — publish/subscribe shells for local event debugging",
+			macOS:       []string{"brew install mosquitto"},
+			linux: []linuxStep{
+				{"apt-get", "sudo apt-get install -y mosquitto-clients"},
+				{"dnf", "sudo dnf install -y mosquitto-clients"},
+				{"pacman", "sudo pacman -S --noconfirm mosquitto"},
 			},
 		}, true
 	case "mobile":
@@ -787,6 +1018,12 @@ func metaInstallPlan(name string) (installPlan, bool) {
 			description: "Core TDD / quality stack: pre-commit, pytest, ruff, vitest, eslint, prettier. Meta-target.",
 			runFunc:     runTDDInstall,
 		}, true
+	case "backend-dev":
+		return installPlan{
+			name:        "backend-dev",
+			description: "Local backend stack: sqlite, Vercel, Convex, PostgreSQL, Redis, Supabase, MQTT. Meta-target.",
+			runFunc:     runBackendDevInstall,
+		}, true
 	case "pre-commit":
 		return installPlan{
 			name:        "pre-commit",
@@ -847,4 +1084,43 @@ func metaInstallPlan(name string) (installPlan, bool) {
 	default:
 		return installPlan{}, false
 	}
+}
+
+func runVercelInstall(ctx context.Context, progress func(string)) error {
+	return installNodeBackedCLI(ctx, "vercel", "vercel", progress)
+}
+
+func runConvexInstall(ctx context.Context, progress func(string)) error {
+	return installNodeBackedCLI(ctx, "convex", "convex", progress)
+}
+
+func runSupabaseInstall(ctx context.Context, progress func(string)) error {
+	return installNodeBackedCLI(ctx, "supabase", "supabase", progress)
+}
+
+func installNodeBackedCLI(ctx context.Context, scriptName, pkgName string, progress func(string)) error {
+	nodeBin, err := installNodeRuntime(ctx, progress)
+	if err != nil {
+		return err
+	}
+	if progress != nil {
+		progress("Using Node runtime: " + nodeBin)
+	}
+	targetDir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	targetDir = filepath.Join(targetDir, ".local", "bin")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return err
+	}
+	targetPath := filepath.Join(targetDir, scriptName)
+	script := fmt.Sprintf("#!/usr/bin/env sh\nset -eu\nPATH=\"%s:$PATH\"\nexec npx -y %s \"$@\"\n", filepath.Dir(nodeBin), pkgName)
+	if err := os.WriteFile(targetPath, []byte(script), 0o755); err != nil {
+		return err
+	}
+	if progress != nil {
+		progress("Installed wrapper: " + targetPath)
+	}
+	return nil
 }

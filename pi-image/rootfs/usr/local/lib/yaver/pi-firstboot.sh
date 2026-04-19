@@ -51,6 +51,7 @@ Useful commands:
   journalctl -u yaver-pi-firstboot.service -f
   journalctl -u yaver-agent.service -f
   systemctl status yaver-pi-auto-update.timer
+  yaver install backend-dev
   yaver install tailscale
   yaver install cloudflared
   yaver install hybrid

@@ -108,15 +108,18 @@ export default function RaspberryPiManual() {
           <div className="overflow-x-auto rounded-xl bg-surface-950 p-4 font-mono text-[12px] text-surface-300">
             <div className="mb-1"><span className="text-surface-500">$</span> curl -fsSL https://yaver.io/install.sh | sh</div>
             <div className="mb-3"><span className="text-surface-500">$</span> yaver install mobile   # pulls Node + hermesc, idempotent</div>
-            <div className="mb-3"><span className="text-surface-500">$</span> yaver install pi-dev-node   # Pi-focused dev-node profile: git, gh, uv, docker, mobile, tmux, ffmpeg, ollama, aider, opencode, TDD stack</div>
+            <div className="mb-3"><span className="text-surface-500">$</span> yaver install pi-dev-node   # Pi-focused dev-node profile: AI stack + TDD + sqlite/vercel/convex/postgres/redis/supabase/mqtt</div>
             <div className="mb-1 text-surface-500"># OR via Docker (multi-arch image, no native install):</div>
             <div><span className="text-surface-500">$</span> docker pull kivanccakmak/yaver-cli:latest</div>
           </div>
           <p className="mt-4 text-sm leading-relaxed text-surface-400">
             The new <code>pi-dev-node</code> profile is the best starting point for a headless
-            Raspberry Pi Yaver box. It installs the base economic-stack tooling plus
-            Python/TypeScript TDD helpers, but leaves premium runner sign-in such as Codex
-            or Claude Code to you. Add <code>yaver install tailscale</code> or{" "}
+            Raspberry Pi Yaver box. It installs the economic AI stack plus
+            Python/TypeScript TDD helpers and the promoted-backend toolchain:
+            <code> sqlite3</code>, <code>vercel</code>, <code>convex</code>,{" "}
+            <code>postgresql</code>, <code>redis</code>, <code>supabase</code>, and{" "}
+            <code>mosquitto</code>. Premium runner sign-in such as Codex or Claude Code is
+            still left to you. Add <code>yaver install tailscale</code> or{" "}
             <code>yaver install cloudflared</code> if you want remote connectivity modules
             after the base node comes up.
           </p>
@@ -124,8 +127,8 @@ export default function RaspberryPiManual() {
             If you use the flashable Pi image instead of a manual install, the boot partition
             includes <code>yaver-firstboot.env</code> with an <code>YAVER_AUTO_UPDATE</code>
             parameter. Supported values are <code>daily</code>, <code>weekly</code>, and{" "}
-            <code>off</code>; first boot converts that into a systemd timer for Yaver and the
-            dev stack.
+            <code>off</code>; first boot converts that into a systemd timer for Yaver, apt
+            packages, and the npx-backed cloud/backend CLIs shipped with the dev stack.
           </p>
         </section>
 
