@@ -357,19 +357,100 @@ Verify all set: `npx convex env list | sort`.
 
 ## 10. What the feature does NOT do yet (known follow-ups)
 
-- Namecheap / Porkbun / Route53 API adapters — the abstraction in
-  `desktop/agent/dns_provider.go` is in place, but only Cloudflare
-  and manual are wired today.
-- Mobile-originated checkout (intentionally off — Apple commission
-  risk). The mobile app surfaces a "finish setup on yaver.io"
-  message instead.
-- Per-user `CLOUD_OWNER_TOKEN` isolation. The managed tenant
-  today uses a single shared secret; moving to per-subscriber
-  tokens is a separate migration.
-- Wildcard TLS (`*.myapp.com`). Current reconciler issues
-  single-name certs via HTTP-01. Wildcards need DNS-01, which
-  means a scoped API token for the user's DNS provider — a
-  separate UX work item on the **Domains** tab.
+### Infrastructure / server-side
 
-These are captured for a future session — none block the first
-paying-customer flow.
+- **Namecheap / Porkbun / Route53 API adapters.** The abstraction in
+  `desktop/agent/dns_provider.go` is in place, but only Cloudflare
+  and manual are wired today. Manual fallback works fine for any
+  registrar (user pastes records by hand); auto-create for these
+  providers is a future polish.
+- **Per-user `CLOUD_OWNER_TOKEN` isolation.** The managed tenant
+  today uses a single shared secret accepted by the agent's
+  own-token fast path; all paying subscribers currently share one
+  auth token. Moving to per-subscriber tokens requires hooking
+  Convex OAuth session validation into the cloud tenant's auth
+  middleware + a token-resolution cache.
+- **Wildcard TLS (`*.myapp.com`).** The reconciler issues single-name
+  certs via HTTP-01. Wildcards need DNS-01, which means a scoped API
+  token for the user's DNS provider — a separate UX work item on the
+  **Domains** tab.
+- **TLS cert renewals.** Certbot's own timer handles renewals on the
+  box (every day, 12h jitter), but nothing reports renewal status
+  back to `userDomains.status`. If a renewal fails silently on the
+  box, the UI still says "active". Fix: extend the reconciler to
+  also run `certbot renew --dry-run` on each tick and POST a
+  health-check result.
+
+### Path-C gap: move an existing local project to Yaver Cloud
+
+- `cloudMachines.provision` now spins up a fully-equipped box, but
+  there's no one-shot "migrate my existing Next.js + Postgres
+  project from my laptop to this box" command. Today a user must:
+  (a) provision the machine via the web, (b) `rsync` their repo to
+  the box, (c) replay env vars, (d) wire a `yaver serve` instance
+  to serve their app, (e) point a custom domain via **Domains**.
+  A `yaver cloud promote <local-project>` CLI would collapse all
+  five steps into one command — target file
+  `desktop/agent/cloud_promote.go` (not yet created).
+
+### Path-A / Path-B UX polish
+
+- **Mobile `includeData` toggle not surfaced.** `pushPhoneProject`
+  accepts `{includeData: true}` but the phone-project detail
+  screen always hard-codes it to `true` — user has no way to push
+  schema-only. Fix: add a toggle to the deploy confirm modal.
+- **Guest users can't receive phone-project pushes**
+  (`/phone/projects/receive` is owner-auth only). The rejection is
+  an opaque HTTP 403. Two options: (1) add "receive" to the guest
+  allowlist gated by an explicit opt-in per guest, or (2) surface a
+  friendlier "you're a guest on this machine, only the host can
+  receive pushes" error in the mobile UI.
+- **No post-deploy onboarding after a successful cloud push.** Right
+  now mobile just shows a toast + link. Missing: a "next steps" card
+  that says "Add a custom domain · Open the web dashboard · Rename
+  this project". Would live in `mobile/app/phone-project/[slug].tsx`
+  near the existing `lastDeploy` render.
+- **`containerize=true` is forced on `yaver-cloud` pushes** in
+  `mobile/src/lib/phoneProjects.ts`, but the cloud tenant doesn't
+  actually consume the Dockerfile in the bundle — it runs the
+  stock `yaver serve`. The flag is dead baggage; remove it OR make
+  the cloud tenant honor it (switch from `yaver serve` to
+  `docker compose up -d` using the bundled scaffold).
+
+### Billing / business logic
+
+- **Mobile-originated checkout stays off** (intentionally — Apple
+  commission risk). The mobile app detects 402 and tells the user
+  to finish setup on the web. This is a policy choice, not a bug,
+  but revisit if Apple's Reader/Enterprise carve-outs apply.
+- **No downgrade / upgrade flow.** `subscription_updated` events are
+  handled as state patches, but there's no UI to change plan tier
+  from inside Yaver — users go back to the LS customer portal.
+- **No usage-based billing.** Flat subscription only. If we ever add
+  "N projects per tier" or "X GB of bundled data" enforcement, the
+  cloud-tenant agent has to count + report usage to Convex.
+
+### Testing / observability gaps
+
+- **No end-to-end test for the provisioning flow** — `cloudMachines.provision`
+  calls real external APIs and has no mock harness. A sandbox test
+  would need a Hetzner test account (they don't offer one) or an
+  HTTP interceptor. Low priority vs. manual smoke-test cycle.
+- **The TLS reconciler logs to `journalctl -u yaver-tls.service`**
+  but nothing surfaces that log to the web dashboard. If certbot
+  fails repeatedly, the user has to SSH in to debug. Fix: stream
+  the last N reconciler lines back via
+  `POST /machine/tls-log` and render in the Domains tab.
+
+### Docs / tooling
+
+- **`cloud/deploy.sh` pulls from `main`**. If you roll out breaking
+  changes to `cloud/` before a new cloud tenant is (re)deployed,
+  old boxes will carry stale behavior. Consider pinning to a tag
+  and bumping on each major cloud change.
+- **No `yaver cloud status` CLI** to inspect the Yaver Cloud tenant
+  health, list paying subscribers, etc. Would be handy for ops.
+
+None of the above block the first paying-customer flow. They are
+captured here so the next time you sit down to push Yaver Cloud
+forward you have a concrete punch list.
