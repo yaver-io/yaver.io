@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { WebView } from "react-native-webview";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient, type MachineInfo } from "../../src/lib/quic";
@@ -29,7 +29,7 @@ import {
   type GuestUsageEntry,
 } from "../../src/lib/guests";
 import { useAuth } from "../../src/context/AuthContext";
-import { fetchPairInfo, submitPair } from "../../src/lib/pairDevice";
+import { fetchPairInfo, submitPair, parsePairUrl } from "../../src/lib/pairDevice";
 import { beaconListener, type DiscoveredDevice } from "../../src/lib/beacon";
 
 const TUTORIALS = [
@@ -2322,6 +2322,14 @@ export default function MoreScreen() {
   const handleSettings = useCallback(() => router.navigate("/(tabs)/settings" as any), [router]);
   const handleTutorials = useCallback(() => setShowTutorials(true), []);
 
+  // Read ?pair=<url> on mount/route-change so a deep-linked pair URL
+  // (handled at the root in _layout.tsx) opens this tab pre-filled.
+  // The search-param contains the full canonical pair URL; we parse
+  // it and apply it via the same applyPairUrl path used by paste.
+  // Never auto-submits — the user always taps the explicit Pair button.
+  const search = useLocalSearchParams<{ pair?: string }>();
+  const pairParam = typeof search.pair === "string" ? search.pair : "";
+
   const openPair = useCallback(() => {
     setPairCode("");
     setPairError(null);
@@ -2359,6 +2367,40 @@ export default function MoreScreen() {
       setPairCode(dev.bootstrapPasskey);
     }
   }, []);
+
+  // applyPairUrl handles a pasted canonical pair URL
+  // (https://yaver.io/pair?sid=…&target=…&code=…). Splits it into the
+  // existing passkey + target fields so the user still hits the same
+  // explicit "Pair" button — never auto-submits a token from a paste.
+  // Returns true when the input was recognised, so the input handler
+  // can short-circuit instead of treating the URL as raw text.
+  const applyPairUrl = useCallback((raw: string): boolean => {
+    const payload = parsePairUrl(raw);
+    if (!payload) return false;
+    if (payload.code) {
+      setPairCode(payload.code.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6));
+    } else if (payload.sid && payload.sid.length <= 6) {
+      // sid==code in Slice A; keep the field correct in case the
+      // URL omitted the explicit code= parameter.
+      setPairCode(payload.sid.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6));
+    }
+    if (payload.target) setPairUrl(payload.target);
+    setPairError(null);
+    setPairSuccess(null);
+    return true;
+  }, []);
+
+  // When the global Linking handler routes a pair URL into this tab
+  // via ?pair=, open the pair modal and apply the URL once. The
+  // router.setParams clear avoids re-opening on re-render.
+  useEffect(() => {
+    if (!pairParam) return;
+    if (applyPairUrl(pairParam)) {
+      setShowPair(true);
+      // Clear the param so navigating away + back doesn't re-trigger.
+      router.setParams({ pair: undefined });
+    }
+  }, [pairParam, applyPairUrl, router]);
 
   const handlePairSubmit = useCallback(async () => {
     if (!token) {
@@ -2960,10 +3002,14 @@ export default function MoreScreen() {
               </View>
             )}
 
-            <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 6 }}>Passkey</Text>
+            <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 6 }}>Passkey (or paste a yaver.io/pair URL)</Text>
             <TextInput
               value={pairCode}
               onChangeText={(t) => {
+                // Detect a pasted canonical pair URL and split it
+                // into both fields. Falls through to normal passkey
+                // entry for plain 6-char input.
+                if (applyPairUrl(t)) return;
                 setPairCode(t.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6));
                 setPairError(null);
                 setPairSuccess(null);
@@ -2977,10 +3023,13 @@ export default function MoreScreen() {
               style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgCard, letterSpacing: 6, fontFamily: "Menlo", textAlign: "center", fontSize: 20, fontWeight: "700" }]}
             />
 
-            <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 6, marginTop: 14 }}>Target URL</Text>
+            <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 6, marginTop: 14 }}>Target URL (or paste a yaver.io/pair URL)</Text>
             <TextInput
               value={pairUrl}
               onChangeText={(t) => {
+                // A pasted canonical pair URL fills both fields; a
+                // plain reachable URL just updates this one.
+                if (applyPairUrl(t)) return;
                 setPairUrl(t);
                 setPairError(null);
                 setPairSuccess(null);

@@ -6,6 +6,7 @@ import { AuthProvider } from "../src/context/AuthContext";
 import { DeviceProvider } from "../src/context/DeviceContext";
 import { ThemeProvider, useTheme } from "../src/context/ThemeContext";
 import { FeedbackOverlay } from "../src/components/FeedbackOverlay";
+import { PairLinkHandler } from "../src/lib/pairLinkHandler";
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -52,6 +53,7 @@ function InnerLayout() {
         }}
       />
       <FeedbackOverlay />
+      <PairLinkHandler />
     </>
   );
 }

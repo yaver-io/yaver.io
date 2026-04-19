@@ -51,6 +51,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mdp/qrterminal/v3"
 )
 
 // pairingSession is the in-memory state while `yaver auth pair`
@@ -190,6 +192,56 @@ func bigPasskey(code string) string {
 	return b.String()
 }
 
+// pairQROptOut returns true when the QR code should be suppressed.
+// QR is a convenience layer — every flow that prints it must also print
+// the plain URL + passkey + reachable hosts, so suppressing the QR
+// never breaks pairing.
+//
+// Suppressed when:
+//   - YAVER_NO_QR=1 (script-friendly opt-out)
+//   - YAVER_QR=0 (alternate spelling some users reach for first)
+//   - stdout is not a TTY (block-art garbage in pipes/log files)
+func pairQROptOut() bool {
+	if envTruthy(os.Getenv("YAVER_NO_QR")) {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("YAVER_QR"))) {
+	case "0", "false", "off", "no":
+		return true
+	}
+	if !isStdoutTTY() {
+		return true
+	}
+	return false
+}
+
+// printPairURLAndQR prints the canonical pair URL and (unless opted
+// out) a terminal QR for it. Always called *after* the existing
+// passkey + reachable-URL block so the additive contract is obvious
+// to readers (QR is extra; passkey + URLs already got them paired).
+//
+// Safe to call with an empty url — prints nothing in that case.
+func printPairURLAndQR(pairURL string) {
+	if strings.TrimSpace(pairURL) == "" {
+		return
+	}
+	fmt.Println("Or scan / open this URL on a phone that's already signed in:")
+	fmt.Println()
+	fmt.Printf("    %s\n", pairURL)
+	fmt.Println()
+	if pairQROptOut() {
+		return
+	}
+	qrterminal.GenerateWithConfig(pairURL, qrterminal.Config{
+		Level:     qrterminal.L,
+		Writer:    os.Stdout,
+		BlackChar: qrterminal.BLACK,
+		WhiteChar: qrterminal.WHITE,
+		QuietZone: 2,
+	})
+	fmt.Println()
+}
+
 // --- HTTP handlers -------------------------------------------------------
 
 // handlePairInfo returns non-sensitive metadata about the
@@ -213,6 +265,59 @@ func (s *HTTPServer) handlePairInfo(w http.ResponseWriter, r *http.Request) {
 		// Never return the code itself — the source already
 		// has it from the QR / manual entry.
 	})
+}
+
+// handlePairSession returns normalized pairing-session metadata for a
+// scanning client (mobile app, web pair page, MCP). Additive over
+// /auth/pair/info — that endpoint stays unchanged so existing callers
+// keep working.
+//
+// Lookup keys (any one accepted, in priority order):
+//   - sid query param (canonical going forward; for Slice A sid==code)
+//   - code query param (back-compat with the manual-passkey flow)
+//   - none (returns the active session if any — same as /info)
+//
+// Response shape is intentionally a superset of /auth/pair/info so a
+// client can use one endpoint instead of two. Never returns the trust
+// secret itself; the scanner already has it (typed in or carried in
+// the URL it scanned).
+func (s *HTTPServer) handlePairSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonError(w, http.StatusMethodNotAllowed, "use GET")
+		return
+	}
+	wantSid := strings.TrimSpace(r.URL.Query().Get("sid"))
+	wantCode := strings.TrimSpace(r.URL.Query().Get("code"))
+	session := activePairingSnapshot()
+	if session == nil {
+		jsonError(w, http.StatusNotFound, "no active pairing session")
+		return
+	}
+	// For Slice A there's exactly one in-memory session and sid==code.
+	// We accept either form so a client built against the future
+	// session-id model works against today's agent.
+	if wantSid != "" && !strings.EqualFold(wantSid, session.Code) {
+		jsonError(w, http.StatusNotFound, "no pairing session matches sid")
+		return
+	}
+	if wantCode != "" && !strings.EqualFold(wantCode, session.Code) {
+		jsonError(w, http.StatusNotFound, "no pairing session matches code")
+		return
+	}
+	resp := map[string]interface{}{
+		"ok":              true,
+		"sessionId":       session.Code,
+		"hostname":        session.Hostname,
+		"expiresAt":       session.ExpiresAt.UTC().Format(time.RFC3339),
+		"canDirectSubmit": true,
+	}
+	// targetUrls help a client that has a sid but not a reachable URL
+	// pick something that works. Same set we hand to the CLI so the
+	// surface is consistent.
+	if urls := candidatePairingURLs(); len(urls) > 0 {
+		resp["targetUrls"] = urls
+	}
+	jsonReply(w, http.StatusOK, resp)
 }
 
 // handlePairSubmit accepts a token submission from the source.
@@ -356,6 +461,12 @@ func runAuthPair(args []string) {
 				label = args[i+1]
 				i++
 			}
+		case "--no-qr":
+			// Per-invocation QR opt-out. Same effect as
+			// YAVER_NO_QR=1 for this process. Useful for the
+			// "I'm pairing over SSH and don't want block-art
+			// in my scrollback" case.
+			_ = os.Setenv("YAVER_NO_QR", "1")
 		}
 	}
 	_ = replace
@@ -411,6 +522,15 @@ func runAuthPair(args []string) {
 		}
 		fmt.Println()
 	}
+	// Additive QR / pair-URL on-ramp. Always after the existing
+	// passkey + reachable-URLs block so the no-regression contract
+	// is obvious — every char above is enough to pair without ever
+	// looking at the URL or QR.
+	pairURL := buildPairURL(session, PairURLOptions{
+		Mode:   "pair",
+		Target: defaultURL,
+	})
+	printPairURLAndQR(pairURL)
 	fmt.Println("Waiting for the source to submit a token…")
 
 	select {

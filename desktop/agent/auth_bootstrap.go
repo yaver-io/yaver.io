@@ -216,6 +216,17 @@ func runBootstrapServe(httpPort int) {
 	fmt.Println("  2. From any already-signed-in machine:")
 	fmt.Printf("       yaver auth send %s http://<this-host-or-ip>:%d\n", session.Code, httpPort)
 	fmt.Println()
+	// Additive QR / pair-URL on-ramp. The LAN beacon + passkey above
+	// already cover every existing flow (mobile beacon detection,
+	// `yaver auth send`); the URL/QR is purely a faster on-ramp.
+	bootstrapTarget := ""
+	if ip := getLocalIP(); ip != "" && ip != "0.0.0.0" {
+		bootstrapTarget = fmt.Sprintf("http://%s:%d", ip, httpPort)
+	}
+	printPairURLAndQR(buildPairURL(session, PairURLOptions{
+		Mode:   "bootstrap",
+		Target: bootstrapTarget,
+	}))
 	fmt.Println("Waiting for a token…")
 	fmt.Println()
 
@@ -225,6 +236,7 @@ func runBootstrapServe(httpPort int) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", bs.handleHealth)
 	mux.HandleFunc("/auth/pair/info", bs.handlePairInfo)
+	mux.HandleFunc("/auth/pair/session", bs.handlePairSession)
 	mux.HandleFunc("/auth/pair/submit", bs.handlePairSubmit)
 	mux.HandleFunc("/auth/pair/encrypted", bs.handlePairEncrypted)
 	// /info is a cheap liveness check the mobile app pings to
@@ -441,6 +453,10 @@ func (bs *bootstrapHTTPServer) handlePairInfo(w http.ResponseWriter, r *http.Req
 	// Reuse the existing handler by wrapping it — it only
 	// touches package-level pairing state, not HTTPServer fields.
 	(&HTTPServer{}).handlePairInfo(w, r)
+}
+
+func (bs *bootstrapHTTPServer) handlePairSession(w http.ResponseWriter, r *http.Request) {
+	(&HTTPServer{}).handlePairSession(w, r)
 }
 
 func (bs *bootstrapHTTPServer) handlePairSubmit(w http.ResponseWriter, r *http.Request) {

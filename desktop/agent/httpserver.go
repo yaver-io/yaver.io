@@ -272,6 +272,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// They still go through the generic rate limiter so brute-
 	// force attempts on the 6-char code are throttled hard.
 	mux.HandleFunc("/auth/pair/info", s.rateLimit(s.handlePairInfo))
+	mux.HandleFunc("/auth/pair/session", s.rateLimit(s.handlePairSession))
 	mux.HandleFunc("/auth/pair/submit", s.rateLimit(s.handlePairSubmit))
 	// Remote-support sessions (TeamViewer-style, in-memory, TTL'd).
 	// Owner-only control plane:

@@ -197,8 +197,11 @@ func runDeviceCodeAuth(convexURL string) (string, error) {
 
 	// QR code stays for humans at real terminals; if stdout is not a TTY
 	// (a bash-tool pipe, a Claude Code call, a log file, …) we skip it so
-	// the agent's chat doesn't fill with block-art garbage.
-	if isStdoutTTY() {
+	// the agent's chat doesn't fill with block-art garbage. The
+	// pairQROptOut helper folds in YAVER_NO_QR=1 so a user can also
+	// suppress every terminal QR explicitly without losing the URL or
+	// code above.
+	if !pairQROptOut() {
 		qrterminal.GenerateWithConfig(authURL, qrterminal.Config{
 			Level:     qrterminal.L,
 			Writer:    os.Stdout,
