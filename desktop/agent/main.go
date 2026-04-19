@@ -31,7 +31,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.96.11"
+const version = "1.96.12"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -5735,7 +5735,14 @@ func execOpen(name string, args ...string) {
 }
 
 func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr *TaskManager, httpServer *HTTPServer) {
-	ticker := time.NewTicker(2 * time.Minute)
+	// 30 s instead of 2 min: a SIGKILL'd / power-cut / wifi-dropped
+	// agent can't call MarkOffline, so the only way Convex (and the
+	// mobile/web clients reading it) notices is via the lastHeartbeat
+	// freshness check on the next query. Tightening to 30 s caps the
+	// "device looks online for ~5 min after a hard crash" UX bug at
+	// ~90 s end-to-end (one missed beat + the 60 s server-side
+	// staleness window). Cheap — it's a single small POST.
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	currentToken := func() string {

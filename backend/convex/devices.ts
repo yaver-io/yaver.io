@@ -5,6 +5,27 @@ import { validateSessionInternal } from "./auth";
 import { listActiveInfraGrantsForGuest, listGrantedDeviceIdsForGrant } from "./access";
 import { recommendPlacement } from "./edgePlacement";
 
+// HEARTBEAT_STALE_MS: how long after the last heartbeat we still
+// trust the device's `isOnline` flag. The agent beats every 30 s,
+// so 90 s is "missed three beats" — far less likely than network
+// jitter. Without this server-side gate, a SIGKILL'd / power-cut /
+// wifi-dropped agent looks online forever (the flag never gets
+// downgraded by the markOffline mutation that the dying process
+// can't run). Mobile / web read this derived value via the listing
+// queries and the device card stops flickering.
+const HEARTBEAT_STALE_MS = 90 * 1000;
+
+/**
+ * deriveIsOnline returns the user-visible online state, reconciling
+ * the explicit isOnline flag with heartbeat freshness. Use this
+ * everywhere a query returns isOnline to clients.
+ */
+function deriveIsOnline(d: { isOnline: boolean; lastHeartbeat: number }): boolean {
+  if (!d.isOnline) return false;
+  const age = Date.now() - d.lastHeartbeat;
+  return age < HEARTBEAT_STALE_MS;
+}
+
 /**
  * Register or update a device for peer discovery.
  * Requires a valid session tokenHash.
@@ -269,7 +290,7 @@ export const listMyDevices = query({
       publicKey: d.publicKey,
       quicHost: d.quicHost,
       quicPort: d.quicPort,
-      isOnline: d.isOnline,
+      isOnline: deriveIsOnline(d),
       needsAuth: d.needsAuth ?? false,
       runnerDown: d.runnerDown ?? false,
       runners: d.runners ?? [],
@@ -316,7 +337,7 @@ export const listMyDevices = query({
           publicKey: d.publicKey,
           quicHost: d.quicHost,
           quicPort: d.quicPort,
-          isOnline: d.isOnline,
+          isOnline: deriveIsOnline(d),
           needsAuth: d.needsAuth ?? false,
           runnerDown: d.runnerDown ?? false,
           runners: d.runners ?? [],
@@ -361,7 +382,7 @@ export const listMyDevices = query({
           publicKey: d.publicKey,
           quicHost: d.quicHost,
           quicPort: d.quicPort,
-          isOnline: d.isOnline,
+          isOnline: deriveIsOnline(d),
           needsAuth: d.needsAuth ?? false,
           runnerDown: d.runnerDown ?? false,
           runners: d.runners ?? [],
@@ -413,7 +434,11 @@ export const recommendTaskPlacement = query({
         deviceId: device.deviceId,
         name: device.name,
         platform: device.platform,
-        isOnline: device.isOnline,
+        // Same staleness gate as listMyDevices — placement decisions
+        // never route work to a device whose last heartbeat is older
+        // than HEARTBEAT_STALE_MS, even if its isOnline flag was
+        // never explicitly cleared.
+        isOnline: deriveIsOnline(device),
         needsAuth: device.needsAuth,
         runnerDown: device.runnerDown,
         deviceClass: device.deviceClass,

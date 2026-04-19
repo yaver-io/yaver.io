@@ -45,6 +45,7 @@ function DeviceCard({
   device,
   isActive,
   authExpired,
+  isStale,
   onSelect,
   onLongPress,
   onRecoverAuth,
@@ -53,6 +54,10 @@ function DeviceCard({
   device: Device;
   isActive: boolean;
   authExpired: boolean;
+  // isStale = Convex still says online but the last connect we tried
+  // failed. Drives the YELLOW badge + the explicit "Try to connect"
+  // button instead of the old green/red flicker.
+  isStale: boolean;
   onSelect: () => void;
   onLongPress: () => void;
   onRecoverAuth: () => Promise<void>;
@@ -66,7 +71,11 @@ function DeviceCard({
   // (without waiting for the /info poll to complete).
   const [needsAuth, setNeedsAuth] = useState<boolean>(device.needsAuth === true);
   const [autoPairing, setAutoPairing] = useState(false);
-  const isOnline = device.online;
+  // Three-state status: green / yellow / gray. The old binary
+  // online|offline missed the "Convex thinks live, we can't reach"
+  // case which flickered between two wrong answers.
+  const isOnline = device.online && !isStale;
+  const isOffline = !device.online;
 
   // Keep state in sync when Convex list refreshes
   useEffect(() => {
@@ -340,9 +349,31 @@ function DeviceCard({
           ) : null}
         </View>
         <View style={styles.cardRight}>
-          <View style={[styles.onlineDot, { backgroundColor: isOnline ? c.success : c.textMuted }]} />
-          <Text style={[styles.lastSeen, { color: c.textMuted }]}>
-            {isOnline ? "online" : "offline"}
+          {/* Explicit three-state status — never flickers between
+              green/red because isStale is sticky until the next
+              successful connect. */}
+          <View
+            style={[
+              styles.onlineDot,
+              {
+                backgroundColor: isOnline
+                  ? c.success
+                  : isStale
+                  ? "#eab308" // yellow — Convex says live, we can't reach
+                  : c.textMuted, // gray — Convex says offline / wiped
+              },
+            ]}
+          />
+          <Text
+            style={[
+              styles.lastSeen,
+              {
+                color: isOnline ? c.success : isStale ? "#eab308" : c.textMuted,
+                fontWeight: "600",
+              },
+            ]}
+          >
+            {isOnline ? "online" : isStale ? "stale" : "offline"}
           </Text>
           {device.lastSeen > 0 && (
             <Text style={[styles.lastSeen, { color: c.textMuted, marginTop: 2 }]}>
@@ -450,8 +481,30 @@ function DeviceCard({
               pingState.ok === false ? "unreachable" : "ping"}
           </Text>
         </Pressable>
-        {!isOnline && (
+        {/* Stale state — Convex says live but we just failed to
+            reach it. Most actionable: try again. The user almost
+            never wants Wake here (the machine is "live" per
+            Convex), so we hide those entries to keep the action
+            row honest. */}
+        {isStale && (
+          <Pressable
+            style={[styles.pingBtn, { backgroundColor: "#eab30822", borderWidth: 1, borderColor: "#eab30866" }]}
+            onPress={onSelect}
+          >
+            <Text style={[styles.pingBtnText, { color: "#eab308", fontWeight: "700" }]}>Try to connect</Text>
+          </Pressable>
+        )}
+        {/* Offline state — Convex agrees the machine isn't reachable.
+            Useful actions: WoL the box, or get docs to make it
+            always-on so it doesn't disappear next time. */}
+        {isOffline && (
           <>
+            <Pressable
+              style={[styles.pingBtn, { backgroundColor: c.accent + "22", borderWidth: 1, borderColor: c.accent + "55" }]}
+              onPress={onSelect}
+            >
+              <Text style={[styles.pingBtnText, { color: c.accent, fontWeight: "700" }]}>Try to connect</Text>
+            </Pressable>
             <Pressable
               style={[styles.pingBtn, { backgroundColor: "#f59e0b18" }]}
               onPress={() => Alert.alert(
@@ -624,6 +677,7 @@ export default function DevicesScreen() {
     detachDevice,
     removeDevice,
     acceptGuestByCode,
+    unreachableDeviceIds,
   } = useDevice();
 
   const [guestCode, setGuestCode] = useState("");
@@ -803,6 +857,7 @@ export default function DevicesScreen() {
             <DeviceCard
               device={item}
               isActive={activeDevice?.id === item.id}
+              isStale={unreachableDeviceIds.includes(item.id)}
               onSelect={() => selectDevice(item)}
               authExpired={activeDevice?.id === item.id && connectionStatus === "connected" && agentAuthExpired}
               onLongPress={() => {

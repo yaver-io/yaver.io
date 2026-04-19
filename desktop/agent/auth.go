@@ -943,7 +943,16 @@ func FetchUserSettings(baseURL, token string) (*UserSettings, error) {
 	return &result.Settings, nil
 }
 
-// MarkOffline tells the backend this device is going offline.
+// shutdownConvexClient is a tight-timeout client for shutdown-path
+// notifications. The default httpClient has multi-minute timeouts;
+// we don't want a slow Convex to delay process exit by more than a
+// couple of seconds. Mobile/web see correct status via the 30 s
+// heartbeat freshness gate even if this best-effort call drops.
+var shutdownConvexClient = &http.Client{Timeout: 5 * time.Second}
+
+// MarkOffline tells the backend this device is going offline. Used
+// for graceful step-down — the device record stays, just isOnline
+// flips. Caller can come back online by re-starting the agent.
 func MarkOffline(baseURL, token, deviceID string) error {
 	payload := map[string]string{"deviceId": deviceID}
 	body, err := json.Marshal(payload)
@@ -956,11 +965,41 @@ func MarkOffline(baseURL, token, deviceID string) error {
 		return fmt.Errorf("create offline request: %w", err)
 	}
 
-	resp, err := httpClient.Do(req)
+	resp, err := shutdownConvexClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("offline request: %w", err)
 	}
 	defer resp.Body.Close()
 
+	return nil
+}
+
+// RemoveDeviceShutdown is RemoveDevice's tight-timeout twin for the
+// `yaver clean --including-auth` and npm preuninstall paths. The
+// regular RemoveDevice uses httpClient (multi-minute default) which
+// would hang process exit if Convex is slow; this one bounds at 5 s
+// and logs-only on failure. Mobile / web see the device disappear
+// either way thanks to the heartbeat freshness gate.
+func RemoveDeviceShutdown(baseURL, token, deviceID string) error {
+	payload := map[string]string{"deviceId": deviceID}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal remove: %w", err)
+	}
+
+	req, err := newBearerRequest("POST", baseURL+"/devices/remove", token, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create remove request: %w", err)
+	}
+
+	resp, err := shutdownConvexClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("remove request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("remove request returned HTTP %d", resp.StatusCode)
+	}
 	return nil
 }

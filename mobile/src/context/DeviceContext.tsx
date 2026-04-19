@@ -72,7 +72,12 @@ const BUILD_NUMBER =
   "unknown";
 
 // Heartbeat is sent every 2 minutes; consider "recently active" if within 5 min
-const HEARTBEAT_STALE_MS = 5 * 60 * 1000;
+// Mirror the backend's HEARTBEAT_STALE_MS (backend/convex/devices.ts).
+// Agent beats every 30 s, so 90 s = "missed three beats, definitely
+// gone". Without this aggressive gate a SIGKILL'd / power-cut /
+// wifi-dropped agent looks online for up to 5 minutes — long enough
+// for the user to tap, fail, see "Failed", and lose trust.
+const HEARTBEAT_STALE_MS = 90 * 1000;
 
 export interface RunnerInfo {
   taskId: string;
@@ -620,6 +625,13 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         setAgentAuthExpired(false);
         // Keep activeDevice so Retry button works — don't null it
         setLastError(errMsg);
+        // Mark this specific device as confirmed-unreachable. The UI
+        // consumes unreachableSet to show a stable "STALE / OFFLINE"
+        // badge with an explicit retry, instead of flickering between
+        // "online" (Convex says so) and "failed" (we just tried).
+        // Cleared automatically when a future connect succeeds via
+        // clearDeviceUnreachable, or when the user explicitly retries.
+        markDeviceUnreachable(device.id);
       }
     },
     [token]

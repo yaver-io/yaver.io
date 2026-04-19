@@ -1223,7 +1223,12 @@ export default function TasksScreen() {
           <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
             <View style={[s.dot, { backgroundColor: banner.dot }]} />
             <Text style={[s.bannerText, { color: banner.text, flexShrink: 1 }]} numberOfLines={1}>
-              {lastError && connectionStatus === "error" ? lastError : banner.label}
+              {/* Never surface raw transport errors here — they read
+                  as "the product is broken" even when a single retry
+                  would fix it. The banner stays at "Disconnected"
+                  level and the unified Not-connected list below
+                  shows the per-device options. */}
+              {banner.label}
               {isEffectivelyConnected ? modeLabel : ""}
               {activeDevice ? ` \u00b7 ${activeDevice.name}` : ""}
             </Text>
@@ -1498,80 +1503,11 @@ export default function TasksScreen() {
                   )}
                 </Pressable>
               </View>
-            ) : userDisconnected && devices.length >= 1 ? (
-              <View style={s.emptyList}>
-                <View style={[s.reconnectCard, { backgroundColor: c.bgCard, borderColor: c.border }]}>
-                  <Text style={[s.reconnectIcon, { color: c.textMuted }]}>{"\u23FB"}</Text>
-                  <Text style={[s.emptyTitle, { color: c.textPrimary }]}>Disconnected</Text>
-                  <Text style={[s.emptySubtitle, { color: c.textSecondary, marginTop: 8 }]}>
-                    Your last session
-                  </Text>
-
-                  <Pressable
-                    style={[s.reconnectDeviceCard, { backgroundColor: c.bg, borderColor: c.border }]}
-                    onPress={() => !isReconnecting && handleReconnect(devices[0])}
-                    disabled={isReconnecting}
-                  >
-                    <View style={s.reconnectDeviceRow}>
-                      <View style={s.reconnectDeviceInfo}>
-                        <Text style={[s.reconnectDeviceName, { color: c.textPrimary }]}>{devices[0].name}</Text>
-                        <Text style={[s.reconnectDeviceMeta, { color: c.textMuted }]}>
-                          {devices[0].os} · {devices[0].host}
-                          {devices[0].deviceClass === "edge-mobile" ? " · mobile worker" : ""}
-                        </Text>
-                      </View>
-                      <View style={[s.reconnectDeviceStatus, { backgroundColor: devices[0].online ? "#22c55e22" : "#a1a1aa22" }]}>
-                        <View style={[s.reconnectStatusDot, { backgroundColor: devices[0].online ? "#22c55e" : "#a1a1aa" }]} />
-                        <Text style={[s.reconnectStatusText, { color: devices[0].online ? "#22c55e" : "#a1a1aa" }]}>
-                          {devices[0].online ? "Online" : "Offline"}
-                        </Text>
-                      </View>
-                    </View>
-                  </Pressable>
-
-                  {reconnectError && (
-                    <Text style={[s.reconnectError, { color: "#ef4444" }]}>{reconnectError}</Text>
-                  )}
-
-                  <Pressable
-                    style={[s.reconnectBtn, { backgroundColor: c.accent }, isReconnecting && s.submitButtonDisabled]}
-                    onPress={() => handleReconnect(devices[0])}
-                    disabled={isReconnecting}
-                  >
-                    {isReconnecting ? (
-                      <View style={s.reconnectBtnRow}>
-                        <ActivityIndicator size="small" color="#fff" />
-                        <Text style={s.reconnectBtnText}>Reconnecting...</Text>
-                      </View>
-                    ) : (
-                      <Text style={s.reconnectBtnText}>Reconnect</Text>
-                    )}
-                  </Pressable>
-                </View>
-              </View>
-            ) : connectionStatus === "error" && lastError ? (
-              <View style={s.emptyList}>
-                <Text style={[s.emptyIcon, { color: "#ef4444" }]}>!</Text>
-                <Text style={[s.emptyTitle, { color: c.textPrimary }]}>Connection Failed</Text>
-                <Text style={[s.emptySubtitle, { color: c.textSecondary }]}>
-                  {lastError}
-                </Text>
-                <View style={s.errorActions}>
-                  <Pressable
-                    style={[s.inlineConnectBtn, { backgroundColor: c.accent }]}
-                    onPress={() => { if (devices.length === 1) selectDevice(devices[0]); }}
-                  >
-                    <Text style={s.inlineConnectText}>Retry</Text>
-                  </Pressable>
-                  <Pressable
-                    style={[s.inlineConnectBtn, { backgroundColor: c.bgCardElevated || "#222", marginLeft: 10 }]}
-                    onPress={() => setShowLogs(true)}
-                  >
-                    <Text style={[s.inlineConnectText, { color: c.textSecondary }]}>View Logs</Text>
-                  </Pressable>
-                </View>
-              </View>
             ) : devices.length === 1 && connectionStatus === "connecting" ? (
+              // Single-device fast path: show a calm spinner instead
+              // of the device picker we'd otherwise render. Still no
+              // "Failed" surface — if the connect dies we fall
+              // through to the unified Not-connected list below.
               <View style={s.emptyList}>
                 <ActivityIndicator size="large" color={c.accent} />
                 <Text style={[s.emptyTitle, { color: c.textPrimary, marginTop: 16 }]}>Connecting...</Text>
@@ -1579,35 +1515,76 @@ export default function TasksScreen() {
                   {devices[0].name}
                 </Text>
               </View>
-            ) : devices.length >= 1 && !activeDevice ? (
+            ) : devices.length >= 1 ? (
+              // Unified "Not connected" view. Used in three cases:
+              //   (a) user disconnected explicitly (was: "Disconnected /
+              //       Your last session" card with the first device only)
+              //   (b) connect attempt failed (was: red "Connection
+              //       Failed" panel with raw error message)
+              //   (c) plain "no active device" with multiple options
+              // We never surface raw errors here — the user said the
+              // product reads as "failing/buggy" when we do. Instead
+              // every known device gets a row with an explicit status
+              // pill (online / stale / offline) and tap-to-retry.
               <View style={s.emptyList}>
-                <Text style={[s.emptyIcon, { color: c.textMuted }]}>{"\u2630"}</Text>
-                <Text style={[s.emptyTitle, { color: c.textPrimary }]}>
-                  {devices.length} {devices.length === 1 ? "Device" : "Devices"} Available
-                </Text>
+                <Text style={[s.emptyIcon, { color: c.textMuted }]}>{"\u23FB"}</Text>
+                <Text style={[s.emptyTitle, { color: c.textPrimary }]}>Not connected</Text>
                 <Text style={[s.emptySubtitle, { color: c.textSecondary, marginBottom: 16 }]}>
-                  Which device do you want to connect to?
+                  {devices.length === 1
+                    ? "Tap the device below to connect."
+                    : `Pick one of your ${devices.length} devices.`}
                 </Text>
                 {devices.map((d) => {
                   const unreachable = unreachableSet.has(d.id);
+                  // Three-state status mirroring the Devices tab so the
+                  // user gets the same vocabulary everywhere: green
+                  // online, yellow stale (Convex says live, last connect
+                  // failed), gray offline.
+                  const statusText = d.online && !unreachable ? "Online" : unreachable && d.online ? "Stale" : "Offline";
+                  const statusColor = d.online && !unreachable ? "#22c55e" : unreachable && d.online ? "#eab308" : "#a1a1aa";
+                  const isRetrying = isReconnecting && activeDevice?.id === d.id;
                   return (
                     <Pressable
                       key={d.id}
-                      style={[s.devicePickerCard, { backgroundColor: c.bgCard, borderColor: unreachable ? "#ef4444" : c.border }]}
-                      onPress={() => selectDevice(d)}
+                      style={[s.devicePickerCard, {
+                        backgroundColor: c.bgCard,
+                        borderColor: unreachable && d.online ? "#eab30866" : c.border,
+                        // Wider cards per user feedback on the
+                        // disconnected screen — the old single-line
+                        // "last session" card didn't give enough room
+                        // for status + meta + action affordance.
+                        paddingVertical: 14,
+                      }]}
+                      onPress={() => !isRetrying && handleReconnect(d)}
+                      disabled={isRetrying}
                     >
                       <View style={s.devicePickerRow}>
-                        <View>
+                        <View style={{ flex: 1 }}>
                           <Text style={[s.devicePickerName, { color: c.textPrimary }]}>{d.name}</Text>
-                          <Text style={[s.devicePickerMeta, { color: c.textMuted }]}>{d.os} · {d.host}</Text>
-                          {d.deviceClass === "edge-mobile" && (
-                            <Text style={[s.devicePickerMeta, { color: c.accent, marginTop: 2 }]}>Mobile worker</Text>
+                          <Text style={[s.devicePickerMeta, { color: c.textMuted }]}>
+                            {d.os} · {d.host}
+                            {d.deviceClass === "edge-mobile" ? " · mobile worker" : ""}
+                          </Text>
+                          {unreachable && d.online && (
+                            <Text style={[s.devicePickerMeta, { color: "#eab308", marginTop: 2 }]}>
+                              Last connect failed — tap to try again
+                            </Text>
                           )}
-                          {unreachable && (
-                            <Text style={[s.devicePickerMeta, { color: "#f87171", marginTop: 2 }]}>Not reachable · tap to retry</Text>
+                          {!d.online && (
+                            <Text style={[s.devicePickerMeta, { color: c.textMuted, marginTop: 2 }]}>
+                              No recent heartbeat. Power on and run yaver serve.
+                            </Text>
                           )}
                         </View>
-                        <View style={[s.devicePickerDot, { backgroundColor: unreachable ? "#ef4444" : d.online ? c.success || "#22c55e" : c.textMuted }]} />
+                        <View style={{ alignItems: "flex-end" }}>
+                          <View style={[s.reconnectDeviceStatus, { backgroundColor: statusColor + "22" }]}>
+                            <View style={[s.reconnectStatusDot, { backgroundColor: statusColor }]} />
+                            <Text style={[s.reconnectStatusText, { color: statusColor }]}>{statusText}</Text>
+                          </View>
+                          {isRetrying ? (
+                            <ActivityIndicator size="small" color={c.accent} style={{ marginTop: 8 }} />
+                          ) : null}
+                        </View>
                       </View>
                     </Pressable>
                   );

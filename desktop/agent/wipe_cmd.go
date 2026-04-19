@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // wipeTargets maps the CLI name → relative paths under ~/.yaver to
@@ -170,6 +171,13 @@ func runWipe(args []string) {
 		}
 	}
 
+	// Tell Convex about the wipe BEFORE touching disk so mobile / web
+	// see the correct status immediately instead of waiting for the
+	// 90 s heartbeat-staleness window. Best-effort — never aborts the
+	// local wipe on network failure (heartbeat freshness is the
+	// safety net).
+	notifyConvexOfWipe(includingAuth)
+
 	// Defensive: refuse to ever delete anything outside ~/.yaver.
 	for _, v := range existing {
 		if !strings.HasPrefix(v+string(os.PathSeparator), base+string(os.PathSeparator)) &&
@@ -186,6 +194,52 @@ func runWipe(args []string) {
 	fmt.Printf("Wiped %d path(s).\n", len(existing))
 	if includingAuth {
 		fmt.Println("Run `yaver auth` to sign in again.")
+	}
+}
+
+// notifyConvexOfWipe pings the backend so mobile / web stop showing
+// this device as live the moment a `yaver wipe` runs. Two modes:
+//
+//   - includingAuth=false → MarkOffline. The device record stays
+//     (so a re-`yaver serve` brings it back without re-pairing); we
+//     only flip the isOnline flag.
+//   - includingAuth=true → RemoveDeviceShutdown. The device record
+//     is deleted entirely, so the user sees it disappear from their
+//     device list. They'll need to re-auth + re-register to come back.
+//
+// Also stops any running yaver agent first so its in-memory
+// heartbeat loop doesn't immediately re-register the device after
+// we just told Convex it's gone.
+//
+// Best-effort everywhere: failures are logged, never fatal. Mobile
+// / web still see correct state via the 90 s heartbeat-freshness
+// gate even if every call here drops.
+func notifyConvexOfWipe(includingAuth bool) {
+	cfg, _ := LoadConfig()
+	if cfg == nil || cfg.AuthToken == "" || cfg.DeviceID == "" || cfg.ConvexSiteURL == "" {
+		return
+	}
+
+	// Stop any running agent first. Otherwise its 30 s heartbeat
+	// loop will re-create the device record we just deleted, or flip
+	// isOnline back to true a few seconds after we marked it offline.
+	if pid, running := isAgentRunning(); running {
+		if proc, err := os.FindProcess(pid); err == nil {
+			terminateProcess(proc)
+			// Give it a moment to flush its own MarkOffline before
+			// we call ours — best-effort, non-blocking.
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+
+	if includingAuth {
+		if err := RemoveDeviceShutdown(cfg.ConvexSiteURL, cfg.AuthToken, cfg.DeviceID); err != nil {
+			fmt.Fprintf(os.Stderr, "wipe: device removal notification failed (mobile/web will catch up via heartbeat staleness): %v\n", err)
+		}
+		return
+	}
+	if err := MarkOffline(cfg.ConvexSiteURL, cfg.AuthToken, cfg.DeviceID); err != nil {
+		fmt.Fprintf(os.Stderr, "wipe: offline notification failed (mobile/web will catch up via heartbeat staleness): %v\n", err)
 	}
 }
 
