@@ -1,6 +1,6 @@
 {
   "name": "yaver-feedback-web",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Visual feedback SDK for web apps — screen recording, voice annotations, and local-first developer workflows through Yaver",
   "main": "src/index.ts",
   "types": "src/index.ts",
