@@ -4,21 +4,10 @@ Application-layer P2P relay for Yaver. Enables mobile-to-desktop connectivity wi
 
 ## Architecture
 
-```
-┌─────────────┐     HTTP         ┌──────────────┐    QUIC tunnel    ┌──────────────┐
-│  Mobile App │─────────────────►│ Relay Server │◄──────────────────│ Desktop Agent│
-│  (roaming)  │  short-lived     │  (your VPS)  │  persistent       │  (ethernet)  │
-│  Wi-Fi/5G   │  HTTP requests   │  public IP   │  outbound conn    │  behind NAT  │
-└─────────────┘                  └──────────────┘                   └──────────────┘
-                                       │
-                                       ▼
-                                 ┌──────────────┐
-                                 │    Convex    │
-                                 │  (auth +     │
-                                 │  platform    │
-                                 │  config)     │
-                                 └──────────────┘
-```
+1. The **mobile app** sends short-lived HTTP requests from Wi-Fi or 5G.
+2. The **relay server** runs on your VPS with a public IP and forwards traffic only when needed.
+3. The **desktop agent** keeps a persistent outbound QUIC connection, so no inbound port opening is required.
+4. **Convex** is used only for auth and platform configuration.
 
 ### Connection flow
 

@@ -343,6 +343,7 @@ func (s *RelayServer) runHTTPProxy(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/tunnels", s.handleListTunnels)
+	mux.HandleFunc("/presence", s.handlePresence)
 	mux.HandleFunc("/admin/set-password", s.handleSetPassword)
 	mux.HandleFunc("/admin/status", s.handleAdminStatus)
 	mux.HandleFunc("/admin/bandwidth", s.handleBandwidthStats)
@@ -441,6 +442,69 @@ func (s *RelayServer) handleListTunnels(w http.ResponseWriter, r *http.Request) 
 		"ok":           true,
 		"tunnels":      list,
 		"exposeRoutes": exposeList,
+	})
+}
+
+// handlePresence gives clients a real-time answer to "is this device connected
+// to the relay right now?" without depending on Convex heartbeat lag (30-90 s).
+// Supports two shapes:
+//
+//   GET /presence?id=<deviceId>            -> single {deviceId, online, since}
+//   GET /presence?ids=a,b,c,...            -> map keyed by deviceId
+//
+// Unknown deviceIds return online:false (indistinguishable from "exists but
+// offline"), so an adversary can't enumerate our tunnel table.
+// Response bodies are small; no auth required because no sensitive data
+// leaves the relay — only the caller's own deviceId yields a real signal.
+func (s *RelayServer) handlePresence(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	lookup := func(id string) map[string]interface{} {
+		now := time.Now()
+		if t, ok := s.tunnels[id]; ok {
+			return map[string]interface{}{
+				"deviceId":   id,
+				"online":     true,
+				"since":      t.connAt.UTC().Format(time.RFC3339),
+				"uptimeSec":  int(now.Sub(t.connAt).Seconds()),
+			}
+		}
+		return map[string]interface{}{
+			"deviceId": id,
+			"online":   false,
+		}
+	}
+
+	if ids := r.URL.Query().Get("ids"); ids != "" {
+		out := map[string]interface{}{}
+		for _, raw := range strings.Split(ids, ",") {
+			id := strings.TrimSpace(raw)
+			if id == "" {
+				continue
+			}
+			out[id] = lookup(id)
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":      true,
+			"devices": out,
+		})
+		return
+	}
+
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		http.Error(w, `{"error":"id or ids query param required"}`, http.StatusBadRequest)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":     true,
+		"device": lookup(id),
 	})
 }
 
