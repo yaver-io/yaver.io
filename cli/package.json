@@ -1,6 +1,6 @@
 {
   "name": "yaver-cli",
-  "version": "1.99.2",
+  "version": "1.99.3",
   "mcpName": "io.github.kivanccakmak/yaver",
   "description": "Unified npm bootstrap for the Yaver agent, SDK injection, and local-first developer runtime",
   "bin": {
@@ -38,6 +38,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "semver": "^7.6.0"
+    "semver": "^7.6.0",
+    "yaver-mobile-headless": "^0.1.0"
   }
 }
