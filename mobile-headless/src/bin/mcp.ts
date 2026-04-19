@@ -19,6 +19,7 @@ const mobile = new MobileClient({
   convexUrl: process.env.YMH_CONVEX_URL,
   authToken: process.env.YMH_AUTH_TOKEN,
   platform: (process.env.YMH_PLATFORM as any) || undefined,
+  agentBaseUrl: process.env.YMH_AGENT_URL,
 });
 
 const server = new Server(

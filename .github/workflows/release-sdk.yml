@@ -35,6 +35,11 @@ on:
         required: false
         type: boolean
         default: true
+      publish_mobile_headless:
+        description: "Publish npm package yaver-mobile-headless"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -168,6 +173,40 @@ jobs:
         run: |
           cd sdk/feedback/web
           npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-mobile-headless:
+    if: ${{ github.event_name == 'release' || inputs.publish_mobile_headless }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install deps
+        working-directory: mobile-headless
+        run: bun install
+
+      - name: Typecheck + tests
+        working-directory: mobile-headless
+        run: |
+          bun run typecheck
+          bun test test/hermetic.test.ts test/drift.test.ts test/mcp.test.ts
+
+      - name: Publish yaver-mobile-headless to npm
+        working-directory: mobile-headless
+        # `npm publish` runs the prepublishOnly script which calls
+        # `bun run build` — produces dist/cli.js, dist/mcp.js,
+        # dist/mobile-client.js with a Node-friendly shebang.
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

@@ -36,7 +36,7 @@ export class MobileClient {
       platform: opts.platform ?? "ios",
       deviceName: opts.deviceName ?? "mobile-headless",
     };
-    this.agentBaseUrl = opts.agentBaseUrl;
+    this.agentBaseUrl = opts.agentBaseUrl ?? process.env.YMH_AGENT_URL;
   }
 
   // ── Auth ──────────────────────────────────────────────────────

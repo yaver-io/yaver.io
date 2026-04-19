@@ -66,15 +66,21 @@ jobs:
             curl -fsS http://127.0.0.1:18080/health && break
           done
           cat /tmp/agent.log | head -50
-      - name: Smoke — install-list + raw-get /info
+      - name: Run smoke tests against live agent
+        working-directory: mobile-headless
+        env:
+          YMH_DATA_DIR: /tmp/ymh-ci
+          YMH_SMOKE_AGENT_URL: http://127.0.0.1:18080
+          YMH_SMOKE_AGENT_TOKEN: ci-smoke-token
+        run: |
+          mkdir -p "$YMH_DATA_DIR"
+          bun test test/smoke-local.test.ts
+      - name: CLI spot-check
         working-directory: mobile-headless
         env:
           YMH_DATA_DIR: /tmp/ymh-ci
         run: |
-          mkdir -p "$YMH_DATA_DIR"
-          echo "--- /install/list"
-          bun run src/bin/cli.ts install-list --token=ci-smoke-token | head -40 || true
-          echo "--- /info"
+          bun run src/bin/cli.ts install-list --token=ci-smoke-token | head -20 || true
           bun run src/bin/cli.ts raw-get /info --token=ci-smoke-token | head -20 || true
       - name: Stop agent
         if: always()
