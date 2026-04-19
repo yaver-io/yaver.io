@@ -16,11 +16,16 @@ Manual fallback:
 npm install yaver-feedback-react-native
 ```
 
+> **Mobile only.** This SDK targets React Native (iOS + Android). A `yaver-feedback-web` package exists for browser apps but currently expects a bring-your-own auth token — the equivalent in-app sign-in UX (Apple / Google / GitHub / GitLab / Microsoft / email) for the web SDK will land in a future release. Open an issue if you need it sooner.
+
 ### Peer dependencies
 
-For full functionality, install these optional peer dependencies:
+For full functionality, install these peer dependencies:
 
 ```bash
+# Auth (in-app browser OAuth + native Apple Sign-In)
+npm install expo-web-browser expo-apple-authentication
+
 # Device discovery (stored connections)
 npm install @react-native-async-storage/async-storage
 
@@ -31,11 +36,28 @@ npm install react-native-view-shot
 npm install react-native-audio-recorder-player
 ```
 
-## Quick Start (0.5+: zero-config auth)
+`expo-apple-authentication` is optional — if it's missing, "Continue with Apple" falls through to in-app browser OAuth on Android. iOS hosts that want true native Apple Sign-In must also enable the **Sign in with Apple** capability in Xcode.
 
-Starting with **0.5.0**, the SDK ships its own login screen + remote machine picker. Drop in `<FeedbackModal />` and the first time a user triggers feedback without a cached session, they get:
+Android hosts must register the OAuth callback in `AndroidManifest.xml`:
 
-1. A full-screen login modal — Apple / Google / GitHub / GitLab / Microsoft via [device-code flow](https://yaver.io/auth/device), or inline email + password.
+```xml
+<intent-filter>
+  <action android:name="android.intent.action.VIEW" />
+  <category android:name="android.intent.category.DEFAULT" />
+  <category android:name="android.intent.category.BROWSABLE" />
+  <data android:scheme="yaver" android:host="oauth-callback" />
+</intent-filter>
+```
+
+iOS does not require any URL scheme registration — `ASWebAuthenticationSession` intercepts the redirect inside the auth session.
+
+## Quick Start (0.6+: native auth)
+
+Starting with **0.6.0**, the SDK login screen mirrors the Yaver mobile app: native Apple Sign-In on iOS, in-app browser OAuth for Google / GitHub / GitLab / Microsoft (no codes, no leaving the app), and inline email + password. The user never sees a verification code or has to switch to a web browser.
+
+Drop in `<FeedbackModal />` and the first time a user triggers feedback without a cached session, they get:
+
+1. A full-screen login modal — Apple (native) / Google / GitHub / GitLab / Microsoft (in-app browser) / email + password (inline).
 2. A picker of the machines they can reach — **their own dev boxes** plus **guest-shared machines** (where another user invited them).
 
 Both screens persist their selection to `AsyncStorage`, so subsequent launches reconnect silently.

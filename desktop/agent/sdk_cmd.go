@@ -183,17 +183,18 @@ func buildFeedbackInstallPlan(dir, platform string) (*sdkInstallPlan, error) {
 		}, nil
 	case "web":
 		pm := detectPackageManager(dir)
-		cmd, args := jsInstallCommand(pm, "@yaver/feedback-web")
+		cmd, args := jsInstallCommand(pm, "yaver-feedback-web")
 		return &sdkInstallPlan{
 			Family:         "feedback",
 			Platform:       "web",
 			PackageManager: pm,
-			PackageName:    "@yaver/feedback-web",
+			PackageName:    "yaver-feedback-web",
 			Command:        cmd,
 			Args:           args,
 			NextSteps: []string{
 				"Call `YaverFeedback.init({ trigger: 'floating-button' })` in development mode.",
-				"Run `yaver auth` and `yaver serve` on your dev machine if the agent is not already running.",
+				"The first time the user clicks the feedback button, they sign in to Yaver via the SDK's in-app modal (Apple / Google / GitHub / GitLab / Microsoft / email).",
+				"Run `yaver serve` on your dev machine if the agent is not already running.",
 			},
 		}, nil
 	default:

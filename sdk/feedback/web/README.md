@@ -8,7 +8,14 @@ Visual feedback SDK for web apps — record screen + voice, take screenshots, se
 npm install yaver-feedback-web
 ```
 
-## Quick Start
+Or via the umbrella CLI in any web project root:
+
+```bash
+npm install -g yaver-cli
+yaver feedback setup
+```
+
+## Quick Start (0.2+: native sign-in)
 
 ```typescript
 import { YaverFeedback } from 'yaver-feedback-web';
@@ -21,7 +28,18 @@ if (process.env.NODE_ENV === 'development') {
 }
 ```
 
-That's it. A small "Y" button appears in the corner. Click it to:
+That's it — no auth token required. The first time the user clicks the floating button (or presses the keyboard shortcut), a compact sign-in modal opens with five OAuth providers (**Apple / Google / GitHub / GitLab / Microsoft**) and email + password. Each provider opens in a popup window that closes itself once authentication completes; the SDK persists the session token in `localStorage` so subsequent reports go straight through.
+
+If your app already authenticates against yaver.io and you want to pass a ready token (e.g. from your own server), opt out of the modal:
+
+```typescript
+YaverFeedback.init({
+  authToken: 'your-token',
+  autoLogin: false,
+});
+```
+
+A small "Y" button appears in the corner. Click it to:
 1. Record your screen + microphone
 2. Take annotated screenshots
 3. Send the report to your Yaver agent

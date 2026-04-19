@@ -4,7 +4,8 @@ export interface FeedbackConfig {
   /**
    * Auth token for the Yaver agent. Optional in 0.5+: if omitted, the SDK
    * will hydrate one from AsyncStorage or show its in-app login screen
-   * (device-code / email / OAuth) the first time the user triggers feedback.
+   * (Apple native / OAuth in-app browser / email) the first time the user
+   * triggers feedback.
    */
   authToken?: string;
   /**

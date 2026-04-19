@@ -52,19 +52,18 @@ export {
   saveSelectedDeviceId,
   clearSelectedDeviceId,
   validateToken,
-  startDeviceCode,
-  pollDeviceCode,
+  signInWithApple,
+  signInWithOAuth,
   signupWithEmail,
   loginWithEmail,
   listReachableDevices,
   DEFAULT_CONVEX_SITE_URL,
   DEFAULT_WEB_BASE_URL,
+  DEFAULT_OAUTH_REDIRECT,
 } from './auth';
 export type {
   OAuthProvider,
   User,
-  DeviceCodeStart,
-  DeviceCodePoll,
   RemoteDevice,
   DeviceList,
 } from './auth';

@@ -28,10 +28,12 @@
 /// ```
 library yaver_feedback;
 
+export 'src/auth.dart';
 export 'src/blackbox.dart';
 export 'src/connection_widget.dart';
 export 'src/discovery.dart';
 export 'src/feedback.dart';
 export 'src/floating_button.dart';
+export 'src/login_page.dart';
 export 'src/p2p_client.dart';
 export 'src/types.dart';

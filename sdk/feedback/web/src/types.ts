@@ -1,8 +1,14 @@
 export interface FeedbackConfig {
   /** Yaver agent URL (e.g., http://192.168.1.100:18080 or relay URL) */
   agentUrl?: string;
-  /** Bearer auth token */
+  /** Bearer auth token. Optional in 0.2+: omit to use the in-app sign-in modal. */
   authToken?: string;
+  /**
+   * When true (default), the SDK auto-opens its sign-in modal the first time
+   * the user triggers feedback and no `authToken` is provided/cached. Set false
+   * to opt out (you must provide `authToken` yourself).
+   */
+  autoLogin?: boolean;
   /** How to trigger feedback: floating button, keyboard shortcut, or manual only */
   trigger?: 'floating-button' | 'keyboard' | 'manual';
   /** Keyboard shortcut to trigger (default: Ctrl+Shift+F) */

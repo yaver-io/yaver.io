@@ -76,6 +76,11 @@ function TotpContent() {
         return;
       }
 
+      if (client === "sdk") {
+        window.location.href = `/auth/sdk-callback?token=${encodeURIComponent(token)}`;
+        return;
+      }
+
       window.location.href = returnTo || "/dashboard";
     } catch {
       setErrorMsg("Network error. Please try again.");

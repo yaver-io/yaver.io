@@ -1,26 +1,26 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
   ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
   SafeAreaView,
   ScrollView,
-  Linking,
-  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 import {
   loginWithEmail,
-  signupWithEmail,
-  pollDeviceCode,
-  startDeviceCode,
-  validateToken,
   saveToken,
   saveUser,
-  OAuthProvider,
-  DeviceCodeStart,
+  signInWithApple,
+  signInWithOAuth,
+  signupWithEmail,
+  validateToken,
+  type OAuthProvider,
 } from './auth';
 
 export interface YaverLoginScreenProps {
@@ -30,366 +30,303 @@ export interface YaverLoginScreenProps {
   onCancel?: () => void;
 }
 
-type Mode = 'device' | 'email';
-
-const PROVIDERS: { id: OAuthProvider; label: string; emoji: string }[] = [
-  { id: 'apple', label: 'Apple', emoji: '' },
-  { id: 'google', label: 'Google', emoji: 'G' },
-  { id: 'github', label: 'GitHub', emoji: '' },
-  { id: 'gitlab', label: 'GitLab', emoji: '' },
-  { id: 'microsoft', label: 'Microsoft', emoji: 'M' },
-];
-
 /**
- * Full-screen in-SDK login. Device-code is the default flow — users sign in
- * with any OAuth provider (Apple/Google/GitHub/GitLab/Microsoft) or email on
- * yaver.io and the SDK polls for the issued session token. Email/password is
- * available as an inline fallback for headless environments.
+ * Full-screen in-SDK login. Mirrors the Yaver mobile app login UX: native
+ * Apple Sign-In on iOS, in-app browser OAuth for Google/GitHub/GitLab/
+ * Microsoft (no codes, no leaving the app), and inline email/password.
  */
 export const YaverLoginScreen: React.FC<YaverLoginScreenProps> = ({
   onLoggedIn,
   onCancel,
 }) => {
-  const [mode, setMode] = useState<Mode>('device');
-
-  const [code, setCode] = useState<DeviceCodeStart | null>(null);
-  const [codeError, setCodeError] = useState<string | null>(null);
-  const [starting, setStarting] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const expiredTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const [emailMode, setEmailMode] = useState<'login' | 'signup'>('login');
+  const [busyProvider, setBusyProvider] = useState<OAuthProvider | 'apple' | null>(null);
+  const [showEmailForm, setShowEmailForm] = useState(false);
+  const [isSignUp, setIsSignUp] = useState(false);
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [emailBusy, setEmailBusy] = useState(false);
-  const [emailError, setEmailError] = useState<string | null>(null);
+  const [emailError, setEmailError] = useState('');
 
-  useEffect(() => {
-    if (mode === 'device' && !code && !starting) {
-      void beginDeviceCode(undefined);
-    }
-    return () => {
-      stopPolling();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
-
-  const stopPolling = () => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-    if (expiredTimerRef.current) {
-      clearTimeout(expiredTimerRef.current);
-      expiredTimerRef.current = null;
-    }
+  const finish = async (token: string) => {
+    const user = await validateToken(token);
+    await saveToken(token);
+    if (user) await saveUser(user);
+    onLoggedIn(token);
   };
 
-  const beginDeviceCode = async (preferredProvider?: OAuthProvider) => {
-    setStarting(true);
-    setCodeError(null);
-    stopPolling();
+  const handleApple = async () => {
+    setBusyProvider('apple');
     try {
-      const result = await startDeviceCode({
-        platform: Platform.OS,
-        machineName: `feedback-sdk-${Platform.OS}`,
-        preferredProvider,
-      });
-      setCode(result);
-
-      pollRef.current = setInterval(async () => {
-        const poll = await pollDeviceCode(result.deviceCode);
-        if (poll.status === 'authorized') {
-          stopPolling();
-          const user = await validateToken(poll.token);
-          await saveToken(poll.token);
-          if (user) await saveUser(user);
-          onLoggedIn(poll.token);
-        } else if (poll.status === 'expired') {
-          stopPolling();
-          setCodeError('Kod doldu — tekrar başlat.');
-          setCode(null);
-        }
-      }, 3_000);
-
-      expiredTimerRef.current = setTimeout(() => {
-        stopPolling();
-        setCode(null);
-        setCodeError('Kod süresi doldu.');
-      }, Math.max(0, result.expiresAt - Date.now()));
-    } catch (err) {
-      setCodeError(err instanceof Error ? err.message : String(err));
+      const { token } = await signInWithApple();
+      await finish(token);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Apple Sign-In failed';
+      if (msg !== 'cancelled') Alert.alert('Sign In Failed', msg);
     } finally {
-      setStarting(false);
+      setBusyProvider(null);
     }
   };
 
-  const openVerification = () => {
-    if (!code) return;
-    Linking.openURL(code.verificationUrl).catch(() => {
-      setCodeError('Tarayıcı açılamadı — URL’yi elle aç.');
-    });
+  const handleOAuth = async (provider: OAuthProvider) => {
+    setBusyProvider(provider);
+    try {
+      const { token } = await signInWithOAuth(provider);
+      await finish(token);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Sign-in failed';
+      if (msg !== 'cancelled') Alert.alert('Sign In Failed', msg);
+    } finally {
+      setBusyProvider(null);
+    }
   };
 
   const handleEmailSubmit = async () => {
-    setEmailError(null);
-    if (!email.trim() || !password) {
-      setEmailError('E-posta ve parola zorunlu.');
-      return;
+    setEmailError('');
+    if (isSignUp) {
+      if (!fullName.trim()) return setEmailError('Full name is required');
+      if (password !== confirmPassword)
+        return setEmailError('Passwords do not match');
+      if (password.length < 8)
+        return setEmailError('Password must be at least 8 characters');
     }
+    if (!email.trim() || !password)
+      return setEmailError('Email and password are required');
+
     setEmailBusy(true);
     try {
-      const result =
-        emailMode === 'signup'
-          ? await signupWithEmail(fullName.trim() || email.trim(), email.trim(), password)
-          : await loginWithEmail(email.trim(), password);
-      const user = await validateToken(result.token);
-      await saveToken(result.token);
-      if (user) await saveUser(user);
-      onLoggedIn(result.token);
-    } catch (err) {
-      setEmailError(err instanceof Error ? err.message : String(err));
+      const result = isSignUp
+        ? await signupWithEmail(fullName.trim(), email.trim(), password)
+        : await loginWithEmail(email.trim(), password);
+      await finish(result.token);
+    } catch (e: unknown) {
+      setEmailError(e instanceof Error ? e.message : 'Something went wrong');
     } finally {
       setEmailBusy(false);
     }
   };
 
+  const renderProvider = (
+    id: OAuthProvider | 'apple',
+    label: string,
+    onPress: () => void,
+  ) => (
+    <Pressable
+      key={id}
+      style={({ pressed }) => [
+        styles.button,
+        pressed && styles.buttonPressed,
+        busyProvider === id && { opacity: 0.6 },
+      ]}
+      onPress={onPress}
+      disabled={busyProvider !== null}
+    >
+      {busyProvider === id ? (
+        <ActivityIndicator color="#e0e0e0" />
+      ) : (
+        <Text style={styles.buttonText}>{label}</Text>
+      )}
+    </Pressable>
+  );
+
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
+    <SafeAreaView style={styles.safeArea}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <View style={styles.header}>
-          <Text style={styles.title}>Yaver Girişi</Text>
-          {onCancel && (
-            <TouchableOpacity onPress={onCancel} style={styles.cancel}>
-              <Text style={styles.cancelText}>İptal</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        <View style={styles.tabRow}>
-          <TouchableOpacity
-            style={[styles.tab, mode === 'device' && styles.tabActive]}
-            onPress={() => setMode('device')}
-          >
-            <Text
-              style={[styles.tabText, mode === 'device' && styles.tabTextActive]}
-            >
-              Hızlı Giriş (OAuth)
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.tab, mode === 'email' && styles.tabActive]}
-            onPress={() => setMode('email')}
-          >
-            <Text
-              style={[styles.tabText, mode === 'email' && styles.tabTextActive]}
-            >
-              E-posta
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {mode === 'device' && (
-          <View style={styles.section}>
-            {starting ? (
-              <ActivityIndicator color="#6366f1" style={{ marginVertical: 40 }} />
-            ) : code ? (
-              <>
-                <Text style={styles.hint}>
-                  Tarayıcıda yaver.io/auth/device aç ve aşağıdaki kodu gir.
-                  Sağlayıcıyla giriş yaptığında buraya otomatik dönecek.
-                </Text>
-                <View style={styles.codeBox}>
-                  <Text style={styles.codeText}>{code.userCode}</Text>
-                </View>
-                <TouchableOpacity style={styles.primaryButton} onPress={openVerification}>
-                  <Text style={styles.primaryButtonText}>Tarayıcıda Aç</Text>
-                </TouchableOpacity>
-
-                <Text style={[styles.hint, { marginTop: 20 }]}>
-                  Sağlayıcıyı önceden seçmek istersen:
-                </Text>
-                <View style={styles.providerRow}>
-                  {PROVIDERS.map((p) => (
-                    <TouchableOpacity
-                      key={p.id}
-                      style={styles.providerButton}
-                      onPress={() => beginDeviceCode(p.id)}
-                    >
-                      <Text style={styles.providerButtonText}>{p.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </>
-            ) : (
-              <TouchableOpacity
-                style={styles.primaryButton}
-                onPress={() => beginDeviceCode(undefined)}
-              >
-                <Text style={styles.primaryButtonText}>Tekrar Başlat</Text>
-              </TouchableOpacity>
+        <ScrollView
+          contentContainerStyle={styles.scrollContainer}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.header}>
+            <Text style={styles.logo}>Yaver</Text>
+            <Text style={styles.subtitle}>Sign in to send feedback</Text>
+            {onCancel && (
+              <Pressable onPress={onCancel} style={styles.cancel}>
+                <Text style={styles.cancelText}>Cancel</Text>
+              </Pressable>
             )}
-            {codeError && <Text style={styles.error}>{codeError}</Text>}
           </View>
-        )}
 
-        {mode === 'email' && (
-          <View style={styles.section}>
-            <View style={styles.tabRow}>
-              <TouchableOpacity
-                style={[styles.subTab, emailMode === 'login' && styles.subTabActive]}
-                onPress={() => setEmailMode('login')}
-              >
-                <Text style={styles.subTabText}>Giriş</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.subTab, emailMode === 'signup' && styles.subTabActive]}
-                onPress={() => setEmailMode('signup')}
-              >
-                <Text style={styles.subTabText}>Kayıt</Text>
-              </TouchableOpacity>
-            </View>
+          <View style={styles.buttons}>
+            {Platform.OS === 'ios'
+              ? renderProvider('apple', 'Continue with Apple', handleApple)
+              : renderProvider('apple', 'Continue with Apple', () =>
+                  handleOAuth('apple'),
+                )}
+            {renderProvider('google', 'Continue with Google', () =>
+              handleOAuth('google'),
+            )}
+            {renderProvider('github', 'Continue with GitHub', () =>
+              handleOAuth('github'),
+            )}
+            {renderProvider('gitlab', 'Continue with GitLab', () =>
+              handleOAuth('gitlab'),
+            )}
+            {renderProvider('microsoft', 'Continue with Microsoft', () =>
+              handleOAuth('microsoft'),
+            )}
 
-            {emailMode === 'signup' && (
+            {!showEmailForm ? (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.button,
+                  pressed && styles.buttonPressed,
+                ]}
+                onPress={() => setShowEmailForm(true)}
+                disabled={busyProvider !== null}
+              >
+                <Text style={styles.buttonText}>Continue with Email</Text>
+              </Pressable>
+            ) : (
               <>
-                <Text style={styles.label}>Ad Soyad</Text>
+                <View style={styles.divider}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerText}>email</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+                {isSignUp && (
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Full Name"
+                    placeholderTextColor="#666"
+                    value={fullName}
+                    onChangeText={setFullName}
+                    autoCapitalize="words"
+                    autoCorrect={false}
+                  />
+                )}
                 <TextInput
                   style={styles.input}
-                  value={fullName}
-                  onChangeText={setFullName}
-                  placeholder="Adın Soyadın"
+                  placeholder="Email"
                   placeholderTextColor="#666"
-                  autoCapitalize="words"
+                  value={email}
+                  onChangeText={setEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
                 />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Password"
+                  placeholderTextColor="#666"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry
+                  autoCapitalize="none"
+                />
+                {isSignUp && (
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Confirm Password"
+                    placeholderTextColor="#666"
+                    value={confirmPassword}
+                    onChangeText={setConfirmPassword}
+                    secureTextEntry
+                  />
+                )}
+
+                {emailError ? (
+                  <Text style={styles.errorText}>{emailError}</Text>
+                ) : null}
+
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.submitButton,
+                    pressed && styles.buttonPressed,
+                    emailBusy && { opacity: 0.6 },
+                  ]}
+                  onPress={handleEmailSubmit}
+                  disabled={emailBusy}
+                >
+                  {emailBusy ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.submitButtonText}>
+                      {isSignUp ? 'Create Account' : 'Sign In'}
+                    </Text>
+                  )}
+                </Pressable>
+
+                <Pressable
+                  onPress={() => {
+                    setIsSignUp(!isSignUp);
+                    setEmailError('');
+                  }}
+                >
+                  <Text style={styles.toggleText}>
+                    {isSignUp
+                      ? 'Already have an account? Sign In'
+                      : "Don't have an account? Sign Up"}
+                  </Text>
+                </Pressable>
               </>
             )}
-
-            <Text style={styles.label}>E-posta</Text>
-            <TextInput
-              style={styles.input}
-              value={email}
-              onChangeText={setEmail}
-              placeholder="you@example.com"
-              placeholderTextColor="#666"
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-
-            <Text style={styles.label}>Parola</Text>
-            <TextInput
-              style={styles.input}
-              value={password}
-              onChangeText={setPassword}
-              placeholder="••••••••"
-              placeholderTextColor="#666"
-              secureTextEntry
-              autoCapitalize="none"
-            />
-
-            <TouchableOpacity
-              style={styles.primaryButton}
-              onPress={handleEmailSubmit}
-              disabled={emailBusy}
-            >
-              {emailBusy ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.primaryButtonText}>
-                  {emailMode === 'signup' ? 'Kayıt Ol' : 'Giriş Yap'}
-                </Text>
-              )}
-            </TouchableOpacity>
-
-            {emailError && <Text style={styles.error}>{emailError}</Text>}
           </View>
-        )}
-      </ScrollView>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#1a1a2e' },
-  content: { padding: 24, paddingTop: 16 },
-  header: {
+  safeArea: { flex: 1, backgroundColor: '#1a1a2e' },
+  scrollContainer: {
+    flexGrow: 1,
+    paddingHorizontal: 24,
+    justifyContent: 'center',
+  },
+  header: { alignItems: 'center', marginBottom: 40 },
+  logo: { fontSize: 44, fontWeight: '800', color: '#e0e0e0', letterSpacing: -1 },
+  subtitle: { fontSize: 15, color: '#9ca3af', marginTop: 6 },
+  cancel: { position: 'absolute', right: 0, top: 0, padding: 8 },
+  cancelText: { color: '#9ca3af', fontSize: 14 },
+  buttons: { gap: 12 },
+  button: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  buttonPressed: { opacity: 0.7 },
+  buttonText: { color: '#e0e0e0', fontSize: 15, fontWeight: '600' },
+  divider: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 20,
-  },
-  title: { fontSize: 22, fontWeight: '700', color: '#e0e0e0' },
-  cancel: { padding: 8 },
-  cancelText: { color: '#9ca3af', fontSize: 14 },
-  tabRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
-  tab: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    alignItems: 'center',
-  },
-  tabActive: { backgroundColor: 'rgba(99,102,241,0.25)' },
-  tabText: { color: '#9ca3af', fontSize: 14, fontWeight: '600' },
-  tabTextActive: { color: '#e0e0e0' },
-  subTab: {
-    flex: 1,
-    paddingVertical: 8,
-    borderRadius: 8,
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
-  },
-  subTabActive: { backgroundColor: 'rgba(99,102,241,0.2)' },
-  subTabText: { color: '#e0e0e0', fontSize: 13 },
-  section: { marginTop: 4 },
-  hint: { color: '#9ca3af', fontSize: 13, lineHeight: 18 },
-  codeBox: {
-    backgroundColor: 'rgba(99,102,241,0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(99,102,241,0.35)',
-    borderRadius: 14,
-    paddingVertical: 24,
-    alignItems: 'center',
     marginTop: 16,
-    marginBottom: 16,
+    marginBottom: 8,
   },
-  codeText: {
-    color: '#e0e7ff',
-    fontSize: 36,
-    fontWeight: '800',
-    letterSpacing: 6,
-    fontVariant: ['tabular-nums'],
+  dividerLine: { flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.12)' },
+  dividerText: { marginHorizontal: 14, fontSize: 12, color: '#6b7280' },
+  input: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    color: '#e0e0e0',
+    fontSize: 15,
   },
-  primaryButton: {
+  errorText: { color: '#ef4444', fontSize: 13, textAlign: 'center' },
+  submitButton: {
     backgroundColor: '#6366f1',
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
-    marginTop: 8,
+    justifyContent: 'center',
+    marginTop: 4,
   },
-  primaryButtonText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  providerRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
-  providerButton: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+  submitButtonText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  toggleText: {
+    color: '#818cf8',
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 4,
   },
-  providerButtonText: { color: '#e0e0e0', fontSize: 13, fontWeight: '600' },
-  label: { color: '#9ca3af', fontSize: 12, marginTop: 14, marginBottom: 6 },
-  input: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: '#e0e0e0',
-    fontSize: 15,
-  },
-  error: { color: '#ef4444', fontSize: 13, marginTop: 12 },
 });

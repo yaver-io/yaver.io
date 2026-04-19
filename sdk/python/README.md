@@ -10,10 +10,34 @@ pip install yaver
 
 ## Quick Start
 
+### Getting an auth token
+
+Three ways, depending on context:
+
+```python
+import yaver
+
+# 1. Email + password — non-interactive, good for scripts/CI
+token = yaver.login_with_email("you@example.com", "your-password")
+
+# 2. Sign up a new account — non-interactive
+token = yaver.signup_with_email("Your Name", "you@example.com", "your-password")
+
+# 3. Browser OAuth — interactive, supports Apple/Google/GitHub/GitLab/Microsoft
+#    Opens https://yaver.io/auth?client=cli in the default browser and runs
+#    a tiny local HTTP listener on 127.0.0.1:19836 to capture the callback.
+#    Same flow as the `yaver auth` CLI command.
+token = yaver.signin_via_browser()
+```
+
+Tokens are long-lived (30 days). Cache them in your app's keystore or env var; a fresh sign-in is only required after expiry or sign-out.
+
+### Using the client
+
 ```python
 from yaver import YaverClient
 
-client = YaverClient("http://localhost:18080", "your-auth-token")
+client = YaverClient("http://localhost:18080", token)
 
 # Create a task
 task = client.create_task("Fix the login bug")

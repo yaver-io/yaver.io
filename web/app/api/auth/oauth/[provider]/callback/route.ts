@@ -263,6 +263,15 @@ async function handleCallback(
     return response;
   }
 
+  // SDK client (yaver-feedback-web popup): redirect to a page that
+  // window.opener.postMessage(token) and closes itself.
+  if (state.client === "sdk") {
+    const sdkUrl = new URL("/auth/sdk-callback", baseUrl);
+    sdkUrl.searchParams.set("token", token);
+    await logToConvex(provider, "redirect", "info", "Redirecting to SDK popup callback");
+    return NextResponse.redirect(sdkUrl.toString(), 303);
+  }
+
   const deviceCode = extractDeviceCode(state.returnTo);
   if (deviceCode) {
     try {

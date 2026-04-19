@@ -1,5 +1,7 @@
 import type { FeedbackConfig, FeedbackBundle, TimelineEvent, DeviceInfo } from './types';
 import { YaverDiscovery } from './discovery';
+import { getToken as getCachedToken } from './auth';
+import { openLoginModal } from './LoginModal';
 
 /**
  * YaverFeedback — visual feedback SDK for web apps.
@@ -39,6 +41,12 @@ export class YaverFeedback {
     }
 
     if (!config.enabled) return;
+
+    // Hydrate auth token from localStorage if caller didn't pass one.
+    if (!config.authToken) {
+      const cached = getCachedToken();
+      if (cached) config.authToken = cached;
+    }
 
     // Auto-discover agent if no URL provided
     if (!config.agentUrl) {
@@ -232,6 +240,14 @@ export class YaverFeedback {
       return null;
     }
 
+    // Lazy auth: prompt the user to sign in if we don't have a token yet.
+    // No-op when caller passed `authToken` or `autoLogin: false`.
+    const authed = await YaverFeedback.ensureAuthToken();
+    if (!authed) {
+      console.warn('[yaver-feedback] Sign-in cancelled — bundle not uploaded.');
+      return null;
+    }
+
     const form = new FormData();
     form.append('metadata', JSON.stringify(bundle.metadata));
 
@@ -271,8 +287,33 @@ export class YaverFeedback {
     }
   }
 
+  /**
+   * Ensure we have an auth token. If `autoLogin` is enabled (default) and
+   * none is cached, opens the in-app sign-in modal. Returns true if a token
+   * is now available; false if the user cancelled or auth is disabled.
+   */
+  static async ensureAuthToken(): Promise<boolean> {
+    if (YaverFeedback.config?.authToken) return true;
+    const cached = getCachedToken();
+    if (cached) {
+      if (YaverFeedback.config) YaverFeedback.config.authToken = cached;
+      return true;
+    }
+    if (YaverFeedback.config?.autoLogin === false) return false;
+    try {
+      const token = await openLoginModal();
+      if (YaverFeedback.config) YaverFeedback.config.authToken = token;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Manually trigger the feedback report UI. */
   static startReport(): void {
+    // Auth happens lazily — at upload time, not at trigger time. The user
+    // can record + screenshot without a session; we only need a token to
+    // POST the bundle to the agent.
     // Create a simple overlay UI
     const overlay = document.createElement('div');
     overlay.id = 'yaver-feedback-overlay';

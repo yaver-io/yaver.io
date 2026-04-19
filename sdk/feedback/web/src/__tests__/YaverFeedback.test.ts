@@ -67,6 +67,8 @@ describe('YaverFeedback', () => {
         enabled: true,
         agentUrl: 'http://192.168.1.10:18080',
         trigger: 'manual',
+        authToken: 'test-token',
+        autoLogin: false,
       });
 
       expect(YaverFeedback.isInitialized).toBe(true);
@@ -209,6 +211,8 @@ describe('YaverFeedback', () => {
       await YaverFeedback.init({
         enabled: true,
         trigger: 'manual',
+        authToken: 'test-token',
+        autoLogin: false,
         // no agentUrl, and discovery returns null
       });
 
@@ -245,6 +249,8 @@ describe('YaverFeedback', () => {
         enabled: true,
         agentUrl: 'http://192.168.1.10:18080',
         trigger: 'manual',
+        authToken: 'test-token',
+        autoLogin: false,
       });
 
       const result = await YaverFeedback.upload({

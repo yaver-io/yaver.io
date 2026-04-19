@@ -532,6 +532,37 @@ Two tiers (all dedicated, no sharing):
 
 The Feedback SDK captures visual bug reports from device testing and sends them to the AI agent. Available for React Native, Flutter, and Web.
 
+### Auth flow (per-platform Feedback SDK)
+
+Every Feedback SDK exposes the same five OAuth providers (Apple / Google / GitHub / GitLab / Microsoft) plus email + password, against the same Convex / yaver.io endpoints. The transport differs per platform:
+
+| SDK | OAuth path | Apple | Email | Callback |
+|---|---|---|---|---|
+| `yaver-feedback-react-native` 0.6+ | `expo-web-browser` `openAuthSessionAsync` | Native via `expo-apple-authentication` → `/auth/apple-native` | Inline form → `/auth/login` `/auth/signup` | `yaver://oauth-callback` (same as mobile app) |
+| `yaver-feedback-web` 0.2+ | `window.open` popup → `/auth/sdk-callback` posts back via `postMessage` | Same popup OAuth (no native browser Apple) | Inline form | `https://yaver.io/auth/sdk-callback` |
+
+The **pre-0.6 device-code flow** (browser hop + 6-char code with a 3-min TTL) is removed from every Feedback SDK — no fallback.
+
+**Web side:** the OAuth callback (`web/app/api/auth/oauth/[provider]/callback/route.ts`) handles `client=mobile` (deep link), `client=desktop` (CLI bridge), `client=sdk` (popup `postMessage`), and the default web flow. The TOTP page (`web/app/auth/totp/page.tsx`) also routes `client=sdk` back through `/auth/sdk-callback` so 2FA users complete the flow without leaving the popup.
+
+**RN SDK peer deps:** `expo-web-browser` required; `expo-apple-authentication` optional. Android hosts must register an intent filter for `yaver://oauth-callback`; iOS needs nothing (ASWebAuthenticationSession intercepts inside the auth session).
+
+**Web SDK** has no native peer deps — the LoginModal is a vanilla-DOM widget injected via `<style>`. Works with any framework (React / Vue / Svelte / vanilla).
+
+**Implementation files**
+
+| File | Purpose |
+|---|---|
+| `sdk/feedback/react-native/src/auth.ts` | `signInWithApple`, `signInWithOAuth`, `DEFAULT_OAUTH_REDIRECT` |
+| `sdk/feedback/react-native/src/LoginScreen.tsx` | Five provider buttons + collapsed email form |
+| `sdk/feedback/web/src/auth.ts` | Browser `signInWithOAuth` (popup + `postMessage`), email/password, localStorage persistence |
+| `sdk/feedback/web/src/LoginModal.ts` | Vanilla-DOM compact modal — no React/Vue dep |
+| `sdk/feedback/web/src/YaverFeedback.ts` | `ensureAuthToken()` auto-opens the modal on first feedback trigger |
+| `web/app/auth/sdk-callback/page.tsx` | Popup callback that does `window.opener.postMessage({type:'yaver-feedback-auth', token})` |
+| `web/app/api/auth/oauth/[provider]/callback/route.ts` | `client=sdk` → `/auth/sdk-callback` redirect |
+| `web/app/auth/totp/page.tsx` | TOTP completion routes `client=sdk` back through the popup callback |
+| `desktop/agent/sdk_cmd.go` | `yaver feedback setup --platform web` installs `yaver-feedback-web` (was `@yaver/feedback-web` — wrong) |
+
 ### Suppress-when-inside-Yaver layer (RN SDK only, 0.5.5+)
 
 When a third-party RN app is loaded through the Yaver mobile app's super-host (Hermes push), `YaverFeedback.init()` + `ShakeDetector.start()` silently no-op. The SDK detects the runtime via the `YaverInfo` native module (only registered in Yaver's container at `mobile/ios/Yaver/YaverInfo.swift` + the Android counterpart) and yields every side-effect — shake detection, FeedbackModal mount, BlackBox HTTP + SSE command channel — to Yaver's native UX. The user only ever sees Yaver's 2-button overlay ("Reload" + "Back to Yaver"); the guest bundle never pops its own feedback modal or fires double P2P sessions. Standalone builds (TestFlight / App Store / Play via the developer's own account) are unaffected. Gate lives in `sdk/feedback/react-native/src/YaverFeedback.ts::isRunningInsideYaverHost()` + `ShakeDetector.ts::start()`.
