@@ -1127,11 +1127,12 @@ export default function HomePage() {
               </div>
               <p className="mt-3 text-[11px] text-surface-500">
                 Recommended: <code>npm install -g yaver-cli</code>. Installs the
-                agent and the RN push toolchain in one go; <code>yaver auth</code>
-                starts the agent automatically. Homebrew, <code>apt</code>, AppImage,
-                <code>.deb</code>/<code>.rpm</code>, tarball, and install script
-                work too &mdash; <code>yaver push</code> on those paths
-                auto-fetches the hermes bundler via npm on first use.{" "}
+                agent and the RN push toolchain in one go;{" "}
+                <code>yaver auth</code> starts the agent automatically. Homebrew,{" "}
+                <code>apt</code>, AppImage, <code>.deb</code>/<code>.rpm</code>,
+                tarball, and install script work too &mdash;{" "}
+                <code>yaver push</code> on those paths auto-fetches the hermes
+                bundler via npm on first use.{" "}
                 <Link href="/download" className="underline hover:text-surface-300">
                   See install methods
                 </Link>.
