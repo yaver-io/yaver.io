@@ -4,13 +4,24 @@
   "description": "Yaver SDK — embed P2P AI agent connectivity into your apps (React Native, Node.js, Browser)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist/", "src/"],
+  "files": [
+    "dist/",
+    "src/"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "node --test dist/test.js"
   },
-  "keywords": ["yaver", "ai", "agent", "p2p", "speech-to-text", "tts", "sdk"],
-  "license": "MIT",
+  "keywords": [
+    "yaver",
+    "ai",
+    "agent",
+    "p2p",
+    "speech-to-text",
+    "tts",
+    "sdk"
+  ],
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/kivanccakmak/yaver.io"

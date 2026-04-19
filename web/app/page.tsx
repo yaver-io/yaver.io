@@ -5,7 +5,80 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, useEffect } from "react";
 import { useAuth } from "@/lib/use-auth";
 
+// Canonical definitional one-liner — picked up by AI search (Perplexity,
+// ChatGPT, Claude) as the answer to "what is Yaver?". Rendered as sr-only
+// text under the H1 so we don't change the visible hero design.
+const LANDING_TAGLINE =
+  "Yaver is an open-source (AGPL-3.0-only) peer-to-peer control plane for AI coding agents — Codex, Claude Code, Aider, Ollama, and other terminal-first agents — that lets developers run, supervise, and deploy them from their phone, connecting directly to their own machines with no cloud middleman. Starts at $0 on your own hardware.";
 
+const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
+  {
+    q: "How is this different from AWS or Vercel?",
+    a: "Yaver starts one step earlier. The first backend tier can live in the mobile app itself, then move to your own machine, then later to Yaver Cloud. AWS and Vercel start with cloud infrastructure; Yaver starts with the phone and your own hardware.",
+  },
+  {
+    q: "Do I need a powerful machine?",
+    a: "Any modern Mac or Linux machine works. 16GB RAM is comfortable for web development. For local AI models (Ollama), 24GB+ is better. A $5/month Hetzner or DigitalOcean VPS works great as a headless dev machine you control from your phone.",
+  },
+  {
+    q: "Is my code safe?",
+    a: "Your code never leaves your machine. All traffic is P2P encrypted (QUIC+TLS). The relay is a dumb pipe — it forwards bytes but can't read your data. Self-host the relay if you want zero third-party servers involved.",
+  },
+  {
+    q: "Can I use this for web apps, not just mobile?",
+    a: "Yes. Yaver works with any project — Next.js, Vite, Remix, SvelteKit, APIs, Docker containers. The Push to Device feature is React Native specific, but everything else (project creation, local backends, database dashboards, deployment, AI tasks) works with any stack.",
+  },
+  {
+    q: "What if I already use Vercel or Supabase Cloud?",
+    a: "Great — keep using them for production. Use Yaver for local development at $0, then deploy to your cloud provider when ready. Yaver bridges your local stack and your production stack.",
+  },
+  {
+    q: "Does Yaver manage my servers?",
+    a: "Today the main local-first path is still your server, your dev box, or your phone sandbox. Yaver Cloud is the optional managed target when you want that convenience instead of operating your own hardware.",
+  },
+  {
+    q: "Is this really free?",
+    a: "The local-first path can start at $0: mobile app, your own machine, and self-hosted flows. The business model is managed surfaces when you want them, like Yaver Cloud, release distribution, and heavier automation. The open-source repo uses a split license (AGPL-3.0-only core, Apache-2.0 client SDKs) so hosted clones can't free-ride on the core.",
+  },
+  {
+    q: "What license is Yaver under?",
+    a: "Yaver uses a split-license model. The core server components — the agent, relay, cloud control plane, and web dashboards — are AGPL-3.0-only. Client SDKs and CLIs that you import into your own app (the Feedback SDK, yaver-cli, yaver push, templates) are Apache-2.0. See LICENSING.md for the full breakdown.",
+  },
+  {
+    q: "Can I use Yaver in a commercial closed-source app?",
+    a: "Yes. Using yaver-cli to scaffold, build, and deploy your app does not put your app under AGPL — you're using Yaver as a tool, the same way you'd use git or gcc. Embedding the Feedback SDK, BlackBox, or push client is also fine: those packages are Apache-2.0, so your app stays under whatever license you choose.",
+  },
+  {
+    q: "What triggers the AGPL obligations, then?",
+    a: "Modifying the Yaver agent, relay, cloud control plane, or dashboards and running the modified version as a network service. If you fork Yaver and host a competing service based on it, you must release your changes. If you run Yaver unmodified — even commercially, even for your team — you have no obligations.",
+  },
+  {
+    q: "I'm at a company that doesn't allow AGPL software. Can I still use Yaver?",
+    a: "Usually yes. Most AGPL bans in large companies are about shipping or modifying AGPL code. Using Yaver as a development tool, and embedding the Apache-2.0 SDKs in your app, typically falls outside those bans. If your legal team needs the AGPL components under a different license (for example, to bundle a modified agent into a closed-source product), a commercial license is available — email kivanc.cakmak@simkab.com.",
+  },
+  {
+    q: "Can I fork Yaver?",
+    a: "Yes. Apache-2.0 forks of the client SDKs can do almost anything. AGPL forks of the core must stay AGPL and, if run as a network service with modifications, must publish those modifications.",
+  },
+];
+
+const LANDING_HOWTO_STEPS: ReadonlyArray<{ name: string; text: string; url?: string }> = [
+  {
+    name: "Install the Yaver CLI",
+    text: "Run npm install -g yaver-cli (or the curl install.sh on a box without Node), then yaver auth to sign in with Apple, Google, or Microsoft SSO.",
+    url: "https://yaver.io/download",
+  },
+  {
+    name: "Install the Yaver mobile app",
+    text: "Download Yaver from the App Store or Google Play and sign in with the same account.",
+    url: "https://yaver.io/download",
+  },
+  {
+    name: "Connect the phone to your machine",
+    text: "Your dev machine appears automatically via LAN beacon or the optional relay. Tap to pair — task data flows P2P over QUIC, never through yaver.io servers.",
+    url: "https://yaver.io/manuals/cli-setup",
+  },
+];
 
 function DebugConsolePreview() {
   const [panelOpen, setPanelOpen] = useState(true);
@@ -869,8 +942,66 @@ export default function HomePage() {
   }
 
 
+  const faqLd = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: LANDING_FAQ.map(({ q, a }) => ({
+      "@type": "Question",
+      name: q,
+      acceptedAnswer: { "@type": "Answer", text: a },
+    })),
+  };
+
+  const howToLd = {
+    "@context": "https://schema.org",
+    "@type": "HowTo",
+    name: "Install and pair Yaver from your phone",
+    description:
+      "Run AI coding agents on your own machine and control them from your phone.",
+    totalTime: "PT5M",
+    supply: [{ "@type": "HowToSupply", name: "A Mac, Linux, or Windows machine" }],
+    tool: [
+      { "@type": "HowToTool", name: "Node.js (optional, for npm install)" },
+      { "@type": "HowToTool", name: "The Yaver mobile app" },
+    ],
+    step: LANDING_HOWTO_STEPS.map((s, i) => ({
+      "@type": "HowToStep",
+      position: i + 1,
+      name: s.name,
+      text: s.text,
+      url: s.url,
+    })),
+  };
+
+  const organizationLd = {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    name: "Yaver",
+    legalName: "SIMKAB ELEKTRIK",
+    url: "https://yaver.io",
+    logo: "https://yaver.io/icon-512.png",
+    sameAs: [
+      "https://github.com/kivanccakmak/yaver.io",
+      "https://www.npmjs.com/package/yaver-cli",
+    ],
+    email: "kivanc.cakmak@simkab.com",
+    description: LANDING_TAGLINE,
+  };
+
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqLd) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(howToLd) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationLd) }}
+      />
       {/* ── Section 1: Hero — three legs (power / simplicity / free) ── */}
       <section className="px-6 pb-12 pt-20 md:pt-32">
         <div className="mx-auto max-w-4xl text-center">
@@ -878,6 +1009,11 @@ export default function HomePage() {
             Start on your{" "}
             <span className="bg-gradient-to-r from-indigo-400 to-emerald-400 bg-clip-text text-transparent">phone.</span>
           </h1>
+
+          {/* AI / screen-reader description — hidden from sighted users so
+              the visual hero is unchanged, but picked up by Google,
+              Perplexity, ChatGPT, and Claude when answering "what is Yaver?". */}
+          <p className="sr-only">{LANDING_TAGLINE}</p>
 
           <p className="mx-auto max-w-2xl text-base leading-relaxed text-surface-400 md:text-lg">
             Vibe code full-stack apps locally. Move to your machine or cloud later.
@@ -1348,7 +1484,12 @@ return (
             <p><strong className="text-surface-100">A solo developer can start at $0.</strong></p>
             <p>The wedge is local-first: phone sandbox, then your own machine, then optional cloud.</p>
             <p>Open source and self-hosting matter. So does having a paid path for managed cloud, CI, and release distribution.</p>
-            <p className="mt-4 text-surface-500">The open-source repo is now AGPL-3.0-only. BSD would not have protected against a hosted clone.</p>
+            <p className="mt-4 text-surface-500">
+              The open-source repo uses a <Link href="/licensing" className="underline hover:text-surface-300">split license</Link>: the core
+              (agent, relay, cloud, dashboards) is <strong className="text-surface-300">AGPL-3.0-only</strong> to prevent hosted clones,
+              while all client SDKs and CLIs are <strong className="text-surface-300">Apache-2.0</strong> so you can embed them in
+              commercial closed-source apps with no obligations.
+            </p>
           </div>
         </div>
       </section>
@@ -1363,34 +1504,9 @@ return (
             FAQ
           </h2>
           <div>
-            <FAQItem
-              question="How is this different from AWS or Vercel?"
-              answer="Yaver starts one step earlier. The first backend tier can live in the mobile app itself, then move to your own machine, then later to Yaver Cloud. AWS and Vercel start with cloud infrastructure; Yaver starts with the phone and your own hardware."
-            />
-            <FAQItem
-              question="Do I need a powerful machine?"
-              answer="Any modern Mac or Linux machine works. 16GB RAM is comfortable for web development. For local AI models (Ollama), 24GB+ is better. A $5/month Hetzner or DigitalOcean VPS works great as a headless dev machine you control from your phone."
-            />
-            <FAQItem
-              question="Is my code safe?"
-              answer="Your code never leaves your machine. All traffic is P2P encrypted (QUIC+TLS). The relay is a dumb pipe — it forwards bytes but can't read your data. Self-host the relay if you want zero third-party servers involved."
-            />
-            <FAQItem
-              question="Can I use this for web apps, not just mobile?"
-              answer="Yes. Yaver works with any project — Next.js, Vite, Remix, SvelteKit, APIs, Docker containers. The Push to Device feature is React Native specific, but everything else (project creation, local backends, database dashboards, deployment, AI tasks) works with any stack."
-            />
-            <FAQItem
-              question="What if I already use Vercel or Supabase Cloud?"
-              answer="Great — keep using them for production. Use Yaver for local development at $0, then deploy to your cloud provider when ready. Yaver bridges your local stack and your production stack."
-            />
-            <FAQItem
-              question="Does Yaver manage my servers?"
-              answer="Today the main local-first path is still your server, your dev box, or your phone sandbox. Yaver Cloud is the optional managed target when you want that convenience instead of operating your own hardware."
-            />
-            <FAQItem
-              question="Is this really free?"
-              answer="The local-first path can start at $0: mobile app, your own machine, and self-hosted flows. The business model is managed surfaces when you want them, like Yaver Cloud, release distribution, and heavier automation. The open-source repo is AGPL-3.0-only because BSD would not protect against a fast hosted clone."
-            />
+            {LANDING_FAQ.map(({ q, a }) => (
+              <FAQItem key={q} question={q} answer={a} />
+            ))}
           </div>
         </div>
       </section>
@@ -1414,8 +1530,19 @@ return (
             </div>
           </div>
           <p className="mt-6 text-center text-xs text-surface-600">
-            AGPL-3.0-only &middot; Local First &middot;{" "}
-            <a href="https://github.com/kivanccakmak/yaver.io" target="_blank" rel="noopener noreferrer" className="hover:text-surface-300">Source Code</a>
+            Open Source &middot;{" "}
+            <Link href="/licensing" className="hover:text-surface-300">
+              AGPL-3.0 core + Apache-2.0 SDKs
+            </Link>{" "}
+            &middot; Local First &middot;{" "}
+            <a
+              href="https://github.com/kivanccakmak/yaver.io"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-surface-300"
+            >
+              Source Code
+            </a>
           </p>
         </div>
       </footer>

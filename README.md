@@ -1835,12 +1835,22 @@ Contact: kivanc.cakmak@simkab.com
 
 ## License
 
-This repo is licensed under `AGPL-3.0-only`.
+Yaver uses a **split-license model** — see [`LICENSING.md`](./LICENSING.md)
+for the canonical mapping and [`CONTRIBUTING.md`](./CONTRIBUTING.md) for
+how contributions are licensed.
 
-Reason:
+- **Server & infrastructure** (agent, relay, backend, web UI, mobile app,
+  desktop app/installer, pi-image) — [`AGPL-3.0-only`](./LICENSE).
+  Protects the core against hosted clones: if you modify these and run
+  them as a network service, you must publish your modifications.
+- **Client SDKs & CLIs** (`cli/`, `sdk/js`, `sdk/feedback/*`,
+  `sdk/flutter`, `sdk/python`, `sdk/go/*`, `sdk/errors-js`) —
+  [`Apache-2.0`](./LICENSING.md). You can embed these in closed-source
+  commercial applications without copyleft contamination.
 
-- `BSD` would not materially slow down a hosted `yaver2` fork
-- `AGPL` is the open-source option that creates real pressure for network-deployed forks to publish their changes
-- managed cloud, hosted distribution, and other commercial surfaces can still be monetized on top
+Rule of thumb: *does your app import / bundle / invoke this code?*
+Yes → Apache-2.0. No, it runs as a network service → AGPL-3.0-only.
 
-If the business later needs a cleaner commercial carve-out, the next step would be dual licensing rather than a return to a permissive license.
+A commercial license is available for organizations that need the
+AGPL-licensed core without AGPL obligations — contact
+[kivanc.cakmak@simkab.com](mailto:kivanc.cakmak@simkab.com).

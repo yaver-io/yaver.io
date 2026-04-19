@@ -28,7 +28,7 @@
     "expo-go-alternative"
   ],
   "author": "Yaver <hello@yaver.io>",
-  "license": "AGPL-3.0-only",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/kivanccakmak/yaver.io.git"

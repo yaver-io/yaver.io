@@ -77,7 +77,12 @@ export default function YaverPiImageBlogPage() {
         </Link>
 
         <div className="mb-10">
-          <p className="text-xs uppercase tracking-[0.2em] text-surface-500">2026-04-19</p>
+          <time
+            dateTime={post.date}
+            className="text-xs uppercase tracking-[0.2em] text-surface-500"
+          >
+            {post.date}
+          </time>
           <h1 className="mt-3 text-3xl font-bold text-surface-50 md:text-4xl">
             Announcing the Yaver Raspberry Pi 5 Dev-Node Image
           </h1>

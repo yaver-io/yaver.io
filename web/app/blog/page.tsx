@@ -50,7 +50,12 @@ export default async function BlogIndexPage({
               href={`/blog/${post.slug}`}
               className="block rounded-2xl border border-surface-800 bg-surface-900 p-6 transition-colors hover:border-surface-600"
             >
-              <p className="text-xs uppercase tracking-[0.2em] text-surface-500">{post.date}</p>
+              <time
+                dateTime={post.date}
+                className="text-xs uppercase tracking-[0.2em] text-surface-500"
+              >
+                {post.date}
+              </time>
               <h2 className="mt-2 text-xl font-semibold text-surface-50">{post.title}</h2>
               <p className="mt-3 text-sm leading-6 text-surface-400">{post.description}</p>
             </Link>

@@ -10,7 +10,7 @@
     "android/",
     "app.plugin.js"
   ],
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/kivanccakmak/yaver.io",
@@ -22,8 +22,12 @@
     "@react-native-async-storage/async-storage": ">=1.17.0"
   },
   "peerDependenciesMeta": {
-    "@expo/config-plugins": { "optional": true },
-    "expo-constants": { "optional": true }
+    "@expo/config-plugins": {
+      "optional": true
+    },
+    "expo-constants": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "jest": "^29.0.0",
@@ -37,7 +41,16 @@
   "jest": {
     "preset": "ts-jest",
     "testEnvironment": "node",
-    "testMatch": ["**/src/__tests__/**/*.test.ts"]
+    "testMatch": [
+      "**/src/__tests__/**/*.test.ts"
+    ]
   },
-  "keywords": ["yaver", "feedback", "bug-report", "screen-recording", "vibe-coding", "react-native"]
+  "keywords": [
+    "yaver",
+    "feedback",
+    "bug-report",
+    "screen-recording",
+    "vibe-coding",
+    "react-native"
+  ]
 }

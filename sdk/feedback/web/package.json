@@ -4,7 +4,7 @@
   "description": "Visual feedback SDK for web apps — screen recording, voice annotations, dev machine discovery for Yaver vibe coding",
   "main": "src/index.ts",
   "types": "src/index.ts",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/kivanccakmak/yaver.io",
@@ -24,5 +24,12 @@
     "testEnvironment": "jsdom",
     "testPathPattern": "__tests__"
   },
-  "keywords": ["yaver", "feedback", "bug-report", "screen-recording", "vibe-coding", "web"]
+  "keywords": [
+    "yaver",
+    "feedback",
+    "bug-report",
+    "screen-recording",
+    "vibe-coding",
+    "web"
+  ]
 }

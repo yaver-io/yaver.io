@@ -2,11 +2,20 @@
   "name": "yaver-errors",
   "version": "0.1.0",
   "description": "Zero-config error tracking for Yaver — one line to install, ships to your own agent (not a SaaS).",
-  "keywords": ["error-tracking", "sentry", "self-hosted", "yaver"],
-  "license": "AGPL-3.0-only",
+  "keywords": [
+    "error-tracking",
+    "sentry",
+    "self-hosted",
+    "yaver"
+  ],
+  "license": "Apache-2.0",
   "author": "Yaver",
   "homepage": "https://github.com/kivanccakmak/yaver.io",
-  "repository": { "type": "git", "url": "https://github.com/kivanccakmak/yaver.io", "directory": "sdk/errors-js" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kivanccakmak/yaver.io",
+    "directory": "sdk/errors-js"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -17,7 +26,10 @@
       "require": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
     "test": "node --test"
@@ -26,5 +38,7 @@
     "tsup": "^8.0.0",
     "typescript": "^5.4.0"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  }
 }

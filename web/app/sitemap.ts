@@ -36,6 +36,7 @@ const staticRoutes: StaticRoute[] = [
   { path: "/manuals/integrations", changeFrequency: "monthly", priority: 0.6 },
   { path: "/hybrid", changeFrequency: "monthly", priority: 0.5 },
   { path: "/support", changeFrequency: "monthly", priority: 0.4 },
+  { path: "/licensing", changeFrequency: "monthly", priority: 0.6 },
   { path: "/privacy", changeFrequency: "yearly", priority: 0.3 },
   { path: "/terms", changeFrequency: "yearly", priority: 0.3 },
 ];
