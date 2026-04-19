@@ -46,7 +46,6 @@ jobs:
   publish-npm:
     needs: validate
     runs-on: ubuntu-latest
-    environment: production
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -77,7 +76,6 @@ jobs:
     # before the registry tries to verify them.
     needs: [validate, publish-npm]
     runs-on: ubuntu-latest
-    environment: production
     permissions:
       id-token: write
       contents: read
@@ -296,7 +294,6 @@ jobs:
   release:
     needs: [validate, build]
     runs-on: ubuntu-latest
-    environment: production
     env:
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
@@ -335,7 +332,6 @@ jobs:
   update-package-managers:
     needs: [validate, release]
     runs-on: ubuntu-latest
-    environment: production
     env:
       VERSION: ${{ needs.validate.outputs.version }}
     steps:

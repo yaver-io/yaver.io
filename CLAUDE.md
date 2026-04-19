@@ -1802,9 +1802,11 @@ cd relay && ./deploy/down.sh <server-ip>
 curl https://<your-relay-domain>/health
 ```
 
-### Mobile Release Policy — Local-Only, Never CI
+### Mobile Release Policy — Local-First, CI Optional
 
-**All mobile releases (TestFlight + Google Play) happen locally from this Mac. Never via GitHub Actions.** The iOS signing keychain, Apple `.p8` under `~/Workspace/talos/mobile/ios/`, and the upload keystore under `keys/yaver-upload.keystore` live on the host. CI cannot archive or sign; any attempt to run the release-mobile workflow should be cancelled (`gh run cancel <id>`) and the local scripts used instead. The `.github/workflows/release-mobile.yml` file stays in place only as documentation / skeleton — it is not part of the release path.
+**Primary path: local deploys from this Mac.** The iOS signing keychain, Apple `.p8` under `~/Workspace/talos/mobile/ios/`, and upload keystore under `keys/yaver-upload.keystore` live on the host, and local builds are the fastest feedback loop. **Secondary path: `release-mobile.yml` on GitHub Actions** — free to run on a public repo, uses the `APP_STORE_CONNECT_API_KEY_*` + `ANDROID_KEYSTORE*` secrets. CI fires automatically on every `mobile/v*` tag push or via `workflow_dispatch`.
+
+**No manual approval on release workflows.** The `environment: production` gate was removed from release-cli / release-mobile / release-web / release-relay because only the repo owner (`kivanc`) can push tags, so the implicit auth gate is sufficient. Deploys proceed directly once the tag push or `workflow_dispatch` fires.
 
 Single-command release (both stores, version already bumped + committed):
 ```bash

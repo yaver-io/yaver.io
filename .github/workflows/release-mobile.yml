@@ -41,7 +41,6 @@ jobs:
   ios:
     needs: validate
     runs-on: macos-15
-    environment: production
     env:
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
@@ -165,7 +164,6 @@ jobs:
   android:
     needs: validate
     runs-on: ubuntu-latest
-    environment: production
     env:
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
@@ -253,7 +251,6 @@ jobs:
   update-versions:
     needs: [validate, ios, android]
     runs-on: ubuntu-latest
-    environment: production
     env:
       VERSION: ${{ needs.validate.outputs.version }}
     steps:

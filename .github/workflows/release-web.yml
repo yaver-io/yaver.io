@@ -41,7 +41,6 @@ jobs:
   deploy:
     needs: validate
     runs-on: ubuntu-latest
-    environment: production
     env:
       VERSION: ${{ needs.validate.outputs.version }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
