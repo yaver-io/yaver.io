@@ -1,0 +1,83 @@
+name: mobile-headless
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mobile-headless/**"
+      - "mobile/src/lib/**"
+      - "desktop/agent/**"
+      - ".github/workflows/mobile-headless.yml"
+  pull_request:
+    paths:
+      - "mobile-headless/**"
+      - "mobile/src/lib/**"
+      - "desktop/agent/**"
+      - ".github/workflows/mobile-headless.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: mobile-headless-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hermetic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install deps
+        working-directory: mobile-headless
+        run: bun install
+      - name: Typecheck
+        working-directory: mobile-headless
+        run: bun run typecheck
+      - name: Hermetic tests
+        working-directory: mobile-headless
+        run: bun test test/hermetic.test.ts
+
+  smoke-local:
+    runs-on: ubuntu-latest
+    needs: hermetic
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - name: Install deps
+        working-directory: mobile-headless
+        run: bun install
+      - name: Build agent
+        working-directory: desktop/agent
+        run: go build -o /tmp/yaver-agent .
+      - name: Start agent in background
+        run: |
+          mkdir -p "$HOME/.yaver"
+          echo '{"auth_token":"ci-smoke-token","device_id":"ci-mobile-headless","convex_site_url":"https://perceptive-minnow-557.eu-west-1.convex.site"}' > "$HOME/.yaver/config.json"
+          nohup /tmp/yaver-agent serve --port 18080 >/tmp/agent.log 2>&1 &
+          echo $! > /tmp/agent.pid
+          for i in $(seq 1 30); do
+            sleep 1
+            curl -fsS http://127.0.0.1:18080/health && break
+          done
+          cat /tmp/agent.log | head -50
+      - name: Smoke — install-list + raw-get /info
+        working-directory: mobile-headless
+        env:
+          YMH_DATA_DIR: /tmp/ymh-ci
+        run: |
+          mkdir -p "$YMH_DATA_DIR"
+          echo "--- /install/list"
+          bun run src/bin/cli.ts install-list --token=ci-smoke-token | head -40 || true
+          echo "--- /info"
+          bun run src/bin/cli.ts raw-get /info --token=ci-smoke-token | head -20 || true
+      - name: Stop agent
+        if: always()
+        run: |
+          kill $(cat /tmp/agent.pid) || true
+          tail -80 /tmp/agent.log || true

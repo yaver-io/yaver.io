@@ -1,0 +1,37 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noImplicitAny": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "jsx": "react-native",
+    "lib": ["ES2022", "DOM"],
+    "types": ["bun"],
+    "baseUrl": ".",
+    "paths": {
+      // Shim every native module the mobile lib imports so the real
+      // mobile/src/lib/* code can run unchanged in Node/Bun. No fork.
+      "react-native": ["./src/shims/react-native.ts"],
+      "react-native-udp": ["./src/shims/react-native-udp.ts"],
+      "@react-native-async-storage/async-storage": ["./src/shims/async-storage.ts"],
+      "expo-secure-store": ["./src/shims/expo-secure-store.ts"],
+      "expo-device": ["./src/shims/expo-device.ts"],
+      "expo-constants": ["./src/shims/expo-constants.ts"],
+      "expo-application": ["./src/shims/expo-application.ts"],
+      "expo-apple-authentication": ["./src/shims/expo-apple-authentication.ts"],
+      "expo-auth-session": ["./src/shims/expo-auth-session.ts"],
+      "expo-web-browser": ["./src/shims/expo-web-browser.ts"],
+      "expo-crypto": ["./src/shims/expo-crypto.ts"],
+      // Import real mobile lib by path — no duplication. If a file
+      // here imports mobile/src/lib/quic.ts, bun resolves it.
+      "@yaver/mobile-lib/*": ["../mobile/src/lib/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

@@ -1,0 +1,5 @@
+[test]
+preload = ["./src/shims/preload.ts"]
+
+[run]
+preload = ["./src/shims/preload.ts"]

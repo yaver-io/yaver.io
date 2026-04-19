@@ -5682,6 +5682,14 @@ export interface MorningRunSummary {
 /** Singleton client instance. */
 export const quicClient = new QuicClient();
 
+// Fresh-instance factory. The singleton above is what the mobile app
+// consumes at runtime; `mobile-headless` (see MOBILE_HEADLESS.md)
+// needs one QuicClient per harness instance so test runs don't share
+// auth state across parallel cases. Not called by any app code.
+export function createQuicClient(): QuicClient {
+  return new QuicClient();
+}
+
 // Morning endpoints use the same relay-aware baseUrl + auth that tasks
 // do, so a user vibing at the beach gets their overnight report over
 // the same QUIC/relay channel as everything else — no new transport.

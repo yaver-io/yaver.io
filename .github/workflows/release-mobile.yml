@@ -81,7 +81,16 @@ jobs:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
         run: |
           mkdir -p ~/private_keys
-          echo "$APP_STORE_CONNECT_API_KEY" | base64 --decode > ~/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8
+          # Decode via python3 — shell `base64` on macOS runners
+          # sometimes chokes on GitHub-secret newlines and writes a
+          # file whose JWT signer rejects as "keyPathInvalid". python
+          # is bulletproof across platforms.
+          python3 -c "import base64, os, sys; sys.stdout.buffer.write(base64.b64decode(os.environ['APP_STORE_CONNECT_API_KEY']))" \
+            > ~/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8
+          chmod 600 ~/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8
+          # Sanity-check the key looks like PKCS#8 ES256.
+          head -1 ~/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8 | grep -qE "^-----BEGIN (PRIVATE|EC PRIVATE) KEY-----" \
+            || { echo "Decoded p8 does not begin with PKCS#8 header; secret is corrupted — rotate APP_STORE_CONNECT_API_KEY."; exit 1; }
 
       - name: Bump build number
         run: |
@@ -159,6 +168,23 @@ jobs:
 
       - name: Prebuild native projects
         run: cd mobile && npx expo prebuild --platform android --clean
+
+      # `expo prebuild --clean` wipes android/app/src/main/res/drawable/
+      # splashscreen_logo.xml. Gradle fails linking resources without
+      # it (CLAUDE.md documents this). Write a transparent shape
+      # drawable so the resource exists; the real splash is
+      # overlaid elsewhere.
+      - name: Restore splashscreen_logo drawable
+        run: |
+          DIR="mobile/android/app/src/main/res/drawable"
+          mkdir -p "$DIR"
+          cat > "$DIR/splashscreen_logo.xml" <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <shape xmlns:android="http://schemas.android.com/apk/res/android"
+              android:shape="rectangle">
+              <solid android:color="@android:color/transparent"/>
+          </shape>
+          XML
 
       - name: Decode Android keystore
         env:
