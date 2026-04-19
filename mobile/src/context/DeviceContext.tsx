@@ -142,6 +142,18 @@ export interface Device {
   local?: boolean;
   /** stable hardware ID (P2P only, never sent to Convex) */
   hwid?: string;
+  /** Real-time tunnel event from the relay (optional — only populated
+   * when the relay has CONVEX_PRESENCE_URL + _SECRET wired). Mobile
+   * shows a "relay-online since X" badge when this is fresher than
+   * the last heartbeat, because it reflects tunnel state with ~2s
+   * latency vs the 30s heartbeat window. */
+  lastTunnelEvent?: {
+    online: boolean;
+    at: number;           // epoch ms
+    peerAddr?: string;
+    connectedAt?: number; // epoch ms
+    durationSec?: number; // set on disconnect
+  };
   /** every reachable IPv4 the agent broadcast in heartbeat — Wi-Fi LAN,
    * Tailscale 100.x, Ethernet, etc. The connect path races them in
    * parallel so the session attaches via whichever has a route from
@@ -588,6 +600,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             publicKey: d.publicKey,
             hwid: d.hardwareId || d.hwid,
             lanIps: Array.isArray(d.localIps) ? d.localIps : undefined,
+            lastTunnelEvent: d.lastTunnelEvent ?? undefined,
             needsAuth: d.needsAuth ?? false,
             isGuest: d.isGuest || false,
             hostName: d.hostName,

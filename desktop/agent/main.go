@@ -309,6 +309,12 @@ func main() {
 		runGuests(os.Args[2:])
 	case "primary":
 		runPrimary(os.Args[2:])
+	case "ops":
+		runOps(os.Args[2:])
+	case "workspace":
+		runWorkspace(os.Args[2:])
+	case "managed":
+		runManaged(os.Args[2:])
 	case "2fa", "totp":
 		runTwoFactor(os.Args[2:])
 	case "morning":

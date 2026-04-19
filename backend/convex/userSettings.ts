@@ -2,6 +2,44 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { validateSessionInternal, randomHex } from "./auth";
 
+// Shared validator for the per-subsystem managed toggle. Each field
+// accepts boolean (true=Yaver-managed, false=self-hosted) or null
+// (explicit clear). Omitting a key leaves its stored value untouched.
+// Adding a new subsystem here + in schema.ts is the only place a
+// developer touches to surface a new toggle across every Yaver UI.
+const managedPatchValidator = v.object({
+  relay:     v.optional(v.union(v.boolean(), v.null())),
+  dns:       v.optional(v.union(v.boolean(), v.null())),
+  analytics: v.optional(v.union(v.boolean(), v.null())),
+  storage:   v.optional(v.union(v.boolean(), v.null())),
+  email:     v.optional(v.union(v.boolean(), v.null())),
+  ci:        v.optional(v.union(v.boolean(), v.null())),
+  voice:     v.optional(v.union(v.boolean(), v.null())),
+  llm:       v.optional(v.union(v.boolean(), v.null())),
+});
+
+// mergeManagedPatch applies a caller's patch to the existing managed
+// object. Booleans win; nulls clear; undefined keeps the previous
+// value. Returns the new object with empty keys elided so we don't
+// persist fields the user never touched.
+function mergeManagedPatch(
+  existing: Record<string, boolean | undefined> | undefined,
+  patch: Record<string, boolean | null | undefined>,
+): Record<string, boolean> | undefined {
+  const merged: Record<string, boolean> = {};
+  for (const [k, v] of Object.entries(existing ?? {})) {
+    if (typeof v === "boolean") merged[k] = v;
+  }
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) {
+      delete merged[k];
+    } else if (typeof v === "boolean") {
+      merged[k] = v;
+    }
+  }
+  return Object.keys(merged).length === 0 ? undefined : merged;
+}
+
 export const get = query({
   args: { userId: v.id("users") },
   handler: async (ctx, args) => {
@@ -41,6 +79,11 @@ export const set = mutation({
     keyStorage: v.optional(v.string()),
     // null sentinel = clear the preference; undefined = leave untouched.
     primaryDeviceId: v.optional(v.union(v.string(), v.null())),
+    // Per-subsystem managed: true (Yaver-hosted) | false (user-hosted)
+    // | null (unset → use legacy default). Clients send only the
+    // subsystem(s) they're changing; unspecified keys retain their
+    // existing value. Null on any key clears that subsystem.
+    managed: v.optional(managedPatchValidator),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
@@ -63,6 +106,12 @@ export const set = mutation({
     if (args.keyStorage !== undefined) patch.keyStorage = args.keyStorage;
     if (args.primaryDeviceId !== undefined) {
       patch.primaryDeviceId = args.primaryDeviceId ?? undefined;
+    }
+    if (args.managed !== undefined) {
+      patch.managed = mergeManagedPatch(
+        existing?.managed as Record<string, boolean | undefined> | undefined,
+        args.managed as Record<string, boolean | null | undefined>,
+      );
     }
     if (existing) {
       await ctx.db.patch(existing._id, patch);
@@ -91,6 +140,7 @@ export const setByToken = mutation({
     verbosity: v.optional(v.number()),
     keyStorage: v.optional(v.string()),
     primaryDeviceId: v.optional(v.union(v.string(), v.null())),
+    managed: v.optional(managedPatchValidator),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -116,6 +166,12 @@ export const setByToken = mutation({
     if (args.keyStorage !== undefined) patch.keyStorage = args.keyStorage;
     if (args.primaryDeviceId !== undefined) {
       patch.primaryDeviceId = args.primaryDeviceId ?? undefined;
+    }
+    if (args.managed !== undefined) {
+      patch.managed = mergeManagedPatch(
+        existing?.managed as Record<string, boolean | undefined> | undefined,
+        args.managed as Record<string, boolean | null | undefined>,
+      );
     }
     if (existing) {
       await ctx.db.patch(existing._id, patch);

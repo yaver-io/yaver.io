@@ -312,6 +312,17 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 
 	log.Printf("[RELAY] Device %s registered from %s", reg.DeviceID[:8], remoteAddr)
 
+	// Best-effort push to Convex so mobile/web pick up tunnel-up
+	// within the Convex reactive latency window instead of polling
+	// /presence every 30s. No-op unless CONVEX_PRESENCE_URL +
+	// CONVEX_PRESENCE_SECRET env vars are set. See convex_presence.go.
+	pushPresence(presencePayload{
+		DeviceID:    reg.DeviceID,
+		Online:      true,
+		PeerAddr:    remoteAddr,
+		ConnectedAt: tunnel.connAt.UnixMilli(),
+	})
+
 	// Accept control streams (expose register/unregister) from agent
 	go s.handleAgentControlStreams(conn, reg.DeviceID)
 
@@ -323,6 +334,15 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 		delete(s.tunnels, reg.DeviceID)
 	}
 	s.mu.Unlock()
+
+	// Mirror the disconnect to Convex. duration lets the reactive UI
+	// show "last seen X ago" without waiting for the next heartbeat.
+	pushPresence(presencePayload{
+		DeviceID:    reg.DeviceID,
+		Online:      false,
+		ConnectedAt: tunnel.connAt.UnixMilli(),
+		DurationSec: int(time.Since(tunnel.connAt).Seconds()),
+	})
 
 	// Clean up expose routes for this device
 	s.exposeMu.Lock()

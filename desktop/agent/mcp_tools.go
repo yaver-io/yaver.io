@@ -2040,6 +2040,239 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, primaryTools...)
 
+	// --- Grand MCP: ops + ops_verbs ---
+	// Unified verb-based API (see YAVER_MCP_COVERAGE.md). Agents that
+	// want one schema instead of 744 specialist tools call `ops`; they
+	// discover available verbs via `ops_verbs`. The specialist tools
+	// stay — ops is additive, not a replacement.
+	opsTools := []map[string]interface{}{
+		{
+			"name":        "ops",
+			"description": "Run one verb on one machine. Single API for every Yaver capability (info, run, build, test, deploy, push, reload, logs, status, env, session, scale, provision, destroy, ...). Discover available verbs via `ops_verbs`.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"verb"},
+				"properties": map[string]interface{}{
+					"machine": map[string]interface{}{
+						"type":        "string",
+						"description": "Target: \"local\" (this agent) or a deviceId / alias. Remote routing (cross-machine) is a follow-up; today only \"local\" runs.",
+						"default":     "local",
+					},
+					"verb": map[string]interface{}{
+						"type":        "string",
+						"description": "Verb name. Call ops_verbs for the registered list + each verb's payload schema.",
+					},
+					"payload": map[string]interface{}{
+						"type":        "object",
+						"description": "Verb-specific payload. Shape depends on verb.",
+					},
+				},
+				"additionalProperties": false,
+			},
+		},
+		{
+			"name":        "ops_verbs",
+			"description": "List every registered ops verb with its description, payload schema, whether it streams, and whether guests may call it. Call this once to populate the agent's knowledge of the ops API.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+	}
+	tools = append(tools, opsTools...)
+
+	// --- SDK-token lifecycle (MCP) ---
+	// CLI has `yaver sdk-token create` with scopes / CIDRs / expiry;
+	// wiring the same through MCP lets an agent rotate its own scoped
+	// tokens without shelling out. The raw token is returned ONCE —
+	// same contract as the CLI — and is never re-fetchable.
+	sdkTokenTools := []map[string]interface{}{
+		{
+			"name":        "sdk_token_create",
+			"description": "Mint a new SDK token (scoped, IP-bound, optional expiry). The raw token is returned exactly once — store it immediately. Defaults: scopes=[\"feedback\",\"blackbox\"], no CIDR, 1-year expiry.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"label":        map[string]interface{}{"type": "string", "description": "Human-readable name shown in the dashboard."},
+					"scopes":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "e.g. [\"feedback\",\"blackbox\",\"voice\",\"builds\"]. Omit for defaults."},
+					"allowedCIDRs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "CIDR allowlist (IPv4/IPv6)."},
+					"expiresInMs":  map[string]interface{}{"type": "integer", "description": "Lifetime in milliseconds. Default: 1 year."},
+				},
+			},
+		},
+	}
+	tools = append(tools, sdkTokenTools...)
+
+	// --- Feedback SDK (MCP) ---
+	// Covers the "attach a bug report from an agent" path. CLI already
+	// has `yaver feedback list/show/fix/delete` — this MCP parity
+	// means a vibe coder in Cursor can act on an SDK-captured crash
+	// without leaving their chat window.
+	feedbackTools := []map[string]interface{}{
+		{
+			"name":        "feedback_list",
+			"description": "List recent feedback reports captured from the Feedback SDK (React Native / Flutter / Web). Includes crash logs, screenshots, black-box ring buffers.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"limit": map[string]interface{}{"type": "integer", "description": "Max items to return. Default 20."},
+				},
+			},
+		},
+		{
+			"name":        "feedback_show",
+			"description": "Return the full feedback report for one id: error metadata, stack, screenshot URL, and a recent-events snapshot from the BlackBox.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"id"},
+				"properties": map[string]interface{}{
+					"id": map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+		{
+			"name":        "feedback_fix",
+			"description": "Create a task that asks the wrapped AI runner to fix the issue captured in this feedback report. Pulls in the stack trace + BlackBox context automatically.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"id"},
+				"properties": map[string]interface{}{
+					"id":     map[string]interface{}{"type": "string"},
+					"runner": map[string]interface{}{"type": "string", "description": "Optional runner override (claude-code / codex / aider / ...)."},
+				},
+			},
+		},
+		{
+			"name":        "feedback_delete",
+			"description": "Remove a feedback report. Destructive.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"id"},
+				"properties": map[string]interface{}{
+					"id": map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+	}
+	tools = append(tools, feedbackTools...)
+
+	// --- Source maps (MCP) ---
+	// Table-stakes coverage gap: the CLI has `yaver sourcemaps`
+	// upload/list/delete/resolve. Agents that drive mobile releases
+	// want to upload a Hermes sourcemap right after a build so crash
+	// reports in the Errors dashboard symbolicate. Maps stay on the
+	// agent's disk (~/.yaver/sourcemaps/) — never shipped to Convex.
+	sourcemapTools := []map[string]interface{}{
+		{
+			"name":        "sourcemaps_list",
+			"description": "List uploaded source maps — returns {app: [versions]}. Maps are stored locally on the agent.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "sourcemaps_delete",
+			"description": "Remove the source map for a specific app + version tuple. Destructive.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"app", "version"},
+				"properties": map[string]interface{}{
+					"app":     map[string]interface{}{"type": "string"},
+					"version": map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+		{
+			"name":        "sourcemaps_resolve",
+			"description": "Resolve a compiled line:col against the stored source map for app+version. Returns {source, line, column, name} or an error when the map is missing.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"app", "version", "line", "column"},
+				"properties": map[string]interface{}{
+					"app":     map[string]interface{}{"type": "string"},
+					"version": map[string]interface{}{"type": "string"},
+					"line":    map[string]interface{}{"type": "integer"},
+					"column":  map[string]interface{}{"type": "integer"},
+				},
+			},
+		},
+	}
+	tools = append(tools, sourcemapTools...)
+
+	// --- Monorepo workspace manifest ---
+	monorepoWorkspaceTools := []map[string]interface{}{
+		{
+			"name":        "workspace_init",
+			"description": "Wire every app declared in yaver.workspace.yaml: scaffold init.md, env-check, per-app setup. Call workspace_scaffold first if no manifest exists. Idempotent — re-runs skip already-initialised apps unless force=true.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"root":           map[string]interface{}{"type": "string", "description": "Repo root. Defaults to agent CWD."},
+					"force":          map[string]interface{}{"type": "boolean", "description": "Overwrite existing init.md files."},
+					"dryRun":         map[string]interface{}{"type": "boolean"},
+					"onlyApp":        map[string]interface{}{"type": "string", "description": "Restrict to a single app name."},
+					"autoinitPrompt": map[string]interface{}{"type": "boolean", "description": "Include per-app `yaver autoinit` hints in the result."},
+				},
+			},
+		},
+		{
+			"name":        "workspace_list",
+			"description": "Return apps declared in yaver.workspace.yaml, ordered by dependency (leaf-first).",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{"root": map[string]interface{}{"type": "string"}},
+			},
+		},
+		{
+			"name":        "workspace_status",
+			"description": "Per-app runtime status: on-disk presence, init.md freshness, missing env vars. Read-only.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{"root": map[string]interface{}{"type": "string"}},
+			},
+		},
+		{
+			"name":        "workspace_scaffold",
+			"description": "Detect apps in the current directory and return a starter yaver.workspace.yaml. Does NOT write the file — caller decides (keeps the tool side-effect-free for agents that want to review first).",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{"root": map[string]interface{}{"type": "string"}},
+			},
+		},
+	}
+	tools = append(tools, monorepoWorkspaceTools...)
+
+	// --- Managed / self-hosted toggle (per subsystem) ---
+	// Single-checkbox UX across every Yaver surface: each subsystem
+	// (relay, dns, analytics, storage, email, ci, voice, llm) runs
+	// either against Yaver-hosted infra or against user-provided
+	// credentials. Default is neither — subsystems retain their
+	// legacy behaviour until the user explicitly opts in.
+	managedTools := []map[string]interface{}{
+		{
+			"name":        "managed_get",
+			"description": "Read the per-subsystem managed:true|false toggle. Returns {subsystem: value?} — missing keys mean \"not set\" → legacy behaviour.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "managed_set",
+			"description": "Set one subsystem's managed-flag. `managed:true` = use Yaver-hosted infra for this subsystem; `managed:false` = user-hosted; `managed:null` = clear the preference (revert to default). Valid subsystems: relay, dns, analytics, storage, email, ci, voice, llm.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"subsystem"},
+				"properties": map[string]interface{}{
+					"subsystem": map[string]interface{}{"type": "string", "enum": []string{"relay", "dns", "analytics", "storage", "email", "ci", "voice", "llm"}},
+					"managed":   map[string]interface{}{"description": "true | false | null"},
+				},
+			},
+		},
+	}
+	tools = append(tools, managedTools...)
+
 	// --- Remote Support Sessions ---
 	// In-memory, TTL'd, owner-initiated remote-control grant. Think
 	// TeamViewer, not Convex-tied guest access.

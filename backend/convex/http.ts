@@ -1159,6 +1159,51 @@ http.route({
   }),
 });
 
+/** POST /devices/presence — Relay-driven tunnel-up/down notifier.
+ *
+ * Called by the Yaver relay binary when a device's QUIC tunnel opens or
+ * closes. Lets the reactive Convex UI flip online/offline within ~100ms
+ * of the event, without waiting for the device's 30s heartbeat.
+ *
+ * Auth is a shared secret header (X-Relay-Secret) matched against
+ * `platformConfig["relay_presence_secret"]`. The relay is trusted
+ * platform infrastructure; this is distinct from user session auth.
+ * Dropping the platformConfig entry disables the endpoint (every call
+ * returns 401). Rotation = write a new entry + update the relay's
+ * CONVEX_PRESENCE_SECRET env var.
+ */
+http.route({
+  path: "/devices/presence",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const provided = request.headers.get("X-Relay-Secret") ?? "";
+    if (!provided) return errorResponse("Missing X-Relay-Secret", 401);
+    const expected = await ctx.runQuery(api.platformConfig.get, {
+      key: "relay_presence_secret",
+    });
+    if (!expected) {
+      // Feature not enabled on this deployment — opt in by writing the
+      // secret via `npx convex run platformConfig:set --key=relay_presence_secret --value=<secret>`.
+      return errorResponse("Presence endpoint disabled", 404);
+    }
+    if (provided !== expected) {
+      return errorResponse("Bad relay secret", 401);
+    }
+    const body = await request.json().catch(() => ({}));
+    if (!body?.deviceId || typeof body.deviceId !== "string") {
+      return errorResponse("deviceId required", 400);
+    }
+    await ctx.runMutation(api.devices.presenceUpdate, {
+      deviceId: body.deviceId,
+      online: body.online === true,
+      peerAddr: typeof body.peerAddr === "string" ? body.peerAddr : undefined,
+      connectedAt: typeof body.connectedAt === "number" ? body.connectedAt : undefined,
+      durationSec: typeof body.durationSec === "number" ? body.durationSec : undefined,
+    });
+    return jsonResponse({ ok: true });
+  }),
+});
+
 /** POST /devices/placement/recommend — Recommend edge vs infra placement for a task. */
 http.route({
   path: "/devices/placement/recommend",
@@ -1576,6 +1621,11 @@ http.route({
       keyStorage: body.keyStorage,
       // Client sends null to clear the preference, undefined to leave untouched.
       primaryDeviceId: body.primaryDeviceId,
+      // Per-subsystem managed toggle. Client sends only the
+      // subsystem(s) it's changing; backend merges the patch into
+      // the existing record so other subsystems' toggles are
+      // preserved. null on any key clears that subsystem.
+      managed: body.managed,
     });
     return jsonResponse({ ok: true });
   }),

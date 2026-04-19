@@ -1,0 +1,113 @@
+# Yaver monorepo manifest — consumed by `yaver workspace init`.
+# See desktop/agent/workspace.go for the parser + engine.
+version: 1
+name: yaver.io
+workspace:
+  root: .
+  # auto → resolves to userSettings.primaryDeviceId (managed by
+  # `yaver primary set/clear`). Pin to a specific deviceId to force
+  # every `ops primary ...` on the monorepo to one machine.
+  primary_device: auto
+  relay: managed
+  vault: local
+
+apps:
+  - name: backend
+    path: ./backend
+    stack: convex
+    provider:
+      deploy: convex-prod
+    env:
+      - CONVEX_URL
+      - CONVEX_DEPLOY_KEY
+
+  - name: web
+    path: ./web
+    stack: nextjs
+    depends: [backend]
+    provider:
+      deploy: cloudflare
+      analytics: plausible
+    env:
+      - CLOUDFLARE_API_TOKEN
+      - CLOUDFLARE_ACCOUNT_ID
+
+  - name: mobile
+    path: ./mobile
+    stack: react-native-expo
+    depends: [backend]
+    provider:
+      ios: testflight
+      android: playstore
+    env:
+      - APPLE_TEAM_ID
+      - APP_STORE_KEY_PATH
+      - APP_STORE_KEY_ID
+      - APP_STORE_KEY_ISSUER
+
+  - name: mobile-headless
+    path: ./mobile-headless
+    stack: bun
+    depends: [mobile]
+
+  - name: desktop-agent
+    path: ./desktop/agent
+    stack: go
+
+  - name: desktop-installer
+    path: ./desktop/installer
+    stack: node
+
+  - name: desktop-app
+    path: ./desktop/app
+    stack: node
+
+  - name: relay
+    path: ./relay
+    stack: go
+
+  - name: cli
+    path: ./cli
+    stack: node
+
+  - name: sdk-react-native
+    path: ./sdk/feedback/react-native
+    stack: node
+
+  - name: sdk-flutter
+    path: ./sdk/feedback/flutter
+    stack: flutter
+
+  - name: sdk-web
+    path: ./sdk/feedback/web
+    stack: node
+
+  - name: sdk-js
+    path: ./sdk/js
+    stack: node
+
+  - name: sdk-python
+    path: ./sdk/python
+    stack: python
+
+  - name: sdk-flutter-main
+    path: ./sdk/flutter
+    stack: flutter
+
+  - name: e2e
+    path: ./e2e
+    stack: node
+
+shared:
+  # Checked globally by `workspace init`. A missing value is a warning,
+  # not a failure — releases need them but local builds often don't.
+  env:
+    - CONVEX_URL
+    - CONVEX_DEPLOY_KEY
+    - APPLE_TEAM_ID
+    - CLOUDFLARE_API_TOKEN
+  # Vault key glob: keys matching this pattern are considered shared
+  # by every app. Follow-up: workspace engine injects them into each
+  # app's runtime env when kicking actions.
+  secrets:
+    - yaver-*

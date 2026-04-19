@@ -264,6 +264,54 @@ export const heartbeat = mutation({
 });
 
 /**
+ * Relay-driven presence update — called only by Yaver's relay server
+ * via the /devices/presence HTTP action, which validates a shared
+ * secret before running this mutation. The mutation itself doesn't
+ * need user auth because the HTTP layer has already gated access.
+ *
+ * Flips `isOnline` immediately (no heartbeat wait) and records the
+ * last tunnel event so reactive clients can show "just disconnected"
+ * vs "offline for hours" accurately.
+ */
+export const presenceUpdate = mutation({
+  args: {
+    deviceId: v.string(),
+    online: v.boolean(),
+    peerAddr: v.optional(v.string()),
+    connectedAt: v.optional(v.number()),
+    durationSec: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+    if (!device) {
+      // Silently ignore unknown devices — the relay may have tunnels
+      // for devices that were removed from this user's account.
+      return;
+    }
+    const patch: Record<string, unknown> = {
+      isOnline: args.online,
+      lastTunnelEvent: {
+        online: args.online,
+        at: Date.now(),
+        peerAddr: args.peerAddr,
+        connectedAt: args.connectedAt,
+        durationSec: args.durationSec,
+      },
+    };
+    // Refresh lastHeartbeat on connect so heartbeat-staleness checks
+    // don't fight the tunnel-up signal. On disconnect leave it alone
+    // — the agent is still alive elsewhere (maybe on LAN).
+    if (args.online) {
+      patch.lastHeartbeat = Date.now();
+    }
+    await ctx.db.patch(device._id, patch);
+  },
+});
+
+/**
  * List all devices belonging to the authenticated user,
  * plus devices from hosts who granted them guest access.
  */

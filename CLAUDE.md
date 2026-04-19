@@ -363,6 +363,118 @@ If you need to add a new sync path, append the new forbidden keys to `fieldsWeFo
 10. **Provider-agnostic voice** — Like LLM-agnosticism for coding agents, voice is provider-agnostic: PersonaPlex (free, on-prem), OpenAI Realtime (paid, cloud), or any future provider via the VoiceProvider interface.
 8. **Session Transfer** — Transfer AI agent sessions (Claude Code, Aider, Codex, Goose, Amp, OpenCode) between machines via `yaver session transfer`. Includes conversation history, agent-specific state files, and optional workspace (via git or tar). Also available as MCP tools for use directly from within AI agents.
 11. **Guest Access** — Share your machine with anyone via `yaver guests invite <email>`. No team/subscription needed. Guests get scoped access (tasks, feedback, dev server) but can't access shell, vault, or sessions. Max 5 guests per host, invitations expire in 2 days. Works from CLI, mobile app, and MCP.
+12. **Grand MCP (`ops` verb-based API)** — see [`YAVER_MCP_COVERAGE.md`](YAVER_MCP_COVERAGE.md). Single MCP tool `ops(machine, verb, payload)` collapses 744 specialist tools into one surface so vibe-coders in Cursor / Claude Desktop / Aider / Codex / Goose drive Yaver with one schema. 20 verbs: `info`, `run`, `status`, `env`, `files`, `logs`, `session`, `secrets`, `build`, `push`, `test`, `deploy`, `reload`, `provision`, `scale`, `destroy`, `workspace`, `dns`, `cert`, `backup`. Remote routing via the existing peer-proxy; `primary` alias resolves to `userSettings.primaryDeviceId`.
+13. **Monorepo manifest** — `yaver.workspace.yaml` declares apps + stacks + providers + shared infra. `yaver workspace init` wires every app (init.md scaffold, env check, autoinit hints). 16 apps detected in this repo's dogfood manifest. MCP: `workspace_init/list/status/scaffold`.
+14. **Managed toggle** — `userSettings.managed = {relay, dns, analytics, storage, email, ci, voice, llm}` — each accepts `true` (Yaver-hosted) / `false` (self-hosted) / `null` (legacy default). CLI `yaver managed get/set <sub> <val>`, MCP `managed_get/set`. Plumbing done; per-subsystem implementers pending.
+
+## The `ops` grand-MCP surface
+
+`yaver ops` unifies hundreds of domain-specific tools into one
+verb-based API. Humans use it from CLI/mobile; AI agents (Cursor,
+Claude Code, Aider, Codex, Goose) call it as a single MCP tool.
+
+### CLI
+```bash
+yaver ops                                  # list registered verbs
+yaver ops verbs                            # same, explicit
+yaver ops info                             # specs snapshot
+yaver ops run --cmd='uname -a'             # shell on the agent
+yaver ops status                           # in-flight tasks / dev servers / ...
+yaver ops <verb> [--machine=<id>] [--payload='{...}']
+```
+
+### HTTP
+- `POST /ops` — `{machine, verb, payload}` → `{ok, streamId?, initial?, error?, code?}`
+- `GET  /ops/verbs` — every registered verb + its JSON-Schema payload
+
+### MCP
+- `ops` — one tool, all verbs.
+- `ops_verbs` — agent self-discovery of the verb catalogue.
+
+### Mobile-headless parity
+- `MobileClient.ops(verb, payload, machine)` + `opsVerbs()`.
+- CLI: `yaver-mobile-headless ops --verb=info`, `ops-verbs`.
+
+### Guarantees (`desktop/agent/ops.go`)
+- Typed errors with stable `code`: `unknown_verb`, `bad_payload`, `unauthorized`, `remote_failed`, `remote_malformed`, `invalid_machine`, `internal`.
+- Guest-scope gated per verb via `AllowGuest`. Default is owner-only.
+- Panic recovery — a buggy verb can't take the agent down.
+- Remote routing to peer devices via `proxyToDevice`. `primary` alias
+  resolves to `userSettings.primaryDeviceId`. Other aliases (`gpu`,
+  `mac-mini`) are follow-up work.
+
+## Monorepo manifest (`yaver workspace`)
+
+Declarative workspace file at repo root. Each app declares:
+- `path` — directory relative to workspace root
+- `stack` — nextjs / react-native-expo / go / convex / flutter / bun / node / python / rust / gradle
+- `provider:` — per-action hints (deploy / analytics / release)
+- `depends:` — app names this one depends on (for build order)
+- `env:` — required env vars (warn if missing)
+
+Workspace-wide:
+- `primary_device: auto` → resolves to `userSettings.primaryDeviceId`
+- `relay: managed | self-hosted | disabled`
+- `shared.env:` — env vars every app expects (checked once)
+
+The engine runs per-app: path check → env-var check → `init.md`
+scaffold (autodev/autoideas/autotest read it as cached project
+context, saving minutes of re-grepping every kick) → optional
+`yaver autoinit` hint.
+
+```bash
+yaver workspace init              # wire every declared app
+yaver workspace init --scaffold   # generate a starter manifest first
+yaver workspace list              # apps declared (in dep order)
+yaver workspace status            # on-disk + env + init.md state
+yaver workspace init --dry-run    # preview without touching disk
+```
+
+MCP: `workspace_init`, `workspace_list`, `workspace_status`,
+`workspace_scaffold` + ops verb `workspace`.
+
+Dogfood: `/yaver.workspace.yaml` declares this repo's 16 apps.
+
+### Key Files
+| File | Purpose |
+|---|---|
+| `desktop/agent/workspace.go` | YAML parser, validator, Kahn topo-sort |
+| `desktop/agent/workspace_engine.go` | Init / status action engine |
+| `desktop/agent/workspace_cmd.go` | CLI subcommand |
+| `desktop/agent/ops_workspace.go` | `ops workspace` MCP verb |
+| `desktop/agent/workspace_test.go` | Unit tests (loading, cycles, idempotency) |
+| `yaver.workspace.yaml` | Dogfood manifest for this repo |
+
+## Per-subsystem managed toggle
+
+Every subsystem (relay, dns, analytics, storage, email, ci, voice,
+llm) runs in one of three modes:
+- `managed: true` — use Yaver-hosted infrastructure
+- `managed: false` — user-hosted (their Cloudflare / Plausible / VPS)
+- unset — subsystem keeps its legacy behaviour until the user opts in
+
+Source of truth: `userSettings.managed = {relay, dns, ...}`. Patching
+one subsystem merges into the existing record without clobbering
+others.
+
+```bash
+yaver managed                         # list all subsystems + values
+yaver managed set relay true          # use Yaver-managed relay
+yaver managed set analytics false     # self-hosted Plausible/etc.
+yaver managed set dns null            # clear (revert to default)
+```
+
+MCP: `managed_get`, `managed_set`. Plumbing is complete; the
+per-subsystem implementers (DNS code reading the flag to pick
+provider, analytics code, etc.) are a follow-up PR per subsystem.
+
+### Key Files
+| File | Purpose |
+|---|---|
+| `backend/convex/schema.ts` | `userSettings.managed` object |
+| `backend/convex/userSettings.ts` | `mergeManagedPatch` merge logic |
+| `desktop/agent/managed.go` | `fetchManagedSettings` + `setManagedSubsystem` |
+| `desktop/agent/managed_cmd.go` | `yaver managed` CLI |
 
 ## Voice AI Architecture
 

@@ -179,6 +179,18 @@ export default defineSchema({
       title: v.string(),
     }))),
     lastHeartbeat: v.number(),
+    // Real-time tunnel state pushed by the relay server when an
+    // agent's QUIC tunnel registers / deregisters. Optional because
+    // only deployments with CONVEX_PRESENCE_URL + _SECRET wired on
+    // the relay populate it. When present, clients show tunnel
+    // connect/disconnect within ~2s end-to-end.
+    lastTunnelEvent: v.optional(v.object({
+      online:      v.boolean(),
+      at:          v.number(),                     // epoch ms
+      peerAddr:    v.optional(v.string()),         // relay-observed source
+      connectedAt: v.optional(v.number()),         // epoch ms; matches the connect event
+      durationSec: v.optional(v.number()),         // populated on disconnect
+    })),
     createdAt: v.number(),
     // Bootstrap state: true when agent is running without a valid token.
     // Clients show a "NEEDS AUTH" badge and can auto-pair via relay.
@@ -301,6 +313,28 @@ export default defineSchema({
     // Value is devices.deviceId (uuid), not an Id<"devices">, so the
     // pref survives a device record being deleted and re-created.
     primaryDeviceId: v.optional(v.string()),
+    // Per-subsystem managed: true|false toggle. true = use Yaver's
+    // hosted infrastructure for that subsystem (managed relay,
+    // managed analytics, managed storage, …). false = user hosts
+    // their own (their Cloudflare, their Plausible, their VPS). The
+    // endgame: one checkbox per feature, every Yaver surface honors
+    // the same choice without the user juggling per-provider configs.
+    //
+    // Omitted fields mean "not yet chosen" — the feature keeps its
+    // legacy behaviour until the user explicitly opts in/out. Any
+    // new subsystem adopting the pattern adds an optional field
+    // here; the dashboard/mobile/web Settings page enumerates the
+    // schema and shows a toggle per subsystem automatically.
+    managed: v.optional(v.object({
+      relay:     v.optional(v.boolean()),  // today wired via relayUrl/platformConfig fallback; setting this to true forces the platform relay
+      dns:       v.optional(v.boolean()),
+      analytics: v.optional(v.boolean()),
+      storage:   v.optional(v.boolean()),
+      email:     v.optional(v.boolean()),
+      ci:        v.optional(v.boolean()),
+      voice:     v.optional(v.boolean()),
+      llm:       v.optional(v.boolean()),
+    })),
   }).index("by_userId", ["userId"]),
 
   aiRunners: defineTable({

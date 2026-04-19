@@ -276,6 +276,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/auth/pair/submit", s.rateLimit(s.handlePairSubmit))
 	// Remote-support sessions (TeamViewer-style, in-memory, TTL'd).
 	// Owner-only control plane:
+	// Grand MCP: unified verb-based ops API. See ops.go.
+	// /ops           — POST {machine, verb, payload} -> {ok, streamId?, initial?, error?, code?}
+	// /ops/verbs     — GET list of registered verbs + their payload schemas
+	mux.HandleFunc("/ops", s.auth(s.handleOps))
+	mux.HandleFunc("/ops/verbs", s.auth(s.handleOpsVerbs))
 	mux.HandleFunc("/support/start", s.auth(s.handleSupportStart))
 	mux.HandleFunc("/support/stop", s.auth(s.handleSupportStop))
 	mux.HandleFunc("/support/status", s.auth(s.handleSupportStatus))
@@ -8920,6 +8925,245 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return true
 		})
 		return mcpToolResult(fmt.Sprintf("Guest access revoked for %s", args.Email))
+
+	// --- Grand MCP: ops (unified verb-based API) ---
+	case "ops":
+		var req OpsRequest
+		if err := json.Unmarshal(call.Arguments, &req); err != nil {
+			return mcpToolError("invalid ops request: " + err.Error())
+		}
+		// Callers that reach the MCP dispatch have already cleared
+		// the owner-auth boundary upstream (auth() in /mcp). Guests
+		// and support sessions use their own scoped routes, not /mcp,
+		// so we can safely assume owner here. The dispatcher itself
+		// enforces per-verb policy via AllowGuest on non-owner paths
+		// when /ops HTTP is called directly.
+		octx := OpsContext{Ctx: context.Background(), Server: s, Caller: "owner"}
+		out := dispatchOps(octx, req)
+		body, _ := json.MarshalIndent(out, "", "  ")
+		return mcpToolResult(string(body))
+
+	// --- SDK-token MCP ---
+	case "sdk_token_create":
+		var args struct {
+			Label        string   `json:"label"`
+			Scopes       []string `json:"scopes"`
+			AllowedCIDRs []string `json:"allowedCIDRs"`
+			ExpiresInMs  int64    `json:"expiresInMs"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		cfg, err := LoadConfig()
+		if err != nil || cfg == nil || cfg.AuthToken == "" {
+			return mcpToolError("not signed in — run 'yaver auth' on the agent first")
+		}
+		opts := SdkTokenCreateOpts{
+			Label:        args.Label,
+			Scopes:       args.Scopes,
+			AllowedCIDRs: args.AllowedCIDRs,
+			ExpiresInMs:  args.ExpiresInMs,
+		}
+		tok, err := CreateSdkToken(s.convexURL, cfg.AuthToken, opts)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		// Raw token returned once — standard sdk-token contract.
+		out := map[string]interface{}{
+			"ok":    true,
+			"token": tok,
+			"hint":  "store this token now — it cannot be retrieved again. Use it as Authorization: Bearer <token> on scoped SDK endpoints.",
+			"label": args.Label,
+		}
+		body, _ := json.MarshalIndent(out, "", "  ")
+		return mcpToolResult(string(body))
+
+	// --- Feedback SDK (MCP) ---
+	case "feedback_list":
+		var args struct {
+			Limit int `json:"limit"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		// Reuse the same HTTP surface the CLI hits.
+		body, _, _ := s.feedbackHttpMCP("GET", "/feedback", nil)
+		if args.Limit > 0 {
+			// Best-effort truncation; Feedback list is small in practice.
+			var list []interface{}
+			if err := json.Unmarshal(body, &list); err == nil && len(list) > args.Limit {
+				trimmed, _ := json.MarshalIndent(list[:args.Limit], "", "  ")
+				return mcpToolResult(string(trimmed))
+			}
+		}
+		return mcpToolResult(string(body))
+
+	case "feedback_show":
+		var args struct {
+			ID string `json:"id"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.ID == "" {
+			return mcpToolError("id is required")
+		}
+		body, status, _ := s.feedbackHttpMCP("GET", "/feedback/"+args.ID, nil)
+		if status == 404 {
+			return mcpToolError("feedback not found: " + args.ID)
+		}
+		return mcpToolResult(string(body))
+
+	case "feedback_fix":
+		var args struct {
+			ID     string `json:"id"`
+			Runner string `json:"runner"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.ID == "" {
+			return mcpToolError("id is required")
+		}
+		payload := map[string]interface{}{}
+		if args.Runner != "" {
+			payload["runner"] = args.Runner
+		}
+		body, _, _ := s.feedbackHttpMCP("POST", "/feedback/"+args.ID+"/fix", payload)
+		return mcpToolResult(string(body))
+
+	case "feedback_delete":
+		var args struct {
+			ID string `json:"id"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.ID == "" {
+			return mcpToolError("id is required")
+		}
+		_, status, _ := s.feedbackHttpMCP("DELETE", "/feedback/"+args.ID, nil)
+		if status >= 400 {
+			return mcpToolError(fmt.Sprintf("delete failed: HTTP %d", status))
+		}
+		return mcpToolResult(fmt.Sprintf("Feedback %s deleted.", args.ID))
+
+	// --- Source maps (MCP) ---
+	case "sourcemaps_list":
+		store := GlobalSourceMapStore()
+		out := store.List()
+		body, _ := json.MarshalIndent(out, "", "  ")
+		return mcpToolResult(string(body))
+
+	case "sourcemaps_delete":
+		var args struct {
+			App     string `json:"app"`
+			Version string `json:"version"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.App == "" || args.Version == "" {
+			return mcpToolError("app and version are required")
+		}
+		if err := GlobalSourceMapStore().Delete(args.App, args.Version); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult(fmt.Sprintf("Source map %s@%s deleted.", args.App, args.Version))
+
+	// --- Managed / self-hosted toggle (per subsystem) ---
+	case "managed_get":
+		cfg, err := LoadConfig()
+		if err != nil || cfg == nil || cfg.AuthToken == "" {
+			return mcpToolError("not signed in")
+		}
+		body, err := fetchManagedSettings(context.Background(), s.convexURL, cfg.AuthToken)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult(string(body))
+
+	case "managed_set":
+		cfg, err := LoadConfig()
+		if err != nil || cfg == nil || cfg.AuthToken == "" {
+			return mcpToolError("not signed in")
+		}
+		var args struct {
+			Subsystem string          `json:"subsystem"`
+			Managed   json.RawMessage `json:"managed"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.Subsystem == "" {
+			return mcpToolError("subsystem is required")
+		}
+		if err := setManagedSubsystem(context.Background(), s.convexURL, cfg.AuthToken, args.Subsystem, args.Managed); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolResult(fmt.Sprintf("managed.%s updated", args.Subsystem))
+
+	// --- Monorepo workspace manifest ---
+	case "workspace_init":
+		var args opsWorkspacePayload
+		json.Unmarshal(call.Arguments, &args)
+		args.Op = "init"
+		p, _ := json.Marshal(args)
+		r := opsWorkspaceHandler(OpsContext{Server: s, Caller: "owner"}, p)
+		body, _ := json.MarshalIndent(r, "", "  ")
+		return mcpToolResult(string(body))
+
+	case "workspace_list":
+		var args opsWorkspacePayload
+		json.Unmarshal(call.Arguments, &args)
+		args.Op = "list"
+		p, _ := json.Marshal(args)
+		r := opsWorkspaceHandler(OpsContext{Server: s, Caller: "owner"}, p)
+		body, _ := json.MarshalIndent(r, "", "  ")
+		return mcpToolResult(string(body))
+
+	case "workspace_status":
+		var args opsWorkspacePayload
+		json.Unmarshal(call.Arguments, &args)
+		args.Op = "status"
+		p, _ := json.Marshal(args)
+		r := opsWorkspaceHandler(OpsContext{Server: s, Caller: "owner"}, p)
+		body, _ := json.MarshalIndent(r, "", "  ")
+		return mcpToolResult(string(body))
+
+	case "workspace_scaffold":
+		var args opsWorkspacePayload
+		json.Unmarshal(call.Arguments, &args)
+		args.Op = "scaffold"
+		p, _ := json.Marshal(args)
+		r := opsWorkspaceHandler(OpsContext{Server: s, Caller: "owner"}, p)
+		body, _ := json.MarshalIndent(r, "", "  ")
+		return mcpToolResult(string(body))
+
+	case "sourcemaps_resolve":
+		var args struct {
+			App     string `json:"app"`
+			Version string `json:"version"`
+			Line    int    `json:"line"`
+			Column  int    `json:"column"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.App == "" || args.Version == "" {
+			return mcpToolError("app and version are required")
+		}
+		src, line, col, name, ok := GlobalSourceMapStore().Resolve(args.App, args.Version, args.Line, args.Column)
+		if !ok {
+			return mcpToolError(fmt.Sprintf("no source map for %s@%s (or frame unresolvable)", args.App, args.Version))
+		}
+		out := map[string]interface{}{
+			"source": src,
+			"line":   line,
+			"column": col,
+			"name":   name,
+		}
+		body, _ := json.MarshalIndent(out, "", "  ")
+		return mcpToolResult(string(body))
+
+	case "ops_verbs":
+		verbs := listOpsVerbs()
+		out := make([]map[string]interface{}, 0, len(verbs))
+		for _, v := range verbs {
+			out = append(out, map[string]interface{}{
+				"name":        v.Name,
+				"description": v.Description,
+				"streaming":   v.Streaming,
+				"allowGuest":  v.AllowGuest,
+				"payload":     v.Schema,
+			})
+		}
+		body, _ := json.MarshalIndent(map[string]interface{}{"verbs": out, "count": len(out)}, "", "  ")
+		return mcpToolResult(string(body))
 
 	// --- Primary device preference ---
 	case "device_primary_get":

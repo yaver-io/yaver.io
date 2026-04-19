@@ -276,6 +276,41 @@ export class MobileClient {
     return body.devices ?? {};
   }
 
+  // ── Grand MCP: ops ────────────────────────────────────────────
+  /** List registered ops verbs with their payload schemas. */
+  async opsVerbs(): Promise<Array<{
+    name: string;
+    description: string;
+    streaming: boolean;
+    allowGuest: boolean;
+    payload: Record<string, unknown>;
+  }>> {
+    const r = await this.raw.get("/ops/verbs");
+    if (r.status >= 400) throw new Error(`opsVerbs: HTTP ${r.status}`);
+    return r.body?.verbs ?? [];
+  }
+
+  /** Invoke a single ops verb. Returns the structured OpsResult — agents
+   *  inspect `ok`, `streamId`, `initial`, `error`, `code` to branch.
+   *  Setting `machine` to anything other than "local" currently returns
+   *  `code:"remote_not_implemented"` — remote routing lands in a
+   *  follow-up. */
+  async ops(
+    verb: string,
+    payload?: unknown,
+    machine: string = "local",
+  ): Promise<{
+    ok: boolean;
+    streamId?: string;
+    initial?: any;
+    error?: string;
+    code?: string;
+  }> {
+    const r = await this.raw.post("/ops", { verb, machine, payload });
+    if (r.status >= 500) throw new Error(`ops: HTTP ${r.status}`);
+    return r.body ?? { ok: false, error: `HTTP ${r.status}`, code: "http_error" };
+  }
+
   // ── Wizard ─────────────────────────────────────────────────────
   readonly wizard = {
     start: async () => (await this.raw.post("/project/wizard/start")).body,

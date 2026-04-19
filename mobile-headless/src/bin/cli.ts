@@ -11,7 +11,7 @@ import { MobileClient } from "../mobile-client.js";
 
 async function main() {
   const argv = minimist(process.argv.slice(2), {
-    string: ["token", "email", "password", "device", "target", "platform", "data-dir", "tool", "preset", "parent-dir", "convex-url", "relay"],
+    string: ["token", "email", "password", "device", "target", "platform", "data-dir", "tool", "preset", "parent-dir", "convex-url", "relay", "verb", "machine", "payload"],
     alias: { t: "token", d: "device" },
   });
 
@@ -82,6 +82,23 @@ async function main() {
       const primary = await mobile.getPrimaryDevice();
       const target = mobile.pickAutoConnectTarget(devices, primary);
       out({ primaryDeviceId: primary, target: target ? { id: target.id, name: target.name } : null });
+      break;
+    }
+    case "ops-verbs": {
+      out(await mobile.opsVerbs());
+      break;
+    }
+    case "ops": {
+      const verb = (argv as any).verb ?? rest[0];
+      if (!verb) die("ops needs --verb=<name> (or positional)");
+      const machine = (argv as any).machine ?? "local";
+      // Accept --payload as raw JSON or fall through with undefined.
+      let payload: unknown;
+      if ((argv as any).payload) {
+        try { payload = JSON.parse(String((argv as any).payload)); }
+        catch { die("--payload must be valid JSON"); }
+      }
+      out(await mobile.ops(String(verb), payload, String(machine)));
       break;
     }
     case "connect": {

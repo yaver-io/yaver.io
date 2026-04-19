@@ -268,6 +268,14 @@ function DeviceCard({
                 <Text style={{ color: "#818cf8", fontSize: 10, fontWeight: "700" }}>PRIMARY ★</Text>
               </View>
             ) : null}
+            {device.lastTunnelEvent && device.lastTunnelEvent.online && (Date.now() - device.lastTunnelEvent.at) < 60_000 ? (
+              <View style={{
+                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+                backgroundColor: "#22d3ee22", borderWidth: 1, borderColor: "#22d3ee66",
+              }}>
+                <Text style={{ color: "#22d3ee", fontSize: 10, fontWeight: "700" }}>RELAY LIVE</Text>
+              </View>
+            ) : null}
             {device.isGuest && device.priorityMode === "spare-capacity" ? (
               <View style={{
                 paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
