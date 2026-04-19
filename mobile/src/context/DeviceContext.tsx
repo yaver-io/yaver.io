@@ -14,7 +14,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { quicClient, RecoveryResult, RelayServer, TunnelServer } from "../lib/quic";
 import { useAuth } from "./AuthContext";
-import { getLocalSecret, getUserSettings, LOCAL_KEYS } from "../lib/auth";
+import { getLocalSecret, getUserSettings, saveUserSettings, LOCAL_KEYS } from "../lib/auth";
 import { appLog } from "../lib/logger";
 import { beaconListener, type DiscoveredDevice } from "../lib/beacon";
 import { fetchPairInfo, submitPair } from "../lib/pairDevice";
@@ -51,6 +51,43 @@ async function getDetachedDevices(): Promise<Set<string>> {
     const raw = await AsyncStorage.getItem(DETACHED_DEVICES_KEY);
     return raw ? new Set(JSON.parse(raw)) : new Set();
   } catch { return new Set(); }
+}
+
+/**
+ * Ask the primary relay server which of these devices have an active QUIC
+ * tunnel right now. The relay is authoritative for tunnel state; heartbeat
+ * lags by up to ~90 s. When the relay reports a device online we flip
+ * online=true on its record immediately, which makes the auto-connect rule
+ * and the device list react to real state instead of the last heartbeat.
+ *
+ * Best-effort: any failure (no relays configured, relay down, network error)
+ * returns the input list unchanged.
+ */
+async function applyRelayPresence(list: Device[]): Promise<Device[]> {
+  if (list.length === 0) return list;
+  const relays = quicClient.relayServersSnapshot;
+  if (!relays || relays.length === 0) return list;
+  const relay = relays[0]; // highest priority
+  try {
+    const ids = list.map((d) => d.id).filter(Boolean).join(",");
+    const url = `${relay.httpUrl}/presence?ids=${encodeURIComponent(ids)}`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3000);
+    const res = await fetch(url, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) return list;
+    const data = await res.json();
+    const table = (data && data.devices) || {};
+    return list.map((d) => {
+      const entry = table[d.id];
+      if (entry && entry.online === true) {
+        return { ...d, online: true, lastSeen: Math.max(d.lastSeen || 0, Date.now()) };
+      }
+      return d;
+    });
+  } catch {
+    return list;
+  }
 }
 
 async function addDetachedDevice(key: string): Promise<void> {
@@ -105,6 +142,12 @@ export interface Device {
   local?: boolean;
   /** stable hardware ID (P2P only, never sent to Convex) */
   hwid?: string;
+  /** every reachable IPv4 the agent broadcast in heartbeat — Wi-Fi LAN,
+   * Tailscale 100.x, Ethernet, etc. The connect path races them in
+   * parallel so the session attaches via whichever has a route from
+   * the phone right now (e.g. Tailscale on cellular, Wi-Fi on same LAN).
+   */
+  lanIps?: string[];
   /** true when this device belongs to a host who granted us guest access */
   isGuest?: boolean;
   /** host's display name (only set when isGuest=true) */
@@ -411,6 +454,11 @@ interface DeviceState {
   inviteGuest: (
     target: string | { email?: string; userId?: string; deviceIds?: string[] },
   ) => Promise<{ inviteCode: string; guestRegistered: boolean; guestUserId?: string; guestEmail?: string }>;
+  /** User's preferred device for auto-connect when multiple machines exist. */
+  primaryDeviceId: string | null;
+  /** Persist the preferred device. Pass null to clear. Syncs to Convex so
+   *  other surfaces (web, desktop, MCP) honor the same choice. */
+  setPrimaryDevice: (deviceId: string | null) => Promise<void>;
 }
 
 const DeviceContext = createContext<DeviceState | undefined>(undefined);
@@ -474,6 +522,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   const [guestInvitations, setGuestInvitations] = useState<GuestInvitation[]>([]);
   const [agentAuthExpired, setAgentAuthExpired] = useState(false);
   const [unreachableSet, setUnreachableSet] = useState<Set<string>>(() => new Set());
+  // User-chosen "primary" machine — auto-connect target when they have more
+  // than one device. Undefined = no preference set → force manual pick for
+  // multi-device users. Loaded from Convex on mount, persisted on change.
+  const [primaryDeviceId, setPrimaryDeviceIdState] = useState<string | null>(null);
   const hasLoadedOnce = useRef(false);
 
   const markDeviceUnreachable = useCallback((deviceId: string) => {
@@ -535,6 +587,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             runners: d.runners ?? [],
             publicKey: d.publicKey,
             hwid: d.hardwareId || d.hwid,
+            lanIps: Array.isArray(d.localIps) ? d.localIps : undefined,
             needsAuth: d.needsAuth ?? false,
             isGuest: d.isGuest || false,
             hostName: d.hostName,
@@ -554,10 +607,19 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         const collapsed = collapseAliasDevices(mapped);
         // Filter out detached devices
         const detached = await getDetachedDevices();
-        const finalDevices = collapsed.filter(d => {
+        const filtered = collapsed.filter(d => {
           const key = deviceIdentityKey(d);
           return !detached.has(key);
         });
+        // Real-time presence override: ask the primary relay server which
+        // devices have an active QUIC tunnel RIGHT NOW. This signal is
+        // authoritative — heartbeat can be up to ~90 s stale, but the relay
+        // knows tunnel up/down the instant it happens. If the relay says
+        // online, we flip online=true regardless of heartbeat freshness;
+        // if it says offline we leave the heartbeat-based flag alone
+        // (could still be LAN-only and not using the relay at all).
+        // Best-effort: any failure leaves the list unchanged.
+        const finalDevices = await applyRelayPresence(filtered);
         setDevices(finalDevices);
       } else {
         appLog("warn", `/devices/list failed: ${devicesRes.status}`);
@@ -599,8 +661,11 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           host: device.host, port: device.port, deviceId: device.id.slice(0, 8),
           relayCount: quicClient.relayServerCount,
         }));
-        // Race connect against a 10s timeout
-        const connectPromise = quicClient.connect(device.host, device.port, token, device.id);
+        // Race connect against a 10s timeout. Pass every reachable IP the
+        // agent has reported in heartbeat (Wi-Fi LAN, Tailscale 100.x,
+        // Ethernet) so quicClient can race them in parallel against the
+        // beacon and Convex-stored primary host.
+        const connectPromise = quicClient.connect(device.host, device.port, token, device.id, device.lanIps);
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("Could not connect in 20s")), 20000)
         );
@@ -654,6 +719,22 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     setUserDisconnected(true);
     setAgentAuthExpired(false);
   }, []);
+
+  const setPrimaryDevice = useCallback(async (deviceId: string | null) => {
+    if (!token) throw new Error("Not signed in");
+    // Optimistic local update so the UI reflects the choice immediately.
+    setPrimaryDeviceIdState(deviceId);
+    try {
+      // `null` sentinel tells Convex to clear the preference; omitting the
+      // field leaves it untouched, which is the wrong semantics here.
+      await saveUserSettings(token, { primaryDeviceId: deviceId });
+    } catch (e) {
+      // Roll back so the user sees the real state.
+      appLog("error", `[settings] setPrimaryDevice failed: ${e}`);
+      setPrimaryDeviceIdState((prev) => prev);
+      throw e;
+    }
+  }, [token]);
 
   const stopReconnectAndBounce = useCallback(async () => {
     const failed = activeDevice;
@@ -853,6 +934,12 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         if (settings.forceRelay !== undefined) {
           quicClient.setForceRelay(settings.forceRelay);
           appLog("info", `[settings] forceRelay=${settings.forceRelay}`);
+        }
+
+        // Apply primary device preference (controls auto-connect when N > 1)
+        if (settings.primaryDeviceId !== undefined) {
+          setPrimaryDeviceIdState(settings.primaryDeviceId ?? null);
+          appLog("info", `[settings] primaryDeviceId=${settings.primaryDeviceId ?? "(none)"}`);
         }
 
         // Apply tunnel from settings (if no local override)
@@ -1241,22 +1328,42 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     }
   }, [token, refreshDevices]);
 
-  // Auto-connect: single online device → connect immediately (unless user disconnected)
-  // Wait for relaysReady so the QUIC client has relay servers before attempting connection
+  // Auto-connect rule (applies once, after login / relaysReady):
+  //   1. Exactly one online device                 → auto-connect
+  //   2. Multiple online, primaryDeviceId is one   → auto-connect the primary
+  //   3. Multiple online, no (matching) primary    → force user to pick
+  // The user-disconnect flag always wins so a manual "Stop" isn't overridden
+  // by the auto-connect effect firing again.
   useEffect(() => {
     if (!token || !relaysReady || activeDevice || connectionStatus === "connecting" || userDisconnected) return;
 
     const recentDevices = devices.filter((d) => d.online);
+    if (recentDevices.length === 0) return;
 
+    let target: Device | null = null;
+    let reason: "single" | "primary" = "single";
     if (recentDevices.length === 1) {
-      console.log("[DeviceContext] Auto-connecting to single online device:", recentDevices[0].name);
-      sendTelemetry(token, "auto-connect", `Single device: ${recentDevices[0].name}`, JSON.stringify({
-        relayCount: quicClient.relayServerCount, deviceId: recentDevices[0].id.slice(0, 8),
-      }));
-      selectDevice(recentDevices[0]);
+      target = recentDevices[0];
+    } else if (primaryDeviceId) {
+      const primary = recentDevices.find((d) => d.id === primaryDeviceId);
+      if (primary) {
+        target = primary;
+        reason = "primary";
+      }
     }
-    // Multiple devices → don't auto-connect, let UI prompt user
-  }, [devices, token, relaysReady, activeDevice, connectionStatus, userDisconnected, selectDevice]);
+
+    if (target) {
+      console.log(`[DeviceContext] Auto-connecting (${reason}) to`, target.name);
+      sendTelemetry(token, "auto-connect", `${reason}: ${target.name}`, JSON.stringify({
+        reason,
+        relayCount: quicClient.relayServerCount,
+        deviceId: target.id.slice(0, 8),
+        onlineCount: recentDevices.length,
+      }));
+      selectDevice(target);
+    }
+    // Multiple devices + no primary (or primary offline) → do nothing; UI asks the user to pick.
+  }, [devices, token, relaysReady, activeDevice, connectionStatus, userDisconnected, primaryDeviceId, selectDevice]);
 
   // Trigger immediate reconnection on network change (WiFi↔cellular roaming)
   useEffect(() => {
@@ -1303,8 +1410,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       acceptGuestInvitation,
       acceptGuestByCode,
       inviteGuest,
+      primaryDeviceId,
+      setPrimaryDevice,
     }),
-    [devices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, unreachableSet, markDeviceUnreachable, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest]
+    [devices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, unreachableSet, markDeviceUnreachable, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

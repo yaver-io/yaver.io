@@ -46,6 +46,7 @@ function DeviceCard({
   isActive,
   authExpired,
   isStale,
+  isPrimary,
   onSelect,
   onLongPress,
   onRecoverAuth,
@@ -58,6 +59,7 @@ function DeviceCard({
   // failed. Drives the YELLOW badge + the explicit "Try to connect"
   // button instead of the old green/red flicker.
   isStale: boolean;
+  isPrimary: boolean;
   onSelect: () => void;
   onLongPress: () => void;
   onRecoverAuth: () => Promise<void>;
@@ -256,6 +258,14 @@ function DeviceCard({
                 backgroundColor: "#60a5fa22", borderWidth: 1, borderColor: "#60a5fa66",
               }}>
                 <Text style={{ color: "#60a5fa", fontSize: 10, fontWeight: "700" }}>SHARED</Text>
+              </View>
+            ) : null}
+            {isPrimary ? (
+              <View style={{
+                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+                backgroundColor: "#6366f122", borderWidth: 1, borderColor: "#6366f166",
+              }}>
+                <Text style={{ color: "#818cf8", fontSize: 10, fontWeight: "700" }}>PRIMARY ★</Text>
               </View>
             ) : null}
             {device.isGuest && device.priorityMode === "spare-capacity" ? (
@@ -678,6 +688,8 @@ export default function DevicesScreen() {
     removeDevice,
     acceptGuestByCode,
     unreachableDeviceIds,
+    primaryDeviceId,
+    setPrimaryDevice,
   } = useDevice();
 
   const [guestCode, setGuestCode] = useState("");
@@ -858,6 +870,7 @@ export default function DevicesScreen() {
               device={item}
               isActive={activeDevice?.id === item.id}
               isStale={unreachableDeviceIds.includes(item.id)}
+              isPrimary={primaryDeviceId === item.id}
               onSelect={() => selectDevice(item)}
               authExpired={activeDevice?.id === item.id && connectionStatus === "connected" && agentAuthExpired}
               onLongPress={() => {
@@ -865,28 +878,35 @@ export default function DevicesScreen() {
                 const message = item.isGuest
                   ? "Remove this shared machine from your list? It will reappear if the host shares it again."
                   : "Remove this device from your account? The node will need to re-register before it shows up again.";
-                Alert.alert(
-                  item.name,
-                  message,
-                  [
-                    { text: "Cancel", style: "cancel" },
-                    {
-                      text: actionLabel,
-                      style: "destructive",
-                      onPress: async () => {
-                        try {
-                          if (item.isGuest) {
-                            await detachDevice(item);
-                          } else {
-                            await removeDevice(item);
-                          }
-                        } catch (e: any) {
-                          Alert.alert("Error", e?.message || "Failed");
-                        }
-                      },
-                    },
-                  ]
-                );
+                // Guest machines can't be the primary — they can vanish on host revocation.
+                const isThisPrimary = primaryDeviceId === item.id;
+                const primaryAction = item.isGuest
+                  ? null
+                  : isThisPrimary
+                    ? { text: "Unset primary", onPress: async () => {
+                        try { await setPrimaryDevice(null); } catch (e: any) { Alert.alert("Error", e?.message || "Failed"); }
+                      } }
+                    : { text: "Set as primary", onPress: async () => {
+                        try { await setPrimaryDevice(item.id); } catch (e: any) { Alert.alert("Error", e?.message || "Failed"); }
+                      } };
+                const buttons: any[] = [{ text: "Cancel", style: "cancel" }];
+                if (primaryAction) buttons.push(primaryAction);
+                buttons.push({
+                  text: actionLabel,
+                  style: "destructive",
+                  onPress: async () => {
+                    try {
+                      if (item.isGuest) {
+                        await detachDevice(item);
+                      } else {
+                        await removeDevice(item);
+                      }
+                    } catch (e: any) {
+                      Alert.alert("Error", e?.message || "Failed");
+                    }
+                  },
+                });
+                Alert.alert(item.name, message, buttons);
               }}
               onRecoverAuth={async () => {
                 try {

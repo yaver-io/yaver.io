@@ -456,6 +456,10 @@ export interface UserSettings {
   ttsEnabled?: boolean;
   verbosity?: number; // 0-10: response detail level
   keyStorage?: KeyStorage; // "local" = device Keychain only, "cloud" = sync to Convex
+  /** Preferred device for auto-connect when user has multiple machines.
+   * Send `null` to clear; omit to leave untouched. Single-device users
+   * auto-connect regardless of this field. */
+  primaryDeviceId?: string | null;
 }
 
 // ── Local secret storage (iOS Keychain / Android SecureStore) ───────

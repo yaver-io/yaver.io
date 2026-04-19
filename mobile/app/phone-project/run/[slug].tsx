@@ -221,13 +221,13 @@ export default function PhoneProjectRuntimeScreen() {
     if (!project?.dir) {
       Alert.alert(
         "Coding loop unavailable",
-        "This phone sandbox runs locally in-app. Move it to a Yaver agent or Yaver Cloud before opening the coding loop.",
+        "This phone sandbox runs locally in-app. Move it to a Yaver agent before opening the coding loop.",
       );
       return;
     }
     const prompt = [
       `We are iterating on the mobile sandbox app "${project.name}".`,
-      `Focus on the in-app experience first. Keep SQLite as the local backend and preserve exportability to remote dev hardware or Yaver Cloud.`,
+      `Focus on the in-app experience first. Keep SQLite as the local backend and preserve exportability to remote dev hardware later.`,
       `Primary entity: ${primaryTable}.`,
       primaryScreen?.title ? `Current runtime screen: ${primaryScreen.title}.` : "",
       `Make the next concrete improvement to the app and narrate progress through the task stream.`,

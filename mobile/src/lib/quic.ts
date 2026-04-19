@@ -463,7 +463,7 @@ export interface ExecOptions {
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 export type ConnectionMode = "direct" | "relay" | "tunnel" | null;
 /** How the connection was established — tracked for diagnostics and faster reconnection. */
-export type ConnectionPath = "lan-beacon" | "lan-convex-ip" | "lan-beacon-upgrade" | "relay" | "cloudflare-tunnel" | null;
+export type ConnectionPath = "lan-beacon" | "lan-convex-ip" | "lan-beacon-upgrade" | "lan-heartbeat" | "lan-tailscale" | "relay" | "cloudflare-tunnel" | null;
 
 export type OutputCallback = (taskId: string, line: string) => void;
 export type ConnectionStateCallback = (state: ConnectionState) => void;
@@ -516,19 +516,29 @@ export class QuicClient {
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private _consecutiveHeartbeatFailures = 0;
 
-  // Reconnection — max 15 retries, then give up (needs headroom for network transitions)
+  // Reconnection — short burst, then give up. 15 attempts produced a
+  // ~2-minute silent spinning loop that ate battery and made the UI feel
+  // broken; 3 attempts (≈7s of exponential backoff total) surfaces the
+  // failure fast enough for the user to decide whether to retry, switch
+  // networks, or pick a different device. Full network-change events
+  // still trigger a fresh full reconnect with its own budget.
   // `reconnectAttempt` is the 1-indexed number of the attempt currently in
   // progress or just completed. 0 means idle (connected or never started).
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private _reconnectAttempt = 0;
   private _reconnectStopped = false;
   private readonly baseBackoffMs = 1000;
-  private readonly _maxReconnectAttempts = 15;
+  private readonly _maxReconnectAttempts = 3;
 
   private _connectionMode: ConnectionMode = null;
   private _connectionPath: ConnectionPath = null;
   private _networkType: string | null = null; // "wifi" | "cellular" | etc.
   private _connectingInProgress = false; // guard against concurrent attemptConnect calls
+  // Extra LAN/Tailscale/Ethernet IPs that the agent advertised in heartbeat.
+  // Raced in parallel against the beacon IP and the primary host so the
+  // session attaches via whichever address the phone can actually route to
+  // (e.g. Tailscale 100.x when on cellular, plain Wi-Fi when same LAN).
+  private _lanIps: string[] = [];
   agentAuthExpired = false; // true when agent's session with Convex has expired
 
   // Relay health tracking
@@ -572,6 +582,13 @@ export class QuicClient {
 
   get tunnelServerCount(): number {
     return this.tunnelServers.length;
+  }
+
+  /** Snapshot of the configured relay servers (highest priority first). Used
+   *  by DeviceContext to hit /presence on the primary relay for real-time
+   *  tunnel-up state, which is more accurate than Convex heartbeat lag. */
+  get relayServersSnapshot(): RelayServer[] {
+    return [...this.relayServers];
   }
 
   // ── Public getters ─────────────────────────────────────────────────
@@ -782,17 +799,29 @@ export class QuicClient {
    * Establish a connection to the desktop agent.
    * Tries direct connection first, then relay servers in priority order.
    */
-  async connect(host: string, port: number, token: string, deviceId: string): Promise<void> {
+  async connect(host: string, port: number, token: string, deviceId: string, lanIps?: string[]): Promise<void> {
     this.host = host;
     this.port = port;
     this.token = token;
     this.deviceId = deviceId;
+    this._lanIps = Array.isArray(lanIps) ? lanIps.filter((s) => typeof s === "string" && s.length > 0) : [];
     this.activeRelayUrl = null;
     this.activeRelayPassword = null;
     this._reconnectStopped = false;
     this.setReconnectAttempt(1);
 
     await this.attemptConnect();
+
+    // _doAttemptConnect swallows path failures and flips state to "error"
+    // so the background reconnect loop can keep trying. The public connect()
+    // contract is different: callers (selectDevice) need to know up-front
+    // whether the initial attempt actually reached the agent — otherwise the
+    // UI logs "[connect-success] via null" and shows a fake green badge while
+    // every subsequent request fails. Surface the failure as a thrown error
+    // so the caller can show the real reason and stop the reconnect chatter.
+    if (this._connectionState !== "connected") {
+      throw new Error("Could not reach agent (direct, tunnel, or via relay)");
+    }
   }
 
   /** Close the connection and stop all timers. */
@@ -806,6 +835,7 @@ export class QuicClient {
     this.port = null;
     this.token = null;
     this.deviceId = null;
+    this._lanIps = [];
     this.activeRelayUrl = null;
     this.activeRelayPassword = null;
   }
@@ -2872,6 +2902,102 @@ export class QuicClient {
     return /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host);
   }
 
+  /** Tailscale CGNAT range (100.64.0.0/10). Only relevant when both ends are
+   *  on the same tailnet — but the cost of probing it is bounded by the
+   *  parallel race budget, so we let it ride. */
+  private isTailscaleIP(host: string): boolean {
+    if (!/^100\./.test(host)) return false;
+    const second = parseInt(host.split(".")[1] ?? "0", 10);
+    return second >= 64 && second <= 127;
+  }
+
+  /** Race every direct-connection candidate in parallel. Resolves with the
+   *  first /health 200 within the per-probe budget, null if none answer.
+   *  Cancels losers via AbortController so we never leak sockets.
+   *
+   *  Order of candidates is informational only — they all fire at once. We
+   *  surface the matched path label (lan-beacon / lan-tailscale / lan-convex-ip)
+   *  in the connection log so the user sees how the session attached.
+   */
+  private async raceDirectCandidates(): Promise<{
+    ip: string;
+    port: number;
+    path: ConnectionPath;
+    authExpired: boolean;
+  } | null> {
+    type Candidate = { ip: string; port: number; path: ConnectionPath };
+    const seen = new Set<string>();
+    const candidates: Candidate[] = [];
+    const push = (ip: string, port: number, path: ConnectionPath) => {
+      if (!ip || !port) return;
+      const key = `${ip}:${port}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      candidates.push({ ip, port, path });
+    };
+
+    // Beacon first — freshest signal, tells us the agent is on this LAN now.
+    const lanInfo = this.deviceId ? beaconListener.getLocalIP(this.deviceId) : null;
+    if (lanInfo) push(lanInfo.ip, lanInfo.port, "lan-beacon");
+
+    // Heartbeat-advertised IPs from Convex. Port is whatever the agent is
+    // listening on (same port for every interface — single HTTP server).
+    const port = this.port ?? 18080;
+    for (const ip of this._lanIps) {
+      // Tag Tailscale IPs distinctly so the log shows which path actually won.
+      const path: ConnectionPath = this.isTailscaleIP(ip) ? "lan-tailscale" : "lan-heartbeat";
+      push(ip, port, path);
+    }
+
+    // Convex-stored primary IP last — kept for backwards-compat with agents
+    // that haven't upgraded to localIps yet. May be stale.
+    if (this.host && this.isPrivateIP(this.host) && this.port) {
+      push(this.host, this.port, "lan-convex-ip");
+    }
+
+    if (candidates.length === 0) return null;
+    console.log(`[QUIC] Racing ${candidates.length} direct candidate(s):`,
+      candidates.map((c) => `${c.path}=${c.ip}:${c.port}`).join(", "));
+
+    const controllers: AbortController[] = [];
+    const probe = (cand: Candidate, idx: number): Promise<{
+      ip: string; port: number; path: ConnectionPath; authExpired: boolean;
+    }> => {
+      const ctrl = new AbortController();
+      controllers[idx] = ctrl;
+      const url = `http://${cand.ip}:${cand.port}/health`;
+      const timer = setTimeout(() => ctrl.abort(), 2500);
+      return fetch(url, { headers: this.authHeaders, signal: ctrl.signal })
+        .then(async (res) => {
+          clearTimeout(timer);
+          if (!res.ok) throw new Error(`status ${res.status}`);
+          const body = await res.json().catch(() => ({}));
+          return { ip: cand.ip, port: cand.port, path: cand.path, authExpired: !!body.authExpired };
+        })
+        .catch((e) => {
+          clearTimeout(timer);
+          throw e;
+        });
+    };
+
+    try {
+      const winner = await Promise.any(candidates.map((c, i) => probe(c, i)));
+      // Cancel every other in-flight probe — they're losers now.
+      for (let i = 0; i < controllers.length; i++) {
+        const c = controllers[i];
+        if (!c) continue;
+        if (winner.ip !== candidates[i].ip || winner.port !== candidates[i].port) {
+          try { c.abort(); } catch {}
+        }
+      }
+      return winner;
+    } catch {
+      // All failed — Promise.any rejects with AggregateError; the relay
+      // path will be tried next by the caller.
+      return null;
+    }
+  }
+
   private async attemptConnect(): Promise<void> {
     // Prevent concurrent connection attempts (poll failure + NetInfo can race)
     if (this._connectingInProgress) {
@@ -2905,51 +3031,24 @@ export class QuicClient {
       // Strategy: direct-first on WiFi (lowest latency), relay-fallback.
       // On cellular: skip direct, go straight to relay.
 
-      // 1. Try direct connection first (LAN beacon IP or Convex-known IP)
+      // 1. Try direct connection first — race every candidate IP in parallel.
+      //    Candidates: LAN beacon (freshest), heartbeat-advertised localIps
+      //    (Wi-Fi + Tailscale + Ethernet), then the Convex-stored primary
+      //    host. Whoever returns 200 from /health first wins; the others
+      //    are abandoned. This collapses the old serial 2s+2s waterfall
+      //    into a single ~2s window and survives stale Convex IPs because
+      //    the freshest signal wins, not the first-tried one.
       if (isWifi && !this._forceRelay) {
-        // 1a. Check if device is LAN-discovered via beacon (freshest IP)
-        const lanInfo = this.deviceId ? beaconListener.getLocalIP(this.deviceId) : null;
-        if (lanInfo) {
-          try {
-            const directUrl = `http://${lanInfo.ip}:${lanInfo.port}`;
-            console.log("[QUIC] Trying LAN-discovered direct:", directUrl);
-            const res = await this.fetchWithTimeout(`${directUrl}/health`, {
-              headers: this.authHeaders,
-            }, 2000);
-            if (res.ok) {
-              const healthData = await res.json().catch(() => ({}));
-              this.agentAuthExpired = !!healthData.authExpired;
-              this.activeRelayUrl = null;
-              this.setConnectionMode("direct");
-              this._connectionPath = "lan-beacon";
-              connected = true;
-              console.log("[QUIC] Direct connection via LAN beacon succeeded");
-            }
-          } catch (e) {
-            console.log("[QUIC] LAN beacon direct failed:", e);
-          }
-        }
-
-        // 1b. Try Convex-known IP (if beacon didn't work and IP is private)
-        if (!connected && this.host && this.isPrivateIP(this.host)) {
-          try {
-            const directUrl = `http://${this.host}:${this.port}`;
-            console.log("[QUIC] Trying Convex-known direct:", directUrl);
-            const res = await this.fetchWithTimeout(`${directUrl}/health`, {
-              headers: this.authHeaders,
-            }, 2000);
-            if (res.ok) {
-              const healthData = await res.json().catch(() => ({}));
-              this.agentAuthExpired = !!healthData.authExpired;
-              this.activeRelayUrl = null;
-              this.setConnectionMode("direct");
-              this._connectionPath = "lan-convex-ip";
-              connected = true;
-              console.log("[QUIC] Direct connection via Convex IP succeeded");
-            }
-          } catch (e) {
-            console.log("[QUIC] Convex IP direct failed:", e);
-          }
+        const winner = await this.raceDirectCandidates();
+        if (winner) {
+          this.host = winner.ip;
+          this.port = winner.port;
+          this.activeRelayUrl = null;
+          this.agentAuthExpired = winner.authExpired;
+          this.setConnectionMode("direct");
+          this._connectionPath = winner.path;
+          connected = true;
+          console.log(`[QUIC] Direct via ${winner.path}: ${winner.ip}:${winner.port}`);
         }
       }
 

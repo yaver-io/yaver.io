@@ -26,6 +26,7 @@ import {
   listCloudflareZones,
   verifyCloudflareToken,
 } from "../../src/lib/phoneProjects";
+import { getYaverCloudHost } from "../../src/lib/yaverCloud";
 
 // Per-project "Custom Domain" screen. Pastes a Cloudflare API token (Zone:
 // DNS:Edit scope), lists the user's zones, lets them CNAME <sub>.<zone>
@@ -34,7 +35,7 @@ import {
 // the X-CF-Token header per-request. See desktop/agent/cloudflare_dns.go.
 
 const TOKEN_KEY = "yaver.cloudflare.token";
-const DEFAULT_TARGET = "cloud.yaver.io";
+const DEFAULT_TARGET = getYaverCloudHost();
 
 export default function PhoneDNSScreen() {
   const c = useColors();
@@ -139,7 +140,7 @@ export default function PhoneDNSScreen() {
       const rec = await createCloudflareRecord(token, selectedZone.id, input);
       Alert.alert(
         "Record created",
-        `${rec.type} ${rec.name} → ${rec.content}\n\nDNS will propagate in a few seconds. Yaver Cloud's Caddy picks up new hostnames automatically.`,
+        `${rec.type} ${rec.name} → ${rec.content}\n\nDNS will propagate in a few seconds. The target proxy will pick up new hostnames automatically.`,
       );
       setSubdomain("");
       await loadRecords();

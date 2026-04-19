@@ -49,7 +49,7 @@ export default function PhoneProjectWorkspaceScreen() {
         : access?.kind === "dev-hw"
           ? "on the user's remote dev machine through Yaver"
           : access?.kind === "yaver-cloud"
-            ? "on Yaver Cloud"
+            ? "on a private-preview managed machine"
             : "in the mobile sandbox";
     return [
       `You are coding for the Yaver mobile sandbox project "${project.name}".`,
@@ -65,7 +65,7 @@ export default function PhoneProjectWorkspaceScreen() {
     if (!project?.dir) {
       Alert.alert(
         "Coding loop unavailable",
-        "Phone-local projects run in-app first. Export or bind this project to a Yaver agent or Yaver Cloud before opening the coding loop.",
+        "Phone-local projects run in-app first. Export or bind this project to a Yaver agent before opening the coding loop.",
       );
       return;
     }
@@ -170,7 +170,7 @@ export default function PhoneProjectWorkspaceScreen() {
             Active backend: {access?.label ?? "This phone"}
           </Text>
           <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 2 }}>
-            Export path: phone → Yaver agent → Yaver Cloud
+            Export path: phone → Yaver agent
           </Text>
         </View>
         <View style={styles.tabRow}>
