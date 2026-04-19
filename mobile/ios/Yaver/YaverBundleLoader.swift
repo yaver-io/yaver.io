@@ -153,13 +153,12 @@ class YaverBundleLoader: RCTEventEmitter {
 
   @objc func getAvailableModules(_ resolve: @escaping RCTPromiseResolveBlock,
                                  rejecter reject: @escaping RCTPromiseRejectBlock) {
-    resolve(["expo-camera","expo-location","expo-sensors","expo-haptics","expo-device",
-             "expo-constants","expo-notifications","expo-file-system","expo-asset","expo-font",
-             "expo-clipboard","expo-linking","expo-secure-store","expo-av","expo-image-picker",
-             "expo-speech","expo-web-browser","expo-apple-authentication",
-             "react-native-reanimated","react-native-gesture-handler","react-native-screens",
-             "react-native-safe-area-context","react-native-webview",
-             "@react-native-async-storage/async-storage","@react-native-community/netinfo"])
+    let manifest = SDKManifest.shared.raw
+    if let modules = manifest["nativeModules"] as? [String: String] {
+      resolve(Array(modules.keys).sorted())
+    } else {
+      resolve([])
+    }
   }
 
   @objc func isLoaded(_ resolve: @escaping RCTPromiseResolveBlock,

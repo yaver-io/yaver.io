@@ -1,6 +1,7 @@
 import { NativeModules, NativeEventEmitter, Platform } from "react-native";
 
 const { YaverBundleLoader } = NativeModules;
+const { YaverInfo } = NativeModules;
 
 const emitter = YaverBundleLoader
   ? new NativeEventEmitter(YaverBundleLoader)
@@ -44,8 +45,13 @@ export async function unloadApp(): Promise<{ unloaded: boolean }> {
  * Used for compatibility checking before loading a bundle.
  */
 export async function getAvailableModules(): Promise<string[]> {
-  if (!YaverBundleLoader) return [];
-  return YaverBundleLoader.getAvailableModules();
+  if (YaverBundleLoader?.getAvailableModules) {
+    return YaverBundleLoader.getAvailableModules();
+  }
+  if (YaverInfo?.getAvailableModules) {
+    return YaverInfo.getAvailableModules();
+  }
+  return [];
 }
 
 /**
