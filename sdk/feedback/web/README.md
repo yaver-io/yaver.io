@@ -1,17 +1,17 @@
-# @yaver/feedback-web
+# yaver-feedback-web
 
 Visual feedback SDK for web apps — record screen + voice, take screenshots, send bug reports to your Yaver dev machine. The AI agent receives the report and fixes the bugs automatically.
 
 ## Install
 
 ```bash
-npm install @yaver/feedback-web
+npm install yaver-feedback-web
 ```
 
 ## Quick Start
 
 ```typescript
-import { YaverFeedback } from '@yaver/feedback-web';
+import { YaverFeedback } from 'yaver-feedback-web';
 
 // Initialize in development only
 if (process.env.NODE_ENV === 'development') {
@@ -45,7 +45,7 @@ YaverFeedback.init({
 For more control, use the `FeedbackWidget` component in your dev tools panel:
 
 ```typescript
-import { FeedbackWidget } from '@yaver/feedback-web';
+import { FeedbackWidget } from 'yaver-feedback-web';
 
 // Mount in your dev settings page
 FeedbackWidget.mount(document.getElementById('yaver-panel'));

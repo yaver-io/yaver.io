@@ -204,32 +204,31 @@ export default function FeedbackSdkPage() {
         <section className="mb-20">
           <SectionHeading id="installation">Installation</SectionHeading>
           <Prose>
-            The SDK is available for React Native, Flutter, and Web. Install the
-            package for your platform.
+            Install Yaver once, then use the same <InlineCode>yaver</InlineCode>{" "}
+            command to inject the Feedback SDK into the current project. This is
+            the preferred path because Yaver can auto-detect the app type and
+            patch config where needed.
           </Prose>
 
-          <SubHeading>React Native</SubHeading>
+          <SubHeading>Single Entry</SubHeading>
           <div className="mb-8">
-            <Terminal title="install-rn">
-              <Cmd>npm install yaver-feedback-react-native</Cmd>
-              <Comment># or</Comment>
-              <Cmd>yarn add yaver-feedback-react-native</Cmd>
+            <Terminal title="install-yaver">
+              <Cmd>npm install -g yaver-cli</Cmd>
+              <Cmd>cd your-app</Cmd>
+              <Cmd>yaver feedback setup</Cmd>
+              <Comment># or: yaver sdk add feedback</Comment>
             </Terminal>
           </div>
 
-          <SubHeading>Flutter</SubHeading>
+          <SubHeading>Manual Fallbacks</SubHeading>
           <div className="mb-8">
             <Terminal title="install-flutter">
+              <Comment># React Native</Comment>
+              <Cmd>npm install yaver-feedback-react-native</Cmd>
+              <Comment># Flutter</Comment>
               <Cmd>flutter pub add yaver_feedback</Cmd>
-            </Terminal>
-          </div>
-
-          <SubHeading>Web</SubHeading>
-          <div className="mb-8">
-            <Terminal title="install-web">
-              <Cmd>npm install @yaver/feedback-web</Cmd>
-              <Comment># or</Comment>
-              <Cmd>yarn add @yaver/feedback-web</Cmd>
+              <Comment># Web</Comment>
+              <Cmd>npm install yaver-feedback-web</Cmd>
             </Terminal>
           </div>
         </section>
@@ -313,7 +312,7 @@ void main() {
           <div className="mb-8">
             <Terminal title="quick-start-web.ts">
               <pre className="text-surface-300">
-                {`import { YaverFeedback } from '@yaver/feedback-web';
+                {`import { YaverFeedback } from 'yaver-feedback-web';
 
 // Only show for the developer
 const isDev = process.env.NODE_ENV === 'development'
@@ -396,7 +395,7 @@ void main() {
             <Terminal title="error-wrap-web.ts">
               <Comment># Web &mdash; wrapping addEventListener</Comment>
               <pre className="text-surface-300">
-                {`import { wrapErrorHandler } from '@yaver/feedback-web';
+                {`import { wrapErrorHandler } from 'yaver-feedback-web';
 
 // Observe 'error' events (sync errors)
 window.addEventListener('error', wrapErrorHandler(

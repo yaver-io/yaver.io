@@ -52,6 +52,20 @@ yaver auth
 That is the whole setup. No further flags. The `yaver` Go binary is
 downloaded on first use; no manual download needed.
 
+After that, keep using the same `yaver` command as the single setup
+surface:
+
+```
+yaver feedback setup      # inject Feedback SDK into the current app
+yaver sdk add core        # inject the programmatic SDK into the current project
+yaver install mobile      # Hermes / RN mobile toolchain
+yaver install all         # machine-wide tools catalogue when needed
+```
+
+Do not send the human straight to raw `npm install yaver-feedback-*`,
+`flutter pub add ...`, or `pip install yaver` first unless they
+explicitly ask for the manual package-manager path.
+
 ### Alternative (no Node)
 
 ```

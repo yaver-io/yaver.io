@@ -293,6 +293,8 @@ func main() {
 		runHybrid(os.Args[2:])
 	case "feedback":
 		runFeedback(os.Args[2:])
+	case "sdk":
+		runSDK(os.Args[2:])
 	case "voice":
 		runVoice(os.Args[2:])
 	case "clean":

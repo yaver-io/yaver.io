@@ -3,12 +3,45 @@ name: Publish SDKs
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      publish_js:
+        description: "Publish npm package yaver-sdk"
+        required: false
+        type: boolean
+        default: true
+      publish_python:
+        description: "Publish PyPI package yaver"
+        required: false
+        type: boolean
+        default: true
+      publish_flutter_core:
+        description: "Publish pub.dev package yaver"
+        required: false
+        type: boolean
+        default: true
+      publish_feedback_rn:
+        description: "Publish npm package yaver-feedback-react-native"
+        required: false
+        type: boolean
+        default: true
+      publish_feedback_web:
+        description: "Publish npm package yaver-feedback-web"
+        required: false
+        type: boolean
+        default: true
+      publish_feedback_flutter:
+        description: "Publish pub.dev package yaver_feedback"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 jobs:
   publish-npm:
+    if: ${{ github.event_name == 'release' || inputs.publish_js }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +65,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   publish-pypi:
+    if: ${{ github.event_name == 'release' || inputs.publish_python }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -55,6 +89,7 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
 
   build-clib:
+    if: ${{ github.event_name == 'release' || inputs.publish_js || inputs.publish_python || inputs.publish_flutter_core || inputs.publish_feedback_rn || inputs.publish_feedback_web || inputs.publish_feedback_flutter }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -101,6 +136,7 @@ jobs:
           done
 
   publish-feedback-rn:
+    if: ${{ github.event_name == 'release' || inputs.publish_feedback_rn }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -118,6 +154,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   publish-feedback-web:
+    if: ${{ github.event_name == 'release' || inputs.publish_feedback_web }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -134,7 +171,8 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-  publish-feedback-flutter:
+  publish-flutter-core:
+    if: ${{ github.event_name == 'release' || inputs.publish_flutter_core }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -143,8 +181,46 @@ jobs:
         with:
           flutter-version: "3.22.0"
 
+      - name: Restore pub.dev credentials
+        env:
+          PUB_CREDENTIALS_JSON: ${{ secrets.PUB_CREDENTIALS_JSON }}
+        run: |
+          if [ -z "$PUB_CREDENTIALS_JSON" ]; then
+            echo "PUB_CREDENTIALS_JSON secret is not set"
+            exit 1
+          fi
+          mkdir -p "$HOME/.pub-cache"
+          printf '%s' "$PUB_CREDENTIALS_JSON" > "$HOME/.pub-cache/credentials.json"
+          chmod 600 "$HOME/.pub-cache/credentials.json"
+
+      - name: Publish yaver to pub.dev
+        run: |
+          cd sdk/flutter
+          dart pub publish --force
+
+  publish-feedback-flutter:
+    if: ${{ github.event_name == 'release' || inputs.publish_feedback_flutter }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.22.0"
+
+      - name: Restore pub.dev credentials
+        env:
+          PUB_CREDENTIALS_JSON: ${{ secrets.PUB_CREDENTIALS_JSON }}
+        run: |
+          if [ -z "$PUB_CREDENTIALS_JSON" ]; then
+            echo "PUB_CREDENTIALS_JSON secret is not set"
+            exit 1
+          fi
+          mkdir -p "$HOME/.pub-cache"
+          printf '%s' "$PUB_CREDENTIALS_JSON" > "$HOME/.pub-cache/credentials.json"
+          chmod 600 "$HOME/.pub-cache/credentials.json"
+
       - name: Publish yaver_feedback to pub.dev
         run: |
           cd sdk/feedback/flutter
           dart pub publish --force
-        # Note: requires pub.dev credentials configured

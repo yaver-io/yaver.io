@@ -20,17 +20,18 @@ Collect visual bug reports from your Flutter app and send them directly to your 
 
 ## Installation
 
-Add to your `pubspec.yaml`:
-
-```yaml
-dependencies:
-  yaver_feedback: ^0.1.0
-```
-
-Then run:
+Preferred path:
 
 ```bash
-flutter pub get
+npm install -g yaver-cli
+cd your-app
+yaver feedback setup --platform flutter
+```
+
+Manual fallback:
+
+```bash
+flutter pub add yaver_feedback
 ```
 
 ## Quick Start

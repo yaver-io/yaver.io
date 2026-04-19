@@ -92,7 +92,7 @@ Yaver is built for solo developers and small teams who ship from anywhere. It ha
 │  ─────────────────────────────────────────────────────────────────────────  │
 │                                                                             │
 │  📦 NPM BOOTSTRAP (`yaver-cli`)              🐛 FEEDBACK SDK               │
-│  npm install -g yaver-cli                     npm install @yaver/feedback-*  │
+│  npm install -g yaver-cli                     yaver feedback setup          │
 │                                                                             │
 │  One npm install, two surfaces:               Embed in YOUR app during dev. │
 │  `yaver serve` bootstraps the Go agent;       Shake to report bugs with     │
@@ -104,7 +104,7 @@ Yaver is built for solo developers and small teams who ship from anywhere. It ha
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Why four pieces?** The mobile app and desktop agent are the core — phone talks to your machine P2P. The npm package (`yaver-cli`) now bootstraps both the agent binary and the React Native push flow so new developers can start from a single install. The Feedback SDK is still separate because it embeds inside *your* app, not Yaver's — it captures bugs from within the app being tested.
+**Why four pieces?** The mobile app and desktop agent are the core — phone talks to your machine P2P. The npm package (`yaver-cli`) is the umbrella install point: it gives you the `yaver` command, bootstraps the agent binary, and covers the React Native push flow. The Feedback SDK still embeds inside *your* app, but the install path is now routed through the same `yaver` command (`yaver feedback setup` / `yaver sdk add feedback`) instead of sending developers straight to raw package-manager commands first.
 
 **You might use:**
 - Just the **mobile app + agent** — control AI agents from your phone, hot reload any framework
@@ -463,22 +463,36 @@ You test the app ��� Record screen + voice → AI agent sees the recording
 
 Embed in your app during development. The SDK provides device discovery, connection UI, screen recording, voice annotation, and P2P upload — all in a single package. Disabled automatically in production builds.
 
-**Install:**
+**Preferred install flow:**
+
+```bash
+npm install -g yaver-cli
+
+# Then, inside the project you want to wire up:
+yaver feedback setup
+
+# Or be explicit:
+yaver sdk add feedback --platform web
+yaver sdk add feedback --platform react-native
+yaver sdk add feedback --platform flutter
+```
+
+**Manual fallback:**
 
 ```bash
 # Web (any framework: React, Vue, Svelte, vanilla JS)
-npm install @yaver/feedback-web
+npm install yaver-feedback-web
 
 # React Native
 npm install yaver-feedback-react-native
 
 # Flutter
-# Add to pubspec.yaml: yaver_feedback: ^0.1.0
+flutter pub add yaver_feedback
 ```
 
 **Quick start (Web):**
 ```typescript
-import { YaverFeedback } from '@yaver/feedback-web';
+import { YaverFeedback } from 'yaver-feedback-web';
 
 if (process.env.NODE_ENV === 'development') {
   YaverFeedback.init({ trigger: 'floating-button' });
@@ -1322,9 +1336,9 @@ ACL peers are also accessible via MCP tools (`acl_list_peers`, `acl_call_peer_to
 |-------|-----------|---------|-------------|
 | **Mobile App** | `mobile/` | App Store / Play Store | Remote control for AI agents + native RN container + on-device HTTP server (port 8347) |
 | **Desktop Agent** | `desktop/agent/` | `brew install yaver` or `apt install yaver` | Native `yaver` command for P2P server, AI agent runner, MCP, hot reload, builds, and session transfer. Also bridges `yaver push` through npm when Node is present. |
-| **Unified NPM Bootstrap** | `cli/` | `npm i -g yaver-cli` | Fastest start. Installs the same `yaver` command and covers both `yaver serve` and `yaver push`. |
-| **Feedback SDKs** | `sdk/feedback/` | `npm i yaver-feedback-*` | Debug console + black box recorder embedded in your app. React Native, Flutter, Web. |
-| **Programmatic SDKs** | `sdk/` | `npm i yaver-sdk`, `pip install yaver`, etc. | Automate Yaver from code — Go, Python, JS/TS, Flutter/Dart, C. |
+| **Unified NPM Bootstrap** | `cli/` | `npm i -g yaver-cli` | Umbrella install. Installs the `yaver` command, bootstraps the agent, and gives you one entry point for `yaver serve`, `yaver push`, `yaver feedback setup`, `yaver sdk add ...`, and `yaver install ...`. |
+| **Feedback SDKs** | `sdk/feedback/` | `npm i -g yaver-cli` then `yaver feedback setup` | Debug console + black box recorder embedded in your app. React Native, Flutter, Web. |
+| **Programmatic SDKs** | `sdk/` | `npm i -g yaver-cli` then `yaver sdk add core` | Automate Yaver from code — Go, Python, JS/TS, Flutter/Dart, C. |
 | Desktop Installer | `desktop/installer/` | [Download](https://yaver.io/download) | GUI installer (DMG/EXE/DEB) — installs the Go agent binary |
 | Relay Server | `relay/` | Docker / binary | QUIC relay for NAT traversal — self-hostable, pass-through only |
 | Backend | `backend/` | Managed (Convex) | Auth + peer discovery + platform config. No user data. |
@@ -1498,7 +1512,7 @@ Embed in your app during development. Screen recording + voice + screenshots →
 
 | SDK | Install | Trigger Modes |
 |-----|---------|---------------|
-| **Web** | `npm install @yaver/feedback-web` | Floating button, keyboard shortcut (Ctrl+Shift+F), manual |
+| **Web** | `npm install yaver-feedback-web` | Floating button, keyboard shortcut (Ctrl+Shift+F), manual |
 | **React Native** | `npm install yaver-feedback-react-native` | Shake-to-report, floating button, manual |
 | **Flutter** | `yaver_feedback: ^0.1.0` in pubspec.yaml | Shake, floating button, manual |
 

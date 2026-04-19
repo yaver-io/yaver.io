@@ -1,6 +1,6 @@
 # yaver-sdk
 
-Embed Yaver's P2P AI agent connectivity into your JavaScript/TypeScript applications. Works in React Native, Node.js, and browsers.
+Embed Yaver's local-first agent runtime into your JavaScript and TypeScript applications. Works in React Native, Node.js, and browsers.
 
 ## Install
 

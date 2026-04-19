@@ -1,6 +1,6 @@
 # Yaver Python SDK
 
-Embed Yaver's P2P AI agent connectivity into your Python applications. Zero dependencies (stdlib only).
+Embed Yaver's local-first agent runtime into your Python applications. Zero dependencies (stdlib only).
 
 ## Install
 

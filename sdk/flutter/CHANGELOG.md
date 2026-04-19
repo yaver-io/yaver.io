@@ -1,3 +1,8 @@
+## 0.2.1
+
+- Refresh package metadata and positioning for Yaver's broader local-first developer runtime
+- Align Flutter package release with the umbrella `yaver` setup story
+
 ## 0.2.0
 
 - Initial release

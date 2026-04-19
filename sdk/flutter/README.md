@@ -1,12 +1,12 @@
 # Yaver SDK for Flutter & Dart
 
-Embed [Yaver's](https://yaver.io) P2P AI agent connectivity into your Flutter and Dart apps. Control any AI coding agent (Claude Code, Codex, Aider, etc.) running on your dev machine — from a Flutter app on any platform.
+Embed [Yaver](https://yaver.io)'s local-first agent runtime into your Flutter and Dart apps. Create tasks, stream output, inspect devices, and connect your app to Yaver-powered developer workflows from any platform.
 
 ## Install
 
 ```yaml
 dependencies:
-  yaver: ^0.2.0
+  yaver: ^0.2.1
 ```
 
 ```bash

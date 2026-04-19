@@ -1,7 +1,7 @@
 {
   "name": "yaver-feedback-web",
-  "version": "0.1.1",
-  "description": "Visual feedback SDK for web apps — screen recording, voice annotations, dev machine discovery for Yaver vibe coding",
+  "version": "0.1.2",
+  "description": "Visual feedback SDK for web apps — screen recording, voice annotations, and local-first developer workflows through Yaver",
   "main": "src/index.ts",
   "types": "src/index.ts",
   "license": "Apache-2.0",
@@ -29,7 +29,8 @@
     "feedback",
     "bug-report",
     "screen-recording",
-    "vibe-coding",
-    "web"
+    "web",
+    "developer-runtime",
+    "local-first"
   ]
 }

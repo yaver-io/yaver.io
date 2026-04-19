@@ -1,7 +1,7 @@
 {
   "name": "yaver-feedback-react-native",
-  "version": "0.5.2",
-  "description": "Visual feedback SDK for Yaver — shake-to-report, screen recording, voice annotations for vibe coding",
+  "version": "0.5.3",
+  "description": "Visual feedback SDK for Yaver — bug reports, screen recording, voice annotations, and local-first developer workflows",
   "main": "src/index.ts",
   "types": "src/index.ts",
   "files": [
@@ -50,7 +50,8 @@
     "feedback",
     "bug-report",
     "screen-recording",
-    "vibe-coding",
-    "react-native"
+    "react-native",
+    "developer-runtime",
+    "local-first"
   ]
 }

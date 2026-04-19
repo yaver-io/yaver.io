@@ -43,6 +43,19 @@ function Divider() {
   return <div className="h-px bg-surface-800/60" />;
 }
 
+function FlowSteps({ steps }: { steps: React.ReactNode[] }) {
+  return (
+    <div className="space-y-2 text-sm text-surface-300">
+      {steps.map((step, index) => (
+        <div key={index} className="flex gap-3">
+          <span className="w-5 flex-none text-surface-500">{index + 1}.</span>
+          <div>{step}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function SectionHeading({
   id,
   children,
@@ -418,18 +431,14 @@ export default function DevelopersPage() {
 
           <SubHeading>How it works</SubHeading>
           <Terminal title="hot-reload-flow">
-            <pre className="text-surface-300">{`Phone (Yaver app)          Relay              Dev Machine
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│  WebView     │─────│  QUIC relay  │─────│  Agent :18080│
-│  loads app   │     │  (pass-thru) │     │    │         │
-│  through     │     │              │     │    ▼         │
-│  relay URL   │     └──────────────┘     │  /dev/* proxy│
-└──────────────┘                          │    │         │
-                                          │    ▼         │
-                                          │  Metro :8081 │
-                                          │  (or Vite,   │
-                                          │   Flutter)   │
-                                          └──────────────┘`}</pre>
+            <FlowSteps
+              steps={[
+                <>The phone loads the preview inside the Yaver app WebView.</>,
+                <>If needed, traffic goes through the QUIC relay as a pass-through tunnel.</>,
+                <>The agent exposes a <InlineCode>/dev/*</InlineCode> proxy on port <InlineCode>18080</InlineCode>.</>,
+                <>That proxy forwards requests to your local dev server such as Metro, Vite, or Flutter.</>,
+              ]}
+            />
           </Terminal>
 
           <SubHeading>Supported frameworks</SubHeading>
@@ -493,16 +502,14 @@ export default function DevelopersPage() {
 
           <SubHeading>How it works</SubHeading>
           <Terminal title="git-clone-flow">
-            <pre className="text-surface-300">{`Phone (Yaver app)                         Dev Machine
-┌──────────────┐                      ┌──────────────┐
-│ Browse repos │──GET /git/repos────►│ Agent queries │
-│ from GitHub  │                      │ GitHub/GitLab │
-│ or GitLab    │                      │ API with      │
-│              │◄─repo list──────────│ local creds   │
-│              │                      │               │
-│ Tap "Clone"  │──POST /git/clone───►│ git clone     │
-│              │                      │ on machine    │
-└──────────────┘                      └──────────────┘`}</pre>
+            <FlowSteps
+              steps={[
+                <>From the phone, browse repositories with <InlineCode>GET /git/repos</InlineCode>.</>,
+                <>The agent queries GitHub or GitLab using credentials already present on the dev machine.</>,
+                <>The repo list comes back to the app for browsing and selection.</>,
+                <>When you tap clone, the app sends <InlineCode>POST /git/clone</InlineCode> and the machine runs <InlineCode>git clone</InlineCode> locally.</>,
+              ]}
+            />
           </Terminal>
 
           <SubHeading>Credential detection order</SubHeading>
@@ -2414,13 +2421,15 @@ CLI Agent ◄──QUIC──────────────── Relay (:
             <div className="card">
               <h4 className="mb-3 text-sm font-medium text-surface-200">React Native</h4>
               <Terminal title="install">
-                <Cmd>npm install yaver-feedback-react-native</Cmd>
+                <Cmd>npm install -g yaver-cli</Cmd>
+                <Cmd>cd your-app &amp;&amp; yaver feedback setup</Cmd>
               </Terminal>
             </div>
             <div className="card">
               <h4 className="mb-3 text-sm font-medium text-surface-200">Flutter</h4>
               <Terminal title="install">
-                <Cmd>flutter pub add yaver_feedback</Cmd>
+                <Cmd>npm install -g yaver-cli</Cmd>
+                <Cmd>cd your-app &amp;&amp; yaver feedback setup --platform flutter</Cmd>
               </Terminal>
             </div>
           </div>
@@ -2679,7 +2688,8 @@ CLI Agent ◄──QUIC──────────────── Relay (:
             <div className="card">
               <h4 className="mb-3 text-sm font-medium text-surface-200">Python</h4>
               <Terminal title="Python SDK">
-                <Comment># pip install yaver (or copy sdk/python/yaver.py)</Comment>
+                <Comment># npm install -g yaver-cli</Comment>
+                <Comment># cd your-project && yaver sdk add core --platform python</Comment>
                 <div className="text-surface-300">{`from yaver import YaverClient`}</div>
                 <div className="text-surface-300 mt-2">{`client = YaverClient("http://localhost:18080", token)`}</div>
                 <div className="text-surface-300">{`task = client.create_task("Fix the bug")`}</div>
@@ -2694,7 +2704,8 @@ CLI Agent ◄──QUIC──────────────── Relay (:
             <div className="card">
               <h4 className="mb-3 text-sm font-medium text-surface-200">JavaScript / TypeScript</h4>
               <Terminal title="JS/TS SDK">
-                <Comment># npm install yaver-sdk</Comment>
+                <Comment># npm install -g yaver-cli</Comment>
+                <Comment># cd your-project && yaver sdk add core --platform js</Comment>
                 <div className="text-surface-300">{`import { YaverClient } from 'yaver-sdk';`}</div>
                 <div className="text-surface-300 mt-2">{`const client = new YaverClient('http://localhost:18080', token);`}</div>
                 <div className="text-surface-300">{`const task = await client.createTask('Fix the bug');`}</div>
@@ -2710,7 +2721,8 @@ CLI Agent ◄──QUIC──────────────── Relay (:
             <div className="card">
               <h4 className="mb-3 text-sm font-medium text-surface-200">Flutter / Dart</h4>
               <Terminal title="Flutter SDK">
-                <Comment># flutter pub add yaver</Comment>
+                <Comment># npm install -g yaver-cli</Comment>
+                <Comment># cd your-project && yaver sdk add core --platform flutter</Comment>
                 <div className="text-surface-300">{`import 'package:yaver/yaver.dart';`}</div>
                 <div className="text-surface-300 mt-2">{`final client = YaverClient('http://localhost:18080', token);`}</div>
                 <div className="text-surface-300">{`final task = await client.createTask('Fix the bug');`}</div>

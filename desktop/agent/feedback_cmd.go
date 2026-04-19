@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -13,6 +14,8 @@ func runFeedback(args []string) {
 	}
 
 	switch args[0] {
+	case "setup":
+		runFeedbackSetup(args[1:])
 	case "list", "ls":
 		runFeedbackList()
 	case "show":
@@ -42,10 +45,17 @@ func runFeedback(args []string) {
 
 func printFeedbackUsage() {
 	fmt.Print(`Usage:
+  yaver feedback setup [--dir <path>] [--platform <name>]
   yaver feedback list              List feedback reports from device testing
   yaver feedback show <id>         Show feedback details + transcript
   yaver feedback fix <id>          Create AI task from feedback (auto-generates prompt)
   yaver feedback delete <id>       Delete a feedback report
+
+Setup flow:
+  Install Yaver once: npm install -g yaver-cli
+  Then inject the SDK into a project with:
+    yaver feedback setup
+    yaver sdk add feedback
 
 Feedback is sent from:
   A) Yaver mobile app — record screen + voice while testing your build
@@ -57,6 +67,18 @@ Feedback is sent from:
 The AI agent receives screen recordings, voice transcripts, screenshots,
 and a timeline — then fixes the bugs and rebuilds.
 `)
+}
+
+func runFeedbackSetup(args []string) {
+	fs := flag.NewFlagSet("feedback setup", flag.ExitOnError)
+	dir := fs.String("dir", ".", "Project directory")
+	platform := fs.String("platform", "", "Platform/framework override")
+	fs.Parse(args)
+
+	if err := performSDKAdd("feedback", *dir, *platform); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func runFeedbackList() {

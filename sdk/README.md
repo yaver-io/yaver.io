@@ -5,34 +5,36 @@ Embed Yaver's P2P AI agent connectivity into your own applications.
 ## Install
 
 ```bash
-npm install yaver-sdk          # JavaScript / TypeScript
-pip install yaver              # Python
-go get github.com/kivanccakmak/yaver.io/sdk/go/yaver  # Go
-flutter pub add yaver          # Flutter / Dart
+npm install -g yaver-cli
+
+# Then, inside your project:
+yaver sdk add core             # auto-detects JS / Python / Flutter / Go when possible
+
+# Or be explicit:
+yaver sdk add core --platform js
+yaver sdk add core --platform python
+yaver sdk add core --platform flutter
+yaver sdk add core --platform go
 ```
 
 C/C++: build the shared library from source (see below).
 
+Manual fallback:
+
+```bash
+npm install yaver-sdk
+pip install yaver
+go get github.com/kivanccakmak/yaver.io/sdk/go/yaver
+flutter pub add yaver
+```
+
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Your App                                │
-│                                                                 │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
-│  │ YaverClient  │  │YaverAuthClient│ │ Transcriber / Speech │  │
-│  │  (tasks)     │  │ (auth/devices)│ │   (STT / TTS)        │  │
-│  └──────┬───────┘  └──────┬───────┘  └──────────────────────┘  │
-│         │                 │                                     │
-└─────────┼─────────────────┼─────────────────────────────────────┘
-          │ HTTP            │ HTTP
-          ▼                 ▼
-┌──────────────┐    ┌──────────────┐
-│ Yaver Agent  │    │    Convex    │
-│ (desktop)    │    │  (auth/cfg)  │
-│ port 18080   │    │  cloud       │
-└──────────────┘    └──────────────┘
-```
+| Layer | Components | Talks to |
+|---|---|---|
+| **Your app** | `YaverClient`, `YaverAuthClient`, transcriber / speech helpers | The Yaver agent and Convex over HTTP |
+| **Yaver Agent** | Desktop agent on port `18080` | Handles tasks, AI runners, tmux sessions, and process management |
+| **Convex** | Auth + config backend | Token validation, device discovery, and settings |
 
 **Client-side SDK** — connects to a running Yaver agent over HTTP. The agent handles the AI runner (Claude, Codex, etc.), tmux sessions, and process management.
 
