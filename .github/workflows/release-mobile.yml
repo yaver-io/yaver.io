@@ -85,12 +85,22 @@ jobs:
           # sometimes chokes on GitHub-secret newlines and writes a
           # file whose JWT signer rejects as "keyPathInvalid". python
           # is bulletproof across platforms.
-          python3 -c "import base64, os, sys; sys.stdout.buffer.write(base64.b64decode(os.environ['APP_STORE_CONNECT_API_KEY']))" \
-            > ~/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8
-          chmod 600 ~/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8
-          # Sanity-check the key looks like PKCS#8 ES256.
-          head -1 ~/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8 | grep -qE "^-----BEGIN (PRIVATE|EC PRIVATE) KEY-----" \
-            || { echo "Decoded p8 does not begin with PKCS#8 header; secret is corrupted — rotate APP_STORE_CONNECT_API_KEY."; exit 1; }
+          # Try base64 decode first (how the secret is normally stored
+          # when produced by `base64 < AuthKey_XXX.p8`). If the result
+          # doesn't look like PEM, fall back to the raw secret value —
+          # some workflows paste the .p8 contents directly.
+          KEYFILE=~/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8
+          python3 -c "import base64, os, sys; sys.stdout.buffer.write(base64.b64decode(os.environ['APP_STORE_CONNECT_API_KEY']))" > "$KEYFILE" || true
+          if ! grep -q "BEGIN .*PRIVATE KEY" "$KEYFILE"; then
+            printf '%s' "$APP_STORE_CONNECT_API_KEY" > "$KEYFILE"
+          fi
+          chmod 600 "$KEYFILE"
+          if ! grep -q "BEGIN .*PRIVATE KEY" "$KEYFILE"; then
+            echo "APP_STORE_CONNECT_API_KEY: neither base64-encoded nor raw PEM. Rotate via:"
+            echo "  gh secret set APP_STORE_CONNECT_API_KEY --body \"\$(cat AuthKey_XXX.p8 | base64)\""
+            exit 1
+          fi
+          echo "p8 header: $(grep -m1 'BEGIN' "$KEYFILE")"
 
       - name: Bump build number
         run: |
