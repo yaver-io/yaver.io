@@ -25,6 +25,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -307,6 +308,19 @@ func autoinitContextBlock(workDir string) string {
 	read("Project init", autoinitFile)
 	read("Project conventions", "CLAUDE.md")
 	read("Remaining work", "remained.md")
+
+	// Append a compact "what package managers exist on this host" line
+	// so runners like claude-code / codex / aider pick the right
+	// install command instead of guessing. Cached because `exec.LookPath`
+	// across a dozen names costs <1ms on a warm box but we don't want
+	// to re-do it on every kick.
+	if pms := detectPackageManagers(); len(pms) > 0 {
+		sb.WriteString("\n=== Host capabilities ===\n")
+		sb.WriteString("Package managers available on this machine: " + strings.Join(pms, ", ") + "\n")
+		sb.WriteString("OS: " + runtime.GOOS + " / " + runtime.GOARCH + "\n")
+		sb.WriteString("Prefer the first OS-native manager in the list for system packages, and the matching language-level manager for language-scoped installs.\n")
+	}
+
 	if sb.Len() == 0 {
 		return ""
 	}

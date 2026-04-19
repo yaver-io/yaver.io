@@ -23,6 +23,7 @@ import ExtrasView from "@/components/dashboard/ExtrasView";
 import ShareView from "@/components/dashboard/ShareView";
 import GuestsStatusView from "@/components/dashboard/GuestsStatusView";
 import InfraView from "@/components/dashboard/InfraView";
+import ToolsView from "@/components/dashboard/ToolsView";
 import PreviewPane from "@/components/dashboard/PreviewPane";
 import TwoFactorView from "@/components/dashboard/TwoFactorView";
 import MorningView from "@/components/dashboard/MorningView";
@@ -56,7 +57,7 @@ export default function DashboardPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [guestCode, setGuestCode] = useState("");
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "domains">("home");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "tools" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "domains">("home");
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [relayReady, setRelayReady] = useState(false);
@@ -222,6 +223,7 @@ export default function DashboardPage() {
     { id: "accounts", label: "Accounts", icon: "\uD83D\uDD11" },
     { id: "console", label: "Console", icon: "\uD83D\uDCBB" },
     { id: "infra", label: "Infra", icon: "\uD83D\uDEE0\uFE0F" },
+    { id: "tools", label: "Tools", icon: "\uD83E\uDDE9" },
     { id: "observ", label: "Observ", icon: "\uD83D\uDCCA" },
     { id: "ops", label: "Ops", icon: "\uD83D\uDE80" },
     { id: "extras", label: "Extras", icon: "\u2699\uFE0F" },
@@ -459,6 +461,8 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><ConsoleView /></div>
           ) : activeTab === "infra" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><InfraView /></div>
+          ) : activeTab === "tools" ? (
+            <ToolsView devices={devices} />
           ) : activeTab === "observ" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><ObservabilityView /></div>
           ) : activeTab === "ops" ? (

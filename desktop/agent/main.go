@@ -31,7 +31,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.98.0"
+const version = "1.99.0"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -2122,6 +2122,15 @@ func runServe(args []string) {
 
 	// Start heartbeat loop (needs httpServer for authExpired flag)
 	go heartbeatLoop(ctx, cfg.ConvexSiteURL, cfg.AuthToken, cfg.DeviceID, taskMgr, httpServer)
+
+	// Warm the public package registry cache so /install/list is rich
+	// from the first request. The cache refreshes itself every 6h via
+	// PackageRegistry(), so we only need to kick it once here.
+	go func() {
+		warmupCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		_ = RefreshPackageRegistry(warmupCtx, cfg.ConvexSiteURL)
+	}()
 
 	// iOS install method (from flag or config, default "auto")
 	iosMethod := *iosInstall

@@ -317,7 +317,7 @@ for (const path of [
   "/auth/forgot-password", "/auth/reset-password", "/auth/change-password",
   "/auth/verify-totp", "/auth/providers", "/auth/oauth-link/start", "/auth/oauth-link/complete",
   "/auth/device-code/authorize",
-  "/devices/list", "/devices/owner-by-hardware", "/config", "/settings",
+  "/devices/list", "/devices/owner-by-hardware", "/config", "/settings", "/packages",
   "/billing/yaver-cloud/checkout",
   "/billing/yaver-cloud/dev-activate",
   "/guests/invite", "/guests/accept", "/guests/accept-code",
@@ -1968,6 +1968,29 @@ http.route({
         },
       }
     );
+  }),
+});
+
+// ── Public install catalogue ────────────────────────────────────────
+
+/** GET /packages — public tool catalogue for Go agent + mobile/web UIs.
+ * Returns the whole packageRegistry table sorted by (kind, sortOrder).
+ * Nothing in here is user-specific or sensitive (see packages.ts). */
+http.route({
+  path: "/packages",
+  method: "GET",
+  handler: httpAction(async (ctx) => {
+    const rows = await ctx.runQuery(api.packages.list, {});
+    return new Response(JSON.stringify(rows), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+        // 10 minutes — the catalogue changes rarely, and the agent
+        // refreshes on its own 6h schedule anyway.
+        "Cache-Control": "public, max-age=600",
+      },
+    });
   }),
 });
 

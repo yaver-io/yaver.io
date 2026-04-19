@@ -46,14 +46,16 @@ type InfraCapabilities struct {
 }
 
 type InfraSummary struct {
-	Machine      MachineInfo             `json:"machine"`
-	Metrics      *HostMetrics            `json:"metrics,omitempty"`
-	DevServices  []ServiceStatus         `json:"devServices,omitempty"`
-	Network      []InfraNetworkInterface `json:"network,omitempty"`
-	Relays       []InfraRelaySummary     `json:"relays,omitempty"`
-	Sharing      InfraSharingSummary     `json:"sharing"`
-	Sandbox      ContainerSandboxSummary `json:"sandbox"`
-	Capabilities InfraCapabilities       `json:"capabilities"`
+	Machine         MachineInfo             `json:"machine"`
+	Metrics         *HostMetrics            `json:"metrics,omitempty"`
+	DevServices     []ServiceStatus         `json:"devServices,omitempty"`
+	Network         []InfraNetworkInterface `json:"network,omitempty"`
+	Relays          []InfraRelaySummary     `json:"relays,omitempty"`
+	Sharing         InfraSharingSummary     `json:"sharing"`
+	Sandbox         ContainerSandboxSummary `json:"sandbox"`
+	Capabilities    InfraCapabilities       `json:"capabilities"`
+	PackageManagers []string                `json:"packageManagers,omitempty"`
+	Binaries        []DetectedBinary        `json:"binaries,omitempty"`
 }
 
 func (s *HTTPServer) infraSummary(ctx context.Context) InfraSummary {
@@ -68,16 +70,54 @@ func (s *HTTPServer) infraSummary(ctx context.Context) InfraSummary {
 	machine.Capabilities = detectMachineCapabilities(workDir)
 
 	summary := InfraSummary{
-		Machine:      machine,
-		Metrics:      infraMetricsSnapshot(ctx),
-		DevServices:  infraDevServices(workDir),
-		Network:      infraNetworkInterfaces(),
-		Relays:       infraRelaySummary(),
-		Sharing:      infraSharingSummary(),
-		Sandbox:      s.sandboxSummary(),
-		Capabilities: infraCapabilities(),
+		Machine:         machine,
+		Metrics:         infraMetricsSnapshot(ctx),
+		DevServices:     infraDevServices(workDir),
+		Network:         infraNetworkInterfaces(),
+		Relays:          infraRelaySummary(),
+		Sharing:         infraSharingSummary(),
+		Sandbox:         s.sandboxSummary(),
+		Capabilities:    infraCapabilities(),
+		PackageManagers: detectPackageManagers(),
+		Binaries:        DiscoverInstalledBinaries(),
 	}
 	return summary
+}
+
+// detectPackageManagers probes the PATH for package managers the AI
+// runner (claude-code / codex / aider) and the install catalogue can
+// use. Returned in priority order so the caller can pick the first
+// match. Kept tiny on purpose — distro-specific ones like `zypper` or
+// `emerge` can be added on demand, but every entry here has to map
+// cleanly to an install command in install_cmd.go.
+func detectPackageManagers() []string {
+	candidates := []string{
+		// OS-native package managers
+		"brew", "apt-get", "dnf", "pacman", "zypper", "apk", "pkg",
+		// Universal Linux package sources — often present alongside
+		// the distro's own manager, so we advertise both.
+		"snap", "flatpak",
+		// Windows
+		"winget", "choco", "scoop",
+		// Language-level — listed separately so prompts can pick the
+		// right one for whatever the user is trying to install.
+		"npm", "pnpm", "yarn", "pip", "pip3", "uv", "pipx",
+		"cargo", "go", "gem", "composer", "dart",
+		// Generic fallbacks — "curl" is here so one-line installer
+		// scripts (Rust, Ollama) always have a matcher.
+		"curl",
+	}
+	out := make([]string, 0, len(candidates))
+	for _, name := range candidates {
+		// DiscoverBinary also falls back to common install prefixes
+		// (~/.local/bin, /snap/bin, /opt/homebrew/bin, ~/.cargo/bin)
+		// so this works even when the agent was launched without the
+		// user's shell profile — common under systemd and launchd.
+		if DiscoverBinary(name) != "" {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 func infraMetricsSnapshot(ctx context.Context) *HostMetrics {

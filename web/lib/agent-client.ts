@@ -893,6 +893,46 @@ class AgentClient {
     return data.runners || [];
   }
 
+  /**
+   * Fetch the installable catalogue from GET /install/list. When
+   * `target` is set, the call is forwarded to a paired peer via
+   * /peer/<id>/install/list so the web dashboard can inspect and
+   * install onto any machine in the mesh, not just the directly
+   * connected one.
+   */
+  async listInstallables(
+    target?: string,
+  ): Promise<{ name: string; installed: boolean; description: string }[]> {
+    this.assertConnected();
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/install/list`
+      : `${this.baseUrl}/install/list`;
+    const res = await fetch(base, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    return res.json();
+  }
+
+  /**
+   * Trigger an install. Returns the SSE stream name to subscribe to
+   * with streamLog() for live progress. `target` forwards to a peer.
+   */
+  async installTool(
+    tool: string,
+    target?: string,
+  ): Promise<{ ok: boolean; tool: string; stream: string; error?: string }> {
+    this.assertConnected();
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/install/${encodeURIComponent(tool)}`
+      : `${this.baseUrl}/install/${encodeURIComponent(tool)}`;
+    const res = await fetch(base, { method: "POST", headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, tool, stream: "", error: data.error || `HTTP ${res.status}` };
+    }
+    return { ok: true, tool: data.tool || tool, stream: data.stream || `install:${tool}` };
+  }
+
+
   async switchRunner(runnerId: string): Promise<void> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/agent/runner/switch`, {
@@ -2194,9 +2234,12 @@ class AgentClient {
     return res.json();
   }
 
-  async infraSummary(): Promise<InfraSummary> {
+  async infraSummary(target?: string): Promise<InfraSummary> {
     this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/infra/summary`, { headers: this.authHeaders });
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/infra/summary`
+      : `${this.baseUrl}/infra/summary`;
+    const res = await fetch(base, { headers: this.authHeaders });
     return res.json();
   }
 

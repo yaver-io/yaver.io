@@ -224,6 +224,45 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_key", ["key"]),
 
+  // Public install catalogue — the Go agent fetches this on startup
+  // and merges it with its built-in list. Lets new tools / new OS
+  // install commands ship without a CLI release. Every field is
+  // intentionally NON-SENSITIVE: tool name, one-line description,
+  // and an array of `(packageManager, command)` pairs. No URLs to
+  // private infra, no credentials, no customer data.
+  //
+  // `kind` groups the tool so UIs can section them: "ai-runner" for
+  // claude-code / codex / aider, "model-runtime" for ollama + lm
+  // studio, "language" for node / python / go / rust, "devtool"
+  // for ripgrep / fd / bat / jq / gh / docker / sqlite, "system"
+  // for things that only make sense once (tailscale, cloudflared).
+  packageRegistry: defineTable({
+    name: v.string(),                 // tool slug, e.g. "ollama"
+    kind: v.string(),                 // category hint (see comment)
+    description: v.string(),          // one-line summary for UIs
+    tags: v.optional(v.array(v.string())),
+    // Install steps as a flat array so an agent can pick the first
+    // one whose `packageManager` it has on PATH. `platform` is
+    // optional — when set ("darwin", "linux", "windows") the agent
+    // must also match GOOS. `packageManager` of "" means "run the
+    // command verbatim" (for one-line curl installers etc.).
+    installs: v.array(v.object({
+      platform: v.optional(v.string()),
+      packageManager: v.string(),
+      command: v.string(),
+    })),
+    // `checkCommand` is executed to decide whether the tool is
+    // already installed. Empty = fall back to `which <name>`.
+    checkCommand: v.optional(v.string()),
+    // `docUrl` points at an authoritative page for users who want
+    // to read more. Optional and always public.
+    docUrl: v.optional(v.string()),
+    sortOrder: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_name", ["name"])
+    .index("by_kind", ["kind"]),
+
   authLogs: defineTable({
     level: v.union(v.literal("info"), v.literal("error"), v.literal("warn")),
     provider: v.string(),

@@ -3448,13 +3448,44 @@ export class QuicClient {
   }
 
   /**
+   * Fetch the install catalogue (tool name + installed flag + one-line
+   * description) from GET /install/list on the connected agent.
+   *
+   * `target`, when set, forwards the call to the given paired device
+   * via /peer/<id>/install/list so the mobile app can enumerate what
+   * a remote machine has installed.
+   */
+  async listInstallables(
+    target?: string,
+  ): Promise<{ name: string; installed: boolean; description: string }[]> {
+    this.assertConnected();
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/install/list`
+      : `${this.baseUrl}/install/list`;
+    const res = await fetch(base, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    return res.json();
+  }
+
+  /**
    * Trigger a dependency install on the dev machine via
    * POST /install/<tool>. Returns the SSE stream name to subscribe to
    * for live progress (use subscribeStream() below).
+   *
+   * `target` forwards the call to a paired device via
+   * /peer/<id>/install/<tool>, making phones able to install tools on
+   * a different machine than they're directly connected to (the
+   * "cross-machine install" story).
    */
-  async installTool(tool: string): Promise<{ ok: boolean; tool: string; stream: string; error?: string }> {
+  async installTool(
+    tool: string,
+    target?: string,
+  ): Promise<{ ok: boolean; tool: string; stream: string; error?: string }> {
     this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/install/${encodeURIComponent(tool)}`, {
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/install/${encodeURIComponent(tool)}`
+      : `${this.baseUrl}/install/${encodeURIComponent(tool)}`;
+    const res = await fetch(base, {
       method: "POST",
       headers: this.authHeaders,
     });

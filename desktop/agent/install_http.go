@@ -78,7 +78,8 @@ func (s *HTTPServer) handleInstall(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleInstallList returns the integrations catalogue with current
-// installed status. Same data as `yaver install list` but JSON.
+// installed status. Merges the agent's built-in list with the public
+// Convex package registry so new tools ship without a CLI release.
 func (s *HTTPServer) handleInstallList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonError(w, http.StatusMethodNotAllowed, "use GET")
@@ -88,15 +89,54 @@ func (s *HTTPServer) handleInstallList(w http.ResponseWriter, r *http.Request) {
 		Name        string `json:"name"`
 		Installed   bool   `json:"installed"`
 		Description string `json:"description"`
+		// New fields — UIs are free to ignore them.
+		Path    string `json:"path,omitempty"`    // absolute binary path when installed
+		Manager string `json:"manager,omitempty"` // best-guess install manager: brew, snap, cargo, …
+		Kind    string `json:"kind,omitempty"`    // ai-runner / model-runtime / devtool / language / system
+		Source  string `json:"source,omitempty"`  // "builtin" | "registry"
 	}
-	out := make([]entry, 0, len(integrations))
+
+	// Start with the agent's built-in catalogue — never fails even if
+	// Convex is unreachable.
+	seen := map[string]bool{}
+	out := make([]entry, 0, len(integrations)+24)
 	for _, p := range integrations {
+		path := DiscoverBinary(p.name)
 		out = append(out, entry{
 			Name:        p.name,
-			Installed:   checkInstalled(p.name) == "✓",
+			Installed:   path != "",
 			Description: p.description,
+			Path:        path,
+			Manager:     guessManagerForPath(path),
+			Source:      "builtin",
+		})
+		seen[p.name] = true
+	}
+
+	// Merge the public Convex registry — add anything we don't
+	// already have. Kind comes from the registry; `Installed` checks
+	// the binary on disk (faster than running the registry's
+	// CheckCommand on every list call).
+	convexSiteURL := ""
+	if s != nil {
+		convexSiteURL = s.convexURL
+	}
+	for _, rp := range PackageRegistry(convexSiteURL) {
+		if seen[rp.Name] {
+			continue
+		}
+		path := DiscoverBinary(rp.Name)
+		out = append(out, entry{
+			Name:        rp.Name,
+			Installed:   path != "",
+			Description: rp.Description,
+			Path:        path,
+			Manager:     guessManagerForPath(path),
+			Kind:        rp.Kind,
+			Source:      "registry",
 		})
 	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
 }

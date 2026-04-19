@@ -590,6 +590,13 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/install/", s.auth(s.handleInstall))
 	mux.HandleFunc("/install", s.auth(s.handleInstall))
 
+	// Cross-machine peer forwarder. Any owner-auth'd request to
+	// /peer/<deviceId>/<anything> is re-signed and forwarded to the
+	// named agent via the same relay transport the MCP proxy uses.
+	// Lets the mobile app and web dashboard install onto / inspect
+	// a paired peer without having to rebind the connection.
+	mux.HandleFunc("/peer/", s.auth(s.handlePeerProxy))
+
 	// Git provider (GitHub/GitLab — auto-detect from dev machine's existing credentials)
 	mux.HandleFunc("/git/provider/detect", s.auth(s.handleGitProviderAutoDetect))
 	mux.HandleFunc("/git/provider/setup", s.auth(s.handleGitProviderSetup))

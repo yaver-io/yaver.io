@@ -1,9 +1,31 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { useAuth } from "../../src/context/AuthContext";
 import { useColors } from "../../src/context/ThemeContext";
+import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient, type InfraSummary } from "../../src/lib/quic";
+import { listGuests, type GuestInfo } from "../../src/lib/guests";
+
+// Install catalogue metadata — kept tiny, emoji + tagline per tool so
+// the install grid reads as "what to add to this machine" instead of
+// a raw CLI list. Anything the agent advertises but isn't in the map
+// still renders with a neutral gear icon.
+const TOOL_META: Record<string, { emoji: string; tagline: string }> = {
+  ollama: { emoji: "🦙", tagline: "Local LLM runtime — pull models, serve them to aider/claude." },
+  aider: { emoji: "🧑‍🔧", tagline: "Terminal pair-programmer. Pairs with Ollama for the hybrid planner." },
+  opencode: { emoji: "🪄", tagline: "Open-source coding agent, Claude-style UX." },
+  "claude-code": { emoji: "🤖", tagline: "Anthropic's CLI agent — the frontier-quality runner." },
+  codex: { emoji: "🧠", tagline: "OpenAI Codex CLI — token-efficient daily driver." },
+  hybrid: { emoji: "🪢", tagline: "Meta-install: aider + ollama + qwen2.5-coder. Cheap implementer tier." },
+  docker: { emoji: "🐳", tagline: "Containerise tasks — required for guest isolation + sandbox mode." },
+  node: { emoji: "🟢", tagline: "Node.js runtime — required for Expo, Vite, Next.js builds." },
+  python: { emoji: "🐍", tagline: "Python 3 — required for ML tooling, some CLIs." },
+  go: { emoji: "🐹", tagline: "Go toolchain — needed to rebuild the agent or relay from source." },
+  rust: { emoji: "🦀", tagline: "Rust toolchain — some Yaver runners + Hermes compiler." },
+  git: { emoji: "🔀", tagline: "Version control — required for every scaffold." },
+};
 
 function fmtBytes(n?: number) {
   if (!n) return "0 B";
@@ -27,13 +49,86 @@ function fmtUptime(seconds?: number) {
   return `${mins}m`;
 }
 
+type InstallEntry = { name: string; installed: boolean; description: string };
+
 export default function InfraScreen() {
   const c = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { token } = useAuth();
+  const { devices, activeDevice } = useDevice();
   const [summary, setSummary] = useState<InfraSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  const [guests, setGuests] = useState<GuestInfo[]>([]);
+
+  // --- tooling catalogue -------------------------------------------------
+  // `target` is the deviceId we want to inspect / install onto. Defaults
+  // to the active device; switching it forwards every /install call
+  // through /peer/<id>/... so the phone can install onto a paired Mac
+  // Mini or Hetzner box without first rebinding to it.
+  const [target, setTarget] = useState<string | undefined>(undefined);
+  const [catalogue, setCatalogue] = useState<InstallEntry[]>([]);
+  const [installingTool, setInstallingTool] = useState<string | null>(null);
+  const [installLog, setInstallLog] = useState<string[]>([]);
+  const [installResult, setInstallResult] = useState<{ tool: string; status: string } | null>(null);
+  const cancelStreamRef = useRef<(() => void) | null>(null);
+
+  async function loadCatalogue() {
+    try {
+      const entries = await quicClient.listInstallables(target);
+      setCatalogue(entries);
+    } catch {
+      /* ignore — list is best-effort */
+    }
+  }
+
+  useEffect(() => {
+    void loadCatalogue();
+    return () => {
+      if (cancelStreamRef.current) cancelStreamRef.current();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target]);
+
+  async function installTool(tool: string) {
+    if (installingTool) return;
+    setInstallingTool(tool);
+    setInstallLog([]);
+    setInstallResult(null);
+    const res = await quicClient.installTool(tool, target);
+    if (!res.ok) {
+      Alert.alert("Install failed to start", res.error || "Unknown error");
+      setInstallingTool(null);
+      return;
+    }
+    // SSE stream subscription — always lives on the LOCAL agent's
+    // /streams/ path even for remote installs, because the remote
+    // agent tees its log lines back through the peer forwarder.
+    cancelStreamRef.current?.();
+    cancelStreamRef.current = quicClient.subscribeStream(
+      res.stream,
+      (line) => setInstallLog((prev) => [...prev.slice(-199), line]),
+      (status, err) => {
+        setInstallResult({ tool, status });
+        setInstallingTool(null);
+        if (status !== "ok" && err) {
+          Alert.alert(`Install ${tool} failed`, err);
+        }
+        void loadCatalogue();
+      },
+    );
+  }
+
+  const machineOptions = useMemo(() => {
+    // Only online peer agents (desktop-ish) are installable targets.
+    // Filter out edge-mobile (phones) because pushing `ollama` onto
+    // a phone is a recipe for 24-hour builds and tears.
+    const desktops = devices.filter(
+      (d) => d.online && d.deviceClass !== "edge-mobile",
+    );
+    return desktops;
+  }, [devices]);
 
   async function refresh() {
     try {
@@ -45,11 +140,25 @@ export default function InfraScreen() {
     }
   }
 
+  async function refreshGuests() {
+    if (!token) return;
+    try {
+      const list = await listGuests(token);
+      setGuests(list);
+    } catch {
+      /* soft-fail: counts from summary still render */
+    }
+  }
+
   useEffect(() => {
     refresh();
-    const iv = setInterval(refresh, 15000);
+    void refreshGuests();
+    const iv = setInterval(() => {
+      refresh();
+      void refreshGuests();
+    }, 15000);
     return () => clearInterval(iv);
-  }, []);
+  }, [token]);
 
   async function serviceAction(name: string, action: "start" | "stop" | "restart") {
     setBusy(`${name}:${action}`);
@@ -149,6 +258,176 @@ export default function InfraScreen() {
             <Metric c={c} label="Uptime" value={fmtUptime(summary.metrics?.uptime)} sub={summary.metrics?.hostname || summary.machine.deviceId} />
           </View>
 
+          <Section
+            c={c}
+            title="Tooling"
+            subtitle={
+              target
+                ? `Installing onto remote peer ${target}`
+                : "Install coding agents and local model runtimes on this machine"
+            }
+          >
+            {machineOptions.length > 1 ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ gap: 8, paddingVertical: 4 }}
+              >
+                <Pressable
+                  onPress={() => setTarget(undefined)}
+                  style={[
+                    targetChip(c),
+                    {
+                      borderColor: !target ? c.accent : c.border,
+                      backgroundColor: !target ? c.accent + "22" : c.bgCard,
+                    },
+                  ]}
+                >
+                  <Text style={{ color: !target ? c.accent : c.textPrimary, fontSize: 12, fontWeight: "700" }}>
+                    This machine
+                  </Text>
+                </Pressable>
+                {machineOptions
+                  .filter((d) => d.id !== activeDevice?.id)
+                  .map((d) => {
+                    const selected = target === d.id;
+                    return (
+                      <Pressable
+                        key={d.id}
+                        onPress={() => setTarget(d.id)}
+                        style={[
+                          targetChip(c),
+                          {
+                            borderColor: selected ? c.accent : c.border,
+                            backgroundColor: selected ? c.accent + "22" : c.bgCard,
+                          },
+                        ]}
+                      >
+                        <Text style={{ color: selected ? c.accent : c.textPrimary, fontSize: 12, fontWeight: "700" }}>
+                          {d.name}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+              </ScrollView>
+            ) : null}
+
+            {catalogue.length === 0 ? (
+              <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 8 }}>
+                No install targets advertised. This agent may be pre-1.98.0.
+              </Text>
+            ) : (
+              <View style={{ gap: 8, marginTop: 10 }}>
+                {catalogue.map((entry) => {
+                  const meta = TOOL_META[entry.name] ?? {
+                    emoji: "⚙️",
+                    tagline: entry.description || "",
+                  };
+                  const isBusy = installingTool === entry.name;
+                  return (
+                    <View key={entry.name} style={[card(c), { gap: 8 }]}>
+                      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
+                        <Text style={{ fontSize: 24 }}>{meta.emoji}</Text>
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                            <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "700" }}>
+                              {entry.name}
+                            </Text>
+                            {entry.installed ? (
+                              <View
+                                style={{
+                                  backgroundColor: "#22c55e22",
+                                  paddingHorizontal: 8,
+                                  paddingVertical: 2,
+                                  borderRadius: 999,
+                                }}
+                              >
+                                <Text style={{ color: "#22c55e", fontSize: 10, fontWeight: "800" }}>
+                                  INSTALLED
+                                </Text>
+                              </View>
+                            ) : (
+                              <View
+                                style={{
+                                  backgroundColor: c.textMuted + "22",
+                                  paddingHorizontal: 8,
+                                  paddingVertical: 2,
+                                  borderRadius: 999,
+                                }}
+                              >
+                                <Text style={{ color: c.textMuted, fontSize: 10, fontWeight: "800" }}>
+                                  NOT INSTALLED
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                          <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 4, lineHeight: 17 }}>
+                            {meta.tagline || entry.description}
+                          </Text>
+                        </View>
+                      </View>
+                      <Pressable
+                        onPress={() => void installTool(entry.name)}
+                        disabled={!!installingTool}
+                        style={[
+                          actionBtn(c),
+                          {
+                            backgroundColor: entry.installed ? c.bgCard : c.accent,
+                            borderWidth: entry.installed ? 1 : 0,
+                            borderColor: c.border,
+                            opacity: installingTool && !isBusy ? 0.5 : 1,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={{
+                            color: entry.installed ? c.textPrimary : "#fff",
+                            fontWeight: "700",
+                            fontSize: 13,
+                          }}
+                        >
+                          {isBusy
+                            ? "Installing…"
+                            : entry.installed
+                              ? "Reinstall / update"
+                              : "Install"}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
+            {installLog.length > 0 ? (
+              <View
+                style={{
+                  marginTop: 12,
+                  borderRadius: 12,
+                  backgroundColor: "#000",
+                  padding: 12,
+                  maxHeight: 220,
+                }}
+              >
+                <Text style={{ color: "#94a3b8", fontSize: 10, fontWeight: "800", marginBottom: 6 }}>
+                  {installingTool
+                    ? `INSTALLING · ${installingTool}`
+                    : `LAST RUN · ${installResult?.tool ?? ""}${installResult?.status ? ` · ${installResult.status}` : ""}`}
+                </Text>
+                <ScrollView>
+                  {installLog.slice(-30).map((line, idx) => (
+                    <Text
+                      key={idx}
+                      style={{ color: "#e2e8f0", fontSize: 11, fontFamily: "Menlo", lineHeight: 15 }}
+                    >
+                      {line}
+                    </Text>
+                  ))}
+                </ScrollView>
+              </View>
+            ) : null}
+          </Section>
+
           <Section c={c} title="Services" subtitle="Managed dev services">
             {(summary.devServices || []).length === 0 ? (
               <Text style={{ color: c.textMuted, fontSize: 12 }}>No dev services configured.</Text>
@@ -188,11 +467,64 @@ export default function InfraScreen() {
             )}
           </Section>
 
-          <Section c={c} title="Sharing" subtitle="Guest access posture">
+          <Section c={c} title="Sharing" subtitle="Guest access posture — who has a key to this machine">
             <View style={styles.metricGrid}>
               <Metric c={c} label="Accepted" value={`${summary.sharing.acceptedGuests}`} sub="active guests" />
               <Metric c={c} label="Pending" value={`${summary.sharing.pendingGuests}`} sub="pending invites" />
             </View>
+            {guests.length > 0 ? (
+              <View style={{ gap: 8, marginTop: 10 }}>
+                {guests.slice(0, 12).map((g) => (
+                  <View key={g.email} style={[card(c), { gap: 4 }]}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      <View
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: 4,
+                          backgroundColor:
+                            g.status === "accepted"
+                              ? "#22c55e"
+                              : g.status === "pending"
+                                ? "#f59e0b"
+                                : c.textMuted,
+                        }}
+                      />
+                      <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "700", flex: 1 }} numberOfLines={1}>
+                        {g.fullName?.trim() || g.email}
+                      </Text>
+                      <Text style={{ color: c.textMuted, fontSize: 10, fontWeight: "700", textTransform: "uppercase" }}>
+                        {g.status}
+                      </Text>
+                    </View>
+                    {g.fullName ? (
+                      <Text style={{ color: c.textMuted, fontSize: 11 }} numberOfLines={1}>
+                        {g.email}
+                      </Text>
+                    ) : null}
+                    {g.inviteCode && g.status === "pending" ? (
+                      <Text style={{ color: c.accent, fontSize: 11, fontWeight: "700", letterSpacing: 0.6 }}>
+                        Code {g.inviteCode}
+                      </Text>
+                    ) : null}
+                    {g.proposedDeviceIds && g.proposedDeviceIds.length > 0 ? (
+                      <Text style={{ color: c.textMuted, fontSize: 10 }}>
+                        Scoped to {g.proposedDeviceIds.length} device{g.proposedDeviceIds.length === 1 ? "" : "s"}
+                      </Text>
+                    ) : null}
+                  </View>
+                ))}
+                {guests.length > 12 ? (
+                  <Text style={{ color: c.textMuted, fontSize: 11, textAlign: "center" }}>
+                    +{guests.length - 12} more
+                  </Text>
+                ) : null}
+              </View>
+            ) : (
+              <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 8 }}>
+                Nobody is sharing this machine yet. Invite from the Guests tab.
+              </Text>
+            )}
             <Pressable onPress={() => router.navigate("/(tabs)/guests" as any)} style={[actionBtn(c), { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, marginTop: 8 }]}>
               <Text style={{ color: c.textPrimary, fontWeight: "700" }}>Open guest controls</Text>
             </Pressable>
@@ -320,6 +652,15 @@ function card(c: any) {
 
 function actionBtn(c: any) {
   return { borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12, alignItems: "center", justifyContent: "center" } as const;
+}
+
+function targetChip(c: any) {
+  return {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+  } as const;
 }
 
 const styles = StyleSheet.create({
