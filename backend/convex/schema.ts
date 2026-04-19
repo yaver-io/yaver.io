@@ -441,8 +441,60 @@ export default defineSchema({
     updatedAt: v.number(),
     lastHealthCheck: v.optional(v.number()),
     errorMessage: v.optional(v.string()),
+    // Hash of a long-lived machine-auth token generated at provisioning
+    // time. The plaintext is placed on the box in /etc/yaver/machine.json
+    // (root-owned, 0600) so the TLS reconciler systemd timer can call
+    // /machine/pending-tls on Convex. We never store the plaintext.
+    machineTokenHash: v.optional(v.string()),
   }).index("by_user", ["userId"])
     .index("by_team", ["teamId"]),
+
+  // User-bound custom domains. Independent of the auto-generated
+  // <shortId>.cloud.yaver.io / <shortId>.relay.yaver.io hostnames, so a user
+  // can bring their own myapp.com from Namecheap / Porkbun / Route53 and
+  // point it at either a cloud machine or a managed relay.
+  //
+  // `targetType` + `targetId` identify where the domain should route to
+  // (cloud_machine → cloudMachines._id, managed_relay → managedRelays._id,
+  //  custom_server → raw IP in `targetIp`). Verification flow:
+  //   1. User enters domain + chooses target.
+  //   2. Convex returns a TXT-record challenge (verificationToken) and an
+  //      A/CNAME record spec for the target (serverIp / autoDomain).
+  //   3. User adds both records at their registrar / DNS host.
+  //   4. verify() polls DNS, flips `status` to "verified" when both appear.
+  //   5. Once verified, the target's nginx/Caddy config is updated to
+  //      accept the custom hostname and certbot issues a TLS cert.
+  userDomains: defineTable({
+    userId: v.id("users"),
+    domain: v.string(),              // "myapp.com" or "api.myapp.com"
+    targetType: v.union(
+      v.literal("cloud_machine"),
+      v.literal("managed_relay"),
+      v.literal("custom_server"),
+    ),
+    targetId: v.optional(v.string()),  // Convex id of target (as string)
+    targetIp: v.optional(v.string()),  // IPv4 of the current target — kept
+                                       // here so the UI can print DNS
+                                       // instructions without re-joining.
+    autoDomain: v.optional(v.string()), // "<shortId>.cloud.yaver.io" for
+                                        // CNAME-based setups.
+    dnsProvider: v.optional(v.string()), // "cloudflare" | "manual" | ...
+    verificationToken: v.string(),     // the user adds this as a TXT record
+                                       // to prove ownership.
+    status: v.union(
+      v.literal("pending"),            // waiting for DNS records
+      v.literal("verified"),           // records observed, TLS being issued
+      v.literal("active"),             // TLS cert issued, domain live
+      v.literal("error"),
+    ),
+    errorMessage: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    verifiedAt: v.optional(v.number()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_domain", ["domain"])
+    .index("by_target", ["targetType", "targetId"]),
 
   // Guest access — let other users connect to your agent (peer-to-peer sharing)
   guestInvitations: defineTable({

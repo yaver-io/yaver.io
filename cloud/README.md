@@ -37,15 +37,46 @@ The script:
    `CLOUD_OWNER_TOKEN` if one isn't already set.
 4. `docker compose up -d --build`.
 
-Grab the generated token from `/opt/yaver-cloud/cloud/.env` and store it
-somewhere the mobile app / CLI can read it. Per-user tokens replace this
-flat token post-MVP (tracked against the `sdkTokens` table).
+Grab the generated `CLOUD_OWNER_TOKEN` from `/opt/yaver-cloud/cloud/.env`
+and stash it in your password manager. Per-user tokens replace this flat
+token post-MVP (tracked against the `sdkTokens` table).
+
+> **How the shared token works:** `CLOUD_OWNER_TOKEN` is a random secret
+> that the cloud agent treats as its own-token fast path — any request
+> presenting `Authorization: Bearer <CLOUD_OWNER_TOKEN>` is accepted
+> without a Convex round-trip. It does NOT need to be a real Convex
+> session, and it is NOT the same value as your personal `~/.yaver/config.json`
+> `auth_token`. Clients must pass it explicitly (CLI `--token`, env
+> `YAVER_AUTH_TOKEN`, or `cloudAuthToken` on the mobile push target).
+
+### Running alongside an existing relay on the same box
+
+`deploy.sh` detects ports 80/443 already in use (e.g. your relay server)
+and skips the Caddy service, binding the agent directly on
+`CLOUD_AGENT_PORT` (default `18081`). Push with the direct host:port URL:
+
+```bash
+CLOUD_AGENT_PORT=18181 ssh root@HETZNER_IP bash /tmp/deploy.sh
+yaver phone push my-todos \
+  --to http://HETZNER_IP:18181 \
+  --token "$CLOUD_OWNER_TOKEN"
+```
 
 ## Push a phone project from a laptop
 
 ```bash
-yaver phone push --to https://cloud.yaver.io my-todos
+yaver phone push my-todos \
+  --to https://cloud.yaver.io \
+  --token "$CLOUD_OWNER_TOKEN"
+# or via env:
+YAVER_AUTH_TOKEN="$CLOUD_OWNER_TOKEN" \
+  yaver phone push my-todos --to https://cloud.yaver.io
 ```
+
+Without `--token`, `yaver phone push` falls back to `~/.yaver/config.json`
+`auth_token` — which is your personal OAuth session and will be rejected
+by the cloud box (the cloud's `ownerUserID` is empty because
+`CLOUD_OWNER_TOKEN` is a random secret, not a Convex-issued session).
 
 `/phone/projects/receive` materialises the bundle into
 `/home/yaver/.yaver/phone-projects/<slug>/` inside the container (backed by

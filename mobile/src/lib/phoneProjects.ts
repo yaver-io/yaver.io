@@ -1308,8 +1308,32 @@ export async function promotePhoneProject(
 
 export type PhonePushTarget =
   | { kind: "dev-hw"; deviceId: string; relayHttpUrl: string }
-  | { kind: "yaver-cloud"; cloudBaseUrl?: string }
-  | { kind: "custom"; baseUrl: string };
+  // `cloudAuthToken` is the CLOUD_OWNER_TOKEN the managed cloud agent
+  // accepts via its own-token fast path. It's separate from the user's
+  // Convex OAuth session because the cloud box's ownerUserID is empty
+  // (by design — single-tenant shared-secret). Callers that already
+  // paid can cache the token after checkout succeeds.
+  | { kind: "yaver-cloud"; cloudBaseUrl?: string; cloudAuthToken?: string }
+  | { kind: "custom"; baseUrl: string; authToken?: string };
+
+// Raised when the cloud target requires a paid subscription.
+//
+// IMPORTANT — Apple App Store compliance: the mobile app MUST NOT initiate
+// a paid transaction or auto-open a checkout URL in-app. Apple's 3.1.3(a)
+// rules treat LemonSqueezy-hosted checkout pages the same as any other
+// in-app digital purchase and take a 30% cut — or reject the app. So when
+// mobile code catches this error it should:
+//   • render a message telling the user to complete checkout on the web
+//     (e.g. "Open yaver.io/pricing on your computer to finish setup"),
+//   • NOT open `checkoutUrl` with Linking.openURL.
+// The `checkoutUrl` field is preserved so the web dashboard (where opening
+// a checkout is allowed) can use it directly.
+export class PhonePushPaymentRequired extends Error {
+  constructor(public checkoutUrl: string | null, message: string) {
+    super(message);
+    this.name = "PhonePushPaymentRequired";
+  }
+}
 
 export interface PhonePushResult {
   slug: string;
@@ -1376,14 +1400,58 @@ export async function pushPhoneProject(
   if (opts.skipSeed) form.append("skipSeed", "true");
 
   const targetBase = resolveTargetBase(target);
+
+  // Swap auth header when pushing to yaver-cloud/custom with an explicit
+  // token — the managed cloud agent accepts CLOUD_OWNER_TOKEN via its
+  // own-token fast path, not the user's personal OAuth session.
+  const overrideToken =
+    target.kind === "yaver-cloud"
+      ? target.cloudAuthToken
+      : target.kind === "custom"
+        ? target.authToken
+        : undefined;
+  const pushHeaders: Record<string, string> = { ...h };
+  if (overrideToken) pushHeaders["Authorization"] = `Bearer ${overrideToken}`;
+
+  // Pre-flight: ping the target's /health so we fail fast (and with a
+  // useful message) when the target is offline. Big bundle uploads that
+  // die half-way through a dead connection are the #1 user complaint.
+  try {
+    const probe = await fetch(`${targetBase}/health`, { method: "GET" });
+    if (!probe.ok && probe.status !== 401) {
+      throw new Error(`target health check failed: ${probe.status}`);
+    }
+  } catch (e) {
+    throw new Error(
+      `target ${targetBase} is not reachable (${e instanceof Error ? e.message : String(e)})`,
+    );
+  }
+
   const receiveRes = await fetch(`${targetBase}/phone/projects/receive`, {
     method: "POST",
     // Do NOT set Content-Type — let fetch set the multipart boundary.
-    headers: h,
+    headers: pushHeaders,
     body: form as unknown as BodyInit,
   });
   if (!receiveRes.ok) {
     const body = await receiveRes.text().catch(() => "");
+    // The cloud agent returns 402 Payment Required when a push is rejected
+    // for subscription reasons — surface the checkout URL separately so the
+    // UI can open it instead of showing a raw error string.
+    if (receiveRes.status === 402) {
+      let checkoutUrl: string | null = null;
+      try { checkoutUrl = JSON.parse(body).checkoutUrl ?? null; } catch { /* ignore */ }
+      throw new PhonePushPaymentRequired(
+        checkoutUrl,
+        "this cloud tenant requires an active subscription — complete checkout and retry",
+      );
+    }
+    if (receiveRes.status === 401 || receiveRes.status === 403) {
+      const hint = target.kind === "yaver-cloud"
+        ? " (pass cloudAuthToken with your CLOUD_OWNER_TOKEN)"
+        : "";
+      throw new Error(`receive failed: ${receiveRes.status} ${body}${hint}`);
+    }
     throw new Error(`receive failed: ${receiveRes.status} ${body}`);
   }
   const json = (await receiveRes.json()) as PhonePushResult;

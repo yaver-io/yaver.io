@@ -54,6 +54,11 @@ type LSStatus struct {
 	StoreName string `json:"storeName"`
 	StoreID   string `json:"storeId"`
 	StoreURL  string `json:"storeUrl"`
+	// IsSandbox reflects the LemonSqueezy store's test_mode attribute.
+	// Test-mode stores don't charge real money and are isolated from the
+	// live store's orders/subscriptions. All dev / CI should use a
+	// test-mode API key; production traffic uses a live-mode key.
+	IsSandbox bool `json:"isSandbox"`
 }
 
 type LSProduct struct {
@@ -296,9 +301,10 @@ func (m *LemonSqueezyManager) Status() (*LSStatus, error) {
 	var stores []struct {
 		ID         string `json:"id"`
 		Attributes struct {
-			Name string `json:"name"`
-			Slug string `json:"slug"`
-			URL  string `json:"url"`
+			Name     string `json:"name"`
+			Slug     string `json:"slug"`
+			URL      string `json:"url"`
+			TestMode bool   `json:"test_mode"`
 		} `json:"attributes"`
 	}
 	if err := json.Unmarshal(data, &stores); err != nil {
@@ -320,6 +326,7 @@ func (m *LemonSqueezyManager) Status() (*LSStatus, error) {
 		StoreName: s.Attributes.Name,
 		StoreID:   s.ID,
 		StoreURL:  storeURL,
+		IsSandbox: s.Attributes.TestMode,
 	}, nil
 }
 

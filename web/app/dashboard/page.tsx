@@ -31,6 +31,7 @@ import StorageView from "@/components/dashboard/StorageView";
 import SchedulesView from "@/components/dashboard/SchedulesView";
 import PhoneProjectsView from "@/components/dashboard/PhoneProjectsView";
 import ExecView from "@/components/dashboard/ExecView";
+import DomainsView from "@/components/dashboard/DomainsView";
 
 function statusColor(s: string) {
   if (s === "running") return "text-amber-400";
@@ -54,7 +55,7 @@ export default function DashboardPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [guestCode, setGuestCode] = useState("");
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "infra" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone">("home");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "infra" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "domains">("home");
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [relayReady, setRelayReady] = useState(false);
@@ -230,6 +231,7 @@ export default function DashboardPage() {
     { id: "apikeys", label: "API Keys", icon: "\uD83D\uDD11" },
     { id: "schedules", label: "Schedules", icon: "\u23F0" },
     { id: "phone", label: "Phone Backend", icon: "\u26A1" },
+    { id: "domains", label: "Domains", icon: "\uD83C\uDF10" },
     { id: "exec", label: "Exec", icon: "\u2699\uFE0F" },
     { id: "security", label: "Security", icon: "\uD83D\uDD10" },
     { id: "morning", label: "Morning", icon: "\u2600\uFE0F" },
@@ -479,6 +481,11 @@ export default function DashboardPage() {
             <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto"><SchedulesView /></div>
           ) : activeTab === "phone" ? (
             <div className="flex-1 min-h-0 w-full max-w-6xl mx-auto overflow-auto p-4"><PhoneProjectsView /></div>
+          ) : activeTab === "domains" ? (
+            <div className="flex-1 min-h-0 w-full max-w-5xl mx-auto">
+              {token && user?.id ? <DomainsView token={token} userId={user.id} /> :
+                <div className="p-6 text-xs text-surface-500">Sign in to manage custom domains.</div>}
+            </div>
           ) : activeTab === "exec" ? (
             <div className="flex-1 min-h-0 w-full"><ExecView /></div>
           ) : (

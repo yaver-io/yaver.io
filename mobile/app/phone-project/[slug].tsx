@@ -16,10 +16,14 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useAuth } from "../../src/context/AuthContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice, type Device } from "../../src/context/DeviceContext";
 import { AppBackButton } from "../../src/components/AppBackButton";
+import { isCloudPreviewUser } from "../../src/lib/cloudPreview";
+import { getYaverCloudBaseUrl } from "../../src/lib/yaverCloud";
 import { quicClient } from "../../src/lib/quic";
+import { getLocalSecret, LOCAL_KEYS } from "../../src/lib/auth";
 import {
   EscapeRoute,
   PhoneProjectAccess,
@@ -51,7 +55,7 @@ import {
 // truth. Positioning (per user): trust signal, not headline — shown behind
 // the existing "Advanced" collapsible, never in the primary Deploy surface.
 
-const YAVER_CLOUD_BASE = "https://cloud.yaver.io";
+const YAVER_CLOUD_BASE = getYaverCloudBaseUrl();
 
 // A "dev machine" target is an owned, online Yaver-running device that is
 // not the currently-connected source (the phone itself). This is the yc.md
@@ -71,10 +75,12 @@ function pickDevMachines(all: Device[], currentId: string | undefined): Device[]
 
 export default function PhoneProjectDetailScreen() {
   const c = useColors();
+  const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { slug } = useLocalSearchParams<{ slug: string }>();
   const slugStr = String(slug ?? "");
+  const canUseCloudPreview = isCloudPreviewUser(user?.email);
 
   const [project, setProject] = useState<PhoneProject | null>(null);
   const [access, setAccess] = useState<PhoneProjectAccess | null>(null);
@@ -220,7 +226,7 @@ export default function PhoneProjectDetailScreen() {
   async function doExport() {
     Alert.alert(
       "Export backend",
-      "Portable export is git + SQLite friendly. Containerized export also adds Docker / compose files for remote dev or Yaver Cloud.",
+      "Portable export is git + SQLite friendly. Containerized export also adds Docker / compose files for remote dev.",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -373,8 +379,18 @@ export default function PhoneProjectDetailScreen() {
       await load();
       await loadRows();
     } catch (e: any) {
-      // Agent returns a descriptive message on 413 — surface it verbatim.
-      Alert.alert("Deploy failed", e?.message ?? "push failed");
+      // Apple-compliance: we DETECT that payment is required but we do NOT
+      // open the checkout URL from inside the app. Tell the user to finish
+      // setup on the web; the web dashboard is allowed to open checkout.
+      if (e?.name === "PhonePushPaymentRequired") {
+        Alert.alert(
+          "Subscription required",
+          "This Yaver Cloud tenant needs an active subscription. Open yaver.io/pricing in your browser on any device, complete setup, then retry the deploy.",
+        );
+      } else {
+        // Agent returns a descriptive message on 413 — surface it verbatim.
+        Alert.alert("Deploy failed", e?.message ?? "push failed");
+      }
     } finally {
       setDeploying(null);
     }
@@ -382,30 +398,48 @@ export default function PhoneProjectDetailScreen() {
 
   async function deployToDevMachine() {
     if (!slugStr) return;
+    // If there are multiple online dev machines and none has been explicitly
+    // picked, show the picker first rather than silently using the first one.
     if (!selectedDevMachine) {
-      Alert.alert(
-        "No dev machine paired",
-        "Install Yaver on your Mac/Linux/Pi and sign in with the same account. It'll appear here.",
-      );
-      return;
+      if (devMachines.length === 0) {
+        Alert.alert(
+          "No dev machine paired",
+          "Install Yaver on your Mac/Linux/Pi and sign in with the same account. It'll appear here.",
+        );
+        return;
+      }
+      if (devMachines.length > 1) {
+        pickDevMachine();
+        return;
+      }
     }
+    const target = selectedDevMachine ?? devMachines[0];
+    if (!target) return;
     const relayHttpUrl = quicClient.activeRelayHttpUrl;
     if (!relayHttpUrl) {
       Alert.alert(
         "No relay in use",
-        "Your phone is connected directly to this device. Switch to a relay-routed connection to deploy to a different machine, or use Yaver Cloud.",
+        "Your phone is connected directly to this device. Switch to a relay-routed connection to deploy to a different machine.",
       );
       return;
     }
     await runPush(
-      { kind: "dev-hw", deviceId: selectedDevMachine.id, relayHttpUrl },
+      { kind: "dev-hw", deviceId: target.id, relayHttpUrl },
       "dev-hw",
     );
   }
 
   async function deployToCloud() {
     if (!slugStr) return;
-    await runPush({ kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE }, "yaver-cloud");
+    // Pull the cached CLOUD_OWNER_TOKEN (set via a one-time paste from the
+    // web dashboard after the user completes checkout on yaver.io/pricing).
+    // If it's missing, the push still fires so the user sees the cloud
+    // tenant's 401 hint — that's the signal to finish web setup.
+    const cloudAuthToken = (await getLocalSecret(LOCAL_KEYS.yaverCloudToken)) ?? undefined;
+    await runPush(
+      { kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken },
+      "yaver-cloud",
+    );
   }
 
   function pickDevMachine() {
@@ -461,7 +495,7 @@ export default function PhoneProjectDetailScreen() {
     if (!project?.dir) {
       Alert.alert(
         "Coding loop unavailable",
-        "This phone sandbox runs locally in-app. Move it to a Yaver agent or Yaver Cloud before opening the coding loop.",
+        "This phone sandbox runs locally in-app. Move it to a Yaver agent before opening the coding loop.",
       );
       return;
     }
@@ -779,8 +813,7 @@ export default function PhoneProjectDetailScreen() {
       <Text style={[styles.section, { color: c.textPrimary }]}>Deploy</Text>
       <View style={{ paddingHorizontal: 16 }}>
         <Text style={{ color: c.textMuted, fontSize: 13, marginBottom: 12 }}>
-          Ship this mini-backend in one tap. Your dev machine is free; Yaver Cloud is
-          a managed Hetzner tenant.
+          Ship this mini-backend in one tap to your own machine.
         </Text>
 
         {/* [Your Dev Machine] */}
@@ -817,32 +850,33 @@ export default function PhoneProjectDetailScreen() {
           )}
         </Pressable>
 
-        {/* [Yaver Cloud] */}
-        <Pressable
-          onPress={deployToCloud}
-          disabled={deploying !== null}
-          style={[
-            styles.deployCard,
-            {
-              backgroundColor: c.bgCard,
-              borderColor: c.accent,
-              opacity: deploying !== null && deploying !== "yaver-cloud" ? 0.5 : 1,
-              marginTop: 8,
-            },
-          ]}
-        >
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.deployLabel, { color: c.textPrimary }]}>Yaver Cloud</Text>
-            <Text style={[styles.deploySub, { color: c.textMuted }]}>
-              Managed — shareable URL at {YAVER_CLOUD_BASE.replace(/^https?:\/\//, "")}
-            </Text>
-          </View>
-          {deploying === "yaver-cloud" ? (
-            <ActivityIndicator color={c.accent} />
-          ) : (
-            <Text style={[styles.deployArrow, { color: c.accent }]}>→</Text>
-          )}
-        </Pressable>
+        {canUseCloudPreview ? (
+          <Pressable
+            onPress={deployToCloud}
+            disabled={deploying !== null}
+            style={[
+              styles.deployCard,
+              {
+                backgroundColor: c.bgCard,
+                borderColor: c.accent,
+                opacity: deploying !== null && deploying !== "yaver-cloud" ? 0.5 : 1,
+                marginTop: 8,
+              },
+            ]}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.deployLabel, { color: c.textPrimary }]}>Yaver Cloud</Text>
+              <Text style={[styles.deploySub, { color: c.textMuted }]}>
+                Private preview at {YAVER_CLOUD_BASE.replace(/^https?:\/\//, "")}
+              </Text>
+            </View>
+            {deploying === "yaver-cloud" ? (
+              <ActivityIndicator color={c.accent} />
+            ) : (
+              <Text style={[styles.deployArrow, { color: c.accent }]}>→</Text>
+            )}
+          </Pressable>
+        ) : null}
 
         {lastDeploy ? (
           <Pressable
@@ -963,7 +997,7 @@ function buildSandboxPrompt(project: PhoneProject): string {
   const screenTitles = (project.app?.screens ?? []).map((screen) => screen.title).join(", ");
   return [
     `You are vibe-coding inside Yaver's mobile sandbox for the project "${project.name}".`,
-    `Keep the implementation mobile-first, SQLite-backed, and exportable to the user's hardware or Yaver Cloud later.`,
+    `Keep the implementation mobile-first, SQLite-backed, and exportable to the user's hardware later.`,
     `Primary entity: ${primaryEntity}.`,
     screenTitles ? `Current screens: ${screenTitles}.` : "",
     `Improve the sandbox app directly. Prefer concrete edits that make the app feel closer to a polished solo-dev mobile product.`,

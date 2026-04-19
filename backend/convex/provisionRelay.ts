@@ -27,6 +27,15 @@ export const provision = internalAction({
     relayId: v.id("managedRelays"),
     region: v.string(),
     password: v.string(),
+    // Optional — user-supplied domain (e.g. relay.myapp.com). When set:
+    //   • still create the <shortId>.relay.yaver.io subdomain in the
+    //     yaver.io zone (so the relay always has a canonical URL);
+    //   • also record a user_domains binding so the web UI surfaces the
+    //     DNS records the user needs to set at their own registrar.
+    // Nginx + certbot inside the cloud-init already accept any
+    // Host:-based request via the default server_name, so no extra
+    // config is needed on the box itself.
+    customDomain: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const HCLOUD_TOKEN = process.env.HCLOUD_TOKEN;
@@ -53,6 +62,11 @@ export const provision = internalAction({
     try {
       // ── Step 1: Create Hetzner server ──────────────────────────
 
+      // CAX11 is arm64 — pick the matching yaver release asset. If you
+      // later switch to an amd64 server_type, flip the asset name here.
+      const yaverAsset = "yaver-linux-arm64";
+      const yaverReleaseUrl = `https://github.com/kivanccakmak/yaver.io/releases/latest/download/${yaverAsset}`;
+
       const cloudConfig = `#cloud-config
 package_update: true
 packages:
@@ -61,9 +75,24 @@ packages:
   - nginx
   - certbot
   - python3-certbot-nginx
+  - jq
+  - curl
+  - ca-certificates
+  - ufw
+  - git
+  - unzip
+  - build-essential
+  - tmux
 runcmd:
   - systemctl enable docker
   - systemctl start docker
+  # Install the yaver CLI on the managed relay so the box is usable as a
+  # devops console (yaver sdk-token, yaver dns *, yaver guests *, etc.)
+  # without SSHing in with extra tooling. Non-fatal on failure.
+  - |
+    ( curl -fsSL "${yaverReleaseUrl}" -o /usr/local/bin/yaver \
+      && chmod +x /usr/local/bin/yaver \
+      && /usr/local/bin/yaver --version >/dev/null 2>&1 ) || echo "[cloud-init] yaver install skipped (release not yet published for arm64)"
   - mkdir -p /opt/yaver-relay
   - |
     cat > /opt/yaver-relay/docker-compose.yml <<'YML'
@@ -176,6 +205,20 @@ runcmd:
         serverIp,
         domain,
       });
+
+      // Record custom-domain binding so the dashboard can show the user
+      // which DNS records they still need to set at their registrar. This
+      // is metadata only — nginx on the relay box is already Host-agnostic.
+      if (args.customDomain) {
+        await ctx.runMutation(internal.userDomains.recordBinding, {
+          userId: args.userId,
+          domain: args.customDomain,
+          targetType: "managed_relay",
+          targetId: args.relayId.toString(),
+          serverIp,
+          autoDomain: domain,
+        });
+      }
 
       console.log(`[provision] Relay provisioned: ${domain} (${serverIp}), server ${serverId}`);
 

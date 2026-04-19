@@ -39,6 +39,7 @@ import type * as subscriptions from "../subscriptions.js";
 import type * as survey from "../survey.js";
 import type * as teams from "../teams.js";
 import type * as totp from "../totp.js";
+import type * as userDomains from "../userDomains.js";
 import type * as userSettings from "../userSettings.js";
 
 import type {
@@ -79,6 +80,7 @@ declare const fullApi: ApiFromModules<{
   survey: typeof survey;
   teams: typeof teams;
   totp: typeof totp;
+  userDomains: typeof userDomains;
   userSettings: typeof userSettings;
 }>;
 

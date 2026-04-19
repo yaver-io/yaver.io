@@ -147,9 +147,10 @@ func runPhonePush(args []string) {
 	skipSeed := fs.Bool("skip-seed", false, "push schema+auth but no seed rows")
 	includeData := fs.Bool("include-data", false, "bundle local.db so runtime rows survive promotion")
 	containerize := fs.Bool("containerize", false, "include Docker/compose scaffold on the target project")
+	tokenFlag := fs.String("token", "", "override auth token (also: YAVER_AUTH_TOKEN env). Useful for pushing to a managed cloud tenant whose CLOUD_OWNER_TOKEN differs from your local OAuth session")
 	_ = fs.Parse(args)
 	if fs.NArg() < 1 || *to == "" {
-		fmt.Fprintln(os.Stderr, "Usage: yaver phone push <slug> --to <base-url> [--as-slug NAME] [--conflict reject|rename|overwrite] [--include-data] [--containerize]")
+		fmt.Fprintln(os.Stderr, "Usage: yaver phone push <slug> --to <base-url> [--token TOKEN] [--as-slug NAME] [--conflict reject|rename|overwrite] [--include-data] [--containerize]")
 		os.Exit(1)
 	}
 	slug := fs.Arg(0)
@@ -164,16 +165,23 @@ func runPhonePush(args []string) {
 		os.Exit(1)
 	}
 
-	cfg, err := LoadConfig()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "not signed in. run 'yaver auth' first.\n")
-		os.Exit(1)
+	token := strings.TrimSpace(*tokenFlag)
+	if token == "" {
+		token = strings.TrimSpace(os.Getenv("YAVER_AUTH_TOKEN"))
+	}
+	if token == "" {
+		cfg, err := LoadConfig()
+		if err != nil || strings.TrimSpace(cfg.AuthToken) == "" {
+			fmt.Fprintf(os.Stderr, "no auth token. pass --token <TOKEN>, set YAVER_AUTH_TOKEN, or run 'yaver auth'.\n")
+			os.Exit(1)
+		}
+		token = cfg.AuthToken
 	}
 
 	base := strings.TrimRight(*to, "/")
 	fmt.Printf("→ %s/phone/projects/receive (%d bytes)\n", base, len(bundle))
 	t0 := time.Now()
-	result, err := pushPhoneBundle(base, cfg.AuthToken, bundle, *asSlug, *conflict, *skipSeed)
+	result, err := pushPhoneBundle(base, token, bundle, *asSlug, *conflict, *skipSeed)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "push failed: %v\n", err)
 		os.Exit(1)

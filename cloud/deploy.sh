@@ -36,20 +36,36 @@ if [ ! -f "$ENV_FILE_REMOTE" ]; then
 fi
 
 SERVICES="yaver-agent"
+CADDY_STARTED=0
 if ss -ltn '( sport = :80 or sport = :443 )' | grep -q LISTEN; then
   echo "[deploy] host ports 80/443 already in use — deploying agent only on CLOUD_AGENT_PORT"
 else
   SERVICES="yaver-agent caddy"
+  CADDY_STARTED=1
 fi
 
 docker compose --env-file "$ENV_FILE_REMOTE" -f cloud/docker-compose.yml up -d --build $SERVICES
 
+AGENT_PORT="${CLOUD_AGENT_PORT:-18081}"
+HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+
 echo
-echo "[deploy] done. once DNS for $DOMAIN points at this box, try:"
-echo "  curl https://$DOMAIN/health"
+echo "[deploy] done."
 echo
-echo "direct host-port health:"
-echo "  curl http://$(hostname -I | awk '{print $1}'):${CLOUD_AGENT_PORT:-18081}/health"
+echo "direct host-port health (always works):"
+echo "  curl http://${HOST_IP}:${AGENT_PORT}/health"
 echo
-echo "to push a phone project from your laptop:"
-echo "  yaver phone push <slug> --to https://$DOMAIN"
+if [ "$CADDY_STARTED" = "1" ]; then
+  echo "once DNS for $DOMAIN points at this box, TLS health:"
+  echo "  curl https://$DOMAIN/health"
+  echo
+  echo "to push a phone project from your laptop (TLS):"
+  echo "  yaver phone push <slug> --to https://$DOMAIN --token <CLOUD_OWNER_TOKEN>"
+else
+  echo "ports 80/443 were in use — Caddy NOT started. Use the direct host:port above."
+  echo
+  echo "to push a phone project from your laptop (plain HTTP, host:port):"
+  echo "  yaver phone push <slug> --to http://${HOST_IP}:${AGENT_PORT} --token <CLOUD_OWNER_TOKEN>"
+fi
+echo
+echo "CLOUD_OWNER_TOKEN is stored in $ENV_FILE_REMOTE"

@@ -475,6 +475,11 @@ export const LOCAL_KEYS = {
   relayUrl: `${LOCAL_KEY_PREFIX}relay_url`,
   tunnelUrl: `${LOCAL_KEY_PREFIX}tunnel_url`,
   bootstrapSecret: `${LOCAL_KEY_PREFIX}bootstrap_secret`,
+  // CLOUD_OWNER_TOKEN the user pastes from the web dashboard after they've
+  // completed LemonSqueezy checkout. Mobile push uses it as the bearer
+  // token against the managed cloud tenant's own-token fast path. Kept
+  // in the device keychain — never synced.
+  yaverCloudToken: `${LOCAL_KEY_PREFIX}yaver_cloud_token`,
 } as const;
 
 export async function getLocalSecret(key: string): Promise<string | null> {

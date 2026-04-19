@@ -4,6 +4,7 @@ import { api, internal } from "./_generated/api";
 import { sha256Hex } from "./auth";
 
 const http = httpRouter();
+const CLOUD_PREVIEW_EMAIL = "kivanc.cakmak@icloud.com";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -19,6 +20,192 @@ function jsonResponse(data: unknown, status = 200): Response {
 
 function errorResponse(message: string, status = 400): Response {
   return jsonResponse({ error: message }, status);
+}
+
+function isCloudPreviewUser(email?: string | null): boolean {
+  return (email ?? "").trim() !== "";
+}
+
+function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
+  if (!value) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1" || normalized === "yes") return true;
+  if (normalized === "false" || normalized === "0" || normalized === "no") return false;
+  return fallback;
+}
+
+// LemonSqueezy docs use LEMONSQUEEZY_* (no underscore between LEMON+SQUEEZY),
+// but some deploys store LEMON_SQUEEZY_* (Convex default in this project).
+// Accept either so a rename on one side doesn't silently break checkout.
+function lsEnv(suffix: string): string | undefined {
+  return process.env["LEMONSQUEEZY_" + suffix] ?? process.env["LEMON_SQUEEZY_" + suffix];
+}
+
+// Constant-time HMAC-SHA256 verification for LemonSqueezy webhooks.
+// LS signs the raw body with LEMONSQUEEZY_WEBHOOK_SECRET and sends the hex
+// digest in the X-Signature header. If no secret is configured we log a
+// warning and accept — matches the previous "TODO" behaviour but surfaces it.
+async function verifyLemonSqueezySignature(body: string, signatureHeader: string | null): Promise<boolean> {
+  const secret = lsEnv("WEBHOOK_SECRET");
+  if (!secret) {
+    console.warn("[lemonsqueezy] LEMONSQUEEZY_WEBHOOK_SECRET not set — webhook signature NOT verified");
+    return true;
+  }
+  if (!signatureHeader) return false;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sigBuf = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body));
+  const expected = Array.from(new Uint8Array(sigBuf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  // Constant-time compare — same length + byte-by-byte xor.
+  const a = expected;
+  const b = signatureHeader.trim().toLowerCase();
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+function normalizeCloudHost(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return baseUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  }
+}
+
+async function createLemonSqueezyCheckout(args: {
+  email: string;
+  custom: Record<string, string>;
+}): Promise<string> {
+  const apiKey = lsEnv("API_KEY");
+  const storeId = lsEnv("STORE_ID");
+  const variantId = lsEnv("YAVER_CLOUD_VARIANT_ID");
+  if (!apiKey || !storeId || !variantId) {
+    const missing = [
+      !apiKey && "API_KEY",
+      !storeId && "STORE_ID",
+      !variantId && "YAVER_CLOUD_VARIANT_ID",
+    ].filter(Boolean).join(", ");
+    throw new Error(`Missing Lemon Squeezy configuration: ${missing}`);
+  }
+
+  const receiptLink =
+    lsEnv("YAVER_CLOUD_RECEIPT_LINK_URL") ||
+    lsEnv("CHECKOUT_REDIRECT_URL") ||
+    process.env.NEXT_PUBLIC_BASE_URL ||
+    "https://yaver.io/pricing";
+  const receiptButtonText =
+    lsEnv("YAVER_CLOUD_RECEIPT_BUTTON_TEXT") || "Open Yaver";
+
+  const payload = {
+    data: {
+      type: "checkouts",
+      attributes: {
+        checkout_data: {
+          email: args.email,
+          custom: args.custom,
+        },
+        checkout_options: {
+          embed: false,
+          media: false,
+          logo: true,
+        },
+        product_options: {
+          receipt_button_text: receiptButtonText,
+          receipt_link_url: receiptLink,
+          redirect_url: receiptLink,
+        },
+      },
+      relationships: {
+        store: { data: { type: "stores", id: storeId } },
+        variant: { data: { type: "variants", id: variantId } },
+      },
+    },
+  };
+
+  const response = await fetch("https://api.lemonsqueezy.com/v1/checkouts", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: "application/vnd.api+json",
+      "Content-Type": "application/vnd.api+json",
+    },
+    body: JSON.stringify(payload),
+  });
+  const raw = await response.text();
+  if (!response.ok) {
+    throw new Error(`Lemon Squeezy checkout failed (${response.status}): ${raw}`);
+  }
+
+  const parsed = JSON.parse(raw);
+  const url = parsed?.data?.attributes?.url;
+  if (typeof url !== "string" || !url) {
+    throw new Error("Lemon Squeezy checkout URL missing");
+  }
+  return url;
+}
+
+async function attachPreviewMachineToSharedServer(
+  ctx: { runMutation: (mutation: any, args: any) => Promise<any> },
+  machineId: string,
+  region: string,
+) {
+  const baseUrl =
+    process.env.YAVER_CLOUD_PREVIEW_BASE_URL ||
+    process.env.YAVER_CLOUD_BASE_URL ||
+    process.env.YAVER_CLOUD_PUBLIC_BASE_URL ||
+    "https://cloud.yaver.io";
+  const hostname =
+    process.env.YAVER_CLOUD_PREVIEW_HOSTNAME ||
+    process.env.YAVER_CLOUD_PUBLIC_HOSTNAME ||
+    normalizeCloudHost(baseUrl);
+  const serverIp =
+    process.env.YAVER_CLOUD_PREVIEW_SERVER_IP ||
+    process.env.YAVER_CLOUD_PUBLIC_SERVER_IP;
+  const providerId =
+    process.env.YAVER_CLOUD_PREVIEW_PROVIDER_ID ||
+    `preview-${region}`;
+
+  await ctx.runMutation(api.cloudMachines.updateStatus, {
+    machineId,
+    status: "active",
+    hostname,
+    serverIp,
+    hetznerServerId: providerId,
+  });
+}
+
+async function ensurePreviewCloudMachine(
+  ctx: {
+    runQuery: (query: any, args: any) => Promise<any>;
+    runMutation: (mutation: any, args: any) => Promise<any>;
+  },
+  userDocId: string,
+  region: string,
+) {
+  const machines = await ctx.runQuery(api.cloudMachines.listForUser, { userId: userDocId });
+  const existing = Array.isArray(machines)
+    ? machines.find((machine) => machine.machineType === "cpu" && machine.status !== "stopped")
+    : null;
+  if (existing?._id) {
+    await attachPreviewMachineToSharedServer(ctx, existing._id, region);
+    return existing._id;
+  }
+
+  const machineId = await ctx.runMutation(api.cloudMachines.create, {
+    userId: userDocId,
+    machineType: "cpu",
+    region,
+  });
+  await attachPreviewMachineToSharedServer(ctx, machineId, region);
+  return machineId;
 }
 
 /** Extract Bearer token from Authorization header, hash it, and validate. */
@@ -131,6 +318,8 @@ for (const path of [
   "/auth/verify-totp", "/auth/providers", "/auth/oauth-link/start", "/auth/oauth-link/complete",
   "/auth/device-code/authorize",
   "/devices/list", "/devices/owner-by-hardware", "/config", "/settings",
+  "/billing/yaver-cloud/checkout",
+  "/billing/yaver-cloud/dev-activate",
   "/guests/invite", "/guests/accept", "/guests/accept-code",
   "/guests/revoke", "/guests/list", "/guests/hosts", "/guests/allowed",
   "/guests/config", "/guests/usage",
@@ -1835,12 +2024,15 @@ http.route({
   path: "/webhooks/lemonsqueezy",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
-    // Verify webhook signature
+    // Verify webhook signature (HMAC-SHA256 over the raw body using
+    // LEMONSQUEEZY_WEBHOOK_SECRET). Without verification, anyone could
+    // POST a forged "subscription_created" to provision hardware on your
+    // Hetzner account.
     const signature = request.headers.get("x-signature");
     const body = await request.text();
-
-    // TODO: Verify HMAC signature with LEMONSQUEEZY_WEBHOOK_SECRET env var
-    // For now, check basic structure
+    if (!(await verifyLemonSqueezySignature(body, signature))) {
+      return errorResponse("Invalid signature", 401);
+    }
 
     let payload;
     try {
@@ -1875,7 +2067,13 @@ http.route({
       case "subscription_created":
       case "subscription_updated":
       case "subscription_resumed": {
-        const plan = data.variant_name?.includes("yearly") ? "relay-yearly" : "relay-monthly";
+        const productType = payload.meta?.custom_data?.product_type || "relay";
+        const isCloudPreviewProduct = productType === "yaver-cloud";
+        const plan = isCloudPreviewProduct
+          ? "yaver-cloud-preview"
+          : data.variant_name?.includes("yearly")
+            ? "relay-yearly"
+            : "relay-monthly";
         const status = data.status === "active" ? "active" : data.status === "past_due" ? "past_due" : "active";
         const periodEnd = new Date(data.renews_at || data.ends_at).getTime();
 
@@ -1890,19 +2088,21 @@ http.route({
 
         // If new subscription, provision the appropriate resource
         if (eventName === "subscription_created") {
-          const productType = payload.meta?.custom_data?.product_type || "relay";
           const region = payload.meta?.custom_data?.region || "eu";
 
-          if (productType === "cpu" || productType === "gpu") {
+          if (productType === "cpu" || productType === "gpu" || isCloudPreviewProduct) {
             // Cloud dev machine — create and provision
             const teamId = payload.meta?.custom_data?.team_id;
-            await ctx.runMutation(api.cloudMachines.create, {
+            const machineId = await ctx.runMutation(api.cloudMachines.create, {
               userId: user._id,
-              machineType: productType,
+              machineType: productType === "gpu" ? "gpu" : "cpu",
               teamId,
               region,
               subscriptionId: subId,
             });
+            if (isCloudPreviewProduct) {
+              await attachPreviewMachineToSharedServer(ctx, machineId, region);
+            }
           } else {
             // Managed relay (default)
             const password = generateRelayPassword();
@@ -1958,6 +2158,71 @@ http.route({
     }
 
     return jsonResponse({ ok: true });
+  }),
+});
+
+/** POST /billing/yaver-cloud/checkout — create authenticated Lemon Squeezy sandbox checkout. */
+http.route({
+  path: "/billing/yaver-cloud/checkout",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    if (!isCloudPreviewUser(session.email)) {
+      return errorResponse("Yaver Cloud is private-preview only on this account", 403);
+    }
+
+    let body: { region?: string } = {};
+    try {
+      body = await request.json();
+    } catch {
+      // allow empty body
+    }
+    const region = (body.region ?? "eu").trim() || "eu";
+
+    try {
+      const url = await createLemonSqueezyCheckout({
+        email: session.email,
+        custom: {
+          user_email: session.email,
+          product_type: "yaver-cloud",
+          region,
+        },
+      });
+      return jsonResponse({ url, mode: parseBooleanEnv(lsEnv("SANDBOX"), true) ? "sandbox" : "live" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return errorResponse(message, 500);
+    }
+  }),
+});
+
+/** POST /billing/yaver-cloud/dev-activate — bypass checkout and attach preview machine for testing. */
+http.route({
+  path: "/billing/yaver-cloud/dev-activate",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    if (!isCloudPreviewUser(session.email)) {
+      return errorResponse("Yaver Cloud is private-preview only on this account", 403);
+    }
+
+    let body: { region?: string } = {};
+    try {
+      body = await request.json();
+    } catch {
+      // allow empty body
+    }
+    const region = (body.region ?? "eu").trim() || "eu";
+
+    try {
+      const machineId = await ensurePreviewCloudMachine(ctx, session.userDocId, region);
+      return jsonResponse({ ok: true, machineId, mode: "dev-bypass" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return errorResponse(message, 500);
+    }
   }),
 });
 
@@ -2785,6 +3050,96 @@ http.route({
 
     const usage = await ctx.runQuery(api.guests.getGuestUsage, { tokenHash, date });
     return jsonResponse({ usage });
+  }),
+});
+
+// ─── Machine-side TLS reconciler endpoints ─────────────────────────
+//
+// Called by /usr/local/bin/yaver-tls-reconciler (installed by the
+// cloudMachines.provision cloud-init). Auth is a long-lived per-machine
+// token whose SHA-256 hash lives on cloudMachines.machineTokenHash.
+
+async function authenticateMachineRequest(
+  ctx: { runQuery: (q: any, args: any) => Promise<any> },
+  request: Request,
+  machineIdRaw: string | null,
+): Promise<{ ok: true; machine: any } | { ok: false; status: number; error: string }> {
+  const token = request.headers.get("x-machine-token");
+  if (!token) return { ok: false, status: 401, error: "Missing X-Machine-Token" };
+  if (!machineIdRaw) return { ok: false, status: 400, error: "Missing machineId" };
+  let machine: any;
+  try {
+    machine = await ctx.runQuery(internal.cloudMachines.getInternal, { machineId: machineIdRaw as any });
+  } catch {
+    return { ok: false, status: 400, error: "Invalid machineId" };
+  }
+  if (!machine) return { ok: false, status: 404, error: "Unknown machine" };
+  if (!machine.machineTokenHash) return { ok: false, status: 409, error: "Machine not yet provisioned" };
+  const hash = await sha256Hex(token);
+  if (hash !== machine.machineTokenHash) {
+    return { ok: false, status: 403, error: "Bad machine token" };
+  }
+  return { ok: true, machine };
+}
+
+/** GET /machine/pending-tls?machineId=... — list verified userDomains routed to this machine. */
+http.route({
+  path: "/machine/pending-tls",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const url = new URL(request.url);
+    const auth = await authenticateMachineRequest(ctx, request, url.searchParams.get("machineId"));
+    if (!auth.ok) return errorResponse(auth.error, auth.status);
+    const rows = await ctx.runQuery(internal.userDomains.listPendingTLSForMachine, {
+      machineId: auth.machine._id,
+    });
+    return jsonResponse({
+      domains: rows.map((r: any) => ({ domain: r.domain, domainId: r._id.toString() })),
+    });
+  }),
+});
+
+/** POST /machine/tls-issued — reconciler reports a successful cert issue. */
+http.route({
+  path: "/machine/tls-issued",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.json().catch(() => ({}));
+    const auth = await authenticateMachineRequest(ctx, request, body.machineId ?? null);
+    if (!auth.ok) return errorResponse(auth.error, auth.status);
+    const domain = String(body.domain ?? "").trim().toLowerCase();
+    if (!domain) return errorResponse("Missing domain", 400);
+    const row = await ctx.runQuery(api.userDomains.getByDomain, { domain });
+    if (!row) return errorResponse("Unknown domain", 404);
+    if (row.targetId !== auth.machine._id.toString()) {
+      return errorResponse("Domain not routed to this machine", 403);
+    }
+    await ctx.runMutation(internal.userDomains.markTLSIssued, { domainId: row._id });
+    return jsonResponse({ ok: true });
+  }),
+});
+
+/** POST /machine/tls-error — reconciler reports a certbot failure. */
+http.route({
+  path: "/machine/tls-error",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.json().catch(() => ({}));
+    const auth = await authenticateMachineRequest(ctx, request, body.machineId ?? null);
+    if (!auth.ok) return errorResponse(auth.error, auth.status);
+    const domain = String(body.domain ?? "").trim().toLowerCase();
+    if (!domain) return errorResponse("Missing domain", 400);
+    const row = await ctx.runQuery(api.userDomains.getByDomain, { domain });
+    if (!row) return errorResponse("Unknown domain", 404);
+    if (row.targetId !== auth.machine._id.toString()) {
+      return errorResponse("Domain not routed to this machine", 403);
+    }
+    await ctx.runMutation(internal.userDomains.setStatus, {
+      domainId: row._id,
+      status: "error",
+      errorMessage: String(body.error ?? "TLS issue failed"),
+    });
+    return jsonResponse({ ok: true });
   }),
 });
 

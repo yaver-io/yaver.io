@@ -537,6 +537,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/vibing/execute", s.auth(s.handleVibingExecute))
 	mux.HandleFunc("/vibing/surprise", s.auth(s.handleVibingSurprise))
 
+	// Recovery: central catalog of fix prompts routed to the wrapped AI agent.
+	mux.HandleFunc("/recover", s.auth(s.handleRecover))
+
 	// Todo list (queued bug reports for batch implementation) — SDK-accessible for add/list/count
 	mux.HandleFunc("/todolist", s.authSDK(s.handleTodoList))
 	mux.HandleFunc("/todolist/count", s.authSDK(s.handleTodoListCount))
@@ -3235,10 +3238,23 @@ func jsonReply(w http.ResponseWriter, status int, data interface{}) {
 }
 
 func jsonError(w http.ResponseWriter, status int, msg string) {
-	jsonReply(w, status, map[string]interface{}{
+	payload := map[string]interface{}{
 		"ok":    false,
 		"error": msg,
-	})
+	}
+	// Cloud-tenant mode: when the agent is deployed as a managed Yaver Cloud
+	// tenant (YAVER_CLOUD_TENANT=1 in its env), enrich 401/403 responses
+	// with a hint + checkout URL so mobile / CLI / web clients can guide
+	// the caller to complete checkout instead of showing a raw auth error.
+	// Apple-compliance: the mobile app is expected to display this hint
+	// but NOT auto-open checkoutUrl — that stays on web.
+	if (status == http.StatusUnauthorized || status == http.StatusForbidden) && os.Getenv("YAVER_CLOUD_TENANT") == "1" {
+		payload["hint"] = "Yaver Cloud tenant — push requires CLOUD_OWNER_TOKEN or an active subscription"
+		if u := os.Getenv("YAVER_CLOUD_CHECKOUT_URL"); u != "" {
+			payload["checkoutUrl"] = u
+		}
+	}
+	jsonReply(w, status, payload)
 }
 
 func jsonString(v interface{}) string {
