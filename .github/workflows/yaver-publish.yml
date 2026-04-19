@@ -1,0 +1,43 @@
+name: Yaver Publish Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Target ID from .yaver/publish.yaml"
+        required: true
+        type: string
+      runs_on:
+        description: 'JSON array of runner labels (example: ["self-hosted","macOS"])'
+        required: false
+        default: '["self-hosted"]'
+        type: string
+
+jobs:
+  publish:
+    runs-on: ${{ fromJson(inputs.runs_on) }}
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+      TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+      PUB_TOKEN: ${{ secrets.PUB_TOKEN }}
+      APP_STORE_API_KEY_ID: ${{ secrets.APP_STORE_API_KEY_ID }}
+      APP_STORE_API_ISSUER: ${{ secrets.APP_STORE_API_ISSUER }}
+      APP_STORE_API_KEY_PATH: ${{ vars.APP_STORE_API_KEY_PATH }}
+      PLAY_STORE_KEY_FILE: ${{ vars.PLAY_STORE_KEY_FILE }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Yaver CLI
+        run: npm install -g yaver-cli
+
+      - name: Publish via Yaver
+        run: yaver publish run --target "${{ inputs.target }}"

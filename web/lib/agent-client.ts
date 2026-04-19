@@ -1672,6 +1672,55 @@ class AgentClient {
     return res.json();
   }
 
+  async getPublishConfig(dir?: string): Promise<{ config: unknown; exists: boolean; path: string }> {
+    this.assertConnected();
+    const params = dir ? `?dir=${encodeURIComponent(dir)}` : "";
+    const res = await fetch(`${this.baseUrl}/publish/config${params}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error("Failed to get publish config");
+    return res.json();
+  }
+
+  async savePublishConfig(dir: string, config: unknown): Promise<{ ok: boolean; path: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/publish/config`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ dir, config }),
+    });
+    if (!res.ok) throw new Error("Failed to save publish config");
+    return res.json();
+  }
+
+  async startPublish(dir: string, target: string, allowGitHubFallback = false): Promise<{
+    id: string;
+    targetId: string;
+    status: string;
+    provider: string;
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/publish/run`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ dir, target, allowGitHubFallback }),
+    });
+    if (!res.ok) throw new Error("Failed to start publish");
+    return res.json();
+  }
+
+  async listPublishes(): Promise<Array<{ id: string; targetId: string; status: string; provider: string }>> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/publish/runs`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    return res.json();
+  }
+
+  async getPublish(id: string): Promise<unknown> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/publish/runs/${encodeURIComponent(id)}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error("Failed to fetch publish run");
+    return res.json();
+  }
+
   // ── Dev Server ────────────────────────────────────────────────────
 
   async getDevServerStatus(): Promise<{

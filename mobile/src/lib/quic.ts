@@ -2154,6 +2154,55 @@ export class QuicClient {
     return this.startBuild(platform, workDir);
   }
 
+  async getPublishConfig(dir?: string): Promise<{ config: unknown; exists: boolean; path: string } | null> {
+    const params = dir ? `?dir=${encodeURIComponent(dir)}` : "";
+    const resp = await this.fetchWithTimeout(`${this.baseUrl}/publish/config${params}`, {
+      headers: this.authHeaders,
+    }, 10_000);
+    if (!resp.ok) return null;
+    return resp.json();
+  }
+
+  async savePublishConfig(dir: string, config: unknown): Promise<boolean> {
+    const resp = await this.fetchWithTimeout(`${this.baseUrl}/publish/config`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ dir, config }),
+    }, 10_000);
+    return resp.ok;
+  }
+
+  async startPublish(dir: string, target: string, allowGitHubFallback = false): Promise<{
+    id: string;
+    targetId: string;
+    status: string;
+    provider: string;
+  } | null> {
+    const resp = await this.fetchWithTimeout(`${this.baseUrl}/publish/run`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ dir, target, allowGitHubFallback }),
+    }, 10_000);
+    if (!resp.ok) return null;
+    return resp.json();
+  }
+
+  async listPublishes(): Promise<Array<{ id: string; targetId: string; status: string; provider: string }>> {
+    const resp = await this.fetchWithTimeout(`${this.baseUrl}/publish/runs`, {
+      headers: this.authHeaders,
+    }, 10_000);
+    if (!resp.ok) return [];
+    return resp.json();
+  }
+
+  async getPublish(id: string): Promise<unknown | null> {
+    const resp = await this.fetchWithTimeout(`${this.baseUrl}/publish/runs/${encodeURIComponent(id)}`, {
+      headers: this.authHeaders,
+    }, 10_000);
+    if (!resp.ok) return null;
+    return resp.json();
+  }
+
   /** Sync vault entries from the connected agent and cache locally. */
   async syncVault(): Promise<void> {
     try {

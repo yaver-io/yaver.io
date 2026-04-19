@@ -210,6 +210,125 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				"properties": map[string]interface{}{},
 			},
 		},
+		{
+			"name":        "publish_config_get",
+			"description": "Load a project's Yaver publish config (.yaver/publish.yaml). Returns the existing config or a scaffold preview if none exists yet.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"dir": map[string]interface{}{
+						"type":        "string",
+						"description": "Project directory. Defaults to the agent work dir.",
+					},
+				},
+			},
+		},
+		{
+			"name":        "publish_run",
+			"description": "Run a publish target from .yaver/publish.yaml. Local/self-hosted execution is primary; GitHub fallback is used only when allowed and requested.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"dir": map[string]interface{}{
+						"type":        "string",
+						"description": "Project directory. Defaults to the agent work dir.",
+					},
+					"target": map[string]interface{}{
+						"type":        "string",
+						"description": "Target ID from .yaver/publish.yaml. Defaults to defaultTarget.",
+					},
+					"allow_github_fallback": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Allow explicit GitHub workflow_dispatch fallback if the target/project permits it.",
+					},
+				},
+			},
+		},
+		{
+			"name":        "publish_submit",
+			"description": "Alias of publish_run. Uses Yaver's uploader/register flow first, then the local submitter, then GitHub fallback only when allowed.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"dir": map[string]interface{}{
+						"type":        "string",
+						"description": "Project directory. Defaults to the agent work dir.",
+					},
+					"target": map[string]interface{}{
+						"type":        "string",
+						"description": "Target ID from .yaver/publish.yaml. Defaults to defaultTarget.",
+					},
+					"allow_github_fallback": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Allow explicit GitHub workflow_dispatch fallback if the target/project permits it.",
+					},
+				},
+			},
+		},
+		{
+			"name":        "publish_upload",
+			"description": "Alias of publish_run for MCP clients that think in terms of an uploader. The target still archives/registers through Yaver first, then submits locally.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"dir": map[string]interface{}{
+						"type":        "string",
+						"description": "Project directory. Defaults to the agent work dir.",
+					},
+					"target": map[string]interface{}{
+						"type":        "string",
+						"description": "Target ID from .yaver/publish.yaml. Defaults to defaultTarget.",
+					},
+					"allow_github_fallback": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Allow explicit GitHub workflow_dispatch fallback if the target/project permits it.",
+					},
+				},
+			},
+		},
+		{
+			"name":        "publish_ci_dispatch",
+			"description": "Alias of publish_run for CI-oriented clients. Use allow_github_fallback=true when you want GitHub dispatch as the fallback path after Yaver/local execution fails.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"dir": map[string]interface{}{
+						"type":        "string",
+						"description": "Project directory. Defaults to the agent work dir.",
+					},
+					"target": map[string]interface{}{
+						"type":        "string",
+						"description": "Target ID from .yaver/publish.yaml. Defaults to defaultTarget.",
+					},
+					"allow_github_fallback": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Allow explicit GitHub workflow_dispatch fallback if the target/project permits it.",
+					},
+				},
+			},
+		},
+		{
+			"name":        "publish_list",
+			"description": "List recent publish runs started by this agent.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "publish_status",
+			"description": "Get the full status of one publish run.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"run_id"},
+				"properties": map[string]interface{}{
+					"run_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Publish run ID.",
+					},
+				},
+			},
+		},
 		// --- iOS Install Method ---
 		{
 			"name":        "get_ios_install_method",

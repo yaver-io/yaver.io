@@ -129,6 +129,7 @@ type HTTPServer struct {
 	// Health monitor (production URL pinging)
 	healthMon     *HealthMonitor
 	agentGraphMgr *AgentGraphManager
+	publishMgr    *PublishManager
 
 	// Named log streams for fan-out of long-running CLI ops
 	// (autodev, autotest, etc.) to mobile + web subscribers.
@@ -540,6 +541,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/projects/mobile", s.auth(s.handleMobileProjects))
 	mux.HandleFunc("/projects/switch", s.auth(s.handleProjectSwitch))
 	mux.HandleFunc("/projects/actions", s.auth(s.handleProjectActions))
+	mux.HandleFunc("/publish/config", s.auth(s.handlePublishConfig))
+	mux.HandleFunc("/publish/run", s.auth(s.handlePublishRun))
+	mux.HandleFunc("/publish/runs", s.auth(s.handlePublishRuns))
+	mux.HandleFunc("/publish/runs/", s.auth(s.handlePublishRunByID))
 	mux.HandleFunc("/vibing", s.auth(s.handleVibing))
 	mux.HandleFunc("/vibing/execute", s.auth(s.handleVibingExecute))
 	mux.HandleFunc("/vibing/surprise", s.auth(s.handleVibingSurprise))
@@ -4284,6 +4289,69 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			content = content[:5000] + "\n... (truncated)"
 		}
 		return mcpToolResult(content)
+
+	case "publish_config_get":
+		var args struct {
+			Dir string `json:"dir"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		dir := strings.TrimSpace(args.Dir)
+		if dir == "" {
+			dir = s.taskMgr.workDir
+		}
+		cfg, exists, err := loadOrScaffoldPublishConfig(dir)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(map[string]interface{}{
+			"ok":     true,
+			"exists": exists,
+			"path":   publishConfigPath(dir),
+			"config": cfg,
+		})
+
+	case "publish_run", "publish_submit", "publish_upload", "publish_ci_dispatch":
+		if s.publishMgr == nil {
+			return mcpToolError("publish manager unavailable")
+		}
+		var args struct {
+			Dir                 string `json:"dir"`
+			Target              string `json:"target"`
+			AllowGitHubFallback bool   `json:"allow_github_fallback"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		dir := strings.TrimSpace(args.Dir)
+		if dir == "" {
+			dir = s.taskMgr.workDir
+		}
+		run, err := s.publishMgr.StartRun(dir, args.Target, args.AllowGitHubFallback)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(map[string]interface{}{"ok": true, "run": run})
+
+	case "publish_list":
+		if s.publishMgr == nil {
+			return mcpToolError("publish manager unavailable")
+		}
+		return mcpToolJSON(map[string]interface{}{"ok": true, "runs": s.publishMgr.ListRuns()})
+
+	case "publish_status":
+		if s.publishMgr == nil {
+			return mcpToolError("publish manager unavailable")
+		}
+		var args struct {
+			RunID string `json:"run_id"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.RunID) == "" {
+			return mcpToolError("run_id is required")
+		}
+		run, ok := s.publishMgr.GetRun(args.RunID)
+		if !ok {
+			return mcpToolError("publish run not found: " + args.RunID)
+		}
+		return mcpToolJSON(map[string]interface{}{"ok": true, "run": run})
 
 	// --- Relay Management ---
 	case "get_relay_config":
@@ -12367,6 +12435,7 @@ Available tool categories:
 - Tasks: create_task, list_tasks, get_task, stop_task, continue_task
 - Runners: list_runners, switch_runner
 - System: get_info, get_system_info, get_config, set_work_dir, list_projects
+- Publish: publish_config_get, publish_run, publish_submit, publish_upload, publish_ci_dispatch, publish_list, publish_status
 - Files: read_file, write_file, list_directory, search_files
 - Relay: get_relay_config, add_relay_server, remove_relay_server, relay_test
 - Tunnels: tunnel_list, tunnel_add, tunnel_remove, tunnel_test

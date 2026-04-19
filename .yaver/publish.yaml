@@ -1,0 +1,135 @@
+version: 1
+defaultTarget: npm-cli
+fallback:
+  githubAllowed: true
+  repo: kivanccakmak/yaver.io
+  workflow: yaver-publish.yml
+  ref: main
+targets:
+  - id: npm-cli
+    label: npm (cli)
+    kind: npm
+    workDir: cli
+    uploader: yaver
+    submitter: yaver
+    publishCommand: PKG_FILE="$(npm pack | tail -n 1)" && npm publish "$PKG_FILE" --access public
+    artifactGlobs:
+      - '*.tgz'
+    envFromVault:
+      NODE_AUTH_TOKEN: npm-token
+    envFromGitHub:
+      NODE_AUTH_TOKEN: NPM_TOKEN
+  - id: npm-sdk-errors-js
+    label: npm (sdk/errors-js)
+    kind: npm
+    workDir: sdk/errors-js
+    uploader: yaver
+    submitter: yaver
+    publishCommand: PKG_FILE="$(npm pack | tail -n 1)" && npm publish "$PKG_FILE" --access public
+    artifactGlobs:
+      - '*.tgz'
+    envFromVault:
+      NODE_AUTH_TOKEN: npm-token
+    envFromGitHub:
+      NODE_AUTH_TOKEN: NPM_TOKEN
+  - id: npm-sdk-js
+    label: npm (sdk/js)
+    kind: npm
+    workDir: sdk/js
+    uploader: yaver
+    submitter: yaver
+    publishCommand: PKG_FILE="$(npm pack | tail -n 1)" && npm publish "$PKG_FILE" --access public
+    artifactGlobs:
+      - '*.tgz'
+    envFromVault:
+      NODE_AUTH_TOKEN: npm-token
+    envFromGitHub:
+      NODE_AUTH_TOKEN: NPM_TOKEN
+  - id: npm-feedback-react-native
+    label: npm (sdk/feedback/react-native)
+    kind: npm
+    workDir: sdk/feedback/react-native
+    uploader: yaver
+    submitter: yaver
+    publishCommand: PKG_FILE="$(npm pack | tail -n 1)" && npm publish "$PKG_FILE" --access public
+    artifactGlobs:
+      - '*.tgz'
+    envFromVault:
+      NODE_AUTH_TOKEN: npm-token
+    envFromGitHub:
+      NODE_AUTH_TOKEN: NPM_TOKEN
+  - id: npm-feedback-web
+    label: npm (sdk/feedback/web)
+    kind: npm
+    workDir: sdk/feedback/web
+    uploader: yaver
+    submitter: yaver
+    publishCommand: PKG_FILE="$(npm pack | tail -n 1)" && npm publish "$PKG_FILE" --access public
+    artifactGlobs:
+      - '*.tgz'
+    envFromVault:
+      NODE_AUTH_TOKEN: npm-token
+    envFromGitHub:
+      NODE_AUTH_TOKEN: NPM_TOKEN
+  - id: pypi-sdk-python
+    label: PyPI (sdk/python)
+    kind: pypi
+    workDir: sdk/python
+    uploader: yaver
+    submitter: yaver
+    publishCommand: python -m build && python -m twine upload dist/*
+    artifactGlobs:
+      - dist/*
+    env:
+      TWINE_USERNAME: __token__
+    envFromVault:
+      TWINE_PASSWORD: pypi-token
+    envFromGitHub:
+      TWINE_PASSWORD: PYPI_TOKEN
+  - id: pubdev-feedback-flutter
+    label: pub.dev (sdk/feedback/flutter)
+    kind: pubdev
+    workDir: sdk/feedback/flutter
+    uploader: yaver
+    submitter: yaver
+    prepareCommand: if [ -n "$PUB_TOKEN" ]; then dart pub token add https://pub.dev --env-var PUB_TOKEN; fi
+    publishCommand: flutter pub publish --force
+    runnerLabels:
+      - self-hosted
+      - macOS
+    envFromGitHub:
+      PUB_TOKEN: PUB_TOKEN
+  - id: pubdev-sdk-flutter
+    label: pub.dev (sdk/flutter)
+    kind: pubdev
+    workDir: sdk/flutter
+    uploader: yaver
+    submitter: yaver
+    prepareCommand: if [ -n "$PUB_TOKEN" ]; then dart pub token add https://pub.dev --env-var PUB_TOKEN; fi
+    publishCommand: flutter pub publish --force
+    runnerLabels:
+      - self-hosted
+      - macOS
+    envFromGitHub:
+      PUB_TOKEN: PUB_TOKEN
+  - id: testflight-mobile
+    label: TestFlight (mobile)
+    kind: testflight
+    workDir: mobile
+    uploader: yaver
+    submitter: yaver
+    buildPlatform: xcode-ipa
+    runnerLabels:
+      - self-hosted
+      - macOS
+  - id: playstore-mobile
+    label: Play Internal (mobile)
+    kind: playstore
+    workDir: mobile
+    uploader: yaver
+    submitter: yaver
+    buildPlatform: gradle-aab
+    envFromVault:
+      ANDROID_KEYSTORE_PASSWORD: android-keystore-password
+      ANDROID_KEY_ALIAS: android-key-alias
+      ANDROID_KEY_PASSWORD: android-key-password

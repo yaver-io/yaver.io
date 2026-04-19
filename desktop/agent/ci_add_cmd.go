@@ -70,6 +70,19 @@ var ciTargets = []ciTarget{
 			"Clients can later `yaver push --bundle <url>` the artifact to devices",
 		},
 	},
+	{
+		name:        "publish-runner",
+		filename:    "yaver-publish.yml",
+		description: "workflow_dispatch entrypoint for self-hosted GitHub publish fallback",
+		requires:    requireGitRepo,
+		workflow:    publishRunnerWorkflow,
+		nextSteps: []string{
+			"Commit .github/workflows/yaver-publish.yml",
+			"Run `yaver publish init` in the repo if .yaver/publish.yaml does not exist yet",
+			"Set `.yaver/publish.yaml -> fallback.githubAllowed: true` only if you want GitHub workflow_dispatch fallback",
+			"Register self-hosted GitHub runners on the hardware you want to use; macOS runners are needed for TestFlight",
+		},
+	},
 }
 
 func runCI(args []string) {
@@ -212,6 +225,16 @@ func requireFeedbackProject(dir string) string {
 	return fmt.Sprintf("no package.json or pubspec.yaml in %s — the feedback CI target needs a supported project", dir)
 }
 
+func requireGitRepo(dir string) string {
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+		return ""
+	}
+	if _, repo := detectRepoFromGit(dir); repo != "" {
+		return ""
+	}
+	return fmt.Sprintf("%s does not look like a git repo with origin configured", dir)
+}
+
 // hermesWorkflow drops a workflow that runs `yaver push doctor --strict`
 // against the project. The runner installs yaver-cli from npm so CI and
 // the laptop share a single install.
@@ -293,6 +316,53 @@ jobs:
           else
             echo "No tsconfig.json — skipping typecheck"
           fi
+`
+}
+
+func publishRunnerWorkflow(dir string) string {
+	return `name: Yaver Publish Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Target ID from .yaver/publish.yaml"
+        required: true
+        type: string
+      runs_on:
+        description: 'JSON array of runner labels (example: ["self-hosted","macOS"])'
+        required: false
+        default: '["self-hosted"]'
+        type: string
+
+jobs:
+  publish:
+    runs-on: ${{ fromJson(inputs.runs_on) }}
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+      TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+      PUB_TOKEN: ${{ secrets.PUB_TOKEN }}
+      APP_STORE_API_KEY_ID: ${{ secrets.APP_STORE_API_KEY_ID }}
+      APP_STORE_API_ISSUER: ${{ secrets.APP_STORE_API_ISSUER }}
+      APP_STORE_API_KEY_PATH: ${{ vars.APP_STORE_API_KEY_PATH }}
+      PLAY_STORE_KEY_FILE: ${{ vars.PLAY_STORE_KEY_FILE }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Yaver CLI
+        run: npm install -g yaver-cli
+
+      - name: Publish via Yaver
+        run: yaver publish run --target "${{ inputs.target }}"
 `
 }
 

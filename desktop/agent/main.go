@@ -249,6 +249,8 @@ func main() {
 		runVault(os.Args[2:])
 	case "build":
 		runBuild(os.Args[2:])
+	case "publish":
+		runPublish(os.Args[2:])
 	case "release":
 		runRelease(os.Args[2:])
 	case "monitor":
@@ -431,6 +433,8 @@ Usage:
   yaver build list       List all builds
   yaver build status <id> Show build details
   yaver build register <file>  Register pre-built artifact
+  yaver publish init [--dir <path>]  Scaffold .yaver/publish.yaml from the repo
+  yaver publish run [--target <id>] [--allow-github-fallback]  Publish through local hardware first
   yaver expo setup [--dir <path>]      Inject Feedback SDK into Expo project
   yaver expo start [--dir <path>]     Start Expo Metro + P2P tunnel for hot reload
   yaver expo build android [--eas]    Build via Expo (--eas for cloud, no Mac needed)
@@ -467,7 +471,7 @@ Usage:
   yaver feedback show <id>  Show feedback details + transcript
   yaver feedback fix <id>   Create AI task from feedback report
   yaver sdk add <core|feedback>  Inject the Yaver SDK into this project
-  yaver ci add <hermes|feedback|push-to-device>  Scaffold a GitHub Actions workflow
+  yaver ci add <hermes|feedback|push-to-device|publish-runner>  Scaffold a GitHub Actions workflow
   yaver ci list             List available CI targets
   yaver cloud buy      Open the hosted cloud checkout flow
   yaver cloud create   Start the cloud flow and wait for the machine
@@ -1958,8 +1962,10 @@ func runServe(args []string) {
 
 		type detectedAgent struct {
 			id, cmd, name, path string
+			status              RunnerRuntimeStatus
 		}
 		var available []detectedAgent
+		var unavailable []detectedAgent
 		for _, a := range agentSearch {
 			var agentPath string
 			if p, err := osexec.LookPath(a.cmd); err == nil {
@@ -1968,11 +1974,17 @@ func runServe(args []string) {
 				agentPath = p
 			}
 			if agentPath != "" {
-				available = append(available, detectedAgent{a.id, a.cmd, a.name, agentPath})
+				status := DetectRunnerRuntimeStatus(GetRunnerConfig(a.id), *workDir)
+				detected := detectedAgent{id: a.id, cmd: a.cmd, name: a.name, path: agentPath, status: status}
+				if status.Ready {
+					available = append(available, detected)
+				} else {
+					unavailable = append(unavailable, detected)
+				}
 			}
 		}
 
-		if len(available) == 0 {
+		if len(available) == 0 && len(unavailable) == 0 {
 			log.Printf("WARNING: No AI agent found. Install one to run tasks.")
 			log.Printf("  Claude Code: https://docs.anthropic.com/en/docs/claude-code")
 			log.Printf("  OpenAI Codex: https://github.com/openai/codex")
@@ -1980,6 +1992,17 @@ func runServe(args []string) {
 			log.Printf("  Ollama: https://ollama.com")
 			log.Printf("  Or set a custom command: yaver set-runner custom \"your-command {prompt}\"")
 			log.Printf("Agent will start but tasks will fail until an AI agent is available.")
+		} else if len(available) == 0 {
+			log.Printf("WARNING: AI agents are installed, but none are ready to run tasks yet.")
+			for _, a := range unavailable {
+				msg := strings.TrimSpace(a.status.Error)
+				if msg == "" {
+					msg = "installed, but not ready"
+				}
+				log.Printf("  %s (%s): %s", a.name, a.path, msg)
+			}
+			log.Printf("Available agents were detected, but none appears to be logged in or configured yet.")
+			log.Printf("Agent will start but tasks will fail until one runner is authenticated/configured.")
 		} else if len(available) == 1 {
 			// Only one agent found — use it automatically
 			a := available[0]
@@ -1994,6 +2017,18 @@ func runServe(args []string) {
 			fmt.Println()
 			for i, a := range available {
 				fmt.Printf("  %d. %s  (%s)\n", i+1, a.name, a.path)
+			}
+			if len(unavailable) > 0 {
+				fmt.Println()
+				fmt.Println("Installed but not ready:")
+				fmt.Println()
+				for _, a := range unavailable {
+					msg := strings.TrimSpace(a.status.Error)
+					if msg == "" {
+						msg = "installed, but not ready"
+					}
+					fmt.Printf("  - %s  (%s) — %s\n", a.name, a.path, msg)
+				}
 			}
 			fmt.Println()
 			fmt.Printf("Select your default agent [1-%d]: ", len(available))
@@ -2194,6 +2229,7 @@ func runServe(args []string) {
 	StartMetricsSampler(context.Background())
 	StartConvexStateSync(context.Background())
 	httpServer.buildMgr = NewBuildManager(httpServer.execMgr, taskMgr.workDir)
+	httpServer.publishMgr = NewPublishManager(httpServer.execMgr, httpServer.buildMgr, taskMgr.workDir)
 	httpServer.tunnelMgr = NewTunnelManager()
 	httpServer.testMgr = NewTestManager(httpServer.execMgr, taskMgr.workDir)
 	httpServer.qualityMgr = NewQualityManager(httpServer.execMgr, taskMgr.workDir)

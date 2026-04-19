@@ -1,16 +1,44 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { agentClient } from "@/lib/agent-client";
 
 interface Build { id: string; platform: string; status: string; startedAt?: number; artifactName?: string; }
+interface Project { name: string; path: string; framework?: string; }
+interface PublishTarget { id: string; label?: string; kind: string; }
+interface PublishConfigResponse {
+  config?: {
+    defaultTarget?: string;
+    fallback?: { githubAllowed?: boolean };
+    targets?: PublishTarget[];
+  };
+  exists: boolean;
+  path: string;
+}
+interface PublishRun {
+  id: string;
+  targetId: string;
+  status: string;
+  provider: string;
+  startedAt?: string;
+  message?: string;
+}
 
 export default function BuildsView({ onTaskCreated }: { onTaskCreated?: (taskId: string) => void }) {
   const [builds, setBuilds] = useState<Build[]>([]);
   const [loading, setLoading] = useState(true);
-  const [projects, setProjects] = useState<{ name: string; path: string; framework?: string }[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedPath, setSelectedPath] = useState("");
+  const [publishConfig, setPublishConfig] = useState<PublishConfigResponse | null>(null);
+  const [publishRuns, setPublishRuns] = useState<PublishRun[]>([]);
+  const [allowGitHubFallback, setAllowGitHubFallback] = useState(false);
+  const [publishBusy, setPublishBusy] = useState<string | null>(null);
 
-  useEffect(() => { loadBuilds(); loadProjects(); }, []);
+  useEffect(() => { void loadBuilds(); void loadProjects(); void loadPublishes(); }, []);
+  useEffect(() => {
+    if (!selectedPath) return;
+    void loadPublishConfig(selectedPath);
+  }, [selectedPath]);
 
   async function loadBuilds() {
     setLoading(true);
@@ -19,17 +47,31 @@ export default function BuildsView({ onTaskCreated }: { onTaskCreated?: (taskId:
   }
 
   async function loadProjects() {
-    try { setProjects(await agentClient.listProjects()); } catch {}
+    try {
+      const out = await agentClient.listProjects();
+      setProjects(out);
+      if (!selectedPath && out[0]?.path) setSelectedPath(out[0].path);
+    } catch {}
+  }
+
+  async function loadPublishConfig(dir: string) {
+    try {
+      const out = await agentClient.getPublishConfig(dir) as PublishConfigResponse;
+      setPublishConfig(out);
+      setAllowGitHubFallback(Boolean(out.config?.fallback?.githubAllowed));
+    } catch {
+      setPublishConfig(null);
+    }
+  }
+
+  async function loadPublishes() {
+    try {
+      setPublishRuns(await agentClient.listPublishes() as PublishRun[]);
+    } catch {}
   }
 
   async function deploy(target: "testflight" | "playstore" | "web") {
-    let proj = projects[0];
-    if (projects.length > 1) {
-      const choice = prompt(`Select project:\n${projects.map((p, i) => `${i + 1}. ${p.name}`).join("\n")}\n\nEnter number:`);
-      if (!choice) return;
-      proj = projects[parseInt(choice) - 1];
-      if (!proj) { alert("Invalid selection"); return; }
-    }
+    let proj = projects.find((p) => p.path === selectedPath) ?? projects[0];
     if (!proj) { alert("No projects found"); return; }
 
     const prompts: Record<string, string> = {
@@ -44,24 +86,104 @@ export default function BuildsView({ onTaskCreated }: { onTaskCreated?: (taskId:
     } catch {}
   }
 
+  async function runPublish(targetId: string) {
+    if (!selectedPath) return;
+    setPublishBusy(targetId);
+    try {
+      await agentClient.startPublish(selectedPath, targetId, allowGitHubFallback);
+      await loadPublishes();
+      await loadBuilds();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Publish failed");
+    } finally {
+      setPublishBusy(null);
+    }
+  }
+
   function statusColor(s: string) {
     if (s === "completed") return "bg-emerald-500/10 text-emerald-400";
     if (s === "running") return "bg-amber-500/10 text-amber-400";
     if (s === "failed") return "bg-red-500/10 text-red-400";
+    if (s === "dispatched") return "bg-sky-500/10 text-sky-400";
     return "bg-surface-800 text-surface-400";
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
+      <div className="rounded-xl border border-surface-800 bg-surface-900/40 p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-xs font-medium uppercase tracking-wider text-surface-500">Publish Targets</div>
+            <div className="mt-1 text-sm text-surface-300">Local/self-hosted first. GitHub fallback only when enabled per project and requested here.</div>
+          </div>
+          <select
+            value={selectedPath}
+            onChange={(e) => setSelectedPath(e.target.value)}
+            className="rounded-lg border border-surface-700 bg-surface-950 px-3 py-2 text-sm text-surface-200"
+          >
+            {projects.map((p) => (
+              <option key={p.path} value={p.path}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <label className="mb-3 flex items-center gap-2 text-xs text-surface-400">
+          <input
+            type="checkbox"
+            checked={allowGitHubFallback}
+            onChange={(e) => setAllowGitHubFallback(e.target.checked)}
+          />
+          Allow GitHub fallback for this run
+        </label>
+
+        {publishConfig?.config?.targets?.length ? (
+          <div className="flex flex-wrap gap-2">
+            {publishConfig.config.targets.map((target) => (
+              <button
+                key={target.id}
+                onClick={() => void runPublish(target.id)}
+                disabled={publishBusy === target.id}
+                className="rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-50"
+              >
+                {publishBusy === target.id ? "Running..." : target.label || target.id}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="text-sm text-surface-500">No publish targets yet for this project. Run `yaver publish init` in the repo.</div>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-surface-800 bg-surface-900/40 p-4">
+        <div className="mb-3 text-xs font-medium uppercase tracking-wider text-surface-500">Recent Publishes</div>
+        {publishRuns.length === 0 ? (
+          <div className="text-sm text-surface-500">No publish runs yet.</div>
+        ) : (
+          <div className="space-y-2">
+            {publishRuns.slice(0, 10).map((run) => (
+              <div key={run.id} className="rounded-lg border border-surface-800 bg-surface-900/60 p-3">
+                <div className="flex items-center gap-3">
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${statusColor(run.status)}`}>{run.status}</span>
+                  <span className="text-sm font-mono text-surface-200">{run.targetId}</span>
+                  <span className="text-xs text-surface-500">{run.provider}</span>
+                  {run.startedAt && <span className="ml-auto text-xs text-surface-600">{new Date(run.startedAt).toLocaleTimeString()}</span>}
+                </div>
+                {run.message && <div className="mt-2 text-xs text-surface-500">{run.message}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="flex gap-2 flex-wrap">
         <button onClick={() => deploy("testflight")} className="px-3 py-2 text-sm rounded-lg border border-surface-700 bg-surface-900 hover:bg-surface-800 flex items-center gap-2">
-          <span>&#x1F34E;</span> TestFlight
+          <span>&#x1F34E;</span> TestFlight Task
         </button>
         <button onClick={() => deploy("playstore")} className="px-3 py-2 text-sm rounded-lg border border-surface-700 bg-surface-900 hover:bg-surface-800 flex items-center gap-2">
-          <span>&#x1F4E6;</span> Google Play
+          <span>&#x1F4E6;</span> Play Task
         </button>
         <button onClick={() => deploy("web")} className="px-3 py-2 text-sm rounded-lg border border-surface-700 bg-surface-900 hover:bg-surface-800 flex items-center gap-2">
-          <span>&#x1F310;</span> Web Deploy
+          <span>&#x1F310;</span> Web Task
         </button>
       </div>
 
@@ -70,7 +192,7 @@ export default function BuildsView({ onTaskCreated }: { onTaskCreated?: (taskId:
       {loading ? (
         <div className="text-center py-8 text-surface-500 text-sm">Loading...</div>
       ) : builds.length === 0 ? (
-        <div className="text-center py-8 text-surface-500 text-sm">No builds yet. Deploy to see build history.</div>
+        <div className="text-center py-8 text-surface-500 text-sm">No builds yet. Publish or deploy to see build history.</div>
       ) : (
         <div className="space-y-1">
           {builds.slice(0, 15).map((b) => (

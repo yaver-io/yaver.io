@@ -1344,6 +1344,34 @@ ACL peers are also accessible via MCP tools (`acl_list_peers`, `acl_call_peer_to
 | Backend | `backend/` | Managed (Convex) | Auth + peer discovery + platform config. No user data. |
 | Web | `web/` | Managed (Cloudflare Workers) | Landing page at yaver.io |
 
+## Publish Runners
+
+Yaver can now run package and store publishes directly on developer-owned
+hardware. The source of truth is project-scoped config in `.yaver/publish.yaml`.
+That same config is surfaced through CLI, web, mobile, and MCP.
+
+- Primary path: local/self-hosted execution on the developer's own machine.
+- Yaver-first upload/register: built artifacts are archived into Yaver's own blob
+  storage first so the system dogfoods its own uploader before any external CI
+  or store fallback path is used.
+- Optional fallback: self-hosted GitHub Actions `workflow_dispatch`, only when
+  the project allows it and the user explicitly requests it for that run.
+- Secret sources: Yaver vault entries and/or environment variables already
+  present on the machine or injected by GitHub secrets/vars.
+- Supported target kinds: `npm`, `pypi`, `pub.dev`, `testflight`, `playstore`.
+
+```bash
+yaver publish init
+yaver publish config
+yaver publish run --target npm-cli
+yaver publish run --target pypi-sdk-python
+```
+
+The repo includes `.github/workflows/yaver-publish.yml` for the GitHub fallback
+path and exposes MCP tools `publish_config_get`, `publish_run`,
+`publish_submit`, `publish_upload`, `publish_ci_dispatch`, `publish_list`, and
+`publish_status`.
+
 ## CLI Commands
 
 ```
@@ -1358,6 +1386,7 @@ yaver set-runner    Set default AI agent (claude/codex/aider/custom)
 yaver relay         Manage relay servers (add/remove/test — hot-reload, no restart)
 yaver tunnel        Manage Cloudflare Tunnels
 yaver config        Get/set configuration
+yaver publish       Project-scoped package/store publish runner
 yaver status        Show auth, agent, relay, and connection status
 yaver doctor        System health check (auth, runners, relay, network)
 yaver devices       List registered devices

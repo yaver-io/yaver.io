@@ -2302,6 +2302,22 @@ CLI Agent ◄──QUIC──────────────── Relay (:
                   update Homebrew/Scoop
                 </li>
                 <li>
+                  &bull; <span className="text-surface-200">Package publishes can be local-first</span>:
+                  configure <InlineCode>.yaver/publish.yaml</InlineCode> and run{" "}
+                  <InlineCode>yaver publish run --target ...</InlineCode> from CLI, web,
+                  mobile, or MCP.
+                </li>
+                <li>
+                  &bull; <span className="text-surface-200">Yaver dogfoods its uploader</span>:
+                  publish artifacts are uploaded/registered into Yaver&apos;s own blob/build
+                  surfaces before any external store or CI fallback path is used.
+                </li>
+                <li>
+                  &bull; <span className="text-surface-200">GitHub fallback is explicit</span>:
+                  <InlineCode>.github/workflows/yaver-publish.yml</InlineCode> is only used when
+                  the project enables GitHub fallback and the user opts into it for that run.
+                </li>
+                <li>
                   &bull; <span className="text-surface-200">Tag format</span>:
                   <InlineCode>cli/vX.Y.Z</InlineCode>, <InlineCode>relay/vX.Y.Z</InlineCode>,
                   <InlineCode>mobile/vX.Y.Z</InlineCode>, <InlineCode>web/vX.Y.Z</InlineCode>,
@@ -2360,6 +2376,17 @@ CLI Agent ◄──QUIC──────────────── Relay (:
                 >
                   SECURITY.md
                 </Link>.
+              </p>
+              <p className="mt-3 text-sm text-surface-400">
+                Publish runners read secrets from the local Yaver vault first, then fall back to
+                process environment variables already injected by self-hosted GitHub runners
+                (<InlineCode>NPM_TOKEN</InlineCode>, <InlineCode>PYPI_TOKEN</InlineCode>,{" "}
+                <InlineCode>PUB_TOKEN</InlineCode>, store creds, etc.).
+              </p>
+              <p className="mt-3 text-sm text-surface-400">
+                MCP clients can treat the same flow as uploader/submitter/CI operations through{" "}
+                <InlineCode>publish_upload</InlineCode>, <InlineCode>publish_submit</InlineCode>,
+                and <InlineCode>publish_ci_dispatch</InlineCode>.
               </p>
             </div>
           </div>

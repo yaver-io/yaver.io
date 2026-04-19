@@ -26,6 +26,15 @@ import {
   installIPA,
 } from "../../src/lib/builds";
 
+type PublishConfigView = {
+  config?: {
+    targets?: Array<{ id: string; label?: string; kind: string }>;
+    fallback?: { githubAllowed?: boolean };
+  };
+  exists: boolean;
+  path: string;
+};
+
 // ── Status helpers ──────────────────────────────────────────────────
 
 const STATUS_COLORS: Record<string, string> = {
@@ -178,6 +187,11 @@ export default function BuildsScreen() {
   const c = useColors();
   const { connectionStatus, activeDevice } = useDevice();
   const [builds, setBuilds] = useState<BuildSummary[]>([]);
+  const [publishRuns, setPublishRuns] = useState<Array<{ id: string; targetId: string; status: string; provider: string }>>([]);
+  const [publishConfig, setPublishConfig] = useState<PublishConfigView | null>(null);
+  const [selectedPublishProject, setSelectedPublishProject] = useState<string>("");
+  const [publishBusy, setPublishBusy] = useState<string | null>(null);
+  const [allowGitHubFallback, setAllowGitHubFallback] = useState(false);
   const [loading, setLoading] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -232,6 +246,9 @@ export default function BuildsScreen() {
         ]);
         if (mounted) {
           setProjects(projectData.projects);
+          if (!selectedPublishProject && projectData.projects[0]?.path) {
+            setSelectedPublishProject(projectData.projects[0].path);
+          }
           setDiscovering(!!projectData.discovery?.discovering);
           setDevStatus(ds?.running ? ds : null);
         }
@@ -240,7 +257,48 @@ export default function BuildsScreen() {
     poll();
     const interval = setInterval(poll, 5000);
     return () => { mounted = false; clearInterval(interval); };
-  }, [isConnected]);
+  }, [isConnected, selectedPublishProject]);
+
+  useEffect(() => {
+    if (!isConnected || !selectedPublishProject) {
+      setPublishConfig(null);
+      setPublishRuns([]);
+      return;
+    }
+    let mounted = true;
+    const poll = async () => {
+      try {
+        const [cfgRaw, runs] = await Promise.all([
+          quicClient.getPublishConfig(selectedPublishProject),
+          quicClient.listPublishes(),
+        ]);
+        if (!mounted) return;
+        const cfg = cfgRaw as PublishConfigView | null;
+        setPublishConfig(cfg);
+        setPublishRuns(runs);
+        setAllowGitHubFallback(Boolean(cfg?.config?.fallback?.githubAllowed));
+      } catch {}
+    };
+    void poll();
+    const interval = setInterval(poll, 5000);
+    return () => { mounted = false; clearInterval(interval); };
+  }, [isConnected, selectedPublishProject]);
+
+  const handlePublish = useCallback(async (targetId: string) => {
+    if (!selectedPublishProject) return;
+    setPublishBusy(targetId);
+    try {
+      const run = await quicClient.startPublish(selectedPublishProject, targetId, allowGitHubFallback);
+      if (!run) throw new Error("Publish did not start");
+      Alert.alert("Publish started", `${run.targetId} via ${run.provider}`);
+      const runs = await quicClient.listPublishes();
+      setPublishRuns(runs);
+    } catch (e) {
+      Alert.alert("Publish failed", e instanceof Error ? e.message : String(e));
+    } finally {
+      setPublishBusy(null);
+    }
+  }, [allowGitHubFallback, selectedPublishProject]);
 
   const handleDiscover = useCallback(async () => {
     setDiscovering(true);
@@ -385,6 +443,87 @@ export default function BuildsScreen() {
             </View>
           )}
 
+          {projects.length > 0 && (
+            <>
+              <View style={[styles.sectionHeader, { marginTop: 16 }]}>
+                <Text style={[styles.sectionTitle, { color: c.textMuted }]}>Publish</Text>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.publishProjectRow}>
+                {projects.map((project) => {
+                  const active = project.path === selectedPublishProject;
+                  return (
+                    <Pressable
+                      key={`pub-${project.path}`}
+                      onPress={() => setSelectedPublishProject(project.path)}
+                      style={[
+                        styles.publishProjectChip,
+                        {
+                          backgroundColor: active ? "#6366f122" : c.bgCard,
+                          borderColor: active ? "#818cf8" : c.border,
+                        },
+                      ]}
+                    >
+                      <Text style={{ color: active ? "#818cf8" : c.textSecondary, fontSize: 12, fontWeight: "600" }}>
+                        {project.name}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+
+              <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+                <View style={styles.publishHeaderRow}>
+                  <Text style={[styles.publishHelper, { color: c.textMuted }]}>
+                    Local/self-hosted first. GitHub fallback only when enabled in the project config and requested here.
+                  </Text>
+                </View>
+                <Pressable style={styles.publishToggleRow} onPress={() => setAllowGitHubFallback((v) => !v)}>
+                  <View style={[styles.publishCheckbox, { borderColor: c.border, backgroundColor: allowGitHubFallback ? "#6366f1" : "transparent" }]}>
+                    {allowGitHubFallback ? <Text style={{ color: "#fff", fontSize: 10, fontWeight: "700" }}>✓</Text> : null}
+                  </View>
+                  <Text style={{ color: c.textSecondary, fontSize: 13 }}>Allow GitHub fallback for this run</Text>
+                </Pressable>
+                {publishConfig?.config?.targets?.length ? (
+                  <View style={styles.publishTargetsWrap}>
+                    {publishConfig.config.targets.map((target) => (
+                      <Pressable
+                        key={target.id}
+                        onPress={() => handlePublish(target.id)}
+                        disabled={publishBusy === target.id}
+                        style={[styles.actionBtn, { backgroundColor: "#6366f122" }]}
+                      >
+                        {publishBusy === target.id ? (
+                          <ActivityIndicator size="small" color="#818cf8" />
+                        ) : (
+                          <Text style={[styles.actionText, { color: "#818cf8" }]}>{target.label || target.id}</Text>
+                        )}
+                      </Pressable>
+                    ))}
+                  </View>
+                ) : (
+                  <Text style={{ color: c.textMuted, fontSize: 13 }}>
+                    No publish targets yet. Run `yaver publish init` in this repo.
+                  </Text>
+                )}
+              </View>
+
+              {publishRuns.length > 0 && (
+                <View style={styles.publishRunsList}>
+                  {publishRuns.slice(0, 8).map((run) => (
+                    <View key={run.id} style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+                      <View style={styles.cardHeader}>
+                        <Text style={[styles.buildId, { color: c.textMuted }]}>{run.id}</Text>
+                        <PlatformBadge platform={run.targetId} />
+                        <StatusBadge status={run.status} />
+                      </View>
+                      <Text style={{ color: c.textMuted, fontSize: 12 }}>{run.provider}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </>
+          )}
+
           {/* ── Build Artifacts ── */}
           {builds.length > 0 && (
             <>
@@ -517,6 +656,45 @@ const styles = StyleSheet.create({
   actionText: {
     fontSize: 13,
     fontWeight: "600",
+  },
+  publishProjectRow: {
+    gap: 8,
+    paddingBottom: 4,
+  },
+  publishProjectChip: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  publishHeaderRow: {
+    marginBottom: 10,
+  },
+  publishHelper: {
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  publishToggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 12,
+  },
+  publishCheckbox: {
+    width: 18,
+    height: 18,
+    borderWidth: 1,
+    borderRadius: 4,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  publishTargetsWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  publishRunsList: {
+    gap: 8,
   },
   // Machine + Repo cards
   sectionHeader: {
