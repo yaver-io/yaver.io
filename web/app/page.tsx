@@ -1140,8 +1140,9 @@ export default function HomePage() {
               yaver-hosting-demo-v1 and in demo-videos/ at the repo root. */}
           <p className="mx-auto mt-4 max-w-2xl text-center text-xs text-surface-500">
             A real React Native app running on a phone. Shake it, type what you
-            want changed, Claude edits it on your Mac, and the phone reloads
-            with the change &mdash; live. No rebuild, no app-store round trip.
+            want changed, a coding agent edits it on your Mac, and the phone
+            reloads with the change &mdash; live. No rebuild, no app-store round
+            trip.
           </p>
         </div>
       </section>

@@ -21,7 +21,7 @@
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.18.1</string>
+	<string>1.18.2</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>CFBundleURLTypes</key>
@@ -71,6 +71,13 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Yaver discovers your Mac on the same Wi-Fi so your phone can connect directly for lowest-latency, end-to-end encrypted control of your AI coding sessions.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_yaver._udp</string>
+		<string>_yaver._tcp</string>
+	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Yaver provides Bluetooth access to apps you run for testing.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>

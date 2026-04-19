@@ -66,10 +66,11 @@ func startBeacon(ctx context.Context, deviceID string, httpPort int, hostname st
 		return
 	}
 
-	addr := &net.UDPAddr{
-		IP:   net.IPv4bcast, // 255.255.255.255
-		Port: beaconPort,
-	}
+	// A listening UDP socket lets us send to multiple destinations
+	// (global broadcast plus every per-interface subnet broadcast).
+	// Many routers drop 255.255.255.255 but still forward subnet-directed
+	// broadcasts (e.g. 192.168.1.255) so we fan out to both.
+	globalAddr := &net.UDPAddr{IP: net.IPv4bcast, Port: beaconPort}
 
 	log.Printf("[beacon] Broadcasting on UDP port %d every %s (id=%s, th=%s)", beaconPort, beaconInterval, shortID, fp)
 
@@ -81,7 +82,7 @@ func startBeacon(ctx context.Context, deviceID string, httpPort int, hostname st
 	consecutiveErrors := 0
 
 	dial := func() *net.UDPConn {
-		c, err := net.DialUDP("udp4", nil, addr)
+		c, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 		if err != nil {
 			if err.Error() != lastErr {
 				log.Printf("[beacon] UDP socket error: %v (will retry silently)", err)
@@ -89,6 +90,7 @@ func startBeacon(ctx context.Context, deviceID string, httpPort int, hostname st
 			}
 			return nil
 		}
+		// Enable SO_BROADCAST via net package semantics (ListenUDP on ipv4 allows broadcast dst).
 		if lastErr != "" {
 			log.Printf("[beacon] UDP socket recovered")
 			lastErr = ""
@@ -114,12 +116,12 @@ func startBeacon(ctx context.Context, deviceID string, httpPort int, hostname st
 					continue
 				}
 			}
-			if _, err := conn.Write(data); err != nil {
+			sendErr := sendBeacon(conn, data, globalAddr)
+			if sendErr != nil {
 				consecutiveErrors++
 				if consecutiveErrors == 1 {
-					log.Printf("[beacon] Send error: %v (suppressing further)", err)
+					log.Printf("[beacon] Send error: %v (suppressing further)", sendErr)
 				}
-				// Rebind after 5 consecutive failures (network likely changed)
 				if consecutiveErrors >= 5 {
 					conn.Close()
 					conn = nil
@@ -135,4 +137,78 @@ func startBeacon(ctx context.Context, deviceID string, httpPort int, hostname st
 			}
 		}
 	}
+}
+
+// sendBeacon writes the payload to 255.255.255.255 plus every per-interface
+// subnet-directed broadcast address (192.168.1.255, 10.0.0.255, …). Returning
+// nil means at least one send succeeded; an error means every destination
+// failed so the caller can rebuild the socket.
+func sendBeacon(conn *net.UDPConn, data []byte, global *net.UDPAddr) error {
+	var firstErr error
+	anyOK := false
+	if _, err := conn.WriteToUDP(data, global); err != nil {
+		firstErr = err
+	} else {
+		anyOK = true
+	}
+	for _, b := range subnetBroadcasts() {
+		addr := &net.UDPAddr{IP: b, Port: beaconPort}
+		if _, err := conn.WriteToUDP(data, addr); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		anyOK = true
+	}
+	if anyOK {
+		return nil
+	}
+	return firstErr
+}
+
+// subnetBroadcasts returns the broadcast address for every active, non-loopback
+// IPv4 interface. Cached per tick; cheap to recompute.
+func subnetBroadcasts() []net.IP {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var out []net.IP
+	for _, ifi := range ifaces {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if ifi.Flags&net.FlagBroadcast == 0 {
+			continue
+		}
+		addrs, err := ifi.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipNet, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ip := ipNet.IP.To4()
+			if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+				continue
+			}
+			mask := ipNet.Mask
+			if len(mask) != 4 {
+				continue
+			}
+			bcast := make(net.IP, 4)
+			for i := 0; i < 4; i++ {
+				bcast[i] = ip[i] | ^mask[i]
+			}
+			// Skip /32 interfaces (Tailscale, VPN) — bcast == ip, pointless.
+			if bcast.Equal(ip) {
+				continue
+			}
+			out = append(out, bcast)
+		}
+	}
+	return out
 }

@@ -415,6 +415,10 @@ export interface RunnerInfo {
   name: string;
   command: string;
   installed: boolean;
+  authConfigured?: boolean;
+  authSource?: string;
+  warning?: string;
+  error?: string;
   isDefault: boolean;
   models: ModelInfo[];
 }
@@ -425,6 +429,9 @@ export interface AgentStatus {
     name: string;
     command: string;
     installed: boolean;
+    authConfigured?: boolean;
+    authSource?: string;
+    warning?: string;
     error?: string;
   };
   runningTasks: number;

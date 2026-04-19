@@ -2,7 +2,7 @@
   "expo": {
     "name": "Yaver",
     "slug": "yaver",
-    "version": "1.18.1",
+    "version": "1.18.2",
     "orientation": "portrait",
     "scheme": "yaver",
     "icon": "./assets/icon.png",
@@ -30,7 +30,12 @@
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Yaver provides location access to apps you run for testing.",
         "NSBluetoothAlwaysUsageDescription": "Yaver provides Bluetooth access to apps you run for testing.",
         "NSBluetoothPeripheralUsageDescription": "Yaver provides Bluetooth access to apps you run for testing.",
-        "NSMotionUsageDescription": "Yaver provides motion sensor access to apps you run for testing."
+        "NSMotionUsageDescription": "Yaver provides motion sensor access to apps you run for testing.",
+        "NSLocalNetworkUsageDescription": "Yaver discovers your Mac on the same Wi-Fi so your phone can connect directly for lowest-latency, end-to-end encrypted control of your AI coding sessions.",
+        "NSBonjourServices": [
+          "_yaver._udp",
+          "_yaver._tcp"
+        ]
       }
     },
     "android": {
@@ -42,6 +47,9 @@
         "RECORD_AUDIO",
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
+        "ACCESS_NETWORK_STATE",
+        "ACCESS_WIFI_STATE",
+        "CHANGE_WIFI_MULTICAST_STATE",
         "BLUETOOTH",
         "BLUETOOTH_ADMIN",
         "BLUETOOTH_CONNECT",

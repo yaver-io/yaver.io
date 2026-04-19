@@ -7,7 +7,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Alert, Linking, Platform } from "react-native";
+import { Alert, AppState, AppStateStatus, Linking, Platform } from "react-native";
 import Constants from "expo-constants";
 import NetInfo from "@react-native-community/netinfo";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -1400,6 +1400,30 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     });
     return () => unsubscribe();
   }, [activeDevice, token]);
+
+  // When the app returns from a third-party app or the background,
+  // resume the last active machine automatically instead of forcing
+  // the user to tap the same device again.
+  const appStateRef = useRef(AppState.currentState);
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (nextState: AppStateStatus) => {
+      const prevState = appStateRef.current;
+      appStateRef.current = nextState;
+      if (nextState !== "active" || !prevState.match(/inactive|background/)) return;
+      if (!activeDevice || userDisconnected) return;
+      if (quicClient.connectionState === "connected" || connectionStatus === "connecting") return;
+      if (quicClient.reconnectAttempt > 0) {
+        quicClient.triggerReconnect();
+        return;
+      }
+      if (connectionStatus === "error" || connectionStatus === "disconnected") {
+        quicClient.triggerReconnect();
+        return;
+      }
+      selectDevice(activeDevice).catch(() => {});
+    });
+    return () => sub.remove();
+  }, [activeDevice, connectionStatus, selectDevice, userDisconnected]);
 
   const value = useMemo<DeviceState>(
     () => ({

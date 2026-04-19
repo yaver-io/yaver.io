@@ -215,6 +215,144 @@ function buildTaskPreviewText(task: Task): string | null {
   return null;
 }
 
+function normalizeTaskTitle(title: string): string {
+  const trimmed = title.trim();
+  if (!trimmed) return "Task";
+  const replacements: Array<[RegExp, string]> = [
+    [/^(expo|react native|rn|xcode|gradle|flutter)\s+build\b.*$/i, "Build"],
+    [/^(expo|react native|rn|hermes)\s+bundle\b.*$/i, "Hot Reload"],
+    [/^(expo|react native|rn|flutter)\s+hot\s*reload\b.*$/i, "Hot Reload"],
+    [/^(ios|android)\s+build\b.*$/i, "Build"],
+  ];
+  for (const [pattern, replacement] of replacements) {
+    if (pattern.test(trimmed)) return replacement;
+  }
+  return trimmed;
+}
+
+type TaskPhaseTone = "neutral" | "active" | "warm" | "success";
+
+function deriveTaskPhases(task: Task): Array<{ label: string; tone: TaskPhaseTone }> {
+  const tail = task.output.length > 120 ? task.output.slice(-120) : task.output;
+  const haystack = `${task.title}\n${tail.join("\n")}\n${task.resultText || ""}`.toLowerCase();
+  const phases: Array<{ label: string; tone: TaskPhaseTone }> = [];
+  const push = (label: string, tone: TaskPhaseTone) => {
+    if (!phases.some((phase) => phase.label === label)) phases.push({ label, tone });
+  };
+
+  if (/(search|find|grep|rg |ripgrep|scan|inspect|trace|ls |cat )/.test(haystack)) push("searching", "neutral");
+  if (/(plan|reason|thinking|analyz|investigat|review)/.test(haystack)) push("mapping", "neutral");
+  if (/(edit|patch|write|refactor|implement|apply_patch|create file)/.test(haystack)) push("cooking", "warm");
+  if (/(build|compile|tsc|xcodebuild|gradle|go build|cargo build|bundle|hermes)/.test(haystack)) push("compiling", "active");
+  if (/(test|jest|vitest|pytest|go test|cargo test|unit test)/.test(haystack)) push("checking", "active");
+  if (/(publish|deploy|upload|ship|release|testflight|play store|pypi|npm publish)/.test(haystack)) push("shipping", "success");
+  if (phases.length === 0) push("working", "active");
+  return phases.slice(0, 3);
+}
+
+function PhaseChip({ task }: { task: Task }) {
+  const c = useColors();
+  const phases = useMemo(() => deriveTaskPhases(task), [task.id, task.title, task.output, task.resultText, task.status]);
+  const [idx, setIdx] = useState(0);
+  const fade = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    setIdx(0);
+  }, [phases.length, task.id]);
+
+  useEffect(() => {
+    if (task.status !== "running" && task.status !== "queued") return;
+    if (phases.length <= 1) return;
+    const interval = setInterval(() => {
+      Animated.sequence([
+        Animated.timing(fade, { toValue: 0.35, duration: 180, useNativeDriver: true }),
+        Animated.timing(fade, { toValue: 1, duration: 220, useNativeDriver: true }),
+      ]).start();
+      setIdx((value) => (value + 1) % phases.length);
+    }, 1800);
+    return () => clearInterval(interval);
+  }, [fade, phases.length, task.status]);
+
+  const current = phases[idx] || phases[0];
+  const palette =
+    current?.tone === "success"
+      ? { bg: "#22c55e16", border: "#22c55e33", fg: "#4ade80" }
+      : current?.tone === "warm"
+        ? { bg: "#f9731614", border: "#f9731633", fg: "#fb923c" }
+        : current?.tone === "neutral"
+          ? { bg: c.bgCardElevated, border: c.border, fg: c.textMuted }
+          : { bg: "#6366f118", border: "#6366f133", fg: "#818cf8" };
+
+  return (
+    <Animated.View style={{ opacity: fade }}>
+      <View style={[s.phaseChip, { backgroundColor: palette.bg, borderColor: palette.border }]}>
+        <Text style={[s.phaseChipText, { color: palette.fg }]}>{current?.label || "working"}</Text>
+      </View>
+    </Animated.View>
+  );
+}
+
+type RunnerBannerKind =
+  | "ok"
+  | "authNeeded"
+  | "notRunnable"
+  | "notInstalled"
+  | "blocked";
+
+const RUNNER_BANNER_TONES: Record<RunnerBannerKind, string> = {
+  ok: "#4ade80",
+  authNeeded: "#fbbf24",
+  notRunnable: "#fbbf24",
+  notInstalled: "#f87171",
+  blocked: "#fbbf24",
+};
+
+function deriveRunnerBannerState(
+  runners: RunnerInfo[],
+  agentStatus: AgentStatus | null,
+): { text: string; tone: string; kind: RunnerBannerKind } | null {
+  if (runners.length === 0 && !agentStatus) return null;
+
+  const installed = runners.filter((runner) => runner.installed);
+  const runnable = installed.filter((runner) => !runner.error);
+  const authed = installed.filter((runner) => runner.authConfigured);
+  const current = agentStatus?.runner;
+  const make = (kind: RunnerBannerKind, text: string) => ({
+    text,
+    tone: RUNNER_BANNER_TONES[kind],
+    kind,
+  });
+
+  if (installed.length === 0) {
+    return make("notInstalled", "No agents available");
+  }
+  if (runnable.length === 0 && authed.length === 0) {
+    return make("authNeeded", "Agents available, none authenticated");
+  }
+  if (runnable.length === 0) {
+    return make("notRunnable", "Agents available, none runnable");
+  }
+  if (current?.installed === false) {
+    return make("notInstalled", `${current.name} not installed`);
+  }
+  if (current?.error && !current?.authConfigured) {
+    return make("authNeeded", `${current.name} needs sign-in`);
+  }
+  if (current?.error) {
+    return make("blocked", `${current.name} blocked`);
+  }
+  if (current?.name) {
+    return make(
+      "ok",
+      `${current.name} ready${agentStatus?.runningTasks ? ` · ${agentStatus.runningTasks} running` : ""}`,
+    );
+  }
+  return make(
+    "ok",
+    `${runnable.length} agent${runnable.length > 1 ? "s" : ""} ready`,
+  );
+}
+
 // ── Chat bubble ──────────────────────────────────────────────────────
 
 function ChatBubble({
@@ -334,6 +472,34 @@ function TaskCard({
 }) {
   const c = useColors();
   const isRunning = item.status === "running" || item.status === "queued";
+  const enter = useRef(new Animated.Value(0)).current;
+  const pulse = useRef(new Animated.Value(isRunning ? 0.55 : 1)).current;
+
+  useEffect(() => {
+    Animated.spring(enter, {
+      toValue: 1,
+      useNativeDriver: true,
+      damping: 18,
+      stiffness: 180,
+      mass: 0.7,
+    }).start();
+  }, [enter]);
+
+  useEffect(() => {
+    if (!isRunning) {
+      pulse.stopAnimation();
+      pulse.setValue(1);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.45, duration: 900, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [isRunning, pulse]);
 
   const handleLongPress = () => {
     if (isRunning) {
@@ -352,47 +518,78 @@ function TaskCard({
   const previewText = buildTaskPreviewText(item);
 
   return (
-    <TouchableOpacity
-      style={[s.cardContainer, s.taskCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
-      onPress={onPress}
-      onLongPress={handleLongPress}
-      activeOpacity={0.7}
+    <Animated.View
+      style={{
+        opacity: enter,
+        transform: [
+          {
+            translateY: enter.interpolate({
+              inputRange: [0, 1],
+              outputRange: [14, 0],
+            }),
+          },
+          {
+            scale: enter.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0.98, 1],
+            }),
+          },
+        ],
+      }}
     >
-      <View style={s.taskHeader}>
-        <View style={[s.statusBadge, { backgroundColor: STATUS_COLORS[item.status] + "22" }]}>
-          <Text style={[s.statusText, { color: STATUS_COLORS[item.status] }]}>{item.status}</Text>
+      <TouchableOpacity
+        style={[s.cardContainer, s.taskCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
+        onPress={onPress}
+        onLongPress={handleLongPress}
+        activeOpacity={0.86}
+      >
+        <View style={s.taskHeader}>
+          <View style={s.taskHeaderMain}>
+            <View style={[s.statusBadge, { backgroundColor: STATUS_COLORS[item.status] + "1f" }]}>
+              {isRunning ? (
+                <Animated.View style={[s.statusPulseDot, { backgroundColor: STATUS_COLORS[item.status], opacity: pulse }]} />
+              ) : (
+                <View style={[s.statusPulseDot, { backgroundColor: STATUS_COLORS[item.status] }]} />
+              )}
+              <Text style={[s.statusText, { color: STATUS_COLORS[item.status] }]}>{item.status}</Text>
+            </View>
+            {item.isAdopted && (
+              <View style={[s.metaPill, { backgroundColor: "#8b5cf614", borderColor: "#8b5cf633" }]}>
+                <Text style={[s.metaPillText, { color: "#8b5cf6" }]}>tmux</Text>
+              </View>
+            )}
+            {item.chainId && (
+              <View style={[s.metaPill, { backgroundColor: "#06b6d412", borderColor: "#06b6d433" }]}>
+                <Text style={[s.metaPillText, { color: "#06b6d4" }]}>{`chain ${(item.chainOrder ?? 0) + 1}`}</Text>
+              </View>
+            )}
+          </View>
+          {item.runnerId && item.runnerId !== "claude" && item.runnerId !== "unknown" ? (
+            <Text style={[s.taskRunnerLabel, { color: c.textMuted }]} numberOfLines={1}>
+              {item.runnerId}
+            </Text>
+          ) : null}
         </View>
-        {item.isAdopted && (
-          <View style={[s.statusBadge, { backgroundColor: "#8b5cf622" }]}>
-            <Text style={[s.statusText, { color: "#8b5cf6" }]}>tmux</Text>
+        <Text style={[s.taskTitle, { color: c.textPrimary }]} numberOfLines={2}>{normalizeTaskTitle(item.title)}</Text>
+        {isRunning ? (
+          <View style={s.taskPhaseRow}>
+            <PhaseChip task={item} />
           </View>
-        )}
-        {item.runnerId && item.runnerId !== "claude" && item.runnerId !== "unknown" && (
-          <View style={[s.statusBadge, { backgroundColor: "#f59e0b22" }]}>
-            <Text style={[s.statusText, { color: "#f59e0b" }]}>{item.runnerId}</Text>
-          </View>
-        )}
-        {item.chainId && (
-          <View style={[s.statusBadge, { backgroundColor: "#06b6d422" }]}>
-            <Text style={[s.statusText, { color: "#06b6d4" }]}>{`chain ${(item.chainOrder ?? 0) + 1}`}</Text>
-          </View>
-        )}
-        {item.autoRetry && item.autoRetryCount != null && item.autoRetryCount > 0 && (
-          <View style={[s.statusBadge, { backgroundColor: "#f9731622" }]}>
-            <Text style={[s.statusText, { color: "#f97316" }]}>{`retry ${item.autoRetryCount}/${item.autoRetryMax}`}</Text>
-          </View>
-        )}
-        {item.status === "running" && <ActivityIndicator size="small" color="#6366f1" />}
-      </View>
-      <Text style={[s.taskTitle, { color: c.textPrimary }]} numberOfLines={2}>{item.title}</Text>
-      {previewText ? (
-        <Text style={[s.taskOutputPreview, { color: c.accent }]} numberOfLines={1}>
-          {previewText}
-          {previewText.length >= 120 ? "..." : ""}
-        </Text>
-      ) : null}
-      <Text style={[s.taskTimestamp, { color: c.textMuted }]}>{formatRelativeTime(item.updatedAt)}</Text>
-    </TouchableOpacity>
+        ) : null}
+        {previewText ? (
+          <Text style={[s.taskOutputPreview, { color: c.textSecondary }]} numberOfLines={2}>
+            {previewText}
+            {previewText.length >= 120 ? "..." : ""}
+          </Text>
+        ) : null}
+        <View style={s.taskFooter}>
+          <Text style={[s.taskTimestamp, { color: c.textMuted }]}>{formatRelativeTime(item.updatedAt)}</Text>
+          {item.autoRetry && item.autoRetryCount != null && item.autoRetryCount > 0 ? (
+            <Text style={[s.taskFooterMeta, { color: "#f97316" }]}>{`retry ${item.autoRetryCount}/${item.autoRetryMax}`}</Text>
+          ) : null}
+        </View>
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 
@@ -415,7 +612,7 @@ function buildChatMessages(task: Task): { role: string; content: string }[] {
       messages.push({ role: turn.role, content: turn.content });
     }
   } else {
-    messages.push({ role: "user", content: task.title });
+    messages.push({ role: "user", content: normalizeTaskTitle(task.title) });
     if (task.resultText) {
       messages.push({ role: "assistant", content: task.resultText });
     }
@@ -1348,6 +1545,38 @@ export default function TasksScreen() {
 
   const chatMessages = selectedTask ? buildChatMessages(selectedTask) : [];
   const isRunning = selectedTask?.status === "running" || selectedTask?.status === "queued";
+  const taskLogLines = useMemo(() => {
+    if (!selectedTask) return [] as string[];
+    const lines = selectedTask.output.filter((line) => line.trim());
+    if (selectedTask.resultText?.trim()) {
+      lines.push(selectedTask.resultText.trim());
+    }
+    return lines;
+  }, [selectedTask?.id, selectedTask?.output, selectedTask?.resultText]);
+  const combinedLogText = useMemo(() => {
+    const sections: string[] = [];
+    if (selectedTask) {
+      const taskSection = [
+        `Task: ${normalizeTaskTitle(selectedTask.title)}`,
+        `Status: ${selectedTask.status}`,
+        "",
+        ...taskLogLines,
+      ].join("\n");
+      sections.push(taskSection.trim());
+    }
+    if (logs.length > 0) {
+      const connectionSection = [
+        "Connection",
+        ...logs.map((l) => `${new Date(l.timestamp).toLocaleTimeString()} [${l.level}] ${l.message}`),
+      ].join("\n");
+      sections.push(connectionSection);
+    }
+    return sections.filter(Boolean).join("\n\n");
+  }, [logs, selectedTask, taskLogLines]);
+  const runnerBannerState = useMemo(
+    () => deriveRunnerBannerState(availableRunners, agentStatus),
+    [availableRunners, agentStatus]
+  );
 
   return (
     <SafeAreaView style={[s.safeArea, { backgroundColor: c.bg }]} edges={["bottom"]}>
@@ -1413,12 +1642,11 @@ export default function TasksScreen() {
           )}
           {isEffectivelyConnected && !agentAuthExpired && (
             <View style={{ flexDirection: "row", alignItems: "center", marginTop: 4, marginLeft: 18 }}>
-              {agentStatus && (
+              {runnerBannerState && (
                 <>
-                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: agentStatus.runner.installed ? "#22c55e" : "#ef4444" }} />
-                  <Text style={{ color: agentStatus.runner.installed ? "#4ade80" : "#f87171", fontSize: 11, marginLeft: 6 }}>
-                    {agentStatus.runner.name} {agentStatus.runner.installed ? "ready" : "not found"}
-                    {agentStatus.runningTasks > 0 ? ` \u00b7 ${agentStatus.runningTasks} running` : ""}
+                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: runnerBannerState.tone }} />
+                  <Text style={{ color: runnerBannerState.tone, fontSize: 11, marginLeft: 6 }}>
+                    {runnerBannerState.text}
                   </Text>
                 </>
               )}
@@ -1436,21 +1664,24 @@ export default function TasksScreen() {
               )}
             </View>
           )}
-          {agentStatus && isEffectivelyConnected && !agentStatus.runner.installed && (
-            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2, marginLeft: 18 }}>
-              {agentStatus.runner.installed === false && (
-                <Pressable
-                  onPress={handleRestartRunner}
-                  disabled={isRestartingRunner}
-                  style={{ marginLeft: 8, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, backgroundColor: "#6366f122" }}
-                >
-                  <Text style={{ color: "#818cf8", fontSize: 11 }}>
-                    {isRestartingRunner ? "Restarting..." : "Restart"}
-                  </Text>
-                </Pressable>
-              )}
-            </View>
-          )}
+          {isEffectivelyConnected &&
+            runnerBannerState &&
+            runnerBannerState.kind !== "ok" &&
+            runnerBannerState.kind !== "authNeeded" && (
+              <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2, marginLeft: 18 }}>
+                {(availableRunners.length > 0 || agentStatus) && (
+                  <Pressable
+                    onPress={handleRestartRunner}
+                    disabled={isRestartingRunner}
+                    style={{ marginLeft: 8, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, backgroundColor: "#6366f122" }}
+                  >
+                    <Text style={{ color: "#818cf8", fontSize: 11 }}>
+                      {isRestartingRunner ? "Restarting..." : "Restart"}
+                    </Text>
+                  </Pressable>
+                )}
+              </View>
+            )}
         </Pressable>
 
         {/* Dev server preview banner */}
@@ -1550,6 +1781,9 @@ export default function TasksScreen() {
               )}
               <Pressable style={[s.actionButton, { backgroundColor: "#8b5cf618" }]} onPress={handleOpenTmuxSessions}>
                 <Text style={[s.actionButtonText, { color: "#8b5cf6" }]}>Tmux</Text>
+              </Pressable>
+              <Pressable style={[s.actionButton, { backgroundColor: "#64748b22" }]} onPress={() => setShowLogs(true)}>
+                <Text style={[s.actionButtonText, { color: "#94a3b8" }]}>Logs</Text>
               </Pressable>
               <Pressable style={[s.actionButton, { backgroundColor: "#f9731618" }]} onPress={handleShipIt}>
                 <Text style={[s.actionButtonText, { color: "#f97316" }]}>Ship It</Text>
@@ -1964,13 +2198,20 @@ export default function TasksScreen() {
                   {/* Center: title + status + device (3 lines) */}
                   <View style={{ flex: 1, alignItems: "center" }}>
                     <Text style={[s.chatHeaderTitle, { color: c.textPrimary }]} numberOfLines={1}>
-                      {selectedTask.title}
+                      {normalizeTaskTitle(selectedTask.title)}
                     </Text>
                     <View style={[s.chatHeaderMeta, { marginTop: 3 }]}>
                       <View style={[s.statusDotSmall, { backgroundColor: STATUS_COLORS[selectedTask.status] }]} />
                       <Text style={[s.chatHeaderStatus, { color: STATUS_COLORS[selectedTask.status] }]}>
                         {selectedTask.status}
                       </Text>
+                      {isRunning ? <PhaseChip task={selectedTask} /> : null}
+                      <Pressable
+                        onPress={() => setShowLogs(true)}
+                        style={{ marginLeft: 8, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, backgroundColor: "#64748b22" }}
+                      >
+                        <Text style={{ color: "#94a3b8", fontSize: 11, fontWeight: "600" }}>Logs</Text>
+                      </Pressable>
                       {/* Cost hidden — Yaver is positioned as part of the free/open-source AI tool stack */}
                     </View>
                     {activeDevice && (
@@ -2166,11 +2407,10 @@ export default function TasksScreen() {
             <Pressable style={{ height: 80 }} onPress={() => setShowLogs(false)} />
             <View style={[s.logsModal, { backgroundColor: c.bg }]}>
               <View style={[s.logsHeader, { borderBottomColor: c.border }]}>
-                <Text style={[s.logsTitle, { color: c.textPrimary }]}>Connection Logs</Text>
+                <Text style={[s.logsTitle, { color: c.textPrimary }]}>{selectedTask ? "Live Logs" : "Connection Logs"}</Text>
                 <View style={s.logsHeaderActions}>
                   <Pressable onPress={() => {
-                    const text = logs.map(l => `${new Date(l.timestamp).toLocaleTimeString()} [${l.level}] ${l.message}`).join("\n");
-                    ExpoClipboard.setStringAsync(text);
+                    ExpoClipboard.setStringAsync(combinedLogText || "No logs yet.");
                     Alert.alert("Copied", "Logs copied to clipboard.");
                   }}>
                     <Text style={[s.logsActionText, { color: c.accent }]}>Copy</Text>
@@ -2181,6 +2421,24 @@ export default function TasksScreen() {
                 </View>
               </View>
               <ScrollView style={s.logsScroll} contentContainerStyle={s.logsScrollContent}>
+                {selectedTask ? (
+                  <>
+                    <Text style={[s.logsSectionTitle, { color: c.textPrimary }]}>
+                      {normalizeTaskTitle(selectedTask.title)} · {selectedTask.status}
+                    </Text>
+                    {taskLogLines.length === 0 ? (
+                      <Text style={[s.logsEmpty, { color: c.textMuted }]}>No task output yet.</Text>
+                    ) : (
+                      taskLogLines.map((line, i) => (
+                        <Text key={`task-${i}`} style={[s.logLine, { color: c.textPrimary }]}>
+                          {line}
+                        </Text>
+                      ))
+                    )}
+                    <View style={[s.logsSectionDivider, { backgroundColor: c.border }]} />
+                    <Text style={[s.logsSectionTitle, { color: c.textPrimary }]}>Connection</Text>
+                  </>
+                ) : null}
                 {logs.length === 0 ? (
                   <Text style={[s.logsEmpty, { color: c.textMuted }]}>No logs yet.</Text>
                 ) : (
@@ -2340,9 +2598,9 @@ const s = StyleSheet.create({
   container: { flex: 1 },
 
   // Banner
-  banner: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1 },
+  banner: { flexDirection: "row", alignItems: "center", paddingHorizontal: 18, paddingVertical: 12, borderBottomWidth: 1 },
   dot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },
-  bannerText: { fontSize: 13, fontWeight: "500" },
+  bannerText: { fontSize: 13, fontWeight: "600", letterSpacing: 0.1 },
 
   // Ping overlay
   pingOverlay: { marginHorizontal: 16, marginTop: 8, padding: 14, borderRadius: 12, borderWidth: 1 },
@@ -2357,9 +2615,12 @@ const s = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    marginHorizontal: 12,
+    marginTop: 10,
+    borderWidth: 1,
+    borderRadius: 18,
   },
   projectChipMobile: {
     flexDirection: "row",
@@ -2378,7 +2639,7 @@ const s = StyleSheet.create({
   todoBarPending: { fontSize: 11 },
 
   // List
-  listContent: { padding: 16, paddingBottom: 100 },
+  listContent: { paddingHorizontal: 14, paddingTop: 14, paddingBottom: 120 },
   listContentEmpty: { flex: 1 },
   emptyList: { flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: 32 },
   emptyIcon: { fontSize: 48, marginBottom: 16 },
@@ -2433,36 +2694,58 @@ const s = StyleSheet.create({
 
   // Logs modal
   logsModalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)" },
-  logsModal: { flex: 1, borderTopLeftRadius: 20, borderTopRightRadius: 20, overflow: "hidden" },
+  logsModal: { flex: 1, borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: "hidden" },
   logsHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1 },
   logsTitle: { fontSize: 16, fontWeight: "700" },
   logsHeaderActions: { flexDirection: "row", alignItems: "center" },
   logsActionText: { fontSize: 15, fontWeight: "600" },
   logsScroll: { flex: 1 },
   logsScrollContent: { padding: 12 },
+  logsSectionTitle: { fontSize: 13, fontWeight: "700", marginBottom: 10 },
+  logsSectionDivider: { height: 1, marginVertical: 14 },
   logsEmpty: { fontSize: 14, textAlign: "center", marginTop: 40 },
   logLine: { fontSize: 11, fontFamily: "monospace", lineHeight: 16, marginBottom: 2 },
 
   // Task card
-  cardContainer: { marginBottom: 12 },
-  taskCard: { borderRadius: 12, padding: 16, borderWidth: 1 },
+  cardContainer: { marginBottom: 10 },
+  taskCard: {
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 15,
+    borderWidth: 1,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.14,
+    shadowRadius: 18,
+    elevation: 2,
+  },
   taskCardPressed: { opacity: 0.7 },
-  taskHeader: { flexDirection: "row", alignItems: "center", marginBottom: 8, gap: 8 },
-  statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
-  statusText: { fontSize: 12, fontWeight: "600", textTransform: "uppercase" },
-  taskTitle: { fontSize: 16, fontWeight: "600" },
-  taskOutputPreview: { fontSize: 12, marginTop: 6, lineHeight: 16 },
-  taskTimestamp: { fontSize: 11, marginTop: 8 },
+  taskHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10, gap: 10 },
+  taskHeaderMain: { flexDirection: "row", alignItems: "center", gap: 7, flexWrap: "wrap", flex: 1 },
+  statusBadge: { flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 },
+  statusPulseDot: { width: 7, height: 7, borderRadius: 4 },
+  statusText: { fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.45 },
+  metaPill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, borderWidth: 1 },
+  metaPillText: { fontSize: 10, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.3 },
+  taskRunnerLabel: { fontSize: 11, marginTop: 4, marginLeft: 8, maxWidth: 90, textAlign: "right" },
+  taskTitle: { fontSize: 17, fontWeight: "600", lineHeight: 22, letterSpacing: -0.2 },
+  taskPhaseRow: { marginBottom: 8 },
+  phaseChip: { alignSelf: "flex-start", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, borderWidth: 1 },
+  phaseChipText: { fontSize: 11, fontWeight: "700", textTransform: "lowercase", letterSpacing: 0.25 },
+  taskOutputPreview: { fontSize: 13, marginTop: 4, lineHeight: 18 },
+  taskFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 10 },
+  taskTimestamp: { fontSize: 11 },
+  taskFooterMeta: { fontSize: 11, fontWeight: "600" },
 
   // FAB
-  fab: { position: "absolute", bottom: 24, right: 24, width: 56, height: 56, borderRadius: 28, backgroundColor: "#6366f1", alignItems: "center", justifyContent: "center", elevation: 4, shadowColor: "#6366f1", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8 },
+  fab: { position: "absolute", bottom: 24, right: 20, width: 58, height: 58, borderRadius: 29, backgroundColor: "#111827", alignItems: "center", justifyContent: "center", elevation: 4, shadowColor: "#000", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.28, shadowRadius: 12 },
   fabPressed: { opacity: 0.8, transform: [{ scale: 0.95 }] },
   fabText: { fontSize: 28, color: "#ffffff", fontWeight: "300" },
 
   // New task modal
   modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" },
   modalDismiss: { flex: 1 },
-  modalContent: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24, paddingTop: 28, paddingBottom: 40 },
+  modalContent: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingTop: 28, paddingBottom: 40 },
   modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 24 },
   modalTitle: { fontSize: 20, fontWeight: "700" },
   agentBadge: { flexDirection: "row", alignItems: "center", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10, borderWidth: 1 },
@@ -2482,20 +2765,20 @@ const s = StyleSheet.create({
   submitButtonText: { color: "#ffffff", fontWeight: "600", fontSize: 15 },
 
   // Action bar
-  actionBar: { flexDirection: "row", paddingHorizontal: 16, paddingVertical: 8, gap: 8, borderBottomWidth: 1 },
-  actionButton: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8 },
-  actionButtonText: { fontSize: 12, fontWeight: "600" },
+  actionBar: { flexDirection: "row", paddingHorizontal: 14, paddingVertical: 8, gap: 8 },
+  actionButton: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999 },
+  actionButtonText: { fontSize: 12, fontWeight: "700", letterSpacing: 0.1 },
 
   // ── Chat modal ─────────────────────────────────────────────────────
   chatModalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.3)" },
   chatModalDismissArea: { height: 50 },
-  chatModal: { flex: 1, borderTopLeftRadius: 20, borderTopRightRadius: 20, overflow: "hidden" },
+  chatModal: { flex: 1, borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: "hidden" },
 
   // Chat header
-  chatHeader: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 14, borderBottomWidth: 1 },
+  chatHeader: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 15, borderBottomWidth: 1 },
   chatHeaderDevice: { flexDirection: "row", alignItems: "center", gap: 4 },
   chatHeaderDeviceText: { fontSize: 10, fontWeight: "500" },
-  chatHeaderTitle: { fontSize: 15, fontWeight: "600" },
+  chatHeaderTitle: { fontSize: 16, fontWeight: "700", letterSpacing: -0.2 },
   chatHeaderMeta: { flexDirection: "row", alignItems: "center", gap: 4 },
   statusDotSmall: { width: 6, height: 6, borderRadius: 3 },
   chatHeaderStatus: { fontSize: 11, fontWeight: "500", textTransform: "uppercase" },
@@ -2505,14 +2788,14 @@ const s = StyleSheet.create({
 
   // Chat messages
   chatScroll: { flex: 1 },
-  chatScrollContent: { padding: 16, paddingBottom: 80 },
+  chatScrollContent: { paddingHorizontal: 14, paddingTop: 16, paddingBottom: 96 },
 
   userRow: { flexDirection: "row", justifyContent: "flex-end", marginBottom: 12 },
-  userBubble: { maxWidth: "80%", borderRadius: 18, borderBottomRightRadius: 4, paddingHorizontal: 16, paddingVertical: 10 },
+  userBubble: { maxWidth: "80%", borderRadius: 20, borderBottomRightRadius: 6, paddingHorizontal: 16, paddingVertical: 11 },
   userBubbleText: { color: "#fff", fontSize: 15, lineHeight: 21 },
 
   assistantRow: { flexDirection: "row", justifyContent: "flex-start", marginBottom: 12 },
-  assistantBubble: { maxWidth: "92%", borderRadius: 18, borderBottomLeftRadius: 4, paddingHorizontal: 14, paddingVertical: 12 },
+  assistantBubble: { maxWidth: "92%", borderRadius: 22, borderBottomLeftRadius: 8, paddingHorizontal: 14, paddingVertical: 13, borderWidth: 1, borderColor: "rgba(255,255,255,0.04)" },
   assistantHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   assistantLabel: { fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.6 },
   assistantToggle: { fontSize: 12, fontWeight: "600" },
@@ -2524,7 +2807,7 @@ const s = StyleSheet.create({
 
   // Typing indicator
   typingRow: { flexDirection: "row", justifyContent: "flex-start", marginBottom: 12 },
-  typingBubble: { flexDirection: "row", gap: 5, backgroundColor: "#1a1a2e", borderRadius: 18, borderBottomLeftRadius: 4, paddingHorizontal: 16, paddingVertical: 14 },
+  typingBubble: { flexDirection: "row", gap: 5, backgroundColor: "#171b22", borderRadius: 20, borderBottomLeftRadius: 8, paddingHorizontal: 16, paddingVertical: 14 },
   typingDot: { width: 8, height: 8, borderRadius: 4 },
 
   // Streaming indicator
