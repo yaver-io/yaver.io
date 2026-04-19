@@ -14,6 +14,7 @@ import { useLocalSearchParams } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient, type AgentGraphRun, type MachineInfo, type RunnerInfo } from "../../src/lib/quic";
+import { describeConnectionStatus } from "../../src/lib/connection";
 
 export default function AgentModeScreen() {
   const c = useColors();
@@ -221,8 +222,15 @@ export default function AgentModeScreen() {
               {(run.status === "running" || run.status === "queued") && (
                 <Pressable
                   onPress={async () => {
-                    await quicClient.stopAgentGraph(run.id);
-                    refresh();
+                    try {
+                      await quicClient.stopAgentGraph(run.id);
+                      refresh();
+                    } catch (e) {
+                      Alert.alert(
+                        "Stop Failed",
+                        `${e instanceof Error ? e.message : String(e)}\n\nYaver ${describeConnectionStatus(connectionStatus)}. The graph may keep running — retry once reconnected.`,
+                      );
+                    }
                   }}
                   style={[styles.stopBtn, { borderColor: c.border }]}
                 >

@@ -25,6 +25,8 @@ import {
   getPhoneOAuth,
   setPhoneOAuth,
 } from "../../src/lib/phoneProjects";
+import { getYaverCloudBaseUrl } from "../../src/lib/yaverCloud";
+import * as Clipboard from "expo-clipboard";
 
 // Phone-hosted OAuth provider setup — the third and final surface of the
 // "do everything from your phone" pitch (yc.md §Wedge Demo).
@@ -78,7 +80,7 @@ const PROVIDER_COPY: Record<ProviderId, ProviderCopy> = {
       "1. Open Google Cloud Console → APIs & Services → Credentials.",
       "2. If you haven't: OAuth consent screen → External → fill app name, support email, dev contact. Add test users if you're staying in testing mode.",
       "3. Create Credentials → OAuth client ID → Application type: Web application.",
-      "4. Under Authorized redirect URIs, add the return URL Yaver will serve (e.g. https://cloud.yaver.io/auth/google/callback).",
+      `4. Under Authorized redirect URIs, add the return URL Yaver will serve (e.g. ${getYaverCloudBaseUrl()}/auth/google/callback).`,
       "5. Copy the Client ID (ends with .apps.googleusercontent.com) and Client Secret (GOCSPX-...).",
       "6. Paste below.",
     ],
@@ -158,7 +160,16 @@ export default function PhoneOAuthScreen() {
       hydrate(r);
       Alert.alert("Saved", `${PROVIDER_COPY[provider].label} config stored for ${slugStr}.`);
     } catch (e: any) {
-      Alert.alert("Save failed", e?.message ?? "unknown error");
+      const raw = e?.message ?? "unknown error";
+      const lower = String(raw).toLowerCase();
+      const hint = /network|fetch|timeout|econn|offline|unreach/.test(lower)
+        ? "Yaver couldn't reach the dev machine. Check your connection and try again."
+        : /401|403|unauth/.test(lower)
+          ? "Your session may have expired — sign in again from Settings."
+          : /invalid|schema|required|missing/.test(lower)
+            ? "One of the fields failed validation — double-check the values you just entered."
+            : "Your changes weren't saved. Retry or reopen this page.";
+      Alert.alert("Save Failed", `${raw}\n\n${hint}`);
     } finally {
       setSaving(null);
     }
@@ -167,9 +178,28 @@ export default function PhoneOAuthScreen() {
   async function openConsole(url: string) {
     try {
       await Linking.openURL(url);
+      return;
     } catch {
-      Alert.alert("Can't open link", "Copy this URL into your browser:\n\n" + url);
+      // Fall through to the copy-to-clipboard fallback.
     }
+    Alert.alert(
+      "Can't Open Link",
+      `No browser on this device could open the provider console. Copy the URL and paste it into a browser on another device.\n\n${url}`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Copy URL",
+          onPress: async () => {
+            try {
+              await Clipboard.setStringAsync(url);
+              Alert.alert("Copied", "Provider console URL is on your clipboard.");
+            } catch (e) {
+              Alert.alert("Clipboard Failed", e instanceof Error ? e.message : String(e));
+            }
+          },
+        },
+      ],
+    );
   }
 
   const sections = useMemo(
@@ -310,7 +340,7 @@ export default function PhoneOAuthScreen() {
           <Text style={{ color: c.textPrimary }}>{slugStr}</Text>. Tap a provider to
           open its console, register your app, and paste the IDs + secrets back here.
           Values save to oauth-providers.yaml alongside the project's schema + auth,
-          and travel with the project when you deploy to your dev machine or Yaver Cloud.
+          and travel with the project when you deploy to your dev machine.
         </Text>
         {err ? (
           <Text style={{ color: "#ff6b6b", marginTop: 10, fontSize: 13 }}>{err}</Text>

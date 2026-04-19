@@ -852,6 +852,57 @@ export class QuicClient {
     };
   }
 
+  /**
+   * Ask the Go agent to craft a recovery prompt for a known failure kind and
+   * hand it to the wrapped AI agent (Claude Code / Codex / Aider / …).
+   *
+   * This is the preferred UX when the user hits something the AI can actually
+   * fix — missing node, failing build, broken pods, Flutter device not found.
+   * The mobile app does NOT build the prompt itself; the agent knows the
+   * wrapped runner, the workdir, and the project context.
+   */
+  async recover(ctx: {
+    kind:
+      | "hermes-build-failed"
+      | "metro-not-starting"
+      | "flutter-flush-failed"
+      | "flutter-device-missing"
+      | "swift-build-failed"
+      | "swift-install-failed"
+      | "kotlin-build-failed"
+      | "kotlin-install-failed"
+      | "apk-download-failed"
+      | "missing-runtime"
+      | "deps-install-failed"
+      | "dev-compat-missing-tools"
+      | "generic";
+    framework?: string;
+    workDir?: string;
+    platform?: string;
+    project?: string;
+    error?: string;
+    tool?: string;
+    hint?: string;
+    userGoal?: string;
+  }): Promise<{ taskId: string; title: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/recover`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...ctx, surface: "mobile" }),
+    });
+    if (!res.ok) {
+      let msg = `Failed to queue recovery task: ${res.status}`;
+      try {
+        const data = await res.json();
+        if (data?.error) msg = data.error;
+      } catch {}
+      throw new Error(msg);
+    }
+    const data = await res.json();
+    return { taskId: data.taskId, title: data.title };
+  }
+
   // ── Hybrid Mode API ──────────────────────────────────────────────
   // Planner + local-implementer orchestration. Endpoints live in
   // desktop/agent/hybrid_http.go. See CLAUDE.md "Hybrid Mode" for

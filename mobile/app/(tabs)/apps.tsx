@@ -4,6 +4,7 @@ import {
   Alert,
   FlatList,
   Modal,
+  NativeModules,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -20,6 +21,8 @@ import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient, type DevCompatibilityStatus, type DevServerStatus, type MobileWorkerPreviewSession } from "../../src/lib/quic";
 import { getAvailableModules, loadApp } from "../../src/lib/bundleLoader";
+import { downloadArtifact } from "../../src/lib/builds";
+import { describeConnectionStatus } from "../../src/lib/connection";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -36,16 +39,23 @@ const FRAMEWORK_ICONS: Record<string, string> = {
   "react-native": "\u269B",
   react: "\u269B",
   flutter: "\uD83D\uDC26",
+  swift: "\uD83C\uDF4E",
+  kotlin: "\uD83E\uDD16",
   nextjs: "\u25B2",
   vite: "\u26A1",
 };
 
 const MOBILE_FRAMEWORKS = ["expo", "react-native", "flutter"];
+const SECOND_CLASS_MOBILE_FRAMEWORKS = ["flutter", "swift", "kotlin"];
 const WEB_FRAMEWORKS = ["nextjs", "vite", "react"];
 const PREVIEW_TARGET_KEY = "@yaver/hotreload_preview_target";
 
 function isHermesMobileFramework(framework?: string): boolean {
   return framework === "expo" || framework === "react-native";
+}
+
+function isSecondClassMobileFramework(framework?: string): boolean {
+  return framework === "flutter" || framework === "swift" || framework === "kotlin";
 }
 
 function hasFeedbackSDK(project?: ProjectItem | null): boolean {
@@ -59,6 +69,86 @@ function agentFlowGuidance(framework?: string, feedbackSDKInstalled?: boolean): 
   }
   return "Open in Yaver uses Metro + Hermes. Feedback SDK is optional for in-app bug reports and remote reload in your app process.";
 }
+
+function secondClassGuidance(framework?: string, isDirectConnection?: boolean): string | null {
+  if (!isSecondClassMobileFramework(framework)) return null;
+  if (!isDirectConnection) {
+    return "Second-class mobile flows are LAN-only. Hermes is still the only first-class path that works over LAN, relay, and 4G.";
+  }
+  switch (framework) {
+    case "flutter":
+      return "Flush to App wraps the Go agent's Flutter tooling and reloads the real Flutter app on your phone over LAN. It does not load inside Yaver.";
+    case "swift":
+      return "Flush Build to Phone wraps the Go agent's Xcode build/install flow over LAN. It does not load inside Yaver.";
+    case "kotlin":
+      return "Flush Build to Phone wraps the Go agent's Gradle build flow, then installs the APK on this phone over LAN. It does not load inside Yaver.";
+    default:
+      return null;
+  }
+}
+
+function secondClassFlushLabel(framework?: string): string {
+  return framework === "flutter" ? "Flush to App (LAN)" : "Flush Build to Phone (LAN)";
+}
+
+type StoreDeploy = {
+  label: string;
+  target: "testflight" | "playstore";
+  prompt: (project: string, workDir: string) => string;
+};
+
+function storeDeployDescriptor(framework: string): StoreDeploy | null {
+  switch (framework) {
+    case "flutter":
+      return Platform.OS === "android"
+        ? {
+            label: "Ship to Play Store (internal)",
+            target: "playstore",
+            prompt: (project, workDir) => `Build ${project} (Flutter) for Android as a release AAB at ${workDir} and upload to Google Play internal testing. Auto-increment versionCode. Report progress.`,
+          }
+        : {
+            label: "Ship to TestFlight",
+            target: "testflight",
+            prompt: (project, workDir) => `Build ${project} (Flutter) for iOS at ${workDir}, archive, and upload to TestFlight. Auto-increment build number. Report progress.`,
+          };
+    case "swift":
+      return {
+        label: "Ship to TestFlight",
+        target: "testflight",
+        prompt: (project, workDir) => `Build ${project} (native Swift/iOS) at ${workDir}, archive with Xcode, and upload to TestFlight. Auto-increment CFBundleVersion. Report progress.`,
+      };
+    case "kotlin":
+      return {
+        label: "Ship to Play Store (internal)",
+        target: "playstore",
+        prompt: (project, workDir) => `Build ${project} (native Kotlin/Android) at ${workDir} as a release AAB and upload to Google Play internal testing. Auto-increment versionCode. Report progress.`,
+      };
+    default:
+      return null;
+  }
+}
+
+// Check whether the currently-connected dev machine can actually produce the
+// requested build. TestFlight archives require macOS + Xcode; without macOS the
+// task will silently fail after minutes. Better to refuse up front.
+function devMachineDeployBlocker(target: "testflight" | "playstore", machineOs?: string): string | null {
+  const os = (machineOs || "").toLowerCase();
+  if (target === "testflight") {
+    if (!os) return "This dev machine hasn't reported its OS yet. TestFlight archives need macOS + Xcode.";
+    if (!os.startsWith("darwin") && !os.includes("mac")) {
+      return `TestFlight archives need macOS + Xcode, but this dev machine is ${machineOs}. Switch to a Mac dev machine or run a CI job instead.`;
+    }
+  }
+  if (target === "playstore") {
+    if (!os) return "This dev machine hasn't reported its OS yet. Play Store AABs need Java 17 + the Android SDK.";
+    // Any desktop OS can build Android, but warn on something clearly non-desktop.
+    if (os.startsWith("ios") || os.startsWith("android")) {
+      return `Play Store AABs need a desktop dev machine with Java 17 + Android SDK, but this dev machine is ${machineOs}.`;
+    }
+  }
+  return null;
+}
+
 
 function buildStateLabel(compatibility?: DevCompatibilityStatus | null): string | null {
   if (!compatibility?.buildState) return null;
@@ -100,7 +190,7 @@ function formatBuildTimestamp(value?: string): string {
 
 function getProjectCategory(framework?: string): "mobile" | "web" | "other" {
   if (!framework) return "other";
-  if (MOBILE_FRAMEWORKS.includes(framework)) return "mobile";
+  if (MOBILE_FRAMEWORKS.includes(framework) || SECOND_CLASS_MOBILE_FRAMEWORKS.includes(framework)) return "mobile";
   if (WEB_FRAMEWORKS.includes(framework)) return "web";
   return "other";
 }
@@ -115,6 +205,91 @@ export default function AppsScreen() {
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const mobileWorkers = devices.filter((d) => d.deviceClass === "edge-mobile");
   const selectedTarget = mobileWorkers.find((d) => d.id === selectedTargetId) || null;
+  const isDirectConnection = quicClient.connectionMode === "direct";
+  const router = useRouter();
+
+  // Build + task status hoisted to the top of the component so the shared
+  // helpers below (sendTaskOrWarn / offerAgentFix) can surface status from
+  // any callback without forward-reference TDZ errors.
+  const [nativeLoading, setNativeLoading] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState("");
+  const [buildProgress, setBuildProgress] = useState(0);
+  const [buildStatus, setBuildStatus] = useState<string | null>(null);
+  const [quickActionStatus, setQuickActionStatus] = useState<string | null>(null);
+
+  // sendTaskOrWarn replaces the old `.catch(() => {})` pattern on user-
+  // initiated taps. Every call either succeeds and navigates the user to the
+  // Tasks tab, or shows them a real error with connection context so they
+  // can fix it — never silently.
+  const sendTaskOrWarn = useCallback(async (
+    title: string,
+    description: string,
+    labelForUser: string,
+  ): Promise<boolean> => {
+    try {
+      await quicClient.sendTask(title, description);
+      setQuickActionStatus(`${labelForUser} sent`);
+      setTimeout(() => setQuickActionStatus(null), 3000);
+      router.navigate("/(tabs)/tasks");
+      return true;
+    } catch (e) {
+      const err = e instanceof Error ? e.message : String(e);
+      Alert.alert(
+        `Couldn't Send "${labelForUser}"`,
+        `${err}\n\nYaver ${describeConnectionStatus(connectionStatus)}.`,
+        [
+          { text: "Close", style: "cancel" },
+          {
+            text: "Retry",
+            onPress: () => {
+              void quicClient.sendTask(title, description)
+                .then(() => {
+                  setQuickActionStatus(`${labelForUser} sent`);
+                  setTimeout(() => setQuickActionStatus(null), 3000);
+                  router.navigate("/(tabs)/tasks");
+                })
+                .catch((retryErr) => Alert.alert(
+                  "Still Couldn't Send",
+                  `${retryErr instanceof Error ? retryErr.message : String(retryErr)}\n\nYaver ${describeConnectionStatus(connectionStatus)}.`,
+                ));
+            },
+          },
+        ],
+      );
+      return false;
+    }
+  }, [router, connectionStatus]);
+
+  // offerAgentFix shows a 2-button alert whose second action queues a
+  // recovery task on the wrapped AI (Claude Code / Codex / Aider / …). The
+  // prompt is crafted server-side by the Go agent — the mobile app only
+  // ships a recovery kind + context. Keeps the "vibe coder" loop tight:
+  // a failure becomes a fix task without the user composing a prompt.
+  const offerAgentFix = useCallback((
+    title: string,
+    body: string,
+    ctx: Parameters<typeof quicClient.recover>[0],
+  ) => {
+    Alert.alert(title, body, [
+      { text: "Close", style: "cancel" },
+      {
+        text: "Ask AI to Fix",
+        onPress: async () => {
+          try {
+            const r = await quicClient.recover(ctx);
+            setQuickActionStatus(`Fix task queued: ${r.title}`);
+            setTimeout(() => setQuickActionStatus(null), 5000);
+            router.navigate("/(tabs)/tasks");
+          } catch (e) {
+            Alert.alert(
+              "Could not queue fix task",
+              `${e instanceof Error ? e.message : String(e)}\n\nYaver ${describeConnectionStatus(connectionStatus)}.`,
+            );
+          }
+        },
+      },
+    ]);
+  }, [router, connectionStatus]);
 
   const [devStatus, setDevStatus] = useState<DevServerStatus | null>(null);
   const [workerSession, setWorkerSession] = useState<MobileWorkerPreviewSession | null>(null);
@@ -223,15 +398,21 @@ export default function AppsScreen() {
     return () => controller.abort();
   }, [showWebView, devStatus?.running]);
 
-  const router = useRouter();
-
   // Tap project → if dev server running, always use Hermes push (fast, ~10s).
   // This keeps iPhone testing working from Linux, WSL, and remote hosts.
   // Xcode native build is available via "Install Native" action in the sheet.
   const handleTapProject = useCallback(async (projectName: string) => {
     const isRunning = devStatus?.workDir?.endsWith(projectName);
     if (isRunning) {
-      handleOpenNative(devStatus!.workDir!, devStatus?.framework);
+      if (isHermesMobileFramework(devStatus?.framework)) {
+        handleOpenNative(devStatus!.workDir!, devStatus?.framework);
+      } else if (devStatus?.framework === "flutter") {
+        if (!isDirectConnection) {
+          handleFlushMobile(devStatus!.workDir!, "flutter");
+          return;
+        }
+        handleReload();
+      }
       return;
     }
 
@@ -240,6 +421,7 @@ export default function AppsScreen() {
       const result = await quicClient.getProjectActions(projectName);
       let compatibility: DevCompatibilityStatus | null = null;
       const hermesFramework = result.actions.find((a: any) => isHermesMobileFramework(a.framework))?.framework;
+      const secondClassFramework = result.actions.find((a: any) => isSecondClassMobileFramework(a.framework))?.framework;
       if (isHermesMobileFramework(hermesFramework)) {
         try {
           const availableModules = await getAvailableModules();
@@ -255,6 +437,28 @@ export default function AppsScreen() {
       const autoDevAction = { label: "Auto Dev", target: ".", type: "autodev", icon: "\u{1F916}", framework: "", platform: "", command: "" };
       const autoTestAction = { label: "Auto Test", target: ".", type: "autotest", icon: "\u{1F9EA}", framework: "", platform: "", command: "" };
       const gitSyncAction = { label: "Git Sync", target: ".", type: "git-sync", icon: "\u{1F504}", framework: "", platform: "", command: "" };
+      const secondClassActions = isSecondClassMobileFramework(secondClassFramework) ? [{
+        label: secondClassFlushLabel(secondClassFramework),
+        target: ".",
+        type: "flush-mobile",
+        icon: secondClassFramework === "flutter" ? "\u{1F4A6}" : "\u{1F69A}",
+        framework: secondClassFramework,
+        platform: Platform.OS,
+        supported:
+          secondClassFramework === "flutter"
+            ? isDirectConnection
+            : secondClassFramework === "swift"
+              ? isDirectConnection && Platform.OS === "ios"
+              : isDirectConnection && Platform.OS === "android",
+        reason:
+          !isDirectConnection
+            ? "LAN only. Hermes is the only first-class mobile path that works over relay and 4G."
+            : secondClassFramework === "swift" && Platform.OS !== "ios"
+              ? "Swift flush targets iPhone only."
+              : secondClassFramework === "kotlin" && Platform.OS !== "android"
+                ? "Kotlin flush targets Android only."
+                : undefined,
+      }] : [];
       const hermesActions = isHermesMobileFramework(hermesFramework) ? [
         {
           label: "Open in Yaver",
@@ -277,22 +481,39 @@ export default function AppsScreen() {
           reason: compatibility?.errors?.[0],
         },
       ] : [];
-      result.actions = [projectAction, ...hermesActions, vibingAction, agentAction, autoDevAction, autoTestAction, gitSyncAction, ...result.actions];
+      result.actions = result.actions.filter((a: any) => !(isSecondClassMobileFramework(a.framework) && a.type === "dev-server"));
+      result.actions = [projectAction, ...hermesActions, ...secondClassActions, vibingAction, agentAction, autoDevAction, autoTestAction, gitSyncAction, ...result.actions];
       setActionSheet({ ...result, compatibility });
-    } catch {
-      // Fallback
-      await quicClient.sendTask(`Run ${projectName} on my phone`, "").catch(() => {});
-      router.navigate("/(tabs)/tasks");
+    } catch (e) {
+      // Don't silently send a vague task — the user just tapped a project and
+      // deserves to know the dev machine couldn't answer. sendTask as a vague
+      // "run on my phone" string is almost never what they meant.
+      const msg = e instanceof Error ? e.message : String(e);
+      Alert.alert(
+        "Couldn't Load Project",
+        `Yaver ${describeConnectionStatus(connectionStatus)}.\n\n${msg}`,
+      );
     } finally {
       setLoadingActions(false);
     }
-  }, [devStatus, router]);
+  }, [devStatus, isDirectConnection, connectionStatus, router]);
 
   // Execute a specific action from the action sheet
   const handleExecuteAction = useCallback(async (action: { label: string; target: string; type: string; framework?: string; platform?: string; command?: string; supported?: boolean; reason?: string }) => {
-    // Block unsupported actions
-    if (action.supported === false) {
-      Alert.alert("Not Supported Yet", action.reason || `${action.label} for ${action.framework} is coming soon.`);
+    // Guard: nothing to do if we're not connected to a dev machine.
+    if (!isConnected) {
+      Alert.alert(
+        "Dev Machine Offline",
+        `Yaver ${describeConnectionStatus(connectionStatus)}. Nothing can run until the dev machine is reachable again.`,
+      );
+      return;
+    }
+
+    // Block unsupported actions — but flush-mobile has a richer fallback
+    // (store deploy, platform mismatch, LAN-missing explanation) that we want
+    // the user to see instead of a generic "coming soon" toast.
+    if (action.supported === false && action.type !== "flush-mobile") {
+      Alert.alert("Not Supported", action.reason || `${action.label} for ${action.framework || "this project"} is not available right now.`);
       return;
     }
 
@@ -302,11 +523,11 @@ export default function AppsScreen() {
     setActionSheet(null);
 
     if (action.type === "git-sync") {
-      await quicClient.sendTask(
+      await sendTaskOrWarn(
         `Git Sync — ${project}`,
         `cd ${path} && Sync this repository with its remote. Pull the latest changes. If there are merge conflicts, resolve them intelligently. If the local branch is behind, rebase or merge as appropriate. If there are uncommitted local changes, stash them first, pull, then re-apply. Show me a summary of what changed.`,
-      ).catch(() => {});
-      router.navigate("/(tabs)/tasks");
+        `Git Sync for ${project}`,
+      );
       return;
     }
 
@@ -363,6 +584,11 @@ export default function AppsScreen() {
         return;
       }
       await handleCompileHermes(path, action.framework);
+      return;
+    }
+
+    if (action.type === "flush-mobile") {
+      await handleFlushMobile(path, action.framework);
       return;
     }
 
@@ -462,38 +688,30 @@ export default function AppsScreen() {
           );
           return;
         }
-        await quicClient.sendTask(
+        await sendTaskOrWarn(
           `Hot reload ${project} on my phone`,
           `Call POST /dev/start with workDir=${targetPath}. Metro only — no expo run:ios, no xcodebuild. Mobile loads via Hermes push.`,
-        ).catch(() => {});
-        router.navigate("/(tabs)/tasks");
+          `Hot reload for ${project}`,
+        );
       } finally {
         if (!deferStartingClear) setStartingProject(null);
       }
     } else if (action.command) {
       // Direct command
-      await quicClient.sendTask(
+      await sendTaskOrWarn(
         `${action.label} — ${project}`,
         `cd ${path}/${action.target} && ${action.command}`,
-      ).catch(() => {});
-      router.navigate("/(tabs)/tasks");
+        action.label,
+      );
     } else {
       // AI handles it
-      await quicClient.sendTask(
+      await sendTaskOrWarn(
         `${action.label} for ${project}`,
         `Project: ${path}/${action.target}. Platform: ${action.platform || action.framework || "auto"}. Do it.`,
-      ).catch(() => {});
-      router.navigate("/(tabs)/tasks");
+        `${action.label} for ${project}`,
+      );
     }
-  }, [actionSheet, router, selectedTarget]);
-
-  const [nativeLoading, setNativeLoading] = useState(false);
-  const [loadingStatus, setLoadingStatus] = useState("");
-  const [buildProgress, setBuildProgress] = useState(0);
-
-  // Direct device install state
-  const [buildStatus, setBuildStatus] = useState<string | null>(null);
-  const [quickActionStatus, setQuickActionStatus] = useState<string | null>(null);
+  }, [actionSheet, selectedTarget, isConnected, connectionStatus, sendTaskOrWarn]);
 
   useEffect(() => {
     AsyncStorage.getItem(PREVIEW_TARGET_KEY)
@@ -511,7 +729,11 @@ export default function AppsScreen() {
         if (!mounted) return;
         setSelectedTargetId(target?.targetDeviceId || null);
       })
-      .catch(() => {});
+      .catch((e) => {
+        // Not user-triggered — don't alert. But keep a breadcrumb so if the
+        // UI sticks to a stale target we can tell why from the console/devtools.
+        console.warn("[apps] getDevServerTarget failed — keeping last known target:", e);
+      });
     return () => { mounted = false; };
   }, [isConnected, activeDevice?.id]);
 
@@ -565,6 +787,250 @@ export default function AppsScreen() {
     }
   }, [devStatus?.workDir]);
 
+
+  const handleFlushMobile = useCallback(async (workDir: string, framework?: string) => {
+    if (!framework || !isSecondClassMobileFramework(framework)) return;
+
+    const platformMismatch =
+      (framework === "swift" && Platform.OS !== "ios") ||
+      (framework === "kotlin" && Platform.OS !== "android");
+    const canDirectInstall = isDirectConnection && !platformMismatch;
+
+    if (!canDirectInstall) {
+      const deploy = storeDeployDescriptor(framework);
+      const projectName = workDir.split("/").filter(Boolean).pop() || "app";
+      const frameworkLabel = framework === "flutter" ? "Flutter" : framework === "swift" ? "native iOS (Swift)" : "native Android (Kotlin)";
+      const reason = !isDirectConnection
+        ? `Running ${frameworkLabel} directly on your phone needs both your machine and phone on the same Wi-Fi. Right now you're on relay / 4G, so the direct install is not possible.`
+        : `This ${frameworkLabel} build needs to run on a ${framework === "swift" ? "iPhone" : "Android phone"}, but you're controlling Yaver from ${Platform.OS === "ios" ? "iPhone" : "Android"}. A direct install from this phone is not possible.`;
+      const blocker = deploy ? devMachineDeployBlocker(deploy.target, activeDevice?.os) : null;
+      const alternative = !deploy
+        ? ""
+        : blocker
+          ? `\n\nWe also can't ship it to ${deploy.label.replace(/^Ship to /, "")} from this dev machine — ${blocker}`
+          : `\n\nWe can still build it on your machine (${activeDevice?.os || "dev machine"}) and ship it to ${deploy.label.replace(/^Ship to /, "")} so your phone picks it up from the store.`;
+      Alert.alert(
+        !isDirectConnection ? "LAN Required" : "Wrong Phone Class",
+        `${reason}\n\nHermes (Expo / React Native) is the only first-class path that works over LAN, relay, and 4G.${alternative}`,
+        deploy && !blocker ? [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: deploy.label,
+            onPress: async () => {
+              try {
+                await quicClient.sendTask(deploy.prompt(projectName, workDir), `[Store Deploy] ${projectName} · ${framework}`);
+                setQuickActionStatus(`${deploy.label} task sent`);
+                setTimeout(() => setQuickActionStatus(null), 4000);
+                router.navigate("/(tabs)/tasks");
+              } catch (e) {
+                Alert.alert("Could not queue deploy task", e instanceof Error ? e.message : String(e));
+              }
+            },
+          },
+        ] : undefined,
+      );
+      return;
+    }
+
+    if (framework === "flutter") {
+      setNativeLoading(true);
+      setLoadingStatus("Flushing Flutter app...");
+      setQuickActionStatus("Starting Flutter flush...");
+      try {
+        const currentStatus = await quicClient.getDevServerStatus();
+        if (currentStatus?.running && currentStatus.workDir === workDir && currentStatus.framework === "flutter") {
+          await quicClient.reloadDevServer();
+          setQuickActionStatus("Flutter reload sent");
+          Alert.alert("Flutter Flushed", "A Flutter reload was sent over LAN.");
+        } else {
+          await quicClient.startDevServer({
+            framework: "flutter",
+            workDir,
+            targetDeviceId: selectedTarget?.id,
+            targetDeviceName: selectedTarget?.name,
+            targetDeviceClass: selectedTarget?.deviceClass,
+          });
+          setQuickActionStatus("Flutter launch started on LAN");
+          Alert.alert("Flutter Flush Started", "Yaver asked the Go agent to start the Flutter app on your phone over LAN.");
+        }
+      } catch (e) {
+        const err = e instanceof Error ? e.message : String(e);
+        setNativeLoading(false);
+        setLoadingStatus("");
+        setTimeout(() => setQuickActionStatus(null), 4000);
+        const missingDevice = /no device|device.*(not found|missing|offline)/i.test(err);
+        offerAgentFix(
+          "Flutter Flush Failed",
+          `${err}\n\nYaver can hand this to the AI agent so it can diagnose and fix on the dev machine.`,
+          {
+            kind: missingDevice ? "flutter-device-missing" : "flutter-flush-failed",
+            framework: "flutter",
+            workDir,
+            platform: Platform.OS,
+            error: err,
+          },
+        );
+        return;
+      } finally {
+        setNativeLoading(false);
+        setLoadingStatus("");
+        setTimeout(() => setQuickActionStatus(null), 4000);
+      }
+      return;
+    }
+
+    if (framework === "swift") {
+      setBuildStatus("queued");
+      setQuickActionStatus("Starting native iOS flush...");
+      try {
+        const build = await quicClient.startBuild("xcode-device-install", workDir, true);
+        setBuildStatus("running");
+        let consecutivePollFailures = 0;
+        for (let i = 0; i < 120; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          let b: Awaited<ReturnType<typeof quicClient.getBuild>> | null = null;
+          try {
+            b = await quicClient.getBuild(build.id);
+          } catch (pollErr) {
+            consecutivePollFailures += 1;
+            if (consecutivePollFailures >= 5) {
+              throw new Error(`Lost contact with build server after ${consecutivePollFailures} consecutive failures: ${pollErr instanceof Error ? pollErr.message : String(pollErr)}`);
+            }
+            continue;
+          }
+          consecutivePollFailures = 0;
+          if (!b) continue;
+          if (b.installStatus === "installed") {
+            setBuildStatus("installed");
+            setQuickActionStatus("Native iOS app installed on phone");
+            Alert.alert("Installed", "The native iOS app was installed on your phone.");
+            setTimeout(() => { setBuildStatus(null); setQuickActionStatus(null); }, 5000);
+            return;
+          }
+          if (b.installStatus === "install_failed") {
+            setBuildStatus("install_failed");
+            setTimeout(() => { setBuildStatus(null); setQuickActionStatus(null); }, 5000);
+            offerAgentFix(
+              "iOS Install Failed",
+              `${b.installError || "Could not install on device."}\n\nMost common causes: provisioning profile doesn't include this iPhone UDID, device isn't trusted, or Xcode can't see the phone. Yaver can ask the AI agent to fix the signing / provisioning.`,
+              { kind: "swift-install-failed", framework: "swift", workDir, platform: Platform.OS, error: b.installError || "install failed" },
+            );
+            return;
+          }
+          if (b.installStatus === "installing") {
+            setBuildStatus("installing");
+            setQuickActionStatus("Installing native iOS app...");
+          } else if (b.status === "failed") {
+            setBuildStatus("failed");
+            setTimeout(() => { setBuildStatus(null); setQuickActionStatus(null); }, 5000);
+            offerAgentFix(
+              "Xcode Build Failed",
+              `${b.error || "xcodebuild failed."}\n\nLikely a signing, pods, or SDK issue on the dev machine. The AI agent can diagnose and fix end-to-end.`,
+              { kind: "swift-build-failed", framework: "swift", workDir, platform: Platform.OS, error: b.error || "xcodebuild failed" },
+            );
+            return;
+          }
+        }
+        throw new Error("Build timed out after 4 minutes. Run it again or check xcodebuild logs on the dev machine.");
+      } catch (e) {
+        const err = e instanceof Error ? e.message : String(e);
+        setBuildStatus("failed");
+        setTimeout(() => { setBuildStatus(null); setQuickActionStatus(null); }, 5000);
+        offerAgentFix(
+          "Native iOS Flush Failed",
+          `${err}\n\nThe AI agent can investigate the Xcode + signing setup and fix it.`,
+          { kind: "swift-build-failed", framework: "swift", workDir, platform: Platform.OS, error: err },
+        );
+      }
+      return;
+    }
+
+    if (framework === "kotlin") {
+      setBuildStatus("queued");
+      setQuickActionStatus("Building Android APK...");
+      try {
+        const build = await quicClient.startBuild("gradle-apk", workDir);
+        setBuildStatus("running");
+        let consecutivePollFailures = 0;
+        for (let i = 0; i < 180; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          let b: Awaited<ReturnType<typeof quicClient.getBuild>> | null = null;
+          try {
+            b = await quicClient.getBuild(build.id);
+          } catch (pollErr) {
+            consecutivePollFailures += 1;
+            if (consecutivePollFailures >= 5) {
+              throw new Error(`Lost contact with build server after ${consecutivePollFailures} consecutive failures: ${pollErr instanceof Error ? pollErr.message : String(pollErr)}`);
+            }
+            continue;
+          }
+          consecutivePollFailures = 0;
+          if (!b) continue;
+          if (b.status === "failed") {
+            setBuildStatus("failed");
+            setTimeout(() => { setBuildStatus(null); setQuickActionStatus(null); }, 5000);
+            offerAgentFix(
+              "Gradle Build Failed",
+              `${b.error || "Gradle build failed."}\n\nCheck the dev machine has Java 17 + Android SDK, or let the AI agent diagnose and fix.`,
+              { kind: "kotlin-build-failed", framework: "kotlin", workDir, platform: Platform.OS, error: b.error || "Gradle build failed" },
+            );
+            return;
+          }
+          if (b.status === "completed" && b.artifactName) {
+            setBuildStatus("installing");
+            setQuickActionStatus("Downloading APK to phone...");
+            let localPath: string;
+            try {
+              localPath = await downloadArtifact(
+                quicClient.baseUrl,
+                quicClient.getAuthHeaders(),
+                build.id,
+              );
+            } catch (dlErr) {
+              const err = dlErr instanceof Error ? dlErr.message : String(dlErr);
+              setBuildStatus("install_failed");
+              setTimeout(() => { setBuildStatus(null); setQuickActionStatus(null); }, 5000);
+              offerAgentFix(
+                "APK Download Failed",
+                `Could not pull the APK from the dev machine: ${err}\n\nThe AI agent can inspect the artifact endpoint or re-run the build.`,
+                { kind: "apk-download-failed", framework: "kotlin", workDir, platform: Platform.OS, error: err },
+              );
+              return;
+            }
+            try {
+              const installer = NativeModules.ApkInstaller;
+              if (!installer || typeof installer.install !== "function") {
+                throw new Error("ApkInstaller native module is not registered in this build of Yaver. Reinstall Yaver from the Play Store.");
+              }
+              await installer.install(localPath);
+            } catch (instErr) {
+              const err = instErr instanceof Error ? instErr.message : String(instErr);
+              setBuildStatus("install_failed");
+              setTimeout(() => { setBuildStatus(null); setQuickActionStatus(null); }, 5000);
+              // APK install on Android is an OS-level dialog, not AI-fixable,
+              // so we keep this as a plain alert explaining the system setting.
+              Alert.alert(
+                "APK Install Failed",
+                `${err}\n\nIf Android blocked the install, enable "Install unknown apps" for Yaver in system settings and retry. If a previous debug-signed copy is conflicting, uninstall it first.`,
+              );
+              return;
+            }
+            setBuildStatus("installed");
+            setQuickActionStatus("Android app ready to open");
+            Alert.alert("APK Ready", "The Android build was downloaded to your phone and the install flow was started.");
+            setTimeout(() => { setBuildStatus(null); setQuickActionStatus(null); }, 5000);
+            return;
+          }
+        }
+        throw new Error("Build timed out after 6 minutes. Run it again or check gradlew logs on the dev machine.");
+      } catch (e) {
+        setBuildStatus("failed");
+        Alert.alert("Native Android Flush Failed", e instanceof Error ? e.message : String(e));
+        setTimeout(() => { setBuildStatus(null); setQuickActionStatus(null); }, 5000);
+      }
+    }
+  }, [isDirectConnection, selectedTarget, activeDevice?.os, router]);
+
   const ensureHermesDevServer = useCallback(async (workDir: string, framework?: string) => {
     const currentStatus = await quicClient.getDevServerStatus();
     if (currentStatus?.running && currentStatus.workDir === workDir) {
@@ -596,9 +1062,22 @@ export default function AppsScreen() {
     framework?: string;
     loadAfterBuild: boolean;
   }) => {
+    // Guard against callers accidentally routing a second-class project through
+    // the Hermes path. Without this, the dev server start below fails with an
+    // opaque "could not detect framework" far from the real mistake.
+    if (framework && !isHermesMobileFramework(framework)) {
+      Alert.alert(
+        "Wrong Action For This Project",
+        `"${framework}" projects can't be loaded inside Yaver — Hermes is React Native / Expo only. Use Flush to App for Flutter or Flush Build to Phone for Swift / Kotlin.`,
+      );
+      return;
+    }
     const baseUrl = (quicClient as any).baseUrl;
     if (!baseUrl) {
-      Alert.alert("Error", "Not connected to agent");
+      Alert.alert(
+        "Dev Machine Not Connected",
+        `Yaver ${describeConnectionStatus(connectionStatus)}. Reconnect on the Devices tab before building.`,
+      );
       return;
     }
 
@@ -672,14 +1151,32 @@ export default function AppsScreen() {
         setLoadingStatus("Hermes bundle ready");
       }
     } catch (err: any) {
-      Alert.alert(loadAfterBuild ? "Load Failed" : "Build Failed", err?.message || "Could not build Hermes bundle in Yaver");
-    } finally {
+      // Reset loading state BEFORE the alert so a fast dismissal can't leave
+      // the UI stuck in a half-built state and trigger a double-build.
       sseController.abort();
       setNativeLoading(false);
       setBuildProgress(0);
-      setTimeout(() => setLoadingStatus(""), 2000);
+      setLoadingStatus("");
+      const raw = err?.message || "Could not build Hermes bundle in Yaver";
+      const lower = raw.toLowerCase();
+      let hint = "";
+      if (lower.includes("did not become ready") || lower.includes("dev server")) {
+        hint = "\n\nMetro didn't start on the dev machine. Check Node.js is installed and the project has a valid package.json.";
+      } else if (lower.includes("hbc") || lower.includes("bytecode") || lower.includes("hermes")) {
+        hint = "\n\nHermes bytecode version mismatch between Yaver and the project. Update Yaver from the App / Play Store and try again.";
+      } else if (lower.includes("yaverbundleloader") || lower.includes("native module")) {
+        hint = "\n\nYaver's native bundle loader is missing — reinstall Yaver from the App / Play Store.";
+      } else if (lower.includes("network") || lower.includes("fetch") || lower.includes("timeout")) {
+        hint = `\n\nYaver ${describeConnectionStatus(connectionStatus)}.`;
+      }
+      Alert.alert(loadAfterBuild ? "Open in Yaver Failed" : "Hermes Build Failed", `${raw}${hint}`);
+      return;
     }
-  }, [ensureHermesDevServer]);
+    sseController.abort();
+    setNativeLoading(false);
+    setBuildProgress(0);
+    setTimeout(() => setLoadingStatus(""), 2000);
+  }, [ensureHermesDevServer, connectionStatus]);
 
   // Open app natively: Go agent builds Hermes bytecode → phone loads into RCTBridge
   const handleOpenNative = useCallback(async (workDir: string, framework?: string) => {
@@ -692,11 +1189,17 @@ export default function AppsScreen() {
 
   const handleOpen = useCallback(() => {
     if (!devStatus?.workDir) return;
-    // Always Hermes push — fast (~10s), works on LAN and relay equally.
-    // This is the default iPhone path for Linux / WSL / remote dev.
-    // Xcode native device install is available as a separate "Install Native" action.
-    handleOpenNative(devStatus.workDir, devStatus.framework);
-  }, [devStatus, handleOpenNative]);
+    if (isHermesMobileFramework(devStatus.framework)) {
+      // Always Hermes push — fast (~10s), works on LAN and relay equally.
+      // This is the default iPhone path for Linux / WSL / remote dev.
+      // Xcode native device install is available as a separate "Install Native" action.
+      handleOpenNative(devStatus.workDir, devStatus.framework);
+      return;
+    }
+    if (devStatus.framework === "flutter") {
+      handleFlushMobile(devStatus.workDir, devStatus.framework);
+    }
+  }, [devStatus, handleFlushMobile, handleOpenNative]);
 
   const handleReload = useCallback(async () => {
     setWebViewLoading(true);
@@ -743,6 +1246,7 @@ export default function AppsScreen() {
   const runningProject = currentProject?.name ?? devStatus?.workDir?.split("/").pop() ?? devStatus?.framework ?? "App";
   const runningHasFeedbackSDK = hasFeedbackSDK(currentProject);
   const runningGuidance = agentFlowGuidance(devStatus?.framework, runningHasFeedbackSDK);
+  const runningSecondClassGuidance = secondClassGuidance(devStatus?.framework, isDirectConnection);
 
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
@@ -759,7 +1263,11 @@ export default function AppsScreen() {
                   {devStatus.framework} · port {devStatus.port} · hot reload {devStatus.hotReload ? "on" : "off"}
                 </Text>
                 <Text style={[s.cardMeta, { color: "#86efac" }]}>
-                  mode · {devStatus.iosInstallMethod === "native" ? "native install" : "Hermes bundle in Yaver"}
+                  mode · {isHermesMobileFramework(devStatus.framework)
+                    ? (devStatus.iosInstallMethod === "native" ? "native install" : "Hermes bundle in Yaver")
+                    : devStatus.framework === "flutter"
+                      ? "LAN app reload (second class)"
+                      : "native mobile flow"}
                 </Text>
                 {devStatus.iosInstallReason ? (
                   <Text style={[s.cardMeta, { color: "#d1d5db" }]}>
@@ -775,6 +1283,10 @@ export default function AppsScreen() {
                   <Text style={[s.cardMeta, s.guidanceText, { color: "#cbd5e1" }]} numberOfLines={3}>
                     {runningGuidance}
                   </Text>
+                ) : runningSecondClassGuidance ? (
+                  <Text style={[s.cardMeta, s.guidanceText, { color: "#cbd5e1" }]} numberOfLines={3}>
+                    {runningSecondClassGuidance}
+                  </Text>
                 ) : null}
                 <Text style={[s.cardMeta, { color: "#7dd3fc" }]}>
                   target · {devStatus.targetDeviceName || selectedTarget?.name || "this device"}
@@ -786,29 +1298,57 @@ export default function AppsScreen() {
                 )}
               </View>
             </View>
-            <View style={s.cardActions}>
-              <Pressable style={[s.actionBtn, s.openBtn]} onPress={handleOpen} disabled={nativeLoading}>
-                {nativeLoading ? (
-                  <>
-                    <ActivityIndicator size="small" color="#000" />
-                    <Text style={[s.openBtnText, { fontSize: 11, marginLeft: 6 }]}>Building...</Text>
-                  </>
-                ) : (
-                  <Text style={s.openBtnText}>Open in Yaver</Text>
-                )}
-              </Pressable>
-              <Pressable style={[s.actionBtn, s.reloadBtn]} onPress={handleReload}>
-                <Text style={s.reloadBtnText}>{"\u21BB"} Reload</Text>
-              </Pressable>
-              {workerSession?.hasTarget && workerSession.workerOnline && (
-                <Pressable style={[s.actionBtn, s.reloadBtn]} onPress={handleRequestScreenshot}>
-                  <Text style={s.reloadBtnText}>Shot</Text>
-                </Pressable>
-              )}
-              <Pressable style={[s.actionBtn, s.stopBtn]} onPress={handleStop}>
-                <Text style={s.stopBtnText}>Stop</Text>
-              </Pressable>
-            </View>
+            {/* Running-banner buttons. For Flutter, both Open-like flush
+                and Reload need LAN. Rather than letting the user tap and hit
+                an Alert, we render the buttons untappable with an inline
+                caption when the action cannot possibly succeed. */}
+            {(() => {
+              const isFlutterRunning = devStatus.framework === "flutter";
+              const flutterBlocked = isFlutterRunning && !isDirectConnection;
+              const openDisabled = nativeLoading || flutterBlocked;
+              const reloadDisabled = flutterBlocked;
+              const openLabel = isFlutterRunning ? "Flush to App" : "Open in Yaver";
+              return (
+                <>
+                  <View style={s.cardActions}>
+                    <Pressable
+                      style={[s.actionBtn, s.openBtn, openDisabled && { opacity: 0.4 }]}
+                      onPress={handleOpen}
+                      disabled={openDisabled}
+                    >
+                      {nativeLoading ? (
+                        <>
+                          <ActivityIndicator size="small" color="#000" />
+                          <Text style={[s.openBtnText, { fontSize: 11, marginLeft: 6 }]}>Building...</Text>
+                        </>
+                      ) : (
+                        <Text style={s.openBtnText}>{openLabel}</Text>
+                      )}
+                    </Pressable>
+                    <Pressable
+                      style={[s.actionBtn, s.reloadBtn, reloadDisabled && { opacity: 0.4 }]}
+                      onPress={handleReload}
+                      disabled={reloadDisabled}
+                    >
+                      <Text style={s.reloadBtnText}>{"\u21BB"} Reload</Text>
+                    </Pressable>
+                    {workerSession?.hasTarget && workerSession.workerOnline && (
+                      <Pressable style={[s.actionBtn, s.reloadBtn]} onPress={handleRequestScreenshot}>
+                        <Text style={s.reloadBtnText}>Shot</Text>
+                      </Pressable>
+                    )}
+                    <Pressable style={[s.actionBtn, s.stopBtn]} onPress={handleStop}>
+                      <Text style={s.stopBtnText}>Stop</Text>
+                    </Pressable>
+                  </View>
+                  {flutterBlocked && (
+                    <Text style={[s.cardMeta, { color: "#fbbf24", marginTop: 4 }]} numberOfLines={2}>
+                      Flush / Reload need the phone + dev machine on the same Wi-Fi. You're on {quicClient.connectionMode || "relay"} — move to LAN, or use the Apps list to ship this project to Play Store / TestFlight.
+                    </Text>
+                  )}
+                </>
+              );
+            })()}
 
             {/* Build progress bar — shows during HBC compilation */}
             {nativeLoading && (
@@ -829,8 +1369,8 @@ export default function AppsScreen() {
                   <View style={[s.progressFill, { width: buildStatus === "installed" ? "100%" : buildStatus === "installing" ? "90%" : "50%" }]} />
                 </View>
                 <Text style={s.progressText} numberOfLines={1}>
-                  {buildStatus === "running" ? "Building with Xcode..." :
-                   buildStatus === "installing" ? "Installing on device..." :
+                  {buildStatus === "running" ? "Building on your machine..." :
+                   buildStatus === "installing" ? "Flushing to phone..." :
                    buildStatus === "installed" ? "Installed! App is ready." :
                    buildStatus === "install_failed" ? "Install failed" :
                    buildStatus === "failed" ? "Build failed" :
@@ -851,15 +1391,43 @@ export default function AppsScreen() {
                   key={action.label}
                   style={s.quickBtn}
                   onPress={() => {
-                    if (action.label === "Ship It" && Platform.OS === "ios" && quicClient.connectionMode === "direct") {
-                      // Direct device install — build with Xcode and install on device
-                      handleDirectBuild();
-                    } else {
-                      // Send as task but stay on this page
-                      quicClient.sendTask(action.prompt, `[Quick Action] ${action.label} for ${runningProject}`).catch(() => {});
-                      setQuickActionStatus(`${action.label} task sent`);
-                      setTimeout(() => setQuickActionStatus(null), 3000);
+                    if (!isConnected) {
+                      Alert.alert(
+                        "Dev Machine Offline",
+                        `Yaver ${describeConnectionStatus(connectionStatus)}. Reconnect before running "${action.label}".`,
+                      );
+                      return;
                     }
+                    if (action.label === "Ship It") {
+                      const iosBlocker = devMachineDeployBlocker("testflight", activeDevice?.os);
+                      if (iosBlocker) {
+                        Alert.alert(
+                          "Can't Ship From This Dev Machine",
+                          `${iosBlocker}\n\nAndroid can still be built here; run Deploy to Play Store from Vibing if that's what you want.`,
+                        );
+                        return;
+                      }
+                      if (Platform.OS === "ios" && quicClient.connectionMode === "direct" && isHermesMobileFramework(devStatus?.framework)) {
+                        // Direct device install — build with Xcode and install on device
+                        handleDirectBuild();
+                        return;
+                      }
+                    }
+                    // Send as task but stay on this page — surface failures
+                    // inline instead of silently swallowing them.
+                    setQuickActionStatus(`${action.label}…`);
+                    quicClient.sendTask(action.prompt, `[Quick Action] ${action.label} for ${runningProject}`)
+                      .then(() => {
+                        setQuickActionStatus(`${action.label} sent`);
+                        setTimeout(() => setQuickActionStatus(null), 3000);
+                      })
+                      .catch((e) => {
+                        setQuickActionStatus(null);
+                        Alert.alert(
+                          `Couldn't Send "${action.label}"`,
+                          `${e instanceof Error ? e.message : String(e)}\n\nYaver ${describeConnectionStatus(connectionStatus)}.`,
+                        );
+                      });
                   }}
                 >
                   <Text style={s.quickIcon}>{action.icon}</Text>
@@ -1024,6 +1592,16 @@ export default function AppsScreen() {
             {actionSheet?.compatibility?.guidance ? (
               <Text style={[s.actionSheetSubtitle, { color: actionSheet.compatibility.compatible ? "#cbd5e1" : "#fbbf24", marginTop: -8 }]}>
                 {actionSheet.compatibility.guidance}
+              </Text>
+            ) : secondClassGuidance(
+              actionSheet?.actions.find((a) => isSecondClassMobileFramework(a.framework))?.framework,
+              isDirectConnection,
+            ) ? (
+              <Text style={[s.actionSheetSubtitle, { color: "#cbd5e1", marginTop: -8 }]}>
+                {secondClassGuidance(
+                  actionSheet?.actions.find((a) => isSecondClassMobileFramework(a.framework))?.framework,
+                  isDirectConnection,
+                )}
               </Text>
             ) : agentFlowGuidance(
               actionSheet?.actions.find((a) => a.framework === "expo" || a.framework === "react-native")?.framework

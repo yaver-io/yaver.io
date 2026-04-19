@@ -315,7 +315,74 @@ func detectFramework(dir string) string {
 			}
 		}
 	}
+
+	// Native mobile — only detect after JS/Flutter checks above fall through,
+	// so a React Native repo (which has ios/*.xcodeproj) is never labelled as
+	// swift, and a Kotlin Spring Boot / JVM backend is never labelled as a
+	// Kotlin *mobile* project.
+	if fileExists(filepath.Join(dir, "Package.swift")) || hasExtInDir(dir, ".xcodeproj") {
+		return "swift"
+	}
+	if isKotlinAndroidProject(dir) {
+		return "kotlin"
+	}
 	return ""
+}
+
+func hasExtInDir(dir, ext string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// isKotlinAndroidProject returns true only when the directory looks like an
+// Android app — a Gradle project that targets Android. A pure Kotlin/JVM
+// backend (Spring Boot, Ktor) will also have build.gradle.kts but must NOT be
+// classified as a mobile project, since we'd then offer Play Store deploy
+// buttons that make no sense.
+func isKotlinAndroidProject(dir string) bool {
+	hasGradle := fileExists(filepath.Join(dir, "build.gradle.kts")) ||
+		fileExists(filepath.Join(dir, "settings.gradle.kts")) ||
+		fileExists(filepath.Join(dir, "build.gradle")) ||
+		fileExists(filepath.Join(dir, "settings.gradle"))
+	if !hasGradle {
+		return false
+	}
+	// Strongest signal: AndroidManifest.xml anywhere in typical locations.
+	manifestCandidates := []string{
+		filepath.Join(dir, "AndroidManifest.xml"),
+		filepath.Join(dir, "app", "src", "main", "AndroidManifest.xml"),
+		filepath.Join(dir, "src", "main", "AndroidManifest.xml"),
+	}
+	for _, p := range manifestCandidates {
+		if fileExists(p) {
+			return true
+		}
+	}
+	// Fall back: the `android/` directory is the conventional Android module root.
+	if info, err := os.Stat(filepath.Join(dir, "android")); err == nil && info.IsDir() {
+		// But exclude React Native / Flutter cases — those are caught above by
+		// detectFramework, so reaching here means plain Android.
+		return true
+	}
+	// Last resort: look for an Android plugin line in build.gradle.kts so a
+	// plain Android-app-as-root repo without `android/` still classifies.
+	for _, name := range []string{"build.gradle.kts", "build.gradle", "app/build.gradle.kts", "app/build.gradle"} {
+		if data, err := readSmallFile(filepath.Join(dir, name)); err == nil {
+			s := string(data)
+			if strings.Contains(s, "com.android.application") || strings.Contains(s, "com.android.library") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func fileExists(path string) bool {

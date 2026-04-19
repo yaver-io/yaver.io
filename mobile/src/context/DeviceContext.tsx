@@ -1189,8 +1189,15 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
-    tryRecover().catch(() => {
+    tryRecover().catch((err) => {
       recoveringAuthRef.current.delete(activeDevice.id);
+      // Surface the recovery failure so the user isn't stuck with a blank
+      // "connection lost" banner — they at least know what to try next.
+      const msg = err instanceof Error ? err.message : String(err);
+      appLog("warn", `Auth recovery failed for ${activeDevice.name}: ${msg}`);
+      if (!cancelled) {
+        setLastError(`Auth recovery failed for ${activeDevice.name}: ${msg}. Sign in again from Settings or pick another device.`);
+      }
     });
 
     return () => {

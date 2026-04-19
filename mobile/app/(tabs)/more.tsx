@@ -16,6 +16,7 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient, type MachineInfo } from "../../src/lib/quic";
+import { describeConnectionStatus } from "../../src/lib/connection";
 import {
   listGuests,
   inviteGuest,
@@ -1380,7 +1381,7 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
             : "";
         const backend =
           Array.isArray(meta?.topology?.backendRunsOn) && meta.topology.backendRunsOn.includes("phone")
-            ? `\nBackend: Yaver continuum (phone → your hardware → Yaver Cloud)`
+            ? `\nBackend: Yaver continuum (phone → your hardware)`
             : "";
         const autoinit = data.autoinit?.started
           ? `\nAutoinit: started`
@@ -1646,10 +1647,21 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
       );
       loadGuests();
     } catch (e: any) {
-      Alert.alert("Error", e.message || "Failed to invite");
+      const raw = e?.message || "Failed to invite";
+      const lower = raw.toLowerCase();
+      const hint = /401|403|unauth/.test(lower)
+        ? "Your session may have expired — sign in again from Settings and try once more."
+        : /network|fetch|timeout|econn|offline/.test(lower)
+          ? `Yaver ${describeConnectionStatus(connectionStatus)}.`
+          : /already|duplicate|exists/.test(lower)
+            ? "This email has already been invited. Check the list below or revoke and re-invite."
+            : /limit|too many|5 guest/i.test(lower)
+              ? "You already have 5 active guests (the cap). Revoke one before inviting another."
+              : "Check the email address and that you're signed in.";
+      Alert.alert("Couldn't Invite Guest", `${raw}\n\n${hint}`);
     }
     setInviting(false);
-  }, [token, inviteEmail, loadGuests]);
+  }, [token, inviteEmail, loadGuests, connectionStatus]);
 
   const handleRevoke = useCallback(async (email: string) => {
     if (!token) return;
@@ -1663,12 +1675,16 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
             await revokeGuest(token, email);
             loadGuests();
           } catch (e: any) {
-            Alert.alert("Error", e.message || "Failed to revoke");
+            const raw = e?.message || "Failed to revoke";
+            Alert.alert(
+              "Couldn't Revoke Access",
+              `${raw}\n\nYaver ${describeConnectionStatus(connectionStatus)}. The guest may still have access until this succeeds — retry when you reconnect.`,
+            );
           }
         },
       },
     ]);
-  }, [token, loadGuests]);
+  }, [token, loadGuests, connectionStatus]);
 
   const handleAcceptByCode = useCallback(async () => {
     if (!token || !acceptCode.trim()) return;
@@ -1679,10 +1695,19 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
       setAcceptCode("");
       refreshDevices();
     } catch (e: any) {
-      Alert.alert("Error", e.message || "Invalid code");
+      const raw = e?.message || "Invalid code";
+      const lower = raw.toLowerCase();
+      const hint = /expir|ttl|timeout/.test(lower)
+        ? "Invite codes expire after 2 days — ask the host to send a new one."
+        : /invalid|not found|unknown code|no such|code/.test(lower)
+          ? "Double-check the 6-character code (0/O and 1/I aren't used). Ask the host to resend if needed."
+          : /network|fetch|econn|offline/.test(lower)
+            ? `Yaver ${describeConnectionStatus(connectionStatus)}.`
+            : "Check the code and try again.";
+      Alert.alert("Couldn't Accept Invite", `${raw}\n\n${hint}`);
     }
     setAccepting(false);
-  }, [token, acceptCode, refreshDevices]);
+  }, [token, acceptCode, refreshDevices, connectionStatus]);
 
   const loadConfigs = useCallback(async () => {
     if (!connected) return;
@@ -1763,10 +1788,14 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
       setConfigEmail(null);
       loadConfigs();
     } catch (e: any) {
-      Alert.alert("Error", e.message || "Failed to save config");
+      const raw = e?.message || "Failed to save config";
+      Alert.alert(
+        "Couldn't Save Guest Config",
+        `${raw}\n\nYaver ${describeConnectionStatus(connectionStatus)}. Your local edits weren't saved to the dev machine — reconnect and try again.`,
+      );
     }
     setSavingConfig(false);
-  }, [configEmail, editLimit, editMode, editRunners, editMachineIds, editShareAllMachines, editAllowedProjects, editAllowedSharedStorage, editPreset, editAllowGuestKeys, editAllowTunnels, editRequireIsolation, connected, loadConfigs]);
+  }, [configEmail, editLimit, editMode, editRunners, editMachineIds, editShareAllMachines, editAllowedProjects, editAllowedSharedStorage, editPreset, editAllowGuestKeys, editAllowTunnels, editRequireIsolation, connected, connectionStatus, loadConfigs]);
 
   const updateGuestQuickAction = useCallback(async (email: string, patch: Record<string, any>, successMessage: string) => {
     if (!connected) return;
@@ -1778,9 +1807,13 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
       Alert.alert("Updated", successMessage);
       loadConfigs();
     } catch (e: any) {
-      Alert.alert("Error", e.message || "Failed to update guest");
+      const raw = e?.message || "Failed to update guest";
+      Alert.alert(
+        "Couldn't Update Guest",
+        `${raw}\n\nYaver ${describeConnectionStatus(connectionStatus)}. The change wasn't applied — retry when reconnected.`,
+      );
     }
-  }, [connected, loadConfigs]);
+  }, [connected, connectionStatus, loadConfigs]);
 
   const activeGuests = guests.filter(g => g.status === "accepted");
   const pendingGuests = guests.filter(g => g.status === "pending");

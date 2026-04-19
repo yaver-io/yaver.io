@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -89,5 +91,109 @@ func TestDetectProjectInfo(t *testing.T) {
 	info := DetectProjectInfo("/tmp")
 	if info.Name != "tmp" {
 		t.Errorf("expected name 'tmp', got %s", info.Name)
+	}
+}
+
+// Scope awareness: the mobile + web + desktop UIs hide mobile deploy buttons
+// when detectFramework returns something that isn't a mobile framework, so
+// these tests lock in the contract.
+func TestDetectFramework_ScopeAwareness(t *testing.T) {
+	write := func(t *testing.T, dir, name, body string) {
+		t.Helper()
+		path := dir + "/" + name
+		// Ensure parent dir exists for nested names.
+		if idx := strings.LastIndex(name, "/"); idx >= 0 {
+			if err := os.MkdirAll(dir+"/"+name[:idx], 0o755); err != nil {
+				t.Fatalf("mkdir parent for %s: %v", name, err)
+			}
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	cases := []struct {
+		name   string
+		setup  func(t *testing.T, dir string)
+		expect string
+	}{
+		{
+			name: "flutter project",
+			setup: func(t *testing.T, dir string) {
+				write(t, dir, "pubspec.yaml", "name: e_mobile_new\n")
+			},
+			expect: "flutter",
+		},
+		{
+			name: "expo mobile project",
+			setup: func(t *testing.T, dir string) {
+				write(t, dir, "package.json", `{"name":"e_mobile_new","dependencies":{"expo":"~52.0.0"}}`)
+			},
+			expect: "expo",
+		},
+		{
+			name: "pure react-native project",
+			setup: func(t *testing.T, dir string) {
+				write(t, dir, "package.json", `{"name":"app","dependencies":{"react-native":"0.74.0"}}`)
+			},
+			expect: "react-native",
+		},
+		{
+			name: "nextjs frontend (e_front)",
+			setup: func(t *testing.T, dir string) {
+				write(t, dir, "next.config.ts", "export default {};")
+				write(t, dir, "package.json", `{"name":"e_front","dependencies":{"next":"15.0.0"}}`)
+			},
+			expect: "nextjs",
+		},
+		{
+			name: "convex/node backend (e_back) — no mobile framework",
+			setup: func(t *testing.T, dir string) {
+				write(t, dir, "package.json", `{"name":"e_back","dependencies":{"convex":"1.0.0","dotenv":"16.0.0"}}`)
+			},
+			expect: "",
+		},
+		{
+			name: "kotlin spring-boot backend — must NOT be classified as mobile",
+			setup: func(t *testing.T, dir string) {
+				write(t, dir, "build.gradle.kts", `plugins { id("org.springframework.boot") version "3.2.0" }`)
+				write(t, dir, "settings.gradle.kts", `rootProject.name = "backend"`)
+			},
+			expect: "",
+		},
+		{
+			name: "kotlin android app — classified as kotlin mobile",
+			setup: func(t *testing.T, dir string) {
+				write(t, dir, "build.gradle.kts", `plugins { id("com.android.application") }`)
+				write(t, dir, "app/src/main/AndroidManifest.xml", `<manifest/>`)
+			},
+			expect: "kotlin",
+		},
+		{
+			name: "swift ios app",
+			setup: func(t *testing.T, dir string) {
+				write(t, dir, "Package.swift", `// swift-tools-version:5.9`)
+			},
+			expect: "swift",
+		},
+		{
+			name: "supabase project — no mobile framework",
+			setup: func(t *testing.T, dir string) {
+				write(t, dir, "supabase/config.toml", `[api]`)
+				write(t, dir, "package.json", `{"name":"backend","dependencies":{"@supabase/supabase-js":"2.0.0"}}`)
+			},
+			expect: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tc.setup(t, dir)
+			got := detectFramework(dir)
+			if got != tc.expect {
+				t.Errorf("detectFramework(%q) = %q, want %q", tc.name, got, tc.expect)
+			}
+		})
 	}
 }

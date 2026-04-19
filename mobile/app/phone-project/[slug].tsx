@@ -21,6 +21,7 @@ import { useColors } from "../../src/context/ThemeContext";
 import { useDevice, type Device } from "../../src/context/DeviceContext";
 import { AppBackButton } from "../../src/components/AppBackButton";
 import { isCloudPreviewUser } from "../../src/lib/cloudPreview";
+import { describeConnectionStatus } from "../../src/lib/connection";
 import { getYaverCloudBaseUrl } from "../../src/lib/yaverCloud";
 import { quicClient } from "../../src/lib/quic";
 import { getLocalSecret, LOCAL_KEYS } from "../../src/lib/auth";
@@ -96,7 +97,7 @@ export default function PhoneProjectDetailScreen() {
   const [promoting, setPromoting] = useState<string | null>(null);
 
   // Deploy state (yc.md §Wedge Demo)
-  const { devices, activeDevice } = useDevice();
+  const { devices, activeDevice, connectionStatus } = useDevice();
   const devMachines = useMemo(
     () => pickDevMachines(devices, activeDevice?.id),
     [devices, activeDevice?.id],
@@ -274,6 +275,22 @@ export default function PhoneProjectDetailScreen() {
 
   async function doPromote(targetID: string, label: string) {
     if (!slugStr) return;
+    const explainPromoteError = (raw: string): string => {
+      const lower = raw.toLowerCase();
+      if (/network|fetch|timeout|econn|offline|unreach/.test(lower)) {
+        return `${raw}\n\nYaver ${describeConnectionStatus(connectionStatus)}. The plan wasn't saved — reconnect and retry.`;
+      }
+      if (/invalid|schema|state|missing/.test(lower)) {
+        return `${raw}\n\nThe project state may be incomplete — try exporting first, then retry the migration.`;
+      }
+      if (/401|403|unauth|permission/.test(lower)) {
+        return `${raw}\n\nYour session may have expired — sign in again from Settings and retry.`;
+      }
+      if (/complex|blocked|pending|conflict/.test(lower)) {
+        return `${raw}\n\nAnother switch plan may already be in progress — check Switch history and finish or roll back that one first.`;
+      }
+      return `${raw}\n\nYour project stays on its current backend until a Plan runs successfully.`;
+    };
     Alert.alert(
       `Plan migration to ${label}?`,
       "This produces a step-by-step switch plan with a 7-day rollback window. You can run it or keep it as a dry-run.",
@@ -285,10 +302,10 @@ export default function PhoneProjectDetailScreen() {
             setPromoting(targetID);
             try {
               const r = await promotePhoneProject(slugStr, targetID, { dryRun: true, run: true });
-              if (r?.error) Alert.alert("Promote", r.error);
+              if (r?.error) Alert.alert(`Dry Run to ${label} Failed`, explainPromoteError(r.error));
               else Alert.alert("Plan saved", `Switch plan ${r?.state?.id ?? ""} created. Review in Switch history.`);
             } catch (e: any) {
-              Alert.alert("Promote", e?.message ?? "failed");
+              Alert.alert(`Dry Run to ${label} Failed`, explainPromoteError(e?.message ?? "failed"));
             } finally {
               setPromoting(null);
             }
@@ -300,10 +317,10 @@ export default function PhoneProjectDetailScreen() {
             setPromoting(targetID);
             try {
               const r = await promotePhoneProject(slugStr, targetID, {});
-              if (r?.error) Alert.alert("Promote", r.error);
+              if (r?.error) Alert.alert(`Plan for ${label} Failed`, explainPromoteError(r.error));
               else Alert.alert("Plan saved", `Complexity: ${r?.state?.complexity}. Run it from Switch history when ready.`);
             } catch (e: any) {
-              Alert.alert("Promote", e?.message ?? "failed");
+              Alert.alert(`Plan for ${label} Failed`, explainPromoteError(e?.message ?? "failed"));
             } finally {
               setPromoting(null);
             }

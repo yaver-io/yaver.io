@@ -16,6 +16,7 @@ import { useLocalSearchParams } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient, type AutoDevLoop, type RunnerInfo } from "../../src/lib/quic";
+import { describeConnectionStatus } from "../../src/lib/connection";
 import { AutodevChat } from "../../src/components/AutodevChat";
 import { AutoIdeasPane } from "../../src/components/AutoIdeasPane";
 
@@ -96,6 +97,13 @@ export default function AutoDevScreen() {
 
   const handleStart = useCallback(async () => {
     if (!canStart || starting) return;
+    if (!isConnected) {
+      Alert.alert(
+        "Dev Machine Offline",
+        `Yaver ${describeConnectionStatus(connectionStatus)}. Reconnect before starting Auto Dev.`,
+      );
+      return;
+    }
     setStarting(true);
     try {
       const res = await quicClient.autodevStart({
@@ -111,17 +119,30 @@ export default function AutoDevScreen() {
         createVideo: formMorningVideo,
       });
       if (!res.ok) {
-        Alert.alert("Start failed", res.error || "Could not start auto dev");
+        const rawErr = res.error || "Could not start auto dev";
+        const looksLikeConnection = /unreachable|401|403|network|offline|timeout|ECONN/i.test(rawErr);
+        Alert.alert(
+          "Auto Dev Didn't Start",
+          looksLikeConnection
+            ? `${rawErr}\n\nYaver ${describeConnectionStatus(connectionStatus)}.`
+            : `${rawErr}\n\nCheck the runner is installed on the dev machine, the project path exists, and the deploy target is supported.`,
+        );
       } else {
         Alert.alert("Started", `Loop ${res.loopName} is running in the background.`);
         setShowStart(false);
         setSection("live");
         refreshRef.current?.();
       }
+    } catch (e) {
+      const err = e instanceof Error ? e.message : String(e);
+      Alert.alert(
+        "Auto Dev Request Failed",
+        `${err}\n\nYaver ${describeConnectionStatus(connectionStatus)}.`,
+      );
     } finally {
       setStarting(false);
     }
-  }, [canStart, starting, formProject, formWorkDir, formInfinite, formHours, formLoad, formRunner, formPrompt, formDeploy, formNoAutotest, formMorningSummary, formMorningVideo]);
+  }, [canStart, starting, isConnected, connectionStatus, formProject, formWorkDir, formInfinite, formHours, formLoad, formRunner, formPrompt, formDeploy, formNoAutotest, formMorningSummary, formMorningVideo]);
 
   const refreshRef = React.useRef<(() => void) | undefined>(undefined);
 

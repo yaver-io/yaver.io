@@ -409,10 +409,18 @@ export default function TasksScreen() {
   const recordingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [preRecordText, setPreRecordText] = useState(""); // text before recording started
 
-  // Load speech settings from Convex (default: on-device whisper)
+  // Load speech settings from Convex (default: on-device whisper). We track
+  // the whisper init error so the mic button can warn up-front instead of
+  // failing with a cryptic message when the user actually taps it.
+  const [whisperInitError, setWhisperInitError] = useState<string | null>(null);
   useEffect(() => {
-    // Pre-init whisper for default on-device provider
-    initWhisper().catch(() => {});
+    initWhisper()
+      .then(() => setWhisperInitError(null))
+      .catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.warn("[speech] whisper init failed:", msg);
+        setWhisperInitError(msg);
+      });
     if (!token) return;
     getUserSettings(token).then(async (s) => {
       if (s.speechProvider) setSpeechProvider(s.speechProvider);
@@ -422,7 +430,10 @@ export default function TasksScreen() {
       const localKey = await getLocalSecret(LOCAL_KEYS.speechApiKey);
       if (localKey) setSpeechApiKey(localKey);
       else if (s.speechApiKey) setSpeechApiKey(s.speechApiKey);
-    }).catch(() => {});
+    }).catch((e: unknown) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn("[speech] getUserSettings failed:", msg);
+    });
   }, [token]);
 
   // Track QUIC connection state and mode
@@ -764,6 +775,15 @@ export default function TasksScreen() {
     try {
       if (!speechProvider) {
         Alert.alert("Voice Not Configured", "Set up a speech-to-text provider in Settings → Voice.");
+        return;
+      }
+      // Refuse up front if on-device whisper failed to initialise — better
+      // than failing deep inside startRealtimeTranscribe with a cryptic error.
+      if (speechProvider === "on-device" && whisperInitError) {
+        Alert.alert(
+          "On-Device Voice Unavailable",
+          `${whisperInitError}\n\nSwitch to a cloud provider in Settings → Voice, or reinstall Yaver from the App / Play Store to restore the on-device voice model.`,
+        );
         return;
       }
 
