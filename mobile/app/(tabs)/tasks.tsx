@@ -128,6 +128,93 @@ function TypingIndicator({ color }: { color: string }) {
   );
 }
 
+function stripMarkdownForPreview(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, " code block ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\s*>\s?/gm, "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/_/g, "")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function normalizePreviewLine(line: string): string {
+  return stripMarkdownForPreview(line)
+    .replace(/^\s*[-*]\s+/, "")
+    .replace(/^\s*\d+\.\s+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractAssistantActivity(text: string, maxItems = 4): string[] {
+  const seen = new Set<string>();
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const items: string[] = [];
+
+  for (const rawLine of lines) {
+    let item = "";
+    const command = rawLine.match(/^\*\*\$\s+(.+?)\*\*$/);
+    if (command?.[1]) {
+      item = `$ ${command[1].trim()}`;
+    } else if (/^[-*]\s+/.test(rawLine) || /^\d+\.\s+/.test(rawLine)) {
+      item = normalizePreviewLine(rawLine);
+    }
+
+    if (!item || item.length < 4 || seen.has(item)) continue;
+    seen.add(item);
+    items.push(item);
+  }
+
+  return items.slice(-maxItems);
+}
+
+function buildAssistantPreview(content: string): {
+  summary: string;
+  activity: string[];
+  shouldCollapse: boolean;
+} {
+  const plain = stripMarkdownForPreview(content);
+  const summaryLines = plain
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !line.startsWith("$ "));
+  const summary = summaryLines.slice(0, 4).join("\n").slice(0, 320).trim();
+  const activity = extractAssistantActivity(content);
+  const shouldCollapse =
+    content.length > Math.max(summary.length + 80, 320) ||
+    activity.length > 0 ||
+    content.includes("```") ||
+    content.includes("|");
+
+  return {
+    summary: summary || "Working...",
+    activity,
+    shouldCollapse,
+  };
+}
+
+function buildTaskPreviewText(task: Task): string | null {
+  if (task.resultText) {
+    return stripMarkdownForPreview(task.resultText).slice(0, 120);
+  }
+  if (task.status === "running" || task.status === "queued") {
+    const live = stripMarkdownForPreview(task.output.join("\n")).split("\n").map((line) => line.trim()).filter(Boolean);
+    if (live.length > 0) return live.slice(-1)[0].slice(0, 120);
+    return "Working...";
+  }
+  return null;
+}
+
 // ── Chat bubble ──────────────────────────────────────────────────────
 
 function ChatBubble({
@@ -149,10 +236,45 @@ function ChatBubble({
     );
   }
 
+  const preview = useMemo(() => buildAssistantPreview(turn.content), [turn.content]);
+  const [expanded, setExpanded] = useState(false);
+
   return (
     <View style={s.assistantRow}>
       <View style={[s.assistantBubble, { backgroundColor: c.bgCardElevated || "#1a1a2e" }]}>
-        <Markdown style={markdownStyles(c)}>{turn.content || " "}</Markdown>
+        <View style={s.assistantHeaderRow}>
+          <Text style={[s.assistantLabel, { color: c.textMuted }]}>Update</Text>
+          {preview.shouldCollapse ? (
+            <Pressable onPress={() => setExpanded((value) => !value)}>
+              <Text style={[s.assistantToggle, { color: c.accent || "#6366f1" }]}>
+                {expanded ? "Hide raw" : "Show raw"}
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+        <Text style={[s.assistantSummary, { color: c.textPrimary }]}>{preview.summary}</Text>
+        {preview.activity.length > 0 ? (
+          <View style={s.assistantActivityList}>
+            {preview.activity.map((item, index) => (
+              <View key={`${item}-${index}`} style={[s.assistantActivityRow, { borderColor: c.border, backgroundColor: c.bg + "55" }]}>
+                <Text
+                  style={[
+                    s.assistantActivityText,
+                    { color: item.startsWith("$ ") ? c.accent || "#6366f1" : c.textSecondary },
+                  ]}
+                  numberOfLines={2}
+                >
+                  {item}
+                </Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
+        {expanded ? (
+          <View style={[s.assistantRawWrap, { borderTopColor: c.border }]}>
+            <Markdown style={markdownStyles(c)}>{turn.content || " "}</Markdown>
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -227,11 +349,7 @@ function TaskCard({
     }
   };
 
-  const previewText = item.resultText
-    ? item.resultText.substring(0, 120) + (item.resultText.length > 120 ? "..." : "")
-    : item.status === "running"
-      ? "Running..."
-      : null;
+  const previewText = buildTaskPreviewText(item);
 
   return (
     <TouchableOpacity
@@ -268,7 +386,10 @@ function TaskCard({
       </View>
       <Text style={[s.taskTitle, { color: c.textPrimary }]} numberOfLines={2}>{item.title}</Text>
       {previewText ? (
-        <Text style={[s.taskOutputPreview, { color: c.accent }]} numberOfLines={1}>{previewText}</Text>
+        <Text style={[s.taskOutputPreview, { color: c.accent }]} numberOfLines={1}>
+          {previewText}
+          {previewText.length >= 120 ? "..." : ""}
+        </Text>
       ) : null}
       <Text style={[s.taskTimestamp, { color: c.textMuted }]}>{formatRelativeTime(item.updatedAt)}</Text>
     </TouchableOpacity>
@@ -2330,7 +2451,7 @@ const s = StyleSheet.create({
   statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
   statusText: { fontSize: 12, fontWeight: "600", textTransform: "uppercase" },
   taskTitle: { fontSize: 16, fontWeight: "600" },
-  taskOutputPreview: { fontSize: 12, marginTop: 6, fontFamily: "monospace" },
+  taskOutputPreview: { fontSize: 12, marginTop: 6, lineHeight: 16 },
   taskTimestamp: { fontSize: 11, marginTop: 8 },
 
   // FAB
@@ -2391,7 +2512,15 @@ const s = StyleSheet.create({
   userBubbleText: { color: "#fff", fontSize: 15, lineHeight: 21 },
 
   assistantRow: { flexDirection: "row", justifyContent: "flex-start", marginBottom: 12 },
-  assistantBubble: { maxWidth: "90%", borderRadius: 18, borderBottomLeftRadius: 4, paddingHorizontal: 14, paddingVertical: 10 },
+  assistantBubble: { maxWidth: "92%", borderRadius: 18, borderBottomLeftRadius: 4, paddingHorizontal: 14, paddingVertical: 12 },
+  assistantHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  assistantLabel: { fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.6 },
+  assistantToggle: { fontSize: 12, fontWeight: "600" },
+  assistantSummary: { fontSize: 14, lineHeight: 20 },
+  assistantActivityList: { gap: 8, marginTop: 10 },
+  assistantActivityRow: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 },
+  assistantActivityText: { fontSize: 12, lineHeight: 17, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" },
+  assistantRawWrap: { marginTop: 12, paddingTop: 12, borderTopWidth: 1 },
 
   // Typing indicator
   typingRow: { flexDirection: "row", justifyContent: "flex-start", marginBottom: 12 },
@@ -2434,19 +2563,19 @@ const s = StyleSheet.create({
 // Markdown styles
 function markdownStyles(c: ReturnType<typeof useColors>) {
   return {
-    body: { color: c.textPrimary, fontSize: 14, lineHeight: 22 },
-    heading1: { color: c.textPrimary, fontSize: 20, fontWeight: "700" as const, marginBottom: 6, marginTop: 12 },
-    heading2: { color: c.textPrimary, fontSize: 17, fontWeight: "700" as const, marginBottom: 4, marginTop: 10 },
-    heading3: { color: c.textPrimary, fontSize: 15, fontWeight: "600" as const, marginBottom: 4, marginTop: 8 },
-    paragraph: { color: c.textPrimary, marginBottom: 8 },
+    body: { color: c.textPrimary, fontSize: 13, lineHeight: 20 },
+    heading1: { color: c.textPrimary, fontSize: 18, fontWeight: "700" as const, marginBottom: 6, marginTop: 10 },
+    heading2: { color: c.textPrimary, fontSize: 16, fontWeight: "700" as const, marginBottom: 4, marginTop: 8 },
+    heading3: { color: c.textPrimary, fontSize: 14, fontWeight: "600" as const, marginBottom: 4, marginTop: 6 },
+    paragraph: { color: c.textPrimary, marginBottom: 6 },
     strong: { fontWeight: "700" as const, color: c.textPrimary },
     em: { fontStyle: "italic" as const },
     bullet_list: { marginBottom: 6 },
     ordered_list: { marginBottom: 6 },
     list_item: { flexDirection: "row" as const, marginBottom: 3 },
     code_inline: { backgroundColor: c.bgCardElevated || "#1e1e2e", color: "#e879f9", fontFamily: "monospace", fontSize: 13, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 },
-    fence: { backgroundColor: c.bgCardElevated || "#0a0a14", borderRadius: 8, padding: 12, marginVertical: 6 },
-    code_block: { color: "#a5f3fc", fontFamily: "monospace", fontSize: 12, lineHeight: 18 },
+    fence: { backgroundColor: c.bgCardElevated || "#0a0a14", borderRadius: 8, padding: 10, marginVertical: 6 },
+    code_block: { color: "#a5f3fc", fontFamily: "monospace", fontSize: 11, lineHeight: 17 },
     blockquote: { borderLeftWidth: 3, borderLeftColor: c.accent || "#6366f1", paddingLeft: 12, marginVertical: 6, opacity: 0.85 },
     link: { color: c.accent || "#6366f1" },
     hr: { backgroundColor: c.border || "#1e1e2e", height: 1, marginVertical: 10 },

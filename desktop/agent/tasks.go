@@ -1406,14 +1406,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	}
 
 	// System prompt: behave as a remote terminal agent, tailored to the task source.
-	switch task.Source {
-	case "mcp":
-		prompt += "\n\nYou are running tasks via MCP from an AI agent. Show what you are doing step by step. Use only terminal commands. Be concise. Format output in markdown."
-	case "cli":
-		prompt += "\n\nYou are running tasks from a remote CLI terminal. Show what you are doing step by step. Use only terminal commands. Be concise. Format output in markdown."
-	default:
-		prompt += "\n\nYou are running tasks from a remote mobile device. Show what you are doing step by step. Use only terminal commands. Be concise. Format output in markdown."
-	}
+	prompt += taskSourcePromptSuffix(task.Source)
 
 	// Inject Yaver dev server proxy context so the runner knows to use /dev/start.
 	// This is critical: the runner must NEVER output exp:// URLs or tell the user
@@ -2326,6 +2319,8 @@ func (tm *TaskManager) ResumeTask(id, input string, images []ImageAttachment) (*
 
 // startResume spawns the runner resuming the task's existing session (if supported).
 func (tm *TaskManager) startResume(task *Task, prompt string) error {
+	prompt += taskSourcePromptSuffix(task.Source)
+
 	// Append image file paths so the AI agent can read them
 	if len(task.ImagePaths) > 0 {
 		prompt += "\n\n[Attached images — use the Read tool to examine these files]\n"
@@ -2441,6 +2436,33 @@ func (tm *TaskManager) startResume(task *Task, prompt string) error {
 	}()
 
 	return nil
+}
+
+func taskSourcePromptSuffix(source string) string {
+	switch source {
+	case "mcp":
+		return "\n\nYou are running tasks via MCP from an AI agent. Show what you are doing step by step. Use only terminal commands. Be concise. Format output in markdown."
+	case "cli":
+		return "\n\nYou are running tasks from a remote CLI terminal. Show what you are doing step by step. Use only terminal commands. Be concise. Format output in markdown."
+	default:
+		return "\n\nYou are running tasks from a remote mobile device. Show what you are doing step by step. Use only terminal commands. Be concise." + mobileTaskResponseContext()
+	}
+}
+
+func mobileTaskResponseContext() string {
+	return `
+
+[Mobile response contract]
+The human is reading this on a phone. Optimize for fast scanning, not rich markdown.
+- Keep progress updates short and concrete. Prefer one short sentence over long narration.
+- Start the final answer with a plain-language outcome sentence.
+- After that, use at most three short bullets chosen from: changed, checked, blocked, next.
+- Do NOT use tables.
+- Do NOT dump long command outputs unless they are essential to understand a failure.
+- If a command succeeds, summarize the result in plain language instead of pasting the whole output.
+- Keep markdown light: short bullets and inline code are fine; avoid heavy heading stacks and long fenced blocks unless truly necessary.
+- Stay agent-agnostic in wording. Do not mention a specific coding assistant brand unless the user asked about it.
+- Never hide important failures, commands, or file changes. Be concise without dropping critical information.`
 }
 
 // ListTasks returns info about all tasks.
