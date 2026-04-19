@@ -160,6 +160,13 @@ export default defineSchema({
     })),
     publicKey: v.optional(v.string()),
     quicHost: v.string(),
+    // Every reachable IPv4 address the agent has — preferred outbound
+    // first, then any additional LAN/Tailscale/Ethernet/VPN address it
+    // is bound to. Mobile clients race them in parallel during connect
+    // so the session attaches via whichever path actually has a route
+    // from the phone (Tailscale on cellular, Wi-Fi on same LAN, etc.).
+    // Optional for backwards-compat with agents that haven't upgraded.
+    localIps: v.optional(v.array(v.string())),
     quicPort: v.number(),
     isOnline: v.boolean(),
     runnerDown: v.optional(v.boolean()),  // true when runner crashed and all retries exhausted
@@ -286,6 +293,14 @@ export default defineSchema({
     ttsEnabled: v.optional(v.boolean()),          // read responses aloud
     verbosity: v.optional(v.number()),            // 0-10: response detail level (0=summary, 10=full detail)
     keyStorage: v.optional(v.string()),            // "local" | "cloud" — where API keys are stored
+    // Preferred device for auto-connect when the user has more than one
+    // machine registered. When set, mobile / desktop / web will attach
+    // to this device on login if it's online, skipping the "pick one"
+    // prompt. Cleared (undefined) = no preference → manual pick only
+    // when N > 1. When N == 1 we always auto-connect regardless.
+    // Value is devices.deviceId (uuid), not an Id<"devices">, so the
+    // pref survives a device record being deleted and re-created.
+    primaryDeviceId: v.optional(v.string()),
   }).index("by_userId", ["userId"]),
 
   aiRunners: defineTable({

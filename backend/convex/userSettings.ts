@@ -39,6 +39,8 @@ export const set = mutation({
     ttsEnabled: v.optional(v.boolean()),
     verbosity: v.optional(v.number()),
     keyStorage: v.optional(v.string()),
+    // null sentinel = clear the preference; undefined = leave untouched.
+    primaryDeviceId: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
@@ -59,6 +61,9 @@ export const set = mutation({
     if (args.ttsEnabled !== undefined) patch.ttsEnabled = args.ttsEnabled;
     if (args.verbosity !== undefined) patch.verbosity = args.verbosity;
     if (args.keyStorage !== undefined) patch.keyStorage = args.keyStorage;
+    if (args.primaryDeviceId !== undefined) {
+      patch.primaryDeviceId = args.primaryDeviceId ?? undefined;
+    }
     if (existing) {
       await ctx.db.patch(existing._id, patch);
     } else {
@@ -85,6 +90,7 @@ export const setByToken = mutation({
     ttsEnabled: v.optional(v.boolean()),
     verbosity: v.optional(v.number()),
     keyStorage: v.optional(v.string()),
+    primaryDeviceId: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -108,6 +114,9 @@ export const setByToken = mutation({
     if (args.ttsEnabled !== undefined) patch.ttsEnabled = args.ttsEnabled;
     if (args.verbosity !== undefined) patch.verbosity = args.verbosity;
     if (args.keyStorage !== undefined) patch.keyStorage = args.keyStorage;
+    if (args.primaryDeviceId !== undefined) {
+      patch.primaryDeviceId = args.primaryDeviceId ?? undefined;
+    }
     if (existing) {
       await ctx.db.patch(existing._id, patch);
     } else {

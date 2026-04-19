@@ -1144,6 +1144,12 @@ http.route({
       deviceId: body.deviceId,
       runners: body.runners,
       quicHost: body.quicHost || undefined,
+      // Multi-IP rollout: the agent advertises every reachable IPv4 it has
+      // (Wi-Fi LAN, Tailscale 100.x, Ethernet, VPNs) so the mobile connect
+      // path can race them in parallel. Older agents don't send the field
+      // at all — then undefined is correct and the mutation leaves the
+      // stored list untouched.
+      localIps: Array.isArray(body.localIps) ? body.localIps : undefined,
       hardwareId: body.hardwareId || undefined,
       deviceClass: body.deviceClass || undefined,
       edgeProfile: body.edgeProfile || undefined,
@@ -1568,6 +1574,8 @@ http.route({
       ttsEnabled: body.ttsEnabled,
       verbosity: body.verbosity,
       keyStorage: body.keyStorage,
+      // Client sends null to clear the preference, undefined to leave untouched.
+      primaryDeviceId: body.primaryDeviceId,
     });
     return jsonResponse({ ok: true });
   }),

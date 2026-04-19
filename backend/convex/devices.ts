@@ -105,6 +105,29 @@ export const registerDevice = mutation({
       return existing._id;
     }
 
+    // If this is the user's first device and they have no primary set yet,
+    // auto-mark it as primary so single-device users skip the "pick one"
+    // prompt forever. Existing multi-device users are untouched — they
+    // have to explicitly choose a primary.
+    const ownDeviceCount = (await ctx.db
+      .query("devices")
+      .withIndex("by_userId", (q) => q.eq("userId", session.user._id))
+      .collect()).length;
+    if (ownDeviceCount === 0) {
+      const settings = await ctx.db
+        .query("userSettings")
+        .withIndex("by_userId", (q) => q.eq("userId", session.user._id))
+        .first();
+      if (!settings) {
+        await ctx.db.insert("userSettings", {
+          userId: session.user._id,
+          primaryDeviceId: args.deviceId,
+        });
+      } else if (!settings.primaryDeviceId) {
+        await ctx.db.patch(settings._id, { primaryDeviceId: args.deviceId });
+      }
+    }
+
     return await ctx.db.insert("devices", {
       userId: session.user._id,
       deviceId: args.deviceId,
@@ -165,6 +188,7 @@ export const heartbeat = mutation({
       title: v.string(),
     }))),
     quicHost: v.optional(v.string()),
+    localIps: v.optional(v.array(v.string())),
     hardwareId: v.optional(v.string()),
     deviceClass: v.optional(
       v.union(
@@ -217,6 +241,12 @@ export const heartbeat = mutation({
     if (args.quicHost && args.quicHost !== device.quicHost) {
       patch.quicHost = args.quicHost;
     }
+    // Replace the full IP set on each heartbeat — interfaces come and
+    // go (Tailscale up/down, Wi-Fi switches), so a delta-merge would
+    // strand stale addresses on the record forever.
+    if (args.localIps !== undefined) {
+      patch.localIps = args.localIps;
+    }
     // Capture hardwareId on heartbeats too — older agents that
     // were registered before the field existed will pick it up
     // on their next heartbeat.
@@ -267,6 +297,7 @@ export const listMyDevices = query({
       platform: string;
       publicKey?: string;
       quicHost: string;
+      localIps: string[];
       quicPort: number;
       isOnline: boolean;
       needsAuth: boolean;
@@ -289,6 +320,7 @@ export const listMyDevices = query({
       platform: d.platform,
       publicKey: d.publicKey,
       quicHost: d.quicHost,
+      localIps: d.localIps ?? [],
       quicPort: d.quicPort,
       isOnline: deriveIsOnline(d),
       needsAuth: d.needsAuth ?? false,
@@ -336,6 +368,7 @@ export const listMyDevices = query({
           platform: d.platform,
           publicKey: d.publicKey,
           quicHost: d.quicHost,
+          localIps: d.localIps ?? [],
           quicPort: d.quicPort,
           isOnline: deriveIsOnline(d),
           needsAuth: d.needsAuth ?? false,
@@ -381,6 +414,7 @@ export const listMyDevices = query({
           platform: d.platform,
           publicKey: d.publicKey,
           quicHost: d.quicHost,
+          localIps: d.localIps ?? [],
           quicPort: d.quicPort,
           isOnline: deriveIsOnline(d),
           needsAuth: d.needsAuth ?? false,
