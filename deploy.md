@@ -26,7 +26,7 @@ command here fails, read the error carefully and consult the
 |--------|---------|---------|-----------------|----------------|
 | iOS (TestFlight) | manual or `mobile/v*` tag | App Store Connect | `scripts/deploy-testflight.sh` | `.github/workflows/release-mobile.yml` |
 | Android (Play Store) | manual or `mobile/v*` tag | Play Console internal track | `scripts/deploy-playstore.sh` + `scripts/upload-playstore.py` | `.github/workflows/release-mobile.yml` |
-| Web (yaver.io) | `web/v*` tag | Cloudflare Workers | `scripts/deploy-vercel.sh` | `.github/workflows/release-web.yml` |
+| Web (yaver.io) | `web/v*` tag | Cloudflare Workers | `scripts/deploy-web.sh` | `.github/workflows/release-web.yml` |
 | Convex backend | manual | Convex prod | `cd backend && npx convex deploy --yes` | n/a |
 | Relay server | `relay/v*` tag | Hetzner / self-host | `cd relay/deploy && ./up.sh <ip> --docker` | `.github/workflows/release-relay.yml` |
 | CLI (`yaver`) | `cli/v*` tag | npm / Homebrew / apt / Scoop / AUR / Docker / Winget / Choco | see §CLI below | `.github/workflows/release-cli.yml` |
@@ -231,7 +231,7 @@ line ~91: wrap `from components.release` in
 Manual deploy (useful for testing from a dev branch):
 
 ```bash
-./scripts/deploy-vercel.sh
+./scripts/deploy-web.sh
 ```
 
 The script name is kept for backward compat; it builds with
@@ -611,7 +611,7 @@ more" — that counts against the next day's quota too. Use
 
 ### `wrangler deploy` fails on size
 
-`web/` exceeded 10 MB. `scripts/deploy-vercel.sh` will print the
+`web/` exceeded 10 MB. `scripts/deploy-web.sh` will print the
 over-cap size. Before pushing a big asset, compress it:
 
 ```bash
@@ -640,7 +640,7 @@ build expects a new mutation, deploy Convex **first**:
 ```bash
 cd backend && npx convex deploy --yes
 # then
-./scripts/deploy-vercel.sh
+./scripts/deploy-web.sh
 ```
 
 ---

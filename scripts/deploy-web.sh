@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Deploy yaver.io web to Cloudflare Workers (migrated from Vercel).
+# Deploy yaver.io web to Cloudflare Workers.
 # Builds with @opennextjs/cloudflare and deploys via wrangler.
+# Enforces a 10 MB cap on the web/ source tree (excluding
+# node_modules, .next, .open-next).
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEPLOY_DIR="$REPO_ROOT/web"

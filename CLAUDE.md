@@ -21,7 +21,7 @@ If you find yourself about to put a secret in a tracked file, stop: add the valu
 
 ## Repository & Deployment
 - **Source of truth**: GitHub (`github.com/kivanccakmak/yaver.io`) — open-source, all development happens here. Push directly to `main` (or via PR). The local `origin` remote may still point at the legacy GitLab mirror — use the `github` remote (`git remote add github https://github.com/kivanccakmak/yaver.io.git`) or just `git push github main`.
-- **Cloudflare Workers**: web deployed via `wrangler`. Manual deploy: `./scripts/deploy-vercel.sh` (name kept for backward compat, deploys to Cloudflare)
+- **Cloudflare Workers**: web deployed via `wrangler`. Manual deploy: `./scripts/deploy-web.sh` (builds with `@opennextjs/cloudflare`, pushes with `wrangler deploy`, size-guards `web/` at 10 MB).
 - **Landing page links**: point to `https://github.com/kivanccakmak/yaver.io`
 
 ### Pushing to GitHub
@@ -1769,7 +1769,7 @@ npx convex deploy --yes  # Push to prod
 ### Web (Cloudflare Workers)
 Deploy via `@opennextjs/cloudflare` + `wrangler`:
 ```bash
-./scripts/deploy-vercel.sh     # Size-guarded deploy (builds + wrangler deploy)
+./scripts/deploy-web.sh        # Size-guarded deploy (builds + wrangler deploy)
 # Or directly:
 cd web && npm run deploy        # runs: opennextjs-cloudflare && wrangler deploy
 ```
