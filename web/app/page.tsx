@@ -38,7 +38,7 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   // ── Push to Device (Section 6) ──────────────────────────────────────
   {
     q: "Do I really push apps to my phone without a developer portal or upload limits?",
-    a: "Yes. The Yaver mobile app is a self-hosted native container with 40+ pre-installed React Native modules. yaver-cli compiles your project's JavaScript to Hermes bytecode and pushes it directly to the container over WiFi, 4G, or your relay. No third-party developer-portal gate, no daily upload quotas, no cloud build minutes. Your binary stays on your machine.",
+    a: "Yes for React Native, and that Hermes path stays exactly the same. The Yaver mobile app is a self-hosted native container with 40+ pre-installed React Native modules. yaver-cli compiles your project's JavaScript to Hermes bytecode and pushes it directly to the container over WiFi, 4G, or your relay. No third-party developer-portal gate, no daily upload quotas, no cloud build minutes. Your binary stays on your machine. Flutter and fully native apps (Swift/Kotlin) are second-class compared to React Native, but on the same LAN Yaver can still trigger development builds and deliver them straight to your phone while you work from your laptop, even if the phone is elsewhere on your local network.",
   },
   {
     q: "Does push-to-device support the React Native New Architecture (TurboModules, Fabric)?",

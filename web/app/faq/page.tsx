@@ -129,6 +129,10 @@ const faqs = [
         a: "Yes. `yaver build flutter apk`, `yaver build gradle apk`, `yaver build xcode ipa`, `yaver build rn android` — all run on your dev machine. The artifact (APK, IPA, AAB) transfers P2P to your phone. On Android, tap to install directly. On iOS, use TestFlight or OTA install via relay. Flutter, React Native, Expo, native Android/iOS, or any custom build command.",
       },
       {
+        q: "Does that same no-portal push flow apply to Flutter and fully native apps too?",
+        a: "Not the same way. React Native is the special path: Yaver compiles your JS to Hermes bytecode and pushes it into the Yaver native container, with no developer-portal gate in that loop. Flutter and fully native apps (Swift/Kotlin) still need real builds, so they are second-class compared to React Native. But when your laptop and phone are on the same LAN, Yaver can still trigger those development builds on your machine and deliver or install them on the phone without you being physically at your desk.",
+      },
+      {
         q: "How does hot reload work remotely?",
         a: "`yaver debug flutter` starts Flutter's debug server on your dev machine and creates a P2P tunnel. Your phone connects to localhost:9100 through the tunnel — Flutter's hot reload works exactly as if you were sitting at your desk. Same for React Native (Metro on :8081). Latency is ~50ms through relay, ~5ms on LAN.",
       },

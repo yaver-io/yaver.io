@@ -62,6 +62,10 @@ export default function DashboardPage() {
   const [connectError, setConnectError] = useState<string | null>(null);
   const [relayReady, setRelayReady] = useState(false);
   const [previewTargetId, setPreviewTargetId] = useState<string | null>(null);
+  // Primary-device preference — the device auto-connect prefers when the
+  // user has more than one online. Also mirrored onto mobile and CLI via
+  // the /settings endpoint so every surface picks the same default.
+  const [primaryDeviceId, setPrimaryDeviceId] = useState<string | null>(null);
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const outputRef = useRef<HTMLDivElement>(null);
@@ -81,7 +85,7 @@ export default function DashboardPage() {
         let relays: any[] = [];
         if (r.ok) { const d = await r.json(); relays = d.relayServers || []; }
 
-        // Fetch user settings to get relay password override
+        // Fetch user settings to get relay password override + primary device
         if (token) {
           try {
             const sr = await fetch(`${CONVEX_URL}/settings`, { headers: { Authorization: `Bearer ${token}` } });
@@ -89,6 +93,7 @@ export default function DashboardPage() {
               const sd = await sr.json();
               const pw = sd.settings?.relayPassword || sd.relayPassword;
               if (pw) { relays = relays.map((r: any) => ({ ...r, password: pw })); }
+              if (!cancelled) setPrimaryDeviceId(sd.settings?.primaryDeviceId ?? null);
             }
           } catch {}
         }
@@ -411,25 +416,55 @@ export default function DashboardPage() {
                     <p className="mb-6 text-sm text-surface-500">Connect to a device running <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-300">yaver serve</code></p>
                     <div className="space-y-2">
                       {devices.filter(d => d.online).map(d => (
-                        <button
-                          key={d.id}
-                          onClick={() => connectToDevice(d)}
-                          className="mx-auto flex items-center gap-3 rounded-lg border border-surface-700 bg-surface-900 px-5 py-3 hover:border-emerald-500/30 transition-colors"
-                          title={d.isGuest && d.hostName ? `shared from ${d.hostName}${d.priorityMode ? ` · ${d.priorityMode}` : ""}` : undefined}
-                        >
-                          <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                          <span className="text-sm font-medium text-surface-200">{d.name}</span>
-                          {d.isGuest ? (
-                            <span className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-[2px] text-[10px] font-semibold uppercase tracking-wider text-sky-300">
-                              shared{d.hostName ? ` · ${d.hostName}` : ""}
-                            </span>
+                        <div key={d.id} className="mx-auto flex items-center gap-2">
+                          <button
+                            onClick={() => connectToDevice(d)}
+                            className="flex items-center gap-3 rounded-lg border border-surface-700 bg-surface-900 px-5 py-3 hover:border-emerald-500/30 transition-colors"
+                            title={d.isGuest && d.hostName ? `shared from ${d.hostName}${d.priorityMode ? ` · ${d.priorityMode}` : ""}` : undefined}
+                          >
+                            <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                            <span className="text-sm font-medium text-surface-200">{d.name}</span>
+                            {primaryDeviceId === d.id ? (
+                              <span className="rounded border border-indigo-500/40 bg-indigo-500/10 px-2 py-[2px] text-[10px] font-semibold uppercase tracking-wider text-indigo-300">
+                                primary ★
+                              </span>
+                            ) : null}
+                            {d.isGuest ? (
+                              <span className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-[2px] text-[10px] font-semibold uppercase tracking-wider text-sky-300">
+                                shared{d.hostName ? ` · ${d.hostName}` : ""}
+                              </span>
+                            ) : null}
+                            {d.isGuest && d.priorityMode === "spare-capacity" ? (
+                              <span className="rounded border border-violet-500/40 bg-violet-500/10 px-2 py-[2px] text-[10px] font-semibold uppercase tracking-wider text-violet-300">
+                                spare
+                              </span>
+                            ) : null}
+                          </button>
+                          {!d.isGuest && token ? (
+                            <button
+                              onClick={async () => {
+                                const nextId = primaryDeviceId === d.id ? null : d.id;
+                                const prev = primaryDeviceId;
+                                setPrimaryDeviceId(nextId);
+                                try {
+                                  const res = await fetch(`${CONVEX_URL}/settings`, {
+                                    method: "POST",
+                                    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                                    body: JSON.stringify({ primaryDeviceId: nextId }),
+                                  });
+                                  if (!res.ok) throw new Error(`status ${res.status}`);
+                                } catch (e: any) {
+                                  setPrimaryDeviceId(prev);
+                                  alert(`Could not update primary: ${e?.message ?? e}`);
+                                }
+                              }}
+                              className="text-xs text-indigo-400 hover:text-indigo-300"
+                              title={primaryDeviceId === d.id ? "Unset primary" : "Mark as primary (auto-connect when multiple devices)"}
+                            >
+                              {primaryDeviceId === d.id ? "unset ★" : "make ★"}
+                            </button>
                           ) : null}
-                          {d.isGuest && d.priorityMode === "spare-capacity" ? (
-                            <span className="rounded border border-violet-500/40 bg-violet-500/10 px-2 py-[2px] text-[10px] font-semibold uppercase tracking-wider text-violet-300">
-                              spare
-                            </span>
-                          ) : null}
-                        </button>
+                        </div>
                       ))}
                     </div>
                     {devices.filter(d => d.online).length === 0 && <p className="text-sm text-surface-600 mt-4">No devices online</p>}

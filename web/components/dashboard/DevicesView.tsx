@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
 import type { Device } from "@/lib/use-devices";
+import { CONVEX_URL } from "@/lib/constants";
 
 function DeviceIcon({ platform }: { platform: string }) {
   const isMobile = platform === "iOS" || platform === "Android";
@@ -43,9 +45,64 @@ interface DevicesViewProps {
   onRefresh: () => Promise<void>;
   signedInEmail?: string;
   signedInProvider?: string;
+  token?: string | null;
 }
 
-export default function DevicesView({ devices, onRefresh, signedInEmail, signedInProvider }: DevicesViewProps) {
+/**
+ * Loads the user's current primaryDeviceId from Convex and exposes a setter
+ * that POSTs back to /settings. Shared between the dashboard's device cards
+ * so only one settings round-trip is made on mount. Null state ("no primary")
+ * is the default for fresh accounts and for anyone who hasn't opted in.
+ */
+function usePrimaryDeviceId(token: string | null | undefined): {
+  primaryDeviceId: string | null;
+  setPrimaryDevice: (id: string | null) => Promise<void>;
+} {
+  const [primaryDeviceId, setPrimaryDeviceId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${CONVEX_URL}/settings`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) {
+          setPrimaryDeviceId(data?.settings?.primaryDeviceId ?? null);
+        }
+      } catch {
+        // best-effort — UI falls back to "no primary"
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token]);
+
+  const setPrimaryDevice = useCallback(async (id: string | null) => {
+    if (!token) return;
+    // Optimistic update — roll back on failure.
+    const previous = primaryDeviceId;
+    setPrimaryDeviceId(id);
+    try {
+      const res = await fetch(`${CONVEX_URL}/settings`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ primaryDeviceId: id }),
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+    } catch (e) {
+      setPrimaryDeviceId(previous);
+      throw e;
+    }
+  }, [token, primaryDeviceId]);
+
+  return { primaryDeviceId, setPrimaryDevice };
+}
+
+export default function DevicesView({ devices, onRefresh, signedInEmail, signedInProvider, token }: DevicesViewProps) {
+  const { primaryDeviceId, setPrimaryDevice } = usePrimaryDeviceId(token);
   return (
     <div className="mb-6">
       <div className="mb-3 flex items-center justify-between">
@@ -109,6 +166,11 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                       {device.sessionBinding === "dedicated" ? "Dedicated Session" : "Legacy Shared Session"}
                     </span>
                   ) : null}
+                  {primaryDeviceId === device.id ? (
+                    <span className="rounded border border-indigo-500/40 bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-indigo-300">
+                      Primary ★
+                    </span>
+                  ) : null}
                   <span
                     className={`inline-flex h-2 w-2 rounded-full ${
                       device.online ? "bg-green-400" : "bg-surface-600"
@@ -129,6 +191,20 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                 <p className="text-xs text-surface-600 font-mono">
                   {device.id.substring(0, 8)}...
                 </p>
+                {!device.isGuest && token ? (
+                  <button
+                    onClick={async () => {
+                      try {
+                        await setPrimaryDevice(primaryDeviceId === device.id ? null : device.id);
+                      } catch (e: any) {
+                        alert(`Failed to update primary: ${e?.message ?? e}`);
+                      }
+                    }}
+                    className="mt-1 text-xs text-indigo-400 hover:text-indigo-300"
+                  >
+                    {primaryDeviceId === device.id ? "Unset primary" : "Set as primary"}
+                  </button>
+                ) : null}
               </div>
             </div>
           ))}
