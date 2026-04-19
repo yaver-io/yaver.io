@@ -22,7 +22,25 @@ export interface MobileClientOptions {
   agentBaseUrl?: string;
 }
 
-type Device = { id: string; name: string; host?: string; port?: number; online?: boolean; deviceClass?: string; os?: string };
+type Device = {
+  id: string;
+  name: string;
+  host?: string;
+  port?: number;
+  online?: boolean;
+  deviceClass?: string;
+  os?: string;
+  /** Every reachable IPv4 the agent reported in heartbeat — Wi-Fi LAN,
+   *  Tailscale 100.x, Ethernet. Mobile races them in parallel during
+   *  connect. Present only on agents >= the multi-IP rollout; older
+   *  agents have it undefined. */
+  lanIps?: string[];
+  /** Populated for shared/guest devices only. */
+  isGuest?: boolean;
+  hostName?: string;
+  hostEmail?: string;
+  lastHeartbeat?: number;
+};
 
 export class MobileClient {
   readonly opts: Required<Omit<MobileClientOptions, "agentBaseUrl">> & { agentBaseUrl?: string };
@@ -64,8 +82,26 @@ export class MobileClient {
   async listDevices(): Promise<Device[]> {
     const res = await fetch(this.opts.convexUrl + "/devices/list", { headers: this.authHeaders() });
     if (!res.ok) throw new Error(`listDevices: HTTP ${res.status}`);
-    const body = await res.json() as { devices: Device[] };
-    return body.devices ?? [];
+    const body = await res.json() as { devices: any[] };
+    // Normalise the Convex shape (quicHost / localIps / lastHeartbeat) into
+    // the contract the real mobile app consumes (host / lanIps / lastSeen).
+    // Callers use this to validate the multi-IP heartbeat is reaching
+    // Convex end-to-end — if agents are running the new binary and the
+    // schema is deployed, `lanIps` will be a non-empty array.
+    return (body.devices ?? []).map((d) => ({
+      id: d.deviceId || d.id,
+      name: d.name,
+      host: d.quicHost || d.host,
+      port: d.quicPort || d.port,
+      online: d.isOnline ?? d.online ?? false,
+      deviceClass: d.deviceClass,
+      os: d.platform || d.os,
+      lanIps: Array.isArray(d.localIps) ? d.localIps : undefined,
+      isGuest: d.isGuest ?? false,
+      hostName: d.hostName,
+      hostEmail: d.hostEmail,
+      lastHeartbeat: d.lastHeartbeat,
+    }));
   }
 
   /** Bind the client to a specific device's agent HTTP endpoint.
@@ -126,6 +162,118 @@ export class MobileClient {
 
   async cancelSudo(tool: string, opts?: { target?: string }): Promise<void> {
     await this.raw.post(this.peerPath(opts?.target, "/install/sudo"), { tool, cancel: true });
+  }
+
+  // ── Primary device (auto-connect target) ──────────────────────
+  /** Read the user's preferred device for auto-connect. null means "no
+   *  preference set" — single-device users auto-connect regardless,
+   *  multi-device users without a primary are left to pick manually. */
+  async getPrimaryDevice(): Promise<string | null> {
+    const res = await fetch(this.opts.convexUrl + "/settings", { headers: this.authHeaders() });
+    if (!res.ok) throw new Error(`getPrimaryDevice: HTTP ${res.status}`);
+    const body = await res.json() as { settings?: { primaryDeviceId?: string | null } };
+    return body.settings?.primaryDeviceId ?? null;
+  }
+
+  /** Persist the preferred device. Pass null to clear the preference.
+   *  Any field omitted from the body leaves other settings untouched —
+   *  `primaryDeviceId: null` is the explicit "clear" sentinel Convex
+   *  recognises. */
+  async setPrimaryDevice(deviceId: string | null): Promise<void> {
+    const res = await fetch(this.opts.convexUrl + "/settings", {
+      method: "POST",
+      headers: { ...this.authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ primaryDeviceId: deviceId }),
+    });
+    if (!res.ok) throw new Error(`setPrimaryDevice: HTTP ${res.status}`);
+  }
+
+  // ── Parallel connect race (mirrors quic.ts::raceDirectCandidates) ─
+  /** Probe every reachable IP for a device in parallel — beacon (if passed)
+   *  + every lanIps entry + the Convex-stored quicHost — and resolve with
+   *  the first `/health` 200 within the per-probe budget. This mirrors
+   *  what the real mobile quic.ts does during `connect()` on the phone so
+   *  tests can validate that a device is reachable via Tailscale, LAN,
+   *  etc. without running the RN app. Returns `null` if no path answers. */
+  async raceDevicePaths(
+    device: Pick<Device, "id" | "host" | "port" | "lanIps">,
+    opts: { beaconIp?: string; beaconPort?: number; perProbeMs?: number } = {},
+  ): Promise<{ ip: string; port: number; path: "lan-beacon" | "lan-heartbeat" | "lan-tailscale" | "lan-convex-ip"; rttMs: number } | null> {
+    type Candidate = { ip: string; port: number; path: "lan-beacon" | "lan-heartbeat" | "lan-tailscale" | "lan-convex-ip" };
+    const seen = new Set<string>();
+    const out: Candidate[] = [];
+    const port = device.port ?? 18080;
+    const push = (ip: string, p: number, pathLabel: Candidate["path"]) => {
+      if (!ip || !p) return;
+      const key = `${ip}:${p}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ ip, port: p, path: pathLabel });
+    };
+    if (opts.beaconIp) push(opts.beaconIp, opts.beaconPort ?? port, "lan-beacon");
+    for (const ip of device.lanIps ?? []) {
+      const isTailscale = /^100\./.test(ip) && (() => {
+        const second = parseInt(ip.split(".")[1] ?? "0", 10);
+        return second >= 64 && second <= 127;
+      })();
+      push(ip, port, isTailscale ? "lan-tailscale" : "lan-heartbeat");
+    }
+    if (device.host) push(device.host, port, "lan-convex-ip");
+    if (out.length === 0) return null;
+    const budget = opts.perProbeMs ?? 2500;
+    const probes = out.map(async (c) => {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), budget);
+      const start = Date.now();
+      try {
+        const res = await fetch(`http://${c.ip}:${c.port}/health`, {
+          headers: this.authHeaders(),
+          signal: ctrl.signal,
+        });
+        clearTimeout(t);
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        return { ip: c.ip, port: c.port, path: c.path, rttMs: Date.now() - start };
+      } catch (e) {
+        clearTimeout(t);
+        throw e;
+      }
+    });
+    try {
+      return await Promise.any(probes);
+    } catch {
+      return null;
+    }
+  }
+
+  // ── Auto-connect decision (mirrors DeviceContext.tsx rule) ────
+  /** Apply the same rule the real mobile app uses:
+   *   1. Exactly one online device                 -> auto-connect
+   *   2. Multiple online, primaryDeviceId matches  -> auto-connect primary
+   *   3. Otherwise                                 -> null (user must pick)
+   *  Guest devices are never treated as primary — the host can revoke. */
+  pickAutoConnectTarget(devices: Device[], primaryDeviceId: string | null): Device | null {
+    const online = devices.filter((d) => d.online);
+    if (online.length === 0) return null;
+    if (online.length === 1) return online[0];
+    if (primaryDeviceId) {
+      const primary = online.find((d) => d.id === primaryDeviceId && !d.isGuest);
+      if (primary) return primary;
+    }
+    return null;
+  }
+
+  // ── Real-time relay presence ──────────────────────────────────
+  /** Ask a relay server which of the given deviceIds currently have an
+   *  active QUIC tunnel. Authoritative — no heartbeat lag. Unknown ids
+   *  report `{online: false}` indistinguishably from "exists but
+   *  offline", so the endpoint is safe without auth. */
+  async relayPresence(relayHttpUrl: string, deviceIds: string[]): Promise<Record<string, { deviceId: string; online: boolean; since?: string; uptimeSec?: number }>> {
+    if (deviceIds.length === 0) return {};
+    const url = `${relayHttpUrl.replace(/\/$/, "")}/presence?ids=${encodeURIComponent(deviceIds.join(","))}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`relayPresence: HTTP ${res.status}`);
+    const body = await res.json() as { ok: boolean; devices?: Record<string, any> };
+    return body.devices ?? {};
   }
 
   // ── Wizard ─────────────────────────────────────────────────────

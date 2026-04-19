@@ -11,7 +11,7 @@ import { MobileClient } from "../mobile-client.js";
 
 async function main() {
   const argv = minimist(process.argv.slice(2), {
-    string: ["token", "email", "password", "device", "target", "platform", "data-dir", "tool", "preset", "parent-dir", "convex-url"],
+    string: ["token", "email", "password", "device", "target", "platform", "data-dir", "tool", "preset", "parent-dir", "convex-url", "relay"],
     alias: { t: "token", d: "device" },
   });
 
@@ -38,6 +38,50 @@ async function main() {
     }
     case "devices": {
       out(await mobile.listDevices());
+      break;
+    }
+    case "primary-get":
+    case "primary": {
+      out({ primaryDeviceId: await mobile.getPrimaryDevice() });
+      break;
+    }
+    case "primary-set": {
+      const id = argv.device || rest[0];
+      if (!id) die("primary-set needs --device <id> or positional <id>");
+      await mobile.setPrimaryDevice(String(id));
+      out({ ok: true, primaryDeviceId: id });
+      break;
+    }
+    case "primary-clear": {
+      await mobile.setPrimaryDevice(null);
+      out({ ok: true, primaryDeviceId: null });
+      break;
+    }
+    case "relay-presence": {
+      const relay = (argv as any).relay ?? process.env.YMH_RELAY_URL;
+      if (!relay) die("relay-presence needs --relay <httpUrl> or $YMH_RELAY_URL");
+      const ids = rest.length > 0 ? rest.map(String) : (await mobile.listDevices()).map((d) => d.id);
+      out(await mobile.relayPresence(String(relay), ids));
+      break;
+    }
+    case "race-paths": {
+      // Hit every candidate IP in parallel and return the winner — mirrors
+      // the parallel race the real mobile app runs inside connect().
+      const id = argv.device || rest[0];
+      if (!id) die("race-paths needs --device <id>");
+      const devices = await mobile.listDevices();
+      const d = devices.find((x) => x.id === id);
+      if (!d) die(`device not found: ${id}`);
+      out(await mobile.raceDevicePaths(d!));
+      break;
+    }
+    case "auto-connect-target": {
+      // Show the device the real app would auto-connect to given current
+      // state. Useful for verifying primary-device + online merges.
+      const devices = await mobile.listDevices();
+      const primary = await mobile.getPrimaryDevice();
+      const target = mobile.pickAutoConnectTarget(devices, primary);
+      out({ primaryDeviceId: primary, target: target ? { id: target.id, name: target.name } : null });
       break;
     }
     case "connect": {
@@ -132,8 +176,15 @@ function printHelp() {
 
 Usage:
   yaver-mobile-headless sign-in --token=...         # or --email + --password
-  yaver-mobile-headless devices                     # list paired devices
+  yaver-mobile-headless devices                     # list paired devices (now includes lanIps[])
   yaver-mobile-headless connect <deviceId>
+  yaver-mobile-headless primary                     # read primaryDeviceId
+  yaver-mobile-headless primary-set <deviceId>      # mark auto-connect target
+  yaver-mobile-headless primary-clear               # unset primary preference
+  yaver-mobile-headless relay-presence --relay=<httpUrl> [id...]
+                                                     # live tunnel-up state per deviceId
+  yaver-mobile-headless race-paths --device=<id>    # race beacon + lanIps + host in parallel
+  yaver-mobile-headless auto-connect-target          # which device would the app auto-pick?
   yaver-mobile-headless infra [--target=<id>]
   yaver-mobile-headless install-list [--target=<id>]
   yaver-mobile-headless install <tool> [--target=<id>]   # streams JSONL

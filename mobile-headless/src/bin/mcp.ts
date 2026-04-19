@@ -41,6 +41,11 @@ const tools = [
   { name: "mobile_wizard_answer",          description: "Answer a wizard question, returns the next one.", inputSchema: schema({ sessionId: str(), questionId: str(), answer: str() }, ["sessionId", "questionId", "answer"]) },
   { name: "mobile_wizard_generate",        description: "Finish the wizard and generate the project on disk.", inputSchema: schema({ sessionId: str(), parentDir: str() }, ["sessionId"]) },
   { name: "mobile_tap_guests",             description: "List people the host has invited or granted access.", inputSchema: schema({}) },
+  { name: "mobile_tap_primary_get",        description: "Read the user's primaryDeviceId — null when no preference is set.", inputSchema: schema({}) },
+  { name: "mobile_tap_primary_set",        description: "Mark a device as the auto-connect target. Pass clear:true to unset.", inputSchema: schema({ deviceId: str(), clear: { type: "boolean" } as any }) },
+  { name: "mobile_api_relay_presence",     description: "Bulk-probe relay tunnel-up state for a set of deviceIds (authoritative, no heartbeat lag).", inputSchema: schema({ relayHttpUrl: str(), deviceIds: { type: "array", items: { type: "string" } } as any }, ["relayHttpUrl", "deviceIds"]) },
+  { name: "mobile_api_race_paths",         description: "Race beacon + lanIps + host in parallel against /health. Returns the winning path or null.", inputSchema: schema({ deviceId: str(), beaconIp: str(), beaconPort: { type: "number" } as any, perProbeMs: { type: "number" } as any }, ["deviceId"]) },
+  { name: "mobile_auto_connect_target",    description: "Return the device the real app would auto-connect to given current online state + primary preference.", inputSchema: schema({}) },
 
   // raw API ("one endpoint per tool")
   { name: "mobile_api_get",                description: "Raw GET against any agent endpoint. Thin passthrough.", inputSchema: schema({ path: str() }, ["path"]) },
@@ -96,6 +101,33 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "mobile_wizard_answer":     return reply(await mobile.wizard.answer(args.sessionId, args.questionId, args.answer));
       case "mobile_wizard_generate":   return reply(await mobile.wizard.generate(args.sessionId, args.parentDir));
       case "mobile_tap_guests":        return reply(await mobile.guests.list());
+      case "mobile_tap_primary_get":   return reply({ primaryDeviceId: await mobile.getPrimaryDevice() });
+      case "mobile_tap_primary_set": {
+        if (args.clear) { await mobile.setPrimaryDevice(null); return reply({ ok: true, primaryDeviceId: null }); }
+        if (!args.deviceId) return reply({ ok: false, error: "deviceId or clear=true required" });
+        await mobile.setPrimaryDevice(String(args.deviceId));
+        return reply({ ok: true, primaryDeviceId: args.deviceId });
+      }
+      case "mobile_api_relay_presence": {
+        const ids = Array.isArray(args.deviceIds) ? args.deviceIds.map(String) : [];
+        return reply(await mobile.relayPresence(String(args.relayHttpUrl), ids));
+      }
+      case "mobile_api_race_paths": {
+        const devices = await mobile.listDevices();
+        const d = devices.find((x) => x.id === args.deviceId);
+        if (!d) return reply({ ok: false, error: `device not found: ${args.deviceId}` });
+        return reply(await mobile.raceDevicePaths(d, {
+          beaconIp: args.beaconIp,
+          beaconPort: typeof args.beaconPort === "number" ? args.beaconPort : undefined,
+          perProbeMs: typeof args.perProbeMs === "number" ? args.perProbeMs : undefined,
+        }));
+      }
+      case "mobile_auto_connect_target": {
+        const devices = await mobile.listDevices();
+        const primary = await mobile.getPrimaryDevice();
+        const target = mobile.pickAutoConnectTarget(devices, primary);
+        return reply({ primaryDeviceId: primary, target: target ? { id: target.id, name: target.name } : null });
+      }
 
       // ── api ────────────────────────────────────────────────────
       case "mobile_api_get":           return reply(await mobile.raw.get(args.path));
