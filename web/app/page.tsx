@@ -1050,17 +1050,11 @@ export default function HomePage() {
             Aider, Ollama &mdash; peer-to-peer on your own hardware.
           </p>
 
-          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+          <div className="mt-8 flex items-center justify-center">
             <div className="terminal inline-flex w-full max-w-sm items-center gap-3 rounded-lg border border-surface-800 bg-surface-950 px-4 py-3 font-mono text-sm text-surface-200 sm:w-auto">
               <span className="text-emerald-400">$</span>
               <span className="flex-1 select-all">npm install -g yaver-cli</span>
             </div>
-            <a
-              href="#demo"
-              className="btn-primary inline-flex items-center gap-2 px-8 py-3 text-base font-semibold"
-            >
-              Watch the demo &rarr;
-            </a>
           </div>
 
           <p className="mt-6 text-xs uppercase tracking-[0.18em] text-surface-600">
@@ -1105,8 +1099,9 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ── Section 3: Deeper demos (3 tabs) ── */}
-      <DemoSection />
+      {/* Secondary DemoSection (tabbed: Full Loop / Auto Test) removed —
+          the hero video above is the single viral artifact; a second
+          video area below it competed for attention. */}
 
       {/* ── Section 3: Get Started ── */}
       <section id="get-started" className="border-t border-surface-800/60 px-6 py-16">
