@@ -1136,16 +1136,20 @@ export default function HomePage() {
             </div>
             <video
               className="aspect-video w-full bg-black"
-              src={`${VIDEO_CDN}/yaver-hosting-demo-v1/yaver-hosting-demo.mp4`}
+              src="/yaver-hosting-demo.mp4"
               autoPlay
               muted
               loop
               playsInline
               preload="metadata"
             />
-            {/* Hosted on GitHub Release yaver-hosting-demo-v1 (1.9 MB). Raw
-                sources + lite re-encodes + rebuild recipe live in
-                demo-videos/ at the repo root. */}
+            {/* 1.9 MB local copy in web/public; Cloudflare serves it with the
+                right Content-Type. Canonical source + raw recordings + rebuild
+                recipe live at GitHub Release yaver-hosting-demo-v1 and in
+                demo-videos/ at the repo root. Release assets use
+                application/octet-stream + Content-Disposition: attachment
+                which Safari refuses to play inline, so we can't link
+                directly to the release URL for a hero <video>. */}
           </div>
           <p className="mx-auto mt-4 max-w-2xl text-center text-xs text-surface-500">
             SFMG &mdash; a real React Native football-manager game &mdash; running
