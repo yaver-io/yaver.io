@@ -256,36 +256,19 @@ export class YaverDiscovery {
    * does on same-LAN.
    */
   static async raceProbe(urls: string[]): Promise<DiscoveryResult | null> {
-    if (!urls || urls.length === 0) return null;
-    const attempts = urls.map((url) =>
-      YaverDiscovery.probe(url).then((r) => {
-        if (!r) throw new Error('no-200');
-        return r;
-      }),
-    );
-    try {
-      // `Promise.any` isn't on every RN runtime yet (older Hermes).
-      // Hand-roll the same behaviour so we don't need a polyfill.
-      return await new Promise<DiscoveryResult | null>((resolve) => {
-        let remaining = attempts.length;
-        let settled = false;
-        attempts.forEach((p) => {
-          p.then((r) => {
-            if (settled) return;
-            settled = true;
-            resolve(r);
-          }).catch(() => {
-            remaining -= 1;
-            if (remaining <= 0 && !settled) {
-              settled = true;
-              resolve(null);
-            }
-          });
-        });
-      });
-    } catch {
-      return null;
-    }
+    // Delegate to the canonical client-core implementation so mobile +
+    // SDK run the same race logic. Returned shape is `ProbeResult` —
+    // structurally compatible with DiscoveryResult minus the required
+    // hostname/version fields, which we backfill with sane defaults.
+    const { raceHealthProbes } = await import('./_core/device');
+    const res = await raceHealthProbes(urls, { timeoutMs: PROBE_TIMEOUT_MS });
+    if (!res) return null;
+    return {
+      url: res.url,
+      hostname: res.hostname ?? 'Unknown',
+      version: res.version ?? 'unknown',
+      latency: res.latency ?? 0,
+    };
   }
 
   /**
