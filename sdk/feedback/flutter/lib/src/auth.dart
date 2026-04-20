@@ -19,10 +19,34 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
+// ── Yaver.io production Convex deployment ────────────────────────────
+//
+// Source of truth: shared/client-core/src/constants.ts, mirrored into
+// the RN SDK and every other client. If yaver.io migrates the
+// deployment (as it did from shocking-echidna-394 → perceptive-minnow-
+// 557 in early 2026), bump this constant and every client picks it up
+// on the next rebuild. Otherwise agents return 403 "invalid token"
+// forever for sessions minted on the wrong deployment.
 const String defaultConvexSiteUrl =
-    'https://shocking-echidna-394.eu-west-1.convex.site';
+    'https://perceptive-minnow-557.eu-west-1.convex.site';
 const String defaultWebBaseUrl = 'https://yaver.io';
 const String defaultOAuthRedirect = 'yaver://oauth-callback';
+
+/// How old an agent's last heartbeat can be before the device is
+/// considered offline. Matches the shared constant
+/// [shared/client-core/src/constants.ts::HEARTBEAT_STALE_MS] + Convex
+/// backend + RN SDK. Drift between surfaces produces "green on one,
+/// yellow on the other" UX glitches from clock skew alone.
+const int heartbeatStaleMs = 90000;
+
+/// Timeout for a direct /health probe over LAN. Matches the RN SDK.
+const int probeTimeoutMs = 2500;
+
+/// Timeout for /health probe routed through a relay server.
+const int relayProbeTimeoutMs = 6000;
+
+/// Default HTTP port `yaver serve` listens on.
+const int defaultAgentHttpPort = 18080;
 
 String _convexSiteUrl = defaultConvexSiteUrl;
 String _webBaseUrl = defaultWebBaseUrl;
