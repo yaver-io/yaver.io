@@ -185,18 +185,18 @@ export class YaverFeedback {
           });
         }
       });
-      // Auto-open the command-stream SSE channel so `status` +
-      // `reload_bundle` messages from the agent actually reach us.
-      // Host apps can still call BlackBox.start(...) themselves to
-      // customise deviceId / appName, but they don't have to.
-      if (!BlackBox.isStreaming) {
-        try {
-          BlackBox.start();
-        } catch {
-          // BlackBox.start throws if agentUrl/token aren't ready yet;
-          // a later setAuthToken() / discoverAgent() tick will retry.
-        }
-      }
+      // NOTE: BlackBox.start() is intentionally NOT auto-called here.
+      // An earlier version (0.7.6) did auto-start it, and when the
+      // agent was in bootstrap / needs-auth mode — which can happen
+      // any time after `yaver serve` restarts before the user pairs —
+      // the SSE channel retried with exponential backoff on 401s,
+      // producing a tight loop of string concatenation + JSON parse
+      // that tripped a Hermes rope-string SIGSEGV on iOS 18.3.1
+      // during any other JS-thread regex work (e.g. react-native-
+      // view-shot's internal string handling during Screenshot &
+      // Fix). Host apps call BlackBox.start() explicitly once they
+      // know the agent URL + token are valid (SFMG does this inside
+      // its YaverFeedbackWidget after auth).
     }
 
     // NOTE: We intentionally do NOT hook ErrorUtils.setGlobalHandler().

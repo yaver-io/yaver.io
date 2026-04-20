@@ -18,22 +18,34 @@ export interface FeedbackEvent {
  * running on the host machine".
  */
 function friendlyReloadError(status: number, body: string): string {
-  const lower = body.toLowerCase();
-  if (
-    /connection refused|econnrefused/.test(lower) &&
-    /127\.0\.0\.1|localhost/.test(lower)
-  ) {
+  // Plain .indexOf instead of regex — short literal tests sidestep
+  // a Hermes rope-flatten SIGSEGV we saw on RN 0.81 / iOS 18.3.1
+  // when the same body was already being processed by a concurrent
+  // SSE reconnect loop.
+  const lower = (body || '').toLowerCase();
+  const hasRefused =
+    lower.indexOf('connection refused') >= 0 ||
+    lower.indexOf('econnrefused') >= 0;
+  const hasLoopback =
+    lower.indexOf('127.0.0.1') >= 0 || lower.indexOf('localhost') >= 0;
+  if (hasRefused && hasLoopback) {
     return (
       'No dev server running on your machine. ' +
       'Start Metro with `yaver dev start` or use "Screenshot & Fix" instead.'
     );
   }
-  if (/no dev server/.test(lower) || /not running/.test(lower)) {
+  if (
+    lower.indexOf('no dev server') >= 0 ||
+    lower.indexOf('not running') >= 0
+  ) {
     return 'No dev server running on your machine. Start Metro first.';
   }
-  if (status === 403) return 'Agent rejected the session — please sign in again.';
-  if (status === 401) return 'Agent rejected the session — please sign in again.';
-  if (status >= 500) return 'Agent hit an internal error while reloading. Check `yaver logs`.';
+  if (status === 401 || status === 403) {
+    return 'Agent rejected the session — please sign in again.';
+  }
+  if (status >= 500) {
+    return 'Agent hit an internal error while reloading. Check `yaver logs`.';
+  }
   return `Reload failed (${status}).`;
 }
 

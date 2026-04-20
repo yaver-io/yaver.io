@@ -116,18 +116,29 @@ export const FeedbackModal: React.FC = () => {
       try {
         await fn(client);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        // 401 / 403 "invalid token" — the cached session is stale
-        // (common after a Convex deployment migration). Sign out so
-        // the next interaction surfaces the login sheet, then bubble
-        // a readable error up to the user.
-        const authFailed = /\b(401|403)\b.*invalid token|invalid token|unauthor/i.test(msg);
+        const msg = (err instanceof Error ? err.message : String(err)) || '';
+        // Avoid unbounded `.*` in regex — on RN 0.81 / Hermes rope
+        // strings plus a background SSE reconnect, that pattern has
+        // reliably SIGSEGV'd Hermes's string-view flattening path.
+        // Split into short, literal-only alternations.
+        const lower = msg.toLowerCase();
+        const authFailed =
+          lower.indexOf('invalid token') >= 0 ||
+          lower.indexOf('unauthor') >= 0 ||
+          lower.indexOf(' 401') >= 0 ||
+          lower.indexOf(' 403') >= 0;
         if (authFailed) {
           await YaverFeedback.signOut();
           YaverFeedback.showLogin();
           throw new Error('Session expired — please sign in again.');
         }
-        const transient = /Network request failed|timeout|ECONNREFUSED|Failed to fetch|fetch failed|aborted/i.test(msg);
+        const transient =
+          lower.indexOf('network request failed') >= 0 ||
+          lower.indexOf('econnrefused') >= 0 ||
+          lower.indexOf('failed to fetch') >= 0 ||
+          lower.indexOf('fetch failed') >= 0 ||
+          lower.indexOf('aborted') >= 0 ||
+          lower.indexOf('timeout') >= 0;
         if (!transient) throw err;
         const ok = await YaverFeedback.reconnect();
         if (!ok) throw err;

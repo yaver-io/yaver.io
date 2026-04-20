@@ -87,6 +87,24 @@ export const YaverMachinePickerScreen: React.FC<YaverMachinePickerProps> = ({
       : device.needsAuth
         ? '#f59e0b'
         : '#22c55e';
+    // Derive a single short status phrase the user can act on.
+    let statusLine = device.platform;
+    if (!device.isOnline) {
+      statusLine = 'Offline — start `yaver serve` on the Mac';
+    } else if (device.needsAuth) {
+      statusLine =
+        'Needs pairing — open the Yaver app to adopt this machine';
+    } else if (device.runnerDown) {
+      statusLine = 'Runner down — restart the coding agent on the Mac';
+    } else {
+      // Happy-path subtitle: platform + optional host/share hint.
+      statusLine = device.platform;
+      if (device.isGuest && device.hostEmail) {
+        statusLine = `${statusLine} • ${device.hostEmail}`;
+      } else if (device.accessScope === 'shared-scoped') {
+        statusLine = `${statusLine} • paylaşılan`;
+      }
+    }
     return (
       <TouchableOpacity
         key={device.deviceId}
@@ -96,11 +114,7 @@ export const YaverMachinePickerScreen: React.FC<YaverMachinePickerProps> = ({
         <View style={[styles.health, { backgroundColor: healthColor }]} />
         <View style={{ flex: 1 }}>
           <Text style={styles.deviceName}>{device.name || device.deviceId}</Text>
-          <Text style={styles.deviceMeta}>
-            {device.platform}
-            {device.isGuest && device.hostEmail ? `  •  ${device.hostEmail}` : ''}
-            {device.accessScope === 'shared-scoped' ? '  •  paylaşılan' : ''}
-          </Text>
+          <Text style={styles.deviceMeta}>{statusLine}</Text>
         </View>
         {selected && <Text style={styles.selectedBadge}>seçili</Text>}
       </TouchableOpacity>
