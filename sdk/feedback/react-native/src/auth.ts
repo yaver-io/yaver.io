@@ -67,8 +67,13 @@ const TOKEN_KEY = 'yaver_feedback_auth_token';
 const USER_KEY = 'yaver_feedback_user';
 const DEVICE_KEY = 'yaver_feedback_selected_device';
 
+// Source of truth: mobile/src/lib/constants.ts → CONVEX_SITE_URL.
+// The yaver-io Convex deployment was migrated from shocking-echidna-394
+// to perceptive-minnow-557; sessions minted against the old deployment
+// don't validate on agents that point at the new one, producing a 403
+// "invalid token" from the agent's authSDK middleware.
 export const DEFAULT_CONVEX_SITE_URL =
-  'https://shocking-echidna-394.eu-west-1.convex.site';
+  'https://perceptive-minnow-557.eu-west-1.convex.site';
 export const DEFAULT_WEB_BASE_URL = 'https://yaver.io';
 
 let convexSiteUrl = DEFAULT_CONVEX_SITE_URL;

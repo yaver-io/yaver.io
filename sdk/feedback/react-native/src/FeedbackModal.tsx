@@ -103,6 +103,16 @@ export const FeedbackModal: React.FC = () => {
         await fn(client);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        // 401 / 403 "invalid token" — the cached session is stale
+        // (common after a Convex deployment migration). Sign out so
+        // the next interaction surfaces the login sheet, then bubble
+        // a readable error up to the user.
+        const authFailed = /\b(401|403)\b.*invalid token|invalid token|unauthor/i.test(msg);
+        if (authFailed) {
+          await YaverFeedback.signOut();
+          YaverFeedback.showLogin();
+          throw new Error('Session expired — please sign in again.');
+        }
         const transient = /Network request failed|timeout|ECONNREFUSED|Failed to fetch|fetch failed|aborted/i.test(msg);
         if (!transient) throw err;
         const ok = await YaverFeedback.reconnect();
