@@ -58,7 +58,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -284,9 +283,16 @@ func runBootstrapServe(httpPort int) {
 	defer relayCancel()
 	if cfg, loadErr := LoadConfig(); loadErr == nil && cfg != nil && cfg.DeviceID != "" {
 		agentAddr := fmt.Sprintf("127.0.0.1:%d", httpPort)
+		relayCfg := cfg.RelayServers
 		globalPw := cfg.RelayPassword
+		if len(relayCfg) == 0 && len(cfg.CachedRelayServers) > 0 {
+			relayCfg = cfg.CachedRelayServers
+			if globalPw == "" {
+				globalPw = cfg.CachedRelayPassword
+			}
+		}
 		started := 0
-		for _, rs := range cfg.RelayServers {
+		for _, rs := range relayCfg {
 			pw := rs.Password
 			if pw == "" {
 				pw = globalPw
@@ -472,105 +478,7 @@ func (bs *bootstrapHTTPServer) handlePairSubmit(w http.ResponseWriter, r *http.R
 // Body: { "encrypted": "<base64(nonce24 + ciphertext)>", "senderPublicKey": "<base64(32)>" }
 // Response: { "ok": true, "host": "..." }
 func (bs *bootstrapHTTPServer) handlePairEncrypted(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", http.StatusMethodNotAllowed)
-		return
-	}
-	var body struct {
-		Code            string `json:"code"`
-		Encrypted       string `json:"encrypted"`
-		SenderPublicKey string `json:"senderPublicKey"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
-		return
-	}
-	if strings.TrimSpace(body.Code) == "" {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "pair code required"})
-		return
-	}
-	pairingMu.Lock()
-	session := activePairing
-	if session == nil || session.Code != strings.ToUpper(strings.TrimSpace(body.Code)) {
-		pairingMu.Unlock()
-		jsonReply(w, http.StatusForbidden, map[string]string{"error": "invalid or inactive pairing code"})
-		return
-	}
-	if time.Now().After(session.ExpiresAt) {
-		pairingMu.Unlock()
-		jsonReply(w, http.StatusGone, map[string]string{"error": "pairing code expired"})
-		return
-	}
-	if session.ReceivedToken != "" {
-		pairingMu.Unlock()
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "token already received"})
-		return
-	}
-	pairingMu.Unlock()
-	if body.Encrypted == "" || body.SenderPublicKey == "" {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "encrypted and senderPublicKey required"})
-		return
-	}
-	dk, err := LoadOrGenerateKeys()
-	if err != nil {
-		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "cannot load device keys"})
-		return
-	}
-	senderPubBytes, err := base64.StdEncoding.DecodeString(body.SenderPublicKey)
-	if err != nil || len(senderPubBytes) != 32 {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid senderPublicKey"})
-		return
-	}
-	var senderPub [32]byte
-	copy(senderPub[:], senderPubBytes)
-
-	encBytes, err := base64.StdEncoding.DecodeString(body.Encrypted)
-	if err != nil {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid base64 in encrypted"})
-		return
-	}
-	plaintext, err := dk.DecryptPairPayload(encBytes, senderPub)
-	if err != nil {
-		jsonReply(w, http.StatusForbidden, map[string]string{"error": "decryption failed: " + err.Error()})
-		return
-	}
-
-	// plaintext is the raw auth token
-	token := strings.TrimSpace(string(plaintext))
-	if token == "" {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "empty token after decryption"})
-		return
-	}
-
-	cfg, _ := LoadConfig()
-	if cfg == nil {
-		cfg = &Config{}
-	}
-	cfg.AuthToken = token
-	if err := SaveConfig(cfg); err != nil {
-		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "save config: " + err.Error()})
-		return
-	}
-	hostname, _ := os.Hostname()
-	log.Printf("[bootstrap] Encrypted pair succeeded — token saved, restarting as authenticated agent")
-
-	// Signal the bootstrap loop to exit and re-exec.
-	pairingMu.Lock()
-	if activePairing != nil {
-		activePairing.ReceivedURL = defaultConvexSiteURL
-		activePairing.ReceivedToken = token
-		select {
-		case <-activePairing.done:
-		default:
-			close(activePairing.done)
-		}
-	}
-	pairingMu.Unlock()
-
-	jsonReply(w, http.StatusOK, map[string]interface{}{
-		"ok":   true,
-		"host": hostname,
-	})
+	(&HTTPServer{}).handlePairEncrypted(w, r)
 }
 
 // handleAuthRecover delegates to the same handler used in

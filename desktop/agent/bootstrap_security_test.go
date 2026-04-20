@@ -78,3 +78,31 @@ func TestBootstrapEncryptedPairRequiresPairCode(t *testing.T) {
 		t.Fatalf("expected active pairing session to remain intact")
 	}
 }
+
+func TestHTTPServerEncryptedPairRequiresPairCode(t *testing.T) {
+	session, err := StartPairingSession(10 * time.Minute)
+	if err != nil {
+		t.Fatalf("StartPairingSession: %v", err)
+	}
+	defer EndPairingSession()
+
+	srv := &HTTPServer{}
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/pair/encrypted", strings.NewReader(`{"encrypted":"abc","senderPublicKey":"def"}`))
+	rec := httptest.NewRecorder()
+	srv.handlePairEncrypted(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing code, got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/auth/pair/encrypted", strings.NewReader(`{"code":"WRONG","encrypted":"abc","senderPublicKey":"def"}`))
+	rec = httptest.NewRecorder()
+	srv.handlePairEncrypted(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for wrong code, got %d", rec.Code)
+	}
+
+	if activePairing == nil || activePairing.Code != session.Code {
+		t.Fatalf("expected active pairing session to remain intact")
+	}
+}

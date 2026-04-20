@@ -43,6 +43,7 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -391,6 +392,109 @@ func (s *HTTPServer) handlePairSubmit(w http.ResponseWriter, r *http.Request) {
 	// If this pair flow is being used to recover a running daemon,
 	// clear the degraded auth-expired flag immediately instead of
 	// waiting for the next heartbeat tick.
+	if s != nil {
+		s.authExpired.Store(false)
+	}
+
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":   true,
+		"host": session.Hostname,
+	})
+}
+
+// handlePairEncrypted accepts an encrypted token submission from a source
+// client that already knows the active pairing code. This keeps the raw
+// bearer off the wire on direct/LAN recovery paths.
+func (s *HTTPServer) handlePairEncrypted(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Code            string `json:"code"`
+		Encrypted       string `json:"encrypted"`
+		SenderPublicKey string `json:"senderPublicKey"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	if strings.TrimSpace(body.Code) == "" {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "pair code required"})
+		return
+	}
+
+	pairingMu.Lock()
+	session := activePairing
+	if session == nil || session.Code != strings.ToUpper(strings.TrimSpace(body.Code)) {
+		pairingMu.Unlock()
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "invalid or inactive pairing code"})
+		return
+	}
+	if time.Now().After(session.ExpiresAt) {
+		pairingMu.Unlock()
+		jsonReply(w, http.StatusGone, map[string]string{"error": "pairing code expired"})
+		return
+	}
+	if session.ReceivedToken != "" {
+		pairingMu.Unlock()
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "token already received"})
+		return
+	}
+	pairingMu.Unlock()
+
+	if body.Encrypted == "" || body.SenderPublicKey == "" {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "encrypted and senderPublicKey required"})
+		return
+	}
+	dk, err := LoadOrGenerateKeys()
+	if err != nil {
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "cannot load device keys"})
+		return
+	}
+	senderPubBytes, err := base64.StdEncoding.DecodeString(body.SenderPublicKey)
+	if err != nil || len(senderPubBytes) != 32 {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid senderPublicKey"})
+		return
+	}
+	var senderPub [32]byte
+	copy(senderPub[:], senderPubBytes)
+
+	encBytes, err := base64.StdEncoding.DecodeString(body.Encrypted)
+	if err != nil {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid base64 in encrypted"})
+		return
+	}
+	plaintext, err := dk.DecryptPairPayload(encBytes, senderPub)
+	if err != nil {
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "decryption failed: " + err.Error()})
+		return
+	}
+
+	token := strings.TrimSpace(string(plaintext))
+	if token == "" {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "empty token after decryption"})
+		return
+	}
+
+	pairingMu.Lock()
+	session = activePairing
+	if session == nil || session.Code != strings.ToUpper(strings.TrimSpace(body.Code)) {
+		pairingMu.Unlock()
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "invalid or inactive pairing code"})
+		return
+	}
+	session.ReceivedToken = token
+	if cfg, err := LoadConfig(); err == nil && cfg != nil && strings.TrimSpace(cfg.ConvexSiteURL) != "" {
+		session.ReceivedURL = cfg.ConvexSiteURL
+	}
+	select {
+	case <-session.done:
+	default:
+		close(session.done)
+	}
+	pairingMu.Unlock()
+
 	if s != nil {
 		s.authExpired.Store(false)
 	}

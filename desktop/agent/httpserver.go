@@ -275,6 +275,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/auth/pair/info", s.rateLimit(s.handlePairInfo))
 	mux.HandleFunc("/auth/pair/session", s.rateLimit(s.handlePairSession))
 	mux.HandleFunc("/auth/pair/submit", s.rateLimit(s.handlePairSubmit))
+	mux.HandleFunc("/auth/pair/encrypted", s.rateLimit(s.handlePairEncrypted))
 	// Remote-support sessions (TeamViewer-style, in-memory, TTL'd).
 	// Owner-only control plane:
 	// Grand MCP: unified verb-based ops API. See ops.go.

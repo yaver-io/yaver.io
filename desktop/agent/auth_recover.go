@@ -317,7 +317,7 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 		// caller doesn't need to hang — it can poll
 		// /auth/pair/info or the existing /agent/status to
 		// know when auth is live again.
-		go completeDeviceCodeInBackground(cfg.ConvexSiteURL, dc.DeviceCode)
+		go completeDeviceCodeInBackground(cfg.ConvexSiteURL, dc.DeviceCode, s)
 
 		resp := RecoveryResponse{
 			OK:            true,
@@ -418,7 +418,7 @@ func requestDeviceCode(convexURL string) (*deviceCodeResponse, error) {
 // finishes the browser OAuth flow, then writes the token to
 // config. On success, the agent picks up the new token on the
 // next request through the auth cache.
-func completeDeviceCodeInBackground(convexURL, deviceCode string) {
+func completeDeviceCodeInBackground(convexURL, deviceCode string, s *HTTPServer) {
 	deadline := time.Now().Add(15 * time.Minute)
 	for time.Now().Before(deadline) {
 		token, done, err := pollDeviceCode(convexURL, deviceCode)
@@ -427,7 +427,7 @@ func completeDeviceCodeInBackground(convexURL, deviceCode string) {
 			continue
 		}
 		if done && token != "" {
-			applyRecoveredAuthToken(token, convexURL, nil)
+			applyRecoveredAuthToken(token, convexURL, s)
 			return
 		}
 		if done {

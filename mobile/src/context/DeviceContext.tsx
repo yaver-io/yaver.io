@@ -1267,12 +1267,18 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       return deviceCode ?? recovery;
     }
 
-    const pairRes = await submitPair({
-      code: recovery.pairCode,
-      targetUrl: recovery.targetUrl || quicClient.baseUrl,
-      token,
-      userId: user.id,
-    });
+    const targetUrl = recovery.targetUrl || quicClient.baseUrl;
+    let pairRes: { ok: boolean; host?: string; error?: string };
+    if (device.publicKey) {
+      pairRes = await submitEncryptedPair(targetUrl, token, device.publicKey, recovery.pairCode);
+    } else {
+      pairRes = await submitPair({
+        code: recovery.pairCode,
+        targetUrl,
+        token,
+        userId: user.id,
+      });
+    }
     if (!pairRes.ok) {
       appLog("warn", `Auth recovery pair submit failed for ${device.name}: ${pairRes.error || "unknown error"}`);
       return { ok: false, error: pairRes.error || "Auth recovery pair submit failed" };
