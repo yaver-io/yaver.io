@@ -64,6 +64,17 @@ func installLaunchdDaemonService() {
 
 func isWSLWindowsScheduledTaskInstalled() bool { return false }
 
+// WSL-autostart stubs for native Windows builds. WSL-from-Windows
+// is a non-goal for this target — the real implementations live in
+// process_wsl.go (compiled on everything except native Windows).
+// Call sites in httpserver.go / main.go / process_unix.go expect
+// the names to exist, so we stub them here as no-ops.
+func isWSLAutoStartInstalled() bool { return false }
+func installAutoStartWSL(exePath, workDir string) (string, error) {
+	return "", fmt.Errorf("WSL auto-start is not available on native Windows builds")
+}
+func removeAutoStartWSL() {}
+
 // installAutoStart creates a Windows Scheduled Task to run the agent at logon.
 func installAutoStart(exePath, workDir string) error {
 	// Use schtasks to create a logon trigger task

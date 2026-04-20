@@ -1,3 +1,15 @@
+//go:build !windows
+// +build !windows
+
+// WSL auto-start helpers. Compiled on everything except native
+// Windows. process_windows.go provides a stub
+// `isWSLWindowsScheduledTaskInstalled` for the native Windows build
+// — this file must be excluded there to avoid a duplicate declaration.
+// On darwin, WSL detection naturally returns false so the helpers
+// are effectively no-ops; keeping them compiled here (rather than
+// linux-only) preserves the call sites in process_unix.go without
+// needing darwin-specific stubs.
+
 package main
 
 import (
