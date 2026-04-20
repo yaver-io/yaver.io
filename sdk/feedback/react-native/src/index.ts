@@ -1,24 +1,29 @@
 /**
- * @yaver/feedback-react-native — Visual feedback SDK for Yaver.
+ * yaver-feedback-react-native — Visual feedback SDK for Yaver.
  *
- * Shake-to-report, screenshots, voice annotations, P2P connection,
- * device discovery, and live/narrated/batch feedback modes for vibe coding.
+ * Shake-to-report surface with five one-tap actions:
+ *  1. Hot Reload              — instant JS reload
+ *  2. Screenshot & Fix        — capture the screen under the modal and
+ *                               kick a fix task on the agent
+ *  3. Vibing                  — open a vibing session on the agent
+ *  4. Start / Stop Recording  — screen recording toggle
+ *  5. Send Video              — submit the last recording
  *
  * @example
  * ```tsx
- * import { YaverFeedback, FeedbackProvider } from '@yaver/feedback-react-native';
+ * import { YaverFeedback, FeedbackModal } from 'yaver-feedback-react-native';
  *
  * YaverFeedback.init({
  *   agentUrl: 'http://192.168.1.10:18080',
  *   authToken: 'your-token',
  *   trigger: 'shake',
- *   feedbackMode: 'live',
+ *   strictNativeAuth: true,
  * });
  *
- * // Wrap your app root:
- * <FeedbackProvider>
+ * <>
  *   <App />
- * </FeedbackProvider>
+ *   <FeedbackModal />
+ * </>
  * ```
  */
 
@@ -67,7 +72,12 @@ export type {
   RemoteDevice,
   DeviceList,
 } from './auth';
-export { captureScreenshot, startAudioRecording, stopAudioRecording } from './capture';
+export {
+  captureScreenshot,
+  startVideoRecording,
+  stopVideoRecording,
+  isVideoRecording,
+} from './capture';
 export { uploadFeedback } from './upload';
 export type {
   FeedbackConfig,
@@ -77,7 +87,6 @@ export type {
   AppInfo,
   TimelineEvent,
   FeedbackReport,
-  AgentCommentary,
   FeedbackStreamEvent,
   VoiceCapability,
   CapturedError,

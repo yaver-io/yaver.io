@@ -1,18 +1,24 @@
 /**
- * Screen capture and audio recording helpers.
+ * Screen capture helpers — screenshot + video recording.
  *
- * Screenshot capture requires `react-native-view-shot` as a peer dependency.
- * Audio recording requires `react-native-audio-recorder-player` or a
- * similar library — the implementation below uses a minimal approach
- * that works when one of those is available.
+ * Peer deps (all optional — loaded lazily):
+ *   - `react-native-view-shot`        — screenshot
+ *   - `react-native-record-screen`    — video recording (iOS ReplayKit /
+ *                                       Android MediaProjection)
+ *
+ * Each helper surfaces a clear error if the module is missing so a host
+ * app knows exactly which peer dep to add. Audio-note / voice-command
+ * recording was removed in 0.7.0 — see FeedbackModal for the new
+ * 5-button surface.
  */
-
-let audioRecorderModule: any = null;
 
 /**
  * Capture the current screen as a PNG image.
  * Requires `react-native-view-shot` to be installed.
- * @returns File path of the captured screenshot.
+ *
+ * Note: the feedback modal should hide itself *before* calling this so the
+ * screenshot contains the underlying app state (the actual bug), not the
+ * modal. See `FeedbackModal.handleScreenshotForFix`.
  */
 export async function captureScreenshot(): Promise<string> {
   try {
@@ -24,61 +30,91 @@ export async function captureScreenshot(): Promise<string> {
     return uri;
   } catch (err) {
     throw new Error(
-      '[YaverFeedback] Screenshot capture failed. Make sure react-native-view-shot is installed. ' +
+      '[YaverFeedback] Screenshot capture failed. Install react-native-view-shot as a peer dep. ' +
         String(err),
     );
   }
 }
 
+let videoRecorderModule: any = null;
+let videoRecordingActive = false;
+
 /**
- * Start recording an audio voice note.
- * Requires `react-native-audio-recorder-player` to be installed.
+ * Start a screen-recording session. Requires
+ * `react-native-record-screen` as a peer dep.
+ *
+ * The user must grant the iOS ReplayKit / Android MediaProjection
+ * permission the first time; the prompt is shown by the native module,
+ * not the SDK.
  */
-export async function startAudioRecording(): Promise<void> {
+export async function startVideoRecording(): Promise<void> {
+  if (videoRecordingActive) {
+    throw new Error('[YaverFeedback] A video recording is already in progress.');
+  }
   try {
-    const AudioRecorderPlayer =
-      require('react-native-audio-recorder-player').default;
-    audioRecorderModule = new AudioRecorderPlayer();
-    await audioRecorderModule.startRecorder();
+    videoRecorderModule = require('react-native-record-screen').default ??
+      require('react-native-record-screen');
+    if (typeof videoRecorderModule.startRecording !== 'function') {
+      throw new Error('react-native-record-screen missing startRecording()');
+    }
+    const result = await videoRecorderModule.startRecording({
+      mic: false,
+      width: 720,
+      bitrate: 1024 * 1000,
+    });
+    if (result && result.status && result.status !== 'success') {
+      throw new Error(`startRecording returned ${result.status}`);
+    }
+    videoRecordingActive = true;
   } catch (err) {
-    audioRecorderModule = null;
+    videoRecorderModule = null;
+    videoRecordingActive = false;
     throw new Error(
-      '[YaverFeedback] Audio recording failed to start. Make sure react-native-audio-recorder-player is installed. ' +
+      '[YaverFeedback] Could not start screen recording. Install react-native-record-screen. ' +
         String(err),
     );
   }
 }
 
 /**
- * Stop the current audio recording.
- * @returns Object with the file path and duration in seconds.
+ * Stop the current video recording and return the on-device file path.
  */
-export async function stopAudioRecording(): Promise<{
+export async function stopVideoRecording(): Promise<{
   path: string;
   duration: number;
 }> {
-  if (!audioRecorderModule) {
-    throw new Error('[YaverFeedback] No audio recording in progress.');
+  if (!videoRecordingActive || !videoRecorderModule) {
+    throw new Error('[YaverFeedback] No video recording in progress.');
   }
-
   try {
-    const result = await audioRecorderModule.stopRecorder();
-    const recorder = audioRecorderModule;
-    audioRecorderModule = null;
-
-    // result is the file path on most implementations
-    const path = typeof result === 'string' ? result : result?.uri ?? '';
-    // Duration tracking — recorder-player provides currentPosition in ms
+    const res = await videoRecorderModule.stopRecording();
+    videoRecordingActive = false;
+    const path =
+      typeof res === 'string'
+        ? res
+        : (res?.result?.outputURL as string) ??
+          (res?.outputURL as string) ??
+          (res?.uri as string) ??
+          '';
     const durationMs =
-      typeof recorder.currentPosition === 'number'
-        ? recorder.currentPosition
-        : 0;
-
+      typeof res?.result?.duration === 'number'
+        ? res.result.duration
+        : typeof res?.duration === 'number'
+          ? res.duration
+          : 0;
+    if (!path) {
+      throw new Error('stopRecording() returned no file path');
+    }
     return { path, duration: durationMs / 1000 };
   } catch (err) {
-    audioRecorderModule = null;
+    videoRecordingActive = false;
     throw new Error(
-      '[YaverFeedback] Failed to stop audio recording. ' + String(err),
+      '[YaverFeedback] Failed to stop screen recording. ' + String(err),
     );
   }
+}
+
+/** Whether a video recording is currently active. */
+export function isVideoRecording(): boolean {
+  return videoRecordingActive;
 }

@@ -2,262 +2,148 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   DeviceEventEmitter,
-  FlatList,
   Modal,
   Platform,
-  ScrollView,
+  Pressable,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import { YaverFeedback } from './YaverFeedback';
-import { BlackBox } from './BlackBox';
-import { captureScreenshot, startAudioRecording, stopAudioRecording } from './capture';
+import {
+  captureScreenshot,
+  startVideoRecording,
+  stopVideoRecording,
+} from './capture';
 import { uploadFeedback } from './upload';
-import { TimelineEvent, DeviceInfo, FeedbackBundle, AgentCommentary } from './types';
+import { DeviceInfo, FeedbackBundle } from './types';
 import { AuthOverlay } from './AuthOverlay';
 
-type FeedbackMode = 'live' | 'narrated' | 'batch';
-
-const MODE_LABELS: Record<FeedbackMode, string> = {
-  live: 'Live',
-  narrated: 'Narrated',
-  batch: 'Batch',
-};
-
 /**
- * Full-screen modal for composing and sending a feedback report.
- * Renders when triggered by shake, floating button, or manual call.
+ * Simplified feedback modal — 5 actions:
  *
- * Supports three feedback modes:
- * - Live: stream events to the agent as they happen
- * - Narrated: record everything, send on stop
- * - Batch: dump everything at end (default)
+ *  1. Hot Reload               — instant JS reload (most common use case)
+ *  2. Screenshot + Fix         — capture the underlying app (modal hidden
+ *                                during capture), attach errors, trigger
+ *                                a fix task on the agent
+ *  3. Vibing                   — open a vibing session on the agent
+ *  4. Start / Stop Recording   — screen-recording toggle
+ *  5. Send Video               — submit the last recorded video
+ *
+ * The header has an explicit X close icon on the right.
+ * Live / Narrated / Batch modes, voice notes, and the streaming indicator
+ * were removed in 0.7.0 — those flows never worked end-to-end against
+ * the Go agent (see MISSINGS_FEEDBACK_SDK.md).
  */
+
+interface LastVideo {
+  path: string;
+  duration: number;
+}
+
+type ActionState =
+  | 'idle'
+  | 'hot-reloading'
+  | 'capturing'
+  | 'vibing'
+  | 'sending-video';
+
 export const FeedbackModal: React.FC = () => {
   const [visible, setVisible] = useState(false);
-  const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
-  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
-  const [isSending, setIsSending] = useState(false);
+  const [action, setAction] = useState<ActionState>('idle');
   const [error, setError] = useState<string | null>(null);
-  const [sent, setSent] = useState(false);
-  const [mode, setMode] = useState<FeedbackMode>('batch');
-  const [commentary, setCommentary] = useState<AgentCommentary[]>([]);
-  const [isVoiceCommand, setIsVoiceCommand] = useState(false);
-  const [isReloading, setIsReloading] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [isRecordingVideo, setIsRecordingVideo] = useState(false);
+  const [lastVideo, setLastVideo] = useState<LastVideo | null>(null);
   const mountedRef = useRef(true);
-  const commentaryListRef = useRef<FlatList>(null);
 
   useEffect(() => {
     mountedRef.current = true;
     const sub = DeviceEventEmitter.addListener('yaverFeedback:startReport', () => {
       if (YaverFeedback.isEnabled()) {
         setVisible(true);
-        setTimeline([]);
         setError(null);
-        setSent(false);
-        setCommentary([]);
-        setMode(YaverFeedback.getFeedbackMode());
+        setToast(null);
+        setAction('idle');
       }
     });
-
-    // Listen for agent commentary events
-    const commentarySub = DeviceEventEmitter.addListener(
-      'yaverFeedback:commentary',
-      (event: AgentCommentary) => {
-        if (mountedRef.current) {
-          setCommentary((prev) => [...prev, event]);
-        }
-      },
-    );
-
     return () => {
       mountedRef.current = false;
       sub.remove();
-      commentarySub.remove();
     };
   }, []);
 
-  const handleScreenshot = useCallback(async () => {
-    try {
-      const path = await captureScreenshot();
-      if (mountedRef.current) {
-        const event: TimelineEvent = {
-          type: 'screenshot',
-          path,
-          timestamp: new Date().toISOString(),
-        };
-        setTimeline((prev) => [...prev, event]);
-
-        // In live mode, stream the event immediately
-        if (mode === 'live') {
-          const client = YaverFeedback.getP2PClient();
-          if (client) {
-            try {
-              await client.streamFeedback(
-                (async function* () {
-                  yield {
-                    type: 'screenshot',
-                    timestamp: event.timestamp,
-                    data: { path },
-                  };
-                })(),
-              );
-            } catch (err) {
-              console.warn('[YaverFeedback] Live stream failed:', err);
-            }
-          }
-        }
-      }
-    } catch (err) {
-      if (mountedRef.current) {
-        setError(String(err));
-      }
-    }
-  }, [mode]);
-
-  const handleToggleAudio = useCallback(async () => {
-    if (isRecordingAudio) {
-      try {
-        const result = await stopAudioRecording();
-        if (mountedRef.current) {
-          setIsRecordingAudio(false);
-          const event: TimelineEvent = {
-            type: 'audio',
-            path: result.path,
-            timestamp: new Date().toISOString(),
-            duration: result.duration,
-          };
-          setTimeline((prev) => [...prev, event]);
-
-          // In live mode, stream the audio event
-          if (mode === 'live') {
-            const client = YaverFeedback.getP2PClient();
-            if (client) {
-              try {
-                await client.streamFeedback(
-                  (async function* () {
-                    yield {
-                      type: 'audio',
-                      timestamp: event.timestamp,
-                      data: { path: result.path, duration: result.duration },
-                    };
-                  })(),
-                );
-              } catch (err) {
-                console.warn('[YaverFeedback] Live stream failed:', err);
-              }
-            }
-          }
-        }
-      } catch (err) {
-        if (mountedRef.current) {
-          setIsRecordingAudio(false);
-          setError(String(err));
-        }
-      }
-    } else {
-      try {
-        await startAudioRecording();
-        if (mountedRef.current) {
-          setIsRecordingAudio(true);
-        }
-      } catch (err) {
-        if (mountedRef.current) {
-          setError(String(err));
-        }
-      }
-    }
-  }, [isRecordingAudio, mode]);
-
-  const handleVoiceCommand = useCallback(async () => {
-    if (isVoiceCommand) {
-      // Stop voice command and send as a task
-      try {
-        const result = await stopAudioRecording();
-        if (mountedRef.current) {
-          setIsVoiceCommand(false);
-
-          const client = YaverFeedback.getP2PClient();
-          if (client) {
-            try {
-              await client.streamFeedback(
-                (async function* () {
-                  yield {
-                    type: 'voice_command',
-                    timestamp: new Date().toISOString(),
-                    data: { path: result.path, duration: result.duration },
-                  };
-                })(),
-              );
-            } catch (err) {
-              console.warn('[YaverFeedback] Voice command send failed:', err);
-              if (mountedRef.current) {
-                setError('Failed to send voice command.');
-              }
-            }
-          }
-        }
-      } catch (err) {
-        if (mountedRef.current) {
-          setIsVoiceCommand(false);
-          setError(String(err));
-        }
-      }
-    } else {
-      try {
-        await startAudioRecording();
-        if (mountedRef.current) {
-          setIsVoiceCommand(true);
-        }
-      } catch (err) {
-        if (mountedRef.current) {
-          setError(String(err));
-        }
-      }
-    }
-  }, [isVoiceCommand]);
-
-  const handleReload = useCallback(async () => {
-    const config = YaverFeedback.getConfig();
-    if (!config?.agentUrl) return;
-
-    setIsReloading(true);
-    try {
-      const response = await fetch(`${config.agentUrl.replace(/\/$/, '')}/dev/reload-app`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${config.authToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ mode: 'dev' }),
-      });
-      if (response.ok) {
-        BlackBox.lifecycle('Hot reload triggered from feedback SDK');
-      }
-    } catch (err) {
-      if (mountedRef.current) {
-        setError('Reload failed: ' + String(err));
-      }
-    } finally {
-      if (mountedRef.current) {
-        setIsReloading(false);
-      }
-    }
+  const closeSoon = useCallback((delayMs = 1200) => {
+    setTimeout(() => {
+      if (mountedRef.current) setVisible(false);
+    }, delayMs);
   }, []);
 
-  const handleSend = useCallback(async () => {
-    const config = YaverFeedback.getConfig();
-    if (!config || !config.agentUrl) return;
-
-    setIsSending(true);
+  const handleClose = useCallback(() => {
+    setVisible(false);
     setError(null);
+    setToast(null);
+    setAction('idle');
+  }, []);
+
+  // ─── 1. Hot reload ─────────────────────────────────────────────────
+  const handleHotReload = useCallback(async () => {
+    const client = YaverFeedback.getP2PClient();
+    if (!client) {
+      setError('Not connected to the agent yet.');
+      return;
+    }
+    setAction('hot-reloading');
+    setError(null);
+    try {
+      await client.reloadApp('dev');
+      setToast('Reload sent');
+      closeSoon(800);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (mountedRef.current) setAction('idle');
+    }
+  }, [closeSoon]);
+
+  // ─── 2. Screenshot + Fix ───────────────────────────────────────────
+  //
+  // Hide the modal first so the screenshot captures the actual screen
+  // (the bug) — not the modal card. Await a short animation delay,
+  // snapshot, upload the feedback bundle with any buffered errors, then
+  // kick `/feedback/{id}/fix` to create the repair task.
+  const handleScreenshotAndFix = useCallback(async () => {
+    const client = YaverFeedback.getP2PClient();
+    const config = YaverFeedback.getConfig();
+    if (!client || !config?.agentUrl) {
+      setError('Not connected to the agent yet.');
+      return;
+    }
+    setAction('capturing');
+    setError(null);
+
+    // Step 1: Hide the modal so the screenshot contains the real screen.
+    setVisible(false);
+    // Wait out the slide-down animation on both platforms.
+    await new Promise((resolve) => setTimeout(resolve, 350));
+
+    let path: string | null = null;
+    try {
+      path = await captureScreenshot();
+    } catch (err: unknown) {
+      setVisible(true);
+      setError(err instanceof Error ? err.message : String(err));
+      setAction('idle');
+      return;
+    }
+
+    // Step 2: Re-show the modal for progress + ack.
+    setVisible(true);
+    await new Promise((resolve) => setTimeout(resolve, 150));
 
     try {
       const { Dimensions } = require('react-native');
       const { width, height } = Dimensions.get('window');
-
       const deviceInfo: DeviceInfo = {
         platform: Platform.OS,
         osVersion: String(Platform.Version),
@@ -266,420 +152,353 @@ export const FeedbackModal: React.FC = () => {
         screenHeight: height,
       };
 
-      const screenshots = timeline
-        .filter((e) => e.type === 'screenshot')
-        .map((e) => e.path);
-
-      const audioEvent = timeline.find((e) => e.type === 'audio');
-
-      // Include captured errors from the error buffer
       const capturedErrors = YaverFeedback.getCapturedErrors();
-
       const bundle: FeedbackBundle = {
         metadata: {
           timestamp: new Date().toISOString(),
           device: deviceInfo,
           app: {},
+          userNote: '[Screenshot + Fix]',
         },
-        screenshots,
-        audio: audioEvent?.path,
+        screenshots: [path],
         errors: capturedErrors.length > 0 ? capturedErrors : undefined,
       };
 
-      await uploadFeedback(config.agentUrl, config.authToken, bundle);
-
-      if (mountedRef.current) {
-        setSent(true);
-        // Auto-close after a short delay
-        setTimeout(() => {
-          if (mountedRef.current) {
-            setVisible(false);
-          }
-        }, 1500);
+      const uploaded = await uploadFeedback(
+        config.agentUrl,
+        config.authToken ?? '',
+        bundle,
+      );
+      // The agent returns the new report id as `id` (see
+      // feedback_http.go::ReceiveFeedback). Trigger the fix loop if we got
+      // one back; otherwise just ack the upload.
+      const reportId =
+        (uploaded as { id?: string; reportId?: string } | null | undefined)?.id ??
+        (uploaded as { reportId?: string } | null | undefined)?.reportId;
+      if (reportId) {
+        try {
+          await client.triggerFix(reportId);
+          setToast('Fix task started');
+        } catch (err: unknown) {
+          setToast('Report uploaded — fix trigger failed');
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      } else {
+        setToast('Report uploaded');
       }
-    } catch (err) {
-      if (mountedRef.current) {
-        setError(String(err));
-      }
+      closeSoon(1400);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
-      if (mountedRef.current) {
-        setIsSending(false);
+      if (mountedRef.current) setAction('idle');
+    }
+  }, [closeSoon]);
+
+  // ─── 3. Vibing ─────────────────────────────────────────────────────
+  const handleVibing = useCallback(async () => {
+    const client = YaverFeedback.getP2PClient();
+    if (!client) {
+      setError('Not connected to the agent yet.');
+      return;
+    }
+    setAction('vibing');
+    setError(null);
+    try {
+      const capturedErrors = YaverFeedback.getCapturedErrors();
+      const errNote =
+        capturedErrors.length > 0
+          ? `\n\nRecent captured errors:\n` +
+            capturedErrors
+              .slice(-3)
+              .map((e) => `- ${e.message}`)
+              .join('\n')
+          : '';
+      const prompt =
+        'The user opened the feedback modal on their phone and tapped Vibing. ' +
+        'Investigate whatever they are likely to be asking about — pick the ' +
+        'next small improvement or fix based on recent activity and the ' +
+        'current screen.' +
+        errNote;
+      await client.vibing(prompt);
+      setToast('Vibing task created');
+      closeSoon(1200);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (mountedRef.current) setAction('idle');
+    }
+  }, [closeSoon]);
+
+  // ─── 4. Toggle screen recording ────────────────────────────────────
+  const handleToggleRecording = useCallback(async () => {
+    setError(null);
+    if (isRecordingVideo) {
+      try {
+        const result = await stopVideoRecording();
+        if (mountedRef.current) {
+          setIsRecordingVideo(false);
+          setLastVideo(result);
+          setToast(`Recording stopped — ${Math.round(result.duration)}s`);
+        }
+      } catch (err: unknown) {
+        setIsRecordingVideo(false);
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    } else {
+      try {
+        await startVideoRecording();
+        if (mountedRef.current) {
+          setIsRecordingVideo(true);
+          setToast('Recording…');
+          setLastVideo(null);
+        }
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : String(err));
       }
     }
-  }, [timeline]);
+  }, [isRecordingVideo]);
 
-  const handleCancel = useCallback(() => {
-    setVisible(false);
-    setTimeline([]);
+  // ─── 5. Send the last recorded video ───────────────────────────────
+  const handleSendVideo = useCallback(async () => {
+    const config = YaverFeedback.getConfig();
+    if (!config?.agentUrl) {
+      setError('Not connected to the agent yet.');
+      return;
+    }
+    if (!lastVideo) {
+      setError('No video recorded yet.');
+      return;
+    }
+    setAction('sending-video');
     setError(null);
-    setSent(false);
-    setIsRecordingAudio(false);
-    setIsVoiceCommand(false);
-    setCommentary([]);
-  }, []);
+    try {
+      const { Dimensions } = require('react-native');
+      const { width, height } = Dimensions.get('window');
+      const deviceInfo: DeviceInfo = {
+        platform: Platform.OS,
+        osVersion: String(Platform.Version),
+        model: Platform.OS === 'ios' ? 'iOS Device' : 'Android Device',
+        screenWidth: width,
+        screenHeight: height,
+      };
+      const bundle: FeedbackBundle = {
+        metadata: {
+          timestamp: new Date().toISOString(),
+          device: deviceInfo,
+          app: {},
+          userNote: '[Screen recording]',
+        },
+        screenshots: [],
+        video: lastVideo.path,
+        errors: YaverFeedback.getCapturedErrors().length
+          ? YaverFeedback.getCapturedErrors()
+          : undefined,
+      };
+      await uploadFeedback(config.agentUrl, config.authToken ?? '', bundle);
+      setToast('Video sent');
+      setLastVideo(null);
+      closeSoon(1200);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (mountedRef.current) setAction('idle');
+    }
+  }, [lastVideo, closeSoon]);
 
-  const renderCommentaryItem = useCallback(
-    ({ item }: { item: AgentCommentary }) => (
-      <View style={styles.commentaryBubble}>
-        <Text style={styles.commentaryType}>{item.type}</Text>
-        <Text style={styles.commentaryMessage}>{item.message}</Text>
-      </View>
-    ),
-    [],
-  );
+  const busy = action !== 'idle';
 
-  // The AuthOverlay must stay mounted so it can respond to login / picker
-  // events even when the feedback modal itself isn't visible. The wrapping
-  // fragment keeps the original return shape intact for the modal branch.
   return (
     <>
       <AuthOverlay />
       {visible && (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent
-      onRequestClose={handleCancel}
-    >
-      <View style={styles.overlay}>
-        <View style={styles.modal}>
-          <Text style={styles.title}>Send Feedback</Text>
-
-          {/* Mode selector */}
-          <View style={styles.modeSelector}>
-            {(['live', 'narrated', 'batch'] as FeedbackMode[]).map((m) => (
-              <TouchableOpacity
-                key={m}
-                style={[styles.modeButton, mode === m && styles.modeButtonActive]}
-                onPress={() => setMode(m)}
-              >
-                <Text
-                  style={[styles.modeButtonText, mode === m && styles.modeButtonTextActive]}
+        <Modal
+          visible={visible}
+          animationType="slide"
+          transparent
+          onRequestClose={handleClose}
+        >
+          <Pressable style={styles.overlay} onPress={handleClose}>
+            <Pressable style={styles.modal} onPress={(e) => e.stopPropagation()}>
+              <View style={styles.header}>
+                <Text style={styles.title}>Send Feedback</Text>
+                <Pressable
+                  onPress={handleClose}
+                  hitSlop={12}
+                  style={styles.closeBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close"
                 >
-                  {MODE_LABELS[m]}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {/* Agent commentary (chat-like view) */}
-          {commentary.length > 0 && (
-            <FlatList
-              ref={commentaryListRef}
-              data={commentary}
-              renderItem={renderCommentaryItem}
-              keyExtractor={(item) => item.id}
-              style={styles.commentaryList}
-              onContentSizeChange={() =>
-                commentaryListRef.current?.scrollToEnd({ animated: true })
-              }
-            />
-          )}
-
-          {/* Timeline of captured items */}
-          {timeline.length > 0 && (
-            <ScrollView style={styles.timeline} horizontal>
-              {timeline.map((event, idx) => (
-                <View key={idx} style={styles.timelineItem}>
-                  <Text style={styles.timelineIcon}>
-                    {event.type === 'screenshot'
-                      ? '[img]'
-                      : event.type === 'audio'
-                        ? '[mic]'
-                        : '[vid]'}
-                  </Text>
-                  <Text style={styles.timelineLabel}>{event.type}</Text>
-                  {event.duration != null && (
-                    <Text style={styles.timelineDuration}>
-                      {Math.round(event.duration)}s
-                    </Text>
-                  )}
-                </View>
-              ))}
-            </ScrollView>
-          )}
-
-          {/* Action buttons */}
-          <View style={styles.actions}>
-            <TouchableOpacity style={styles.actionButton} onPress={handleScreenshot}>
-              <Text style={styles.actionText}>Take Screenshot</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.actionButton, isRecordingAudio && styles.actionButtonActive]}
-              onPress={handleToggleAudio}
-              disabled={isVoiceCommand}
-            >
-              <Text style={styles.actionText}>
-                {isRecordingAudio ? 'Stop Recording' : 'Voice Note'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Hot Reload + Streaming status */}
-          <View style={styles.actions}>
-            <TouchableOpacity
-              style={[styles.actionButton, styles.reloadButton]}
-              onPress={handleReload}
-              disabled={isReloading}
-            >
-              <Text style={styles.actionText}>
-                {isReloading ? 'Reloading...' : 'Hot Reload'}
-              </Text>
-            </TouchableOpacity>
-
-            <View style={[styles.actionButton, styles.streamingIndicator]}>
-              <View style={[styles.streamingDot, BlackBox.isStreaming && styles.streamingDotActive]} />
-              <Text style={styles.streamingText}>
-                {BlackBox.isStreaming ? 'Streaming' : 'Not streaming'}
-              </Text>
-            </View>
-          </View>
-
-          {/* Voice command button */}
-          {mode === 'live' && (
-            <TouchableOpacity
-              style={[styles.voiceCommandButton, isVoiceCommand && styles.voiceCommandActive]}
-              onPress={handleVoiceCommand}
-              disabled={isRecordingAudio}
-            >
-              <Text style={styles.voiceCommandText}>
-                {isVoiceCommand ? 'Stop & Send Command' : 'Speak to Fix'}
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          {/* Error display */}
-          {error && <Text style={styles.error}>{error}</Text>}
-
-          {/* Send / Cancel */}
-          <View style={styles.footer}>
-            <TouchableOpacity style={styles.cancelButton} onPress={handleCancel}>
-              <Text style={styles.cancelText}>Cancel</Text>
-            </TouchableOpacity>
-
-            {sent ? (
-              <View style={styles.sendButton}>
-                <Text style={styles.sendText}>Sent!</Text>
+                  <Text style={styles.closeIcon}>×</Text>
+                </Pressable>
               </View>
-            ) : (
-              <TouchableOpacity
-                style={[styles.sendButton, isSending && styles.sendButtonDisabled]}
-                onPress={handleSend}
-                disabled={isSending || timeline.length === 0}
-              >
-                {isSending ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <Text style={styles.sendText}>Send Report</Text>
-                )}
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-      </View>
-    </Modal>
+
+              {/* 1. Hot Reload — the common path */}
+              <ActionRow
+                label={
+                  action === 'hot-reloading' ? 'Reloading…' : 'Hot Reload'
+                }
+                tint="#fbbf24"
+                onPress={handleHotReload}
+                disabled={busy}
+                busy={action === 'hot-reloading'}
+              />
+
+              {/* 2. Screenshot + Fix — for bug fixes */}
+              <ActionRow
+                label={
+                  action === 'capturing'
+                    ? 'Capturing…'
+                    : 'Screenshot & Fix'
+                }
+                tint="#22c55e"
+                onPress={handleScreenshotAndFix}
+                disabled={busy}
+                busy={action === 'capturing'}
+              />
+
+              {/* 3. Vibing */}
+              <ActionRow
+                label={action === 'vibing' ? 'Starting…' : 'Vibing'}
+                tint="#818cf8"
+                onPress={handleVibing}
+                disabled={busy}
+                busy={action === 'vibing'}
+              />
+
+              {/* 4. Start/Stop Recording */}
+              <ActionRow
+                label={isRecordingVideo ? 'Stop Recording' : 'Start Recording'}
+                tint={isRecordingVideo ? '#ef4444' : '#60a5fa'}
+                onPress={handleToggleRecording}
+                disabled={busy && action !== 'idle' && !isRecordingVideo}
+              />
+
+              {/* 5. Send Video (only tappable when a clip is ready) */}
+              <ActionRow
+                label={
+                  action === 'sending-video'
+                    ? 'Sending…'
+                    : lastVideo
+                      ? `Send Video · ${Math.round(lastVideo.duration)}s`
+                      : 'Send Video'
+                }
+                tint="#a78bfa"
+                onPress={handleSendVideo}
+                disabled={busy || !lastVideo}
+                busy={action === 'sending-video'}
+              />
+
+              {toast && <Text style={styles.toast}>{toast}</Text>}
+              {error && <Text style={styles.error}>{error}</Text>}
+            </Pressable>
+          </Pressable>
+        </Modal>
       )}
     </>
   );
 };
 
+interface ActionRowProps {
+  label: string;
+  tint: string;
+  onPress: () => void;
+  disabled?: boolean;
+  busy?: boolean;
+}
+
+const ActionRow: React.FC<ActionRowProps> = ({
+  label,
+  tint,
+  onPress,
+  disabled,
+  busy,
+}) => (
+  <Pressable
+    onPress={onPress}
+    disabled={disabled}
+    style={({ pressed }) => [
+      styles.actionBtn,
+      {
+        borderColor: tint + '66',
+        backgroundColor: tint + '1f',
+      },
+      disabled && styles.actionBtnDisabled,
+      pressed && !disabled && { opacity: 0.7 },
+    ]}
+    accessibilityRole="button"
+    accessibilityLabel={label}
+  >
+    {busy ? (
+      <ActivityIndicator color={tint} size="small" />
+    ) : (
+      <Text style={[styles.actionText, { color: tint }]}>{label}</Text>
+    )}
+  </Pressable>
+);
+
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.55)',
     justifyContent: 'flex-end',
   },
   modal: {
-    backgroundColor: '#1a1a2e',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 24,
-    paddingBottom: 40,
-    maxHeight: '90%',
+    backgroundColor: '#141422',
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    padding: 22,
+    paddingBottom: 36,
+    gap: 12,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
   },
   title: {
     fontSize: 20,
     fontWeight: '700',
     color: '#fff',
-    marginBottom: 12,
   },
-  modeSelector: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 16,
-  },
-  modeButton: {
-    flex: 1,
-    paddingVertical: 8,
-    borderRadius: 8,
+  closeBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
   },
-  modeButtonActive: {
-    backgroundColor: 'rgba(99,102,241,0.3)',
-    borderColor: '#6366f1',
+  closeIcon: {
+    color: '#fff',
+    fontSize: 22,
+    lineHeight: 24,
+    fontWeight: '400',
   },
-  modeButtonText: {
-    color: '#999',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  modeButtonTextActive: {
-    color: '#c7c8ff',
-  },
-  commentaryList: {
-    maxHeight: 140,
-    marginBottom: 12,
-  },
-  commentaryBubble: {
-    backgroundColor: 'rgba(99,102,241,0.15)',
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 6,
-    borderLeftWidth: 3,
-    borderLeftColor: '#6366f1',
-  },
-  commentaryType: {
-    color: '#8b8bf5',
-    fontSize: 10,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    marginBottom: 2,
-  },
-  commentaryMessage: {
-    color: '#d0d0e0',
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  timeline: {
-    maxHeight: 80,
-    marginBottom: 16,
-  },
-  timelineItem: {
+  actionBtn: {
+    paddingVertical: 16,
+    borderRadius: 14,
     alignItems: 'center',
-    marginRight: 16,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 12,
-    padding: 10,
-    minWidth: 70,
-  },
-  timelineIcon: {
-    fontSize: 14,
-    color: '#ccc',
-    fontWeight: '600',
-  },
-  timelineLabel: {
-    color: '#ccc',
-    fontSize: 11,
-    marginTop: 4,
-  },
-  timelineDuration: {
-    color: '#999',
-    fontSize: 10,
-  },
-  actions: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
-  },
-  actionButton: {
-    flex: 1,
-    backgroundColor: 'rgba(99,102,241,0.2)',
+    justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(99,102,241,0.4)',
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
   },
-  actionButtonActive: {
-    backgroundColor: 'rgba(239,68,68,0.3)',
-    borderColor: 'rgba(239,68,68,0.6)',
+  actionBtnDisabled: {
+    opacity: 0.35,
   },
   actionText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
   },
-  voiceCommandButton: {
-    backgroundColor: 'rgba(34,197,94,0.2)',
-    borderWidth: 1,
-    borderColor: 'rgba(34,197,94,0.4)',
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  voiceCommandActive: {
-    backgroundColor: 'rgba(34,197,94,0.4)',
-    borderColor: '#22c55e',
-  },
-  voiceCommandText: {
+  toast: {
     color: '#22c55e',
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 13,
+    textAlign: 'center',
+    marginTop: 4,
   },
   error: {
     color: '#ef4444',
     fontSize: 12,
-    marginBottom: 12,
-  },
-  footer: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  cancelButton: {
-    flex: 1,
-    paddingVertical: 14,
-    alignItems: 'center',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-  },
-  cancelText: {
-    color: '#999',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  sendButton: {
-    flex: 2,
-    backgroundColor: '#6366f1',
-    paddingVertical: 14,
-    alignItems: 'center',
-    borderRadius: 12,
-  },
-  sendButtonDisabled: {
-    opacity: 0.5,
-  },
-  sendText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  reloadButton: {
-    backgroundColor: 'rgba(251,191,36,0.2)',
-    borderColor: 'rgba(251,191,36,0.4)',
-  },
-  streamingIndicator: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderColor: 'rgba(255,255,255,0.1)',
-  },
-  streamingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#555',
-    marginRight: 6,
-  },
-  streamingDotActive: {
-    backgroundColor: '#22c55e',
-  },
-  streamingText: {
-    color: '#999',
-    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 4,
   },
 });

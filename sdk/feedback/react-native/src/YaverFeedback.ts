@@ -77,8 +77,6 @@ export class YaverFeedback {
     config = {
       trigger: 'shake',
       maxRecordingDuration: 120,
-      feedbackMode: 'batch',
-      agentCommentaryLevel: 0,
       autoLogin: true,
       ...cfg,
     };
@@ -486,16 +484,6 @@ export class YaverFeedback {
    */
   static getP2PClient(): P2PClient | null {
     return p2pClient;
-  }
-
-  /** Returns the current feedback mode. */
-  static getFeedbackMode(): 'live' | 'narrated' | 'batch' {
-    return config?.feedbackMode ?? 'batch';
-  }
-
-  /** Returns the agent commentary level (0-10). */
-  static getCommentaryLevel(): number {
-    return config?.agentCommentaryLevel ?? 0;
   }
 
   // ─── One-stop SaaS replacement methods ─────────────────────────

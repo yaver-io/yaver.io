@@ -66,27 +66,6 @@ export interface FeedbackConfig {
   /** Max screen recording duration in seconds. Default: 120 */
   maxRecordingDuration?: number;
   /**
-   * Feedback mode:
-   * - 'live': stream events to the agent as they happen
-   * - 'narrated': record everything, send on stop
-   * - 'batch': dump everything at end (default)
-   */
-  feedbackMode?: 'live' | 'narrated' | 'batch';
-  /**
-   * Agent commentary level (0-10).
-   * 0 = silent, 10 = agent comments on everything it sees.
-   * Only relevant in live mode. Default: 0.
-   */
-  agentCommentaryLevel?: number;
-  /**
-   * Enable voice input for feedback annotations. Always true by default.
-   * Audio is recorded on the device and sent to the agent for transcription.
-   * Works regardless of whether a speech-to-speech provider is configured —
-   * if STT is available on the agent, audio is auto-transcribed; otherwise
-   * raw audio is attached to the feedback report.
-   */
-  voiceEnabled?: boolean;
-  /**
    * Maximum number of captured errors to keep in memory (ring buffer).
    * Oldest errors are evicted when the buffer is full.
    * Default: 5.
@@ -180,13 +159,10 @@ export interface FeedbackConfig {
 
 export interface FeedbackBundle {
   metadata: FeedbackMetadata;
+  /** Screen-recording file path, when produced by the "Start Recording" action. */
   video?: string;
-  /** Voice annotation audio file path (WAV). Always available when voiceEnabled. */
-  audio?: string;
-  /** Transcribed text from voice annotation (if STT/S2S provider is available on agent). */
-  audioTranscript?: string;
   screenshots: string[];
-  /** Captured errors with stack traces, attached automatically when captureErrors is enabled. */
+  /** Captured errors with stack traces, attached via attachError / wrapErrorHandler. */
   errors?: CapturedError[];
 }
 
@@ -237,13 +213,6 @@ export interface FeedbackReport {
   bundle: FeedbackBundle;
   status: 'pending' | 'uploading' | 'uploaded' | 'failed';
   error?: string;
-}
-
-export interface AgentCommentary {
-  id: string;
-  timestamp: string;
-  message: string;
-  type: 'observation' | 'suggestion' | 'question' | 'action';
 }
 
 export interface FeedbackStreamEvent {

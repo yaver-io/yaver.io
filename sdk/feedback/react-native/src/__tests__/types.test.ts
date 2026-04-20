@@ -6,7 +6,6 @@ import type {
   DeviceInfo,
   AppInfo,
   FeedbackReport,
-  AgentCommentary,
   FeedbackStreamEvent,
 } from '../types';
 
@@ -21,8 +20,6 @@ describe('React Native SDK types', () => {
       expect(config.trigger).toBeUndefined();
       expect(config.enabled).toBeUndefined();
       expect(config.maxRecordingDuration).toBeUndefined();
-      expect(config.feedbackMode).toBeUndefined();
-      expect(config.agentCommentaryLevel).toBeUndefined();
     });
 
     it('can be constructed with all optional fields', () => {
@@ -32,12 +29,10 @@ describe('React Native SDK types', () => {
         trigger: 'shake',
         enabled: true,
         maxRecordingDuration: 60,
-        feedbackMode: 'live',
-        agentCommentaryLevel: 7,
+        strictNativeAuth: true,
       };
       expect(config.trigger).toBe('shake');
-      expect(config.feedbackMode).toBe('live');
-      expect(config.agentCommentaryLevel).toBe(7);
+      expect(config.strictNativeAuth).toBe(true);
     });
 
     it('accepts all trigger types', () => {
@@ -45,14 +40,6 @@ describe('React Native SDK types', () => {
       triggers.forEach((trigger) => {
         const config: FeedbackConfig = { authToken: 'tok', trigger };
         expect(config.trigger).toBe(trigger);
-      });
-    });
-
-    it('accepts all feedback modes', () => {
-      const modes: FeedbackConfig['feedbackMode'][] = ['live', 'narrated', 'batch'];
-      modes.forEach((mode) => {
-        const config: FeedbackConfig = { authToken: 'tok', feedbackMode: mode };
-        expect(config.feedbackMode).toBe(mode);
       });
     });
   });
@@ -82,10 +69,9 @@ describe('React Native SDK types', () => {
       expect(bundle.metadata.device.platform).toBe('ios');
       expect(bundle.screenshots).toEqual([]);
       expect(bundle.video).toBeUndefined();
-      expect(bundle.audio).toBeUndefined();
     });
 
-    it('can include optional video, audio, and screenshots', () => {
+    it('can include optional video + screenshots', () => {
       const bundle: FeedbackBundle = {
         metadata: {
           timestamp: '2026-03-24T12:00:00Z',
@@ -100,12 +86,10 @@ describe('React Native SDK types', () => {
           userNote: 'This button does not work',
         },
         video: '/tmp/recording.mp4',
-        audio: '/tmp/voice.m4a',
         screenshots: ['/tmp/ss1.png', '/tmp/ss2.png'],
       };
 
       expect(bundle.video).toBe('/tmp/recording.mp4');
-      expect(bundle.audio).toBe('/tmp/voice.m4a');
       expect(bundle.screenshots).toHaveLength(2);
       expect(bundle.metadata.userNote).toBe('This button does not work');
     });
@@ -209,26 +193,6 @@ describe('React Native SDK types', () => {
           status,
         };
         expect(report.status).toBe(status);
-      });
-    });
-  });
-
-  describe('AgentCommentary', () => {
-    it('has correct structure', () => {
-      const commentary: AgentCommentary = {
-        id: 'cmt-1',
-        timestamp: '2026-03-24T12:00:00Z',
-        message: 'I see a layout issue on the login screen',
-        type: 'observation',
-      };
-      expect(commentary.type).toBe('observation');
-    });
-
-    it('accepts all commentary types', () => {
-      const types: AgentCommentary['type'][] = ['observation', 'suggestion', 'question', 'action'];
-      types.forEach((type) => {
-        const c: AgentCommentary = { id: '1', timestamp: 'now', message: 'test', type };
-        expect(c.type).toBe(type);
       });
     });
   });

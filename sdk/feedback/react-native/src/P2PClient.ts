@@ -79,14 +79,6 @@ export class P2PClient {
       } as any);
     }
 
-    if (bundle.audio) {
-      formData.append('audio', {
-        uri: Platform.OS === 'android' ? `file://${bundle.audio}` : bundle.audio,
-        type: 'audio/m4a',
-        name: 'voice_note.m4a',
-      } as any);
-    }
-
     if (bundle.video) {
       formData.append('video', {
         uri: Platform.OS === 'android' ? `file://${bundle.video}` : bundle.video,
@@ -223,20 +215,82 @@ export class P2PClient {
    * @param mode - "dev" for hot reload, "bundle" for native bundle rebuild
    */
   async reloadApp(mode: 'dev' | 'bundle' = 'dev'): Promise<{ ok: boolean }> {
-    const response = await fetch(`${this.baseUrl}/dev/reload-app`, {
+    // Primary path: /dev/reload — same endpoint the Yaver mobile app uses.
+    // Triggers Metro/Expo HMR synchronously and emits an SSE `reload` event
+    // on /dev/events that the FeedbackModal can subscribe to for progress.
+    //
+    // Only fall back to /dev/reload-app (the BlackBox-SSE-broadcast path)
+    // when the primary path reports "no dev server running" — that mode is
+    // really for the mobile app remotely kicking a third-party app, not
+    // for the app kicking itself.
+    const primary = await fetch(`${this.baseUrl}/dev/reload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    });
+    if (primary.ok) {
+      return primary.json().catch(() => ({ ok: true }));
+    }
+    if (primary.status >= 500 || primary.status === 404 || mode === 'bundle') {
+      const fallback = await fetch(`${this.baseUrl}/dev/reload-app`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ mode }),
+      });
+      if (!fallback.ok) {
+        const text = await fallback.text().catch(() => '');
+        throw new Error(`[P2PClient] Reload failed (${fallback.status}): ${text}`);
+      }
+      return fallback.json().catch(() => ({ ok: true }));
+    }
+    const text = await primary.text().catch(() => '');
+    throw new Error(`[P2PClient] Reload failed (${primary.status}): ${text}`);
+  }
+
+  /**
+   * Open a vibing session on the connected agent. Vibing is the Yaver
+   * interactive coding-agent flow — `/vibing/execute` creates a task with
+   * the project context plus the user's prompt. Returns the task id the
+   * caller can poll via `/tasks/{id}` if needed.
+   *
+   * Requires an owner/CLI/paired token — the `/vibing*` routes do not
+   * currently accept SDK-minted tokens. Power users typically drive
+   * vibing from Claude Code / the Yaver mobile app; this method is a
+   * convenience for the SDK's one-tap bug-report-to-vibing path.
+   */
+  async vibing(prompt: string, projectPath?: string): Promise<{ taskId: string }> {
+    const response = await fetch(`${this.baseUrl}/vibing/execute`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.authToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ mode }),
+      body: JSON.stringify({ prompt, projectPath: projectPath ?? '' }),
     });
-
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      throw new Error(`[P2PClient] Reload app failed (${response.status}): ${text}`);
+      throw new Error(`[P2PClient] Vibing failed (${response.status}): ${text}`);
     }
+    return response.json();
+  }
 
+  /**
+   * After uploading a feedback bundle with `uploadFeedback`, call this
+   * with the returned report id to create a fix task on the agent. The
+   * task includes the feedback's screenshots, errors, and (when available)
+   * the BlackBox context for the originating device.
+   */
+  async triggerFix(feedbackId: string): Promise<{ taskId: string; prompt: string }> {
+    const response = await fetch(`${this.baseUrl}/feedback/${encodeURIComponent(feedbackId)}/fix`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`[P2PClient] Fix trigger failed (${response.status}): ${text}`);
+    }
     return response.json();
   }
 

@@ -39,8 +39,6 @@ describe('YaverFeedback', () => {
       expect(cfg!.agentUrl).toBe('http://localhost:18080');
       expect(cfg!.trigger).toBe('shake');
       expect(cfg!.maxRecordingDuration).toBe(120);
-      expect(cfg!.feedbackMode).toBe('batch');
-      expect(cfg!.agentCommentaryLevel).toBe(0);
     });
 
     it('respects user-provided values over defaults', () => {
@@ -48,15 +46,13 @@ describe('YaverFeedback', () => {
         authToken: 'tok',
         trigger: 'floating-button',
         maxRecordingDuration: 60,
-        feedbackMode: 'live',
-        agentCommentaryLevel: 7,
+        strictNativeAuth: true,
       });
 
       const cfg = YaverFeedback.getConfig();
       expect(cfg!.trigger).toBe('floating-button');
       expect(cfg!.maxRecordingDuration).toBe(60);
-      expect(cfg!.feedbackMode).toBe('live');
-      expect(cfg!.agentCommentaryLevel).toBe(7);
+      expect(cfg!.strictNativeAuth).toBe(true);
     });
 
     it('with enabled=false sets enabled to false', () => {
@@ -127,41 +123,6 @@ describe('YaverFeedback', () => {
       expect(cfg).toBeDefined();
       expect(cfg!.authToken).toBe('my-token');
       expect(cfg!.agentUrl).toBe('http://10.0.0.1:18080');
-    });
-  });
-
-  describe('getFeedbackMode()', () => {
-    it('defaults to batch when no config', () => {
-      // After any init, feedbackMode defaults to 'batch'
-      YaverFeedback.init({ authToken: 'tok' });
-      expect(YaverFeedback.getFeedbackMode()).toBe('batch');
-    });
-
-    it('returns configured mode', () => {
-      YaverFeedback.init({ authToken: 'tok', feedbackMode: 'narrated' });
-      expect(YaverFeedback.getFeedbackMode()).toBe('narrated');
-    });
-
-    it('returns live when configured', () => {
-      YaverFeedback.init({ authToken: 'tok', feedbackMode: 'live' });
-      expect(YaverFeedback.getFeedbackMode()).toBe('live');
-    });
-  });
-
-  describe('getCommentaryLevel()', () => {
-    it('defaults to 0', () => {
-      YaverFeedback.init({ authToken: 'tok' });
-      expect(YaverFeedback.getCommentaryLevel()).toBe(0);
-    });
-
-    it('returns configured level', () => {
-      YaverFeedback.init({ authToken: 'tok', agentCommentaryLevel: 5 });
-      expect(YaverFeedback.getCommentaryLevel()).toBe(5);
-    });
-
-    it('returns max level when set to 10', () => {
-      YaverFeedback.init({ authToken: 'tok', agentCommentaryLevel: 10 });
-      expect(YaverFeedback.getCommentaryLevel()).toBe(10);
     });
   });
 

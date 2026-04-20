@@ -7,16 +7,17 @@ import { FeedbackBundle } from './types';
  * The agent receives the bundle at POST /feedback with:
  * - `metadata` (JSON string)
  * - `screenshot_0`, `screenshot_1`, ... (image files)
- * - `audio` (audio file, if present)
  * - `video` (video file, if present)
  *
- * @returns The feedback report ID from the agent response.
+ * Returns the parsed agent response — typically `{ ok, id, reportId }`.
+ * Callers can inspect `.id` / `.reportId` to drive a follow-up
+ * `/feedback/{id}/fix` kick.
  */
 export async function uploadFeedback(
   agentUrl: string,
   authToken: string,
   bundle: FeedbackBundle,
-): Promise<string> {
+): Promise<{ id?: string; reportId?: string; [k: string]: unknown }> {
   const formData = new FormData();
 
   // Attach metadata as JSON
@@ -29,16 +30,6 @@ export async function uploadFeedback(
       uri: Platform.OS === 'android' ? `file://${path}` : path,
       type: 'image/png',
       name: `screenshot_${i}.png`,
-    } as any);
-  }
-
-  // Attach audio
-  if (bundle.audio) {
-    formData.append('audio', {
-      uri:
-        Platform.OS === 'android' ? `file://${bundle.audio}` : bundle.audio,
-      type: 'audio/m4a',
-      name: 'voice_note.m4a',
     } as any);
   }
 
@@ -69,6 +60,6 @@ export async function uploadFeedback(
     );
   }
 
-  const result = await response.json();
-  return result.id ?? result.reportId ?? 'unknown';
+  const result = await response.json().catch(() => ({}));
+  return result as { id?: string; reportId?: string; [k: string]: unknown };
 }

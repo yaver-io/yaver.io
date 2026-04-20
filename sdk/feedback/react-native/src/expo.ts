@@ -31,7 +31,6 @@ import type { FeedbackConfig } from './types';
  *
  * Defaults:
  * - trigger: 'shake'
- * - feedbackMode: 'batch'
  * - enabled: __DEV__ (only active in development)
  *
  * @param overrides - Optional partial config to override defaults
@@ -54,7 +53,6 @@ export function initExpo(overrides?: Partial<FeedbackConfig>): void {
   YaverFeedback.init({
     authToken: '', // LAN auto-discovery doesn't require a token
     trigger: 'shake',
-    feedbackMode: 'batch',
     enabled: __DEV__,
     ...overrides,
     ...(agentUrl ? { agentUrl } : {}),
