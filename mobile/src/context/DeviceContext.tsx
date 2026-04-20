@@ -450,6 +450,9 @@ interface DeviceState {
   unreachableDeviceIds: string[];
   /** Flag a device as not reachable (e.g. after user hit Stop on a reconnect loop). */
   markDeviceUnreachable: (deviceId: string) => void;
+  /** Devices where auto-pair has repeatedly failed; the user needs to run
+   *  `yaver auth` on that machine manually. UI can surface a soft banner. */
+  manualAuthRequiredDeviceIds: string[];
   /** Stop the active reconnect loop, clear the active device, mark it unreachable, and refresh from Convex. */
   stopReconnectAndBounce: () => Promise<void>;
   /** Pending guest invitations from other users */
@@ -533,6 +536,12 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   const [guestInvitations, setGuestInvitations] = useState<GuestInvitation[]>([]);
   const [agentAuthExpired, setAgentAuthExpired] = useState(false);
   const [unreachableSet, setUnreachableSet] = useState<Set<string>>(() => new Set());
+  // Auto-pair failure tracking. Each auto-pair path (LAN beacon / relay /
+  // direct) records per-device failures; after MAX_PAIR_ATTEMPTS we add
+  // the deviceId to `manualAuthRequiredSet` and the polling loops skip
+  // it. Reset automatically the next time we observe a successful pair.
+  const pairAttemptsRef = useRef<Map<string, number>>(new Map());
+  const [manualAuthRequiredSet, setManualAuthRequiredSet] = useState<Set<string>>(() => new Set());
   // User-chosen "primary" machine — auto-connect target when they have more
   // than one device. Undefined = no preference set → force manual pick for
   // multi-device users. Loaded from Convex on mount, persisted on change.
@@ -555,6 +564,41 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       next.delete(deviceId);
       return next;
     });
+  }, []);
+
+  // Auto-pair bookkeeping — shared across the 3 auto-pair effects so
+  // failures on one path count against the overall budget for that
+  // device. 5 attempts spans LAN + relay + direct probes, which is
+  // enough to rule out transient network trouble and signal to the
+  // user that the machine genuinely needs manual `yaver auth`.
+  const MAX_AUTO_PAIR_ATTEMPTS = 5;
+  const recordAutoPairFailure = useCallback((deviceId: string) => {
+    const next = (pairAttemptsRef.current.get(deviceId) ?? 0) + 1;
+    pairAttemptsRef.current.set(deviceId, next);
+    if (next >= MAX_AUTO_PAIR_ATTEMPTS) {
+      setManualAuthRequiredSet((prev) => {
+        if (prev.has(deviceId)) return prev;
+        const updated = new Set(prev);
+        updated.add(deviceId);
+        appLog(
+          "warn",
+          `[auto-pair] Giving up on ${deviceId} after ${next} attempts — run 'yaver auth' on that machine`
+        );
+        return updated;
+      });
+    }
+  }, []);
+  const recordAutoPairSuccess = useCallback((deviceId: string) => {
+    pairAttemptsRef.current.delete(deviceId);
+    setManualAuthRequiredSet((prev) => {
+      if (!prev.has(deviceId)) return prev;
+      const updated = new Set(prev);
+      updated.delete(deviceId);
+      return updated;
+    });
+  }, []);
+  const isAutoPairBlocked = useCallback((deviceId: string) => {
+    return (pairAttemptsRef.current.get(deviceId) ?? 0) >= MAX_AUTO_PAIR_ATTEMPTS;
   }, []);
 
   const refreshDevices = useCallback(async () => {
@@ -863,9 +907,47 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(iv);
   }, [activeDevice?.id]);
 
+  // Auto-clear the "needs manual auth" block when the device list shows
+  // the machine is no longer in bootstrap mode — i.e. the user ran
+  // `yaver auth` on it directly. Without this the block would stick for
+  // the whole session and UI would keep showing the soft banner after
+  // the user already fixed it. Also clears the per-device attempt
+  // counter so the auto-pair path doesn't immediately re-block.
+  useEffect(() => {
+    if (manualAuthRequiredSet.size === 0) return;
+    let changed = false;
+    const next = new Set(manualAuthRequiredSet);
+    for (const blockedId of manualAuthRequiredSet) {
+      const dev = devices.find((d) => d.id === blockedId);
+      // Clear when either (a) the device is no longer in bootstrap mode
+      // per Convex heartbeat, or (b) the device has disappeared from the
+      // list entirely (removed by the user).
+      if (!dev || dev.needsAuth !== true) {
+        next.delete(blockedId);
+        pairAttemptsRef.current.delete(blockedId);
+        appLog("info", `[auto-pair] Cleared manual-auth block for ${blockedId}`);
+        changed = true;
+      }
+    }
+    if (changed) setManualAuthRequiredSet(next);
+  }, [devices, manualAuthRequiredSet]);
+
+  // Keep quicClient.token in sync with AuthContext — when Convex rotates
+  // the session token (via X-Yaver-Rotate-Token), AuthContext persists it
+  // and pushes the new value through React state. Without this hop, the
+  // QUIC client keeps using the old bearer until the next reconnect and
+  // every in-flight agent request fails 401 for ~30s until the token is
+  // observed stale and a full reconnect is forced.
+  useEffect(() => {
+    if (!token) return;
+    quicClient.setToken(token);
+  }, [token]);
+
   // Fetch relay servers: local AsyncStorage > Convex user settings > Convex platform config
   // Extracted so it can be called on startup AND on reconnection (when relay list is empty).
-  const fetchRelayServers = useCallback(async () => {
+  // Returns the number of relays ultimately loaded into the QUIC client — 0 means "no relays
+  // from any source", which the startup retry loop uses as the trigger to back off and retry.
+  const fetchRelayServers = useCallback(async (): Promise<number> => {
     try {
       // 1. Check for user-configured custom relays in local storage first
       const customRaw = await AsyncStorage.getItem(RELAYS_KEY);
@@ -874,7 +956,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         if (customRelays.length > 0) {
           quicClient.setRelayServers(customRelays);
           console.log("[DeviceContext] Using", customRelays.length, "custom relay server(s)");
-          return;
+          return customRelays.length;
         }
       }
 
@@ -900,7 +982,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             await AsyncStorage.setItem(RELAYS_KEY, JSON.stringify(resolved));
             await AsyncStorage.setItem(SYNC_KEY, "true");
             console.log("[DeviceContext] Loaded", resolved.length, "relay server(s) from Convex user settings");
-            return;
+            return resolved.length;
           }
         } catch {
           // Best-effort — fall through to platform config
@@ -910,17 +992,49 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       // 3. No account-level relay — fall back to Convex platform config
       quicClient.setRelayServers(platformServers);
       console.log("[DeviceContext] Loaded", platformServers.length, "relay server(s) from Convex");
+      return platformServers.length;
     } catch {
       sendTelemetry(token, "relays-failed", "Could not fetch relay config");
+      return 0;
     }
   }, [token]);
 
-  // Initial relay fetch on mount
+  // Initial relay fetch on mount. If we end up with zero relays (likely a
+  // transient `/config` fetch failure at boot — DNS not resolved yet,
+  // airplane-mode toggle, cold tunnel), keep retrying in the background
+  // with exponential backoff so the app recovers as soon as the network
+  // is usable. Never blocks `setRelaysReady(true)` — the app can still
+  // run on LAN-only connections while relays are being fetched.
   const relaysFetched = useRef(false);
   useEffect(() => {
     if (relaysFetched.current) return;
     relaysFetched.current = true;
-    fetchRelayServers().finally(() => setRelaysReady(true));
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const retryDelaysMs = [5_000, 10_000, 20_000, 40_000, 60_000];
+    let attempt = 0;
+
+    const tryFetch = async () => {
+      const count = await fetchRelayServers();
+      if (!cancelled) setRelaysReady(true);
+      if (cancelled) return;
+      if (count > 0) return;
+      if (attempt >= retryDelaysMs.length) {
+        console.log("[DeviceContext] No relays after retries — LAN-only connectivity");
+        return;
+      }
+      const delay = retryDelaysMs[attempt++];
+      console.log(`[DeviceContext] No relays loaded; retry in ${delay}ms`);
+      timer = setTimeout(tryFetch, delay);
+    };
+
+    tryFetch();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [fetchRelayServers]);
 
   // Re-fetch relay config when connection is lost and relay list is empty.
@@ -1055,8 +1169,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       const bootstraps = beaconListener.getBootstrapDevices();
       for (const dev of bootstraps) {
         if (autoPairedRef.current.has(dev.deviceId)) continue;
+        if (isAutoPairBlocked(dev.deviceId)) continue;
         autoPairedRef.current.add(dev.deviceId);
         const targetUrl = `http://${dev.ip}:${dev.port}`;
+        let paired = false;
         try {
           // Try encrypted path: find the device's public key from Convex.
           // If the beacon also broadcasts a public key (dpk), verify it
@@ -1076,6 +1192,8 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             const res = await submitEncryptedPair(targetUrl, token, pubKey, dev.bootstrapPasskey);
             if (res.ok) {
               appLog("info", `Encrypted auto-pair: ${dev.name || dev.deviceId} at ${dev.ip}`);
+              paired = true;
+              recordAutoPairSuccess(dev.deviceId);
               setTimeout(() => refreshDevices(), 3000);
               continue;
             }
@@ -1092,15 +1210,22 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           });
           if (res.ok) {
             appLog("info", `Passkey auto-pair: ${dev.name || dev.deviceId} at ${dev.ip}`);
+            paired = true;
+            recordAutoPairSuccess(dev.deviceId);
             setTimeout(() => refreshDevices(), 3000);
           }
         } catch {
           autoPairedRef.current.delete(dev.deviceId);
+        } finally {
+          if (!paired) {
+            autoPairedRef.current.delete(dev.deviceId);
+            recordAutoPairFailure(dev.deviceId);
+          }
         }
       }
     }, 3000);
     return () => clearInterval(iv);
-  }, [token, user?.id, devices, refreshDevices]);
+  }, [token, user?.id, devices, refreshDevices, isAutoPairBlocked, recordAutoPairFailure, recordAutoPairSuccess]);
 
   // Relay auto-pair: probe known OFFLINE devices via relay to check
   // if they're in bootstrap mode. The bootstrap agent connects to the
@@ -1119,7 +1244,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       //   - online devices with needsAuth=true (re-registered via /devices/bootstrap)
       // Both need the same encrypted-pair flow via relay.
       const offlineDevices = devices.filter(
-        (d) => (!d.online || d.needsAuth === true) && !d.isGuest && d.publicKey && !probed.has(d.id) && !autoPairedRef.current.has(d.id)
+        (d) => (!d.online || d.needsAuth === true) && !d.isGuest && d.publicKey && !probed.has(d.id) && !autoPairedRef.current.has(d.id) && !isAutoPairBlocked(d.id)
       );
       for (const dev of offlineDevices) {
         probed.add(dev.id);
@@ -1135,17 +1260,21 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           const res = await submitEncryptedPair(relayUrl, token, dev.publicKey!, info.bootstrapPasskey);
           if (res.ok) {
             appLog("info", `Relay encrypted auto-pair: ${dev.name} via ${relays[0].httpUrl}`);
+            recordAutoPairSuccess(dev.id);
             setTimeout(() => refreshDevices(), 3000);
           } else {
             autoPairedRef.current.delete(dev.id);
+            recordAutoPairFailure(dev.id);
           }
         } catch {
-          // Device not reachable via relay — normal for truly offline devices
+          // Device not reachable via relay — normal for truly offline devices.
+          // Don't count as a failure: true offline doesn't mean the device
+          // needs manual auth, it just isn't up right now.
         }
       }
     }, 15000);
     return () => clearInterval(iv);
-  }, [token, user?.id, devices, refreshDevices]);
+  }, [token, user?.id, devices, refreshDevices, isAutoPairBlocked, recordAutoPairFailure, recordAutoPairSuccess]);
 
   // Bootstrap detection via direct connection. Covers the case where the
   // mobile app can reach the Mac's bootstrap HTTP server directly (LAN IP
@@ -1157,8 +1286,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!token || !user?.id || !activeDevice?.host) return;
     if (autoPairedRef.current.has(activeDevice.id)) return;
+    if (isAutoPairBlocked(activeDevice.id)) return;
     const iv = setInterval(async () => {
       if (autoPairedRef.current.has(activeDevice.id)) return;
+      if (isAutoPairBlocked(activeDevice.id)) return;
       try {
         const url = `http://${activeDevice.host}:${activeDevice.port || 18080}/info`;
         const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
@@ -1173,6 +1304,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           const ok = await submitEncryptedPair(targetUrl, token, activeDevice.publicKey, info.bootstrapPasskey || info.passkey);
           if (ok.ok) {
             appLog("info", `Direct encrypted auto-pair: ${activeDevice.name} at ${activeDevice.host}`);
+            recordAutoPairSuccess(activeDevice.id);
             setTimeout(() => refreshDevices(), 3000);
             return;
           }
@@ -1181,6 +1313,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         const passkey = info.bootstrapPasskey || info.passkey;
         if (!passkey) {
           autoPairedRef.current.delete(activeDevice.id);
+          recordAutoPairFailure(activeDevice.id);
           appLog("warn", `Bootstrap device ${activeDevice.name} has no passkey and no known pubkey — cannot auto-pair`);
           return;
         }
@@ -1192,16 +1325,20 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         });
         if (pairRes.ok) {
           appLog("info", `Direct passkey auto-pair: ${activeDevice.name} at ${activeDevice.host}`);
+          recordAutoPairSuccess(activeDevice.id);
           setTimeout(() => refreshDevices(), 3000);
         } else {
           autoPairedRef.current.delete(activeDevice.id);
+          recordAutoPairFailure(activeDevice.id);
         }
       } catch {
-        // Network error — will retry next tick
+        // Network error — will retry next tick. Do NOT count as an
+        // auto-pair failure: the device may just be momentarily
+        // unreachable, not broken.
       }
     }, 5000);
     return () => clearInterval(iv);
-  }, [token, user?.id, activeDevice?.id, activeDevice?.host, activeDevice?.port, activeDevice?.publicKey, activeDevice?.name, refreshDevices]);
+  }, [token, user?.id, activeDevice?.id, activeDevice?.host, activeDevice?.port, activeDevice?.publicKey, activeDevice?.name, refreshDevices, isAutoPairBlocked, recordAutoPairFailure, recordAutoPairSuccess]);
 
   const acceptGuestInvitation = useCallback(
     async (hostUserId: string, approvedDeviceIds?: string[]) => {
@@ -1379,9 +1516,19 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         onlineCount: recentDevices.length,
       }));
       selectDevice(target);
+
+      // Seed primaryDeviceId after the first successful auto-connect on a
+      // multi-device account. The single online device today becomes the
+      // default for tomorrow — next launch skips the picker even if both
+      // devices are online. User can always override in Settings.
+      if (reason === "single" && devices.length > 1 && primaryDeviceId === null) {
+        setPrimaryDevice(target.id).catch((e) => {
+          appLog("warn", `[DeviceContext] Auto-set primaryDevice failed: ${e}`);
+        });
+      }
     }
     // Multiple devices + no primary (or primary offline) → do nothing; UI asks the user to pick.
-  }, [devices, token, relaysReady, activeDevice, connectionStatus, userDisconnected, primaryDeviceId, selectDevice]);
+  }, [devices, token, relaysReady, activeDevice, connectionStatus, userDisconnected, primaryDeviceId, selectDevice, setPrimaryDevice]);
 
   // Trigger immediate reconnection on network change (WiFi↔cellular roaming)
   useEffect(() => {
@@ -1408,12 +1555,15 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
 
   // When the app returns from a third-party app or the background,
   // resume the last active machine automatically instead of forcing
-  // the user to tap the same device again.
+  // the user to tap the same device again. Also forwards foreground
+  // state into the QUIC client so its reconnect loop pauses while
+  // suspended (saves battery, no spurious "failed" state on resume).
   const appStateRef = useRef(AppState.currentState);
   useEffect(() => {
     const sub = AppState.addEventListener("change", (nextState: AppStateStatus) => {
       const prevState = appStateRef.current;
       appStateRef.current = nextState;
+      quicClient.setForegroundState(nextState === "active");
       if (nextState !== "active" || !prevState.match(/inactive|background/)) return;
       if (!activeDevice || userDisconnected) return;
       if (quicClient.connectionState === "connected" || connectionStatus === "connecting") return;
@@ -1447,6 +1597,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       removeDevice: handleRemoveDevice,
       unreachableDeviceIds: Array.from(unreachableSet),
       markDeviceUnreachable,
+      manualAuthRequiredDeviceIds: Array.from(manualAuthRequiredSet),
       stopReconnectAndBounce,
       guestInvitations,
       acceptGuestInvitation,
@@ -1455,7 +1606,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       primaryDeviceId,
       setPrimaryDevice,
     }),
-    [devices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, unreachableSet, markDeviceUnreachable, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice]
+    [devices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

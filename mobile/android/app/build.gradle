@@ -92,8 +92,8 @@ android {
         applicationId 'io.yaver.mobile'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 179
-        versionName "1.18.5"
+        versionCode 180
+        versionName "1.18.6"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }

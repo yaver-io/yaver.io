@@ -66,7 +66,20 @@ export async function saveUser(user: User): Promise<void> {
   await SecureStore.setItemAsync(USER_KEY, JSON.stringify(user));
 }
 
-export async function validateToken(token: string): Promise<User | null> {
+/**
+ * Detailed result of a token validation call. Distinguishes between
+ * "server actually said this token is invalid" (kind=invalid → caller
+ * should log out) and "we could not reach the server" (kind=networkError
+ * → caller should keep the cached session and retry later). The old
+ * null-returning `validateToken` collapsed both into the same signal
+ * which caused spurious logouts on brief network hiccups.
+ */
+export type ValidationResult =
+  | { kind: "valid"; user: User }
+  | { kind: "invalid" }
+  | { kind: "networkError" };
+
+export async function validateTokenDetailed(token: string): Promise<ValidationResult> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5_000);
@@ -81,40 +94,89 @@ export async function validateToken(token: string): Promise<User | null> {
       }
     );
     clearTimeout(timeout);
-    if (!response.ok) return null;
+    if (response.status === 401 || response.status === 403) {
+      return { kind: "invalid" };
+    }
+    if (!response.ok) {
+      // 5xx / unexpected — treat as transient, do NOT nuke the session.
+      return { kind: "networkError" };
+    }
     const data = await response.json();
     const u = data.user;
-    return {
+    const user: User = {
       id: u.userId ?? u.id,
       email: u.email,
       name: u.fullName ?? u.name,
       provider: u.provider,
       avatarUrl: u.avatarUrl,
       surveyCompleted: u.surveyCompleted ?? false,
-    } as User;
+    };
+    return { kind: "valid", user };
   } catch {
-    return null;
+    return { kind: "networkError" };
   }
 }
 
+/** Legacy wrapper — returns the user on success, null on invalid OR
+ *  network error. Prefer `validateTokenDetailed` in new code. */
+export async function validateToken(token: string): Promise<User | null> {
+  const result = await validateTokenDetailed(token);
+  return result.kind === "valid" ? result.user : null;
+}
+
 /**
- * Refresh the session token — extends expiry by 30 days.
- * Returns true if refreshed, false if expired/invalid (needs re-login).
+ * Result of a refresh call.
+ *  - `ok: false`                    → server said the token is revoked/expired; log out
+ *  - `ok: true, networkError: true` → couldn't reach the server; keep cached token
+ *  - `ok: true, newToken: "..."`    → server rotated the token; persist it
+ *  - `ok: true`                     → extended; no action needed
  */
-export async function refreshToken(token: string): Promise<boolean> {
+export interface RefreshResult {
+  ok: boolean;
+  newToken?: string;
+  networkError?: boolean;
+}
+
+/**
+ * Refresh the session token — extends expiry by 30 days. Opts in to
+ * server-side token rotation (`X-Yaver-Rotate-Token: 1`); when the
+ * backend rotates, we surface the new token so the caller can persist
+ * it. Matches the Go agent's behavior (see `desktop/agent/auth.go`).
+ */
+export async function refreshToken(token: string): Promise<RefreshResult> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5_000);
     const response = await fetch(`${getConvexSiteUrl()}/auth/refresh`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "X-Yaver-Rotate-Token": "1",
+      },
       signal: controller.signal,
     });
     clearTimeout(timeout);
-    return response.ok;
+    if (response.status === 401 || response.status === 403) {
+      return { ok: false };
+    }
+    if (!response.ok) {
+      return { ok: true, networkError: true };
+    }
+    try {
+      const body = await response.json();
+      if (
+        body?.rotated === true &&
+        typeof body.token === "string" &&
+        body.token.length > 0
+      ) {
+        return { ok: true, newToken: body.token };
+      }
+    } catch {
+      // Older backend without JSON body — no rotation; keep cached token.
+    }
+    return { ok: true };
   } catch {
-    // Network error — assume token is still valid
-    return true;
+    return { ok: true, networkError: true };
   }
 }
 

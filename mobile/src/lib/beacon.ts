@@ -12,7 +12,12 @@ import dgram from "react-native-udp";
 import { appLog } from "./logger";
 
 const BEACON_PORT = 19837;
-const BEACON_STALE_MS = 10_000; // device expires after 10s of no beacons
+// Device expires after 15s of no beacons. Agents broadcast every 3s, so
+// this tolerates ~5 missed packets — enough to ride out the noisy-WiFi
+// retransmit window without falsely flipping the device to "offline"
+// and forcing a relay fallback. Anything under ~12s produced too many
+// transient "device lost" events on busy networks.
+const BEACON_STALE_MS = 15_000;
 
 export interface DiscoveredDevice {
   deviceId: string;  // short ID (first 8 chars)

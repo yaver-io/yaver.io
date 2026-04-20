@@ -525,17 +525,20 @@ export class QuicClient {
 
   // Reconnection — short burst, then give up. 15 attempts produced a
   // ~2-minute silent spinning loop that ate battery and made the UI feel
-  // broken; 3 attempts (≈7s of exponential backoff total) surfaces the
-  // failure fast enough for the user to decide whether to retry, switch
-  // networks, or pick a different device. Full network-change events
-  // still trigger a fresh full reconnect with its own budget.
+  // broken; 3 attempts (≈7s) was too brittle on intermittent WiFi. At 5
+  // attempts the backoff ladder is 1s, 2s, 4s, 8s, 16s (≈31s total) —
+  // enough to ride out a DNS blip or relay reboot, still short enough to
+  // surface a real outage. When the app goes to background we pause the
+  // loop entirely (battery + no network events will be delivered anyway)
+  // and resume from attempt 1 when we return to foreground.
   // `reconnectAttempt` is the 1-indexed number of the attempt currently in
   // progress or just completed. 0 means idle (connected or never started).
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private _reconnectAttempt = 0;
   private _reconnectStopped = false;
+  private _isForeground = true;
   private readonly baseBackoffMs = 1000;
-  private readonly _maxReconnectAttempts = 3;
+  private readonly _maxReconnectAttempts = 5;
 
   private _connectionMode: ConnectionMode = null;
   private _connectionPath: ConnectionPath = null;
@@ -829,6 +832,21 @@ export class QuicClient {
     if (this._connectionState !== "connected") {
       throw new Error("Could not reach agent (direct, tunnel, or via relay)");
     }
+  }
+
+  /**
+   * Replace the bearer token used for every subsequent request without
+   * tearing down the connection. Called when Convex rotates the session
+   * token in response to `/auth/refresh` — the existing TCP/QUIC path,
+   * relay password, and active device remain; only the Authorization
+   * header changes. Ignores no-op and empty updates so we don't race
+   * with the AuthContext bootstrap. Callers must have already persisted
+   * the new token to the Keychain before calling this.
+   */
+  setToken(token: string): void {
+    if (!token) return;
+    if (this.token === token) return;
+    this.token = token;
   }
 
   /** Close the connection and stop all timers. */
@@ -2901,6 +2919,37 @@ export class QuicClient {
     this.setConnectionState("error");
   }
 
+  /**
+   * Called by the host React tree on AppState transitions. Going to
+   * background cancels the pending backoff timer so we don't wake the
+   * radio while the app is suspended; returning to foreground resumes
+   * the loop from attempt 1 if we were mid-reconnect or in an error
+   * state. Idempotent.
+   */
+  setForegroundState(isForeground: boolean): void {
+    if (this._isForeground === isForeground) return;
+    this._isForeground = isForeground;
+    if (!isForeground) {
+      // Backgrounded — cancel the pending backoff. Do NOT mark as
+      // stopped (that's the user-initiated signal) so we resume
+      // automatically on foreground.
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+      return;
+    }
+    // Foregrounded — if we need to reconnect, do it now with a fresh
+    // attempt budget. DeviceContext's AppState handler also calls
+    // triggerReconnect separately; these are idempotent.
+    if (!this.host || !this.port || !this.token) return;
+    if (this._reconnectStopped) return;
+    if (this._connectionState === "connected") return;
+    if (this._connectingInProgress) return;
+    this.setReconnectAttempt(1);
+    this.attemptConnect().catch(() => {});
+  }
+
   private emit(event: "output", taskId: string, line: string): void {
     for (const cb of this.listeners.output) {
       try {
@@ -3222,6 +3271,18 @@ export class QuicClient {
   private scheduleReconnect(): void {
     if (!this.host || !this.port || !this.token) return;
     if (this._reconnectStopped) return;
+
+    // Paused while the app is in the background — setForegroundState(true)
+    // will resume from attempt 1 when we come back. The current attempt
+    // counter is preserved in case foreground returns quickly and we want
+    // to pick up where we left off.
+    if (!this._isForeground) {
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+      return;
+    }
 
     // Give up after max retries — attempt `_maxReconnectAttempts` just failed.
     if (this._reconnectAttempt >= this._maxReconnectAttempts) {
