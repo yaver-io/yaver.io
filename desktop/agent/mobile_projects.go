@@ -327,53 +327,120 @@ func findMobileProjectByBundleID(bundleID string) *MobileProject {
 	return nil
 }
 
-// projectBundleIDMatches checks the project's ios/ and android/ manifests
-// for the given bundle identifier. Best-effort: any read error is
-// treated as "not a match" — we don't want a single broken project to
-// poison the lookup for the rest.
+// projectBundleIDMatches checks a project's iOS and Android manifests
+// for the given identifier. Both platforms are first-class — an
+// Android-only project resolves just as well as an iOS-only one, and
+// a cross-platform project resolves from whichever manifest loads
+// first. Best-effort: any read error is treated as "not a match" so
+// a single broken project can't poison lookups for the rest.
+//
+// iOS identifier surfaces checked:
+//   - ios/<App>/Info.plist literal CFBundleIdentifier
+//   - ios/<App>.xcodeproj/project.pbxproj PRODUCT_BUNDLE_IDENTIFIER
+//   - app.json / app.config.json expo.ios.bundleIdentifier
+//
+// Android identifier surfaces checked:
+//   - android/app/build.gradle applicationId (Groovy + KTS syntax)
+//   - android/app/src/main/AndroidManifest.xml package= attribute
+//     (AGP 7 legacy) and namespace in build.gradle (AGP 8+)
+//   - app.json / app.config.json expo.android.package
+//
+// RN / Expo projects share a bundle id between platforms by
+// convention, so a match on EITHER side identifies the project
+// correctly.
 func projectBundleIDMatches(projectPath, bundleID string) bool {
-	if projectPath == "" {
+	if projectPath == "" || bundleID == "" {
 		return false
 	}
-	// iOS Info.plist — CFBundleIdentifier is either literal or
-	// $(PRODUCT_BUNDLE_IDENTIFIER) with the real value in the
-	// project.pbxproj. Check both locations.
+	if iosProjectHasBundleID(projectPath, bundleID) {
+		return true
+	}
+	if androidProjectHasBundleID(projectPath, bundleID) {
+		return true
+	}
+	return expoConfigHasBundleID(projectPath, bundleID)
+}
+
+func iosProjectHasBundleID(projectPath, bundleID string) bool {
 	iosDir := filepath.Join(projectPath, "ios")
-	if entries, err := os.ReadDir(iosDir); err == nil {
-		for _, e := range entries {
-			if !e.IsDir() {
-				continue
-			}
-			plist := filepath.Join(iosDir, e.Name(), "Info.plist")
-			if data, err := os.ReadFile(plist); err == nil {
-				if strings.Contains(string(data), bundleID) {
-					return true
-				}
-			}
-			pbx := filepath.Join(iosDir, e.Name()+".xcodeproj", "project.pbxproj")
+	entries, err := os.ReadDir(iosDir)
+	if err != nil {
+		return false
+	}
+	quoted := `PRODUCT_BUNDLE_IDENTIFIER = "` + bundleID + `"`
+	unquoted := `PRODUCT_BUNDLE_IDENTIFIER = ` + bundleID + `;`
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		// Two directory layouts to handle:
+		//   ios/<AppName>/Info.plist           — an app target source folder
+		//   ios/<AppName>.xcodeproj/project.pbxproj — the Xcode project
+		// The earlier revision of this function always appended
+		// ".xcodeproj" which produced the double-suffix path
+		// "MyApp.xcodeproj.xcodeproj" and missed every real project.
+		if strings.HasSuffix(name, ".xcodeproj") {
+			pbx := filepath.Join(iosDir, name, "project.pbxproj")
 			if data, err := os.ReadFile(pbx); err == nil {
-				if strings.Contains(string(data), "PRODUCT_BUNDLE_IDENTIFIER = "+bundleID) ||
-					strings.Contains(string(data), `PRODUCT_BUNDLE_IDENTIFIER = "`+bundleID+`"`) {
+				s := string(data)
+				if strings.Contains(s, quoted) || strings.Contains(s, unquoted) {
 					return true
 				}
+			}
+			continue
+		}
+		plist := filepath.Join(iosDir, name, "Info.plist")
+		if data, err := os.ReadFile(plist); err == nil {
+			if strings.Contains(string(data), bundleID) {
+				return true
 			}
 		}
 	}
-	// Android: applicationId in app/build.gradle (Gradle) or
-	// package= in AndroidManifest.xml.
-	gradle := filepath.Join(projectPath, "android", "app", "build.gradle")
-	if data, err := os.ReadFile(gradle); err == nil {
-		if strings.Contains(string(data), `applicationId "`+bundleID+`"`) ||
-			strings.Contains(string(data), `applicationId '`+bundleID+`'`) {
+	return false
+}
+
+func androidProjectHasBundleID(projectPath, bundleID string) bool {
+	// 1. app/build.gradle — Groovy: `applicationId "x"` / `applicationId 'x'`
+	//    Kotlin DSL: `applicationId = "x"`
+	//    Plus AGP 8+ `namespace = "x"` (used in newer RN templates)
+	for _, gradleName := range []string{"build.gradle", "build.gradle.kts"} {
+		gradle := filepath.Join(projectPath, "android", "app", gradleName)
+		if data, err := os.ReadFile(gradle); err == nil {
+			s := string(data)
+			if strings.Contains(s, `applicationId "`+bundleID+`"`) ||
+				strings.Contains(s, `applicationId '`+bundleID+`'`) ||
+				strings.Contains(s, `applicationId = "`+bundleID+`"`) ||
+				strings.Contains(s, `namespace "`+bundleID+`"`) ||
+				strings.Contains(s, `namespace = "`+bundleID+`"`) {
+				return true
+			}
+		}
+	}
+	// 2. AndroidManifest.xml — older templates carry `package="x"`
+	manifest := filepath.Join(projectPath, "android", "app", "src", "main", "AndroidManifest.xml")
+	if data, err := os.ReadFile(manifest); err == nil {
+		if strings.Contains(string(data), `package="`+bundleID+`"`) {
 			return true
 		}
 	}
-	// Expo app.json / app.config.* — check ios.bundleIdentifier.
+	return false
+}
+
+// expoConfigHasBundleID checks Expo's declarative config. Expo sets
+// BOTH ios.bundleIdentifier and android.package — checking both here
+// so an Android-only app.json still matches even when the iOS section
+// is absent, and vice versa.
+func expoConfigHasBundleID(projectPath, bundleID string) bool {
 	for _, f := range []string{"app.json", "app.config.json"} {
-		if data, err := os.ReadFile(filepath.Join(projectPath, f)); err == nil {
-			if strings.Contains(string(data), `"bundleIdentifier": "`+bundleID+`"`) {
-				return true
-			}
+		data, err := os.ReadFile(filepath.Join(projectPath, f))
+		if err != nil {
+			continue
+		}
+		s := string(data)
+		if strings.Contains(s, `"bundleIdentifier": "`+bundleID+`"`) ||
+			strings.Contains(s, `"package": "`+bundleID+`"`) {
+			return true
 		}
 	}
 	return false
