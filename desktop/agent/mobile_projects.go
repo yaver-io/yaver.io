@@ -299,6 +299,86 @@ func findMobileProjectByName(name string) *MobileProject {
 	return nil
 }
 
+// findMobileProjectByBundleID resolves a mobile project by iOS bundle
+// identifier. Reads each cached project's ios/*/Info.plist lazily (no
+// upfront indexing) since bundle IDs aren't in the cache schema yet —
+// one Info.plist read per project at worst, and the cache is typically
+// < 20 entries. Returns the first match.
+//
+// Used by /vibing/execute and /feedback/.../fix so the SDK can route
+// a "vibe on THIS app" request to the right repo instead of relying
+// on the legacy prompt-substring matcher, which picked the wrong
+// project when a common word (e.g. "in") matched an unrelated repo.
+func findMobileProjectByBundleID(bundleID string) *MobileProject {
+	target := strings.TrimSpace(bundleID)
+	if target == "" {
+		return nil
+	}
+	mobileProjectCache.mu.RLock()
+	projects := make([]MobileProject, len(mobileProjectCache.projects))
+	copy(projects, mobileProjectCache.projects)
+	mobileProjectCache.mu.RUnlock()
+
+	for i := range projects {
+		if projectBundleIDMatches(projects[i].Path, target) {
+			return &projects[i]
+		}
+	}
+	return nil
+}
+
+// projectBundleIDMatches checks the project's ios/ and android/ manifests
+// for the given bundle identifier. Best-effort: any read error is
+// treated as "not a match" — we don't want a single broken project to
+// poison the lookup for the rest.
+func projectBundleIDMatches(projectPath, bundleID string) bool {
+	if projectPath == "" {
+		return false
+	}
+	// iOS Info.plist — CFBundleIdentifier is either literal or
+	// $(PRODUCT_BUNDLE_IDENTIFIER) with the real value in the
+	// project.pbxproj. Check both locations.
+	iosDir := filepath.Join(projectPath, "ios")
+	if entries, err := os.ReadDir(iosDir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			plist := filepath.Join(iosDir, e.Name(), "Info.plist")
+			if data, err := os.ReadFile(plist); err == nil {
+				if strings.Contains(string(data), bundleID) {
+					return true
+				}
+			}
+			pbx := filepath.Join(iosDir, e.Name()+".xcodeproj", "project.pbxproj")
+			if data, err := os.ReadFile(pbx); err == nil {
+				if strings.Contains(string(data), "PRODUCT_BUNDLE_IDENTIFIER = "+bundleID) ||
+					strings.Contains(string(data), `PRODUCT_BUNDLE_IDENTIFIER = "`+bundleID+`"`) {
+					return true
+				}
+			}
+		}
+	}
+	// Android: applicationId in app/build.gradle (Gradle) or
+	// package= in AndroidManifest.xml.
+	gradle := filepath.Join(projectPath, "android", "app", "build.gradle")
+	if data, err := os.ReadFile(gradle); err == nil {
+		if strings.Contains(string(data), `applicationId "`+bundleID+`"`) ||
+			strings.Contains(string(data), `applicationId '`+bundleID+`'`) {
+			return true
+		}
+	}
+	// Expo app.json / app.config.* — check ios.bundleIdentifier.
+	for _, f := range []string{"app.json", "app.config.json"} {
+		if data, err := os.ReadFile(filepath.Join(projectPath, f)); err == nil {
+			if strings.Contains(string(data), `"bundleIdentifier": "`+bundleID+`"`) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Scans all mobile projects, checks dev builds, and pre-builds missing ones in background.
 func PrewarmMobileProjects() {
 	log.Println("[mobile-scan] Scanning for mobile projects...")

@@ -7,6 +7,7 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { YaverFeedback } from './YaverFeedback';
@@ -65,6 +66,14 @@ export const FeedbackModal: React.FC = () => {
   // hidden button instead of a runtime error.
   const voiceSupported = useRef<boolean>(isVoiceCaptureSupported()).current;
   const [lastVideo, setLastVideo] = useState<LastVideo | null>(null);
+  // Vibing-input mode: same expand-on-tap pattern as email login.
+  // Tap "Vibing" once → the button reveals an input + Send; that lets
+  // the user say WHAT they want to vibe on instead of firing a canned
+  // "pick something for me" prompt (which in 0.7.13 pointed Claude at
+  // the wrong project because the matcher grepped the prompt itself).
+  const [showVibeInput, setShowVibeInput] = useState(false);
+  const [vibePrompt, setVibePrompt] = useState('');
+  const [lastVibeTaskId, setLastVibeTaskId] = useState<string | null>(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -285,7 +294,23 @@ export const FeedbackModal: React.FC = () => {
   }, [closeSoon]);
 
   // ─── 3. Vibing ─────────────────────────────────────────────────────
-  const handleVibing = useCallback(async () => {
+  // First tap expands the input; second submit fires the actual
+  // /vibing/execute. Mirrors the Yaver mobile app's Vibing tab —
+  // user types what they want, hits Send, sees the task id back. If
+  // left blank, we default to "pick the next small improvement"
+  // so a one-tap workflow still works for lazy days.
+  const handleVibingButton = useCallback(() => {
+    if (!showVibeInput) {
+      setShowVibeInput(true);
+      return;
+    }
+    // collapse if tapped again with empty input
+    if (!vibePrompt.trim()) {
+      setShowVibeInput(false);
+    }
+  }, [showVibeInput, vibePrompt]);
+
+  const handleVibingSubmit = useCallback(async () => {
     const client = YaverFeedback.getP2PClient();
     if (!client) {
       setError('Not connected to the agent yet.');
@@ -303,21 +328,22 @@ export const FeedbackModal: React.FC = () => {
               .map((e) => `- ${e.message}`)
               .join('\n')
           : '';
-      const prompt =
-        'The user opened the feedback modal on their phone and tapped Vibing. ' +
-        'Investigate whatever they are likely to be asking about — pick the ' +
-        'next small improvement or fix based on recent activity and the ' +
-        'current screen.' +
-        errNote;
-      await client.vibing(prompt);
-      setToast('Vibing task created');
-      closeSoon(1200);
+      const userPrompt = vibePrompt.trim();
+      const prompt = userPrompt
+        ? userPrompt + errNote
+        : 'Pick the next small improvement or fix for this app based on recent activity and the current screen.' +
+          errNote;
+      const result = await client.vibing(prompt);
+      setLastVibeTaskId(result.taskId);
+      setToast(`Vibing task ${result.taskId.slice(0, 8)} created`);
+      setVibePrompt('');
+      setShowVibeInput(false);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       if (mountedRef.current) setAction('idle');
     }
-  }, [closeSoon]);
+  }, [vibePrompt]);
 
   // ─── 4. Toggle screen recording ────────────────────────────────────
   const handleToggleRecording = useCallback(async () => {
@@ -537,14 +563,64 @@ export const FeedbackModal: React.FC = () => {
                 busy={action === 'capturing'}
               />
 
-              {/* 3. Vibing */}
-              <ActionRow
-                label={action === 'vibing' ? 'Starting…' : 'Vibing'}
-                tint="#818cf8"
-                onPress={handleVibing}
-                disabled={busy}
-                busy={action === 'vibing'}
-              />
+              {/* 3. Vibing — expands to an input box on first tap
+                   so the user says WHAT they want to vibe on, just
+                   like the Yaver mobile app's Vibing tab. Second
+                   tap (Send) fires /vibing/execute with the typed
+                   prompt + resolved bundle id so the agent routes
+                   to the right repo. */}
+              {!showVibeInput ? (
+                <ActionRow
+                  label={action === 'vibing' ? 'Starting…' : 'Vibing'}
+                  tint="#818cf8"
+                  onPress={handleVibingButton}
+                  disabled={busy}
+                  busy={action === 'vibing'}
+                />
+              ) : (
+                <View style={styles.vibeInputRow}>
+                  <TextInput
+                    style={styles.vibeInput}
+                    placeholder="What do you want to vibe on?"
+                    placeholderTextColor="#666"
+                    value={vibePrompt}
+                    onChangeText={setVibePrompt}
+                    multiline
+                    autoFocus
+                    editable={action !== 'vibing'}
+                    blurOnSubmit={false}
+                  />
+                  <View style={styles.vibeInputButtons}>
+                    <Pressable
+                      onPress={() => { setShowVibeInput(false); setVibePrompt(''); }}
+                      style={({ pressed }) => [styles.vibeCancelBtn, pressed && styles.buttonPressed]}
+                      disabled={action === 'vibing'}
+                    >
+                      <Text style={styles.vibeCancelBtnText}>Cancel</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={handleVibingSubmit}
+                      style={({ pressed }) => [
+                        styles.vibeSendBtn,
+                        pressed && styles.buttonPressed,
+                        action === 'vibing' && { opacity: 0.6 },
+                      ]}
+                      disabled={action === 'vibing'}
+                    >
+                      {action === 'vibing' ? (
+                        <ActivityIndicator color="#fff" />
+                      ) : (
+                        <Text style={styles.vibeSendBtnText}>Send</Text>
+                      )}
+                    </Pressable>
+                  </View>
+                </View>
+              )}
+              {lastVibeTaskId && action !== 'vibing' && (
+                <Text style={styles.vibeTaskLine} numberOfLines={1}>
+                  Last vibing task: {lastVibeTaskId.slice(0, 12)}…
+                </Text>
+              )}
 
               {/* Voice note — only rendered when expo-av is installed.
                   Tap to start, tap again to stop → transcribes via
@@ -647,6 +723,56 @@ const ActionRow: React.FC<ActionRowProps> = ({
 );
 
 const styles = StyleSheet.create({
+  vibeInputRow: {
+    backgroundColor: 'rgba(129,140,248,0.08)',
+    borderColor: 'rgba(129,140,248,0.4)',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    gap: 10,
+  },
+  vibeInput: {
+    color: '#fff',
+    fontSize: 15,
+    minHeight: 64,
+    textAlignVertical: 'top',
+    padding: 0,
+  },
+  vibeInputButtons: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  vibeCancelBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: 'transparent',
+  },
+  vibeCancelBtnText: {
+    color: '#999',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  vibeSendBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#818cf8',
+    minWidth: 72,
+    alignItems: 'center',
+  },
+  vibeSendBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  vibeTaskLine: {
+    color: '#818cf8',
+    fontSize: 12,
+    marginTop: -4,
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+  },
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.55)',

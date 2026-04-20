@@ -376,14 +376,30 @@ export class P2PClient {
    * vibing from Claude Code / the Yaver mobile app; this method is a
    * convenience for the SDK's one-tap bug-report-to-vibing path.
    */
-  async vibing(prompt: string, projectPath?: string): Promise<{ taskId: string }> {
+  async vibing(
+    prompt: string,
+    opts?: { projectName?: string; bundleId?: string; projectPath?: string },
+  ): Promise<{ taskId: string }> {
+    // Resolve app identity exactly the same way we do for
+    // reloadApp — bundle ID from expo-constants or native config.
+    // Without this, the agent falls back to "grep the prompt for a
+    // word that looks like a project name," which is catastrophically
+    // wrong: the prompt 'tapped Vibing' matched 'in' → picked mprint
+    // → Claude vibed on the wrong repo. Passing the bundle/name lets
+    // the agent go straight to findMobileProjectByName / bundleId.
+    const identity = resolveAppIdentity(opts);
     const response = await fetch(`${this.baseUrl}/vibing/execute`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.authToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ prompt, projectPath: projectPath ?? '' }),
+      body: JSON.stringify({
+        prompt,
+        projectPath: identity.projectPath ?? opts?.projectPath ?? '',
+        projectName: identity.projectName,
+        bundleId: identity.bundleId,
+      }),
     });
     if (!response.ok) {
       const text = await response.text().catch(() => '');

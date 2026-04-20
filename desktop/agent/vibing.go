@@ -921,10 +921,40 @@ func (s *HTTPServer) handleVibingExecute(w http.ResponseWriter, r *http.Request)
 	var req struct {
 		Prompt      string `json:"prompt"`
 		ProjectPath string `json:"projectPath"`
+		// Feedback SDK passes the running app's bundle id + project
+		// name so we don't have to guess the target repo from the
+		// free-text prompt. Without this, the fallback matcher runs
+		// substring search across discovered projects and picks the
+		// wrong one catastrophically (e.g. "in" inside 'Vibing' matched
+		// the unrelated 'mprint' project and Claude vibed on the wrong
+		// repo). Prefer these in the order below; only fall through to
+		// the loose prompt-matcher when nothing identifies the target.
+		ProjectName string `json:"projectName"`
+		BundleID    string `json:"bundleId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON")
 		return
+	}
+
+	// Resolve the project directory in priority order:
+	//   1. explicit projectPath (power users / CLI callers)
+	//   2. SDK-provided bundleId   → scan mobile projects' Info.plist
+	//   3. SDK-provided projectName → match against cached project names
+	// If all three come up empty we leave taskMgr.workDir unchanged
+	// and the taskMgr's own auto-detect runs (with the sloppy
+	// substring matcher that burned us on "in" → mprint).
+	if req.ProjectPath == "" {
+		if req.BundleID != "" {
+			if proj := findMobileProjectByBundleID(req.BundleID); proj != nil {
+				req.ProjectPath = proj.Path
+			}
+		}
+		if req.ProjectPath == "" && req.ProjectName != "" {
+			if proj := findMobileProjectByName(req.ProjectName); proj != nil {
+				req.ProjectPath = proj.Path
+			}
+		}
 	}
 
 	if req.ProjectPath != "" {
