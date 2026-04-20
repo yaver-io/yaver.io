@@ -72,15 +72,19 @@ export const YaverMachinePickerScreen: React.FC<YaverMachinePickerProps> = ({
 
   const renderDevice = (device: RemoteDevice) => {
     const selected = device.deviceId === currentDeviceId;
-    // Match the Yaver mobile app: HEARTBEAT_STALE_MS is 90 s. Using
-    // 60 s here flashed yellow on a single missed agent beat even
-    // though the Mac was up.
-    const stale =
-      device.lastHeartbeat > 0 &&
-      Date.now() - device.lastHeartbeat > 90_000;
+    // Trust Convex's `isOnline` — the backend already gates it on a
+    // fresh 90 s heartbeat (see backend/convex/devices.ts
+    // deriveIsOnline). Re-checking on the client produced false
+    // yellows from phone↔backend clock skew around the 89-90 s mark.
+    //
+    // `runnerDown` intentionally does NOT flip the dot. That flag
+    // tracks whether the AI runner (claude-code, aider, ...) is
+    // healthy — a separate concern from "can I reach this machine?"
+    // Mobile app surfaces runner issues via a separate badge, not
+    // this dot. Picker's job is reachability, nothing more.
     const healthColor = !device.isOnline
       ? '#ef4444'
-      : device.needsAuth || device.runnerDown || stale
+      : device.needsAuth
         ? '#f59e0b'
         : '#22c55e';
     return (
