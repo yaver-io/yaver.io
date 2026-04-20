@@ -31,7 +31,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const version = "1.99.9"
+const version = "1.99.10"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
