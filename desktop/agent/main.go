@@ -162,6 +162,35 @@ func normalizeRelayHTTPURL(raw string) string {
 	return strings.TrimRight(strings.TrimSpace(raw), "/")
 }
 
+// persistRotatedAuthToken writes a freshly-rotated bearer token back
+// to ~/.yaver/config.json. SaveConfig is already atomic (tmp +
+// rename + fsync), so a crash mid-write can't corrupt the file, and
+// the old token remains valid on the server until the daily refresh
+// ticks — either outcome (success or interrupted write) leaves the
+// agent authenticated.
+//
+// The cfg passed here must be a FRESHLY loaded config. We re-read it
+// here to avoid stomping on other mutations (relay cache updates,
+// runner changes, device ID rotations) that may have happened on a
+// different goroutine since the caller obtained its cfg pointer.
+func persistRotatedAuthToken(cfg *Config, newToken string) error {
+	if strings.TrimSpace(newToken) == "" {
+		return nil
+	}
+	fresh, err := LoadConfig()
+	if err != nil || fresh == nil {
+		// Fall back to the caller's cfg — better than silently losing
+		// the rotation; any concurrent writer will just resync on its
+		// next SaveConfig.
+		fresh = cfg
+	}
+	if fresh.AuthToken == newToken {
+		return nil
+	}
+	fresh.AuthToken = newToken
+	return SaveConfig(fresh)
+}
+
 func relayHTTPURLsMatch(a, b string) bool {
 	a = normalizeRelayHTTPURL(a)
 	b = normalizeRelayHTTPURL(b)
@@ -399,7 +428,7 @@ Usage:
   yaver logs        Show agent logs
   yaver clear-logs  Clear agent log file
   yaver config      Show current configuration
-  yaver config set <key> <value>  Set a config value (auto-start, auto-update)
+  yaver config set <key> <value>  Set a config value (auto-start, auto-update, headless-keep-awake)
   yaver relay add <url> [--password <pass>] [--label <name>]  Add a relay server
   yaver relay list   List configured relay servers
   yaver relay remove <id-or-url>  Remove a relay server
@@ -536,6 +565,7 @@ Examples:
   (Agent is also selectable per task from the mobile app)
   yaver config set auto-start true  Start Yaver on login
   yaver config set auto-update true Check for updates on startup
+  yaver config set headless-keep-awake true  Block sleep while yaver serve runs
 
 Flags for exec:
   --device          Device ID or hostname prefix (auto-discovers if not set)
@@ -1257,12 +1287,16 @@ func finalizeAuthConfig(cfg *Config, convexURL, token string, printSuccess, prin
 	// Clear any manually configured relay — use per-user relay from backend
 	cfg.RelayServers = nil
 	cfg.RelayPassword = ""
+	applyDefaultHeadlessKeepAwake(cfg)
 	if err := SaveConfig(cfg); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
 	if printSuccess {
 		fmt.Println("Signed in successfully.")
 		fmt.Println("  Free relay: public.yaver.io (included, no setup needed)")
+		if shouldEnableHeadlessKeepAwake(cfg) {
+			fmt.Println("  Headless keep-awake: enabled while `yaver serve` is running")
+		}
 		fmt.Println()
 	}
 	// Register reboot persistence (systemd user unit on Linux, launchd
@@ -1319,6 +1353,13 @@ func maybeRegisterAutoStartAfterAuth() {
 		fmt.Println("  (e.g. /mnt/c not mounted, no $USER), add a Task Scheduler")
 		fmt.Println("  entry that runs `wsl.exe -d <distro> -u <user> bash -lc")
 		fmt.Println("  '~/.yaver/wsl-autostart.sh'`. See docs/wsl2-relay-troubleshooting.md.")
+		fmt.Println("  Windows host note: WSL cannot block Windows sleep. For unattended")
+		fmt.Println("  remote use, disable Windows sleep, run Tailscale on Windows itself,")
+		os.Stdout.WriteString("  and prefer mirrored networking in `%USERPROFILE%\\\\.wslconfig`.\n")
+	} else if runtime.GOOS == "darwin" && !isDarwinLaunchDaemonInstalled() {
+		fmt.Println("  macOS note: the default LaunchAgent starts after login only.")
+		fmt.Println("  For a real headless Mac mini that must come back before login, run:")
+		fmt.Println("    sudo yaver serve --install-launchd-daemon")
 	}
 	fmt.Println("  (opt out any time: `yaver config set auto-start false`)")
 	fmt.Println()
@@ -1370,6 +1411,28 @@ func printHeadlessNextSteps() {
 		fmt.Println("ever expires while you're away from it, run: yaver init")
 		fmt.Println()
 	}
+	if shouldEnableHeadlessKeepAwake(cfgOrEmpty()) {
+		fmt.Println("While the agent is running, Yaver will ask the OS not to sleep this box.")
+		fmt.Println("Opt out: `yaver config set headless-keep-awake false`")
+		fmt.Println()
+	} else if isWSL() {
+		fmt.Println("WSL note: Yaver cannot block Windows sleep from inside WSL.")
+		fmt.Println("Use the WSL startup helper plus Windows power settings / Tailscale service.")
+		fmt.Println()
+	}
+	if runtime.GOOS == "darwin" && !isDarwinLaunchDaemonInstalled() {
+		fmt.Println("For a real headless macOS box, install the LaunchDaemon once:")
+		fmt.Println("  sudo yaver serve --install-launchd-daemon")
+		fmt.Println()
+	}
+}
+
+func cfgOrEmpty() *Config {
+	cfg, _ := LoadConfig()
+	if cfg != nil {
+		return cfg
+	}
+	return &Config{}
 }
 
 // startServeIfStopped forks `yaver serve` in the background if the
@@ -1540,6 +1603,7 @@ func runServe(args []string) {
 	tlsPort := fs.Int("tls-port", 18443, "HTTPS server port (0 to disable)")
 	noTLS := fs.Bool("no-tls", false, "Disable HTTPS server")
 	installSystemd := fs.Bool("install-systemd", false, "Install and enable systemd user service, then exit")
+	installLaunchdDaemon := fs.Bool("install-launchd-daemon", false, "Install a macOS LaunchDaemon for boot-before-login headless start, then exit")
 	noAutopilot := fs.Bool("no-autopilot", false, "Disable auto-driving mode (enabled by default)")
 	iosInstall := fs.String("ios-install", "", "iOS install method: auto (default), native (xcodebuild+xcrun), bundle (Hermes push)")
 	containerizeGuests := fs.Bool("containerize-guests", false, "Run guest tasks inside Docker containers (requires yaver-sandbox image)")
@@ -1551,6 +1615,10 @@ func runServe(args []string) {
 	// Install systemd service and exit
 	if *installSystemd {
 		installSystemdService()
+		return
+	}
+	if *installLaunchdDaemon {
+		installLaunchdDaemonService()
 		return
 	}
 
@@ -1629,12 +1697,16 @@ func runServe(args []string) {
 
 	// Validate token before forking — try refresh if expired, but never exit
 	if _, err := ValidateTokenUser(cfg.ConvexSiteURL, cfg.AuthToken); err != nil {
-		// Try refreshing the token first
-		if refreshErr := RefreshToken(cfg.ConvexSiteURL, cfg.AuthToken); refreshErr != nil {
+		// Try refreshing the token first — the backend may rotate the
+		// token as part of refresh; if so we must persist the new one.
+		if newToken, refreshErr := RefreshToken(cfg.ConvexSiteURL, cfg.AuthToken); refreshErr != nil {
 			fmt.Fprintf(os.Stderr, "Warning: token validation failed (%v). The agent will start but the device may appear offline.\n", err)
 			fmt.Fprintf(os.Stderr, "Run 'yaver auth' to re-authenticate. The agent will NOT sign you out automatically.\n")
 			// Continue anyway — the heartbeat loop will keep retrying and the user can re-auth
 		} else {
+			if err := persistRotatedAuthToken(cfg, newToken); err != nil {
+				log.Printf("[auth] (warn) could not persist rotated token: %v", err)
+			}
 			fmt.Println("Token refreshed successfully.")
 		}
 	}
@@ -1742,6 +1814,10 @@ func runServe(args []string) {
 
 	// Debug mode: run in foreground with full logging
 	log.Println("Yaver agent starting...")
+	stopKeepAwake := startHeadlessKeepAwake(cfg)
+	if stopKeepAwake != nil {
+		defer stopKeepAwake()
+	}
 
 	// Note: we no longer kill other Claude processes on startup.
 	// Users may have active Claude Code sessions we shouldn't disrupt.
@@ -2818,6 +2894,7 @@ func runConfig(args []string) {
 	fmt.Printf("convex_site_url: %s\n", valueOrEmpty(cfg.ConvexSiteURL))
 	fmt.Printf("auto_start:      %v\n", cfg.AutoStart)
 	fmt.Printf("auto_update:     %v\n", cfg.AutoUpdate)
+	fmt.Printf("headless_keep_awake: %v\n", shouldEnableHeadlessKeepAwake(cfg))
 }
 
 func runConfigSet(key, value string) {
@@ -2869,9 +2946,30 @@ func runConfigSet(key, value string) {
 			fmt.Println("Auto-update disabled.")
 		}
 
+	case "headless-keep-awake":
+		enabled := value == "true" || value == "1" || value == "yes"
+		cfg.HeadlessKeepAwake = &enabled
+		if err := SaveConfig(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
+			os.Exit(1)
+		}
+		if enabled {
+			switch {
+			case isWSL():
+				fmt.Println("Headless keep-awake preference saved, but WSL cannot block host sleep.")
+				fmt.Println("Use Windows power settings and keep Tailscale running as a Windows service.")
+			case runtime.GOOS == "linux" || runtime.GOOS == "darwin":
+				fmt.Println("Headless keep-awake enabled. Yaver will block system sleep while `yaver serve` is running.")
+			default:
+				fmt.Printf("Headless keep-awake saved, but %s does not support it.\n", runtime.GOOS)
+			}
+		} else {
+			fmt.Println("Headless keep-awake disabled.")
+		}
+
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown config key: %s\n", key)
-		fmt.Fprintf(os.Stderr, "Supported keys: auto-start, auto-update\n")
+		fmt.Fprintf(os.Stderr, "Supported keys: auto-start, auto-update, headless-keep-awake\n")
 		os.Exit(1)
 	}
 }
@@ -6118,12 +6216,29 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 		return token
 	}
 
-	// Refresh token on startup (extends expiry by 30 days)
-	if err := RefreshToken(baseURL, currentToken()); err != nil {
-		log.Printf("[auth] Token refresh failed: %v", err)
-	} else {
-		log.Println("[auth] Token refreshed (extended 30 days).")
+	// Refresh token on startup — extends the expiry by 1 year and,
+	// if the backend supports rotation, swaps the bearer token so a
+	// leak only lives until the next daily refresh.
+	refreshAndPersist := func(label string) bool {
+		newToken, err := RefreshToken(baseURL, currentToken())
+		if err != nil {
+			log.Printf("[auth] %s token refresh failed: %v", label, err)
+			return false
+		}
+		if newToken != "" {
+			if cfg, cerr := LoadConfig(); cerr == nil && cfg != nil {
+				if perr := persistRotatedAuthToken(cfg, newToken); perr != nil {
+					log.Printf("[auth] (warn) %s — rotated but could not persist: %v", label, perr)
+				} else {
+					log.Printf("[auth] %s refreshed + rotated (extended 1 year).", label)
+				}
+			}
+		} else {
+			log.Printf("[auth] %s refreshed (extended 1 year).", label)
+		}
+		return true
 	}
+	refreshAndPersist("startup")
 
 	// Refresh token daily (extends to 1 year each time — prevents expiry even on long-running agents)
 	refreshTicker := time.NewTicker(24 * time.Hour)
@@ -6154,10 +6269,7 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 		case <-ctx.Done():
 			return
 		case <-refreshTicker.C:
-			if err := RefreshToken(baseURL, currentToken()); err != nil {
-				log.Printf("[auth] Weekly token refresh failed: %v", err)
-			} else {
-				log.Println("[auth] Token refreshed (extended 30 days).")
+			if refreshAndPersist("daily") {
 				authExpiredLogged = false
 				if httpServer != nil {
 					httpServer.authExpired.Store(false)
@@ -6179,8 +6291,8 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 
 			if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP, currentIPs); err != nil {
 				if errors.Is(err, ErrAuthExpired) {
-					// Try to refresh token first
-					if refreshErr := RefreshToken(baseURL, currentToken()); refreshErr != nil {
+					// Try to refresh token first — backend may rotate.
+					if !refreshAndPersist("on-401") {
 						if !authExpiredLogged {
 							log.Println("[auth] WARNING: Auth token expired or revoked.")
 							log.Println("[auth] This can happen if you signed out from all devices or your session expired.")

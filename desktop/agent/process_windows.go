@@ -14,9 +14,9 @@ import (
 )
 
 var (
-	modkernel32         = syscall.NewLazyDLL("kernel32.dll")
-	procOpenProcess     = modkernel32.NewProc("OpenProcess")
-	procCloseHandle     = modkernel32.NewProc("CloseHandle")
+	modkernel32     = syscall.NewLazyDLL("kernel32.dll")
+	procOpenProcess = modkernel32.NewProc("OpenProcess")
+	procCloseHandle = modkernel32.NewProc("CloseHandle")
 )
 
 const (
@@ -50,6 +50,19 @@ func terminateProcess(proc *os.Process) error {
 }
 
 const taskName = "YaverAgent"
+const (
+	darwinLaunchdLabel     = "io.yaver.agent"
+	darwinLaunchAgentPath  = "Library/LaunchAgents/io.yaver.agent.plist"
+	darwinLaunchDaemonPath = "/Library/LaunchDaemons/io.yaver.agent.plist"
+)
+
+func isDarwinLaunchDaemonInstalled() bool { return false }
+
+func installLaunchdDaemonService() {
+	fmt.Println("macOS LaunchDaemon install is only available on macOS.")
+}
+
+func isWSLWindowsScheduledTaskInstalled() bool { return false }
 
 // installAutoStart creates a Windows Scheduled Task to run the agent at logon.
 func installAutoStart(exePath, workDir string) error {

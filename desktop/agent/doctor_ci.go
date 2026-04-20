@@ -153,9 +153,15 @@ func detectDarwinHeadlessPowerStatus() *headlessPowerStatus {
 	if v, ok := values["powernap"]; ok && strings.TrimSpace(v) != "0" {
 		problems = append(problems, fmt.Sprintf("powernap=%s (expected 0)", strings.TrimSpace(v)))
 	}
+	if cfg, _ := LoadConfig(); shouldEnableHeadlessKeepAwake(cfg) {
+		problems = append(problems, "runtime keep-awake handled by Yaver while `yaver serve` runs")
+	}
 	summary := fmt.Sprintf("sleep=%d, disksleep=%d, autorestart=%d", pmsetIntValue(values, "sleep"), pmsetIntValue(values, "disksleep"), pmsetIntValue(values, "autorestart"))
 	if len(problems) == 0 {
 		return &headlessPowerStatus{ok: true, summary: summary}
+	}
+	if len(problems) == 1 && strings.Contains(problems[0], "runtime keep-awake handled by Yaver") {
+		return &headlessPowerStatus{ok: true, summary: summary, details: problems}
 	}
 	return &headlessPowerStatus{
 		ok:      false,
@@ -186,6 +192,9 @@ func detectLinuxHeadlessPowerStatus() *headlessPowerStatus {
 	if !isAutoStartInstalled() {
 		ok = false
 		details = append(details, "auto-start service missing (run `yaver serve` once)")
+	}
+	if cfg, _ := LoadConfig(); shouldEnableHeadlessKeepAwake(cfg) {
+		details = append(details, "runtime keep-awake handled by Yaver while `yaver serve` runs")
 	}
 	details = append(details, "Firmware auto-reboot after power loss is manual: "+autoBootManualURL)
 	return &headlessPowerStatus{

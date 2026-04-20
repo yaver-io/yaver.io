@@ -14,6 +14,12 @@ import (
 	"time"
 )
 
+const (
+	darwinLaunchdLabel     = "io.yaver.agent"
+	darwinLaunchAgentPath  = "Library/LaunchAgents/io.yaver.agent.plist"
+	darwinLaunchDaemonPath = "/Library/LaunchDaemons/io.yaver.agent.plist"
+)
+
 // detachProcess sets the child process to run in a new session (Unix: setsid).
 func detachProcess(cmd *osexec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -279,32 +285,7 @@ func installAutoStartDarwin(exePath, workDir string) error {
 	os.MkdirAll(plistDir, 0755)
 	plistPath := filepath.Join(plistDir, "io.yaver.agent.plist")
 
-	plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>io.yaver.agent</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>%s</string>
-        <string>serve</string>
-        <string>--debug</string>
-        <string>--work-dir=%s</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>%s</string>
-    <key>StandardErrorPath</key>
-    <string>%s</string>
-</dict>
-</plist>
-`, exePath, workDir,
-		filepath.Join(logDir, "launchd-stdout.log"),
-		filepath.Join(logDir, "launchd-stderr.log"))
+	plist := buildDarwinLaunchdPlist(exePath, workDir, logDir, "", "")
 
 	if err := os.WriteFile(plistPath, []byte(plist), 0644); err != nil {
 		return fmt.Errorf("write plist: %w", err)
@@ -385,7 +366,7 @@ func isAutoStartInstalled() bool {
 	}
 	switch runtime.GOOS {
 	case "darwin":
-		_, err := os.Stat(filepath.Join(home, "Library", "LaunchAgents", "io.yaver.agent.plist"))
+		_, err := os.Stat(filepath.Join(home, darwinLaunchAgentPath))
 		return err == nil
 	case "linux":
 		if isWSL() {
@@ -432,32 +413,7 @@ func ensureAutoStartDarwin(exePath, workDir string) (string, error) {
 	os.MkdirAll(plistDir, 0755)
 	plistPath := filepath.Join(plistDir, "io.yaver.agent.plist")
 
-	plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>io.yaver.agent</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>%s</string>
-        <string>serve</string>
-        <string>--debug</string>
-        <string>--work-dir=%s</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>%s</string>
-    <key>StandardErrorPath</key>
-    <string>%s</string>
-</dict>
-</plist>
-`, exePath, workDir,
-		filepath.Join(logDir, "launchd-stdout.log"),
-		filepath.Join(logDir, "launchd-stderr.log"))
+	plist := buildDarwinLaunchdPlist(exePath, workDir, logDir, "", "")
 
 	if err := os.WriteFile(plistPath, []byte(plist), 0644); err != nil {
 		return "", err
@@ -465,7 +421,11 @@ func ensureAutoStartDarwin(exePath, workDir string) (string, error) {
 
 	// Don't load/start — the agent is already running from the fork.
 	// launchd will pick it up on next login/reboot.
-	return "Registered as macOS LaunchAgent (will auto-start on login).", nil
+	msg := "Registered as macOS LaunchAgent (will auto-start after login)."
+	if !isDarwinLaunchDaemonInstalled() {
+		msg += " For pre-login headless boot, run `sudo yaver serve --install-launchd-daemon`."
+	}
+	return msg, nil
 }
 
 func ensureAutoStartLinux(exePath, workDir string) (string, error) {
@@ -525,10 +485,14 @@ func stopAutoStartService() {
 	case "darwin":
 		home, _ := os.UserHomeDir()
 		if home != "" {
-			plistPath := filepath.Join(home, "Library", "LaunchAgents", "io.yaver.agent.plist")
+			plistPath := filepath.Join(home, darwinLaunchAgentPath)
 			if _, err := os.Stat(plistPath); err == nil {
 				osexec.Command("launchctl", "unload", plistPath).Run()
 				fmt.Println("  LaunchAgent unloaded (use 'yaver serve' to re-enable).")
+			}
+			if isDarwinLaunchDaemonInstalled() {
+				fmt.Println("  LaunchDaemon still installed for boot-time start. Remove with:")
+				fmt.Printf("    sudo launchctl bootout system/%s ; sudo rm -f %s\n", darwinLaunchdLabel, darwinLaunchDaemonPath)
 			}
 		}
 	case "linux":
@@ -559,7 +523,7 @@ func removeAutoStart() {
 		if err != nil {
 			return
 		}
-		plistPath := filepath.Join(home, "Library", "LaunchAgents", "io.yaver.agent.plist")
+		plistPath := filepath.Join(home, darwinLaunchAgentPath)
 		osexec.Command("launchctl", "unload", plistPath).Run()
 		os.Remove(plistPath)
 	case "linux":
@@ -577,4 +541,106 @@ func removeAutoStart() {
 		os.Remove(unitPath)
 		osexec.Command("systemctl", "--user", "daemon-reload").Run()
 	}
+}
+
+func buildDarwinLaunchdPlist(exePath, workDir, logDir, userName, homeDir string) string {
+	var extra strings.Builder
+	if strings.TrimSpace(userName) != "" {
+		extra.WriteString("    <key>UserName</key>\n")
+		extra.WriteString("    <string>" + userName + "</string>\n")
+	}
+	if strings.TrimSpace(homeDir) != "" {
+		extra.WriteString("    <key>EnvironmentVariables</key>\n")
+		extra.WriteString("    <dict>\n")
+		extra.WriteString("        <key>HOME</key>\n")
+		extra.WriteString("        <string>" + homeDir + "</string>\n")
+		extra.WriteString("    </dict>\n")
+	}
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>%s</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>%s</string>
+        <string>serve</string>
+        <string>--debug</string>
+        <string>--work-dir=%s</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>%s</string>
+%s    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>%s</string>
+    <key>StandardErrorPath</key>
+    <string>%s</string>
+</dict>
+</plist>
+`, darwinLaunchdLabel, exePath, workDir, workDir, extra.String(),
+		filepath.Join(logDir, "launchd-stdout.log"),
+		filepath.Join(logDir, "launchd-stderr.log"))
+}
+
+func isDarwinLaunchDaemonInstalled() bool {
+	if runtime.GOOS != "darwin" {
+		return false
+	}
+	_, err := os.Stat(darwinLaunchDaemonPath)
+	return err == nil
+}
+
+func installLaunchdDaemonService() {
+	if runtime.GOOS != "darwin" {
+		fmt.Println("macOS LaunchDaemon install is only available on macOS.")
+		return
+	}
+	exePath, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error finding executable: %v\n", err)
+		return
+	}
+	workDir, _ := os.Getwd()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving home dir: %v\n", err)
+		return
+	}
+	userName := strings.TrimSpace(os.Getenv("USER"))
+	if userName == "" {
+		fmt.Fprintln(os.Stderr, "Error: $USER is empty. Run from the target account.")
+		return
+	}
+	logDir := filepath.Join(home, ".yaver")
+	_ = os.MkdirAll(logDir, 0o700)
+	plist := buildDarwinLaunchdPlist(exePath, workDir, logDir, userName, home)
+	if os.Geteuid() != 0 {
+		stagingPath := filepath.Join(logDir, "io.yaver.agent.launchdaemon.plist")
+		if err := os.WriteFile(stagingPath, []byte(plist), 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing staged plist: %v\n", err)
+			return
+		}
+		fmt.Println("Staged LaunchDaemon plist for pre-login headless boot:")
+		fmt.Printf("  %s\n", stagingPath)
+		fmt.Println("Finish install with:")
+		fmt.Printf("  sudo install -o root -g wheel -m 644 %s %s\n", stagingPath, darwinLaunchDaemonPath)
+		fmt.Printf("  sudo launchctl bootout system/%s >/dev/null 2>&1 || true\n", darwinLaunchdLabel)
+		fmt.Printf("  sudo launchctl bootstrap system %s\n", darwinLaunchDaemonPath)
+		return
+	}
+	if err := os.WriteFile(darwinLaunchDaemonPath, []byte(plist), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing LaunchDaemon plist: %v\n", err)
+		return
+	}
+	_ = osexec.Command("launchctl", "bootout", "system/"+darwinLaunchdLabel).Run()
+	if out, err := osexec.Command("launchctl", "bootstrap", "system", darwinLaunchDaemonPath).CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "launchctl bootstrap failed: %s%v\n", string(out), err)
+		return
+	}
+	fmt.Printf("LaunchDaemon installed: %s\n", darwinLaunchDaemonPath)
+	fmt.Println("Yaver will start at boot before login.")
 }

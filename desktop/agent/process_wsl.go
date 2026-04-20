@@ -9,6 +9,7 @@ import (
 )
 
 const yaverWSLAutoStartMarker = "# yaver-wsl-autostart"
+const yaverWSLTaskName = "YaverWSLAgent"
 
 func wslAutoStartScriptPath() string {
 	dir, err := ConfigDir()
@@ -113,6 +114,33 @@ func installWSLWindowsStartupWrapper() (bool, error) {
 	return true, nil
 }
 
+func installWSLWindowsScheduledTask() (bool, error) {
+	if !isWSL() {
+		return false, nil
+	}
+	if _, err := osexec.LookPath("cmd.exe"); err != nil {
+		return false, nil
+	}
+	distro := strings.TrimSpace(os.Getenv("WSL_DISTRO_NAME"))
+	user := strings.TrimSpace(os.Getenv("USER"))
+	if distro == "" || user == "" {
+		return false, nil
+	}
+	taskCommand := fmt.Sprintf(`wsl.exe -d %s -u %s bash -lc "~/.yaver/wsl-autostart.sh"`, distro, user)
+	deleteCmd := osexec.Command("cmd.exe", "/C", "schtasks", "/Delete", "/TN", yaverWSLTaskName, "/F")
+	_ = deleteCmd.Run()
+	createCmd := osexec.Command("cmd.exe", "/C", "schtasks", "/Create",
+		"/TN", yaverWSLTaskName,
+		"/TR", taskCommand,
+		"/SC", "ONLOGON",
+		"/RL", "LIMITED",
+		"/F")
+	if out, err := createCmd.CombinedOutput(); err != nil {
+		return false, fmt.Errorf("create Windows scheduled task: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return true, nil
+}
+
 func installAutoStartWSL(exePath, workDir string) (string, error) {
 	if err := writeWSLAutoStartScript(exePath, workDir); err != nil {
 		return "", err
@@ -120,16 +148,23 @@ func installAutoStartWSL(exePath, workDir string) (string, error) {
 	if err := installWSLShellAutoStart(); err != nil {
 		return "", err
 	}
-	windowsHooked, err := installWSLWindowsStartupWrapper()
-	if err != nil {
-		return "", err
+	taskHooked, taskErr := installWSLWindowsScheduledTask()
+	windowsHooked, startupErr := installWSLWindowsStartupWrapper()
+	if taskErr != nil && startupErr != nil {
+		return "", taskErr
+	}
+	if startupErr != nil && !taskHooked {
+		return "", startupErr
 	}
 	msg := "Registered WSL startup helper (shell profile hook)."
-	if windowsHooked {
+	if taskHooked {
+		msg += " Also registered a Windows Scheduled Task so Yaver can come back after Windows login."
+	} else if windowsHooked {
 		msg += " Also wrote a Windows Startup wrapper so Yaver can come back after Windows login."
 	} else {
 		msg += " Add a Windows startup / Task Scheduler wrapper if you want reboot persistence before opening WSL."
 	}
+	msg += " Note: this still depends on the Windows host staying awake; for unattended remote use, disable Windows sleep and keep Tailscale on the Windows side."
 	return msg, nil
 }
 
@@ -143,6 +178,9 @@ func isWSLAutoStartInstalled() bool {
 	}
 	if _, err := os.Stat(scriptPath); err != nil {
 		return false
+	}
+	if taskInstalled := isWSLWindowsScheduledTaskInstalled(); taskInstalled {
+		return true
 	}
 	for _, target := range wslShellHookTargets() {
 		data, err := os.ReadFile(target)
@@ -163,4 +201,18 @@ func removeAutoStartWSL() {
 	if startupCmd := wslAutoStartCommandPath(); startupCmd != "" {
 		_ = os.Remove(startupCmd)
 	}
+	if _, err := osexec.LookPath("cmd.exe"); err == nil {
+		_ = osexec.Command("cmd.exe", "/C", "schtasks", "/Delete", "/TN", yaverWSLTaskName, "/F").Run()
+	}
+}
+
+func isWSLWindowsScheduledTaskInstalled() bool {
+	if !isWSL() {
+		return false
+	}
+	if _, err := osexec.LookPath("cmd.exe"); err != nil {
+		return false
+	}
+	out, err := osexec.Command("cmd.exe", "/C", "schtasks", "/Query", "/TN", yaverWSLTaskName).CombinedOutput()
+	return err == nil && strings.Contains(strings.ToLower(string(out)), strings.ToLower(yaverWSLTaskName))
 }

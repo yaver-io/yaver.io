@@ -11,16 +11,17 @@ const configDirName = ".yaver"
 
 // Config holds persisted agent configuration.
 type Config struct {
-	AuthToken     string              `json:"auth_token,omitempty"`
-	DeviceID      string              `json:"device_id,omitempty"`
-	ConvexSiteURL string              `json:"convex_site_url,omitempty"`
-	WebBaseURL    string              `json:"web_base_url,omitempty"`
-	TLSCert       string              `json:"tls_cert,omitempty"`
-	TLSKey        string              `json:"tls_key,omitempty"`
-	AutoStart     bool                `json:"auto_start,omitempty"`
-	AutoUpdate    bool                `json:"auto_update,omitempty"`
-	RelayPassword string              `json:"relay_password,omitempty"`
-	RelayServers  []RelayServerConfig `json:"relay_servers,omitempty"`
+	AuthToken         string              `json:"auth_token,omitempty"`
+	DeviceID          string              `json:"device_id,omitempty"`
+	ConvexSiteURL     string              `json:"convex_site_url,omitempty"`
+	WebBaseURL        string              `json:"web_base_url,omitempty"`
+	TLSCert           string              `json:"tls_cert,omitempty"`
+	TLSKey            string              `json:"tls_key,omitempty"`
+	AutoStart         bool                `json:"auto_start,omitempty"`
+	AutoUpdate        bool                `json:"auto_update,omitempty"`
+	HeadlessKeepAwake *bool               `json:"headless_keep_awake,omitempty"`
+	RelayPassword     string              `json:"relay_password,omitempty"`
+	RelayServers      []RelayServerConfig `json:"relay_servers,omitempty"`
 	// Cached relay settings come from Convex/user settings and are used as a
 	// reboot-safe fallback when the agent's auth token has expired.
 	CachedRelayPassword           string                   `json:"cached_relay_password,omitempty"`
@@ -212,7 +213,26 @@ func LoadConfig() (*Config, error) {
 	return &cfg, nil
 }
 
-// SaveConfig writes the config to disk.
+// SaveConfig writes the config to disk ATOMICALLY.
+//
+// Token rotation (Apr 2026) made this hot path: every daily refresh
+// replaces the agent's bearer token, and if the process dies between
+// os.WriteFile's truncate and its fsync, we'd lose the new token AND
+// the old one (the server has already rotated). A truncated config
+// means the next boot sees an empty token and forces re-auth — exactly
+// the "signed in forever" contract we're protecting.
+//
+// Write-tmp-rename-fsync pattern survives power loss and SIGKILL:
+//
+//   1. Marshal to memory.
+//   2. Write to <path>.tmp with 0600.
+//   3. fsync the tmp file (bytes hit the platter).
+//   4. Atomic rename over <path>.
+//   5. fsync the parent directory so the rename is durable.
+//
+// If anything below step 4 fails, the original file is untouched;
+// if step 4 succeeds, the new file is on disk. Either way, the
+// config is never in a half-written state.
 func SaveConfig(cfg *Config) error {
 	p, err := ConfigPath()
 	if err != nil {
@@ -224,8 +244,43 @@ func SaveConfig(cfg *Config) error {
 		return fmt.Errorf("marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(p, data, 0600); err != nil {
-		return fmt.Errorf("write config: %w", err)
+	dir := filepath.Dir(p)
+	tmp, err := os.CreateTemp(dir, ".config.json.tmp-")
+	if err != nil {
+		return fmt.Errorf("create tmp config: %w", err)
+	}
+	tmpPath := tmp.Name()
+	// If we bail before rename, don't leave the tmp file behind.
+	cleanup := func() { _ = os.Remove(tmpPath) }
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		cleanup()
+		return fmt.Errorf("write tmp config: %w", err)
+	}
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		cleanup()
+		return fmt.Errorf("chmod tmp config: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		cleanup()
+		return fmt.Errorf("fsync tmp config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return fmt.Errorf("close tmp config: %w", err)
+	}
+	if err := os.Rename(tmpPath, p); err != nil {
+		cleanup()
+		return fmt.Errorf("rename tmp config: %w", err)
+	}
+	// fsync the directory so the rename survives a power loss. Best-
+	// effort: some filesystems (tmpfs on Linux, some Darwin overlays)
+	// return ENOSYS — ignore those, the rename itself is still atomic.
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
 	}
 	return nil
 }

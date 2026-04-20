@@ -299,6 +299,13 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// rate limited. Intentionally NOT wrapped in auth() because
 	// the whole point is to bring a locked-out agent back online.
 	mux.HandleFunc("/auth/recover", s.handleAuthRecover)
+	// Cheap, unauth'd "am I signed in?" probe — used by `yaver status`,
+	// the mobile app's connection list, and health dashboards. Returns
+	// the authExpired flag set by the heartbeat loop after a failed
+	// refresh, so callers can tell "just offline" apart from "needs
+	// re-auth." Public because it leaks nothing secret and the
+	// bootstrap-beacon already publishes needs-auth state in the clear.
+	mux.HandleFunc("/auth/status", s.handleAuthStatus)
 	// File browser (read-only, scoped to discovered projects)
 	mux.HandleFunc("/files/roots", s.auth(s.handleFilesRoots))
 	mux.HandleFunc("/files/list", s.auth(s.handleFilesList))
@@ -1571,15 +1578,35 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 	// Auto-start / systemd status
 	autoStart := map[string]interface{}{"configured": false}
 	home, _ := os.UserHomeDir()
-	// Check systemd
-	if _, err := os.Stat(filepath.Join(home, ".config", "systemd", "user", "yaver.service")); err == nil {
-		autoStart["configured"] = true
-		autoStart["type"] = "systemd"
-	}
-	// Check macOS LaunchAgent
-	if _, err := os.Stat(filepath.Join(home, "Library", "LaunchAgents", "io.yaver.agent.plist")); err == nil {
-		autoStart["configured"] = true
-		autoStart["type"] = "launchd"
+	switch runtime.GOOS {
+	case "darwin":
+		if isDarwinLaunchDaemonInstalled() {
+			autoStart["configured"] = true
+			autoStart["type"] = "launchd-daemon"
+			autoStart["scope"] = "boot"
+		} else if _, err := os.Stat(filepath.Join(home, darwinLaunchAgentPath)); err == nil {
+			autoStart["configured"] = true
+			autoStart["type"] = "launchd-agent"
+			autoStart["scope"] = "login"
+		}
+	case "linux":
+		if isWSL() {
+			if isWSLWindowsScheduledTaskInstalled() {
+				autoStart["configured"] = true
+				autoStart["type"] = "wsl-schtasks"
+				autoStart["scope"] = "windows-login"
+			} else if isWSLAutoStartInstalled() {
+				autoStart["configured"] = true
+				autoStart["type"] = "wsl-startup"
+				autoStart["scope"] = "shell-login"
+			}
+		} else if _, err := os.Stat(filepath.Join(home, ".config", "systemd", "user", "yaver.service")); err == nil {
+			autoStart["configured"] = true
+			autoStart["type"] = "systemd"
+			autoStart["scope"] = "boot"
+		}
+	default:
+		// Windows implementation reports scheduled task elsewhere via runtime defaults.
 	}
 	info["autoStart"] = autoStart
 
@@ -5106,8 +5133,15 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 				return mcpToolError(fmt.Sprintf("save config: %v", err))
 			}
 			return mcpToolResult(fmt.Sprintf("auto-update set to %v", cfg.AutoUpdate))
+		case "headless-keep-awake":
+			enabled := args.Value == "true" || args.Value == "1" || args.Value == "yes"
+			cfg.HeadlessKeepAwake = &enabled
+			if err := SaveConfig(cfg); err != nil {
+				return mcpToolError(fmt.Sprintf("save config: %v", err))
+			}
+			return mcpToolResult(fmt.Sprintf("headless-keep-awake set to %v", enabled))
 		default:
-			return mcpToolError(fmt.Sprintf("Unknown config key: %s. Supported: auto-start, auto-update", args.Key))
+			return mcpToolError(fmt.Sprintf("Unknown config key: %s. Supported: auto-start, auto-update, headless-keep-awake", args.Key))
 		}
 
 	case "relay_test":
@@ -12301,8 +12335,28 @@ func yaverOnboardChecklist() string {
 	mark(runnerFound != "", "AI runner installed ("+runnerFound+")", "npm i -g @anthropic-ai/claude-code   or any other supported runner")
 
 	// 7. Auto-start
-	autoStart := cfg != nil && cfg.AutoStart
-	mark(autoStart, "Agent auto-starts on boot", "yaver config set auto-start true")
+	autoStartReady := false
+	autoStartRemedy := "yaver config set auto-start true"
+	autoStartLabel := "Agent auto-starts on boot"
+	switch runtime.GOOS {
+	case "darwin":
+		autoStartReady = isDarwinLaunchDaemonInstalled()
+		if !autoStartReady {
+			autoStartLabel = "Agent auto-starts before login (macOS headless)"
+			autoStartRemedy = "sudo yaver serve --install-launchd-daemon"
+		}
+	case "linux":
+		if isWSL() {
+			autoStartReady = isWSLWindowsScheduledTaskInstalled()
+			autoStartLabel = "Agent restarts after Windows login (WSL)"
+			autoStartRemedy = "yaver serve --install-systemd   or install Windows Task Scheduler wrapper"
+		} else {
+			autoStartReady = isAutoStartInstalled()
+		}
+	default:
+		autoStartReady = cfg != nil && cfg.AutoStart
+	}
+	mark(autoStartReady, autoStartLabel, autoStartRemedy)
 
 	// 8. Auto-update
 	autoUpdate := cfg != nil && cfg.AutoUpdate
