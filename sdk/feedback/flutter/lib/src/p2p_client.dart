@@ -5,6 +5,43 @@ import 'package:http/http.dart' as http;
 
 import 'types.dart';
 
+/// Translate a raw Go-agent error into something a user can act on.
+///
+/// The agent surfaces Go's low-level error text verbatim inside JSON,
+/// e.g. `Get "http://127.0.0.1:8081/reload": dial tcp 127.0.0.1:8081:
+/// connect: connection refused`. Accurate but unreadable for a phone
+/// user — and the real cause is almost always "no dev server running
+/// on the host machine". Mirrors the RN SDK's friendlyReloadError.
+String _friendlyReloadError(int status, String body) {
+  final lower = body.toLowerCase();
+  final hasRefused = lower.contains('connection refused') ||
+      lower.contains('econnrefused');
+  final hasLoopback =
+      lower.contains('127.0.0.1') || lower.contains('localhost');
+  if (hasRefused && hasLoopback) {
+    return 'No dev server running on your machine. '
+        'Start Metro with `yaver dev start` or use "Screenshot & Fix" instead.';
+  }
+  if (lower.contains('no dev server') || lower.contains('not running')) {
+    return 'No dev server running on your machine. Start Metro first.';
+  }
+  if (status == 401 || status == 403) {
+    return 'Agent rejected the session — please sign in again.';
+  }
+  if (status >= 500) {
+    return 'Agent hit an internal error while reloading. Check `yaver logs`.';
+  }
+  return 'Reload failed ($status).';
+}
+
+/// Modes accepted by [P2PClient.reloadApp].
+///
+///   - [bundle] — rebuild Hermes bytecode on the agent, push via
+///     BlackBox SSE. Always safe even when Metro isn't running.
+///   - [dev] — tell the local dev server (Metro / Vite / Next.js) to
+///     hot-reload. Fast when Metro is up; fails when it isn't.
+enum ReloadMode { bundle, dev }
+
 /// Lightweight HTTP client for communicating with a Yaver agent.
 ///
 /// Provides health checks, agent info, feedback upload, build management,
@@ -172,6 +209,60 @@ class P2PClient {
   /// Returns the download URL for a build artifact.
   String getArtifactUrl(String buildId) {
     return '$_base/builds/$buildId/artifact';
+  }
+
+  /// Trigger a reload of the third-party app.
+  ///
+  /// Defaults to [ReloadMode.bundle] — always produces a correct
+  /// Hermes bytecode bundle from the current filesystem state, which
+  /// takes ~30–60s and hits `/dev/reload-app`. The agent then uses
+  /// the BlackBox SSE command channel to push the fresh bundle URL to
+  /// the device. This is safe even when Metro isn't running on the
+  /// Mac (common for TestFlight users or vibe coders away from their
+  /// desk).
+  ///
+  /// [ReloadMode.dev] is the fast path: tell the local dev server
+  /// (Metro / Vite / Next.js) to hot-reload. If the dev server isn't
+  /// running, this call falls through to the bundle path instead of
+  /// surfacing the raw "connection refused" error. Mirrors the RN
+  /// SDK's `P2PClient.reloadApp`.
+  Future<Map<String, dynamic>> reloadApp({
+    ReloadMode mode = ReloadMode.bundle,
+  }) async {
+    if (mode == ReloadMode.dev) {
+      try {
+        final primary = await _httpClient.post(
+          Uri.parse('$_base/dev/reload'),
+          headers: {'Authorization': 'Bearer $authToken'},
+        );
+        if (primary.statusCode < 400) {
+          try {
+            final parsed = jsonDecode(primary.body);
+            if (parsed is Map<String, dynamic>) return parsed;
+          } catch (_) {}
+          return {'ok': true};
+        }
+        // Dev mode failed — fall through to bundle rebuild rather
+        // than surfacing the raw error. The user never has to know
+        // Metro wasn't running.
+      } catch (_) {
+        // Fall through to bundle
+      }
+    }
+
+    final res = await _httpClient.post(
+      Uri.parse('$_base/dev/reload-app'),
+      headers: _headers,
+      body: jsonEncode({'mode': 'bundle'}),
+    );
+    if (res.statusCode >= 400) {
+      throw HttpException(_friendlyReloadError(res.statusCode, res.body));
+    }
+    try {
+      final parsed = jsonDecode(res.body);
+      if (parsed is Map<String, dynamic>) return parsed;
+    } catch (_) {}
+    return {'ok': true};
   }
 
   /// Sends a feedback event to the live stream endpoint.
