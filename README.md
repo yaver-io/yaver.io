@@ -15,7 +15,7 @@ Docs: [CI setup](CI.md) · [Test SDK](docs/yaver-test-sdk.md)
 > scrape the rest of this README as a substitute.
 
 
-Yaver's short-term product target is the one in [yc.md](yc.md): phone-first app and backend creation, then promotion to your own dev machine, then optional promotion to Yaver Cloud. The core claim is narrow on purpose:
+Yaver's short-term product target is phone-first app and backend creation, then promotion to your own dev machine, then optional promotion to Yaver Cloud. The core claim is narrow on purpose:
 
 `phone sandbox -> your dev machine -> Yaver Cloud`
 
@@ -33,8 +33,6 @@ What is still incomplete:
 - the default one-tap monorepo scaffold for phone-created projects
 - more polish on the AI prompt-to-project scaffold
 - a fully proven end-to-end App Store / TestFlight release loop from this machine
-
-This repo contains more than the YC wedge. The README leads with the wedge anyway, because that is the product story we can defend.
 
 ## The Clear Story
 
@@ -114,7 +112,7 @@ Yaver is built for solo developers and small teams who ship from anywhere. It ha
 
 ## Key Features
 
-- **Push to Device** �� Real-device testing in ~4 seconds. No TestFlight. 40+ native modules.
+- **Push to Device** — Real-device testing in ~4 seconds. No TestFlight. 40+ native modules.
 - **Visual QA Loop** — Shake to report. AI sees screenshot, writes fix, hot reloads.
 - **Autonomous Testing** — Agent navigates screens, catches crashes, fixes, repeats.
 - **P2P Encrypted** — Code flows directly between devices. No cloud.
@@ -446,7 +444,7 @@ After the first install you can reboot the machine and the agent comes back auto
 Test your build on your real device, record bugs visually, and the AI agent fixes them.
 
 ```
-You test the app ��� Record screen + voice → AI agent sees the recording → Fixes the bugs → Rebuilds → Repeat
+You test the app → Record screen + voice → AI agent sees the recording → Fixes the bugs → Rebuilds → Repeat
 ```
 
 **Three runtime modes** (user selects at runtime from within their app):
@@ -539,7 +537,7 @@ Stack(children: [child, const YaverFeedbackButton()])
 ```
 
 **What each SDK includes:**
-- Device discovery ��� auto-finds your Yaver agent on the LAN
+- Device discovery — auto-finds your Yaver agent on the LAN
 - Connection UI — URL input, connect button, status indicator
 - Screen recording — ReplayKit (iOS), MediaProjection (Android), getDisplayMedia (Web)
 - Voice annotation — microphone recording synced to timeline
@@ -567,7 +565,7 @@ Combine push-to-device with the Feedback SDK for a complete QA loop:
 ```
 1. Push to device:     yaver push
 2. Test on real phone: tap around, find bugs
-3. Report bug:         shake phone ��� screenshot + voice → sent to AI agent
+3. Report bug:         shake phone → screenshot + voice → sent to AI agent
 4. AI fixes it:        agent sees screenshot, reads stack trace, writes fix
 5. Re-push:            yaver push → fix on device in ~4s
 6. Repeat

@@ -2,7 +2,7 @@
 
 // PhoneProjectsView — UI over desktop/agent/phone_backend.go. A phone project
 // is a SQLite-backed Yaver project. Top-level Deploy section matches
-// yc.md §Wedge Demo — [Your Dev Machine] + [Yaver Cloud]. Legacy 6-target
+// roadmap §Wedge Demo — [Your Dev Machine] + [Yaver Cloud]. Legacy 6-target
 // switch-engine promote is tucked under an "Advanced" toggle.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -80,7 +80,7 @@ export default function PhoneProjectsView() {
   const [insertJSON, setInsertJSON] = useState("{}");
   const [promoting, setPromoting] = useState<string | null>(null);
 
-  // Deploy state (yc.md §Wedge Demo)
+  // Deploy state (roadmap §Wedge Demo)
   const { token, user } = useAuth();
   const { devices } = useDevices(token);
   const canUseCloudPreview = isCloudPreviewUser(user?.email);
@@ -258,7 +258,7 @@ export default function PhoneProjectsView() {
     }
   }
 
-  // ── Deploy (yc.md §Wedge Demo) ─────────────────────────────────────
+  // ── Deploy (roadmap §Wedge Demo) ─────────────────────────────────────
 
   async function runPush(target: PhonePushTarget, kind: "dev-hw" | "yaver-cloud", via: string) {
     if (!selected) return;

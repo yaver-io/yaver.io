@@ -29,7 +29,7 @@ import { getYaverCloudBaseUrl } from "../../src/lib/yaverCloud";
 import * as Clipboard from "expo-clipboard";
 
 // Phone-hosted OAuth provider setup — the third and final surface of the
-// "do everything from your phone" pitch (yc.md §Wedge Demo).
+// "do everything from your phone" pitch (roadmap §Wedge Demo).
 //
 // The user still visits the provider's web console to create the app
 // registration (Apple Developer portal has no API at all, Google and

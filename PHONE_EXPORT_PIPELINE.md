@@ -3,8 +3,7 @@
 Status: **shipped** (April 17, 2026). Core export / receive / promote flow is in place. Follow-up work is mostly polish, monorepo bootstrap, and deploy ergonomics.
 
 This is the dump of what actually got written. Pairs with
-[`MOBILE_BACKEND_EXPORT.md`](MOBILE_BACKEND_EXPORT.md) (the design) and
-[`yc.md`](yc.md) (the YC sprint it fits into).
+[`MOBILE_BACKEND_EXPORT.md`](MOBILE_BACKEND_EXPORT.md) (the design).
 
 ## What this thread delivers
 
@@ -323,7 +322,7 @@ Regression test `TestPhoneAdapter_MissingProjectReturnsNotFound` added to `phone
 
 ## Dogfood log — 2026-04-17 (pm) — wedge-demo two-button deploy
 
-Second dogfood against the same two targets as the morning run — this time driving the new `[Your Dev Machine]` / `[Yaver Cloud]` deploy surface in mobile + web (yc.md §Wedge Demo Apr 21). CLI still the emulator (`yaver phone push`) since iOS hot-iterate is a 20-minute loop.
+Second dogfood against the same two targets as the morning run — this time driving the new `[Your Dev Machine]` / `[Yaver Cloud]` deploy surface in mobile + web. CLI still the emulator (`yaver phone push`) since iOS hot-iterate is a 20-minute loop.
 
 ### Flow shipped end-to-end
 
@@ -340,14 +339,14 @@ Second dogfood against the same two targets as the morning run — this time dri
       Hetzner now has 3 todos
 ```
 
-Both targets reachable and running the same project after a clean 2-tap flow. 17 ms to the Mac is fast enough to feel instant in a demo recording; 196 ms to Hetzner is the baseline RTT to eu-central + a few round-trips of the upload. Both are well under the 3-minute budget `yc.md §HN Launch Playbook` requires for the HN-launch demo.
+Both targets reachable and running the same project after a clean 2-tap flow. 17 ms to the Mac is fast enough to feel instant in a demo recording; 196 ms to Hetzner is the baseline RTT to eu-central + a few round-trips of the upload. Both are well under the 3-minute budget the HN-launch demo requires.
 
 ### What the new UI looks like
 
 Mobile (`mobile/app/phone-project/[slug].tsx`) and web (`web/components/dashboard/PhoneProjectsView.tsx`) now both show a "Deploy" section with exactly two primary affordances:
 
 - **Your Dev Machine** — filled indigo button. Auto-targets the first online, owner-owned, non-mobile device (i.e. an agent running on a Mac / Pi / Linux box). Long-press (mobile) / dropdown (web) to pick a different sibling device. Goes through the active relay URL, which is how the phone's existing HTTP path already routes to the Mac. Cost: free.
-- **Yaver Cloud** — outlined button to `https://cloud.yaver.io`. Uses the same `POST /phone/projects/receive` endpoint; the Hetzner box runs a stock `yaver serve`. Cost: $19/mo tier per yc.md §Business Model.
+- **Yaver Cloud** — outlined button to `https://cloud.yaver.io`. Uses the same `POST /phone/projects/receive` endpoint; the Hetzner box runs a stock `yaver serve`. Cost: $19/mo tier.
 
 The 6-target switch-engine picker (SQLite, Turso, Postgres, Supabase, Neon, Convex) is hidden behind a collapsible "Advanced — promote to a switch-engine target" toggle so the wedge stays visually simple for the demo recording.
 
@@ -357,7 +356,7 @@ The 6-target switch-engine picker (SQLite, Turso, Postgres, Supabase, Neon, Conv
 - **Token hygiene for CLI pushes.** `yaver phone push` reads the caller's `~/.yaver/config.json` for the bearer, so pushing to a cloud agent owned by a *different account* requires swapping the config. Mobile / web go through the same relay with the user's own token, so this is only a concern for the CLI path.
 - **macOS LaunchAgent / Linux systemd auto-registration** fires whenever the agent starts in a new HOME, which adds up over many CI / dogfood runs. Not hazardous (the units point at specific binary paths), but worth a `--no-autostart` flag for automation.
 
-## Relationship to the YC sprint (`yc.md`)
+## Relationship to the product roadmap
 
 This thread finishes **Apr 19 – Apr 21** items in the 17-day sprint:
 
@@ -402,7 +401,7 @@ User asked for Apple / Google / Microsoft OAuth setup guidance from the phone. S
 
 #### 1.3 Voice/text prompt → project scaffold
 
-**Why:** yc.md Apr 20 core deliverable — "Voice/text prompt on phone produces a running RN project on the dev Mac." Today the user manually picks a template; we need the AI half of the loop.
+**Why:** Apr 20 core deliverable — "Voice/text prompt on phone produces a running RN project on the dev Mac." Today the user manually picks a template; we need the AI half of the loop.
 
 **Scope that fits in a day:**
 
@@ -415,7 +414,7 @@ User asked for Apple / Google / Microsoft OAuth setup guidance from the phone. S
 
 #### 1.4 `cloud.yaver.io` DNS + TLS
 
-**Why:** yc.md Apr 24. Today the mobile app and CLI point at `https://cloud.yaver.io` but nothing listens there. For the demo video we need a real URL.
+**Why:** Apr 24 milestone. Today the mobile app and CLI point at `https://cloud.yaver.io` but nothing listens there. For the demo video we need a real URL.
 
 **Runbook (fits in 30 minutes if the Hetzner box is already up):**
 
@@ -609,13 +608,12 @@ User also asked: "if possible integrate so user may deploy yaver lite backend to
 | Hetzner cloud stack | `cloud/` — Dockerfile, docker-compose.yml, Caddyfile, deploy.sh, README.md |
 | Spec | `MOBILE_WORKER.md §"Mini Backend"` |
 | Design notes | `MOBILE_BACKEND_EXPORT.md` |
-| Sprint plan + current status | `yc.md` |
 
 ### Commit trail (end of 2026-04-17)
 
 ```
-4960c31a yc.md §Apr 20: 3-mode picker at phone-project creation
-8e7a8c69 yc.md §Wedge Demo: two-button Deploy + Hetzner cloud stack + dogfood log
+4960c31a Apr 20: 3-mode picker at phone-project creation
+8e7a8c69 Wedge Demo: two-button Deploy + Hetzner cloud stack + dogfood log
 b6d06165 Phone project push: cross-device deploy + relay-aware target resolution
 dbf75d61 Dogfood phone push pipeline + fix missing-slug 500 → 404
 39e40740 Ship phone-first mini backend runtime

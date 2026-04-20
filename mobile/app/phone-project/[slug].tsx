@@ -59,7 +59,7 @@ import {
 const YAVER_CLOUD_BASE = getYaverCloudBaseUrl();
 
 // A "dev machine" target is an owned, online Yaver-running device that is
-// not the currently-connected source (the phone itself). This is the yc.md
+// not the currently-connected source (the phone itself). This is the
 // [Your Dev Machine] button's candidate pool.
 function pickDevMachines(all: Device[], currentId: string | undefined): Device[] {
   return all.filter(
@@ -96,7 +96,7 @@ export default function PhoneProjectDetailScreen() {
   const [insertJSON, setInsertJSON] = useState("{}");
   const [promoting, setPromoting] = useState<string | null>(null);
 
-  // Deploy state (yc.md §Wedge Demo)
+  // Deploy state (roadmap §Wedge Demo)
   const { devices, activeDevice, connectionStatus } = useDevice();
   const devMachines = useMemo(
     () => pickDevMachines(devices, activeDevice?.id),
@@ -330,7 +330,7 @@ export default function PhoneProjectDetailScreen() {
     );
   }
 
-  // ── Deploy (yc.md §Wedge Demo) ──────────────────────────────────────
+  // ── Deploy (roadmap §Wedge Demo) ──────────────────────────────────────
 
   // Pre-flight guard for runPush — fetches the bundle size + cost hint and
   // asks the user to confirm BEFORE any bytes hit the wire. Keeps a

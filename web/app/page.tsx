@@ -1630,7 +1630,9 @@ return (
         <div className="mx-auto max-w-5xl">
           <div className="flex flex-col items-center justify-between gap-6 sm:flex-row">
             <p className="text-xs text-surface-500">
-              &copy; 2026 SIMKAB ELEKTRIK &middot;{" "}
+              &copy; 2026{" "}
+              <a href="https://simkab.com" target="_blank" rel="noopener noreferrer" className="hover:text-surface-300">SIMKAB ELEKTRIK</a>
+              {" "}&middot;{" "}
               <a href="mailto:kivanc.cakmak@simkab.com" className="hover:text-surface-300">kivanc.cakmak@simkab.com</a>
             </p>
             <div className="flex flex-wrap items-center gap-4 text-xs text-surface-500">

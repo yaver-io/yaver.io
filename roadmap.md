@@ -1,18 +1,17 @@
-# YC Application Sprint — Yaver
+# Product Roadmap — Yaver
 
-**Deadline:** May 4, 2026, 5pm PT (hard stop; application closes 8pm PT).
+**Target launch date:** May 4, 2026.
 **Today:** April 17, 2026. **17 days.**
-**Decision date:** June 5, 2026.
 
 ## Current Status — end of Apr 17, 2026
 
 **Implemented so far (some already pushed, some still local as of Apr 17):**
-- Mini-backend runtime on the agent side — SQLite + schema DSL + auth personas + seed + CRUD. Templates: blank / crud / todos / notes. Portable tgz export with generated SQLite + Postgres DDL. Covers yc.md Apr 18–19 + Apr 22.
+- Mini-backend runtime on the agent side — SQLite + schema DSL + auth personas + seed + CRUD. Templates: blank / crud / todos / notes. Portable tgz export with generated SQLite + Postgres DDL. Covers roadmap Apr 18–19 + Apr 22.
 - `POST /phone/projects/receive` on every `yaver serve` agent — the single receive endpoint used by dev-hw AND Yaver Cloud targets. 11 receive-side tests + 1 regression test (ErrPhoneProjectNotFound) all green.
 - `yaver phone <list|export|import|push>` CLI — the phone emulator used for dogfood. `push --to <base-url>` posts any local project to any reachable agent.
-- Mobile Deploy section (`mobile/app/phone-project/[slug].tsx`) — two primary buttons `[Your Dev Machine]` + `[Yaver Cloud]`; 6 switch-engine targets hidden under "Advanced". yc.md Apr 21 shipped.
+- Mobile Deploy section (`mobile/app/phone-project/[slug].tsx`) — two primary buttons `[Your Dev Machine]` + `[Yaver Cloud]`; 6 switch-engine targets hidden under "Advanced". roadmap Apr 21 shipped.
 - Web dashboard mirror (`web/components/dashboard/PhoneProjectsView.tsx`) — same two-button Deploy UI for demo recording parity.
-- 3-mode picker at project creation (`mobile/app/phone-projects.tsx`) — user picks `[This device]` / `[Your Dev Machine]` / `[Yaver Cloud]` at project birth instead of create-then-promote. yc.md Apr 20 partial (AI-scaffold pending).
+- 3-mode picker at project creation (`mobile/app/phone-projects.tsx`) — user picks `[This device]` / `[Your Dev Machine]` / `[Yaver Cloud]` at project birth instead of create-then-promote. roadmap Apr 20 partial (AI-scaffold pending).
 - Voice/text prompt scaffold (`runPhonePromptGenerator`, mobile prompt UI) — prompt now generates schema/auth/seed/app spec for a phone project; remaining work is quality/polish, not first implementation.
 - Deploy-state rebinding (`PhoneProjectAccess`, `bindPhoneProjectToTarget`, `clearPhoneProjectBinding`) — after push, phone CRUD can rebind to the promoted target instead of staying pinned to the source sandbox.
 - Local phone sandbox bridge (`mobile/src/lib/phoneSandboxLocal.ts`) — offline/local project persistence exists, with sync back to the connected agent when reachable.
@@ -26,14 +25,14 @@
 | Push to Mac target (`[Your Dev Machine]`) | 1.3 KB | 17 ms |
 | Push to Hetzner (`[Yaver Cloud]`) | 1.3 KB | 196 ms |
 
-**What's still on the critical path for the YC video (ordered by leverage):**
+**What's still on the critical path for the launch video (ordered by leverage):**
 1. **Prompt scaffold polish** (1 day) — first implementation exists, but the generated schema/screen quality still needs dogfood tightening so the demo path is reliable. See `PHONE_EXPORT_PIPELINE.md §Handoff 1.3`.
-2. **Cloud tenant DNS + TLS** (yc.md Apr 24; 30 min runbook) — point `cloud.yaver.io` at a Hetzner box with the `cloud/` stack + Caddy wildcard. Details in `PHONE_EXPORT_PIPELINE.md §Handoff 1.4`.
+2. **Cloud tenant DNS + TLS** (Apr 24; 30 min runbook) — point `cloud.yaver.io` at a Hetzner box with the `cloud/` stack + Caddy wildcard. Details in `PHONE_EXPORT_PIPELINE.md §Handoff 1.4`.
 3. **GitHub/GitLab monorepo scaffolding** (1 day) — user-requested. Auth + clone + mono-repo layout + push. Can defer; the phone-only path is already demoable.
 4. **OpenAI key onboarding helper** (1 hour) — paste-with-validate + in-app link to platform.openai.com. OpenAI has no one-click OAuth-to-API-key. `PHONE_EXPORT_PIPELINE.md §Handoff 2.2`.
 5. **True on-device SQLite runtime (`expo-sqlite`)** (2–3 days) — so "Phone only" mode is literal, not "lives on the currently-connected agent". Not a demo-blocker; pragmatic today.
-6. **Landing page rewrite** (yc.md Apr 27) — "Build mobile apps from your phone" one-CTA.
-7. **HN launch** (yc.md Apr 29), video (May 1), application (May 4).
+6. **Landing page rewrite** (Apr 27) — "Build mobile apps from your phone" one-CTA.
+7. **HN launch** (Apr 29) + video (May 1).
 
 **Recently shipped (moved off critical path):**
 - Prompt-to-project scaffold + deploy-state rebinding + local sandbox sync all landed in the current repo state on Apr 17; the remaining work there is polish and dogfood, not first implementation.
@@ -49,7 +48,7 @@
 2. Trust signals — escape routes, export to any backend, self-host runbook. Present but deliberately secondary.
 3. Retention — mobile worker fleet, guest access. One-line mentions only.
 
-**Key invariants a Codex handoff must preserve:**
+**Key invariants a future handoff must preserve:**
 - The three tiers run the **same binary** (`yaver serve`). No cloud-only code path.
 - Convex is identity + peer discovery + deployment metadata only. **No payloads.** See `CLAUDE.md §"Privacy Contract"` + `desktop/agent/convex_privacy_test.go`.
 - Wire format = tgz with `schema.yaml` + `auth.yaml` + `seed.json` + `.yaver/config.yaml` + `.yaver/project.yaml` + generated DDL + README. Do not change the filename set without updating `phone_backend.go::ExportPhoneProject` AND `phone_backend.go::ImportPhoneProject` together — both sides have tests.
@@ -60,7 +59,7 @@
 > Yaver is the **backend that moves with you** — build it on your phone, grow it
 > onto your own Mac, lift it to our cloud. Same code, same data, no migration.
 
-Everything in the application, the demo, and the HN launch must ladder to that sentence. If a feature doesn't support it, cut it from the pitch (not from the repo).
+Everything in the launch, the demo, and the public narrative must ladder to that sentence. If a feature doesn't support it, cut it from the pitch (not from the repo).
 
 ## The Backend Continuum (the core insight)
 
@@ -86,11 +85,11 @@ Same portable manifest (schema + auth personas + seed + storage) is materialized
 6. Tap **Grow → Yaver Cloud**. Same manifest provisions on a managed box. Shareable URL.
 7. (Optional fallback slide) **Export to Supabase** — same manifest, escape hatch proves no lock-in.
 
-If this runs end-to-end without a hitch, the application is close to guaranteed a first-round read. If it doesn't, nothing else in the application will save it.
+If this runs end-to-end without a hitch, the launch is close to guaranteed a first-round read. If it doesn't, nothing else in the narrative will save it.
 
-## What Gets Cut From the Pitch
+## What Stays Out of the Public Narrative
 
-Keep in the repo, remove from the YC narrative:
+Keep in the repo, remove from the launch pitch:
 
 - Mobile worker fleet (retention hook, mention in one line)
 - Guest access
@@ -103,7 +102,7 @@ Keep in the repo, remove from the YC narrative:
 - Support sessions
 - LLM serving (**never mention — this kills deals**)
 
-CLAUDE.md is 3× too big for the pitch. It stays in the repo — but the application, demo video, and landing page talk about one thing.
+CLAUDE.md is 3× too big for the pitch. It stays in the repo — but the landing page and demo video talk about one thing.
 
 ## 17-Day Calendar
 
@@ -129,16 +128,7 @@ CLAUDE.md is 3× too big for the pitch. It stays in the repo — but the applica
 | Apr 27 (Mon) | Landing page rewrite: `yaver.io` → "Build mobile apps from your phone. Deploy to your Mac or our cloud." One CTA. | Live on yaver.io; old feature grid gone. |
 | Apr 28 (Tue) | Pre-launch polish: demo video B-roll, HN title draft, first HN comment draft. | Dry-run the HN launch with a friend. |
 | Apr 29 (Wed) | **HN launch**, 9am PT (peaks morning US time). Reply to every comment for 6 hours. | Post is live; you're at the keyboard until noon PT. |
-| Apr 30 (Thu) | Buffer day. Something is broken. Also: measure — signups, projects created, projects deployed, paying users. | Real numbers in a doc, ready to paste into application. |
-
-### Final Stretch — YC Application (May 1–4)
-
-| Date | Ship | Done when |
-|---|---|---|
-| May 1 (Fri) | **1-minute product demo video.** Phone screen recording. No talking head, no intro music. Just the magic. 3 takes max. | Uploaded to YouTube (unlisted). |
-| May 2 (Sat) | **1-minute founder video.** Phone camera, no script, why-you-why-this-why-now. 3 takes max. | Uploaded to YouTube (unlisted). |
-| May 3 (Sun) | Write the application. See "Application Answers" below. | Every field drafted; partner (spouse/friend) reviewed. |
-| May 4 (Mon) | **Submit by 5pm PT.** Leaves 3 hours for form bugs. | Confirmation email received. |
+| Apr 30 (Thu) | Buffer day. Something is broken. Also: measure — signups, projects created, projects deployed, paying users. | Real numbers in a doc. |
 
 ## HN Launch Playbook (Apr 29)
 
@@ -150,7 +140,7 @@ CLAUDE.md is 3× too big for the pitch. It stays in the repo — but the applica
 - [ ] `status.yaver.io` or at least an uptime pingdom on the Hetzner cloud box.
 - [ ] Twitter/Bluesky thread drafted, ready to post 30 minutes after HN submission.
 
-**If any box is unchecked Apr 28 → skip HN, go straight to application.** A broken Show HN is in the public record forever and the YC partner will find it.
+**If any box is unchecked Apr 28 → skip HN.** A broken Show HN is in the public record forever.
 
 **Title:** `Show HN: Yaver – Build and deploy mobile apps from your phone`
 No adjectives, no emojis, no "I made a thing".
@@ -170,10 +160,10 @@ No adjectives, no emojis, no "I made a thing".
 1. Reply to every top-level comment within 10 minutes. Every one.
 2. Never argue. Acknowledge the critique, say what you'll do about it.
 3. If someone says "why 30 features?" → "Scaffolding for the wedge. Next release cuts 60%." Then move on.
-4. If a comment has a concrete bug → fix it live, reply with the commit hash. YC *loves* this.
+4. If a comment has a concrete bug → fix it live, reply with the commit hash.
 5. No "thanks!" replies. Every reply should add information.
 
-**Traction to capture for the YC application:**
+**Traction to capture:**
 
 - HN rank at peak
 - Upvotes at 12h / 24h
@@ -181,56 +171,13 @@ No adjectives, no emojis, no "I made a thing".
 - Projects created in first 24h
 - First paying user's timestamp
 
-## YC Application Answers — Draft Now, Polish May 3
-
-### Describe what your company does in 50 characters or less.
-> The backend that grows from your phone to cloud.
-
-### What is your company going to make?
-> Yaver is a backend-as-a-service whose first tier runs inside a mobile app. A solo developer prompts on their phone, the app scaffolds a React Native project with a SQLite-backed mini-backend that runs *on the phone itself*, and the app is usable in under a minute — no signup with a cloud vendor, no infra to provision. When the project outgrows the phone, the same portable manifest (schema, auth, seed, storage) is materialized on the developer's own Mac via our P2P agent, and from there onto our managed cloud tier — no code changes, no data migration, no vendor swap. The user picks how far up the continuum to go; Yaver is the only tier that spans all three. Open-source everywhere; revenue comes from the managed cloud tier ($10–$449/mo) and a real-device test-fleet feature for teams. We also ship one-click export to Supabase, Convex, Firebase, Postgres, Turso, and 14 other backends — positioned as escape hatches, not the product.
-
-### Why did you pick this idea?
-- Personal pain — answer specifically, not generically.
-- Insight nobody else has — P2P + mobile-first + portable mini-backend.
-- Why the timing is now — Hermes push works in 2025, voice-prompting is usable, RN ecosystem stable.
-
-### What's new about what you're making?
-> Two things. (1) The *first tier of the backend* runs inside the mobile app — the phone isn't a client of a backend, it *is* the backend at step zero, with real schema, auth, storage, and CRUD. No other BaaS starts on-device. (2) The backend is a continuum, not a destination — the same portable manifest scales from phone → the developer's own hardware → our managed cloud, with zero migration. Supabase, Convex, and Firebase all assume the backend is somewhere else from day one; we assume it's in your pocket and only leaves when you say so.
-
-### Who are your competitors, and who might become competitors?
-> Direct BaaS: Supabase, Firebase, Convex, Appwrite — all laptop-first, none start on the phone, none run on user hardware, none give a three-tier continuum. Adjacent: Expo / EAS (build infra, no data layer), Replit Mobile (browser-based, no real native), Cursor Mobile (chat-only, no dev loop). Long-term risk: Supabase or Convex could bolt on a phone runtime, but that cannibalizes their own cloud revenue and neither has the P2P agent or the native container for on-device RN execution. Firebase is Google, too big to pivot. Open-source + phone-first is the moat.
-
-### How far along are you?
-- Specific numbers from Apr 30 measurement day.
-- "Launched on HN on Apr 29, hit #X, N signups, M projects created, P paying."
-- "Ship daily; cut N features in last 2 weeks to focus."
-
-### How long have each of you been working on this?
-- Honest dates.
-
-### Do you have revenue?
-- Whatever it is on May 3, put it in. Even $5/mo from one user counts and is better than zero.
-
-### Anything else we should know?
-- The **backend continuum** (phone → user HW → Yaver cloud, one runtime) is the entire moat. Supabase/Convex/Firebase cannot copy the phone tier without cannibalizing their cloud revenue.
-- The mobile-worker feature (spare phones as a real-device test fleet) is the retention hook for teams — one line, not a paragraph.
-- Open-source on day one; you self-host everything for free. Managed cloud is the paid tier.
-- Team-of-one ships daily; commit history is public.
-
-## Application-Killers (Non-Negotiable)
+## Launch-Killers (Non-Negotiable)
 
 1. **Never mention "LLM serving" or compete-with-Cursor framing.** It signals bad taste.
-2. **Don't over-promise TAM.** YC partners can smell "everyone who codes" from a mile away. Your TAM is solo React Native devs — own it.
-3. **Don't list 30 features.** The application asks what your company *does*, not what your repo contains.
-4. **Don't apologize for being solo.** YC funds solo founders. Just be clear you ship.
-5. **Submit by 5pm, not 8pm.** Form bugs happen. Buffer is non-optional.
-6. **Do not frame Supabase/Convex/Firebase as promotion targets.** They are escape hatches — one-click exports for trust signaling. Lead with Yaver-native (phone → user HW → Yaver cloud); mentioning competitors as the *default* destination hands them the narrative.
-
-## Post-Submission (May 4+)
-
-- Don't stop shipping. YC partners re-check your GitHub after reading the application.
-- Daily tweets with concrete progress — screenshots, not vibes.
-- If invited to interview (mid-to-late May), prep with 2 mock interviews. YC interviews are 10 minutes and partners interrupt — practice answering the first sentence, not the whole pitch.
+2. **Don't over-promise TAM.** Evaluators can smell "everyone who codes" from a mile away. Your TAM is solo React Native devs — own it.
+3. **Don't list 30 features.** The public pitch is what your company *does*, not what your repo contains.
+4. **Don't apologize for being solo.** Just be clear you ship.
+5. **Do not frame Supabase/Convex/Firebase as promotion targets.** They are escape hatches — one-click exports for trust signaling. Lead with Yaver-native (phone → user HW → Yaver cloud); mentioning competitors as the *default* destination hands them the narrative.
 
 ## Success Criteria
 
@@ -239,8 +186,7 @@ By May 4 at 5pm PT:
 - [ ] Wedge demo runs end-to-end on a stranger's phone in under 3 minutes.
 - [ ] At least 100 signups, 20 real projects, 3 paying users.
 - [ ] HN launch happened (or was consciously skipped Apr 28 with written reason).
-- [ ] Product video (60s) and founder video (60s) uploaded.
-- [ ] Application submitted, confirmation email archived.
+- [ ] Product video (60s) uploaded.
 - [ ] Landing page is one-CTA, one-sentence pitch.
 - [ ] CLAUDE.md pitch bloat unchanged (keep the repo, trim only the narrative).
 

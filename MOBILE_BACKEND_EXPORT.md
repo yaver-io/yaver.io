@@ -1,6 +1,6 @@
 # Mobile Backend Export Pipeline
 
-Companion doc to [`MOBILE_WORKER.md`](MOBILE_WORKER.md) (Parallel Product Track: Mini Backend Inside Yaver) and [`yc.md`](yc.md) (17-day YC application sprint). This file owns the **export/deploy pipeline** — how a project created inside the mobile app's mini-backend is promoted to (a) the developer's own dev hardware, or (b) Yaver's managed cloud, or (c) chained (phone → dev hw → cloud).
+Companion doc to [`MOBILE_WORKER.md`](MOBILE_WORKER.md) (Parallel Product Track: Mini Backend Inside Yaver). This file owns the **export/deploy pipeline** — how a project created inside the mobile app's mini-backend is promoted to (a) the developer's own dev hardware, or (b) Yaver's managed cloud, or (c) chained (phone → dev hw → cloud).
 
 The parallel thread owns the **runtime** (SQLite + schema + CRUD inside the mobile app). This thread owns everything that happens after the user taps **Deploy**.
 

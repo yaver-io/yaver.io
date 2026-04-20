@@ -704,7 +704,7 @@ export async function createLocalPhoneProject(spec: PhoneCreateSpec): Promise<Ph
 /** Create a new phone-backend project on a *different* agent than the one
  *  we're currently connected to. Used by the "Create project" flow in
  *  mobile/app/phone-projects.tsx when the user picks [Your Dev Machine] or
- *  [Yaver Cloud] as the start-point (yc.md §Wedge Demo). Goes through the
+ *  [Yaver Cloud] as the start-point (roadmap §Wedge Demo). Goes through the
  *  same auth headers as the local agent; the three tiers in the Yaver-native
  *  continuum share the same owner-token model.
  *
