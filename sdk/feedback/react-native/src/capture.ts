@@ -1,15 +1,17 @@
 /**
- * Screen capture helpers — screenshot + video recording.
+ * Screen capture helpers — screenshot + video + voice recording.
  *
  * Peer deps (all optional — loaded lazily):
  *   - `react-native-view-shot`        — screenshot
  *   - `react-native-record-screen`    — video recording (iOS ReplayKit /
  *                                       Android MediaProjection)
+ *   - `expo-av`                       — audio recording for voice notes
  *
  * Each helper surfaces a clear error if the module is missing so a host
- * app knows exactly which peer dep to add. Audio-note / voice-command
- * recording was removed in 0.7.0 — see FeedbackModal for the new
- * 5-button surface.
+ * app knows exactly which peer dep to add. Voice-note capture was
+ * removed in 0.7.0 and re-added in 0.7.14 as a narrow, "press to
+ * record → stop → transcribe via the agent → attach to feedback" flow.
+ * The broader live/narrated/batch modes from pre-0.7.0 stay removed.
  */
 
 /**
@@ -117,4 +119,115 @@ export async function stopVideoRecording(): Promise<{
 /** Whether a video recording is currently active. */
 export function isVideoRecording(): boolean {
   return videoRecordingActive;
+}
+
+// ── Voice note recording ────────────────────────────────────────────
+//
+// Short audio recording, stopped on user tap. Lazy-loaded via expo-av —
+// the SDK doesn't declare a hard dep on it so bare-RN apps that don't
+// have Expo can still install the SDK. If expo-av is missing, the
+// helpers throw a clear error and the modal's voice button gracefully
+// hides itself.
+
+let audioRecorderRef: any = null;
+let audioRecorderActive = false;
+
+function loadExpoAvOrThrow(): any {
+  try {
+    const mod = require('expo-av');
+    if (!mod?.Audio?.Recording) {
+      throw new Error('expo-av is installed but missing Audio.Recording');
+    }
+    return mod;
+  } catch (err) {
+    throw new Error(
+      '[YaverFeedback] Voice notes need `expo-av` as a peer dependency. ' +
+        'Add it with `npx expo install expo-av` and rebuild. ' +
+        String(err),
+    );
+  }
+}
+
+/**
+ * Returns true if `expo-av` is installed and Audio.Recording is
+ * available — lets the modal hide the voice button in apps that
+ * haven't installed the peer dep, instead of throwing on tap.
+ */
+export function isVoiceCaptureSupported(): boolean {
+  try {
+    const mod = require('expo-av');
+    return !!mod?.Audio?.Recording;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Begin recording audio from the device microphone. Requests
+ * microphone permission on first use. Resolves once recording has
+ * actually started, so the UI can flip to "Stop" immediately.
+ */
+export async function startAudioRecording(): Promise<void> {
+  if (audioRecorderActive) {
+    throw new Error('[YaverFeedback] An audio recording is already in progress.');
+  }
+  const ExpoAv = loadExpoAvOrThrow();
+  const { Audio } = ExpoAv;
+
+  const perm = await Audio.requestPermissionsAsync();
+  if (!perm.granted) {
+    throw new Error(
+      '[YaverFeedback] Microphone permission denied. Enable it in Settings ▸ Your App ▸ Microphone.',
+    );
+  }
+
+  // Use the iOS/Android high-quality preset — transcription providers
+  // (Whisper / Deepgram / OpenAI) prefer 16 kHz+ mono but also handle
+  // the higher sample rates fine. Default preset is portable.
+  await Audio.setAudioModeAsync({
+    allowsRecordingIOS: true,
+    playsInSilentModeIOS: true,
+    staysActiveInBackground: false,
+  });
+
+  const recording = new Audio.Recording();
+  await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+  await recording.startAsync();
+  audioRecorderRef = recording;
+  audioRecorderActive = true;
+}
+
+/**
+ * Stop the current audio recording and return the on-device file path
+ * (usually a .m4a on iOS / .3gp on Android). Returns null if no
+ * recording was active.
+ */
+export async function stopAudioRecording(): Promise<{ path: string; duration: number } | null> {
+  if (!audioRecorderActive || !audioRecorderRef) return null;
+  const recording = audioRecorderRef;
+  audioRecorderRef = null;
+  audioRecorderActive = false;
+  try {
+    await recording.stopAndUnloadAsync();
+  } catch {
+    // Second stop calls throw; ignore and use whatever state we have.
+  }
+  const uri = typeof recording.getURI === 'function' ? recording.getURI() : null;
+  if (!uri) {
+    throw new Error('[YaverFeedback] Audio recording produced no file.');
+  }
+  let durationMs = 0;
+  try {
+    const status = await recording.getStatusAsync();
+    durationMs = status?.durationMillis ?? 0;
+  } catch {
+    // Status can fail after unload; leave duration at 0, transcription
+    // still works.
+  }
+  return { path: uri, duration: durationMs / 1000 };
+}
+
+/** Whether a voice-note recording is currently active. */
+export function isAudioRecording(): boolean {
+  return audioRecorderActive;
 }

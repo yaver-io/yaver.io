@@ -14,6 +14,9 @@ import {
   captureScreenshot,
   startVideoRecording,
   stopVideoRecording,
+  startAudioRecording,
+  stopAudioRecording,
+  isVoiceCaptureSupported,
 } from './capture';
 import { uploadFeedback } from './upload';
 import { DeviceInfo, FeedbackBundle } from './types';
@@ -46,7 +49,9 @@ type ActionState =
   | 'hot-reloading'
   | 'capturing'
   | 'vibing'
-  | 'sending-video';
+  | 'sending-video'
+  | 'recording-voice'
+  | 'transcribing-voice';
 
 export const FeedbackModal: React.FC = () => {
   const [visible, setVisible] = useState(false);
@@ -55,6 +60,10 @@ export const FeedbackModal: React.FC = () => {
   const [toast, setToast] = useState<string | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
   const [isRecordingVideo, setIsRecordingVideo] = useState(false);
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  // Cached once on mount — bare-RN apps without expo-av get a clean
+  // hidden button instead of a runtime error.
+  const voiceSupported = useRef<boolean>(isVoiceCaptureSupported()).current;
   const [lastVideo, setLastVideo] = useState<LastVideo | null>(null);
   const mountedRef = useRef(true);
 
@@ -339,6 +348,97 @@ export const FeedbackModal: React.FC = () => {
     }
   }, [isRecordingVideo]);
 
+  // ─── Voice note: record → transcribe → send as feedback ───────────
+  // Tap once to start; tap again to stop. On stop: upload the audio
+  // to the agent's /voice/transcribe (which routes through whichever
+  // STT provider is configured — Whisper / Deepgram / OpenAI / etc.),
+  // then file the transcript as a bug report. The audio file itself
+  // is also attached to the feedback bundle so the agent can re-play
+  // it if the transcript is wrong.
+  const handleToggleVoice = useCallback(async () => {
+    setError(null);
+    if (!isRecordingVoice) {
+      try {
+        await startAudioRecording();
+        if (mountedRef.current) {
+          setIsRecordingVoice(true);
+          setAction('recording-voice');
+          setToast('Recording voice note…');
+        }
+      } catch (err: unknown) {
+        setIsRecordingVoice(false);
+        setAction('idle');
+        setError(err instanceof Error ? err.message : String(err));
+      }
+      return;
+    }
+
+    // Stopping → transcribe → send.
+    try {
+      const audio = await stopAudioRecording();
+      setIsRecordingVoice(false);
+      if (!audio) {
+        setAction('idle');
+        return;
+      }
+      setAction('transcribing-voice');
+      setToast('Transcribing…');
+
+      const config = YaverFeedback.getConfig();
+      if (!config?.agentUrl) {
+        setError('Not connected to the agent yet.');
+        setAction('idle');
+        return;
+      }
+      let transcript = '';
+      try {
+        const client = YaverFeedback.getP2PClient();
+        if (client) {
+          const res = await client.transcribeVoice(audio.path);
+          transcript = res.text ?? '';
+        }
+      } catch {
+        // Transcription can fail (no STT provider configured on the
+        // agent, network blip, etc.). Don't block the flow — ship
+        // the raw audio file with a "[no transcript]" note so the
+        // agent + human reviewer can still play it back.
+      }
+
+      const { Dimensions } = require('react-native');
+      const { width, height } = Dimensions.get('window');
+      const deviceInfo: DeviceInfo = {
+        platform: Platform.OS,
+        osVersion: String(Platform.Version),
+        model: Platform.OS === 'ios' ? 'iOS Device' : 'Android Device',
+        screenWidth: width,
+        screenHeight: height,
+      };
+      const bundle: FeedbackBundle = {
+        metadata: {
+          timestamp: new Date().toISOString(),
+          device: deviceInfo,
+          app: {},
+          userNote:
+            transcript.length > 0
+              ? `[Voice note] ${transcript}`
+              : `[Voice note · ${Math.round(audio.duration)}s — transcription unavailable]`,
+        },
+        screenshots: [],
+        audio: audio.path,
+        errors: YaverFeedback.getCapturedErrors().length
+          ? YaverFeedback.getCapturedErrors()
+          : undefined,
+      };
+      await uploadFeedback(config.agentUrl, config.authToken ?? '', bundle);
+      setToast(transcript ? `Sent: "${transcript.slice(0, 60)}${transcript.length > 60 ? '…' : ''}"` : 'Voice note sent');
+      closeSoon(1800);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (mountedRef.current) setAction('idle');
+    }
+  }, [isRecordingVoice, closeSoon]);
+
   // ─── 5. Send the last recorded video ───────────────────────────────
   const handleSendVideo = useCallback(async () => {
     const config = YaverFeedback.getConfig();
@@ -445,6 +545,25 @@ export const FeedbackModal: React.FC = () => {
                 disabled={busy}
                 busy={action === 'vibing'}
               />
+
+              {/* Voice note — only rendered when expo-av is installed.
+                  Tap to start, tap again to stop → transcribes via
+                  the agent and files as a feedback report. */}
+              {voiceSupported && (
+                <ActionRow
+                  label={
+                    action === 'transcribing-voice'
+                      ? 'Transcribing…'
+                      : isRecordingVoice
+                        ? 'Stop & Send Voice'
+                        : 'Voice Note'
+                  }
+                  tint={isRecordingVoice ? '#ef4444' : '#f472b6'}
+                  onPress={handleToggleVoice}
+                  disabled={busy && action !== 'recording-voice' && action !== 'idle'}
+                  busy={action === 'transcribing-voice'}
+                />
+              )}
 
               {/* 4. Start/Stop Recording */}
               <ActionRow

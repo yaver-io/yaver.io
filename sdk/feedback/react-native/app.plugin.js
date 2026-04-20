@@ -270,8 +270,15 @@ function withYaverAppDelegateHook(config) {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
       guard let self = self else { return }
 
+      // No explicit override needed — the new delegate's bundleURL()
+      // has a patched branch that calls YaverHotReload.bundleURL()
+      // first, which returns the file we just saved. That avoids
+      // relying on a non-existent overrideBundleURL property on
+      // ExpoReactNativeFactoryDelegate (which is what errored out in
+      // 0.7.14's build on Expo SDK 54+).
+      _ = bundleURL  // silence "unused" warning; the file path was
+                    // baked into YaverHotReload by loadBundle() above
       let delegate = ReactNativeDelegate()
-      delegate.overrideBundleURL = bundleURL
       delegate.dependencyProvider = RCTAppDependencyProvider()
 
       let factory = ExpoReactNativeFactory(delegate: delegate)
