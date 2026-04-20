@@ -224,7 +224,9 @@ func runAIGeneratorOpenCode(ctx context.Context, spec AIGeneratorSpec) (string, 
 	if err := CheckRunnerReady(GetRunnerConfig("opencode"), spec.WorkDir); err != nil {
 		return "", err
 	}
-	cmd := osexec.CommandContext(ctx, "opencode", "--message", spec.Prompt)
+	// Current opencode uses `opencode run <message>` for non-interactive
+	// runs. The old `--message` flag was removed in sst/opencode.
+	cmd := osexec.CommandContext(ctx, "opencode", "run", "--dangerously-skip-permissions", spec.Prompt)
 	cmd.Dir = spec.WorkDir
 	cmd.Stderr = os.Stderr
 	var buf bytes.Buffer

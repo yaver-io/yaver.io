@@ -58,16 +58,10 @@ function isSecondClassMobileFramework(framework?: string): boolean {
   return framework === "flutter" || framework === "swift" || framework === "kotlin";
 }
 
-function hasFeedbackSDK(project?: ProjectItem | null): boolean {
-  return !!project?.tags?.includes("feedback-sdk");
-}
-
-function agentFlowGuidance(framework?: string, feedbackSDKInstalled?: boolean): string | null {
-  if (!isHermesMobileFramework(framework)) return null;
-  if (feedbackSDKInstalled) {
-    return "Open in Yaver uses Metro + Hermes. Feedback SDK detected for in-app bug reports and remote reload in your app process.";
-  }
-  return "Open in Yaver uses Metro + Hermes. Feedback SDK is optional for in-app bug reports and remote reload in your app process.";
+function agentFlowGuidance(_framework?: string, _feedbackSDKInstalled?: boolean): string | null {
+  // Yaver's native overlay (shake → reload / back) already handles the
+  // in-app feedback loop, so no extra banner text is needed.
+  return null;
 }
 
 function secondClassGuidance(framework?: string, isDirectConnection?: boolean): string | null {
@@ -1244,8 +1238,6 @@ export default function AppsScreen() {
 
   const currentProject = projects.find((project) => project.path === devStatus?.workDir) ?? null;
   const runningProject = currentProject?.name ?? devStatus?.workDir?.split("/").pop() ?? devStatus?.framework ?? "App";
-  const runningHasFeedbackSDK = hasFeedbackSDK(currentProject);
-  const runningGuidance = agentFlowGuidance(devStatus?.framework, runningHasFeedbackSDK);
   const runningSecondClassGuidance = secondClassGuidance(devStatus?.framework, isDirectConnection);
 
   return (
@@ -1274,16 +1266,7 @@ export default function AppsScreen() {
                     {devStatus.iosInstallReason}
                   </Text>
                 ) : null}
-                {runningHasFeedbackSDK ? (
-                  <Text style={[s.cardMeta, { color: "#86efac" }]}>
-                    feedback sdk · detected
-                  </Text>
-                ) : null}
-                {runningGuidance ? (
-                  <Text style={[s.cardMeta, s.guidanceText, { color: "#cbd5e1" }]} numberOfLines={3}>
-                    {runningGuidance}
-                  </Text>
-                ) : runningSecondClassGuidance ? (
+                {runningSecondClassGuidance ? (
                   <Text style={[s.cardMeta, s.guidanceText, { color: "#cbd5e1" }]} numberOfLines={3}>
                     {runningSecondClassGuidance}
                   </Text>

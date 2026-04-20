@@ -291,6 +291,15 @@ export function DevPreview() {
               <Text style={styles.bannerArrow}>{"\u203A"}</Text>
             </>
           )}
+          {!status.building && (
+            <Pressable
+              onPress={(e) => { e.stopPropagation?.(); handleStop(); }}
+              hitSlop={8}
+              style={({ pressed }) => [styles.bannerStopBtn, pressed && { opacity: 0.6 }]}
+            >
+              <Text style={styles.bannerStopText}>Stop</Text>
+            </Pressable>
+          )}
         </View>
       </Pressable>
 
@@ -543,6 +552,20 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: "#22c55e",
     marginTop: -2,
+  },
+  bannerStopBtn: {
+    marginLeft: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: "#2e1a1a",
+    borderWidth: 1,
+    borderColor: "#ef4444",
+  },
+  bannerStopText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#ef4444",
   },
   container: { flex: 1 },
   header: {

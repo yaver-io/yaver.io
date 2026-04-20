@@ -1978,35 +1978,58 @@ export default function TasksScreen() {
 
         {/* FAB */}
         {isEffectivelyConnected && (
-          <Pressable style={({ pressed }) => [s.fab, pressed && s.fabPressed]} onPress={() => setShowNewTask(true)}>
+          <Pressable
+            style={({ pressed }) => [s.fab, pressed && s.fabPressed]}
+            onPress={() => {
+              // Defensive reset — guarantees the modal opens cleanly even if
+              // a previous cancel/backdrop-dismiss left stale state around.
+              setNewTaskText("");
+              setAttachedImages([]);
+              setInputFromSpeech(false);
+              pendingOpenTaskRef.current = null;
+              setShowNewTask(true);
+            }}
+          >
             <Text style={s.fabText}>+</Text>
           </Pressable>
         )}
 
         {/* New Task Modal */}
-        <Modal visible={showNewTask} animationType="slide" transparent onDismiss={handleNewTaskModalDismiss}>
+        <Modal
+          visible={showNewTask}
+          animationType="slide"
+          transparent
+          onDismiss={handleNewTaskModalDismiss}
+          onRequestClose={() => {
+            Keyboard.dismiss();
+            setShowNewTask(false);
+            setNewTaskText("");
+            setAttachedImages([]);
+            setInputFromSpeech(false);
+          }}
+        >
           <KeyboardAvoidingView style={s.modalOverlay} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-            <Pressable style={s.modalDismiss} onPress={() => { Keyboard.dismiss(); setShowNewTask(false); setNewTaskText(""); }} />
+            <Pressable style={s.modalDismiss} onPress={() => { Keyboard.dismiss(); setShowNewTask(false); setNewTaskText(""); setAttachedImages([]); setInputFromSpeech(false); }} />
             <View style={[s.modalContent, { backgroundColor: c.bgCard }]}>
               <View style={s.modalHeader}>
                 <Text style={[s.modalTitle, { color: c.textPrimary }]}>New Task</Text>
-                {(availableRunners.length > 0 || availableModels.length > 0) && (
-                  <Pressable
-                    style={[s.agentBadge, { backgroundColor: c.bgCardElevated, borderColor: c.border }]}
-                    onPress={() => setShowAgentPicker(true)}
-                  >
-                    <Text style={[s.agentBadgeText, { color: c.textSecondary }]}>
-                      {(() => {
-                        const runner = availableRunners.find(r => r.id === selectedRunner);
-                        const model = availableModels.find(m => m.id === selectedModel);
-                        const runnerLabel = selectedRunner === "custom" ? "Custom" : (runner?.name || "Claude");
-                        const modelLabel = model?.name || selectedModel || "";
-                        return modelLabel ? `${runnerLabel} · ${modelLabel}` : runnerLabel;
-                      })()}
-                    </Text>
-                    <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>▾</Text>
-                  </Pressable>
-                )}
+                <Pressable
+                  style={[s.agentBadge, { backgroundColor: c.bgCardElevated, borderColor: c.border }]}
+                  onPress={() => setShowAgentPicker(true)}
+                >
+                  <Text style={[s.agentBadgeText, { color: c.textSecondary }]}>
+                    {(() => {
+                      const runner = availableRunners.find(r => r.id === selectedRunner);
+                      const model = availableModels.find(m => m.id === selectedModel);
+                      const runnerLabel = selectedRunner === "custom"
+                        ? "Custom"
+                        : (runner?.name || (selectedRunner ? selectedRunner : "Claude"));
+                      const modelLabel = model?.name || selectedModel || "";
+                      return modelLabel ? `${runnerLabel} · ${modelLabel}` : runnerLabel;
+                    })()}
+                  </Text>
+                  <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>▾</Text>
+                </Pressable>
               </View>
               <TextInput
                 style={[s.input, s.inputMultiline, { backgroundColor: c.bg, borderColor: c.border, color: c.textPrimary }]}
@@ -2101,51 +2124,77 @@ export default function TasksScreen() {
                 <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>Done</Text>
               </Pressable>
             </View>
-            {availableRunners.length > 0 && (
-              <>
-                <Text style={[s.agentPickerSection, { color: c.textMuted }]}>AGENT</Text>
-                <View style={s.agentPickerChips}>
-                  {availableRunners.map((r) => (
+            {availableRunners.length === 0 && availableModels.length === 0 && (
+              <Text style={{ color: c.textMuted, fontSize: 13, paddingHorizontal: 16, paddingVertical: 20, textAlign: "center" }}>
+                Loading agents… if this persists, make sure your dev machine has a coding agent installed (claude-code, codex, aider, opencode).
+              </Text>
+            )}
+            {availableRunners.length > 0 && (() => {
+              // Only surface runners the connected dev machine actually has
+              // on PATH. Keep the currently-selected runner even if it's not
+              // installed (so the chip doesn't silently disappear).
+              const installed = availableRunners.filter(
+                (r) => r.installed || r.id === selectedRunner,
+              );
+              if (installed.length === 0) {
+                return (
+                  <>
+                    <Text style={[s.agentPickerSection, { color: c.textMuted }]}>AGENT</Text>
+                    <Text style={{ color: c.textMuted, fontSize: 12, paddingHorizontal: 16, paddingBottom: 12 }}>
+                      No coding agents installed on this dev machine. Install one with{"\n"}
+                      <Text style={{ fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", color: c.textSecondary }}>
+                        yaver install claude | codex | aider | opencode
+                      </Text>
+                    </Text>
+                  </>
+                );
+              }
+              return (
+                <>
+                  <Text style={[s.agentPickerSection, { color: c.textMuted }]}>AGENT</Text>
+                  <View style={s.agentPickerChips}>
+                    {installed.map((r) => (
+                      <Pressable
+                        key={r.id}
+                        style={[
+                          s.modelChip,
+                          { borderColor: selectedRunner === r.id ? "#f59e0b" : c.border },
+                          selectedRunner === r.id && { backgroundColor: "#f59e0b20" },
+                        ]}
+                        onPress={() => setSelectedRunner(r.id)}
+                      >
+                        <Text style={[s.modelChipText, { color: selectedRunner === r.id ? "#f59e0b" : c.textMuted }]}>
+                          {r.name}
+                        </Text>
+                      </Pressable>
+                    ))}
                     <Pressable
-                      key={r.id}
                       style={[
                         s.modelChip,
-                        { borderColor: selectedRunner === r.id ? "#f59e0b" : c.border },
-                        selectedRunner === r.id && { backgroundColor: "#f59e0b20" },
+                        { borderColor: selectedRunner === "custom" ? "#f59e0b" : c.border },
+                        selectedRunner === "custom" && { backgroundColor: "#f59e0b20" },
                       ]}
-                      onPress={() => setSelectedRunner(r.id)}
+                      onPress={() => setSelectedRunner("custom")}
                     >
-                      <Text style={[s.modelChipText, { color: selectedRunner === r.id ? "#f59e0b" : c.textMuted }]}>
-                        {r.name}
+                      <Text style={[s.modelChipText, { color: selectedRunner === "custom" ? "#f59e0b" : c.textMuted }]}>
+                        Custom
                       </Text>
                     </Pressable>
-                  ))}
-                  <Pressable
-                    style={[
-                      s.modelChip,
-                      { borderColor: selectedRunner === "custom" ? "#f59e0b" : c.border },
-                      selectedRunner === "custom" && { backgroundColor: "#f59e0b20" },
-                    ]}
-                    onPress={() => setSelectedRunner("custom")}
-                  >
-                    <Text style={[s.modelChipText, { color: selectedRunner === "custom" ? "#f59e0b" : c.textMuted }]}>
-                      Custom
-                    </Text>
-                  </Pressable>
-                </View>
-                {selectedRunner === "custom" && (
-                  <TextInput
-                    style={[s.input, { backgroundColor: c.bg, borderColor: c.border, color: c.textPrimary, marginHorizontal: 16, marginBottom: 8, fontSize: 13, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }]}
-                    placeholder="Command, e.g. my-tool --auto {prompt}"
-                    placeholderTextColor={c.textMuted}
-                    value={customCommand}
-                    onChangeText={setCustomCommand}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                  />
-                )}
-              </>
-            )}
+                  </View>
+                  {selectedRunner === "custom" && (
+                    <TextInput
+                      style={[s.input, { backgroundColor: c.bg, borderColor: c.border, color: c.textPrimary, marginHorizontal: 16, marginBottom: 8, fontSize: 13, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }]}
+                      placeholder="Command, e.g. my-tool --auto {prompt}"
+                      placeholderTextColor={c.textMuted}
+                      value={customCommand}
+                      onChangeText={setCustomCommand}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                  )}
+                </>
+              );
+            })()}
             {availableModels.length > 0 && (
               <>
                 <Text style={[s.agentPickerSection, { color: c.textMuted }]}>MODEL</Text>

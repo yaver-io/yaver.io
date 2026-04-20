@@ -183,12 +183,15 @@ var builtinRunners = map[string]RunnerConfig{
 		OutputMode: "raw",
 	},
 	"opencode": {
-		RunnerID:    "opencode",
-		Name:        "OpenCode",
-		Command:     "opencode",
-		Args:        []string{"--message", "{prompt}"},
-		OutputMode:  "raw",
-		ExitCommand: "/quit",
+		RunnerID: "opencode",
+		Name:     "OpenCode",
+		Command:  "opencode",
+		// Newer opencode (sst/opencode) uses `opencode run <message>` for
+		// non-interactive mode. The old `--message` flag was removed.
+		// --dangerously-skip-permissions is required so it doesn't block
+		// on permission prompts when run from the agent.
+		Args:       []string{"run", "--dangerously-skip-permissions", "{prompt}"},
+		OutputMode: "raw",
 	},
 	// aider-ollama: Aider driven by a local Ollama model. File-editing
 	// stays with aider; the LLM is whatever qwen2.5-coder variant the
