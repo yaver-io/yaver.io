@@ -90,6 +90,14 @@ export const registerDevice = mutation({
       if (existing.userId !== session.user._id) {
         throw new Error("Device belongs to another user");
       }
+      // Every register call requires a valid session (validated
+      // above) — so by definition this device is owner-authenticated
+      // and is not in needs-auth / bootstrap state anymore. Clear
+      // the flag here so it doesn't stay stuck at true after a
+      // bootstrap → owner-mode transition (which otherwise surfaces
+      // as a permanent yellow "Needs pairing" row in every client
+      // picker). Patches the existing row in place — no new
+      // heartbeat backlog, one row per device always.
       await ctx.db.patch(existing._id, {
         name: args.name,
         platform: args.platform,
@@ -99,6 +107,7 @@ export const registerDevice = mutation({
         quicHost: args.quicHost,
         quicPort: args.quicPort,
         isOnline: true,
+        needsAuth: false,
         lastHeartbeat: Date.now(),
         ...(args.hardwareId ? { hardwareId: args.hardwareId } : {}),
       });
@@ -235,6 +244,7 @@ export const heartbeat = mutation({
     const patch: Record<string, unknown> = {
       isOnline: true,
       lastHeartbeat: Date.now(),
+      needsAuth: false, // valid session → not in bootstrap mode
       runners: args.runners ?? [],
     };
     // Update stored IP if the agent reports a new one
