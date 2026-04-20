@@ -925,8 +925,18 @@ http.route({
     const token = authHeader.slice(7);
     const tokenHash = await sha256Hex(token);
 
+    // Rotation is OPT-IN, not default-on. An older agent (<1.99.12)
+    // that hits this endpoint calls POST /auth/refresh with no opt-in
+    // signal and only reads {ok, expiresAt} from the response — if
+    // we rotated unconditionally, the server would move to a new
+    // tokenHash while the agent keeps writing the old one to disk,
+    // locking that device out on the next call. Require explicit
+    // opt-in via ?rotate=1 OR X-Yaver-Rotate-Token: 1 so only agents
+    // that know how to persist the new token trigger a rotation.
     const url = new URL(request.url);
-    const wantRotation = url.searchParams.get("rotate") !== "0";
+    const optInFromQuery = url.searchParams.get("rotate") === "1";
+    const optInFromHeader = request.headers.get("X-Yaver-Rotate-Token") === "1";
+    const wantRotation = optInFromQuery || optInFromHeader;
 
     let newToken: string | undefined;
     let newTokenHash: string | undefined;

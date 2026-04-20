@@ -30,6 +30,10 @@ func RefreshToken(baseURL, token string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("create refresh request: %w", err)
 	}
+	// Opt in to server-side token rotation. We're 1.99.12+; we know
+	// how to persist the returned new token atomically (see
+	// persistRotatedAuthToken). Older backends ignore the header.
+	req.Header.Set("X-Yaver-Rotate-Token", "1")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
