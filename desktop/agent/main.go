@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	mathRand "math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -32,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.11"
+const version = "1.99.12"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -3838,13 +3839,51 @@ func checkAutoUpdate(cfg *Config) {
 
 	log.Printf("[auto-update] Updated to v%s.", latestVersion)
 
-	// In systemd mode (--debug from service), exit so systemd restarts with new binary
-	// Check if we're running under systemd by looking for INVOCATION_ID env var
+	// Exit cleanly so the supervisor respawns us with the new binary:
+	//   - systemd (Linux):   INVOCATION_ID env, Restart=on-failure triggers
+	//     on any non-zero OR on clean exit if Restart=always. We exit 0 and
+	//     rely on the unit we install (Restart=always + RestartSec=5).
+	//   - launchd (macOS):   KeepAlive=true in our plist restarts on any
+	//     exit (clean or otherwise). So a clean os.Exit(0) picks up the
+	//     new binary within a few seconds — no reboot required. This
+	//     closes the "auto-updated but old process still serving"
+	//     window that bit users before Apr 2026.
+	//   - Foreground (no supervisor): the user started us manually.
+	//     Don't exit from under them — they'll see the "take effect
+	//     on next restart" line and can CTRL-C when they like.
 	if os.Getenv("INVOCATION_ID") != "" {
 		log.Println("[auto-update] Running under systemd — exiting for automatic restart with new binary.")
 		os.Exit(0)
 	}
+	if runtime.GOOS == "darwin" && isUnderLaunchd() {
+		log.Println("[auto-update] Running under launchd — exiting for automatic restart with new binary.")
+		os.Exit(0)
+	}
 	log.Println("[auto-update] New version will take effect on next restart.")
+}
+
+// isUnderLaunchd reports whether the current process was spawned by
+// launchd (so KeepAlive=true will respawn us on clean exit). We
+// check three cheap signals in order of reliability:
+//   1. XPC_SERVICE_NAME — set by launchd for anything it launches.
+//   2. LaunchDaemons set LAUNCHD_SOCKET / LAUNCH_DAEMON_SOCKET_NAME.
+//   3. getppid() == 1 — classic launchd-owned parent; works for
+//      user LaunchAgents that were re-parented to launchd.
+// Any one of these being true is enough.
+func isUnderLaunchd() bool {
+	if runtime.GOOS != "darwin" {
+		return false
+	}
+	if os.Getenv("XPC_SERVICE_NAME") != "" {
+		return true
+	}
+	if os.Getenv("LAUNCHD_SOCKET") != "" || os.Getenv("LAUNCH_DAEMON_SOCKET_NAME") != "" {
+		return true
+	}
+	if os.Getppid() == 1 {
+		return true
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------
@@ -6667,10 +6706,19 @@ func loadRelayHealth() []RelayHealthStatus {
 	return statuses
 }
 
-// runRelayTunnel connects to the relay and handles incoming proxied requests.
-// It reconnects automatically with exponential backoff.
+// runRelayTunnel connects to ONE specific relay and reconnects to
+// THAT relay with per-relay exponential backoff. The relayManager
+// spawns one of these per configured relay so a dead relay hammers
+// itself in isolation while the others keep serving.
+//
+// Failover semantics: if this relay is dead for > 60 s, we jitter the
+// retry up to a minute so N agents on the same dead relay don't
+// thundering-herd it when it comes back. Healthy reconnects (short
+// blips < 30 s total) retry aggressively from 1 s so the user sees
+// fast recovery on normal network flaps.
 func runRelayTunnel(ctx context.Context, relayAddr, agentAddr, deviceID, token, password string, exposeMgr *RelayExposeManager) {
 	backoff := time.Second
+	unhealthySince := time.Time{}
 
 	for {
 		select {
@@ -6680,27 +6728,60 @@ func runRelayTunnel(ctx context.Context, relayAddr, agentAddr, deviceID, token, 
 		}
 
 		log.Printf("[RELAY] Connecting to relay %s...", relayAddr)
+		startedAt := time.Now()
 		err := relayConnectAndServe(ctx, relayAddr, agentAddr, deviceID, token, password, exposeMgr)
 		if err != nil {
-			log.Printf("[RELAY] Connection lost: %v", err)
+			log.Printf("[RELAY %s] Connection lost after %s: %v", relayAddr, time.Since(startedAt).Round(time.Second), err)
 		}
 
 		if ctx.Err() != nil {
 			return
 		}
 
-		log.Printf("[RELAY] Reconnecting in %s...", backoff)
+		// If we held the connection for ≥ 30 s, treat the flap as
+		// healthy-transient: reset backoff + unhealthySince. Short
+		// flaps aren't an outage.
+		if time.Since(startedAt) >= 30*time.Second {
+			backoff = time.Second
+			unhealthySince = time.Time{}
+		} else if unhealthySince.IsZero() {
+			unhealthySince = time.Now()
+		}
+
+		// Past 60 s of continuous failure → add jitter so multiple
+		// agents coming back don't hit the same dead relay in
+		// lockstep. Up to ±50% of the backoff window.
+		wait := backoff
+		if !unhealthySince.IsZero() && time.Since(unhealthySince) > 60*time.Second {
+			jitter := time.Duration(randInt63n(int64(backoff))) - backoff/2
+			wait = backoff + jitter
+			if wait < time.Second {
+				wait = time.Second
+			}
+		}
+
+		log.Printf("[RELAY %s] Reconnecting in %s...", relayAddr, wait.Round(100*time.Millisecond))
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(backoff):
+		case <-time.After(wait):
 		}
 
 		backoff *= 2
-		if backoff > 30*time.Second {
-			backoff = 30 * time.Second
+		if backoff > 60*time.Second {
+			backoff = 60 * time.Second
 		}
 	}
+}
+
+// randInt63n is a test-stubbable wrapper around rand.Int63n. In normal
+// operation the stock math/rand is fine — this isn't a security hot
+// path, it's just a retry-jitter spreader.
+var randInt63n = func(n int64) int64 {
+	if n <= 0 {
+		return 0
+	}
+	return mathRand.Int63n(n)
 }
 
 func relayConnectAndServe(ctx context.Context, relayAddr, agentAddr, deviceID, token, password string, exposeMgr *RelayExposeManager) error {

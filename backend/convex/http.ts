@@ -904,7 +904,16 @@ http.route({
 
 // ── Token Refresh ────────────────────────────────────────────────────
 
-/** POST /auth/refresh — Extend session by 30 days. Returns new expiresAt. */
+/**
+ * POST /auth/refresh — Extend session by 1 year + rotate the bearer
+ * token so a leaked token only lives until the next daily refresh
+ * (~24 h max blast radius). The agent writes the returned `token` back
+ * to ~/.yaver/config.json atomically. Older agents that ignore the
+ * `token` field still work — they just don't get the rotation benefit.
+ *
+ * Query param `?rotate=0` disables rotation for tooling that wants a
+ * simple "extend only" refresh (rare).
+ */
 http.route({
   path: "/auth/refresh",
   method: "POST",
@@ -916,11 +925,36 @@ http.route({
     const token = authHeader.slice(7);
     const tokenHash = await sha256Hex(token);
 
-    const result = await ctx.runMutation(api.auth.refreshSession, { tokenHash });
+    const url = new URL(request.url);
+    const wantRotation = url.searchParams.get("rotate") !== "0";
+
+    let newToken: string | undefined;
+    let newTokenHash: string | undefined;
+    if (wantRotation) {
+      const tokenBytes = new Uint8Array(32);
+      crypto.getRandomValues(tokenBytes);
+      newToken = Array.from(tokenBytes)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+      newTokenHash = await sha256Hex(newToken);
+    }
+
+    const result = await ctx.runMutation(api.auth.refreshSession, {
+      tokenHash,
+      newTokenHash,
+    });
     if (!result) {
       return errorResponse("Session expired or invalid", 401);
     }
-    return jsonResponse({ ok: true, expiresAt: result.expiresAt });
+    return jsonResponse({
+      ok: true,
+      expiresAt: result.expiresAt,
+      // Only surface the new token when the backend actually rotated
+      // (guarded against hash collision). Otherwise omit so old agents
+      // don't accidentally persist an identical value.
+      token: result.rotated ? newToken : undefined,
+      rotated: !!result.rotated,
+    });
   }),
 });
 

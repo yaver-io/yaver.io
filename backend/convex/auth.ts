@@ -1043,12 +1043,29 @@ export const validateSession = query({
 });
 
 /**
- * Refresh a session — extends expiresAt by 30 days from now.
- * Returns the new expiresAt, or null if session is invalid/expired.
+ * Refresh a session — extends expiresAt by 1 year and OPTIONALLY
+ * rotates the token hash. Returns the new expiresAt (and, when rotated,
+ * acknowledges the rotation so the HTTP layer can return the fresh
+ * raw token to the agent).
+ *
+ * Grace window is 1 year — matches the post-refresh lifetime, so a
+ * headless Mac Mini that was off for up to a year comes back signed
+ * in automatically. Past a year of total silence we refuse: that's
+ * "this thing might be lost" territory and a re-auth is appropriate.
+ *
+ * Token rotation: when the agent generates a fresh raw token and
+ * passes its hash as `newTokenHash`, we swap the stored hash in the
+ * same mutation. This caps the blast radius of a leaked token to
+ * ~24 h (the daily refresh cadence) without any user-visible churn —
+ * the agent writes the rotated token back to ~/.yaver/config.json.
  */
 export const refreshSession = mutation({
   args: {
     tokenHash: v.string(),
+    // Optional: the agent-provided hash of a freshly-minted replacement
+    // token. When present, we rotate; when absent, we just extend.
+    // Callers on old clients that don't rotate continue to work.
+    newTokenHash: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await ctx.db
@@ -1058,15 +1075,32 @@ export const refreshSession = mutation({
 
     if (!session) return null;
 
-    // Allow refresh of sessions expired within the last 90 days (grace period).
-    // This prevents "session expired" on machines that were off for a while.
-    // Only signout (deleteSession) should permanently kill a session.
-    const gracePeriod = 90 * 24 * 60 * 60 * 1000; // 90 days
+    // 1-year grace window. Was 90 days — too aggressive for a Mac
+    // Mini in a closet. A year of contact silence is a reasonable
+    // "forgotten device" threshold.
+    const gracePeriod = 365 * 24 * 60 * 60 * 1000;
     if (session.expiresAt < Date.now() - gracePeriod) return null;
 
-    const newExpiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000; // 1 year
-    await ctx.db.patch(session._id, { expiresAt: newExpiresAt });
-    return { expiresAt: newExpiresAt };
+    const newExpiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000;
+    const patch: { expiresAt: number; tokenHash?: string } = {
+      expiresAt: newExpiresAt,
+    };
+    if (args.newTokenHash && args.newTokenHash !== args.tokenHash) {
+      // Guard against collision with another existing session — extremely
+      // unlikely with 256-bit tokens but cheap to check.
+      const collision = await ctx.db
+        .query("sessions")
+        .withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.newTokenHash!))
+        .unique();
+      if (!collision) {
+        patch.tokenHash = args.newTokenHash;
+      }
+    }
+    await ctx.db.patch(session._id, patch);
+    return {
+      expiresAt: newExpiresAt,
+      rotated: patch.tokenHash !== undefined,
+    };
   },
 });
 

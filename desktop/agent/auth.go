@@ -11,27 +11,52 @@ import (
 	"time"
 )
 
-// RefreshToken extends the session expiry by 30 days.
-// Returns nil on success. Returns an error with status 401 if the session is expired.
-func RefreshToken(baseURL, token string) error {
+// RefreshToken extends the session expiry by 1 year and, if the
+// backend supports rotation (yaver.io Convex, Apr 2026+), returns a
+// freshly-minted bearer token. A leaked token then only lives until
+// the next daily refresh (~24 h max blast radius) — invisible to the
+// user, automatic.
+//
+// The caller is expected to persist the returned rotated token to
+// ~/.yaver/config.json atomically before considering the refresh
+// complete (see persistRotatedAuthToken in main.go).
+//
+// Returns ("", nil) on success without rotation (old backend).
+// Returns (newToken, nil) when the backend rotated.
+// Returns ErrAuthExpired (wrapped) on 401 — session is past the
+// 1-year grace window or was explicitly revoked from the dashboard.
+func RefreshToken(baseURL, token string) (string, error) {
 	req, err := newBearerRequest("POST", baseURL+"/auth/refresh", token, nil)
 	if err != nil {
-		return fmt.Errorf("create refresh request: %w", err)
+		return "", fmt.Errorf("create refresh request: %w", err)
 	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("refresh token request: %w", err)
+		return "", fmt.Errorf("refresh token request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("session expired (401)")
+		return "", fmt.Errorf("session expired (401)")
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("refresh token failed (status %d)", resp.StatusCode)
+		return "", fmt.Errorf("refresh token failed (status %d)", resp.StatusCode)
 	}
-	return nil
+
+	// Decode the response to see if the backend rotated the token.
+	// If we're talking to an older backend that only returns
+	// {ok, expiresAt}, `Token` stays empty and the caller keeps the
+	// existing token — fully backwards compatible.
+	var body struct {
+		Token   string `json:"token"`
+		Rotated bool   `json:"rotated"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if body.Rotated && strings.TrimSpace(body.Token) != "" {
+		return strings.TrimSpace(body.Token), nil
+	}
+	return "", nil
 }
 
 func SignupWithEmail(baseURL, fullName, email, password string) (string, error) {

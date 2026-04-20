@@ -467,3 +467,47 @@ func runConfigBootstrapSecret(args []string) {
 	fmt.Println("  If the agent ever loses auth, POST to /auth/recover with this secret")
 	fmt.Println("  from the mobile app to trigger a new pair or device-code flow.")
 }
+
+// handleAuthStatus answers "am I signed in, and if not, why?" — a
+// cheap, unauthenticated probe used by `yaver status`, the mobile
+// app's connection panel, and health dashboards. Leaks nothing
+// secret: authentication state is already advertised in the clear on
+// the bootstrap beacon, and the user ID / email is behind auth().
+//
+// Response:
+//   { authenticated: bool, reason?: "revoked" | "grace_expired" | "no_token" | "never_validated",
+//     since?: <unix ms>, bootstrap: bool }
+//
+// bootstrap=true means the agent is still in pre-pair mode (never
+// signed in yet). authenticated=false with reason=revoked means the
+// user needs to run `yaver auth` — that's the actionable signal for
+// the red status line + mobile re-pair banner.
+func (s *HTTPServer) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	cfg, _ := LoadConfig()
+	bootstrap := cfg == nil || strings.TrimSpace(cfg.AuthToken) == ""
+	authed := !bootstrap && !s.authExpired.Load()
+	reason := ""
+	if bootstrap {
+		reason = "no_token"
+	} else if s.authExpired.Load() {
+		// The heartbeat loop sets authExpired after TWO things: a 401
+		// from Convex AND a failed RefreshToken retry. So this is the
+		// "not a transient blip" path — either the session was
+		// revoked from the dashboard or we're past the 1-year grace
+		// window. The UI should prompt re-auth.
+		reason = "revoked"
+	}
+	resp := map[string]interface{}{
+		"authenticated": authed,
+		"bootstrap":     bootstrap,
+	}
+	if reason != "" {
+		resp["reason"] = reason
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
