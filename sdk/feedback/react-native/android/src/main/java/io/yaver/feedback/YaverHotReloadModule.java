@@ -42,6 +42,9 @@ public class YaverHotReloadModule extends ReactContextBaseJavaModule {
     private static final String BUNDLE_FILE = "index.android.bundle";
     private static final String PREFS_NAME = "yaver_hot_reload";
     private static final String PREFS_KEY_BUNDLE = "bundle_path";
+    private static final String PREFS_KEY_BOOT_ATTEMPTS = "boot_attempts";
+    private static final String PREFS_KEY_BUNDLE_MTIME = "bundle_mtime";
+    private static final int MAX_BOOT_ATTEMPTS = 3;
 
     public YaverHotReloadModule(ReactApplicationContext context) {
         super(context);
@@ -173,16 +176,72 @@ public class YaverHotReloadModule extends ReactContextBaseJavaModule {
     // MARK: - Static helpers for Application/MainApplication
 
     /**
-     * Returns the hot-reloaded bundle file if it exists.
-     * Call from MainApplication.getJSBundleFile() to load the hot bundle on startup.
+     * Returns the hot-reloaded bundle file if it exists AND has not
+     * crashed on boot {@link #MAX_BOOT_ATTEMPTS} times in a row.
+     * Call from MainApplication.getJSBundleFile() to load the hot bundle
+     * on startup.
+     *
+     * Safety net for the vibe-coding loop: if a pushed bundle crashes
+     * on boot, without this guard the saved bundle persists across
+     * cold starts and bricks the app. Counter increments on each cold
+     * start, resets on {@link #markBootSuccessful(Context)} (called
+     * from MainApplication's ReactInstanceEventListener after JS
+     * context init, and a 10-s fallback timer). If the counter hits
+     * {@link #MAX_BOOT_ATTEMPTS}, delete the saved bundle and return
+     * null so MainApplication falls back to the APK-bundled bundle.
+     * See YaverHotReload.swift for the matching iOS implementation.
      */
     public static File getSavedBundleFile(Context context) {
         SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         String path = prefs.getString(PREFS_KEY_BUNDLE, null);
-        if (path != null) {
-            File f = new File(path);
-            if (f.exists()) return f;
+        if (path == null) return null;
+        File f = new File(path);
+        if (!f.exists()) return null;
+
+        long currentMtime = f.lastModified();
+        long lastMtime = prefs.getLong(PREFS_KEY_BUNDLE_MTIME, 0);
+        SharedPreferences.Editor editor = prefs.edit();
+
+        // Fresh bundle since the counter was last reset → start over.
+        if (currentMtime != lastMtime) {
+            editor.putInt(PREFS_KEY_BOOT_ATTEMPTS, 0);
+            editor.putLong(PREFS_KEY_BUNDLE_MTIME, currentMtime);
         }
-        return null;
+
+        int attempts = prefs.getInt(PREFS_KEY_BOOT_ATTEMPTS, 0);
+        if (attempts >= MAX_BOOT_ATTEMPTS) {
+            Log.w(TAG, "hot bundle failed " + attempts + " consecutive boot attempts — reverting to APK-bundled bundle.");
+            File dir = new File(context.getFilesDir(), BUNDLE_DIR);
+            if (dir.exists()) {
+                File[] list = dir.listFiles();
+                if (list != null) for (File child : list) child.delete();
+                dir.delete();
+            }
+            editor.remove(PREFS_KEY_BOOT_ATTEMPTS)
+                  .remove(PREFS_KEY_BUNDLE_MTIME)
+                  .remove(PREFS_KEY_BUNDLE)
+                  .apply();
+            return null;
+        }
+
+        // Pre-increment: this boot counts as a failure unless the JS
+        // side reaches context-initialized and calls markBootSuccessful.
+        editor.putInt(PREFS_KEY_BOOT_ATTEMPTS, attempts + 1).apply();
+        Log.i(TAG, "loading hot bundle (boot attempt " + (attempts + 1) + "/" + MAX_BOOT_ATTEMPTS + ")");
+        return f;
+    }
+
+    /**
+     * Clear the boot-attempt counter. MainApplication should call this
+     * from a ReactInstanceEventListener after JS context init, AND via
+     * a 10-s fallback Handler in case the listener never fires.
+     */
+    public static void markBootSuccessful(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        int attempts = prefs.getInt(PREFS_KEY_BOOT_ATTEMPTS, 0);
+        if (attempts > 0) {
+            Log.i(TAG, "boot confirmed successful — reset boot-attempt counter.");
+        }
+        prefs.edit().putInt(PREFS_KEY_BOOT_ATTEMPTS, 0).apply();
     }
 }

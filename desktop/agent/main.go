@@ -32,7 +32,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.10"
+const version = "1.99.11"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -3720,6 +3720,22 @@ func checkAutoUpdate(cfg *Config) {
 		os.Remove(tmpPath)
 		log.Printf("[auto-update] Failed to replace binary: %v", err)
 		return
+	}
+
+	// On macOS, re-adhoc-sign the freshly-placed binary. The release
+	// tarballs are adhoc-signed by `go build` but the kernel rejects
+	// a Mach-O whose on-disk bytes don't match the embedded signature
+	// with "load code signature error 2" → SIGKILL on first exec.
+	// Rebuilding the adhoc signature against the current bytes
+	// guarantees the next exec (including the systemd/launchd restart
+	// below) will not be killed by the kernel.
+	if runtime.GOOS == "darwin" {
+		if out, err := osexec.Command("codesign", "--force", "--sign", "-", exePath).CombinedOutput(); err != nil {
+			log.Printf("[auto-update] (warn) codesign adhoc re-sign failed: %v — %s", err, strings.TrimSpace(string(out)))
+		}
+		// Also strip quarantine just in case the tarball round-trip
+		// re-applied it. Best-effort; ignore errors.
+		_ = osexec.Command("xattr", "-dr", "com.apple.quarantine", exePath).Run()
 	}
 
 	log.Printf("[auto-update] Updated to v%s.", latestVersion)

@@ -104,9 +104,68 @@ class YaverHotReload: NSObject {
       .appendingPathComponent(bundleFile)
   }
 
-  /// Returns the hot-reloaded bundle URL if one exists on disk.
+  /// Returns the hot-reloaded bundle URL if one exists AND hasn't
+  /// crashed on boot N times in a row.
+  ///
+  /// Vibe-coding loop: a developer pushes dozens of Hermes bundles over
+  /// the course of a session; eventually one of them crashes on boot
+  /// (missing native module, syntax error, TurboModule assert). Without
+  /// this guard, the crashing bundle persists across cold starts and
+  /// bricks the app — user has to delete + reinstall from TestFlight.
+  ///
+  /// Guard: on each cold-start bundleURL() call, increment a boot
+  /// counter. Reset it on first successful render (RCTContentDidAppear)
+  /// or after 10 s of uptime. If the counter hits kMaxBootAttempts
+  /// without being reset, the bundle has crashed every boot so far —
+  /// delete it and return nil so the app falls back to the
+  /// TestFlight-installed bundle.
+  ///
+  /// Bundle mtime is tracked separately: pushing a NEW bundle resets
+  /// the counter so each pushed bundle gets its own 3 attempts.
   @objc static func bundleURL() -> URL? {
     let path = savedBundlePath()
-    return FileManager.default.fileExists(atPath: path.path) ? path : nil
+    guard FileManager.default.fileExists(atPath: path.path) else { return nil }
+
+    let defaults = UserDefaults.standard
+    let attrs = try? FileManager.default.attributesOfItem(atPath: path.path)
+    let currentMtime = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+    let lastMtime = defaults.double(forKey: kKeyBundleMtime)
+
+    // Fresh bundle pushed since the counter was last reset → start over.
+    if currentMtime != lastMtime {
+      defaults.set(0, forKey: kKeyBootAttempts)
+      defaults.set(currentMtime, forKey: kKeyBundleMtime)
+    }
+
+    let attempts = defaults.integer(forKey: kKeyBootAttempts)
+    if attempts >= kMaxBootAttempts {
+      NSLog("[YaverHotReload] hot bundle failed %d consecutive boot attempts — reverting to app-bundled TestFlight bundle.", attempts)
+      let dir = path.deletingLastPathComponent()
+      try? FileManager.default.removeItem(at: dir)
+      defaults.removeObject(forKey: kKeyBootAttempts)
+      defaults.removeObject(forKey: kKeyBundleMtime)
+      return nil
+    }
+
+    // Pre-increment: this boot will count as a failure unless the JS
+    // side reaches first render and calls markBootSuccessful().
+    defaults.set(attempts + 1, forKey: kKeyBootAttempts)
+    NSLog("[YaverHotReload] loading hot bundle (boot attempt %d/%d)", attempts + 1, kMaxBootAttempts)
+    return path
   }
+
+  /// Clear the boot-attempt counter. Call this from AppDelegate after
+  /// first successful RN render (RCTContentDidAppearNotification) or
+  /// after a short uptime safety timer — whichever fires first.
+  @objc static func markBootSuccessful() {
+    let defaults = UserDefaults.standard
+    if defaults.integer(forKey: kKeyBootAttempts) > 0 {
+      NSLog("[YaverHotReload] boot confirmed successful — reset boot-attempt counter.")
+    }
+    defaults.set(0, forKey: kKeyBootAttempts)
+  }
+
+  static let kKeyBootAttempts = "yaverHotReloadBootAttempts"
+  static let kKeyBundleMtime = "yaverHotReloadBundleMtime"
+  static let kMaxBootAttempts = 3
 }

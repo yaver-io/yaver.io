@@ -70,16 +70,24 @@ function withYaverFeedbackAndroid(config) {
 }
 
 /**
- * Copy YaverHotReload native module files into the iOS project directory.
- * Uses withDangerousMod to copy files during prebuild. The files are
- * automatically picked up by Xcode since they're in the project directory.
+ * Copy YaverHotReload native module files into the iOS project directory
+ * AND register them in project.pbxproj so Xcode actually compiles them.
+ *
+ * The file-copy step uses withDangerousMod; the project registration
+ * uses withXcodeProject. Both are needed — if we only copy the files
+ * they sit in the filesystem unreferenced, Xcode ignores them, the
+ * final .ipa has no `YaverHotReload` class, and the agent's
+ * `reload_bundle` broadcast silently fails to load a new Hermes bundle.
+ * This is a bug we've hit repeatedly; keep both steps wired.
  */
 function withYaverHotReloadNativeModule(config) {
-  return withDangerousMod(config, [
+  // Step 1 — copy source files onto disk.
+  config = withDangerousMod(config, [
     "ios",
     (config) => {
       const sdkIosDir = path.resolve(__dirname, "ios");
-      const appName = config.modRequest.projectName || "SFMG";
+      const appName = config.modRequest.projectName;
+      if (!appName) return config;
       const targetDir = path.join(
         config.modRequest.platformProjectRoot,
         appName
@@ -89,7 +97,10 @@ function withYaverHotReloadNativeModule(config) {
       for (const fileName of filesToCopy) {
         const src = path.join(sdkIosDir, fileName);
         const dst = path.join(targetDir, fileName);
-        if (fs.existsSync(src) && !fs.existsSync(dst)) {
+        if (fs.existsSync(src)) {
+          // Always overwrite so bumping the SDK version actually
+          // picks up the new native code on the next prebuild
+          // instead of silently keeping a stale copy.
           fs.copyFileSync(src, dst);
         }
       }
@@ -97,6 +108,98 @@ function withYaverHotReloadNativeModule(config) {
       return config;
     },
   ]);
+
+  // Step 2 — register the files in project.pbxproj so Xcode compiles
+  // them into the app target. Without this, the files exist on disk
+  // but are invisible to the build system.
+  config = withXcodeProject(config, (config) => {
+    const pbx = config.modResults;
+    const appName = config.modRequest.projectName;
+    if (!appName) return config;
+
+    // Ensure the PBX group we'll attach files to exists (it's the
+    // app's main Sources group — same one that holds AppDelegate.swift).
+    const group = pbx.pbxGroupByName(appName);
+    if (!group) return config;
+
+    // Find the group UUID by walking the pbxGroup section.
+    const groupSection = pbx.pbxGroupSection();
+    let groupUuid = null;
+    for (const uuid of Object.keys(groupSection)) {
+      if (uuid.endsWith("_comment")) continue;
+      if (groupSection[uuid] === group) {
+        groupUuid = uuid;
+        break;
+      }
+    }
+    if (!groupUuid) return config;
+
+    // Locate the app's "Sources" build phase so we can attach
+    // YaverHotReload.swift as a compile unit. AppDelegate.swift is
+    // already there — find its PBXBuildFile to get the build phase UUID.
+    const nativeTargetSection = pbx.pbxNativeTargetSection();
+    let sourcesBuildPhase = null;
+    for (const uuid of Object.keys(nativeTargetSection)) {
+      if (uuid.endsWith("_comment")) continue;
+      const target = nativeTargetSection[uuid];
+      if (target.name !== appName && target.productReference_comment !== appName) continue;
+      for (const phase of target.buildPhases || []) {
+        const phaseComment = (phase.comment || "").toLowerCase();
+        if (phaseComment.includes("sources")) {
+          sourcesBuildPhase = phase.value;
+          break;
+        }
+      }
+      if (sourcesBuildPhase) break;
+    }
+
+    const swiftName = "YaverHotReload.swift";
+    const objcName = "YaverHotReload.m";
+
+    // addSourceFile registers the file as a PBXFileReference, adds a
+    // PBXBuildFile entry, drops it into the pbx group, and adds it to
+    // the sources build phase — exactly what we need.
+    if (!pbxHasFile(pbx, swiftName)) {
+      pbx.addSourceFile(
+        `${appName}/${swiftName}`,
+        { target: findTargetUuidByName(pbx, appName) },
+        groupUuid,
+      );
+    }
+    if (!pbxHasFile(pbx, objcName)) {
+      pbx.addSourceFile(
+        `${appName}/${objcName}`,
+        { target: findTargetUuidByName(pbx, appName) },
+        groupUuid,
+      );
+    }
+
+    return config;
+  });
+
+  return config;
+}
+
+function pbxHasFile(pbx, basename) {
+  const refs = pbx.pbxFileReferenceSection();
+  for (const uuid of Object.keys(refs)) {
+    if (uuid.endsWith("_comment")) continue;
+    const ref = refs[uuid];
+    if (!ref || typeof ref !== "object") continue;
+    const pathValue = (ref.path || "").replace(/"/g, "");
+    if (pathValue.endsWith(basename)) return true;
+  }
+  return false;
+}
+
+function findTargetUuidByName(pbx, appName) {
+  const section = pbx.pbxNativeTargetSection();
+  for (const uuid of Object.keys(section)) {
+    if (uuid.endsWith("_comment")) continue;
+    const target = section[uuid];
+    if (target && target.name === appName) return uuid;
+  }
+  return undefined;
 }
 
 /**
@@ -146,6 +249,20 @@ function withYaverAppDelegateHook(config) {
       name: Notification.Name("YaverHotReloadBundle"),
       object: nil
     )
+    // Crash-revert safety net: clear the boot-attempt counter once
+    // RN renders its first frame, OR after 10 s of uptime — whichever
+    // fires first. If neither fires (bundle crashes before render),
+    // YaverHotReload.bundleURL() will eventually revert to the
+    // TestFlight-installed bundle after 3 failed boots. See
+    // YaverHotReload.swift for the full state machine.
+    NotificationCenter.default.addObserver(
+      forName: NSNotification.Name(rawValue: "RCTContentDidAppearNotification"),
+      object: nil,
+      queue: .main
+    ) { _ in YaverHotReload.markBootSuccessful() }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+      YaverHotReload.markBootSuccessful()
+    }
   }
 
   @objc private func yaverHandleHotReload(_ notification: Notification) {
@@ -297,6 +414,44 @@ function withYaverAndroidHotReload(config) {
         contents.slice(methodStart);
     }
 
+    // Crash-revert safety net: clear the boot-attempt counter once
+    // the React context initializes (bundle loaded successfully), AND
+    // via a 10-s fallback Handler in case that listener never fires
+    // (e.g. infinite loop in root component). If neither fires,
+    // YaverHotReloadModule.getSavedBundleFile() reverts to the
+    // APK-bundled bundle after 3 failed cold starts. Parity with
+    // YaverHotReload.swift on iOS.
+    if (contents.includes("onCreate()") && !contents.includes("yaverHotReloadBootListener")) {
+      const onCreateIdx = contents.indexOf("onCreate()");
+      const braceIdx = contents.indexOf("{", onCreateIdx);
+      const insertionPoint = braceIdx + 1;
+      const bootGuard = `
+    // Yaver Feedback SDK hot-reload crash-revert safety net
+    final android.content.Context yaverHotReloadCtx = getApplicationContext();
+    new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+        new Runnable() {
+          @Override public void run() {
+            io.yaver.feedback.YaverHotReloadModule.markBootSuccessful(yaverHotReloadCtx);
+          }
+        },
+        10000
+    );
+    try {
+      com.facebook.react.ReactInstanceManager yaverRim = getReactNativeHost().getReactInstanceManager();
+      yaverRim.addReactInstanceEventListener(new com.facebook.react.ReactInstanceEventListener() {
+        @Override public void onReactContextInitialized(com.facebook.react.bridge.ReactContext ctx) {
+          io.yaver.feedback.YaverHotReloadModule.markBootSuccessful(yaverHotReloadCtx);
+        }
+      });
+    } catch (Throwable yaverHotReloadBootListener) {
+      // Older/newer RN versions may not expose ReactInstanceEventListener
+      // exactly like this; the 10-s fallback above still covers us.
+    }
+`;
+      contents =
+        contents.slice(0, insertionPoint) + bootGuard + contents.slice(insertionPoint);
+    }
+
     config.modResults.contents = contents;
     return config;
   });
@@ -308,10 +463,15 @@ function withYaverFeedback(config, props) {
   config = withYaverFeedbackIOS(config);
   config = withYaverFeedbackAndroid(config);
 
-  // Hot reload native module is opt-in via enableHotReload: true
-  // Skip by default — apps running inside Yaver container get hot reload
-  // via YaverBundleLoader, standalone dev builds use DevSettings.reload()
-  const enableHotReload = props?.enableHotReload === true;
+  // Hot reload native module is ON by default — it's the SDK's whole
+  // point. TestFlight / Play Store standalone builds have no Metro
+  // dev server, so without the YaverHotReload native module the
+  // agent's `reload_bundle` broadcast silently no-ops: the SDK falls
+  // through to DevSettings.reload() which does nothing in Release
+  // builds. Apps that specifically don't want the plugin mutating
+  // their AppDelegate / MainApplication can opt out with
+  //   ["yaver-feedback-react-native", { "enableHotReload": false }]
+  const enableHotReload = props?.enableHotReload !== false;
   if (enableHotReload) {
     config = withYaverHotReloadNativeModule(config);
     config = withYaverAppDelegateHook(config);

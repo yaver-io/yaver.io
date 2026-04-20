@@ -1,7 +1,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const { pipeline } = require('stream/promises');
 const https = require('https');
 const semver = require('semver');
@@ -13,6 +13,17 @@ const WINDOWS_REPO = process.env.YAVER_WINDOWS_AGENT_REPO || 'kivanccakmak/yaver
 const CACHE_ROOT = process.env.YAVER_AGENT_CACHE_DIR || path.join(os.homedir(), '.yaver', 'bin');
 let resolvedAgentVersionPromise = null;
 const resolvedAssetPromiseByKey = new Map();
+
+// Magic bytes for executable formats. Used to sanity-check a downloaded
+// binary before we spawn it — an HTML error page or a half-written file
+// will fail this and we'll redownload instead of producing SIGKILL.
+const EXECUTABLE_MAGICS = [
+  Buffer.from([0xcf, 0xfa, 0xed, 0xfe]), // Mach-O 64-bit LE (macOS)
+  Buffer.from([0xce, 0xfa, 0xed, 0xfe]), // Mach-O 32-bit LE
+  Buffer.from([0xca, 0xfe, 0xba, 0xbe]), // Mach-O fat binary
+  Buffer.from([0x7f, 0x45, 0x4c, 0x46]), // ELF (Linux) — \x7fELF
+  Buffer.from([0x4d, 0x5a]),             // PE (Windows) — MZ
+];
 
 async function ensureAgentBinary({ quiet = false } = {}) {
   const asset = await resolveAsset();
@@ -58,25 +69,122 @@ async function ensureAgentBinary({ quiet = false } = {}) {
   if (process.platform !== 'win32') {
     fs.chmodSync(binaryPath, 0o755);
   }
+  // Proactively strip macOS quarantine + re-adhoc-sign on
+  // freshly-downloaded binaries. Without this:
+  //   - Gatekeeper SIGKILLs the first exec because Yaver release
+  //     tarballs are not notarized (adhoc-signed at link time only).
+  //   - If the Go linker's adhoc signature didn't survive the tarball
+  //     round-trip, the kernel refuses to load it ("load code
+  //     signature error 2"). codesign --force --sign - rebuilds a
+  //     valid adhoc signature against the current bytes.
+  // Doing both here means the happy path never sees SIGKILL in the
+  // first place.
+  if (process.platform === 'darwin') {
+    try {
+      spawnSync('xattr', ['-dr', 'com.apple.quarantine', binaryPath], { stdio: 'ignore' });
+    } catch (_err) {}
+    try {
+      spawnSync('codesign', ['--force', '--sign', '-', binaryPath], { stdio: 'ignore' });
+    } catch (_err) {}
+  }
+  // Sanity-check the extracted binary. A truncated tarball or an
+  // HTML error page saved as ".tar.gz" can leave us with a file that
+  // exists but isn't actually executable — spawning it produces
+  // SIGKILL and a cryptic error. Fail loudly here with a message
+  // that points at the actual problem (bad download) so the caller
+  // can redownload.
+  if (!looksLikeExecutable(binaryPath)) {
+    try { fs.rmSync(binaryPath, { force: true }); } catch (_err) {}
+    throw new Error(
+      `downloaded agent binary at ${binaryPath} is not a valid executable ` +
+        `(likely a truncated download or GitHub rate-limit HTML page). ` +
+        `Retry in a minute, or set YAVER_AGENT_BIN to a local yaver binary.`,
+    );
+  }
   return binaryPath;
 }
 
 async function runAgentCommand(args, options = {}) {
+  // One auto-recovery retry on SIGKILL of a cached binary. SIGKILL on a
+  // freshly-downloaded binary almost always means macOS Gatekeeper
+  // quarantined it (no notarization), or the download was truncated.
+  // Both are self-healing: strip quarantine + redownload + retry once.
+  // We never retry for user-initiated signals or normal exits.
+  let attempt = 0;
+  const maxAttempts = 2;
+
+  while (true) {
+    attempt += 1;
+    const spawnSpec = await resolveSpawnSpec(args, options);
+    const isCachedBinary = spawnSpec.command.startsWith(CACHE_ROOT);
+
+    try {
+      await spawnAndWait(spawnSpec, args);
+      return;
+    } catch (err) {
+      const { signal, recoverable } = err;
+      if (
+        recoverable &&
+        signal === 'SIGKILL' &&
+        isCachedBinary &&
+        attempt < maxAttempts
+      ) {
+        const healed = await attemptSigkillRecovery(spawnSpec.command, { quiet: options.quiet });
+        if (healed) {
+          console.error(`Yaver agent: recovered from SIGKILL (${healed}). Retrying...`);
+          continue;
+        }
+      }
+      throw err;
+    }
+  }
+}
+
+async function resolveSpawnSpec(args, options) {
   const localAgent = resolveLocalAgentCommand(args);
-  const spawnSpec = localAgent
-    ? localAgent
-    : { command: await ensureAgentBinary(options), args };
+  if (localAgent) return localAgent;
+  return { command: await ensureAgentBinary(options), args };
+}
+
+function spawnAndWait(spawnSpec, args) {
   const child = spawn(spawnSpec.command, spawnSpec.args, {
     stdio: 'inherit',
     env: process.env,
     cwd: spawnSpec.cwd || process.cwd(),
   });
 
-  await new Promise((resolve, reject) => {
+  // Forward Ctrl-C / SIGTERM / SIGHUP from the wrapper to the child
+  // so the user's interrupt actually reaches the running binary
+  // (instead of killing the wrapper while leaving the child orphaned).
+  // Without this, Ctrl-C would just kill the Node wrapper and the
+  // wrapper's exit handler would then report "terminated by signal
+  // SIGINT" as if it were an error.
+  const forwarded = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+  const forwarders = forwarded.map((sig) => {
+    const handler = () => {
+      try { child.kill(sig); } catch (_e) { /* child already gone */ }
+    };
+    process.on(sig, handler);
+    return [sig, handler];
+  });
+
+  return new Promise((resolve, reject) => {
     child.on('error', reject);
     child.on('exit', (code, signal) => {
+      for (const [sig, handler] of forwarders) {
+        process.removeListener(sig, handler);
+      }
+      // User-initiated interrupts — exit quietly. The user already
+      // knows they hit Ctrl-C; surfacing a red ❌ is noise.
+      if (signal === 'SIGINT' || signal === 'SIGTERM' || signal === 'SIGHUP') {
+        resolve();
+        return;
+      }
       if (signal) {
-        reject(new Error(`agent terminated by signal ${signal}`));
+        const error = new Error(diagnoseAbnormalSignal(signal, args));
+        error.signal = signal;
+        error.recoverable = true;
+        reject(error);
         return;
       }
       if (code && code !== 0) {
@@ -88,6 +196,136 @@ async function runAgentCommand(args, options = {}) {
       resolve();
     });
   });
+}
+
+// attemptSigkillRecovery tries the three things that actually fix a
+// SIGKILL on a cached Yaver binary:
+//   1. strip macOS quarantine xattrs (Gatekeeper-killed Mach-Os)
+//   2. re-adhoc-sign the Mach-O (fixes broken signature from the
+//      agent's in-place auto-update — kernel refuses to exec, logs
+//      "load code signature error 2")
+//   3. redownload the binary if the magic bytes don't look like an
+//      executable (truncated download / HTML error page)
+// Returns the recovery action taken, or null if nothing could be done.
+async function attemptSigkillRecovery(binaryPath, { quiet = false } = {}) {
+  if (!fs.existsSync(binaryPath)) {
+    // The binary went away mid-flight; re-download by returning null
+    // so the caller retries the full resolve path next loop.
+    return null;
+  }
+
+  // 1. Sanity check first — if the binary isn't even executable-shaped,
+  // nothing we do to it will help. Redownload.
+  if (!looksLikeExecutable(binaryPath)) {
+    try {
+      fs.rmSync(binaryPath, { force: true });
+      resolvedAssetPromiseByKey.clear();
+    } catch (_err) {}
+    if (!quiet) console.error('Yaver agent: cached binary was corrupt, redownloading...');
+    return 'redownload-corrupt-binary';
+  }
+
+  if (process.platform === 'darwin') {
+    // 2. Strip quarantine. Unsigned binaries downloaded via https get
+    // tagged com.apple.quarantine and the kernel SIGKILLs them on
+    // first exec (no dialog, because the parent is a CLI).
+    try {
+      spawnSync('xattr', ['-dr', 'com.apple.quarantine', binaryPath], { stdio: 'ignore' });
+    } catch (_err) {}
+    try { fs.chmodSync(binaryPath, 0o755); } catch (_err) {}
+
+    // 3. Re-adhoc-sign. When the agent's own self-update rewrites the
+    // binary in place, the original adhoc signature no longer
+    // matches the new contents and the kernel refuses to exec it
+    // (dmesg: "load code signature error 2"). `codesign --force
+    // --sign -` rebuilds the adhoc signature against the current
+    // bytes, which is all the kernel needs to let exec proceed.
+    try {
+      const result = spawnSync('codesign', ['--force', '--sign', '-', binaryPath], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        encoding: 'utf8',
+      });
+      if (result.status === 0) {
+        // Verify the resigned binary actually passes the kernel check
+        // now. If codesign succeeded we're done — the retry will work.
+        return 'resign-macos-adhoc';
+      }
+      // If codesign failed (e.g. missing developer tools), fall through
+      // to the quarantine-only return below.
+    } catch (_err) {}
+
+    return 'strip-macos-quarantine';
+  }
+
+  // On Linux / Windows a SIGKILL of an intact binary usually means an
+  // OOM kill or external pkill; re-exec is unlikely to help, so
+  // return null and let the original diagnostic message stand.
+  return null;
+}
+
+function looksLikeExecutable(binaryPath) {
+  try {
+    const fd = fs.openSync(binaryPath, 'r');
+    const buf = Buffer.alloc(4);
+    const bytesRead = fs.readSync(fd, buf, 0, 4, 0);
+    fs.closeSync(fd);
+    if (bytesRead < 2) return false;
+    return EXECUTABLE_MAGICS.some((magic) => {
+      if (magic.length > bytesRead) return false;
+      return buf.slice(0, magic.length).equals(magic);
+    });
+  } catch (_err) {
+    return false;
+  }
+}
+
+// diagnoseAbnormalSignal turns a child-process termination signal into
+// a concrete next-step the user can actually take. Each branch points
+// at the most-common cause — pulled from real bug reports — and lists
+// the exact command that resolves it.
+function diagnoseAbnormalSignal(signal, args = []) {
+  const cmd = args[0] || 'agent';
+  switch (signal) {
+    case 'SIGKILL': {
+      const lines = [
+        `agent process was killed (SIGKILL) — this is usually NOT a bug, ` +
+          `the OS or another process forced it down.`,
+        ``,
+        `Most-likely cause first:`,
+        `  1. Another yaver agent is already running (port 18080 is taken).`,
+        `       check:  lsof -i :18080`,
+        `       fix:    yaver stop   (or:  pkill -f 'yaver.*serve')`,
+      ];
+      if (cmd === 'auth') {
+        lines.push(
+          `       Note: \`yaver auth\` doesn't need a running agent. If one is`,
+          `       already up in bootstrap mode, pair from your Yaver mobile app instead`,
+          `       of running \`yaver auth\` again.`,
+        );
+      }
+      lines.push(
+        ``,
+        `Other possibilities:`,
+        `  2. macOS Gatekeeper quarantined the binary. Run:`,
+        `       xattr -dr com.apple.quarantine ~/.yaver/bin`,
+        `  3. The OS killed it for OOM / power. Check Console.app → Crash Reports.`,
+        `  4. The binary is corrupt. Reinstall:  npm i -g yaver-cli@latest`,
+      );
+      return lines.join('\n');
+    }
+    case 'SIGABRT':
+      return `agent aborted (SIGABRT). Most likely a Go panic — check ~/.yaver/agent.log for the stack trace.`;
+    case 'SIGSEGV':
+    case 'SIGBUS':
+      return (
+        `agent crashed (${signal}). Likely binary corruption or an arch mismatch.\n` +
+        `Try:  npm i -g yaver-cli@latest    to reinstall a clean binary.`
+      );
+    case 'SIGPIPE':
+      return `agent's stdout/stderr pipe was closed. If you piped through head/less, that's expected — re-run without the pipe.`;
+    default:
+      return `agent terminated by signal ${signal}. Check ~/.yaver/agent.log for details.`;
+  }
 }
 
 function resolveAgentInfo() {

@@ -42,15 +42,21 @@ type ProviderTheme = {
   bg: string;
 };
 
-const PROVIDER_THEME: Record<OAuthProvider | 'apple', ProviderTheme> = {
+type LoginOption = OAuthProvider | 'apple' | 'email';
+
+const PROVIDER_THEME: Record<LoginOption, ProviderTheme> = {
   apple:     { ion: 'logo-apple',     letter: '', fg: '#FFFFFF', bg: 'transparent' },
   google:    { ion: 'logo-google',    letter: 'G', fg: '#EA4335', bg: 'transparent' },
   github:    { ion: 'logo-github',    letter: 'G', fg: '#FFFFFF', bg: 'transparent' },
   gitlab:    { ion: 'logo-gitlab',    letter: 'G', fg: '#FC6D26', bg: 'transparent' },
   microsoft: { ion: 'logo-microsoft', letter: 'M', fg: '#00A4EF', bg: 'transparent' },
+  // Email is the universal fallback option — render a mail glyph so
+  // it visually matches the OAuth rows instead of being a naked
+  // label in a row of iconed buttons.
+  email:     { ion: 'mail-outline',   letter: '@', fg: '#E0E0E0', bg: 'transparent' },
 };
 
-const ProviderLogo: React.FC<{ provider: OAuthProvider | 'apple' }> = ({
+const ProviderLogo: React.FC<{ provider: LoginOption }> = ({
   provider,
 }) => {
   const theme = PROVIDER_THEME[provider] ?? PROVIDER_THEME.apple;
@@ -263,7 +269,10 @@ export const YaverLoginScreen: React.FC<YaverLoginScreenProps> = ({
                 onPress={() => setShowEmailForm(true)}
                 disabled={busyProvider !== null}
               >
-                <Text style={styles.buttonText}>Continue with Email</Text>
+                <View style={styles.buttonContent}>
+                  <ProviderLogo provider="email" />
+                  <Text style={[styles.buttonText, styles.buttonTextWithIcon]}>Continue with Email</Text>
+                </View>
               </Pressable>
             ) : (
               <>
