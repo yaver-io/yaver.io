@@ -39,6 +39,8 @@ export { YaverLoginScreen } from './LoginScreen';
 export type { YaverLoginScreenProps } from './LoginScreen';
 export { YaverMachinePickerScreen } from './MachinePickerScreen';
 export type { YaverMachinePickerProps } from './MachinePickerScreen';
+export { PairDeviceModal } from './PairDeviceModal';
+export type { PairDeviceModalProps } from './PairDeviceModal';
 export { AuthOverlay } from './AuthOverlay';
 export { ShakeDetector } from './ShakeDetector';
 export { FloatingButton } from './FloatingButton';

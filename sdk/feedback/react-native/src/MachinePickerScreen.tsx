@@ -15,6 +15,7 @@ import {
   listReachableDevices,
   saveSelectedDeviceId,
 } from './auth';
+import { PairDeviceModal } from './PairDeviceModal';
 
 export interface YaverMachinePickerProps {
   token: string;
@@ -43,6 +44,7 @@ export const YaverMachinePickerScreen: React.FC<YaverMachinePickerProps> = ({
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [list, setList] = useState<DeviceList>({ owned: [], shared: [] });
+  const [pairingDevice, setPairingDevice] = useState<RemoteDevice | null>(null);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -66,6 +68,15 @@ export const YaverMachinePickerScreen: React.FC<YaverMachinePickerProps> = ({
   }, [load]);
 
   const handlePick = async (device: RemoteDevice) => {
+    // Needs-auth device — show the in-SDK pair modal instead of
+    // treating the tap as a "pick". The user enters the 6-char code
+    // from their Mac terminal; the SDK POSTs it to /auth/pair/submit
+    // on the agent directly. Once the device flips out of bootstrap
+    // mode, the next load() picks up the fresh state.
+    if (device.isOnline && device.needsAuth) {
+      setPairingDevice(device);
+      return;
+    }
     await saveSelectedDeviceId(device.deviceId);
     onPick(device);
   };
@@ -165,6 +176,17 @@ export const YaverMachinePickerScreen: React.FC<YaverMachinePickerProps> = ({
           </>
         )}
       </ScrollView>
+
+      <PairDeviceModal
+        device={pairingDevice}
+        onClose={() => setPairingDevice(null)}
+        onPaired={() => {
+          // Give the agent a moment to flip bootstrap → owner mode,
+          // then reload the list so the now-authenticated device shows
+          // up with a green dot and can be selected normally.
+          setTimeout(() => void load(true), 1500);
+        }}
+      />
     </SafeAreaView>
   );
 };

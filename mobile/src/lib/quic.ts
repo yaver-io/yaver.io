@@ -3744,12 +3744,36 @@ export class QuicClient {
     } catch { return false; }
   }
 
-  /** Trigger hot reload on the running dev server. */
-  async reloadDevServer(): Promise<boolean> {
+  /**
+   * Trigger a reload on the connected agent.
+   *
+   * Default behaviour is **always rebuild**: we hit /dev/reload-app with
+   * `mode: "bundle"` so the agent recompiles a fresh Hermes bytecode
+   * bundle and pushes it to the device via BlackBox SSE. That path
+   * works regardless of whether Metro is currently alive on the Mac —
+   * which is the common case when the user is vibe-coding from the
+   * phone while an AI agent edits files remotely.
+   *
+   * Pass `{ mode: "dev" }` to force the old Metro-HMR path for callers
+   * who know Metro is running. On any 4xx/5xx from /dev/reload we fall
+   * through to /dev/reload-app bundle mode so the user never sees a
+   * "connection refused to 127.0.0.1:8081" Go error.
+   */
+  async reloadDevServer(opts?: { mode?: "dev" | "bundle" }): Promise<boolean> {
+    const mode = opts?.mode ?? "bundle";
     try {
-      const res = await fetch(`${this.baseUrl}/dev/reload`, {
+      if (mode === "dev") {
+        const primary = await fetch(`${this.baseUrl}/dev/reload`, {
+          method: "POST",
+          headers: this.authHeaders,
+        });
+        if (primary.ok) return true;
+        // Metro dead — fall through to bundle rebuild below.
+      }
+      const res = await fetch(`${this.baseUrl}/dev/reload-app`, {
         method: "POST",
-        headers: this.authHeaders,
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "bundle" }),
       });
       return res.ok;
     } catch { return false; }
