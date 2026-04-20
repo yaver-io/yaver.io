@@ -8,6 +8,36 @@ export interface FeedbackEvent {
 }
 
 /**
+ * Translate a raw Go-agent error into something a user can act on.
+ *
+ * The agent surfaces Go's low-level error text verbatim inside JSON,
+ * e.g. `Get "http://127.0.0.1:8081/reload": dial tcp 127.0.0.1:8081:
+ * connect: connection refused`. That's accurate but unreadable for a
+ * phone user and — more importantly — leads them to think the SDK is
+ * misconfigured. The real cause is almost always "no dev server
+ * running on the host machine".
+ */
+function friendlyReloadError(status: number, body: string): string {
+  const lower = body.toLowerCase();
+  if (
+    /connection refused|econnrefused/.test(lower) &&
+    /127\.0\.0\.1|localhost/.test(lower)
+  ) {
+    return (
+      'No dev server running on your machine. ' +
+      'Start Metro with `yaver dev start` or use "Screenshot & Fix" instead.'
+    );
+  }
+  if (/no dev server/.test(lower) || /not running/.test(lower)) {
+    return 'No dev server running on your machine. Start Metro first.';
+  }
+  if (status === 403) return 'Agent rejected the session — please sign in again.';
+  if (status === 401) return 'Agent rejected the session — please sign in again.';
+  if (status >= 500) return 'Agent hit an internal error while reloading. Check `yaver logs`.';
+  return `Reload failed (${status}).`;
+}
+
+/**
  * Lightweight P2P HTTP client for communicating with a Yaver agent.
  *
  * Reuses the same endpoint patterns as the main upload module but adds
@@ -230,23 +260,43 @@ export class P2PClient {
     if (primary.ok) {
       return primary.json().catch(() => ({ ok: true }));
     }
-    if (primary.status >= 500 || primary.status === 404 || mode === 'bundle') {
+
+    // Common shape of the `/dev/reload` failure when Metro isn't running
+    // on the agent's host: the agent tries to forward the reload to
+    // `http://127.0.0.1:<metroPort>/reload` and that connection refuses.
+    // In that case a JS hot-reload is simply not possible — pivot to
+    // `/dev/reload-app` in bundle mode, which rebuilds + pushes a fresh
+    // Hermes bundle without needing Metro to be alive.
+    const primaryText = await primary.text().catch(() => '');
+    const noDevServer =
+      primary.status === 400 ||
+      primary.status === 404 ||
+      primary.status >= 500 ||
+      /connection refused|no dev server|not running|ECONNREFUSED/i.test(primaryText);
+
+    if (noDevServer || mode === 'bundle') {
+      const nextMode = mode === 'bundle' ? 'bundle' : 'bundle';
       const fallback = await fetch(`${this.baseUrl}/dev/reload-app`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${this.authToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify({ mode: nextMode }),
       });
       if (!fallback.ok) {
-        const text = await fallback.text().catch(() => '');
-        throw new Error(`[P2PClient] Reload failed (${fallback.status}): ${text}`);
+        const fallbackText = await fallback.text().catch(() => '');
+        // Give the user something actionable instead of a raw Go error.
+        const friendlyFromFallback = friendlyReloadError(
+          fallback.status,
+          fallbackText,
+        );
+        throw new Error(friendlyFromFallback);
       }
       return fallback.json().catch(() => ({ ok: true }));
     }
-    const text = await primary.text().catch(() => '');
-    throw new Error(`[P2PClient] Reload failed (${primary.status}): ${text}`);
+
+    throw new Error(friendlyReloadError(primary.status, primaryText));
   }
 
   /**
