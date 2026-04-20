@@ -113,93 +113,48 @@ function withYaverHotReloadNativeModule(config) {
   // them into the app target. Without this, the files exist on disk
   // but are invisible to the build system.
   config = withXcodeProject(config, (config) => {
-    const pbx = config.modResults;
+    const proj = config.modResults;
     const appName = config.modRequest.projectName;
     if (!appName) return config;
 
-    // Ensure the PBX group we'll attach files to exists (it's the
-    // app's main Sources group — same one that holds AppDelegate.swift).
-    const group = pbx.pbxGroupByName(appName);
-    if (!group) return config;
+    // Look up the group key for the app's source folder (same group
+    // that holds AppDelegate.swift). Expo's naming is consistent —
+    // projectName === group name in the tree.
+    const groupKey =
+      proj.findPBXGroupKey({ name: appName }) ||
+      proj.findPBXGroupKey({ path: appName });
+    if (!groupKey) return config;
 
-    // Find the group UUID by walking the pbxGroup section.
-    const groupSection = pbx.pbxGroupSection();
-    let groupUuid = null;
-    for (const uuid of Object.keys(groupSection)) {
-      if (uuid.endsWith("_comment")) continue;
-      if (groupSection[uuid] === group) {
-        groupUuid = uuid;
-        break;
-      }
-    }
-    if (!groupUuid) return config;
+    // Target UUID — getFirstTarget is the app target in a standard
+    // Expo project. For multi-target projects, users can opt out via
+    // enableHotReload: false.
+    const target = proj.getFirstTarget();
+    if (!target || !target.uuid) return config;
 
-    // Locate the app's "Sources" build phase so we can attach
-    // YaverHotReload.swift as a compile unit. AppDelegate.swift is
-    // already there — find its PBXBuildFile to get the build phase UUID.
-    const nativeTargetSection = pbx.pbxNativeTargetSection();
-    let sourcesBuildPhase = null;
-    for (const uuid of Object.keys(nativeTargetSection)) {
-      if (uuid.endsWith("_comment")) continue;
-      const target = nativeTargetSection[uuid];
-      if (target.name !== appName && target.productReference_comment !== appName) continue;
-      for (const phase of target.buildPhases || []) {
-        const phaseComment = (phase.comment || "").toLowerCase();
-        if (phaseComment.includes("sources")) {
-          sourcesBuildPhase = phase.value;
-          break;
+    const filesToAdd = ["YaverHotReload.swift", "YaverHotReload.m"];
+    for (const fileName of filesToAdd) {
+      const relPath = `${appName}/${fileName}`;
+      // addSourceFile registers PBXFileReference + PBXBuildFile, adds
+      // the file to the group, and wires it into the target's
+      // Sources build phase — which is exactly what we need. It's
+      // idempotent in practice because the sdk-level copyFileSync
+      // step always writes the file, and addSourceFile is a no-op if
+      // the reference already exists.
+      if (!proj.hasFile || !proj.hasFile(relPath)) {
+        try {
+          proj.addSourceFile(relPath, { target: target.uuid }, groupKey);
+        } catch (e) {
+          // If a duplicate slips through, xcode-lib throws; safe to
+          // ignore since the file already being registered is the
+          // desired state.
         }
       }
-      if (sourcesBuildPhase) break;
-    }
-
-    const swiftName = "YaverHotReload.swift";
-    const objcName = "YaverHotReload.m";
-
-    // addSourceFile registers the file as a PBXFileReference, adds a
-    // PBXBuildFile entry, drops it into the pbx group, and adds it to
-    // the sources build phase — exactly what we need.
-    if (!pbxHasFile(pbx, swiftName)) {
-      pbx.addSourceFile(
-        `${appName}/${swiftName}`,
-        { target: findTargetUuidByName(pbx, appName) },
-        groupUuid,
-      );
-    }
-    if (!pbxHasFile(pbx, objcName)) {
-      pbx.addSourceFile(
-        `${appName}/${objcName}`,
-        { target: findTargetUuidByName(pbx, appName) },
-        groupUuid,
-      );
     }
 
     return config;
   });
 
   return config;
-}
-
-function pbxHasFile(pbx, basename) {
-  const refs = pbx.pbxFileReferenceSection();
-  for (const uuid of Object.keys(refs)) {
-    if (uuid.endsWith("_comment")) continue;
-    const ref = refs[uuid];
-    if (!ref || typeof ref !== "object") continue;
-    const pathValue = (ref.path || "").replace(/"/g, "");
-    if (pathValue.endsWith(basename)) return true;
-  }
-  return false;
-}
-
-function findTargetUuidByName(pbx, appName) {
-  const section = pbx.pbxNativeTargetSection();
-  for (const uuid of Object.keys(section)) {
-    if (uuid.endsWith("_comment")) continue;
-    const target = section[uuid];
-    if (target && target.name === appName) return uuid;
-  }
-  return undefined;
 }
 
 /**
