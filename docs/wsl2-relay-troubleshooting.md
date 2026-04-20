@@ -109,9 +109,9 @@ remaining options:
 
 1. **Run `yaver serve` on the Windows host**, not inside WSL. Go
    builds a Windows binary natively. Hermes push-to-phone works
-   identically. You lose systemd auto-start, so wire it as a
-   Windows scheduled task via `yaver serve --install-systemd` (it
-   falls through to the Windows task path).
+   identically. Windows uses a Scheduled Task for auto-start, and is
+   the right place to run Tailscale plus the host power settings for
+   unattended remote use.
 2. **Use the remote-worker pattern** — have the phone connect to a
    Mac / Linux box that *does* have a working relay tunnel, and
    have that box drive Hermes builds for the WSL project via `git

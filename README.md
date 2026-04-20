@@ -345,6 +345,16 @@ Microsoft — the web sign-in page at `yaver.io/auth/device` accepts all
 five and hands
 the resulting token back through the device-code flow.
 
+Headless reachability defaults:
+
+- Linux and macOS now block OS sleep while `yaver serve` is running
+- WSL cannot block Windows host sleep from inside the distro
+- real pre-login macOS boot requires one extra privileged step:
+  `sudo yaver serve --install-launchd-daemon`
+- WSL reboot recovery is best-effort: Yaver installs a shell helper and
+  prefers a Windows Scheduled Task when available, but the Windows host
+  still needs sleep disabled for unattended remote use
+
 ### All Installation Methods
 
 | Method | Command |
@@ -381,7 +391,7 @@ The Pi image is intentionally a **hybrid appliance**: it bakes in the OS image, 
 
 Primary always-on targets:
 
-- **macOS** via LaunchAgent
+- **macOS** via LaunchAgent by default, or LaunchDaemon for real headless pre-login boot
 - **Linux** via systemd user service + linger
 - **Windows** via Scheduled Task
 
@@ -390,14 +400,15 @@ WSL support is different:
 - WSL is supported for the React Native / Hermes daily loop and headless auth
 - WSL is **not** the same as native Linux for reboot persistence
 - Yaver does **not** install a native systemd auto-start service inside WSL
-- Yaver can install a WSL startup helper that uses your shell profile and, when available, a Windows Startup wrapper
+- Yaver installs a WSL startup helper and prefers a Windows Scheduled Task when available
+- WSL cannot stop the Windows host from sleeping; unattended remote use still requires Windows power settings and ideally Tailscale on Windows itself
 - native Linux and macOS still have the stronger always-on path
 
 ```bash
 # Brand-new install. No `yaver auth` needed yet.
 yaver serve
 # → Yaver agent started in bootstrap mode (PID …, port 18080).
-# → Registered as macOS LaunchAgent (will auto-start on login).
+# → Registered as macOS LaunchAgent (will auto-start after login).
 #
 # This machine has no auth token yet. The agent is up and waiting.
 # Open the Yaver mobile app (already signed in) on the same Wi-Fi —
@@ -432,12 +443,12 @@ The first `yaver serve` writes the OS-native auto-start descriptor:
 
 | OS | What gets installed |
 |----|---------------------|
-| **macOS** | `~/Library/LaunchAgents/io.yaver.agent.plist` (RunAtLoad + KeepAlive). Loaded automatically on next login. |
+| **macOS** | Default: `~/Library/LaunchAgents/io.yaver.agent.plist` (RunAtLoad + KeepAlive, starts after login). For a real headless Mac mini that must boot before login: `sudo yaver serve --install-launchd-daemon`, which installs `/Library/LaunchDaemons/io.yaver.agent.plist`. |
 | **Linux** | `~/.config/systemd/user/yaver.service` + `loginctl enable-linger` so the unit runs without an interactive login. |
-| **WSL** | No native systemd service. Yaver installs a WSL startup helper and can also write a Windows Startup wrapper when available. |
+| **WSL** | No native systemd service. Yaver installs a WSL startup helper and prefers a Windows Scheduled Task when available; Windows host sleep still has to be handled in Windows settings. |
 | **Windows** | A scheduled task that fires on user login. |
 
-After the first install you can reboot the machine and the agent comes back automatically on macOS, native Linux, and Windows — in bootstrap mode if no one has paired it yet, in normal mode if it already has a token. On WSL, keep the expectation narrower: the daily dev flow is supported and Yaver can install a helper path, but native Linux/macOS still provide the stronger always-on reboot behavior.
+After the first install the agent comes back automatically on native Linux and Windows, and on macOS after login via the default LaunchAgent. For a truly headless macOS box that must come back before login, install the LaunchDaemon once. On WSL, keep the expectation narrower: the daily dev flow is supported and Yaver can install the helper + Windows-login path, but native Linux/macOS still provide the stronger always-on behavior.
 
 ## Visual Feedback Loop
 
@@ -989,13 +1000,15 @@ Important boundary:
 - WSL is supported for development and phone testing
 - WSL is not the primary always-on deployment target for Yaver itself
 - if you want the machine to survive power loss and come back without touching a terminal, prefer native Linux or macOS
-- if you stay on WSL, use Yaver's WSL startup helper and, when possible, a Windows Startup / Task Scheduler wrapper
+- if you stay on WSL, use Yaver's WSL startup helper and Windows Scheduled Task path
+- also disable Windows sleep; WSL itself cannot keep the Windows host awake
 
 The important rule is:
 
 - **WSL iPhone reload = Hermes bundle into Yaver mobile**
 - **WSL iPhone reload != `xcodebuild`**
 - **WSL reboot persistence uses a helper path, not native Linux systemd**
+- **WSL unattended remote use depends on Windows power settings**
 
 Command-first version:
 

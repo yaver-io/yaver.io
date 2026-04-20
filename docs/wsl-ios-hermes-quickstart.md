@@ -103,11 +103,15 @@ Yaver MCP server in every installed coding agent, and the post-auth
 block nudges the agent to finish with:
 
 ```bash
-yaver config set auto-start true   # survive reboots (WSL helper + Windows Startup wrapper)
+yaver config set auto-start true   # WSL helper + Windows Scheduled Task when available
 yaver init                         # optional: sets a bootstrap secret so
                                    #  the mobile app can remotely re-auth
                                    #  this box if the token ever expires
 ```
+
+For unattended remote use on WSL, also disable Windows sleep and keep
+Tailscale running on the Windows host itself. WSL cannot stop the host
+from sleeping.
 
 ### MCP alternative (same flow through tools)
 
@@ -148,7 +152,8 @@ What works well:
 What is different from native Linux:
 
 - Yaver does not install a native systemd auto-start service inside WSL
-- Yaver can install a WSL startup helper and, when Windows is visible from WSL, a Windows Startup wrapper
+- Yaver installs a WSL startup helper and prefers a Windows Scheduled Task when Windows is visible from WSL
+- WSL cannot block Windows host sleep; unattended remote use still depends on Windows power settings
 - after a Windows reboot or power loss, native Linux/macOS still provide the cleaner always-on path
 - if you want the strongest "box comes back by itself and the phone can re-auth it" behavior, use native Linux or macOS
 
@@ -183,6 +188,7 @@ This is the correct daily loop for projects like `sfmg` when they are standard E
 - The right mental model is `WSL -> Hermes bundle -> Yaver mobile app`.
 - The wrong expectation is `WSL behaves exactly like native Linux for system service auto-start`.
 - The right expectation is `WSL uses a Yaver helper path, not native systemd`.
+- The right expectation is `WSL still depends on Windows staying awake`.
 
 ## Contributor to TestFlight Workflow
 
