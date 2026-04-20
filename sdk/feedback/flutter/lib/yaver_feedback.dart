@@ -31,6 +31,7 @@ library yaver_feedback;
 export 'src/auth.dart';
 export 'src/blackbox.dart';
 export 'src/connection_widget.dart';
+export 'src/device.dart';
 export 'src/discovery.dart';
 export 'src/feedback.dart';
 export 'src/floating_button.dart';
