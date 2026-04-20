@@ -409,7 +409,17 @@ export interface RemoteDevice {
   accessScope: 'owner' | 'shared-scoped' | 'shared-legacy';
   quicHost: string;
   quicPort: number;
+  /** Agent HTTP port — preferred over quicPort when present. */
+  httpPort?: number;
   publicKey?: string;
+  /** Hardware identifier — used for dedup across re-pair events. */
+  hwid?: string;
+  /**
+   * Every LAN IP the agent reported in its last heartbeat. Useful on
+   * multi-homed hosts — probing all of them in parallel is the same
+   * trick the Yaver mobile app uses to "just work" on the same Wi-Fi.
+   */
+  localIps?: string[];
 }
 
 export interface DeviceList {
@@ -420,6 +430,10 @@ export interface DeviceList {
 /**
  * Fetch the set of remote dev machines this user can reach. Splits into
  * owned (user is the host) vs shared (host invited them as a guest).
+ *
+ * Collapses duplicate rows before splitting — Convex can return multiple
+ * rows per physical machine after a re-pair or hostname change, and the
+ * raw list used to render as "Kvancs-MacBook-Air.local ×3" in the picker.
  */
 export async function listReachableDevices(
   token: string,
@@ -430,10 +444,39 @@ export async function listReachableDevices(
     });
     if (!res.ok) return { owned: [], shared: [] };
     const data = await res.json();
-    const all = (data.devices ?? []) as RemoteDevice[];
+    const raw = (data.devices ?? []) as any[];
+    // Normalise Convex field names → SDK's RemoteDevice shape. The
+    // backend returns `localIps`, sometimes the mobile-side mapping
+    // surfaces `lanIps` — accept either so the field survives.
+    const normalised: RemoteDevice[] = raw.map((d) => ({
+      deviceId: d.deviceId ?? d.id,
+      name: d.name ?? '',
+      platform: d.platform ?? d.os ?? '',
+      isOnline: !!d.isOnline,
+      needsAuth: !!d.needsAuth,
+      runnerDown: !!d.runnerDown,
+      lastHeartbeat: d.lastHeartbeat ?? 0,
+      isGuest: !!d.isGuest,
+      hostName: d.hostName,
+      hostEmail: d.hostEmail,
+      accessScope: d.accessScope ?? 'owner',
+      quicHost: d.quicHost ?? d.host ?? '',
+      quicPort: d.quicPort ?? 0,
+      httpPort: d.httpPort ?? d.quicPort,
+      publicKey: d.publicKey,
+      hwid: d.hardwareId ?? d.hwid,
+      localIps: Array.isArray(d.localIps)
+        ? d.localIps
+        : Array.isArray(d.lanIps)
+          ? d.lanIps
+          : undefined,
+    }));
+    // Lazy require so Jest + tree-shakers don't choke on a circular import.
+    const { collapseRemoteDevices } = require('./deviceDedup') as typeof import('./deviceDedup');
+    const deduped = collapseRemoteDevices(normalised);
     return {
-      owned: all.filter((d) => !d.isGuest),
-      shared: all.filter((d) => d.isGuest),
+      owned: deduped.filter((d) => !d.isGuest),
+      shared: deduped.filter((d) => d.isGuest),
     };
   } catch {
     return { owned: [], shared: [] };

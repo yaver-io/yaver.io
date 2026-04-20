@@ -86,17 +86,43 @@ export const FeedbackModal: React.FC = () => {
     setAction('idle');
   }, []);
 
+  // Helper: run a P2P call; on network failure, ask YaverFeedback to
+  // re-query Convex for the fresh IP and retry once. Solves the common
+  // case where the Mac's LAN IP rotated while the SDK held a stale URL.
+  const runWithReconnect = useCallback(
+    async (fn: (client: NonNullable<ReturnType<typeof YaverFeedback.getP2PClient>>) => Promise<void>) => {
+      let client = YaverFeedback.getP2PClient();
+      if (!client) {
+        const ok = await YaverFeedback.reconnect();
+        if (ok) client = YaverFeedback.getP2PClient();
+      }
+      if (!client) {
+        throw new Error('Not connected to the agent yet.');
+      }
+      try {
+        await fn(client);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const transient = /Network request failed|timeout|ECONNREFUSED|Failed to fetch|fetch failed|aborted/i.test(msg);
+        if (!transient) throw err;
+        const ok = await YaverFeedback.reconnect();
+        if (!ok) throw err;
+        const fresh = YaverFeedback.getP2PClient();
+        if (!fresh) throw err;
+        await fn(fresh);
+      }
+    },
+    [],
+  );
+
   // ─── 1. Hot reload ─────────────────────────────────────────────────
   const handleHotReload = useCallback(async () => {
-    const client = YaverFeedback.getP2PClient();
-    if (!client) {
-      setError('Not connected to the agent yet.');
-      return;
-    }
     setAction('hot-reloading');
     setError(null);
     try {
-      await client.reloadApp('dev');
+      await runWithReconnect(async (client) => {
+        await client.reloadApp('dev');
+      });
       setToast('Reload sent');
       closeSoon(800);
     } catch (err: unknown) {
@@ -104,7 +130,7 @@ export const FeedbackModal: React.FC = () => {
     } finally {
       if (mountedRef.current) setAction('idle');
     }
-  }, [closeSoon]);
+  }, [closeSoon, runWithReconnect]);
 
   // ─── 2. Screenshot + Fix ───────────────────────────────────────────
   //

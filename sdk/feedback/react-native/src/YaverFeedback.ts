@@ -202,6 +202,33 @@ export class YaverFeedback {
   }
 
   /**
+   * Force a fresh Convex lookup for the agent URL — ignoring any
+   * cached URL. Callers use this after a P2P request fails
+   * (connection refused / timeout) because the most common cause is
+   * the Mac's LAN IP rotating. Convex has the fresh one, so we
+   * re-query and probe `[quicHost, ...localIps]` in parallel.
+   *
+   * Returns true when a new URL was adopted.
+   */
+  static async reconnect(): Promise<boolean> {
+    if (!config || !enabled) return false;
+    if (!config.authToken || !config.convexUrl) return false;
+    try {
+      const result = await YaverDiscovery.refreshFromConvex({
+        convexUrl: config.convexUrl,
+        authToken: config.authToken,
+        preferredDeviceId: config.preferredDeviceId,
+      });
+      if (!result) return false;
+      config.agentUrl = result.url;
+      p2pClient = new P2PClient(result.url, config.authToken ?? '');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Pull a cached session token + selected device from AsyncStorage (populated
    * by the in-SDK login + machine-picker screens). When present the SDK can
    * reconnect silently on launch without re-prompting the user. Safe to call

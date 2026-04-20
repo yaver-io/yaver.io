@@ -72,7 +72,12 @@ export const YaverMachinePickerScreen: React.FC<YaverMachinePickerProps> = ({
 
   const renderDevice = (device: RemoteDevice) => {
     const selected = device.deviceId === currentDeviceId;
-    const stale = Date.now() - device.lastHeartbeat > 60_000;
+    // Match the Yaver mobile app: HEARTBEAT_STALE_MS is 90 s. Using
+    // 60 s here flashed yellow on a single missed agent beat even
+    // though the Mac was up.
+    const stale =
+      device.lastHeartbeat > 0 &&
+      Date.now() - device.lastHeartbeat > 90_000;
     const healthColor = !device.isOnline
       ? '#ef4444'
       : device.needsAuth || device.runnerDown || stale
