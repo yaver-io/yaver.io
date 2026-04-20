@@ -141,10 +141,11 @@ export function collapseRemoteDevices(devices: RemoteDevice[]): RemoteDevice[] {
 
 /**
  * Threshold for "online" based on heartbeat age, in milliseconds.
- * Matches the mobile app (HEARTBEAT_STALE_MS = 90 s). The SDK used
- * 60 s, which flashed yellow on single missed beats.
+ * Re-exported from `@yaver/client-core` so mobile + SDK + backend
+ * agree on one number at all times.
  */
-export const HEARTBEAT_STALE_MS = 90_000;
+import { HEARTBEAT_STALE_MS } from './_core/constants';
+export { HEARTBEAT_STALE_MS };
 
 /**
  * Returns a freshness flag consistent with the mobile app. A device is

@@ -108,13 +108,12 @@ const BUILD_NUMBER =
   Constants.expoConfig?.android?.versionCode?.toString() ??
   "unknown";
 
-// Heartbeat is sent every 2 minutes; consider "recently active" if within 5 min
-// Mirror the backend's HEARTBEAT_STALE_MS (backend/convex/devices.ts).
-// Agent beats every 30 s, so 90 s = "missed three beats, definitely
-// gone". Without this aggressive gate a SIGKILL'd / power-cut /
-// wifi-dropped agent looks online for up to 5 minutes — long enough
-// for the user to tap, fail, see "Failed", and lose trust.
-const HEARTBEAT_STALE_MS = 90 * 1000;
+// Heartbeat freshness window. Re-exported from @yaver/client-core (the
+// mirror at src/_core/constants.ts) so mobile, Feedback SDK, and the
+// backend all agree on the same number. Drift here previously produced
+// "green on one, yellow on the other" UX glitches from clock skew
+// alone. See ARCHITECTURE_CLIENT_CORE.md.
+import { HEARTBEAT_STALE_MS } from "../_core/constants";
 
 export interface RunnerInfo {
   taskId: string;

@@ -67,14 +67,15 @@ const TOKEN_KEY = 'yaver_feedback_auth_token';
 const USER_KEY = 'yaver_feedback_user';
 const DEVICE_KEY = 'yaver_feedback_selected_device';
 
-// Source of truth: mobile/src/lib/constants.ts → CONVEX_SITE_URL.
-// The yaver-io Convex deployment was migrated from shocking-echidna-394
-// to perceptive-minnow-557; sessions minted against the old deployment
-// don't validate on agents that point at the new one, producing a 403
-// "invalid token" from the agent's authSDK middleware.
-export const DEFAULT_CONVEX_SITE_URL =
-  'https://perceptive-minnow-557.eu-west-1.convex.site';
-export const DEFAULT_WEB_BASE_URL = 'https://yaver.io';
+// Source of truth: `shared/client-core/src/constants.ts`, mirrored to
+// `./_core/constants` via `scripts/sync-client-core.sh`. Keeps the
+// SDK, mobile app, and web dashboard on the same Convex deployment
+// string at all times — previously this drifted and produced 403
+// "invalid token" from the agent's authSDK middleware. See
+// ARCHITECTURE_CLIENT_CORE.md.
+import { CONVEX_SITE_URL, WEB_BASE_URL, OAUTH_REDIRECT } from './_core/constants';
+export const DEFAULT_CONVEX_SITE_URL = CONVEX_SITE_URL;
+export const DEFAULT_WEB_BASE_URL = WEB_BASE_URL;
 
 let convexSiteUrl = DEFAULT_CONVEX_SITE_URL;
 let webBaseUrl = DEFAULT_WEB_BASE_URL;
@@ -294,7 +295,7 @@ export async function signInWithApple(): Promise<{ token: string; userId: string
  * register the scheme on iOS. On Android, add an `<intent-filter>` for
  * `yaver://oauth-callback` in the host app's AndroidManifest.xml.
  */
-export const DEFAULT_OAUTH_REDIRECT = 'yaver://oauth-callback';
+export const DEFAULT_OAUTH_REDIRECT = OAUTH_REDIRECT;
 
 /**
  * Sign in through the in-app browser via yaver.io. Opens

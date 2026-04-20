@@ -1,8 +1,8 @@
 /**
  * Convex site URL — the public HTTP endpoint for auth, device registry, etc.
  *
- * Defaults to the hosted Yaver Convex instance.
- * To use your own Convex deployment, change this value.
+ * Re-exported from `@yaver/client-core` (mirrored into `src/_core/`).
+ * To change the value, edit `shared/client-core/src/constants.ts` and
+ * run `scripts/sync-client-core.sh`. See ARCHITECTURE_CLIENT_CORE.md.
  */
-export const CONVEX_SITE_URL =
-  "https://perceptive-minnow-557.eu-west-1.convex.site";
+export { CONVEX_SITE_URL } from "../_core/constants";
