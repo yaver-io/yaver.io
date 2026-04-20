@@ -67,9 +67,23 @@ export const FeedbackModal: React.FC = () => {
         setAction('idle');
       }
     });
+    // Agent streams build / compile progress through the BlackBox
+    // SSE command channel as `command: "status"`; YaverFeedback re-emits
+    // it as `yaverFeedback:status`. Show the most recent message in the
+    // toast so a multi-second rebuild feels like "working" instead of
+    // "stuck".
+    const statusSub = DeviceEventEmitter.addListener(
+      'yaverFeedback:status',
+      (payload: { message?: string; phase?: string }) => {
+        if (!mountedRef.current) return;
+        const msg = payload?.message || payload?.phase || '';
+        if (msg) setToast(msg);
+      },
+    );
     return () => {
       mountedRef.current = false;
       sub.remove();
+      statusSub.remove();
     };
   }, []);
 

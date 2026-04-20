@@ -244,59 +244,47 @@ export class P2PClient {
    * via the BlackBox command channel.
    * @param mode - "dev" for hot reload, "bundle" for native bundle rebuild
    */
-  async reloadApp(mode: 'dev' | 'bundle' = 'dev'): Promise<{ ok: boolean }> {
-    // Primary path: /dev/reload — same endpoint the Yaver mobile app uses.
-    // Triggers Metro/Expo HMR synchronously and emits an SSE `reload` event
-    // on /dev/events that the FeedbackModal can subscribe to for progress.
+  async reloadApp(mode: 'dev' | 'bundle' = 'bundle'): Promise<{ ok: boolean }> {
+    // Default path: always rebuild a fresh Hermes bundle.
     //
-    // Only fall back to /dev/reload-app (the BlackBox-SSE-broadcast path)
-    // when the primary path reports "no dev server running" — that mode is
-    // really for the mobile app remotely kicking a third-party app, not
-    // for the app kicking itself.
-    const primary = await fetch(`${this.baseUrl}/dev/reload`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${this.authToken}` },
-    });
-    if (primary.ok) {
-      return primary.json().catch(() => ({ ok: true }));
-    }
-
-    // Common shape of the `/dev/reload` failure when Metro isn't running
-    // on the agent's host: the agent tries to forward the reload to
-    // `http://127.0.0.1:<metroPort>/reload` and that connection refuses.
-    // In that case a JS hot-reload is simply not possible — pivot to
-    // `/dev/reload-app` in bundle mode, which rebuilds + pushes a fresh
-    // Hermes bundle without needing Metro to be alive.
-    const primaryText = await primary.text().catch(() => '');
-    const noDevServer =
-      primary.status === 400 ||
-      primary.status === 404 ||
-      primary.status >= 500 ||
-      /connection refused|no dev server|not running|ECONNREFUSED/i.test(primaryText);
-
-    if (noDevServer || mode === 'bundle') {
-      const nextMode = mode === 'bundle' ? 'bundle' : 'bundle';
-      const fallback = await fetch(`${this.baseUrl}/dev/reload-app`, {
+    // Rationale: the SDK's common caller is a phone user who's not
+    // sitting at their Mac — they're doing vibe coding with an AI agent
+    // editing files on the Mac remotely, or they installed the app via
+    // TestFlight and there's no Metro running at all. A Metro-based
+    // reload would either fail (Metro offline) or — worse — serve a
+    // stale bundle because Metro can be slow to re-index fresh edits.
+    // Bundle mode always produces the correct bytecode from the current
+    // filesystem state, taking ~30–60 s, and hits /dev/reload-app which
+    // uses BlackBox SSE to push the fresh bundle URL to the device.
+    //
+    // Callers who know they want Metro HMR pass `mode='dev'` explicitly;
+    // we still honour that. Everything else defaults to bundle.
+    if (mode === 'dev') {
+      const primary = await fetch(`${this.baseUrl}/dev/reload`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.authToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ mode: nextMode }),
+        headers: { Authorization: `Bearer ${this.authToken}` },
       });
-      if (!fallback.ok) {
-        const fallbackText = await fallback.text().catch(() => '');
-        // Give the user something actionable instead of a raw Go error.
-        const friendlyFromFallback = friendlyReloadError(
-          fallback.status,
-          fallbackText,
-        );
-        throw new Error(friendlyFromFallback);
+      if (primary.ok) {
+        return primary.json().catch(() => ({ ok: true }));
       }
-      return fallback.json().catch(() => ({ ok: true }));
+      // Dev mode failed — fall through to bundle rebuild below rather
+      // than surfacing the raw error, so the user never has to know
+      // Metro wasn't running.
     }
 
-    throw new Error(friendlyReloadError(primary.status, primaryText));
+    const res = await fetch(`${this.baseUrl}/dev/reload-app`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ mode: 'bundle' }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(friendlyReloadError(res.status, text));
+    }
+    return res.json().catch(() => ({ ok: true }));
   }
 
   /**

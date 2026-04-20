@@ -923,7 +923,9 @@ func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
 		// First trigger the build (reuse build-native logic)
 		s.handleBuildNativeBundle(w, r)
 		// After build completes (handleBuildNativeBundle writes response),
-		// push reload_bundle command
+		// push reload_bundle command. Emit a final status so the SDK can
+		// flip its modal from "Compiling…" → "Reloading…".
+		s.emitBuildProgress("Pushing fresh bundle to device…", "push")
 		cmd := BlackBoxCommand{
 			Command: "reload_bundle",
 			Data: map[string]interface{}{
@@ -1036,6 +1038,32 @@ func (s *HTTPServer) handleDevServerProxy(w http.ResponseWriter, r *http.Request
 	proxy.ServeHTTP(w, r)
 }
 
+// emitBuildProgress reports one step of a native-bundle build to every
+// listener simultaneously:
+//
+//   - `/dev/events` (Yaver mobile app's progress banner, via EmitLog)
+//   - `/blackbox/command-stream` (Feedback SDK's status toast, via
+//     BroadcastCommand with `{command: "status", data: {message, phase}}`)
+//   - native-build-status JSON on disk (debugging / yaver status)
+//
+// Callers pass a user-facing message (shown verbatim in the SDK's toast)
+// plus a short machine-readable phase label (`build`, `bundle`,
+// `assets`, `push`, `done`, `error`) the SDK can switch on.
+func (s *HTTPServer) emitBuildProgress(message, phase string) {
+	if s.devServerMgr != nil {
+		s.devServerMgr.EmitLog(message)
+	}
+	if s.blackboxMgr != nil {
+		s.blackboxMgr.BroadcastCommand(BlackBoxCommand{
+			Command: "status",
+			Data: map[string]interface{}{
+				"message": message,
+				"phase":   phase,
+			},
+		})
+	}
+}
+
 // handleBuildNativeBundle builds a production Hermes bytecode bundle for the active project.
 // POST /dev/build-native { "platform": "ios" }
 // Returns { "status": "ok", "bundleUrl": "/dev/native-bundle", "moduleName": "main" } on success.
@@ -1066,7 +1094,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	bundlePath := filepath.Join(buildDir, "main.jsbundle")
 
 	log.Printf("[super-host] build-native called: platform=%s workDir=%s", req.Platform, workDir)
-	s.devServerMgr.EmitLog("Building native bundle...")
+	s.emitBuildProgress("Building native bundle...", "build")
 	writeNativeBuildStatus(workDir, nativeBuildStatus{
 		State:    "building",
 		Platform: req.Platform,
@@ -1110,7 +1138,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": errMsg})
 			return
 		}
-		s.devServerMgr.EmitLog(fmt.Sprintf("Installing dependencies with %s...", prep.PackageManager))
+		s.emitBuildProgress(fmt.Sprintf("Installing dependencies with %s...", prep.PackageManager), "install")
 		if err := installProjectDependencies(workDir, prep); err != nil {
 			errMsg := fmt.Sprintf("dependency install failed: %v", err)
 			writeNativeBuildStatus(workDir, nativeBuildStatus{
@@ -1144,7 +1172,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	assetsDir := filepath.Join(buildDir, "assets")
 	var cmd *exec.Cmd
 	if isExpo {
-		s.devServerMgr.EmitLog(fmt.Sprintf("Bundling with Expo for %s...", req.Platform))
+		s.emitBuildProgress(fmt.Sprintf("Bundling with Expo for %s...", req.Platform), "bundle")
 		cmd = bundleCommand(prep.PackageManager, "expo", req.Platform, "", bundlePath, assetsDir)
 	} else {
 		// Find entry file: package.json "main" → fallback candidates
@@ -1159,7 +1187,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 				entryFile = candidate
 			}
 		}
-		s.devServerMgr.EmitLog(fmt.Sprintf("Bundling %s for %s...", entryFile, req.Platform))
+		s.emitBuildProgress(fmt.Sprintf("Bundling %s for %s...", entryFile, req.Platform), "bundle")
 		cmd = bundleCommand(prep.PackageManager, "react-native", req.Platform, entryFile, bundlePath, assetsDir)
 	}
 
@@ -1189,7 +1217,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	}
 
 	// ── Hermes compile ──
-	s.devServerMgr.EmitLog("Compiling Hermes bytecode...")
+	s.emitBuildProgress("Compiling Hermes bytecode...", "hermes")
 
 	info := detectHermesRuntimeInfo(workDir)
 	hermescPath, hermescErr := resolveHermesc(workDir)
@@ -1271,8 +1299,8 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	}
 	log.Printf("[super-host] hasAssets=%v", hasAssets)
 
-	s.devServerMgr.EmitLog(fmt.Sprintf("Bundle ready: %d KB, MD5 verified, BC%d, module: %s",
-		meta.Size/1024, meta.HermesBCVersion, moduleName))
+	s.emitBuildProgress(fmt.Sprintf("Bundle ready: %d KB, BC%d, module: %s",
+		meta.Size/1024, meta.HermesBCVersion, moduleName), "ready")
 	writeNativeBuildStatus(workDir, nativeBuildStatus{
 		State:         "ready",
 		Platform:      req.Platform,

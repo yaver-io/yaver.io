@@ -142,9 +142,13 @@ export class YaverFeedback {
       });
     }
 
-    // Wire up BlackBox command handlers for reload signals from the agent.
-    // This enables the vibe coder to trigger reload from the Yaver mobile app
-    // and have the third-party app (with this SDK) automatically reload.
+    // Wire up BlackBox command handlers for reload + status signals from
+    // the agent. Opens an SSE channel the agent uses to:
+    //   - broadcast reload_bundle so the phone picks up a fresh Hermes
+    //     bundle after a vibe-coding edit;
+    //   - stream build/compile progress ("Compiling bundle…", "Pushing
+    //     assets…", "Done") so the SDK can surface it like a normal
+    //     "Working…" spinner instead of a silent 60-second freeze.
     if (enabled) {
       BlackBox.onCommand((cmd) => {
         if (cmd.command === 'reload') {
@@ -161,8 +165,38 @@ export class YaverFeedback {
           } else {
             YaverFeedback.defaultReloadBundle(bundleUrl, assetsUrl);
           }
+        } else if (cmd.command === 'status') {
+          // Pipe agent progress pings to the UI. The FeedbackModal
+          // subscribes to this event and renders the message while a
+          // reload / build is in flight.
+          const message =
+            typeof cmd.data?.message === 'string'
+              ? (cmd.data.message as string)
+              : '';
+          const phase =
+            typeof cmd.data?.phase === 'string'
+              ? (cmd.data.phase as string)
+              : '';
+          const { DeviceEventEmitter } = require('react-native');
+          DeviceEventEmitter.emit('yaverFeedback:status', {
+            message,
+            phase,
+            at: Date.now(),
+          });
         }
       });
+      // Auto-open the command-stream SSE channel so `status` +
+      // `reload_bundle` messages from the agent actually reach us.
+      // Host apps can still call BlackBox.start(...) themselves to
+      // customise deviceId / appName, but they don't have to.
+      if (!BlackBox.isStreaming) {
+        try {
+          BlackBox.start();
+        } catch {
+          // BlackBox.start throws if agentUrl/token aren't ready yet;
+          // a later setAuthToken() / discoverAgent() tick will retry.
+        }
+      }
     }
 
     // NOTE: We intentionally do NOT hook ErrorUtils.setGlobalHandler().
