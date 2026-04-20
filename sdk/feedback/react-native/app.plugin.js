@@ -188,9 +188,22 @@ function withYaverAppDelegateHook(config) {
       );
     }
 
-    // 2. Add reload notification handler and bridge recreation logic
-    // Insert before the closing brace of the class
-    const classCloseIndex = patched.lastIndexOf("}");
+    // 2. Add reload notification handler and bridge recreation logic.
+    //
+    // Must be inserted into the AppDelegate class — NOT ReactNativeDelegate
+    // (a separate class below it in the same file). The handler accesses
+    // `self.window`, `self.reactNativeDelegate`, `self.reactNativeFactory`,
+    // and `self.bindReactNativeFactory(...)` — all of which only exist
+    // on AppDelegate. An earlier version of this plugin used
+    // lastIndexOf("}"), which in modern Expo templates lands inside
+    // ReactNativeDelegate, producing build errors like
+    //   "cannot find 'setupYaverHotReload' in scope"
+    //   "value of type 'ReactNativeDelegate' has no member 'window'"
+    //
+    // The anchor we want is the closing brace of the AppDelegate class
+    // declaration itself. Find its opening, then walk braces to its
+    // matching close.
+    const classCloseIndex = findAppDelegateClassClose(patched);
     if (classCloseIndex > 0) {
       const reloadHandler = `
   // MARK: - Yaver Feedback SDK Hot Reload
@@ -296,6 +309,34 @@ function withYaverAppDelegateHook(config) {
     config.modResults.contents = patched;
     return config;
   });
+}
+
+// Locate the closing brace of `class AppDelegate: ...` in an Expo
+// Swift AppDelegate file. Returns the index of the matching `}` for
+// the AppDelegate class's opening `{`, or -1 if not found. We need
+// this because Expo's modern template declares TWO classes in the
+// same file (AppDelegate + ReactNativeDelegate), and the SDK's
+// reload handler only makes sense on the AppDelegate one.
+function findAppDelegateClassClose(contents) {
+  // Match both `public class AppDelegate` and `class AppDelegate`,
+  // with either inheritance colon or a plain body.
+  const headerMatch = contents.match(/class\s+AppDelegate\s*[:{][^{]*\{/);
+  if (!headerMatch) return -1;
+  const bodyStart = headerMatch.index + headerMatch[0].length - 1; // index of the opening `{`
+  // Walk braces to find the matching close. Minimal — we don't try
+  // to parse strings/comments because the file is machine-generated
+  // by Expo, so braces inside strings are not a realistic concern
+  // at this layer.
+  let depth = 0;
+  for (let i = bodyStart; i < contents.length; i++) {
+    const ch = contents[i];
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
 }
 
 /**
