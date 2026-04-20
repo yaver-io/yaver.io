@@ -8,6 +8,56 @@ export interface FeedbackEvent {
 }
 
 /**
+ * Try to resolve `{projectName, bundleId}` for the running app so the
+ * agent can map the reload request to a MobileProject in its scan
+ * cache. Order: caller-supplied opts → Expo Constants → react-native
+ * NativeModules. None of the lookups throw — missing data just means
+ * the agent will fall back to its own dev-server resolution.
+ */
+function resolveAppIdentity(opts?: {
+  projectName?: string;
+  bundleId?: string;
+  projectPath?: string;
+}): { projectName?: string; bundleId?: string; projectPath?: string } {
+  let projectName = opts?.projectName;
+  let bundleId = opts?.bundleId;
+  const projectPath = opts?.projectPath;
+
+  if (!projectName || !bundleId) {
+    try {
+      const Constants = require('expo-constants').default ?? require('expo-constants');
+      const cfg = Constants?.expoConfig ?? Constants?.manifest ?? {};
+      projectName = projectName || cfg?.name;
+      bundleId =
+        bundleId ||
+        cfg?.ios?.bundleIdentifier ||
+        cfg?.android?.package;
+    } catch {
+      // expo-constants not installed (bare RN). Fall through.
+    }
+  }
+
+  if (!bundleId) {
+    try {
+      const { Platform, NativeModules } = require('react-native');
+      if (Platform.OS === 'ios') {
+        bundleId = NativeModules?.SettingsManager?.settings?.CFBundleIdentifier;
+      } else if (Platform.OS === 'android') {
+        bundleId = NativeModules?.PlatformConstants?.Package;
+      }
+    } catch {
+      // SettingsManager/PlatformConstants missing on some RN versions.
+    }
+  }
+
+  const out: { projectName?: string; bundleId?: string; projectPath?: string } = {};
+  if (projectName) out.projectName = projectName;
+  if (bundleId) out.bundleId = bundleId;
+  if (projectPath) out.projectPath = projectPath;
+  return out;
+}
+
+/**
  * Translate a raw Go-agent error into something a user can act on.
  *
  * The agent surfaces Go's low-level error text verbatim inside JSON,
@@ -256,7 +306,10 @@ export class P2PClient {
    * via the BlackBox command channel.
    * @param mode - "dev" for hot reload, "bundle" for native bundle rebuild
    */
-  async reloadApp(mode: 'dev' | 'bundle' = 'bundle'): Promise<{ ok: boolean }> {
+  async reloadApp(
+    mode: 'dev' | 'bundle' = 'bundle',
+    opts?: { projectName?: string; bundleId?: string; projectPath?: string },
+  ): Promise<{ ok: boolean }> {
     // Default path: always rebuild a fresh Hermes bundle.
     //
     // Rationale: the SDK's common caller is a phone user who's not
@@ -284,13 +337,26 @@ export class P2PClient {
       // Metro wasn't running.
     }
 
+    // Auto-resolve identity if the caller didn't pass it. Reads from
+    // expo-constants when present (host can pin via app.json
+    // `expo.name` / `ios.bundleIdentifier` / `android.package`); falls
+    // back to react-native's NativeModules.SettingsManager.settings
+    // (iOS `CFBundleIdentifier`, `CFBundleName`) and Application
+    // (Android packageName). On the agent side these resolve to the
+    // matching MobileProject in the cached scan, so we don't need
+    // `yaver dev start` to have run on the host.
+    const identity = resolveAppIdentity(opts);
+
     const res = await fetch(`${this.baseUrl}/dev/reload-app`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.authToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ mode: 'bundle' }),
+      body: JSON.stringify({
+        mode: 'bundle',
+        ...identity,
+      }),
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');

@@ -889,6 +889,17 @@ func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		Mode string `json:"mode"` // "dev" (hot reload) or "bundle" (rebuild + push)
+		// Optional project hints for the bundle path. Without these,
+		// the agent has to fall back to the currently-active dev
+		// server, which is empty for any TestFlight-installed app.
+		// projectName matches MobileProject.Name from the mobile
+		// scan; projectPath is an explicit absolute filesystem path;
+		// bundleId is the iOS / Android application ID, intended
+		// for a future scan-side index. Forwarded verbatim into the
+		// re-issued /dev/build-native body below.
+		ProjectName string `json:"projectName"`
+		ProjectPath string `json:"projectPath"`
+		BundleID    string `json:"bundleId"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&req)
@@ -919,12 +930,52 @@ func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, http.StatusOK, map[string]string{"ok": "true", "mode": "dev"})
 
 	case "bundle":
-		// Native bundle: rebuild and tell SDK devices to fetch new bundle
-		// First trigger the build (reuse build-native logic)
-		s.handleBuildNativeBundle(w, r)
-		// After build completes (handleBuildNativeBundle writes response),
-		// push reload_bundle command. Emit a final status so the SDK can
-		// flip its modal from "Compiling…" → "Reloading…".
+		// Native bundle: rebuild and tell SDK devices to fetch new bundle.
+		// Capture handleBuildNativeBundle's response so we can detect a
+		// failed build (no active dev server, dependency install failed,
+		// hermes crashed, …) and skip the reload_bundle broadcast — the
+		// SDK would otherwise fetch /dev/native-bundle, get nothing or a
+		// stale file, and SIGABRT inside Hermes when the native bundle
+		// loader tries to swap a corrupt bridge. That's the SFMG crash
+		// users saw before this fix.
+		//
+		// r.Body was already drained by the json decode above, so we
+		// can't just pass `r` through. Build a fresh request body with
+		// the project hints so handleBuildNativeBundle sees them.
+		buildBody, _ := json.Marshal(map[string]string{
+			"platform":    "ios",
+			"projectName": req.ProjectName,
+			"projectPath": req.ProjectPath,
+			"bundleId":    req.BundleID,
+		})
+		buildReq, _ := http.NewRequest("POST", "/dev/build-native", bytes.NewReader(buildBody))
+		buildReq.Header.Set("Content-Type", "application/json")
+		rec := newCapturingResponseWriter()
+		s.handleBuildNativeBundle(rec, buildReq)
+		// Forward the build's response (success OR failure) to the
+		// caller so the SDK sees the real status + body.
+		for k, vv := range rec.Header() {
+			for _, v := range vv {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(rec.Status())
+		w.Write(rec.Body())
+		if rec.Status() >= 400 {
+			// Build never produced a fresh bundle. DON'T broadcast
+			// reload_bundle — the SDK would fetch /dev/native-bundle,
+			// get a stale or missing file, and SIGABRT inside the
+			// Hermes bridge swap. Emit a status command so the modal
+			// can flip from "Compiling…" → the real failure.
+			msg := extractErrorMessage(rec.Body())
+			if msg == "" {
+				msg = fmt.Sprintf("build failed (status %d)", rec.Status())
+			}
+			s.emitBuildProgress(msg, "error")
+			log.Printf("[dev] Reload-app (bundle mode): build failed (%d), skipping reload_bundle broadcast", rec.Status())
+			return
+		}
+		// Build succeeded. Tell SDKs to fetch the fresh bundle.
 		s.emitBuildProgress("Pushing fresh bundle to device…", "push")
 		cmd := BlackBoxCommand{
 			Command: "reload_bundle",
@@ -1038,18 +1089,45 @@ func (s *HTTPServer) handleDevServerProxy(w http.ResponseWriter, r *http.Request
 	proxy.ServeHTTP(w, r)
 }
 
+// extractErrorMessage pulls the `{"error": "..."}` field from a JSON
+// body, falling back to the raw body string. Used by handleReloadApp
+// to surface a readable build-failure message to the SDK.
+func extractErrorMessage(body []byte) string {
+	var parsed struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(body, &parsed) == nil && parsed.Error != "" {
+		return parsed.Error
+	}
+	return strings.TrimSpace(string(body))
+}
+
 // emitBuildProgress reports one step of a native-bundle build to every
 // listener simultaneously:
 //
 //   - `/dev/events` (Yaver mobile app's progress banner, via EmitLog)
 //   - `/blackbox/command-stream` (Feedback SDK's status toast, via
-//     BroadcastCommand with `{command: "status", data: {message, phase}}`)
+//     BroadcastCommand with `{command: "status", data: {message, phase, progress}}`)
 //   - native-build-status JSON on disk (debugging / yaver status)
 //
 // Callers pass a user-facing message (shown verbatim in the SDK's toast)
 // plus a short machine-readable phase label (`build`, `bundle`,
 // `assets`, `push`, `done`, `error`) the SDK can switch on.
 func (s *HTTPServer) emitBuildProgress(message, phase string) {
+	s.emitBuildProgressWithPercent(message, phase, phaseProgress(phase))
+}
+
+// emitBuildProgressWithPercent reports one step PLUS a 0..1 fraction so
+// the Feedback SDK / Yaver mobile app can render a progress bar like
+// the Yaver mobile DevPreview already does (`buildProgress` state).
+// `percent` should be monotonically non-decreasing over a single build.
+func (s *HTTPServer) emitBuildProgressWithPercent(message, phase string, percent float64) {
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 1 {
+		percent = 1
+	}
 	if s.devServerMgr != nil {
 		s.devServerMgr.EmitLog(message)
 	}
@@ -1057,10 +1135,40 @@ func (s *HTTPServer) emitBuildProgress(message, phase string) {
 		s.blackboxMgr.BroadcastCommand(BlackBoxCommand{
 			Command: "status",
 			Data: map[string]interface{}{
-				"message": message,
-				"phase":   phase,
+				"message":  message,
+				"phase":    phase,
+				"progress": percent,
 			},
 		})
+	}
+}
+
+// phaseProgress maps a build phase label to a coarse 0..1 fraction so
+// the Feedback SDK's progress bar advances even when the phase doesn't
+// supply an explicit percent. Same shape the mobile app's
+// DevPreview.tsx uses for native builds.
+func phaseProgress(phase string) float64 {
+	switch phase {
+	case "build":
+		return 0.05
+	case "install":
+		return 0.10
+	case "bundle":
+		return 0.45
+	case "hermes":
+		return 0.70
+	case "assets":
+		return 0.85
+	case "ready":
+		return 0.95
+	case "push":
+		return 0.98
+	case "done":
+		return 1.0
+	case "error":
+		return 1.0
+	default:
+		return 0
 	}
 }
 
@@ -1073,14 +1181,18 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	status := s.devServerMgr.Status()
-	if status == nil || status.WorkDir == "" {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "no active dev server — start one first"})
-		return
-	}
-
 	var req struct {
 		Platform string `json:"platform"`
+		// projectName / projectPath let a Feedback-SDK caller (e.g.
+		// SFMG installed via TestFlight, no `yaver dev start` ever
+		// run) tell the agent which mobile project to build. Without
+		// this hint the agent would have to fall back to whatever
+		// dev server is "active" — usually nothing for a TestFlight
+		// app — and 400 with "no active dev server". This is the
+		// fix for the SFMG Hot Reload crash where the agent
+		// broadcast reload_bundle on a never-built bundle.
+		ProjectName string `json:"projectName"`
+		ProjectPath string `json:"projectPath"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&req)
@@ -1089,7 +1201,30 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		req.Platform = "ios"
 	}
 
-	workDir := status.WorkDir
+	// Resolve workDir in priority order:
+	//   1. explicit projectPath in body
+	//   2. projectName looked up in mobile-projects scan
+	//   3. devServerMgr's currently-active project (legacy path)
+	var workDir string
+	if req.ProjectPath != "" {
+		workDir = req.ProjectPath
+	} else if req.ProjectName != "" {
+		if mp := findMobileProjectByName(req.ProjectName); mp != nil {
+			workDir = mp.Path
+		} else {
+			jsonReply(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("no mobile project named %q on this machine — check `yaver projects mobile`", req.ProjectName),
+			})
+			return
+		}
+	} else {
+		status := s.devServerMgr.Status()
+		if status == nil || status.WorkDir == "" {
+			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "no active dev server — start one first OR pass projectName / projectPath in the body"})
+			return
+		}
+		workDir = status.WorkDir
+	}
 	buildDir := filepath.Join(workDir, ".yaver-build")
 	bundlePath := filepath.Join(buildDir, "main.jsbundle")
 

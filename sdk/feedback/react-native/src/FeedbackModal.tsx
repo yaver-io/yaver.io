@@ -53,6 +53,7 @@ export const FeedbackModal: React.FC = () => {
   const [action, setAction] = useState<ActionState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [progress, setProgress] = useState<number | null>(null);
   const [isRecordingVideo, setIsRecordingVideo] = useState(false);
   const [lastVideo, setLastVideo] = useState<LastVideo | null>(null);
   const mountedRef = useRef(true);
@@ -74,10 +75,18 @@ export const FeedbackModal: React.FC = () => {
     // "stuck".
     const statusSub = DeviceEventEmitter.addListener(
       'yaverFeedback:status',
-      (payload: { message?: string; phase?: string }) => {
+      (payload: { message?: string; phase?: string; progress?: number }) => {
         if (!mountedRef.current) return;
         const msg = payload?.message || payload?.phase || '';
         if (msg) setToast(msg);
+        if (typeof payload?.progress === 'number') {
+          setProgress(payload.progress);
+        }
+        // On final phases, fade the bar to 100% so the user sees
+        // completion before the modal auto-dismisses.
+        if (payload?.phase === 'done' || payload?.phase === 'error') {
+          setProgress(1);
+        }
       },
     );
     return () => {
@@ -154,14 +163,25 @@ export const FeedbackModal: React.FC = () => {
   const handleHotReload = useCallback(async () => {
     setAction('hot-reloading');
     setError(null);
+    setProgress(0);
+    setToast('Sending…');
     try {
+      // Default mode: bundle. Always rebuilds via the agent regardless
+      // of Metro state. P2PClient.reloadApp auto-resolves projectName +
+      // bundleId from expo-constants / NativeModules so the agent can
+      // map this app to its MobileProject scan entry without needing
+      // `yaver dev start` to have been run.
       await runWithReconnect(async (client) => {
-        await client.reloadApp('dev');
+        await client.reloadApp('bundle');
       });
-      setToast('Reload sent');
-      closeSoon(800);
+      // We don't auto-close here — the agent's BlackBox status pings
+      // will keep the modal updated, and the on-device YaverBundleLoader
+      // will reload the JS once the fresh bundle arrives. Modal stays
+      // up for a beat so the user sees the final progress state.
+      closeSoon(2500);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
+      setProgress(null);
     } finally {
       if (mountedRef.current) setAction('idle');
     }
@@ -449,6 +469,16 @@ export const FeedbackModal: React.FC = () => {
                 busy={action === 'sending-video'}
               />
 
+              {progress !== null && (
+                <View style={styles.progressTrack}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      { width: `${Math.round(progress * 100)}%` },
+                    ]}
+                  />
+                </View>
+              )}
               {toast && <Text style={styles.toast}>{toast}</Text>}
               {error && <Text style={styles.error}>{error}</Text>}
             </Pressable>
@@ -549,6 +579,18 @@ const styles = StyleSheet.create({
   actionText: {
     fontSize: 15,
     fontWeight: '700',
+  },
+  progressTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    overflow: 'hidden',
+    marginTop: 4,
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#818cf8',
+    borderRadius: 3,
   },
   toast: {
     color: '#22c55e',

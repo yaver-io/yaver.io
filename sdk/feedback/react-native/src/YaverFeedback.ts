@@ -167,8 +167,8 @@ export class YaverFeedback {
           }
         } else if (cmd.command === 'status') {
           // Pipe agent progress pings to the UI. The FeedbackModal
-          // subscribes to this event and renders the message while a
-          // reload / build is in flight.
+          // subscribes to this event and renders the message + a
+          // progress bar while a reload / build is in flight.
           const message =
             typeof cmd.data?.message === 'string'
               ? (cmd.data.message as string)
@@ -177,10 +177,15 @@ export class YaverFeedback {
             typeof cmd.data?.phase === 'string'
               ? (cmd.data.phase as string)
               : '';
+          const progress =
+            typeof cmd.data?.progress === 'number'
+              ? Math.max(0, Math.min(1, cmd.data.progress as number))
+              : undefined;
           const { DeviceEventEmitter } = require('react-native');
           DeviceEventEmitter.emit('yaverFeedback:status', {
             message,
             phase,
+            progress,
             at: Date.now(),
           });
         }

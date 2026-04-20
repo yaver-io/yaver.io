@@ -277,6 +277,28 @@ func detectExpoSDK(dir, framework string) string {
 // ── Startup prebuild ──────────────────────────────────────────────────
 
 // PrewarmMobileProjects runs on `yaver serve` startup.
+// findMobileProjectByName returns the cached MobileProject whose Name
+// matches the supplied identifier (case-insensitive, trimmed). Used by
+// /dev/build-native + /dev/reload-app to resolve which project to
+// build when the Feedback SDK sends a `projectName` hint — needed
+// because TestFlight-installed apps never run `yaver dev start` so
+// the agent has no "active" dev server to fall back on. Returns nil
+// if the cache is empty (cold start) or no match.
+func findMobileProjectByName(name string) *MobileProject {
+	if name == "" {
+		return nil
+	}
+	target := strings.ToLower(strings.TrimSpace(name))
+	mobileProjectCache.mu.RLock()
+	defer mobileProjectCache.mu.RUnlock()
+	for i := range mobileProjectCache.projects {
+		if strings.EqualFold(strings.TrimSpace(mobileProjectCache.projects[i].Name), target) {
+			return &mobileProjectCache.projects[i]
+		}
+	}
+	return nil
+}
+
 // Scans all mobile projects, checks dev builds, and pre-builds missing ones in background.
 func PrewarmMobileProjects() {
 	log.Println("[mobile-scan] Scanning for mobile projects...")
