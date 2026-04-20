@@ -73,6 +73,7 @@ export const DEFAULT_WEB_BASE_URL = 'https://yaver.io';
 
 let convexSiteUrl = DEFAULT_CONVEX_SITE_URL;
 let webBaseUrl = DEFAULT_WEB_BASE_URL;
+let strictNativeAuth = false;
 
 /** Override the Convex site URL + web base (staging vs prod). */
 export function configureAuthEndpoints(opts: {
@@ -81,6 +82,19 @@ export function configureAuthEndpoints(opts: {
 }): void {
   if (opts.convexSiteUrl) convexSiteUrl = opts.convexSiteUrl;
   if (opts.webBaseUrl) webBaseUrl = opts.webBaseUrl;
+}
+
+/**
+ * Enable strict native auth: refuse any fallback that would redirect the
+ * user to an external browser (Safari / Chrome) or show a device code.
+ * See FeedbackConfig.strictNativeAuth for rationale.
+ */
+export function setStrictNativeAuth(enabled: boolean): void {
+  strictNativeAuth = enabled;
+}
+
+export function isStrictNativeAuth(): boolean {
+  return strictNativeAuth;
 }
 
 export function getConvexSiteUrl(): string {
@@ -291,17 +305,29 @@ export async function signInWithOAuth(
   opts?: { redirectUrl?: string; preferEphemeralSession?: boolean },
 ): Promise<{ token: string }> {
   if (!WebBrowser) {
+    // In strictNativeAuth we hard-fail rather than letting the caller
+    // fall back to any homegrown `Linking.openURL(…)` flow that would
+    // leave the app for Safari. Without strict mode we still can't
+    // proceed (no browser module available) so the behavior is the same
+    // — just a clearer error message.
     throw new Error(
-      'expo-web-browser is not installed. Add it as a peer dep to enable OAuth sign-in.',
+      'expo-web-browser is not installed. Add it as a peer dep to enable in-app OAuth sign-in.',
     );
   }
   const redirectUrl = opts?.redirectUrl ?? DEFAULT_OAUTH_REDIRECT;
   const params = new URLSearchParams({ client: 'mobile' });
   const authUrl = `${webBaseUrl}/api/auth/oauth/${provider}?${params.toString()}`;
 
+  // In strict mode force ephemeral session (ASWebAuthenticationSession
+  // with no shared cookie jar) so the OAuth dance is visibly native and
+  // can never hand off to the user's default browser.
+  const prefer =
+    strictNativeAuth || opts?.preferEphemeralSession
+      ? true
+      : false;
   const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUrl, {
-    preferEphemeralSession: opts?.preferEphemeralSession ?? false,
-    showInRecents: true,
+    preferEphemeralSession: prefer,
+    showInRecents: !strictNativeAuth,
   });
 
   if (result.type !== 'success' || !result.url) {

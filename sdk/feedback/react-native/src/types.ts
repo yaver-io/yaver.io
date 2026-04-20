@@ -157,6 +157,25 @@ export interface FeedbackConfig {
    * Default: false (HTTPS preferred when fingerprint available, HTTP fallback).
    */
   requireTLS?: boolean;
+  /**
+   * Compile-time lockdown of the auth flow. When true the SDK refuses to
+   * ever open the user's external browser (Safari / Chrome) or show a
+   * 6-char device code. Auth happens only via native Apple Sign-In
+   * (`expo-apple-authentication`), in-app OAuth (`expo-web-browser`'s
+   * `ASWebAuthenticationSession` with `preferEphemeralSession: true`), or
+   * the built-in email/password form. If a required peer dep is missing,
+   * `signInWithOAuth`/`signInWithApple` throw instead of silently falling
+   * back to a web redirect.
+   *
+   * Recommended for apps that already embed OAuth on the native side and
+   * never want their users to see a `yaver.io` landing page. This is the
+   * belt-and-suspenders version of what the SDK has done since 0.6; set
+   * it to guarantee future regressions can't quietly reintroduce a
+   * browser-hop fallback.
+   *
+   * Default: false (preserve historical behavior).
+   */
+  strictNativeAuth?: boolean;
 }
 
 export interface FeedbackBundle {

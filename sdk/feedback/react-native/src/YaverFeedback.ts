@@ -6,6 +6,7 @@ import { P2PClient } from './P2PClient';
 import { ShakeDetector } from './ShakeDetector';
 import {
   configureAuthEndpoints,
+  setStrictNativeAuth,
   getToken,
   getSelectedDeviceId,
   clearToken,
@@ -88,6 +89,9 @@ export class YaverFeedback {
       convexSiteUrl: cfg.authConvexSiteUrl,
       webBaseUrl: cfg.authWebBaseUrl,
     });
+    // Compile-time lockdown: refuse any browser-hop / device-code fallback
+    // and force ASWebAuthenticationSession in ephemeral mode for OAuth.
+    setStrictNativeAuth(cfg.strictNativeAuth === true);
     // If no explicit convexUrl was set but we have an auth site URL, use it
     // so Discovery.discoverFromConvex() has somewhere to look up the user's
     // machines (works for both LAN-direct and off-LAN relay paths).
