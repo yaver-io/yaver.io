@@ -23,6 +23,88 @@ import {
   type OAuthProvider,
 } from './auth';
 
+// ── ProviderLogo ─────────────────────────────────────────────────────
+//
+// Mirrors the Yaver mobile app's login screen — Apple, Google, GitHub,
+// GitLab, Microsoft each get their brand mark next to the label.
+// Mobile uses `Ionicons` from `@expo/vector-icons`. We soft-require
+// the same package so apps that have it (every Expo app does) get
+// real logos automatically; bare-RN apps without the package fall
+// back to a single-letter monogram in a tinted circle.
+//
+// Each entry holds: Ionicons name, fallback letter, brand colour,
+// optional Apple-on-light invert (Apple's wordmark needs the
+// alternate "logo-apple-appstore" / dark variant on dark backgrounds).
+type ProviderTheme = {
+  ion: string;
+  letter: string;
+  fg: string;
+  bg: string;
+};
+
+const PROVIDER_THEME: Record<OAuthProvider | 'apple', ProviderTheme> = {
+  apple:     { ion: 'logo-apple',     letter: '', fg: '#FFFFFF', bg: 'transparent' },
+  google:    { ion: 'logo-google',    letter: 'G', fg: '#EA4335', bg: 'transparent' },
+  github:    { ion: 'logo-github',    letter: 'G', fg: '#FFFFFF', bg: 'transparent' },
+  gitlab:    { ion: 'logo-gitlab',    letter: 'G', fg: '#FC6D26', bg: 'transparent' },
+  microsoft: { ion: 'logo-microsoft', letter: 'M', fg: '#00A4EF', bg: 'transparent' },
+};
+
+const ProviderLogo: React.FC<{ provider: OAuthProvider | 'apple' }> = ({
+  provider,
+}) => {
+  const theme = PROVIDER_THEME[provider] ?? PROVIDER_THEME.apple;
+  // Soft-require @expo/vector-icons so the SDK works in bare-RN apps
+  // that don't ship Expo. If present, render the brand glyph; if
+  // not, render a coloured monogram fallback.
+  let Ionicons: React.ComponentType<{
+    name: string;
+    size?: number;
+    color?: string;
+    style?: object;
+  }> | null = null;
+  try {
+    const mod = require('@expo/vector-icons');
+    Ionicons = mod?.Ionicons ?? null;
+  } catch {
+    // package not installed — use letter fallback
+  }
+  if (Ionicons) {
+    return (
+      <Ionicons
+        name={theme.ion}
+        size={18}
+        color={theme.fg}
+        style={iconStyles.icon}
+      />
+    );
+  }
+  if (!theme.letter) {
+    return null;
+  }
+  return (
+    <View style={[iconStyles.fallback, { backgroundColor: theme.fg + '22' }]}>
+      <Text style={[iconStyles.fallbackText, { color: theme.fg }]}>{theme.letter}</Text>
+    </View>
+  );
+};
+
+const iconStyles = StyleSheet.create({
+  icon: { marginRight: 12 },
+  fallback: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  fallbackText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+});
+
 export interface YaverLoginScreenProps {
   /** Invoked once a session token is issued and the user is loaded. */
   onLoggedIn: (token: string) => void;
@@ -125,7 +207,10 @@ export const YaverLoginScreen: React.FC<YaverLoginScreenProps> = ({
       {busyProvider === id ? (
         <ActivityIndicator color="#e0e0e0" />
       ) : (
-        <Text style={styles.buttonText}>{label}</Text>
+        <View style={styles.buttonContent}>
+          <ProviderLogo provider={id} />
+          <Text style={[styles.buttonText, styles.buttonTextWithIcon]}>{label}</Text>
+        </View>
       )}
     </Pressable>
   );
@@ -295,6 +380,14 @@ const styles = StyleSheet.create({
   },
   buttonPressed: { opacity: 0.7 },
   buttonText: { color: '#e0e0e0', fontSize: 15, fontWeight: '600' },
+  buttonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  buttonTextWithIcon: {
+    // No extra spacing — ProviderLogo provides its own marginRight.
+  },
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
