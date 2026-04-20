@@ -29,6 +29,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/quic-go/quic-go"
+	"golang.org/x/mod/semver"
 )
 
 const version = "1.99.10"
@@ -213,6 +214,8 @@ func main() {
 		runDevices(os.Args[2:])
 	case "config":
 		runConfig(os.Args[2:])
+	case "auto-update":
+		runAutoUpdate(os.Args[2:])
 	case "relay":
 		runRelay(os.Args[2:])
 	case "tunnel":
@@ -2696,6 +2699,65 @@ func runShutdown() {
 // config — dump current CLI configuration
 // ---------------------------------------------------------------------------
 
+// runAutoUpdate handles `yaver auto-update [enable|disable|status|check]`.
+// Mirrors the shape of `yaver auto-start`. Persists `auto_update` in
+// ~/.yaver/config.json. Without the toggle and the semver guard added
+// alongside it, a stale "latest release" tag on the upstream repo
+// could DOWNGRADE a running agent — which actually happened on
+// 2026-04-20 (kivanccakmak/yaver-cli's latest pointed at v1.37.0
+// while the agent was on v1.99.10).
+func runAutoUpdate(args []string) {
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil {
+		cfg = &Config{}
+	}
+	sub := ""
+	if len(args) > 0 {
+		sub = args[0]
+	}
+	switch sub {
+	case "", "status":
+		fmt.Println("auto-update")
+		fmt.Printf("  enabled: %v\n", cfg.AutoUpdate)
+		fmt.Printf("  repo:    %s\n", updateRepo())
+		fmt.Printf("  current: v%s\n", version)
+		fmt.Println("")
+		fmt.Println("Subcommands:")
+		fmt.Println("  yaver auto-update enable   — opt in to auto-update on agent boot")
+		fmt.Println("  yaver auto-update disable  — opt out (default)")
+		fmt.Println("  yaver auto-update check    — run the update check once, ignoring config")
+		fmt.Println("")
+		fmt.Println("Override repo: YAVER_UPDATE_REPO=<owner>/<repo> yaver serve")
+	case "enable", "on", "true":
+		cfg.AutoUpdate = true
+		if err := SaveConfig(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("auto-update: enabled")
+		fmt.Printf("Will check %s for newer releases on agent boot.\n", updateRepo())
+	case "disable", "off", "false":
+		cfg.AutoUpdate = false
+		if err := SaveConfig(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("auto-update: disabled")
+		fmt.Println("Run `yaver update` manually when you want a new version.")
+	case "check":
+		// Force a single check + apply, ignoring config. Used to test
+		// the new semver guard / repo without flipping persistent
+		// settings.
+		forced := *cfg
+		forced.AutoUpdate = true
+		checkAutoUpdate(&forced)
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown auto-update subcommand: %q\n", sub)
+		fmt.Fprintln(os.Stderr, "Try: yaver auto-update [status|enable|disable|check]")
+		os.Exit(1)
+	}
+}
+
 func runConfig(args []string) {
 	// Handle "yaver config set bootstrap-secret <value>" and
 	// "yaver config bootstrap-secret [value|clear]".
@@ -3464,6 +3526,26 @@ func valueOrEmpty(s string) string {
 	return s
 }
 
+// updateRepo returns the GitHub `owner/repo` the auto-updater should
+// query for new releases. Defaults to the canonical CLI distribution
+// repo. Override with the YAVER_UPDATE_REPO env var so future moves
+// (or staging deploys) don't require a binary rebuild — every running
+// agent picks the new repo on its next update tick.
+//
+// Default was historically `kivanccakmak/yaver-cli` but its `latest`
+// release pointer drifted to v1.37.0 while the actual current
+// release pipeline targets `kivanccakmak/yaver.io`. Pointing here by
+// default stops the silent downgrade. Operators who maintain a
+// separate distribution repo can still set YAVER_UPDATE_REPO.
+func updateRepo() string {
+	if r := strings.TrimSpace(os.Getenv("YAVER_UPDATE_REPO")); r != "" {
+		return r
+	}
+	return "kivanccakmak/yaver.io"
+}
+
+func updateRepoForLog() string { return updateRepo() }
+
 // checkAutoUpdate checks for a newer release on GitHub and self-updates the binary.
 // Returns silently if auto-update is disabled or if already up-to-date.
 func checkAutoUpdate(cfg *Config) {
@@ -3478,7 +3560,7 @@ func checkAutoUpdate(cfg *Config) {
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get("https://api.github.com/repos/kivanccakmak/yaver-cli/releases/latest")
+	resp, err := client.Get(fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", updateRepo()))
 	if err != nil {
 		log.Printf("[auto-update] Failed to check for updates: %v", err)
 		return
@@ -3497,19 +3579,51 @@ func checkAutoUpdate(cfg *Config) {
 	}
 
 	latestVersion := strings.TrimPrefix(release.TagName, "v")
-	if latestVersion == "" || latestVersion == version {
-		log.Printf("[auto-update] Already up-to-date (v%s)", version)
+	if latestVersion == "" {
+		log.Printf("[auto-update] Empty release tag from GitHub — skipping")
 		return
 	}
 
-	// Simple semver comparison: if latest == current, skip
-	// For a proper comparison we just check inequality since GitHub returns the latest
+	// Proper semver comparison so a stale "latest release" pointer on
+	// the upstream repo can never DOWNGRADE the running agent. Without
+	// this check, GitHub returning v1.37.0 as "latest" while the agent
+	// runs v1.99.10 would happily clobber the modern binary with the
+	// old one (which is exactly what happened to kivanc's Mac on
+	// 2026-04-20). semver.Compare returns +1 when a > b, 0 when equal,
+	// -1 when a < b — only proceed if latest is strictly greater.
+	currentSv := "v" + strings.TrimPrefix(version, "v")
+	latestSv := "v" + latestVersion
+	if !semver.IsValid(currentSv) || !semver.IsValid(latestSv) {
+		log.Printf("[auto-update] Non-semver version (current=%s latest=%s) — skipping", currentSv, latestSv)
+		return
+	}
+	cmp := semver.Compare(latestSv, currentSv)
+	if cmp == 0 {
+		log.Printf("[auto-update] Already up-to-date (v%s)", version)
+		return
+	}
+	if cmp < 0 {
+		log.Printf("[auto-update] Upstream %q is older than running v%s — refusing to downgrade. (Check that %s is the right release repo and its `latest` pointer is current.)",
+			latestSv, version, updateRepoForLog())
+		return
+	}
+
 	log.Printf("[auto-update] New version available: v%s (current: v%s)", latestVersion, version)
 
 	goos := runtime.GOOS
 	goarch := runtime.GOARCH
-	binaryName := fmt.Sprintf("yaver-%s-%s", goos, goarch)
-	downloadURL := fmt.Sprintf("https://github.com/kivanccakmak/yaver-cli/releases/download/v%s/%s", latestVersion, binaryName)
+	// release-cli.yml ships macOS/Linux as `.tar.gz`, Windows as
+	// `.exe`. Auto-update used to download a bare `yaver-darwin-arm64`
+	// path that didn't exist in the canonical release — the only
+	// repo that had it was `kivanccakmak/yaver-cli` whose latest
+	// pointer drifted to v1.37.0. Match the real asset names now.
+	var assetName string
+	if goos == "windows" {
+		assetName = fmt.Sprintf("yaver-windows-%s.exe", goarch)
+	} else {
+		assetName = fmt.Sprintf("yaver-%s-%s.tar.gz", goos, goarch)
+	}
+	downloadURL := fmt.Sprintf("https://github.com/%s/releases/download/v%s/%s", updateRepo(), latestVersion, assetName)
 
 	log.Printf("[auto-update] Downloading %s", downloadURL)
 	dlResp, err := client.Get(downloadURL)
@@ -3524,7 +3638,10 @@ func checkAutoUpdate(cfg *Config) {
 		return
 	}
 
-	// Write to a temp file next to the current binary
+	// Write to a temp file next to the current binary, then replace
+	// in two stages: extract from tar.gz (macOS/Linux) or use the raw
+	// .exe (Windows). Backup the running binary as `.previous` first
+	// so a future bad update can be rolled back.
 	exePath, err := os.Executable()
 	if err != nil {
 		log.Printf("[auto-update] Cannot find executable path: %v", err)
@@ -3538,13 +3655,65 @@ func checkAutoUpdate(cfg *Config) {
 		return
 	}
 
-	if _, err := io.Copy(tmpFile, dlResp.Body); err != nil {
+	if goos == "windows" {
+		if _, err := io.Copy(tmpFile, dlResp.Body); err != nil {
+			tmpFile.Close()
+			os.Remove(tmpPath)
+			log.Printf("[auto-update] Failed to write update: %v", err)
+			return
+		}
 		tmpFile.Close()
-		os.Remove(tmpPath)
-		log.Printf("[auto-update] Failed to write update: %v", err)
-		return
+	} else {
+		// tar.gz containing a single file named `yaver`
+		gzr, err := gzip.NewReader(dlResp.Body)
+		if err != nil {
+			tmpFile.Close()
+			os.Remove(tmpPath)
+			log.Printf("[auto-update] gzip open failed: %v", err)
+			return
+		}
+		defer gzr.Close()
+		tr := tar.NewReader(gzr)
+		extracted := false
+		for {
+			hdr, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				tmpFile.Close()
+				os.Remove(tmpPath)
+				log.Printf("[auto-update] tar read failed: %v", err)
+				return
+			}
+			// Take the first regular file — release tarball ships
+			// exactly one entry named `yaver`.
+			if hdr.Typeflag == tar.TypeReg {
+				if _, err := io.Copy(tmpFile, tr); err != nil {
+					tmpFile.Close()
+					os.Remove(tmpPath)
+					log.Printf("[auto-update] Failed to extract %s: %v", hdr.Name, err)
+					return
+				}
+				extracted = true
+				break
+			}
+		}
+		tmpFile.Close()
+		if !extracted {
+			os.Remove(tmpPath)
+			log.Printf("[auto-update] Tarball had no regular files — bad release asset")
+			return
+		}
 	}
-	tmpFile.Close()
+
+	// Backup the current binary so we have a rollback path. Best-
+	// effort: a missing previous file shouldn't block the update.
+	backupPath := exePath + ".previous"
+	_ = os.Remove(backupPath)
+	if err := copyFile(exePath, backupPath); err != nil {
+		log.Printf("[auto-update] (warn) backup of running binary failed: %v", err)
+	}
 
 	// Replace the current binary with the new one
 	if err := os.Rename(tmpPath, exePath); err != nil {
