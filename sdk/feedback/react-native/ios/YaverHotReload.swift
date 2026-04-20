@@ -19,7 +19,13 @@ class YaverHotReload: NSObject {
   static let bundleFile = "main.jsbundle"
   static let reloadNotification = Notification.Name("YaverHotReloadBundle")
 
-  override static func requiresMainQueueSetup() -> Bool { return true }
+  // `requiresMainQueueSetup` is an RCTBridgeModule protocol method,
+  // not an NSObject method — so it must not be marked `override`.
+  // Modern React Native discovers it via the Objective-C runtime
+  // (the Swift-generated ObjC interface plus the .m file's
+  // RCT_EXPORT_MODULE macro). Marking it `override` errors with
+  // "does not override any method from its superclass" on Swift 5+.
+  @objc static func requiresMainQueueSetup() -> Bool { return true }
 
   /// Download a Hermes bundle from the agent and trigger a bridge reload.
   @objc func loadBundle(_ urlString: String,
