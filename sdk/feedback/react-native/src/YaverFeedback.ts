@@ -13,6 +13,10 @@ import {
   clearSelectedDeviceId,
   DEFAULT_CONVEX_SITE_URL,
 } from './auth';
+import {
+  getQuickIconDisabled,
+  setQuickIconDisabled,
+} from './preferences';
 
 // Is this JS runtime the Yaver mobile app's super-host bridge? The
 // YaverInfo native module is only registered inside Yaver's container
@@ -48,6 +52,14 @@ let maxErrors = 5;
 
 /** Track whether BlackBox was running before disable (to restart on enable). */
 let blackBoxWasStreaming = false;
+
+/**
+ * Tracks whether the user has already shaken once in this process.
+ * Consumed by QuickActionIcon's `'after-shake'` mode so the icon
+ * appears the first time a user discovers shake and stays around
+ * thereafter.
+ */
+let firstShakeFired = false;
 
 /**
  * Flag evaluation cache — 30s TTL per `userId|key`. Prevents a
@@ -134,6 +146,7 @@ export class YaverFeedback {
     if (enabled && config.trigger === 'shake') {
       shakeDetector = new ShakeDetector();
       shakeDetector.start(() => {
+        YaverFeedback.notifyShake();
         if (config?.reportingOnly) {
           YaverFeedback.sendAutoReport();
         } else {
@@ -464,6 +477,7 @@ export class YaverFeedback {
       if (config?.trigger === 'shake' && !shakeDetector) {
         shakeDetector = new ShakeDetector();
         shakeDetector.start(() => {
+          YaverFeedback.notifyShake();
           if (config?.reportingOnly) {
             YaverFeedback.sendAutoReport();
           } else {
@@ -794,6 +808,59 @@ export class YaverFeedback {
     } catch {
       // Not in dev mode
     }
+  }
+
+  /**
+   * Internal: fired from every shake path (dev-menu + accelerometer)
+   * before the feedback modal opens. Emits `yaverFeedback:firstShake`
+   * exactly once per process so QuickActionIcon's `'after-shake'` mode
+   * can surface itself on first shake and stay visible for the rest of
+   * the session.
+   */
+  static notifyShake(): void {
+    if (firstShakeFired) return;
+    firstShakeFired = true;
+    try {
+      const { DeviceEventEmitter } = require('react-native');
+      DeviceEventEmitter.emit('yaverFeedback:firstShake');
+    } catch {
+      // emitter unavailable (e.g. jsdom unit test) — safe to ignore
+    }
+  }
+
+  /**
+   * Show / hide the QuickActionIcon programmatically and persist the
+   * choice across launches. Host apps can call this from a settings
+   * screen so the user has a second way to re-enable the icon after
+   * hiding it via the icon's own long-press menu — shake is always the
+   * third back-door because it never depends on a visible control.
+   */
+  static async setQuickIconVisible(visible: boolean): Promise<void> {
+    await setQuickIconDisabled(!visible);
+    try {
+      const { DeviceEventEmitter } = require('react-native');
+      DeviceEventEmitter.emit(
+        visible ? 'yaverFeedback:quickIconShow' : 'yaverFeedback:quickIconHide',
+      );
+    } catch {
+      // emitter unavailable — preference is still persisted
+    }
+  }
+
+  /**
+   * Returns `true` when the user has chosen to hide the QuickActionIcon
+   * (via its long-press menu or `setQuickIconVisible(false)`).
+   * FeedbackModal uses this to surface a one-tap "Show quick icon"
+   * control so the user can bring the icon back without having to know
+   * about the programmatic API.
+   */
+  static async isQuickIconHidden(): Promise<boolean> {
+    return getQuickIconDisabled();
+  }
+
+  /** Clear the persisted "user hid the icon" flag. */
+  static async resetQuickIconPreference(): Promise<void> {
+    await YaverFeedback.setQuickIconVisible(true);
   }
 
   /** Tear down the SDK (stop shake detector, clear state). */

@@ -22,6 +22,7 @@ import {
 import { uploadFeedback } from './upload';
 import { DeviceInfo, FeedbackBundle } from './types';
 import { AuthOverlay } from './AuthOverlay';
+import { QuickActionIcon } from './QuickActionIcon';
 
 /**
  * Simplified feedback modal — 5 actions:
@@ -66,6 +67,11 @@ export const FeedbackModal: React.FC = () => {
   // hidden button instead of a runtime error.
   const voiceSupported = useRef<boolean>(isVoiceCaptureSupported()).current;
   const [lastVideo, setLastVideo] = useState<LastVideo | null>(null);
+  // Tracks whether the user has hidden the QuickActionIcon via its
+  // long-press menu. Shake is always available, so the feedback modal
+  // is our guaranteed UI for bringing the icon back — we surface a
+  // small "Show quick icon" row when this is true.
+  const [quickIconHidden, setQuickIconHidden] = useState(false);
   // Vibing-input mode: same expand-on-tap pattern as email login.
   // Tap "Vibing" once → the button reveals an input + Send; that lets
   // the user say WHAT they want to vibe on instead of firing a canned
@@ -84,6 +90,14 @@ export const FeedbackModal: React.FC = () => {
         setError(null);
         setToast(null);
         setAction('idle');
+        // Re-read the "user hid the quick icon" flag on every open so
+        // the re-enable row reflects the latest preference (the user
+        // might have hidden or shown it between opens).
+        YaverFeedback.isQuickIconHidden()
+          .then((v) => {
+            if (mountedRef.current) setQuickIconHidden(v);
+          })
+          .catch(() => {});
       }
     });
     // Agent streams build / compile progress through the BlackBox
@@ -517,6 +531,7 @@ export const FeedbackModal: React.FC = () => {
   return (
     <>
       <AuthOverlay />
+      <QuickActionIcon />
       {visible && (
         <Modal
           visible={visible}
@@ -676,6 +691,34 @@ export const FeedbackModal: React.FC = () => {
               )}
               {toast && <Text style={styles.toast}>{toast}</Text>}
               {error && <Text style={styles.error}>{error}</Text>}
+
+              {/* Quick-icon toggle. The user's three ways to control
+                  the floating icon are: (1) long-press the icon →
+                  Hide, (2) tap this row to toggle it on/off, (3) shake
+                  → this modal → tap this row. Shake is the unkillable
+                  back-door when the icon is hidden and the dev hasn't
+                  exposed their own settings UI. */}
+              <Pressable
+                onPress={async () => {
+                  const next = !quickIconHidden;
+                  setQuickIconHidden(next);
+                  await YaverFeedback.setQuickIconVisible(!next);
+                }}
+                style={({ pressed }) => [
+                  styles.quickIconToggle,
+                  pressed && { opacity: 0.7 },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  quickIconHidden ? 'Show quick icon' : 'Hide quick icon'
+                }
+              >
+                <Text style={styles.quickIconToggleText}>
+                  {quickIconHidden
+                    ? '◯  Show quick-access icon'
+                    : '●  Hide quick-access icon'}
+                </Text>
+              </Pressable>
             </Pressable>
           </Pressable>
         </Modal>
@@ -848,5 +891,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: 'center',
     marginTop: 4,
+  },
+  quickIconToggle: {
+    marginTop: 4,
+    alignSelf: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  quickIconToggleText: {
+    color: '#9ca3af',
+    fontSize: 12,
+    fontWeight: '500',
   },
 });

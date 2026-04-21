@@ -45,7 +45,14 @@ export { AuthOverlay } from './AuthOverlay';
 export { ShakeDetector } from './ShakeDetector';
 export { FloatingButton } from './FloatingButton';
 export { FeedbackModal } from './FeedbackModal';
+export { QuickActionIcon } from './QuickActionIcon';
+export type { QuickActionIconProps } from './QuickActionIcon';
 export { FixReport } from './FixReport';
+export {
+  getQuickIconDisabled,
+  setQuickIconDisabled,
+  clearQuickIconDisabled,
+} from './preferences';
 export {
   configureAuthEndpoints,
   getConvexSiteUrl,

@@ -42,6 +42,34 @@ export interface FeedbackConfig {
   preferredDeviceId?: string;
   /** How feedback collection is triggered */
   trigger?: 'shake' | 'floating-button' | 'manual';
+  /**
+   * Small tap-to-open icon that floats above the app so the user
+   * doesn't have to shake every time they want to open feedback.
+   * Single tap → open the feedback modal; long-press → menu with
+   * "Hide icon" (persisted across launches via AsyncStorage).
+   *
+   * - `'auto'` (default) → `'always'` on iOS/Android, `'off'` on web.
+   * - `'always'` → visible from app launch.
+   * - `'after-shake'` → hidden until the first shake this session.
+   * - `'off'` → never rendered. Shake still works.
+   *
+   * The user can always override `'always'` / `'auto'` by long-pressing
+   * → Hide. Devs can clear that override via
+   * `YaverFeedback.resetQuickIconPreference()`.
+   */
+  quickIcon?: 'auto' | 'always' | 'after-shake' | 'off';
+  /**
+   * Background color for the quick-action icon. Default: '#6366f1'
+   * (indigo). Pick something distinctive so the icon never visually
+   * collides with your own FAB.
+   */
+  quickIconColor?: string;
+  /**
+   * Initial position of the quick-action icon, in pixels from the
+   * top-left. Default: near the top-right corner of the screen. The
+   * icon is draggable at runtime — this is only the first mount.
+   */
+  quickIconInitialPosition?: { x: number; y: number };
   /** Enable/disable the SDK. Defaults to __DEV__ */
   enabled?: boolean;
   /**
