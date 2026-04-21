@@ -197,9 +197,11 @@ func TestMorningP2PRelayFlow(t *testing.T) {
 		// still OK — the test's prior steps already validated auth
 		// rejection. The guarantee we want is in the prefix list,
 		// which is a static data check:
-		for _, p := range guestAllowedPrefixes {
-			if strings.HasPrefix("/morning/", p) || strings.HasPrefix("/recordings/", p) {
-				t.Fatalf("morning/recordings leaked into guestAllowedPrefixes: %q", p)
+		for _, list := range [][]string{guestFullAllowedPrefixes, guestFeedbackOnlyAllowedPrefixes} {
+			for _, p := range list {
+				if strings.HasPrefix("/morning/", p) || strings.HasPrefix("/recordings/", p) {
+					t.Fatalf("morning/recordings leaked into a guest allowlist: %q", p)
+				}
 			}
 		}
 	}

@@ -65,8 +65,46 @@ func runGuestsInvite(args []string) {
 			opts.ProposedDeviceIDs = splitComma(strings.TrimPrefix(a, "--machines="))
 		case strings.HasPrefix(a, "--devices="):
 			opts.ProposedDeviceIDs = splitComma(strings.TrimPrefix(a, "--devices="))
+		case a == "--scope":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "--scope requires a value (full|feedback-only)")
+				os.Exit(1)
+			}
+			opts.Scope = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--scope="):
+			opts.Scope = strings.TrimPrefix(a, "--scope=")
+		case a == "--full":
+			// Shorthand for teammate invites. End-user invites just omit this flag.
+			opts.Scope = GuestScopeFull
+		case a == "--feedback-only":
+			// Redundant with the default, but explicit is nice for scripts.
+			opts.Scope = GuestScopeFeedbackOnly
+		case a == "--project" || a == "--projects":
+			// Repeatable project-scoping: --project SFMG --project talos
+			// (or comma-separated via --projects=SFMG,talos).
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "--project requires a value (project name or comma-separated list)")
+				os.Exit(1)
+			}
+			opts.AllowedProjects = append(opts.AllowedProjects, splitComma(args[i+1])...)
+			i++
+		case strings.HasPrefix(a, "--project="):
+			opts.AllowedProjects = append(opts.AllowedProjects, splitComma(strings.TrimPrefix(a, "--project="))...)
+		case strings.HasPrefix(a, "--projects="):
+			opts.AllowedProjects = append(opts.AllowedProjects, splitComma(strings.TrimPrefix(a, "--projects="))...)
 		default:
 			positional = append(positional, a)
+		}
+	}
+
+	if opts.Scope != "" {
+		switch opts.Scope {
+		case GuestScopeFull, GuestScopeFeedbackOnly:
+			// ok
+		default:
+			fmt.Fprintf(os.Stderr, "Invalid --scope %q. Must be 'full' or 'feedback-only'.\n", opts.Scope)
+			os.Exit(1)
 		}
 	}
 
@@ -110,6 +148,24 @@ func runGuestsInvite(args []string) {
 	fmt.Printf("Invite code: %s\n", result.InviteCode)
 	if len(opts.ProposedDeviceIDs) > 0 {
 		fmt.Printf("Proposed machines: %s\n", strings.Join(opts.ProposedDeviceIDs, ", "))
+	}
+	scopeShown := result.Scope
+	if scopeShown == "" {
+		scopeShown = opts.Scope
+	}
+	if scopeShown == "" {
+		scopeShown = GuestScopeFeedbackOnly // server default for new invites
+	}
+	if scopeShown == GuestScopeFeedbackOnly {
+		fmt.Printf("Scope: %s  (feedback / blackbox / voice — no tasks, no vibing, no dev-server, /info redacted, tasks force-containerized)\n", scopeShown)
+		fmt.Println("  For a teammate who should get full access, re-invite with: --scope=full")
+	} else {
+		fmt.Printf("Scope: %s  (classic teammate — tasks, vibing, dev server, builds, projects, plus feedback/voice)\n", scopeShown)
+	}
+	if len(opts.AllowedProjects) > 0 {
+		fmt.Printf("Projects: %s  (this guest can only interact with these projects)\n", strings.Join(cleanProjectList(opts.AllowedProjects), ", "))
+	} else {
+		fmt.Println("Projects: all  (to narrow, re-invite with --projects=SFMG,talos)")
 	}
 	fmt.Println()
 	if result.GuestRegistered {
@@ -414,6 +470,7 @@ func runGuestsConfig(args []string) {
 		}
 		for _, c := range configs {
 			fmt.Printf("%-30s  ", c.GuestEmail)
+			fmt.Printf("scope=%-14s  ", guestScopeOrDefault(c.Scope))
 			mode := c.UsageMode
 			if mode == "" {
 				mode = "always"
@@ -465,6 +522,12 @@ func runGuestsConfig(args []string) {
 					mode = "always"
 				}
 				fmt.Printf("Guest: %s (%s)\n", c.GuestEmail, c.GuestName)
+				fmt.Printf("  Scope:            %s\n", guestScopeOrDefault(c.Scope))
+				if projs := cleanProjectList(c.AllowedProjects); len(projs) > 0 {
+					fmt.Printf("  Projects:         %s\n", strings.Join(projs, ", "))
+				} else {
+					fmt.Printf("  Projects:         all\n")
+				}
 				fmt.Printf("  Usage mode:       %s\n", mode)
 				if c.DailyTokenLimit != nil && *c.DailyTokenLimit > 0 {
 					fmt.Printf("  Daily limit:      %d seconds\n", *c.DailyTokenLimit)
@@ -665,7 +728,9 @@ from their Yaver mobile app to run tasks, but cannot access shell,
 vault, sessions, or terminals.
 
 Commands:
-  invite <email>                          Invite by email (host side)
+  invite <email>                          Invite by email (host side, default scope=feedback-only)
+  invite <email> --scope=full             Invite a teammate with classic full scope (tasks, vibing, dev, builds, projects)
+  invite <email> --scope=feedback-only    Hardened end-user scope: feedback / blackbox / voice only, /info redacted, fix-tasks force-containerized
   invite --user-id <id> [--machines ids]  Invite by public user id
   invite <email|id> --machines <id1,id2>  Propose a limited machine scope
   accept <code> [--machines id1,id2]      Accept a pending invite (guest side)

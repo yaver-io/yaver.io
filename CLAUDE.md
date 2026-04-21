@@ -722,6 +722,43 @@ The OAuth callback route (`web/app/api/auth/oauth/[provider]/callback/route.ts`)
 
 Let other people use your machine through Yaver without giving them SSH, passwords, or team setup. The host invites a guest by email; the guest accepts from the Yaver mobile app and can then run tasks on the host's agent. No team or subscription required — just OAuth identity + consent.
 
+### Threat model + hardened `feedback-only` scope (end-user distribution via Feedback SDK)
+
+When a dev ships an app that embeds the Yaver Feedback SDK, end-users of that app can sign in and — if the dev invited them — become guests of the dev's agent. Left unchecked, the historical guest surface (`/tasks`, `/vibing`, `/dev/*`, `/projects`, `/todolist`, `/builds`) is an arbitrary-code-execution vector: a malicious end-user can craft a "task" prompt that exfiltrates files off the dev machine as feedback. The `scope` field on a guest grant closes this.
+
+| Tier | When to use | Allowed paths | Extra hardening |
+|---|---|---|---|
+| `scope=full` (opt-in) | Teammates, trusted cousins | Classic list: `/tasks`, `/vibing`, `/dev/*`, `/builds`, `/projects`, `/todolist`, `/agent/status`, `/agent/runners`, `/shared-storage/*`, plus the feedback/voice/blackbox safe set. | Existing controls (daily limits, runner allowlist, usage mode). |
+| `scope=feedback-only` (**new default**) | End-users of your app — anyone who gets your Feedback SDK | `/feedback`, `/blackbox/*`, `/voice/*`, `/health`, `/info` **only**. | `/info` is redacted (no project list, no workDir, no hostname, no hardware id, no auto-start status, no task stats). `/projects` returns 403. Any task auto-triggered by the guest's feedback (e.g. `/feedback/{id}/fix`) is **force-containerized** regardless of the agent's `containerize_guests` flag. Task workDir is pinned to the resolved project, never guest-provided. |
+
+**Default for new invites is `feedback-only`** — the safer choice given end-user distribution is the common case. Use `--scope=full` when inviting an actual teammate. Legacy rows (pre-`scope`) are treated as `full` at runtime so upgrading the agent in place does not silently downgrade existing grants.
+
+**Multi-device sharing** — a single invite can cover multiple host devices via `--machines=id1,id2`. The guest can trim further on accept. Works identically for both scopes.
+
+**Multi-project narrowing** — `--projects=SFMG,talos` restricts both scopes to those project names (case-insensitive match against `MobileProject.Name`). Feedback-only guests: fix-task creation for a feedback report whose `DeviceInfo.AppName` is outside the list gets 403, and the task's workDir is pinned to the resolved project. Full-scope guests: `/tasks` checks the agent's current workdir project name against the list. Empty = all projects (current behavior).
+
+**CLI**
+```bash
+# End-user of your SFMG app — default scope, scoped to one project
+yaver guests invite cousin@gmail.com --projects=SFMG
+
+# Teammate who needs full access across multiple machines + projects
+yaver guests invite coworker@yaver.io --scope=full --machines=mac-mini,laptop --projects=yaver,sfmg
+
+# Downgrade an existing full-scope grant
+yaver guests config cousin@gmail.com scope=feedback-only projects=SFMG
+```
+
+**MCP** — `guest_invite` accepts `scope` and `projects`. `guest_config` surfaces both on read and update.
+
+**Agent enforcement (files)**
+- `desktop/agent/guest_scope.go` — `GuestScopeFull` / `GuestScopeFeedbackOnly` constants, `guestFullAllowedPrefixes` / `guestFeedbackOnlyAllowedPrefixes` lists, `isGuestAllowedPathForScope`, `GuestCanAccessProject`, `cleanProjectList`.
+- `desktop/agent/httpserver.go::allowGuest` — picks allow-list by scope, stamps `X-Yaver-GuestScope` on forwarded requests, force-containerizes feedback-only guest tasks at `/tasks`, project-gates task creation.
+- `desktop/agent/feedback_http.go::handleFeedbackFix` — project-scope check + workDir pin before task creation.
+- `desktop/agent/httpserver.go::handleInfo` — emits a redacted payload for feedback-only guests.
+
+**Tests** (`guest_scope_test.go`, `allowlist_test.go`, `guest_security_test.go`) — lock in the allow-lists, the scope fallback rules, the project-scoping matcher, and the owner-only tripwire (nothing from `forbiddenOnNonOwnerSurfaces` can appear in either guest list).
+
 ### How it works
 1. **Host** invites: `yaver guests invite cousin@gmail.com` → gets a 6-char invite code (e.g. `K7WP3N`)
 2. **Guest** downloads Yaver app → signs in with **any OAuth method** (Apple, Google, Microsoft, or email)
@@ -757,17 +794,24 @@ Guests can sign in with **any** supported OAuth provider — they don't need to 
 
 ### Guest Endpoint Access
 
-| Allowed (Guest)  | Blocked (Host Only) |
-|------------------|---------------------|
-| `/tasks`, `/tasks/` | `/exec`, `/exec/` |
-| `/feedback`, `/feedback/` | `/vault/*` |
-| `/dev/*` | `/session/*` |
-| `/blackbox/*` | `/tmux/*` |
-| `/voice/*` | `/agent/shutdown`, `/agent/clean` |
-| `/info`, `/agent/status`, `/agent/runners` | `/git/*` |
-| `/projects`, `/todolist`, `/builds` | `/repos/*` |
-| `/vibing`, `/vibing/*` | `/schedules`, `/notifications/*` |
-| `/health`, `/guests` | `/users`, `/sessions` |
+| Path                                   | `scope=full` | `scope=feedback-only` | Owner |
+|----------------------------------------|:-:|:-:|:-:|
+| `/feedback`, `/feedback/`              | ✓ | ✓ | ✓ |
+| `/blackbox/*`, `/voice/*`              | ✓ | ✓ | ✓ |
+| `/health`                              | ✓ | ✓ | ✓ |
+| `/info`                                | ✓ | ✓ (redacted) | ✓ |
+| `/tasks`, `/tasks/`                    | ✓ | — | ✓ |
+| `/vibing`, `/vibing/*`                 | ✓ | — | ✓ |
+| `/dev/*`                               | ✓ | — | ✓ |
+| `/builds`, `/todolist`, `/projects`    | ✓ | — | ✓ |
+| `/agent/status`, `/agent/runners`      | ✓ | — | ✓ |
+| `/shared-storage/*`                    | ✓ | — | ✓ |
+| `/exec`, `/vault/*`, `/session/*`, `/tmux/*`, `/git/*`, `/repos/*`, `/agent/shutdown`, `/agent/clean`, `/schedules`, `/notifications/*`, `/users`, `/sessions` | — | — | ✓ |
+
+Feedback-only guests additionally:
+- `/info` response is stripped to `{ok, version, voiceInputEnabled, voice*, stt*, sandbox.available}` — no hostname, workDir, hwid, project, taskStats, todo counts, autoStart.
+- Any task they trigger via `/feedback/{id}/fix` runs in Docker (`GuestRequireIsolation=true` is forced regardless of host config).
+- If the grant carries `allowedProjects`, fix-triggers for a feedback report outside those projects return 403.
 
 ### How the Agent Enforces Guest Access
 1. Agent polls `GET /guests/allowed` from Convex every 60 seconds → caches approved guest userIds

@@ -2010,7 +2010,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	guestTools := []map[string]interface{}{
 		{
 			"name":        "guest_invite",
-			"description": "Invite a guest by email to use your machine. They can connect from their Yaver mobile app. Max 5 guests, invitation expires in 2 days.",
+			"description": "Invite a guest by email to use your machine. Max 5 guests, invitation expires in 2 days. Default scope is 'feedback-only' — the hardened tier for end-users of your app (no /tasks, no /vibing, no dev-server proxy, no project enumeration; /info is redacted; any fix-triggered task runs inside Docker). Use scope='full' for teammate invites that need task / vibing / dev access.",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
 				"required": []string{"email"},
@@ -2018,6 +2018,16 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"email": map[string]interface{}{
 						"type":        "string",
 						"description": "Email address of the person to invite",
+					},
+					"scope": map[string]interface{}{
+						"type":        "string",
+						"description": "Access tier: 'feedback-only' (default, hardened end-user) or 'full' (classic teammate).",
+						"enum":        []string{"full", "feedback-only"},
+					},
+					"projects": map[string]interface{}{
+						"type":        "array",
+						"description": "Narrow this grant to specific project names/slugs on the host. Empty = all. Useful when feedback-only guests should only see Project A, not B/C.",
+						"items":       map[string]interface{}{"type": "string"},
 					},
 				},
 			},

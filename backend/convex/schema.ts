@@ -595,6 +595,18 @@ export default defineSchema({
     // Host's proposed device scope at invite time. Guest sees this and can trim it on accept.
     // Absent / empty = propose all host devices.
     proposedDeviceIds: v.optional(v.array(v.string())),
+    // Access tier the host is granting:
+    //   "full"          — classic teammate scope: /tasks, /vibing, /dev, /builds, /projects, /todolist,
+    //                     plus the feedback/blackbox/voice/health/info safe set.
+    //   "feedback-only" — hardened end-user scope: /feedback, /blackbox, /voice, /health, /info only.
+    //                     Any task auto-triggered by this guest's feedback is force-containerized.
+    //                     /info is redacted of project metadata; /projects returns 403.
+    // Absent on legacy rows → treated as "full" at runtime (backward-compat). New invites
+    // default to "feedback-only" (safer for Feedback-SDK-distributed end-users).
+    scope: v.optional(v.union(v.literal("full"), v.literal("feedback-only"))),
+    // Optional project narrowing at invite time — copied into guestAccess.allowedProjects
+    // when the invitation is accepted. See guestAccess.allowedProjects for semantics.
+    allowedProjects: v.optional(v.array(v.string())),
     createdAt: v.number(),
     expiresAt: v.number(),           // pending invitations expire after 2 days
     acceptedAt: v.optional(v.number()),
@@ -612,6 +624,21 @@ export default defineSchema({
     guestUserId: v.id("users"),      // guest who has access
     grantedAt: v.number(),
     revokedAt: v.optional(v.number()),  // null = active, set = revoked
+    // Access tier inherited from the accepted invitation. See guestInvitations.scope for semantics.
+    // Absent on legacy rows → treated as "full" at runtime.
+    scope: v.optional(v.union(v.literal("full"), v.literal("feedback-only"))),
+    // Project narrowing — scopes the grant to a subset of the host's
+    // projects/repos even within the allowed path list. Most useful with
+    // scope=feedback-only when a dev wants to let end-users of Project
+    // A file feedback without exposing feedback, workdirs, or fix-task
+    // targets of Projects B/C. Matches by MobileProject.Name / project
+    // slug. Empty / absent = all projects on this host (current behavior).
+    //
+    // Enforced in the agent's auth middleware + /feedback fix-task path:
+    //   - /feedback (GET list): filter to reports whose inferred project is in the list
+    //   - /feedback/{id}/fix: reject if the feedback's project is not in the list
+    //   - /tasks: pin workDir to a project in the list; reject attempts to escape
+    allowedProjects: v.optional(v.array(v.string())),
     // Guest config — set by host to control guest access
     dailyTokenLimit: v.optional(v.number()),    // max task-seconds per day (0 or absent = unlimited)
     allowedRunners: v.optional(v.array(v.string())), // runner IDs guest can use (empty/absent = all)

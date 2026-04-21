@@ -379,16 +379,29 @@ type InviteResult struct {
 	GuestRegistered bool   `json:"guestRegistered"`
 	GuestUserID     string `json:"guestUserId,omitempty"`
 	GuestEmail      string `json:"guestEmail,omitempty"`
+	// Scope is the access tier the server recorded for this invitation.
+	// Mirrors GuestConfig.Scope — "full" or "feedback-only".
+	Scope string `json:"scope,omitempty"`
 }
 
 // InviteGuestOpts controls the destination and optional scoping of an invitation.
 // Exactly one of Email / UserID should be set. ProposedDeviceIDs narrows the
 // invitation to a subset of the host's devices; the guest can trim this
-// further on accept.
+// further on accept. Scope picks the access tier:
+//
+//	""              — server default ("feedback-only" for new invites)
+//	"feedback-only" — hardened end-user tier (feedback / blackbox / voice only)
+//	"full"          — classic teammate tier
 type InviteGuestOpts struct {
 	Email             string
 	UserID            string
 	ProposedDeviceIDs []string
+	Scope             string
+	// AllowedProjects narrows a guest's grant to one or more project names/slugs
+	// on the host. Empty = all projects (current behavior). Most useful paired
+	// with Scope == "feedback-only" when a host wants end-users of Project A to
+	// file feedback without exposing Projects B / C.
+	AllowedProjects []string
 }
 
 // InviteGuest sends a guest invitation via Convex by email.
@@ -407,6 +420,12 @@ func InviteGuestWith(baseURL, token string, opts InviteGuestOpts) (*InviteResult
 	}
 	if len(opts.ProposedDeviceIDs) > 0 {
 		payload["deviceIds"] = opts.ProposedDeviceIDs
+	}
+	if s := strings.TrimSpace(opts.Scope); s != "" {
+		payload["scope"] = s
+	}
+	if projs := cleanProjectList(opts.AllowedProjects); len(projs) > 0 {
+		payload["allowedProjects"] = projs
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -650,9 +669,18 @@ func FetchGuestList(baseURL, token string) ([]GuestInfo, error) {
 
 // GuestConfig describes the config for a single guest from Convex.
 type GuestConfig struct {
-	GuestUserID               string   `json:"guestUserId"`
-	GuestEmail                string   `json:"guestEmail"`
-	GuestName                 string   `json:"guestName"`
+	GuestUserID string `json:"guestUserId"`
+	GuestEmail  string `json:"guestEmail"`
+	GuestName   string `json:"guestName"`
+	// Scope is the access tier this grant was created with:
+	//   "full"          — classic teammate scope (tasks, vibing, dev, builds, projects, ...).
+	//   "feedback-only" — hardened end-user scope (feedback / blackbox / voice / health / info).
+	// Legacy rows without scope come back as "full" (backward-compat).
+	Scope string `json:"scope,omitempty"`
+	// AllowedProjects narrows this grant to specific project slugs on the host.
+	// Empty = all projects. Enforced on /feedback list filtering, /feedback fix
+	// triggering, and /tasks workDir gating.
+	AllowedProjects           []string `json:"allowedProjects,omitempty"`
 	DailyTokenLimit           *int     `json:"dailyTokenLimit,omitempty"`
 	AllowedRunners            []string `json:"allowedRunners,omitempty"`
 	UsageMode                 string   `json:"usageMode,omitempty"`

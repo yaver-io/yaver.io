@@ -36,6 +36,14 @@ export const invite = mutation({
     guestEmail: v.optional(v.string()),
     guestUserId: v.optional(v.string()),
     proposedDeviceIds: v.optional(v.array(v.string())),
+    // Access tier: "full" (classic teammate) or "feedback-only" (hardened end-user).
+    // Default is "feedback-only" — end-user distribution via Feedback SDK is the common
+    // case and safer by default. Use --scope=full for teammate invites.
+    scope: v.optional(v.union(v.literal("full"), v.literal("feedback-only"))),
+    // Optional project narrowing — restrict this grant to one or more project
+    // slugs/names on the host. Useful when a dev wants to let users file
+    // feedback about Project A without exposing B & C. Empty = all projects.
+    allowedProjects: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -152,17 +160,25 @@ export const invite = mutation({
 
     const inviteCode = generateInviteCode();
     const now = Date.now();
+    // Default new invitations to the hardened scope. Hosts who want the
+    // classic teammate access must opt in with scope=full.
+    const scope: "full" | "feedback-only" = args.scope ?? "feedback-only";
     const invitationDoc: Record<string, unknown> = {
       hostUserId,
       guestEmail: storedEmail,
       inviteCode,
       status: "pending",
+      scope,
       createdAt: now,
       expiresAt: now + INVITATION_TTL_MS,
     };
     if (guestUser) invitationDoc.guestUserId = guestUser._id;
     if (rawUserId) invitationDoc.invitedByUserId = true;
     if (proposed.length > 0) invitationDoc.proposedDeviceIds = proposed;
+    const allowedProjects = (args.allowedProjects ?? [])
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (allowedProjects.length > 0) invitationDoc.allowedProjects = allowedProjects;
     await ctx.db.insert("guestInvitations", invitationDoc as any);
 
     // Send invite email if we have a destination address and this was email-targeted.
@@ -182,6 +198,7 @@ export const invite = mutation({
       guestRegistered: !!guestUser,
       guestUserId: guestUser?.userId,
       guestEmail: storedEmail || undefined,
+      scope,
     };
   },
 });
@@ -209,6 +226,12 @@ async function materializeInvitationAccept(
     hostUserId: invitation.hostUserId,
     guestUserId: guestUserDocId,
     grantedAt: now,
+    // Propagate the access tier the host picked at invite time. Legacy invitations
+    // without scope keep the old behavior (treated as "full" downstream).
+    ...(invitation.scope ? { scope: invitation.scope } : {}),
+    ...(Array.isArray(invitation.allowedProjects) && invitation.allowedProjects.length > 0
+      ? { allowedProjects: invitation.allowedProjects as string[] }
+      : {}),
   });
 
   // Normalize + clamp approved list against proposal (if any) and ownership.
@@ -789,6 +812,8 @@ export const getGuestConfig = query({
       guestUserId: string;
       guestEmail: string;
       guestName: string;
+      scope: "full" | "feedback-only";
+      allowedProjects?: string[];
       dailyTokenLimit?: number;
       allowedRunners?: string[];
       usageMode?: string;
@@ -821,6 +846,10 @@ export const getGuestConfig = query({
         guestUserId: guest.userId,
         guestEmail: guest.email,
         guestName: guest.fullName,
+        // Legacy rows (pre-scope) are treated as "full" so upgrading the agent
+        // without re-inviting existing teammates doesn't silently downgrade them.
+        scope: access.scope ?? "full",
+        allowedProjects: access.allowedProjects,
         dailyTokenLimit: access.dailyTokenLimit,
         allowedRunners: grant?.allowedRunners ?? access.allowedRunners,
         usageMode: grant?.usageMode ?? access.usageMode,
@@ -882,6 +911,13 @@ export const updateGuestConfig = mutation({
       endHour: v.number(),
       timezone: v.optional(v.string()),
     })),
+    // Change the access tier on an existing grant. Use with care: downgrading
+    // "full" → "feedback-only" immediately takes effect on the agent (within
+    // the 10s config refresh); upgrading is equally immediate.
+    scope: v.optional(v.union(v.literal("full"), v.literal("feedback-only"))),
+    // Narrow (or clear, by passing []) the set of projects this guest can
+    // see feedback for / trigger fix-tasks against.
+    allowedProjects: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -988,6 +1024,11 @@ export const updateGuestConfig = mutation({
     if (args.allowedRunners !== undefined) patch.allowedRunners = args.allowedRunners;
     if (args.usageMode !== undefined) patch.usageMode = args.usageMode;
     if (args.schedule !== undefined) patch.schedule = args.schedule;
+    if (args.scope !== undefined) patch.scope = args.scope;
+    if (args.allowedProjects !== undefined) {
+      const cleaned = args.allowedProjects.map((s) => s.trim()).filter(Boolean);
+      patch.allowedProjects = cleaned.length > 0 ? cleaned : undefined;
+    }
 
     await ctx.db.patch(access._id, patch);
 

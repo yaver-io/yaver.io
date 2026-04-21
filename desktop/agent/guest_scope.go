@@ -1,0 +1,192 @@
+package main
+
+import (
+	"strings"
+)
+
+// Guest scope model.
+//
+// Every guest grant lives in Convex's `guestAccess.scope` field and comes
+// back on the config sync as `GuestConfig.Scope`. The agent enforces
+// per-scope allow-lists at the auth-middleware layer so a malicious end-user
+// of a third-party app (who signed in to the Feedback SDK and got invited as
+// a guest) physically cannot reach the dev-machine surface that would let
+// them exfiltrate code or execute arbitrary AI-agent prompts.
+//
+// Two tiers today:
+//
+//   - GuestScopeFull — classic teammate: tasks, vibing, dev server proxy,
+//     builds, project enumeration, plus the safe feedback/voice/blackbox
+//     surface. Equivalent to the pre-scope behavior. Opt in with
+//     `yaver guests invite --scope=full`.
+//
+//   - GuestScopeFeedbackOnly (default for new invites) — untrusted end-user:
+//     feedback upload, blackbox telemetry, voice transcription, plus the
+//     minimal health/info/guests surface needed for discovery. No way to
+//     read code, enumerate projects, trigger AI tasks, or proxy dev servers.
+//     Additionally: /info is redacted to strip project metadata, /projects
+//     is 403, and any task spawned by this guest's feedback is force-
+//     containerized regardless of the agent's `containerize_guests` setting.
+//
+// Legacy rows (pre-scope) come back from Convex without a scope field. The
+// runtime treats them as "full" so bumping the agent in place doesn't
+// silently downgrade an existing teammate. New invitations default to
+// "feedback-only" on the Convex side.
+
+const (
+	GuestScopeFull          = "full"
+	GuestScopeFeedbackOnly  = "feedback-only"
+	guestScopeDefaultLegacy = GuestScopeFull
+)
+
+// guestFullAllowedPrefixes is the classic teammate access surface.
+// Kept in sync with the documented table in CLAUDE.md. Host-only endpoints
+// (exec, vault, sessions, tmux, git, shutdown, …) are NOT listed here —
+// they fall through to the owner-only path.
+var guestFullAllowedPrefixes = []string{
+	"/tasks",
+	"/feedback",
+	"/dev/",
+	"/blackbox/",
+	"/voice/",
+	"/info",
+	"/agent/status",
+	"/agent/runners",
+	"/projects",
+	"/todolist",
+	"/builds",
+	"/health",
+	"/vibing",
+	"/shared-storage/",
+}
+
+// guestFeedbackOnlyAllowedPrefixes is the hardened end-user surface.
+// Intentionally tight: only what the Feedback SDK needs to file reports and
+// stream telemetry, plus the minimum health/info probes for discovery.
+//
+// Notable exclusions vs. the full tier:
+//
+//	/tasks, /vibing           — no AI-agent prompts (arbitrary code exec)
+//	/dev/*                    — no dev-server proxy (could hit sensitive local services)
+//	/builds                   — no triggering builds
+//	/projects, /todolist      — no project-metadata enumeration
+//	/agent/runners, /status   — surface the host's loadout of AI runners
+//	/shared-storage/          — no blob pull-through
+var guestFeedbackOnlyAllowedPrefixes = []string{
+	"/feedback",
+	"/blackbox/",
+	"/voice/",
+	"/info",
+	"/health",
+}
+
+// guestScopeOrDefault normalizes a cached scope string to one of the two
+// known tiers. An empty or unknown scope maps to the legacy default ("full").
+func guestScopeOrDefault(s string) string {
+	switch strings.TrimSpace(s) {
+	case GuestScopeFeedbackOnly:
+		return GuestScopeFeedbackOnly
+	case GuestScopeFull:
+		return GuestScopeFull
+	default:
+		return guestScopeDefaultLegacy
+	}
+}
+
+// isGuestAllowedPathForScope returns true if `path` is inside the allow-list
+// for the given scope. Unknown scopes collapse to "full" (legacy default).
+func isGuestAllowedPathForScope(path, scope string) bool {
+	list := guestFullAllowedPrefixes
+	if guestScopeOrDefault(scope) == GuestScopeFeedbackOnly {
+		list = guestFeedbackOnlyAllowedPrefixes
+	}
+	for _, prefix := range list {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// GetScope returns the scope for a guest, defaulting to "full" when no
+// config has been synced yet (e.g. a fresh grant before the 10s config
+// refresh fires). Returning "full" in the unknown case matches the legacy
+// behavior for in-flight rows; the allow-list itself is what actually
+// blocks dangerous paths once the config arrives.
+func (m *GuestConfigManager) GetScope(guestUserID string) string {
+	if m == nil {
+		return guestScopeDefaultLegacy
+	}
+	cfg := m.GetConfig(guestUserID)
+	if cfg == nil {
+		return guestScopeDefaultLegacy
+	}
+	return guestScopeOrDefault(cfg.Scope)
+}
+
+// IsFeedbackOnly is a convenience for the task-spawn + endpoint-redaction
+// paths that need a yes/no answer.
+func (m *GuestConfigManager) IsFeedbackOnly(guestUserID string) bool {
+	return m.GetScope(guestUserID) == GuestScopeFeedbackOnly
+}
+
+// AllowedProjects returns the list of project slugs this guest may touch.
+// Empty slice means "all projects" (current legacy behavior). Callers should
+// treat a non-empty return as an allowlist and reject anything outside.
+func (m *GuestConfigManager) AllowedProjects(guestUserID string) []string {
+	if m == nil {
+		return nil
+	}
+	cfg := m.GetConfig(guestUserID)
+	if cfg == nil {
+		return nil
+	}
+	return cleanProjectList(cfg.AllowedProjects)
+}
+
+// GuestCanAccessProject answers whether a guest may touch `project`. Returns
+// true when the guest has no project narrowing (empty list = all projects)
+// OR when the given project is in the list. Case-insensitive — matches how
+// MobileProject.Name comparisons happen elsewhere in the agent.
+func (m *GuestConfigManager) GuestCanAccessProject(guestUserID, project string) bool {
+	project = strings.TrimSpace(project)
+	allowed := m.AllowedProjects(guestUserID)
+	if len(allowed) == 0 {
+		return true
+	}
+	if project == "" {
+		// No project identity attached to this request but the guest is
+		// restricted — refuse. Forces callers to always tag the project.
+		return false
+	}
+	for _, p := range allowed {
+		if strings.EqualFold(strings.TrimSpace(p), project) {
+			return true
+		}
+	}
+	return false
+}
+
+// cleanProjectList trims whitespace, drops empty entries, and de-duplicates.
+// Used on both the sending (CLI → Convex) and receiving (agent config refresh)
+// sides so the list the agent compares against is always canonical.
+func cleanProjectList(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		key := strings.ToLower(s)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}

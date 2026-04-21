@@ -1070,33 +1070,10 @@ func (s *HTTPServer) authOrLocalhost(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// guestAllowedPrefixes defines which URL paths guests can access.
-// Guests get task execution and feedback but NOT shell access, vault, sessions, or terminals.
-var guestAllowedPrefixes = []string{
-	"/tasks",
-	"/feedback",
-	"/dev/",
-	"/blackbox/",
-	"/voice/",
-	"/info",
-	"/agent/status",
-	"/agent/runners",
-	"/projects",
-	"/todolist",
-	"/builds",
-	"/health",
-	"/vibing",
-	"/shared-storage/",
-}
-
-func isGuestAllowedPath(path string) bool {
-	for _, prefix := range guestAllowedPrefixes {
-		if strings.HasPrefix(path, prefix) {
-			return true
-		}
-	}
-	return false
-}
+// Guest-path allow-lists live in guest_scope.go, keyed off the grant's
+// `scope` field so a feedback-only end-user cannot reach the
+// tasks/vibing/dev/projects/builds surface that a "full" teammate can.
+// Per-scope prefixes + helpers: guest_scope.go::isGuestAllowedPathForScope.
 
 func (s *HTTPServer) isApprovedGuest(userID string) bool {
 	s.guestUserIDsMu.RLock()
@@ -1169,13 +1146,24 @@ func (s *HTTPServer) refreshGuestList(ctx context.Context) {
 	}
 }
 
-// allowGuest checks if a non-owner userId is an approved guest and the path is allowed.
-// Returns true if the request was handled (either allowed or rejected), false if not a guest.
+// allowGuest checks if a non-owner userId is an approved guest and the path is
+// allowed under this guest's scope. Returns true if the request was handled
+// (allowed or rejected), false if the token is not a guest and the caller
+// should fall through.
+//
+// For feedback-only guests we also stamp `X-Yaver-GuestScope: feedback-only`
+// on the forwarded request so downstream handlers (notably /info and any
+// task-spawn path) can apply the extra redaction + force-containerize rules
+// without a second manager lookup.
 func (s *HTTPServer) allowGuest(w http.ResponseWriter, r *http.Request, uid string, next http.HandlerFunc) bool {
 	if !s.isApprovedGuest(uid) {
 		return false
 	}
-	if !isGuestAllowedPath(r.URL.Path) {
+	scope := guestScopeDefaultLegacy
+	if s.guestConfigMgr != nil {
+		scope = s.guestConfigMgr.GetScope(uid)
+	}
+	if !isGuestAllowedPathForScope(r.URL.Path, scope) {
 		jsonError(w, http.StatusForbidden, "guests cannot access this endpoint")
 		return true
 	}
@@ -1188,6 +1176,7 @@ func (s *HTTPServer) allowGuest(w http.ResponseWriter, r *http.Request, uid stri
 	}
 	r.Header.Set("X-Yaver-Guest", "true")
 	r.Header.Set("X-Yaver-GuestUserID", uid)
+	r.Header.Set("X-Yaver-GuestScope", scope)
 	next(w, r)
 	return true
 }
@@ -1625,6 +1614,37 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 	// STT available
 	if cfg != nil && cfg.Speech != nil && cfg.Speech.Provider != "" {
 		info["sttProvider"] = cfg.Speech.Provider
+	}
+
+	// Feedback-only guests get a redacted /info. We still need to answer
+	// "is the agent alive + which feedback + voice endpoints are available"
+	// (the SDK probes this on startup), but we strip everything that leaks
+	// the dev-machine's project layout, task activity, auto-start config,
+	// hardware id, workDir, or hostname. A malicious end-user of a host's
+	// app should not learn what projects the dev is working on or how
+	// many tasks are in flight.
+	if r.Header.Get("X-Yaver-GuestScope") == GuestScopeFeedbackOnly {
+		redacted := map[string]interface{}{
+			"ok":                info["ok"],
+			"version":           info["version"],
+			"voiceInputEnabled": info["voiceInputEnabled"],
+		}
+		// Pass through voice capability fields (the SDK needs them to decide
+		// whether to show the mic button), but nothing else.
+		for _, k := range []string{"voiceProvider", "voiceReady", "sttProvider"} {
+			if v, ok := info[k]; ok {
+				redacted[k] = v
+			}
+		}
+		// Sandbox flag is safe — feedback-only tasks get force-containerized,
+		// so the SDK can show "running sandboxed" without surfacing host config.
+		if sb, ok := info["sandbox"].(map[string]interface{}); ok {
+			redacted["sandbox"] = map[string]interface{}{
+				"available": sb["available"],
+			}
+		}
+		jsonReply(w, http.StatusOK, redacted)
+		return
 	}
 
 	jsonReply(w, http.StatusOK, info)
@@ -2243,6 +2263,10 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	// Check guest restrictions before creating task
 	guestUID := r.Header.Get("X-Yaver-GuestUserID")
 	var guestCfg *GuestConfig
+	// Feedback-only guests ALWAYS require isolation — the scope is designed
+	// for untrusted end-users, so their prompts go through a container even
+	// when the host hasn't globally enabled containerize_guests.
+	forceIsolation := false
 	if guestUID != "" && s.guestConfigMgr != nil {
 		guestCfg = s.guestConfigMgr.GetConfig(guestUID)
 		// Check runner restriction
@@ -2257,9 +2281,24 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, http.StatusForbidden, "guests cannot run custom commands")
 			return
 		}
-		if guestRequireIsolation(guestCfg) {
+		forceIsolation = guestRequireIsolation(guestCfg) || s.guestConfigMgr.IsFeedbackOnly(guestUID)
+		if forceIsolation {
 			if s.containerRunner == nil || !s.containerRunner.IsAvailable() {
 				jsonError(w, http.StatusServiceUnavailable, "guest is configured to require Docker isolation, but Docker is not available on this host")
+				return
+			}
+		}
+		// Project-scope gate: if the host narrowed this guest to specific
+		// projects, every task the guest creates must target one of them.
+		// We don't trust a guest-supplied workDir (it's stripped below),
+		// so we resolve the current-agent-workdir's project name and check
+		// that. If the agent's cwd isn't in the list, reject. Hosts who
+		// want multi-project guests should invite with --projects covering
+		// the set, then switch cwd between runs.
+		if allowed := s.guestConfigMgr.AllowedProjects(guestUID); len(allowed) > 0 {
+			current := filepath.Base(s.taskMgr.workDir)
+			if !s.guestConfigMgr.GuestCanAccessProject(guestUID, current) {
+				jsonError(w, http.StatusForbidden, fmt.Sprintf("this guest is scoped to projects %v; agent is currently in %q", allowed, current))
 				return
 			}
 		}
@@ -2291,7 +2330,7 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		// task as owner-authenticated.
 		taskOpts.GuestUserID = guestUID
 		taskOpts.GuestUseHostAPIKeys = guestUseHostAPIKeys(guestCfg)
-		taskOpts.GuestRequireIsolation = guestRequireIsolation(guestCfg)
+		taskOpts.GuestRequireIsolation = forceIsolation
 		taskOpts.GuestAllowGuestProvidedKeys = guestCfg == nil || guestCfg.AllowGuestProvidedAPIKeys == nil || *guestCfg.AllowGuestProvidedAPIKeys
 		if guestCfg != nil {
 			taskOpts.GuestCPULimitPercent = guestCfg.CPULimitPercent
@@ -8960,13 +8999,22 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	// --- Guest Access ---
 	case "guest_invite":
 		var args struct {
-			Email string `json:"email"`
+			Email    string   `json:"email"`
+			Scope    string   `json:"scope"`
+			Projects []string `json:"projects"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		if args.Email == "" {
 			return mcpToolError("email is required")
 		}
-		invResult, err := InviteGuest(s.convexURL, s.token, args.Email)
+		if args.Scope != "" && args.Scope != GuestScopeFull && args.Scope != GuestScopeFeedbackOnly {
+			return mcpToolError("scope must be 'full' or 'feedback-only'")
+		}
+		invResult, err := InviteGuestWith(s.convexURL, s.token, InviteGuestOpts{
+			Email:           args.Email,
+			Scope:           args.Scope,
+			AllowedProjects: args.Projects,
+		})
 		if err != nil {
 			return mcpToolError(err.Error())
 		}
@@ -8976,7 +9024,22 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			s.guestUserIDs = ids
 			s.guestUserIDsMu.Unlock()
 		}
-		msg := fmt.Sprintf("Invitation sent to %s.\nInvite code: %s\n", args.Email, invResult.InviteCode)
+		scopeShown := invResult.Scope
+		if scopeShown == "" {
+			scopeShown = args.Scope
+		}
+		if scopeShown == "" {
+			scopeShown = GuestScopeFeedbackOnly
+		}
+		msg := fmt.Sprintf("Invitation sent to %s.\nInvite code: %s\nScope: %s\n", args.Email, invResult.InviteCode, scopeShown)
+		if scopeShown == GuestScopeFeedbackOnly {
+			msg += "Hardened end-user tier — no /tasks, /vibing, /dev, /projects; /info redacted; fix-triggered tasks force-containerized. Re-invite with scope='full' for teammates.\n"
+		} else {
+			msg += "Full teammate tier — tasks, vibing, dev-server proxy, builds, projects, plus the feedback/voice surface.\n"
+		}
+		if projs := cleanProjectList(args.Projects); len(projs) > 0 {
+			msg += fmt.Sprintf("Project narrowing: %s (this guest cannot see/fix feedback or run tasks outside these projects).\n", strings.Join(projs, ", "))
+		}
 		if invResult.GuestRegistered {
 			msg += "This email is already registered — they'll see the invitation in their Yaver app."
 		} else {

@@ -254,7 +254,64 @@ func (s *HTTPServer) handleFeedbackFix(w http.ResponseWriter, r *http.Request, f
 
 	// Create a task with the generated prompt
 	if s.taskMgr != nil {
-		task, err := s.taskMgr.CreateTask(prompt, "", "", "feedback", "", "", nil)
+		// If this fix was triggered by a guest (e.g. an end-user of the host's
+		// app via the Feedback SDK), propagate the guest policy into the task.
+		// Feedback-only guests always force Docker isolation — the prompt is
+		// synthesized from user-controlled feedback content, so prompt-injection
+		// would otherwise give a malicious end-user arbitrary code execution
+		// against the dev machine's filesystem + network.
+		opts := TaskCreateOptions{}
+		guestUID := r.Header.Get("X-Yaver-GuestUserID")
+		if guestUID != "" && s.guestConfigMgr != nil {
+			guestCfg := s.guestConfigMgr.GetConfig(guestUID)
+
+			// Project-scope gate: if the host narrowed this guest to specific
+			// projects, reject fixes for feedback from any project the guest
+			// doesn't own. We identify the project by the SDK-reported app
+			// name on the feedback report (DeviceInfo.AppName) and match it
+			// against the guest's allowedProjects list, case-insensitive.
+			//
+			// Missing app name + restricted guest == reject: a guest who was
+			// pinned to Project A must not be able to trigger fixes on
+			// untagged reports that could be from any project.
+			if report, ok := s.feedbackMgr.GetFeedback(feedbackID); ok {
+				projectName := report.DeviceInfo.AppName
+				if !s.guestConfigMgr.GuestCanAccessProject(guestUID, projectName) {
+					jsonReply(w, http.StatusForbidden, map[string]string{
+						"error": "this guest is scoped to specific projects; the feedback's project is not in the allowed list",
+					})
+					return
+				}
+				// Pin the task to the resolved project directory so the AI
+				// agent operates inside the right repo instead of whatever
+				// the agent's current workdir happens to be.
+				if projectName != "" {
+					if mp := findMobileProjectByName(projectName); mp != nil && mp.Path != "" {
+						opts.WorkDir = mp.Path
+					}
+				}
+			}
+
+			forceIsolation := s.guestConfigMgr.IsFeedbackOnly(guestUID) || guestRequireIsolation(guestCfg)
+			if forceIsolation && (s.containerRunner == nil || !s.containerRunner.IsAvailable()) {
+				jsonReply(w, http.StatusServiceUnavailable, map[string]string{
+					"error": "feedback-only guests require Docker isolation for fix tasks, but Docker is not available on this host",
+				})
+				return
+			}
+			opts.GuestUserID = guestUID
+			opts.GuestRequireIsolation = forceIsolation
+			opts.GuestUseHostAPIKeys = guestUseHostAPIKeys(guestCfg)
+			opts.GuestAllowGuestProvidedKeys = guestCfg == nil || guestCfg.AllowGuestProvidedAPIKeys == nil || *guestCfg.AllowGuestProvidedAPIKeys
+			if guestCfg != nil {
+				opts.GuestCPULimitPercent = guestCfg.CPULimitPercent
+				opts.GuestRAMLimitMB = guestCfg.RAMLimitMB
+			}
+			// Stay inside the project directory — same prefix the /tasks handler
+			// applies to direct guest-authored task creation.
+			prompt = guestPromptPrefix(s.taskMgr.workDir, guestCfg) + prompt
+		}
+		task, err := s.taskMgr.CreateTaskWithOptions(prompt, "", "", "feedback", "", "", nil, opts)
 		if err != nil {
 			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return

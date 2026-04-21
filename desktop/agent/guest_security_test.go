@@ -8,8 +8,10 @@ import (
 
 func TestGuestAllowedPathBlocksGuestManagementEndpoints(t *testing.T) {
 	for _, path := range []string{"/guests", "/guests/invite", "/guests/revoke", "/guests/config", "/guests/usage"} {
-		if isGuestAllowedPath(path) {
-			t.Fatalf("expected guest path %q to be blocked", path)
+		for _, scope := range []string{GuestScopeFull, GuestScopeFeedbackOnly} {
+			if isGuestAllowedPathForScope(path, scope) {
+				t.Fatalf("expected guest path %q to be blocked under scope %q", path, scope)
+			}
 		}
 	}
 }

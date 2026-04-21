@@ -31,10 +31,16 @@ var forbiddenOnNonOwnerSurfaces = []string{
 }
 
 func TestGuestAllowlistHasNoOwnerOnlyPrefixes(t *testing.T) {
+	lists := map[string][]string{
+		"guestFullAllowedPrefixes":         guestFullAllowedPrefixes,
+		"guestFeedbackOnlyAllowedPrefixes": guestFeedbackOnlyAllowedPrefixes,
+	}
 	for _, forbidden := range forbiddenOnNonOwnerSurfaces {
-		for _, allowed := range guestAllowedPrefixes {
-			if allowed == forbidden || strings.HasPrefix(allowed, forbidden) {
-				t.Errorf("guestAllowedPrefixes contains owner-only prefix %q (matched entry %q)", forbidden, allowed)
+		for name, allowList := range lists {
+			for _, allowed := range allowList {
+				if allowed == forbidden || strings.HasPrefix(allowed, forbidden) {
+					t.Errorf("%s contains owner-only prefix %q (matched entry %q)", name, forbidden, allowed)
+				}
 			}
 		}
 	}
