@@ -31,7 +31,7 @@ import { clearCache } from "../../src/lib/storage";
 import * as ExpoClipboard from "expo-clipboard";
 import * as ExpoLinking from "expo-linking";
 import { getLogEntries, clearLogEntries, onLogsChanged, LogEntry } from "../../src/lib/logger";
-import { quicClient, type AgentStatus, type RelayServer, type TunnelServer } from "../../src/lib/quic";
+import { quicClient, type AgentStatus, type EnvironmentProfileApplyResult, type RelayServer, type TunnelServer } from "../../src/lib/quic";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -100,7 +100,7 @@ function providerKeyStatusLabel(state?: ProviderKeyState): string {
 
 export default function SettingsScreen() {
   const { user, token, logout, refreshUser } = useAuth();
-  const { activeDevice, connectionStatus, disconnect, selectDevice } = useDevice();
+  const { devices, activeDevice, connectionStatus, disconnect, selectDevice } = useDevice();
   const { isDark, toggleTheme } = useTheme();
   const c = useColors();
   const insets = useSafeAreaInsets();
@@ -166,6 +166,19 @@ export default function SettingsScreen() {
   const [isSavingAiProviders, setIsSavingAiProviders] = useState(false);
   const [isSyncingAiVault, setIsSyncingAiVault] = useState(false);
   const [providerKeyStates, setProviderKeyStates] = useState<Record<string, ProviderKeyState>>({});
+  const [showToolchainSync, setShowToolchainSync] = useState(false);
+  const [toolchainSourceId, setToolchainSourceId] = useState<string | null>(null);
+  const [toolchainSyncGitCredentials, setToolchainSyncGitCredentials] = useState(true);
+  const [toolchainSyncProviderKeys, setToolchainSyncProviderKeys] = useState(true);
+  const [toolchainSyncPresets, setToolchainSyncPresets] = useState(true);
+  const [toolchainSyncFlags, setToolchainSyncFlags] = useState(false);
+  const [toolchainSyncEnv, setToolchainSyncEnv] = useState(false);
+  const [toolchainSyncMonitors, setToolchainSyncMonitors] = useState(false);
+  const [toolchainInstallMissing, setToolchainInstallMissing] = useState(true);
+  const [toolchainRemoveMissing, setToolchainRemoveMissing] = useState(false);
+  const [isPreviewingToolchainSync, setIsPreviewingToolchainSync] = useState(false);
+  const [isApplyingToolchainSync, setIsApplyingToolchainSync] = useState(false);
+  const [toolchainPreview, setToolchainPreview] = useState<EnvironmentProfileApplyResult | null>(null);
 
   // Key storage preference: "local" = device Keychain only, "cloud" = sync to Convex
   const [keyStorage, setKeyStorage] = useState<KeyStorage>("local");
@@ -837,6 +850,143 @@ export default function SettingsScreen() {
       Alert.alert("Error", "Failed to sync AI provider keys to the connected machine vault.");
     } finally {
       setIsSyncingAiVault(false);
+    }
+  };
+
+  const toolchainSourceCandidates = devices.filter(
+    (device) => !device.isGuest && device.id !== activeDevice?.id,
+  );
+  const selectedToolchainSource =
+    toolchainSourceCandidates.find((device) => device.id === toolchainSourceId) ?? toolchainSourceCandidates[0] ?? null;
+
+  useEffect(() => {
+    if (!selectedToolchainSource) {
+      setToolchainSourceId(null);
+      return;
+    }
+    if (toolchainSourceId !== selectedToolchainSource.id) {
+      setToolchainSourceId(selectedToolchainSource.id);
+    }
+  }, [selectedToolchainSource?.id]);
+
+  const currentToolchainSyncKinds = () => {
+    const kinds: string[] = [];
+    if (toolchainSyncProviderKeys) kinds.push("provider-keys");
+    if (toolchainSyncPresets) kinds.push("presets");
+    if (toolchainSyncFlags) kinds.push("flags");
+    if (toolchainSyncEnv) kinds.push("env");
+    if (toolchainSyncMonitors) kinds.push("monitors");
+    return kinds;
+  };
+
+  const summarizeToolchainSync = (result: EnvironmentProfileApplyResult) => {
+    const lines: string[] = [];
+    if ((result.installPlan?.length ?? 0) > 0) {
+      lines.push(`Will install: ${result.installPlan!.slice(0, 6).join(", ")}${result.installPlan!.length > 6 ? "…" : ""}`);
+    }
+    if ((result.installed?.length ?? 0) > 0) {
+      lines.push(`Installed: ${result.installed!.slice(0, 6).join(", ")}${result.installed!.length > 6 ? "…" : ""}`);
+    }
+    if ((result.importedSyncKinds?.length ?? 0) > 0) {
+      lines.push(`Synced settings: ${result.importedSyncKinds!.join(", ")}`);
+    }
+    if ((result.importedGitHosts?.length ?? 0) > 0) {
+      lines.push(`Git hosts: ${result.importedGitHosts!.join(", ")}`);
+    }
+    if ((result.removedGitHosts?.length ?? 0) > 0) {
+      lines.push(`Removed Git hosts: ${result.removedGitHosts!.join(", ")}`);
+    }
+    if ((result.removalPlan?.length ?? 0) > 0) {
+      lines.push(`Manual cleanup suggested: ${result.removalPlan!.slice(0, 6).join(", ")}${result.removalPlan!.length > 6 ? "…" : ""}`);
+    }
+    if ((result.manualSteps?.length ?? 0) > 0) {
+      lines.push(`Manual steps: ${result.manualSteps!.slice(0, 2).join(" · ")}`);
+    }
+    if ((result.notes?.length ?? 0) > 0) {
+      lines.push(result.notes![0]);
+    }
+    return lines;
+  };
+
+  const previewToolchainSync = async () => {
+    if (connectionStatus !== "connected" || !activeDevice) {
+      Alert.alert("Connect a machine", "Connect to the target machine you want to update first.");
+      return;
+    }
+    if (activeDevice.isGuest) {
+      Alert.alert("Owner only", "Toolchain Sync is only available on your own machines.");
+      return;
+    }
+    if (!selectedToolchainSource) {
+      Alert.alert("No source machine", "Bring another one of your Yaver machines online so it can act as the source toolchain.");
+      return;
+    }
+    if (!selectedToolchainSource.online) {
+      Alert.alert("Source offline", "The source machine must be online so the target can read its toolchain profile.");
+      return;
+    }
+    setIsPreviewingToolchainSync(true);
+    try {
+      const preview = await quicClient.applyToolchainSync({
+        sourceDeviceId: selectedToolchainSource.id,
+        installMissing: toolchainInstallMissing,
+        syncKinds: currentToolchainSyncKinds(),
+        includeGitCredentials: toolchainSyncGitCredentials,
+        removeMissing: toolchainRemoveMissing,
+        dryRun: true,
+      });
+      setToolchainPreview(preview);
+      const summary = summarizeToolchainSync(preview);
+      Alert.alert(
+        "Toolchain Sync Preview",
+        summary.length > 0
+          ? summary.join("\n")
+          : "No changes needed. The target already matches the selected source toolchain.",
+      );
+    } catch (error) {
+      Alert.alert("Preview failed", error instanceof Error ? error.message : "Toolchain Sync preview failed.");
+    } finally {
+      setIsPreviewingToolchainSync(false);
+    }
+  };
+
+  const applyToolchainSyncNow = async () => {
+    if (connectionStatus !== "connected" || !activeDevice) {
+      Alert.alert("Connect a machine", "Connect to the target machine you want to update first.");
+      return;
+    }
+    if (activeDevice.isGuest) {
+      Alert.alert("Owner only", "Toolchain Sync is only available on your own machines.");
+      return;
+    }
+    if (!selectedToolchainSource) {
+      Alert.alert("No source machine", "Bring another one of your Yaver machines online so it can act as the source toolchain.");
+      return;
+    }
+    if (!selectedToolchainSource.online) {
+      Alert.alert("Source offline", "The source machine must be online so the target can read its toolchain profile.");
+      return;
+    }
+    setIsApplyingToolchainSync(true);
+    try {
+      const result = await quicClient.applyToolchainSync({
+        sourceDeviceId: selectedToolchainSource.id,
+        installMissing: toolchainInstallMissing,
+        syncKinds: currentToolchainSyncKinds(),
+        includeGitCredentials: toolchainSyncGitCredentials,
+        removeMissing: toolchainRemoveMissing,
+        dryRun: false,
+      });
+      setToolchainPreview(result);
+      const summary = summarizeToolchainSync(result);
+      Alert.alert(
+        result.status === "partial" ? "Toolchain Sync Finished With Notes" : "Toolchain Sync Finished",
+        summary.length > 0 ? summary.join("\n") : "The target machine already matched the selected source toolchain.",
+      );
+    } catch (error) {
+      Alert.alert("Sync failed", error instanceof Error ? error.message : "Toolchain Sync failed.");
+    } finally {
+      setIsApplyingToolchainSync(false);
     }
   };
 
@@ -1645,6 +1795,240 @@ export default function SettingsScreen() {
               <Text style={[styles.noDeviceText, { color: c.textMuted }]}>
                 No device connected. Go to the Devices tab to connect.
               </Text>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.section}>
+          <Pressable
+            onPress={() => setShowToolchainSync((prev) => !prev)}
+            style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+          >
+            <View style={styles.themeRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.themeLabel, { color: c.textPrimary }]}>Toolchain Sync</Text>
+                <Text style={{ fontSize: 11, color: c.textMuted, marginTop: 2 }}>
+                  Clone tools, runner setup, provider-key state, and Git integration from one Yaver machine to another. No user files are copied.
+                </Text>
+              </View>
+              <Text style={{ color: c.textMuted }}>{showToolchainSync ? "\u25B2" : "\u25BC"}</Text>
+            </View>
+          </Pressable>
+
+          {showToolchainSync && (
+            <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginTop: 4, padding: 16 }]}>
+              {connectionStatus !== "connected" || !activeDevice ? (
+                <Text style={{ color: c.textMuted, fontSize: 13 }}>
+                  Connect to the target machine first. Toolchain Sync always applies to the machine currently connected in Yaver.
+                </Text>
+              ) : activeDevice.isGuest ? (
+                <Text style={{ color: c.textMuted, fontSize: 13 }}>
+                  Toolchain Sync is owner-only. Connect to one of your own machines to use it.
+                </Text>
+              ) : toolchainSourceCandidates.length === 0 ? (
+                <Text style={{ color: c.textMuted, fontSize: 13 }}>
+                  No source machine available yet. Bring your development Mac/Linux box online in Yaver, then come back and sync its toolchain into this target.
+                </Text>
+              ) : (
+                <>
+                  <Text style={{ color: c.textMuted, fontSize: 11, textTransform: "uppercase", fontWeight: "700" }}>
+                    Target
+                  </Text>
+                  <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600", marginTop: 4 }}>
+                    {activeDevice.name}
+                  </Text>
+                  <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 2 }}>
+                    Connected target machine. Changes apply here.
+                  </Text>
+
+                  <Text style={{ color: c.textMuted, fontSize: 11, textTransform: "uppercase", fontWeight: "700", marginTop: 16 }}>
+                    Source
+                  </Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+                    {toolchainSourceCandidates.map((device) => {
+                      const selected = selectedToolchainSource?.id === device.id;
+                      return (
+                        <Pressable
+                          key={device.id}
+                          onPress={() => {
+                            setToolchainSourceId(device.id);
+                            setToolchainPreview(null);
+                          }}
+                          style={{
+                            paddingHorizontal: 12,
+                            paddingVertical: 10,
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: selected ? c.accent : c.border,
+                            backgroundColor: selected ? `${c.accent}22` : c.bg,
+                            minWidth: 150,
+                          }}
+                        >
+                          <Text style={{ color: selected ? c.accent : c.textPrimary, fontWeight: "600", fontSize: 13 }}>
+                            {device.name}
+                          </Text>
+                          <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 3 }}>
+                            {device.online ? "Online" : "Offline"} · {device.os || "machine"}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+
+                  <Text style={{ color: c.textMuted, fontSize: 11, textTransform: "uppercase", fontWeight: "700", marginTop: 18 }}>
+                    Options
+                  </Text>
+                  <View style={{ marginTop: 10, gap: 10 }}>
+                    {[
+                      {
+                        label: "Install missing tools",
+                        value: toolchainInstallMissing,
+                        onValueChange: (value: boolean) => setToolchainInstallMissing(value),
+                        hint: "Apply missing Linux-safe tools and runners onto the target box.",
+                      },
+                      {
+                        label: "Sync Git credentials",
+                        value: toolchainSyncGitCredentials,
+                        onValueChange: (value: boolean) => setToolchainSyncGitCredentials(value),
+                        hint: "Copy saved Git host credentials so clone, pull, push, and deploy flows keep working.",
+                      },
+                      {
+                        label: "Sync provider keys state",
+                        value: toolchainSyncProviderKeys,
+                        onValueChange: (value: boolean) => setToolchainSyncProviderKeys(value),
+                        hint: "Carry Yaver-synced provider-key state between devices.",
+                      },
+                      {
+                        label: "Sync presets",
+                        value: toolchainSyncPresets,
+                        onValueChange: (value: boolean) => setToolchainSyncPresets(value),
+                        hint: "Bring tooling presets and machine-level defaults across.",
+                      },
+                      {
+                        label: "Sync flags",
+                        value: toolchainSyncFlags,
+                        onValueChange: (value: boolean) => setToolchainSyncFlags(value),
+                        hint: "Include feature flags and experimental toggles.",
+                      },
+                      {
+                        label: "Sync env entries",
+                        value: toolchainSyncEnv,
+                        onValueChange: (value: boolean) => setToolchainSyncEnv(value),
+                        hint: "Include synced env-store entries. Use carefully if machines should differ.",
+                      },
+                      {
+                        label: "Sync monitors",
+                        value: toolchainSyncMonitors,
+                        onValueChange: (value: boolean) => setToolchainSyncMonitors(value),
+                        hint: "Bring health monitor definitions across.",
+                      },
+                      {
+                        label: "Remove missing synced items",
+                        value: toolchainRemoveMissing,
+                        onValueChange: (value: boolean) => setToolchainRemoveMissing(value),
+                        hint: "Remove missing Git hosts and show target-only tools that need manual cleanup.",
+                      },
+                    ].map((item) => (
+                      <View key={item.label} style={[styles.themeRow, { alignItems: "flex-start" }]}>
+                        <View style={{ flex: 1, paddingRight: 12 }}>
+                          <Text style={[styles.themeLabel, { color: c.textPrimary }]}>{item.label}</Text>
+                          <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 2 }}>{item.hint}</Text>
+                        </View>
+                        <Switch value={item.value} onValueChange={item.onValueChange} trackColor={{ true: c.accent }} />
+                      </View>
+                    ))}
+                  </View>
+
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 16 }}>
+                    <Pressable
+                      onPress={previewToolchainSync}
+                      disabled={isPreviewingToolchainSync || isApplyingToolchainSync}
+                      style={({ pressed }) => [
+                        {
+                          flex: 1,
+                          paddingVertical: 10,
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: c.border,
+                          backgroundColor: c.bg,
+                          alignItems: "center",
+                          opacity: isPreviewingToolchainSync || isApplyingToolchainSync ? 0.5 : 1,
+                        },
+                        pressed && { opacity: 0.7 },
+                      ]}
+                    >
+                      <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 14 }}>
+                        {isPreviewingToolchainSync ? "Previewing..." : "Preview Sync"}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={applyToolchainSyncNow}
+                      disabled={isApplyingToolchainSync || isPreviewingToolchainSync}
+                      style={({ pressed }) => [
+                        {
+                          flex: 1,
+                          paddingVertical: 10,
+                          borderRadius: 8,
+                          backgroundColor: c.accent,
+                          alignItems: "center",
+                          opacity: isApplyingToolchainSync || isPreviewingToolchainSync ? 0.5 : 1,
+                        },
+                        pressed && { opacity: 0.7 },
+                      ]}
+                    >
+                      <Text style={{ color: "#fff", fontWeight: "600", fontSize: 14 }}>
+                        {isApplyingToolchainSync ? "Syncing..." : "Apply Sync"}
+                      </Text>
+                    </Pressable>
+                  </View>
+
+                  {toolchainPreview && (
+                    <View
+                      style={{
+                        marginTop: 16,
+                        padding: 12,
+                        borderRadius: 10,
+                        borderWidth: 1,
+                        borderColor: c.border,
+                        backgroundColor: c.bg,
+                        gap: 6,
+                      }}
+                    >
+                      <Text style={{ color: c.textPrimary, fontWeight: "700", fontSize: 13 }}>
+                        Last Preview
+                      </Text>
+                      <Text style={{ color: c.textMuted, fontSize: 12 }}>
+                        Status: {toolchainPreview.status} · target {toolchainPreview.targetPlatform}
+                      </Text>
+                      {(toolchainPreview.installPlan?.length ?? 0) > 0 ? (
+                        <Text style={{ color: c.textMuted, fontSize: 12 }}>
+                          Install plan: {toolchainPreview.installPlan!.join(", ")}
+                        </Text>
+                      ) : null}
+                      {(toolchainPreview.importedSyncKinds?.length ?? 0) > 0 ? (
+                        <Text style={{ color: c.textMuted, fontSize: 12 }}>
+                          Sync kinds: {toolchainPreview.importedSyncKinds!.join(", ")}
+                        </Text>
+                      ) : null}
+                      {(toolchainPreview.importedGitHosts?.length ?? 0) > 0 ? (
+                        <Text style={{ color: c.textMuted, fontSize: 12 }}>
+                          Git hosts: {toolchainPreview.importedGitHosts!.join(", ")}
+                        </Text>
+                      ) : null}
+                      {(toolchainPreview.removalPlan?.length ?? 0) > 0 ? (
+                        <Text style={{ color: c.warn, fontSize: 12 }}>
+                          Manual cleanup: {toolchainPreview.removalPlan!.join(", ")}
+                        </Text>
+                      ) : null}
+                      {(toolchainPreview.manualSteps?.length ?? 0) > 0 ? (
+                        <Text style={{ color: c.warn, fontSize: 12 }}>
+                          Manual: {toolchainPreview.manualSteps![0]}
+                        </Text>
+                      ) : null}
+                    </View>
+                  )}
+                </>
+              )}
             </View>
           )}
         </View>

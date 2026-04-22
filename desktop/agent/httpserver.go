@@ -106,7 +106,8 @@ type HTTPServer struct {
 	seenIPs sync.Map // "tokenPrefix_IP" -> true
 
 	// Short-lived browser-scoped session tokens for websocket and iframe flows.
-	browserSessions sync.Map
+	browserSessions  sync.Map
+	terminalSessions sync.Map
 
 	// Guest access: cached list of approved guest userIds (refreshed every 60s)
 	guestUserIDs   []string
@@ -137,23 +138,29 @@ type HTTPServer struct {
 
 	// Morning match-report + recording state. Lazy-initialized so
 	// tests and the production agent share the same code path.
-	morningMu       sync.Mutex
-	morningStoreRef *MorningStore
-	recordingMgrRef *RecordingManager
+	morningMu             sync.Mutex
+	morningStoreRef       *MorningStore
+	recordingMgrRef       *RecordingManager
+	hostShareWorkspaceMgr *HostShareWorkspaceManager
 }
 
 // NewHTTPServer creates a new HTTP server bound to the given port.
 func NewHTTPServer(port int, token, ownerUserID, deviceID, convexURL, hostname string, taskMgr *TaskManager) *HTTPServer {
 	currentLocalAgentPort.Store(int64(port))
+	var hostShareWorkspaceMgr *HostShareWorkspaceManager
+	if mgr, err := NewHostShareWorkspaceManager(); err == nil {
+		hostShareWorkspaceMgr = mgr
+	}
 	return &HTTPServer{
-		port:        port,
-		token:       token,
-		ownerUserID: ownerUserID,
-		deviceID:    deviceID,
-		convexURL:   convexURL,
-		hostname:    hostname,
-		taskMgr:     taskMgr,
-		streams:     NewLogStreamRegistry(),
+		port:                  port,
+		token:                 token,
+		ownerUserID:           ownerUserID,
+		deviceID:              deviceID,
+		convexURL:             convexURL,
+		hostname:              hostname,
+		taskMgr:               taskMgr,
+		streams:               NewLogStreamRegistry(),
+		hostShareWorkspaceMgr: hostShareWorkspaceMgr,
 	}
 }
 
@@ -180,6 +187,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/agent/graphs", s.auth(s.handleAgentGraphs))
 	mux.HandleFunc("/agent/graphs/", s.auth(s.handleAgentGraphByID))
 	mux.HandleFunc("/agent/runners", s.auth(s.handleRunners))
+	mux.HandleFunc("/agent/env-profile", s.auth(s.handleEnvironmentProfile))
+	mux.HandleFunc("/agent/env-profile/apply", s.auth(s.handleEnvironmentProfileApply))
+	mux.HandleFunc("/agent/toolchain-sync/profile", s.auth(s.handleEnvironmentProfile))
+	mux.HandleFunc("/agent/toolchain-sync/apply", s.auth(s.handleEnvironmentProfileApply))
+	mux.HandleFunc("/agent/toolchain-sync/git-credentials", s.auth(s.handleToolchainGitCredentials))
 
 	// Morning match-report + recording video byte-range streamer.
 	// Owner-only; deliberately NOT in guestAllowedPrefixes.
@@ -311,6 +323,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/files/list", s.auth(s.handleFilesList))
 	mux.HandleFunc("/files/read", s.auth(s.handleFilesRead))
 	mux.HandleFunc("/files/raw", s.auth(s.handleFilesRaw))
+	mux.HandleFunc("/host-share/fs/write", s.auth(s.handleHostShareFSWrite))
+	mux.HandleFunc("/host-share/fs/mkdir", s.auth(s.handleHostShareFSMkdir))
+	mux.HandleFunc("/host-share/fs/delete", s.auth(s.handleHostShareFSDelete))
 	mux.HandleFunc("/shared-storage/profiles", s.auth(s.handleSharedStorageProfiles))
 	mux.HandleFunc("/shared-storage/profile/delete", s.auth(s.handleSharedStorageDelete))
 	mux.HandleFunc("/shared-storage/list", s.auth(s.handleSharedStorageList))
@@ -406,6 +421,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/clips/list", s.auth(s.handleClipList))
 	mux.HandleFunc("/clips/upload/", s.auth(s.handleClipUpload))
 	mux.HandleFunc("/clips/merge/", s.auth(s.handleClipMerge))
+	mux.HandleFunc("/clips/private/", s.auth(s.handleClipPrivateDetail))
 	mux.HandleFunc("/clips/", s.handleClipDetail)
 
 	// Affiliate tracking (extends the shortener with commissions)
@@ -514,18 +530,18 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/blackbox/context", s.authSDK(s.handleBlackBoxContext))
 
 	// Dev server (reverse proxy to local Metro/Vite/Flutter dev server)
-	mux.HandleFunc("/dev/status", s.authSDK(s.handleDevServerStatus))
-	mux.HandleFunc("/dev/target", s.authSDK(s.handleDevServerTarget))
+	mux.HandleFunc("/dev/status", s.authSDKOrGuest(s.handleDevServerStatus))
+	mux.HandleFunc("/dev/target", s.authSDKOrGuest(s.handleDevServerTarget))
 	mux.HandleFunc("/dev/start", s.authOrLocalhost(s.handleDevServerStart))
 	mux.HandleFunc("/dev/stop", s.authOrLocalhost(s.handleDevServerStop))
-	mux.HandleFunc("/dev/reload", s.authSDK(s.handleDevServerReload))
-	mux.HandleFunc("/dev/reload-app", s.authSDK(s.handleReloadApp))
-	mux.HandleFunc("/dev/native-fingerprint", s.authSDK(s.handleNativeFingerprintGet))
-	mux.HandleFunc("/dev/native-fingerprint/refresh", s.authSDK(s.handleNativeFingerprintRefresh))
-	mux.HandleFunc("/dev/events", s.authSDK(s.handleDevServerEvents))
-	mux.HandleFunc("/dev/compatibility", s.authSDK(s.handleDevServerCompatibility))
+	mux.HandleFunc("/dev/reload", s.authSDKOrGuest(s.handleDevServerReload))
+	mux.HandleFunc("/dev/reload-app", s.authSDKOrGuest(s.handleReloadApp))
+	mux.HandleFunc("/dev/native-fingerprint", s.authSDKOrGuest(s.handleNativeFingerprintGet))
+	mux.HandleFunc("/dev/native-fingerprint/refresh", s.authSDKOrGuest(s.handleNativeFingerprintRefresh))
+	mux.HandleFunc("/dev/events", s.authSDKOrGuest(s.handleDevServerEvents))
+	mux.HandleFunc("/dev/compatibility", s.authSDKOrGuest(s.handleDevServerCompatibility))
 	mux.HandleFunc("/dev/builds", s.auth(s.handleDevServerBuilds))
-	mux.HandleFunc("/dev/build-native", s.authSDK(s.handleBuildNativeBundle))
+	mux.HandleFunc("/dev/build-native", s.authSDKOrGuest(s.handleBuildNativeBundle))
 	mux.HandleFunc("/dev/native-bundle", s.handleServeNativeBundle) // No auth — serves compiled bundle
 	mux.HandleFunc("/dev/native-assets", s.handleServeNativeAssets) // No auth — serves compiled assets
 	mux.HandleFunc("/dev/", s.handleDevServerProxy)                 // No auth — serves app bundle in WebView (not sensitive)
@@ -601,6 +617,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/repos/clone", s.auth(s.handleRepoCloneWithMetadata))
 	mux.HandleFunc("/repos/pull", s.auth(s.handleRepoPull))
 	mux.HandleFunc("/repos/list", s.auth(s.handleRepoList))
+	mux.HandleFunc("/repos/delete", s.auth(s.handleRepoDelete))
 	mux.HandleFunc("/repos/credentials", s.auth(s.handleRepoCredentials))
 	mux.HandleFunc("/repos/credentials/", s.auth(s.handleRepoCredentialByHost))
 
@@ -846,6 +863,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/guests/revoke", s.auth(s.handleGuestRevoke))
 	mux.HandleFunc("/guests/config", s.auth(s.handleGuestConfig))
 	mux.HandleFunc("/guests/usage", s.auth(s.handleGuestUsage))
+	mux.HandleFunc("/host-share/workspace/status", s.auth(s.handleHostShareWorkspaceStatus))
+	mux.HandleFunc("/host-share/workspace/bootstrap", s.auth(s.handleHostShareWorkspaceBootstrap))
+	mux.HandleFunc("/host-share/workspace/attach-repo", s.auth(s.handleHostShareWorkspaceAttachRepo))
+	mux.HandleFunc("/host-share/workspace/pull-from-guest", s.auth(s.handleHostShareWorkspacePullFromGuest))
+	mux.HandleFunc("/host-share/workspace/push-to-guest", s.auth(s.handleHostShareWorkspacePushToGuest))
 
 	// Voice (real-time speech-to-speech & transcription) — SDK-accessible
 	mux.HandleFunc("/voice/status", s.authSDK(s.handleVoiceStatus))
@@ -942,6 +964,7 @@ type cachedTokenInfo struct {
 	isSdk        bool
 	scopes       []string
 	allowedCIDRs []string
+	hostShare    *HostShareAccessInfo
 	// storedAt records when the cache entry was minted. The auth() middleware
 	// uses this to force a Convex re-validation of any non-owner, non-SDK,
 	// non-paired token (i.e. guest tokens) older than guestTokenCacheTTL —
@@ -954,6 +977,24 @@ type cachedTokenInfo struct {
 // cache before we re-check with Convex. Keep short so host revocations are
 // effectively immediate.
 const guestTokenCacheTTL = 15 * time.Second
+
+var hostShareAllowedPrefixes = []string{
+	"/info",
+	"/agent/status",
+	"/agent/runners",
+	"/ws/terminal",
+	"/host-share/workspace/status",
+	"/host-share/workspace/attach-repo",
+	"/host-share/workspace/pull-from-guest",
+	"/host-share/workspace/push-to-guest",
+	"/files/roots",
+	"/files/list",
+	"/files/read",
+	"/files/raw",
+	"/host-share/fs/write",
+	"/host-share/fs/mkdir",
+	"/host-share/fs/delete",
+}
 
 // Scope-to-path mapping: which URL paths each scope grants access to.
 var scopePathPrefixes = map[string][]string{
@@ -976,6 +1017,43 @@ func pathAllowedByScopes(path string, scopes []string) bool {
 			if strings.HasPrefix(path, prefix) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func isHostShareAllowedPath(path string, access *HostShareAccessInfo) bool {
+	if access == nil {
+		return false
+	}
+	if strings.HasPrefix(path, "/ws/terminal") && !access.Policy.AllowTerminal {
+		return false
+	}
+	for _, prefix := range hostShareAllowedPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func hostShareAllowedProjectsFromHeader(r *http.Request) []string {
+	raw := strings.TrimSpace(r.Header.Get("X-Yaver-HostShareAllowedProjects"))
+	if raw == "" {
+		return nil
+	}
+	return cleanProjectList(strings.Split(raw, ","))
+}
+
+func hostShareCanAccessProject(r *http.Request, projectPath string) bool {
+	allowed := hostShareAllowedProjectsFromHeader(r)
+	if len(allowed) == 0 {
+		return true
+	}
+	base := strings.TrimSpace(filepath.Base(projectPath))
+	for _, p := range allowed {
+		if strings.EqualFold(strings.TrimSpace(p), base) || strings.EqualFold(strings.TrimSpace(p), strings.TrimSpace(projectPath)) {
+			return true
 		}
 	}
 	return false
@@ -1181,6 +1259,59 @@ func (s *HTTPServer) allowGuest(w http.ResponseWriter, r *http.Request, uid stri
 	return true
 }
 
+func (s *HTTPServer) resolveHostShareAccess(guestUserID string) *HostShareAccessInfo {
+	token := s.currentAuthToken()
+	if strings.TrimSpace(guestUserID) == "" || strings.TrimSpace(token) == "" || strings.TrimSpace(s.convexURL) == "" {
+		return nil
+	}
+	access, err := FetchHostShareAccess(s.convexURL, token, guestUserID, s.deviceID)
+	if err != nil {
+		log.Printf("[HOST-SHARE] access lookup failed for %s: %v", guestUserID, err)
+		return nil
+	}
+	return access
+}
+
+func (s *HTTPServer) resolveHostSharePeerAccess(hostUserID string) *HostShareAccessInfo {
+	token := s.currentAuthToken()
+	if strings.TrimSpace(hostUserID) == "" || strings.TrimSpace(token) == "" || strings.TrimSpace(s.convexURL) == "" {
+		return nil
+	}
+	access, err := FetchHostSharePeerAccess(s.convexURL, token, hostUserID, s.deviceID)
+	if err != nil {
+		log.Printf("[HOST-SHARE] peer access lookup failed for %s: %v", hostUserID, err)
+		return nil
+	}
+	return access
+}
+
+func (s *HTTPServer) currentAuthToken() string {
+	if cfg, err := LoadConfig(); err == nil && cfg != nil {
+		if token := strings.TrimSpace(cfg.AuthToken); token != "" {
+			return token
+		}
+	}
+	return strings.TrimSpace(s.token)
+}
+
+func (s *HTTPServer) allowHostShare(w http.ResponseWriter, r *http.Request, uid string, access *HostShareAccessInfo, next http.HandlerFunc) bool {
+	if access == nil {
+		return false
+	}
+	if !isHostShareAllowedPath(r.URL.Path, access) {
+		jsonError(w, http.StatusForbidden, "host-share session cannot access this endpoint")
+		return true
+	}
+	r.Header.Set("X-Yaver-HostShare", "true")
+	r.Header.Set("X-Yaver-HostShareGuestUserID", uid)
+	r.Header.Set("X-Yaver-HostShareSessionID", access.SessionID)
+	r.Header.Set("X-Yaver-HostShareGuestDeviceID", access.GuestDeviceID)
+	r.Header.Set("X-Yaver-HostShareToolingPreset", access.Policy.ToolingPreset)
+	r.Header.Set("X-Yaver-HostShareAllowedProjects", strings.Join(access.Policy.AllowedProjects, ","))
+	next(w, r)
+	return true
+}
+
 func (s *HTTPServer) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if sessionToken := r.URL.Query().Get("browser_session"); sessionToken != "" {
@@ -1285,6 +1416,9 @@ func (s *HTTPServer) auth(next http.HandlerFunc) http.HandlerFunc {
 				if s.allowGuest(w, r, info.userID, next) {
 					return
 				}
+				if s.allowHostShare(w, r, info.userID, info.hostShare, next) {
+					return
+				}
 				jsonError(w, http.StatusForbidden, "token belongs to a different user")
 				return
 			}
@@ -1298,10 +1432,30 @@ func (s *HTTPServer) auth(next http.HandlerFunc) http.HandlerFunc {
 			jsonError(w, http.StatusForbidden, "invalid token")
 			return
 		}
-		s.tokenCache.Store(token, &cachedTokenInfo{userID: uid, isSdk: false, storedAt: time.Now()})
+		info := &cachedTokenInfo{userID: uid, isSdk: false, storedAt: time.Now()}
+		if uid != s.ownerUserID {
+			info.hostShare = s.resolveHostShareAccess(uid)
+			if info.hostShare == nil {
+				info.hostShare = s.resolveHostSharePeerAccess(uid)
+			}
+		}
+		cacheToken := true
+		if uid != s.ownerUserID && info.hostShare == nil {
+			// Do not cache a negative non-owner authorization result.
+			// A guest can be granted access moments later via a freshly
+			// accepted host-share invite, and caching the denial makes the
+			// first post-join request fail until the guest token TTL elapses.
+			cacheToken = false
+		}
+		if cacheToken {
+			s.tokenCache.Store(token, info)
+		}
 
 		if uid != s.ownerUserID {
 			if s.allowGuest(w, r, uid, next) {
+				return
+			}
+			if s.allowHostShare(w, r, uid, info.hostShare, next) {
 				return
 			}
 			jsonError(w, http.StatusForbidden, "token belongs to a different user")
@@ -1438,6 +1592,112 @@ func (s *HTTPServer) authSDK(next http.HandlerFunc) http.HandlerFunc {
 		// Track new device IPs
 		s.trackNewIP(token, r)
 
+		next(w, r)
+	}
+}
+
+// authSDKOrGuest is for endpoints that must remain reachable by SDK tokens
+// but should also allow full-scope guest session tokens. Guests still go
+// through the regular allowGuest scope gate; SDK tokens keep their existing
+// scope/IP checks.
+func (s *HTTPServer) authSDKOrGuest(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			jsonError(w, http.StatusUnauthorized, "missing or invalid Authorization header")
+			return
+		}
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+
+		if token == s.token {
+			next(w, r)
+			return
+		}
+
+		if IsPairedToken(token) {
+			TouchPairedToken(token)
+			if cached, ok := s.tokenCache.Load(token); ok {
+				info := cached.(*cachedTokenInfo)
+				r = withPairedUser(r, info.userID)
+			}
+			next(w, r)
+			return
+		}
+
+		if cached, ok := s.tokenCache.Load(token); ok {
+			info := cached.(*cachedTokenInfo)
+			if info.isSdk {
+				if !pathAllowedByScopes(r.URL.Path, info.scopes) {
+					jsonError(w, http.StatusForbidden, "SDK token scope does not allow this endpoint")
+					return
+				}
+				if len(info.allowedCIDRs) > 0 {
+					cidrs := parseCIDRs(info.allowedCIDRs)
+					if !ipMatchesCIDRs(clientIP(r), cidrs) {
+						jsonError(w, http.StatusForbidden, "SDK token not allowed from this IP")
+						return
+					}
+				}
+				s.trackNewIP(token, r)
+				next(w, r)
+				return
+			}
+			if info.userID == s.ownerUserID {
+				next(w, r)
+				return
+			}
+			if s.allowGuest(w, r, info.userID, next) {
+				return
+			}
+			jsonError(w, http.StatusForbidden, "token belongs to a different user")
+			return
+		}
+
+		uid, err := ValidateTokenUser(s.convexURL, token)
+		if err == nil {
+			s.tokenCache.Store(token, &cachedTokenInfo{userID: uid, isSdk: false, storedAt: time.Now()})
+			if uid == s.ownerUserID {
+				next(w, r)
+				return
+			}
+			if s.allowGuest(w, r, uid, next) {
+				return
+			}
+			jsonError(w, http.StatusForbidden, "token belongs to a different user")
+			return
+		}
+
+		sdkInfo, sdkErr := ValidateSdkTokenFull(s.convexURL, token)
+		if sdkErr != nil {
+			log.Printf("[AUTH] %s %s — all token validation failed", r.Method, r.URL.Path)
+			jsonError(w, http.StatusForbidden, "invalid token")
+			return
+		}
+
+		info := &cachedTokenInfo{
+			userID:       sdkInfo.UserID,
+			isSdk:        true,
+			scopes:       sdkInfo.Scopes,
+			allowedCIDRs: sdkInfo.AllowedCIDRs,
+		}
+		s.tokenCache.Store(token, info)
+
+		if info.userID != s.ownerUserID {
+			jsonError(w, http.StatusForbidden, "token belongs to a different user")
+			return
+		}
+		if !pathAllowedByScopes(r.URL.Path, info.scopes) {
+			jsonError(w, http.StatusForbidden, "SDK token scope does not allow this endpoint")
+			return
+		}
+		if len(info.allowedCIDRs) > 0 {
+			cidrs := parseCIDRs(info.allowedCIDRs)
+			if !ipMatchesCIDRs(clientIP(r), cidrs) {
+				jsonError(w, http.StatusForbidden, "SDK token not allowed from this IP")
+				return
+			}
+		}
+		s.trackNewIP(token, r)
 		next(w, r)
 	}
 }
@@ -1952,10 +2212,24 @@ func (s *HTTPServer) handleRunners(w http.ResponseWriter, r *http.Request) {
 
 	var runners []runnerInfo
 	seenIDs := make(map[string]bool)
+	guestUID := strings.TrimSpace(r.Header.Get("X-Yaver-GuestUserID"))
+	allowedRunnerSet := map[string]bool{}
+	filterGuestRunners := false
+	if guestUID != "" && s.guestConfigMgr != nil {
+		if cfg := s.guestConfigMgr.GetConfig(guestUID); cfg != nil && len(cfg.AllowedRunners) > 0 {
+			filterGuestRunners = true
+			for _, id := range cfg.AllowedRunners {
+				allowedRunnerSet[normalizeRunnerID(id)] = true
+			}
+		}
+	}
 
 	// Add default runner first, then others sorted by ID
 	defaultID := s.taskMgr.runner.RunnerID
 	addRunner := func(r RunnerConfig) {
+		if filterGuestRunners && !allowedRunnerSet[normalizeRunnerID(r.RunnerID)] {
+			return
+		}
 		if seenIDs[r.RunnerID] {
 			return
 		}
@@ -1992,7 +2266,7 @@ func (s *HTTPServer) handleRunners(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Include the active runner if it's custom (not in builtinRunners)
-	if !seenIDs[s.taskMgr.runner.RunnerID] {
+	if !seenIDs[s.taskMgr.runner.RunnerID] && (!filterGuestRunners || allowedRunnerSet[normalizeRunnerID(s.taskMgr.runner.RunnerID)]) {
 		runners = append(runners, runnerInfo{
 			ID:        s.taskMgr.runner.RunnerID,
 			Name:      s.taskMgr.runner.Name,
@@ -2003,10 +2277,21 @@ func (s *HTTPServer) handleRunners(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	responseDefault := s.taskMgr.runner.RunnerID
+	if filterGuestRunners && !allowedRunnerSet[normalizeRunnerID(responseDefault)] {
+		responseDefault = ""
+		if len(runners) > 0 {
+			responseDefault = runners[0].ID
+			for i := range runners {
+				runners[i].IsDefault = runners[i].ID == responseDefault
+			}
+		}
+	}
+
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"ok":      true,
 		"runners": runners,
-		"default": s.taskMgr.runner.RunnerID,
+		"default": responseDefault,
 	})
 }
 
@@ -2236,6 +2521,7 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		Model         string             `json:"model"`
 		Runner        string             `json:"runner"`        // runner ID: "claude", "codex", "aider" — empty uses default
 		CustomCommand string             `json:"customCommand"` // arbitrary command — runs via sh -c
+		ProjectName   string             `json:"projectName,omitempty"`
 		Source        string             `json:"source"`        // client type: "mobile", "desktop-app", "web", "cli"
 		SpeechContext *SpeechContext     `json:"speechContext"` // voice input/output preferences
 		Images        []ImageAttachment  `json:"images,omitempty"`
@@ -2263,6 +2549,7 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	// Check guest restrictions before creating task
 	guestUID := r.Header.Get("X-Yaver-GuestUserID")
 	var guestCfg *GuestConfig
+	guestWorkDir := ""
 	// Feedback-only guests ALWAYS require isolation — the scope is designed
 	// for untrusted end-users, so their prompts go through a container even
 	// when the host hasn't globally enabled containerize_guests.
@@ -2270,11 +2557,9 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	if guestUID != "" && s.guestConfigMgr != nil {
 		guestCfg = s.guestConfigMgr.GetConfig(guestUID)
 		// Check runner restriction
-		if body.Runner != "" {
-			if denied := s.guestConfigMgr.CheckRunner(guestUID, body.Runner); denied != nil {
-				jsonError(w, http.StatusForbidden, denied.Reason)
-				return
-			}
+		if denied := s.guestConfigMgr.CheckRequestedRunner(guestUID, body.Runner, s.taskMgr.runner.RunnerID); denied != nil {
+			jsonError(w, http.StatusForbidden, denied.Reason)
+			return
 		}
 		// Block custom commands for guests (direct shell access)
 		if body.CustomCommand != "" {
@@ -2288,19 +2573,26 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		// Project-scope gate: if the host narrowed this guest to specific
-		// projects, every task the guest creates must target one of them.
-		// We don't trust a guest-supplied workDir (it's stripped below),
-		// so we resolve the current-agent-workdir's project name and check
-		// that. If the agent's cwd isn't in the list, reject. Hosts who
-		// want multi-project guests should invite with --projects covering
-		// the set, then switch cwd between runs.
-		if allowed := s.guestConfigMgr.AllowedProjects(guestUID); len(allowed) > 0 {
-			current := filepath.Base(s.taskMgr.workDir)
-			if !s.guestConfigMgr.GuestCanAccessProject(guestUID, current) {
-				jsonError(w, http.StatusForbidden, fmt.Sprintf("this guest is scoped to projects %v; agent is currently in %q", allowed, current))
+		// Project-scope gate: direct guest tasks must carry a project identity
+		// so the host can resolve the exact allowed repo path server-side.
+		// We never trust guest-supplied workDir paths.
+		guestProjectName := strings.TrimSpace(body.ProjectName)
+		allowedProjects := s.guestConfigMgr.AllowedProjects(guestUID)
+		if len(allowedProjects) > 0 && guestProjectName == "" {
+			jsonError(w, http.StatusForbidden, fmt.Sprintf("this guest is scoped to projects %v; projectName is required", allowedProjects))
+			return
+		}
+		if guestProjectName != "" {
+			if !s.guestConfigMgr.GuestCanAccessProject(guestUID, guestProjectName) {
+				jsonError(w, http.StatusForbidden, fmt.Sprintf("project %q is not in the allowed project list %v", guestProjectName, allowedProjects))
 				return
 			}
+			resolvedWorkDir, err := resolveGuestTaskProjectPath(guestProjectName)
+			if err != nil {
+				jsonError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			guestWorkDir = resolvedWorkDir
 		}
 	}
 
@@ -2308,7 +2600,11 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	// stays within the project directory and doesn't access sensitive files.
 	title := body.Title
 	if guestUID != "" {
-		title = guestPromptPrefix(s.taskMgr.workDir, guestCfg) + title
+		promptWorkDir := s.taskMgr.workDir
+		if guestWorkDir != "" {
+			promptWorkDir = guestWorkDir
+		}
+		title = guestPromptPrefix(promptWorkDir, guestCfg) + title
 	}
 
 	// Guests must not be able to redirect the task cwd or inject their own
@@ -2320,8 +2616,9 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		SliceContract: body.SliceContract,
 	}
 	if guestUID != "" {
-		// Strip owner-only fields.
-		taskOpts.WorkDir = ""
+		// Strip owner-only fields. If the host resolved a guest project,
+		// keep that server-approved workDir.
+		taskOpts.WorkDir = guestWorkDir
 		taskOpts.SliceContract = nil
 		// Snapshot guest policy into the task BEFORE it starts, so runtime
 		// guards (autoSwitchProject, container gating, API-key filtering)
@@ -2348,7 +2645,11 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[HTTP] Task created: %s — %s (status: %s, model: %s, runner: %s)", task.ID, task.Title, task.Status, body.Model, task.RunnerID)
-	project := DetectProjectInfo(s.taskMgr.workDir)
+	projectWorkDir := s.taskMgr.workDir
+	if task.WorkDir != "" {
+		projectWorkDir = task.WorkDir
+	}
+	project := DetectProjectInfo(projectWorkDir)
 	resp := map[string]interface{}{
 		"ok":       true,
 		"taskId":   task.ID,
@@ -2359,6 +2660,21 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[HTTP] Sending create response for task %s", task.ID)
 	jsonReply(w, http.StatusCreated, resp)
 	log.Printf("[HTTP] Response sent for task %s", task.ID)
+}
+
+func resolveGuestTaskProjectPath(projectName string) (string, error) {
+	projectName = strings.TrimSpace(projectName)
+	if projectName == "" {
+		return "", fmt.Errorf("projectName is required")
+	}
+	if mp := findMobileProjectByName(projectName); mp != nil && strings.TrimSpace(mp.Path) != "" {
+		return mp.Path, nil
+	}
+	path, err := findProject(projectName)
+	if err != nil {
+		return "", fmt.Errorf("could not resolve project %q: %w", projectName, err)
+	}
+	return path, nil
 }
 
 // handleTaskByID routes /tasks/{id}, /tasks/{id}/output, /tasks/{id}/stop, /tasks/{id}/continue
@@ -3375,7 +3691,7 @@ func jsonError(w http.ResponseWriter, status int, msg string) {
 	// Apple-compliance: the mobile app is expected to display this hint
 	// but NOT auto-open checkoutUrl — that stays on web.
 	if (status == http.StatusUnauthorized || status == http.StatusForbidden) && os.Getenv("YAVER_CLOUD_TENANT") == "1" {
-		payload["hint"] = "Yaver Cloud tenant — push requires CLOUD_OWNER_TOKEN or an active subscription"
+		payload["hint"] = "Yaver Cloud tenant — push requires a valid Yaver session or an explicit override token"
 		if u := os.Getenv("YAVER_CLOUD_CHECKOUT_URL"); u != "" {
 			payload["checkoutUrl"] = u
 		}

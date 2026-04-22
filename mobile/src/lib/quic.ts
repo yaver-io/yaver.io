@@ -57,6 +57,66 @@ export interface SyncItem<T = any> {
   deleted?: boolean;
 }
 
+export interface EnvironmentProjectSummary {
+  path: string;
+  branch?: string;
+}
+
+export interface EnvironmentRunnerSummary {
+  id: string;
+  name: string;
+  command: string;
+  installed: boolean;
+  ready: boolean;
+  authConfigured?: boolean;
+  authSource?: string;
+  warning?: string;
+  error?: string;
+}
+
+export interface EnvironmentSyncSummary {
+  kind: string;
+  count: number;
+}
+
+export interface ToolchainGitCredentialSummary {
+  host: string;
+  username?: string;
+  hasToken: boolean;
+}
+
+export interface EnvironmentProfile {
+  generatedAt: string;
+  sourceDeviceId?: string;
+  hostname?: string;
+  platform: string;
+  arch: string;
+  workDir?: string;
+  discoveredProjects?: EnvironmentProjectSummary[];
+  binaries?: { name: string; path: string; manager?: string }[];
+  runners?: EnvironmentRunnerSummary[];
+  syncKinds?: EnvironmentSyncSummary[];
+  gitCredentials?: ToolchainGitCredentialSummary[];
+}
+
+export interface EnvironmentProfileApplyResult {
+  ok: boolean;
+  status: string;
+  sourcePlatform?: string;
+  targetPlatform: string;
+  installPlan?: string[];
+  installed?: string[];
+  alreadyPresent?: string[];
+  importedSyncKinds?: string[];
+  manualSteps?: string[];
+  projectHints?: string[];
+  notes?: string[];
+  removalPlan?: string[];
+  removed?: string[];
+  importedGitHosts?: string[];
+  removedGitHosts?: string[];
+}
+
 // Matches desktop/agent/scheduler.go::ScheduledTask.
 export interface ScheduledTask {
   id: string;
@@ -88,6 +148,50 @@ export interface ConversationTurn {
   role: "user" | "assistant";
   content: string;
   timestamp: string;
+}
+
+export interface HealthMonitorPing {
+  status: string;
+  responseMs: number;
+  time: string;
+  statusCode?: number;
+  error?: string;
+}
+
+export interface HealthMonitorTarget {
+  id: string;
+  url: string;
+  label?: string;
+  status?: string;
+  statusCode?: number;
+  responseMs?: number;
+  uptimePercent?: number;
+  lastChecked?: string;
+  history?: HealthMonitorPing[];
+}
+
+function normalizeHealthTarget(raw: any): HealthMonitorTarget {
+  const history = Array.isArray(raw?.history)
+    ? raw.history.map((entry: any) => ({
+        status: entry?.status ?? "unknown",
+        responseMs: typeof entry?.responseMs === "number" ? entry.responseMs : 0,
+        time: entry?.time ?? entry?.checkedAt ?? "",
+        statusCode: typeof entry?.statusCode === "number" ? entry.statusCode : undefined,
+        error: typeof entry?.error === "string" ? entry.error : undefined,
+      }))
+    : undefined;
+
+  return {
+    id: String(raw?.id ?? raw?.targetId ?? ""),
+    url: String(raw?.url ?? ""),
+    label: typeof raw?.label === "string" ? raw.label : undefined,
+    status: typeof raw?.status === "string" ? raw.status : undefined,
+    statusCode: typeof raw?.statusCode === "number" ? raw.statusCode : undefined,
+    responseMs: typeof raw?.responseMs === "number" ? raw.responseMs : undefined,
+    uptimePercent: typeof raw?.uptimePercent === "number" ? raw.uptimePercent : undefined,
+    lastChecked: raw?.lastChecked ?? raw?.checkedAt,
+    history,
+  };
 }
 
 // Hybrid Mode — see desktop/agent/hybrid.go. The shapes are a 1:1
@@ -515,6 +619,7 @@ export class QuicClient {
   private activeRelayUrl: string | null = null; // currently working relay base URL
   private activeRelayPassword: string | null = null; // password for the active relay (if any)
   private tunnelServers: TunnelServer[] = [];  // Cloudflare Tunnel endpoints
+  private sessionTunnelServers: TunnelServer[] = [];  // selected-device tunnel hint
   private _tunnelUrl: string | null = null;
   private _tunnelHeaders: Record<string, string> = {};
   private _forceRelay = false; // default to direct-first — try LAN/local before relay
@@ -586,12 +691,21 @@ export class QuicClient {
     this.tunnelServers = servers.sort((a, b) => a.priority - b.priority);
   }
 
+  setSessionTunnelServers(servers?: TunnelServer[] | null): void {
+    this.sessionTunnelServers = [...(servers || [])].sort((a, b) => a.priority - b.priority);
+  }
+
+  private get effectiveTunnelServers(): TunnelServer[] {
+    if (this.sessionTunnelServers.length > 0) return this.sessionTunnelServers;
+    return this.tunnelServers;
+  }
+
   getTunnelServers(): TunnelServer[] {
-    return [...this.tunnelServers];
+    return [...this.effectiveTunnelServers];
   }
 
   get tunnelServerCount(): number {
-    return this.tunnelServers.length;
+    return this.effectiveTunnelServers.length;
   }
 
   /** Snapshot of the configured relay servers (highest priority first). Used
@@ -691,7 +805,7 @@ export class QuicClient {
       });
     }
 
-    for (const tunnel of this.tunnelServers) {
+    for (const tunnel of this.effectiveTunnelServers) {
       const headers: Record<string, string> = {
         Authorization: `Bearer ${this.token}`,
         "X-Client-Platform": Platform.OS,
@@ -809,12 +923,13 @@ export class QuicClient {
    * Establish a connection to the desktop agent.
    * Tries direct connection first, then relay servers in priority order.
    */
-  async connect(host: string, port: number, token: string, deviceId: string, lanIps?: string[]): Promise<void> {
+  async connect(host: string, port: number, token: string, deviceId: string, lanIps?: string[], sessionTunnels?: TunnelServer[]): Promise<void> {
     this.host = host;
     this.port = port;
     this.token = token;
     this.deviceId = deviceId;
     this._lanIps = Array.isArray(lanIps) ? lanIps.filter((s) => typeof s === "string" && s.length > 0) : [];
+    this.setSessionTunnelServers(sessionTunnels);
     this.activeRelayUrl = null;
     this.activeRelayPassword = null;
     this._reconnectStopped = false;
@@ -863,6 +978,9 @@ export class QuicClient {
     this._lanIps = [];
     this.activeRelayUrl = null;
     this.activeRelayPassword = null;
+    this.sessionTunnelServers = [];
+    this._tunnelUrl = null;
+    this._tunnelHeaders = {};
   }
 
   // ── Task API ───────────────────────────────────────────────────────
@@ -1806,6 +1924,20 @@ export class QuicClient {
     return data.execs || [];
   }
 
+  /** Wait until an exec session reaches a terminal state. */
+  async waitForExec(execId: string, opts?: { timeoutMs?: number; pollMs?: number }): Promise<ExecSession> {
+    const deadline = Date.now() + (opts?.timeoutMs ?? 5 * 60_000);
+    const pollMs = opts?.pollMs ?? 1000;
+    while (true) {
+      const exec = await this.getExec(execId);
+      if (exec.status === "completed" || exec.status === "failed" || exec.status === "killed") {
+        return exec;
+      }
+      if (Date.now() > deadline) throw new Error("Timed out waiting for remote exec");
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+  }
+
   /** Send stdin input to a running exec session. */
   async sendExecInput(execId: string, input: string): Promise<void> {
     this.assertConnected();
@@ -1924,6 +2056,70 @@ export class QuicClient {
     } catch {
       return [];
     }
+  }
+
+  async getToolchainSyncProfile(): Promise<EnvironmentProfile | null> {
+    if (!this.isConnected && !this.hasConnectionInfo) return null;
+    try {
+      const res = await fetch(`${this.baseUrl}/agent/toolchain-sync/profile`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => ({}));
+      return (data?.profile as EnvironmentProfile) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async applyToolchainSync(params: {
+    profile?: EnvironmentProfile;
+    sourceDeviceId?: string;
+    installMissing?: boolean;
+    syncKinds?: string[];
+    syncPayload?: Record<string, SyncItem[]>;
+    includeGitCredentials?: boolean;
+    gitCredentials?: { host: string; username?: string; token: string }[];
+    removeMissing?: boolean;
+    dryRun?: boolean;
+  }): Promise<EnvironmentProfileApplyResult> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/agent/toolchain-sync/apply`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        profile: params.profile,
+        sourceDeviceId: params.sourceDeviceId ?? "",
+        installMissing: !!params.installMissing,
+        syncKinds: params.syncKinds ?? [],
+        syncPayload: params.syncPayload ?? {},
+        includeGitCredentials: !!params.includeGitCredentials,
+        gitCredentials: params.gitCredentials ?? [],
+        removeMissing: !!params.removeMissing,
+        dryRun: params.dryRun !== false,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `apply environment profile: HTTP ${res.status}`);
+    return data as EnvironmentProfileApplyResult;
+  }
+
+  async getEnvironmentProfile(): Promise<EnvironmentProfile | null> {
+    return this.getToolchainSyncProfile();
+  }
+
+  async applyEnvironmentProfile(params: {
+    profile?: EnvironmentProfile;
+    sourceDeviceId?: string;
+    installMissing?: boolean;
+    syncKinds?: string[];
+    syncPayload?: Record<string, SyncItem[]>;
+    includeGitCredentials?: boolean;
+    gitCredentials?: { host: string; username?: string; token: string }[];
+    removeMissing?: boolean;
+    dryRun?: boolean;
+  }): Promise<EnvironmentProfileApplyResult> {
+    return this.applyToolchainSync(params);
   }
 
   /** Ping the agent and return round-trip time in milliseconds. */
@@ -2574,11 +2770,12 @@ export class QuicClient {
   // ── Health Monitor ────────────────────────────────────────────────
 
   /** Get all health monitoring targets with current status. */
-  async getHealthTargets(): Promise<any[]> {
+  async getHealthTargets(): Promise<HealthMonitorTarget[]> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/healthmon`, { headers: this.authHeaders });
     if (!res.ok) return [];
-    return res.json();
+    const data = await res.json();
+    return Array.isArray(data) ? data.map(normalizeHealthTarget) : [];
   }
 
   /** Add a new health monitoring target. */
@@ -2600,14 +2797,14 @@ export class QuicClient {
   }
 
   /** Force an immediate health check on a target. */
-  async checkHealthTarget(id: string): Promise<any> {
+  async checkHealthTarget(id: string): Promise<HealthMonitorTarget> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/healthmon/${id}/check`, {
       method: 'POST',
       headers: this.authHeaders,
     });
     if (!res.ok) throw new Error(`Failed to check health target: ${res.status}`);
-    return res.json();
+    return normalizeHealthTarget(await res.json());
   }
 
   // ── Git Operations ────────────────────────────────────────────────
@@ -2770,6 +2967,21 @@ export class QuicClient {
     return res.json();
   }
 
+  /** Delete a repo directory from the remote machine. This removes source code from that box. */
+  async deleteRepo(path: string): Promise<{ok: boolean; path: string}> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/repos/delete`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      throw new Error(err.error || `Delete failed: ${res.status}`);
+    }
+    return res.json();
+  }
+
   /** List repos on dev machine. */
   async listRepos(): Promise<{name: string; path: string; branch: string; remote: string; lastCommit: string; dirty: boolean}[]> {
     this.assertConnected();
@@ -2806,6 +3018,58 @@ export class QuicClient {
       headers: this.authHeaders,
     });
     if (!res.ok) throw new Error(`Failed to remove credential: ${res.status}`);
+  }
+
+  /** Scaffold a starter monorepo workspace manifest from the current repo. */
+  async workspaceScaffold(root?: string): Promise<{ yaml: string; detected: any[]; hint?: string } | null> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/ops`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ verb: "workspace", machine: "local", payload: { op: "scaffold", root } }),
+    });
+    if (!res.ok) throw new Error(`Failed to scaffold workspace: ${res.status}`);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "workspace scaffold failed");
+    return data.initial ?? null;
+  }
+
+  /** Run the workspace init engine against a repo's yaver.workspace.yaml. */
+  async workspaceInit(opts: { root?: string; dryRun?: boolean; force?: boolean; onlyApp?: string } = {}): Promise<{ counts?: Record<string, number>; actions?: any[] } | null> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/ops`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        verb: "workspace",
+        machine: "local",
+        payload: {
+          op: "init",
+          root: opts.root,
+          dryRun: !!opts.dryRun,
+          force: !!opts.force,
+          onlyApp: opts.onlyApp,
+        },
+      }),
+    });
+    if (!res.ok) throw new Error(`Failed to init workspace: ${res.status}`);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "workspace init failed");
+    return data.initial ?? null;
+  }
+
+  /** Read workspace status for a repo with yaver.workspace.yaml. */
+  async workspaceStatus(root?: string): Promise<{ name?: string; status?: any[] } | null> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/ops`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ verb: "workspace", machine: "local", payload: { op: "status", root } }),
+    });
+    if (!res.ok) throw new Error(`Failed to fetch workspace status: ${res.status}`);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "workspace status failed");
+    return data.initial ?? null;
   }
 
   // ── EventEmitter ───────────────────────────────────────────────────
@@ -3158,9 +3422,10 @@ export class QuicClient {
       }
 
       // 2. Try Cloudflare Tunnels (works through any firewall)
-      if (!connected && this.tunnelServers.length > 0) {
-        console.log("[QUIC] Trying", this.tunnelServers.length, "Cloudflare Tunnel(s)");
-        for (const tunnel of this.tunnelServers) {
+      const tunnels = this.effectiveTunnelServers;
+      if (!connected && tunnels.length > 0) {
+        console.log("[QUIC] Trying", tunnels.length, "Cloudflare Tunnel(s)");
+        for (const tunnel of tunnels) {
           try {
             console.log("[QUIC] Trying tunnel:", tunnel.label || tunnel.url);
             const probeHeaders: Record<string, string> = { ...this.authHeaders };
@@ -4454,6 +4719,15 @@ export class QuicClient {
       if (!res.ok) return null;
       return await res.json();
     } catch { return null; }
+  }
+
+  clipPrivateVideoRequest(sessionId: string, filename?: string): { uri: string; headers: Record<string, string> } | null {
+    if (!this.baseUrl) return null;
+    const leaf = filename || "agent-screen.mp4";
+    return {
+      uri: `${this.baseUrl}/clips/private/${encodeURIComponent(sessionId)}/${encodeURIComponent(leaf)}`,
+      headers: this.authHeaders,
+    };
   }
 
   // ---- Chat (live visitor widget) --------------------------------------
