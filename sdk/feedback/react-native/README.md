@@ -87,6 +87,40 @@ function App() {
 
 Shake your phone to open the feedback modal. On mobile the quick-access icon stays hidden until that first shake, then remains tappable for the rest of the session unless the user hides it. From there the sheet exposes four core actions: hot reload, vibing, screenshot or file upload, and screen recording upload.
 
+### Quick Icon Styling
+
+The quick icon is configurable at compile time through `YaverFeedback.init(...)`, with render-time overrides still available through `<QuickActionIcon />` props when needed. If you do nothing, the SDK uses a high-visibility orange bubble by default so it stays distinct from the blue/indigo FAB styling many mobile apps already have.
+
+```tsx
+YaverFeedback.init({
+  trigger: 'shake',
+  quickIcon: 'after-shake',
+  quickIconBackgroundColor: '#0f766e',
+  quickIconForegroundColor: '#f8fafc',
+  quickIconBorderColor: 'rgba(255,255,255,0.85)',
+  quickIconShadowColor: '#000000',
+});
+```
+
+Available options:
+
+- `quickIconBackgroundColor`: bubble fill color.
+- `quickIconForegroundColor`: the `y` label color.
+- `quickIconBorderColor`: outer ring color.
+- `quickIconShadowColor`: shadow tint.
+- `quickIconColor`: deprecated alias for `quickIconBackgroundColor`.
+- `quickIconInitialPosition`: initial top-left position in pixels.
+
+If you need a one-off local override instead of global SDK config:
+
+```tsx
+<QuickActionIcon
+  backgroundColor="#111827"
+  foregroundColor="#f9fafb"
+  borderColor="#f59e0b"
+/>
+```
+
 ### Opt-out: bring-your-own auth (pre-0.5 behavior)
 
 If your app already authenticates against yaver.io on its own and just wants to pass a ready token:
@@ -728,7 +762,7 @@ YaverFeedback.setEnabled(false);
 - Yaver CLI running on your dev machine (`yaver serve`)
 - Optional: `@react-native-async-storage/async-storage` for device discovery persistence
 - Optional: `react-native-view-shot` for screenshots
-- Optional: `react-native-audio-recorder-player` for voice notes
+- Optional: `expo-document-picker` for file uploads
 
 ## API Reference
 
@@ -805,7 +839,7 @@ YaverFeedback.setEnabled(false);
 
 | Component | Description |
 |-----------|-------------|
-| `FeedbackModal` | Modal with mode selector, commentary, screenshots, voice |
+| `FeedbackModal` | Modal with hot reload, vibing, screenshot or upload, and recording |
 | `FloatingButton` | Draggable overlay button to trigger feedback |
 | `YaverConnectionScreen` | Full-screen device discovery and connection UI |
 

@@ -59,11 +59,34 @@ export interface FeedbackConfig {
    */
   quickIcon?: 'auto' | 'always' | 'after-shake' | 'off';
   /**
-   * Background color for the quick-action icon. Default: '#6366f1'
-   * (indigo). Pick something distinctive so the icon never visually
-   * collides with your own FAB.
+   * Deprecated alias for `quickIconBackgroundColor`.
+   *
+   * Background color for the quick-action icon. The SDK now defaults
+   * to a high-visibility safety orange so the icon reads as a utility
+   * affordance instead of blending into the common blue/indigo FAB
+   * palette many mobile apps already use.
    */
   quickIconColor?: string;
+  /**
+   * Background color for the quick-action icon.
+   * Default: '#ff6b2c' (safety orange).
+   */
+  quickIconBackgroundColor?: string;
+  /**
+   * Foreground/text color for the quick-action icon label.
+   * Default: '#111111'.
+   */
+  quickIconForegroundColor?: string;
+  /**
+   * Border color for the quick-action icon.
+   * Default: 'rgba(255,255,255,0.92)'.
+   */
+  quickIconBorderColor?: string;
+  /**
+   * Shadow color for the quick-action icon.
+   * Default: '#000000'.
+   */
+  quickIconShadowColor?: string;
   /**
    * Initial position of the quick-action icon, in pixels from the
    * top-left. Default: near the top-right corner of the screen. The

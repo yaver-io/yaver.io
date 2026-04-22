@@ -26,12 +26,23 @@ function isRunningInsideYaverHost(): boolean {
 }
 
 const DEFAULT_SIZE = 44;
-const DEFAULT_COLOR = '#6366f1';
+const DEFAULT_BACKGROUND_COLOR = '#ff6b2c';
+const DEFAULT_LABEL_COLOR = '#111111';
+const DEFAULT_BORDER_COLOR = 'rgba(255,255,255,0.92)';
+const DEFAULT_SHADOW_COLOR = '#000000';
 const LONG_PRESS_MS = 550;
 
 export interface QuickActionIconProps {
-  /** Override the color from FeedbackConfig.quickIconColor. */
+  /** Deprecated alias for `backgroundColor`. */
   color?: string;
+  /** Override the background from FeedbackConfig.quickIconBackgroundColor. */
+  backgroundColor?: string;
+  /** Override the label color from FeedbackConfig.quickIconForegroundColor. */
+  foregroundColor?: string;
+  /** Override the border color from FeedbackConfig.quickIconBorderColor. */
+  borderColor?: string;
+  /** Override the shadow color from FeedbackConfig.quickIconShadowColor. */
+  shadowColor?: string;
   /** Override the initial position from FeedbackConfig.quickIconInitialPosition. */
   initialPosition?: { x: number; y: number };
   /** Override the icon diameter. Default 44. */
@@ -62,6 +73,10 @@ export interface QuickActionIconProps {
  */
 export const QuickActionIcon: React.FC<QuickActionIconProps> = ({
   color: colorProp,
+  backgroundColor: backgroundColorProp,
+  foregroundColor: foregroundColorProp,
+  borderColor: borderColorProp,
+  shadowColor: shadowColorProp,
   initialPosition: initialPositionProp,
   size = DEFAULT_SIZE,
 }) => {
@@ -75,7 +90,24 @@ export const QuickActionIcon: React.FC<QuickActionIconProps> = ({
     return raw;
   })();
 
-  const color = colorProp ?? config?.quickIconColor ?? DEFAULT_COLOR;
+  const backgroundColor =
+    backgroundColorProp ??
+    colorProp ??
+    config?.quickIconBackgroundColor ??
+    config?.quickIconColor ??
+    DEFAULT_BACKGROUND_COLOR;
+  const foregroundColor =
+    foregroundColorProp ??
+    config?.quickIconForegroundColor ??
+    DEFAULT_LABEL_COLOR;
+  const borderColor =
+    borderColorProp ??
+    config?.quickIconBorderColor ??
+    DEFAULT_BORDER_COLOR;
+  const shadowColor =
+    shadowColorProp ??
+    config?.quickIconShadowColor ??
+    DEFAULT_SHADOW_COLOR;
 
   const { width, height } = Dimensions.get('window');
   const defaultStart =
@@ -239,12 +271,24 @@ export const QuickActionIcon: React.FC<QuickActionIconProps> = ({
               width: visualSize,
               height: visualSize,
               borderRadius: radius,
-              backgroundColor: color,
+              backgroundColor,
+              borderColor,
+              shadowColor,
               opacity: pressed ? 0.85 : 1,
             },
           ]}
         >
-          <Text style={[styles.iconLabel, { fontSize: Math.round(visualSize * 0.5) }]}>y</Text>
+          <Text
+            style={[
+              styles.iconLabel,
+              {
+                color: foregroundColor,
+                fontSize: Math.round(visualSize * 0.5),
+              },
+            ]}
+          >
+            y
+          </Text>
         </Pressable>
         {menuOpen ? (
           <View style={styles.menu}>
@@ -286,14 +330,13 @@ const styles = StyleSheet.create({
   icon: {
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 4,
+    shadowOpacity: 0.34,
+    shadowRadius: 6,
+    elevation: 7,
+    borderWidth: 2,
   },
   iconLabel: {
-    color: '#ffffff',
     fontWeight: '700',
     includeFontPadding: false,
   },
