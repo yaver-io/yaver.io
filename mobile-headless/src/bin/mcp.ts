@@ -23,7 +23,7 @@ const mobile = new MobileClient({
 });
 
 const server = new Server(
-  { name: "yaver-mobile-headless", version: "0.1.0" },
+  { name: "yaver-mobile-headless", version: "0.1.2" },
   { capabilities: { tools: {} } },
 );
 

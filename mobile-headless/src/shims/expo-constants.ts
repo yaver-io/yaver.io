@@ -3,7 +3,7 @@
 export const expoConfig = {
   name: "yaver-mobile-headless",
   slug: "yaver-mobile-headless",
-  version: "0.1.0",
+  version: "0.1.2",
   extra: {} as Record<string, any>,
 };
 

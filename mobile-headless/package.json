@@ -1,6 +1,6 @@
 {
   "name": "yaver-mobile-headless",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Headless surrogate for the Yaver mobile app — share the same mobile/src/lib code with a Node/Bun runtime, drive real Yaver agents via CLI + MCP for tests and AI-assisted QA.",
   "license": "FSL-1.1-Apache-2.0",
   "repository": {
@@ -10,7 +10,7 @@
   },
   "homepage": "https://github.com/kivanccakmak/yaver.io/tree/main/mobile-headless",
   "bin": {
-    "yaver-mobile-headless": "./dist/cli.js"
+    "yaver-mobile-headless": "dist/cli.js"
   },
   "main": "./dist/mobile-client.js",
   "types": "./dist/mobile-client.d.ts",
@@ -41,6 +41,6 @@
     "typescript": "^5.4.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=18"
   }
 }
