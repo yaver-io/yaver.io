@@ -65,3 +65,6 @@ relay/relay
 mcp/mcp
 mcp/yaver-mcp
 videos/
+
+# CI runtime artifacts (server-ip, server-id, logs from remote-verify)
+ci/.artifacts/

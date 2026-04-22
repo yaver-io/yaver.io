@@ -13,7 +13,7 @@
 ### Secrets management
 Every sensitive value lives in exactly one of three places — never in a tracked file or git history:
 
-1. **GitHub Actions secrets** (for CI). Set with `gh secret set NAME`. The full list of secret names currently used by workflows: `ANDROID_KEYSTORE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, `APP_STORE_CONNECT_API_KEY`, `APP_STORE_CONNECT_API_KEY_ID`, `APP_STORE_CONNECT_API_KEY_ISSUER`, `APPLE_TEAM_ID`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CONVEX_DEPLOY_KEY`, `CONVEX_SITE_URL`, `RELAY_HTTP_URL`, `RELAY_QUIC_ADDR`, `RELAY_PASSWORD`, `RELAY_SSH_HOST`, `YAVER_CI_SSH_HOST_PRIMARY`, `YAVER_CI_SSH_HOST_SECONDARY`, `YAVER_CI_SSH_PRIVATE_KEY`, `YAVER_CI_SSH_KNOWN_HOSTS`, `NPM_TOKEN`, `PYPI_TOKEN`.
+1. **GitHub Actions secrets** (for CI). Set with `gh secret set NAME`. The full list of secret names currently used by workflows: `ANDROID_KEYSTORE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, `APP_STORE_CONNECT_API_KEY`, `APP_STORE_CONNECT_API_KEY_ID`, `APP_STORE_CONNECT_API_KEY_ISSUER`, `APPLE_TEAM_ID`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CONVEX_DEPLOY_KEY`, `CONVEX_SITE_URL`, `RELAY_HTTP_URL`, `RELAY_QUIC_ADDR`, `RELAY_PASSWORD`, `RELAY_SSH_HOST`, `YAVER_CI_SSH_HOST_PRIMARY`, `YAVER_CI_SSH_HOST_SECONDARY`, `YAVER_CI_SSH_PRIVATE_KEY`, `YAVER_CI_SSH_KNOWN_HOSTS`, `NPM_TOKEN`, `PYPI_TOKEN`, `HCLOUD_TOKEN`, `HCLOUD_SSH_PRIVATE_KEY`, `HETZNER_TEST_SERVER_ID`, `HETZNER_TEST_SERVER_IP`, `HETZNER_TEST_SNAPSHOT_ID`.
 2. **Local gitignored files** (for dev machine): `.env.test`, `mobile/android/keystore.properties` (copy from `.example`), `keys/*`. These are in `.gitignore` and must never be force-added.
 3. **Runtime env vars** (for ad-hoc scripts): e.g. `HOST=root@relay.example.com ./scripts/check-relay-watchdogs.sh`. Scripts exit 2 if required vars are missing — never fall back to a hardcoded default.
 
@@ -1641,6 +1641,22 @@ cd relay && RELAY_PASSWORD=your-secret docker compose up -d
 
 ### Alternative: Tailscale
 If you use Tailscale, you don't need a relay server at all. Just use `yaver serve --no-relay` and connect directly via Tailscale IP.
+
+## Hetzner Test Server (ephemeral — NOT a production service)
+
+There is a single small Hetzner box named **`yaver-test-ephemeral`** (cax21, arm64, 4 vCPU / 8 GB, Helsinki) used purely for **remote integration testing**: hybrid mode with Ollama, guest-sharing, remote-worker, `ops` verb routing. It is **not** a Yaver service and must **never** be confused with the relay server, a customer cloud machine, or any other permanent infrastructure. Delete it whenever. Kill the whole project, and nothing real breaks.
+
+Rules:
+- **It is disposable.** The whole install is reproducible from `ci/remote/bootstrap.sh`. Any state worth keeping must already live in this repo or in a snapshot — not on the box.
+- **No secrets on the box.** Customer keys, production tokens, Convex prod deploy keys etc. never ship here.
+- **No user-visible copy refers to it.** Landing page, docs, CLI output stay silent on its existence.
+- **Cost reminder**: stopping a Hetzner server still bills at full rate. To pause cheaply, use `ci/hcloud/snapshot-server.sh` to snapshot, then `hcloud server delete yaver-test-ephemeral` — a snapshot is ~€0.10/mo vs. €6.49/mo for the running box. Recreate from the snapshot ID stored in `HETZNER_TEST_SNAPSHOT_ID` with `ci/hcloud/create-server.sh`.
+
+Installed on the box (by `ci/remote/bootstrap.sh`): Docker + compose, Node 22, Go 1.22, Python 3.12 + pipx, Ollama + `qwen2.5-coder:1.5b` (smallest practical coder model — terrible code, perfect for smoke-testing wrappers), aider (via pipx), opencode, and the latest `yaver` .deb.
+
+CI wiring — `.github/workflows/remote-verify.yml` (manual `workflow_dispatch`) targets either the persistent box or a fresh ephemeral one. Supporting scripts live in `ci/hcloud/*.sh` (local/CI orchestration) and `ci/remote/*.sh` (runs on the box).
+
+Secrets used by the remote-verify workflow (set once with `gh secret set`): `HCLOUD_TOKEN`, `HCLOUD_SSH_PRIVATE_KEY`, `HETZNER_TEST_SERVER_ID`, `HETZNER_TEST_SERVER_IP`, `HETZNER_TEST_SNAPSHOT_ID`. The matching public key is registered in Hetzner as `yaver-ci`. **Do not reuse these for anything permanent** — if the test box gets compromised, rotate all five and recreate the key.
 
 ## Conventions
 - Go code: standard Go project layout, `gofmt`

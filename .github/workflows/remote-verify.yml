@@ -1,0 +1,112 @@
+name: remote-verify
+
+# Runs integration / guest-sharing / hybrid-mode tests against a real
+# remote Linux box (Hetzner cax21, arm64) instead of a GitHub-hosted
+# runner. Ordinary unit tests stay in ci.yml / test-suite.yml — those
+# are cheaper on GH-hosted infra.
+#
+# Two modes (chosen by the `target` input):
+#   * `persistent`  — SSH into the always-on yaver-test-ephemeral box
+#     (IP from the HETZNER_TEST_SERVER_IP secret). Fast. Use this for
+#     day-to-day integration runs.
+#   * `ephemeral`   — create a new box from the snapshot (or raw
+#     Ubuntu if no snapshot is set), run the verify script, always
+#     delete the box in cleanup. Use this when you want a clean slate.
+#
+# The box is never a production service. Delete it at will; the
+# bootstrap script at ci/remote/bootstrap.sh can always rebuild it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Which box to run against
+        type: choice
+        default: persistent
+        options:
+          - persistent
+          - ephemeral
+      server_type:
+        description: Hetzner server type (ephemeral mode)
+        required: false
+        default: cax21
+
+concurrency:
+  group: remote-verify-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  remote-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+      HCLOUD_SSH_KEY_NAME: yaver-ci
+      CI_SERVER_TYPE: ${{ inputs.server_type }}
+      CI_SERVER_LOCATION: hel1
+      CI_SERVER_IMAGE: ubuntu-24.04
+      HETZNER_TEST_SNAPSHOT_ID: ${{ secrets.HETZNER_TEST_SNAPSHOT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install hcloud CLI
+        run: |
+          curl -fsSL https://github.com/hetznercloud/cli/releases/latest/download/hcloud-linux-amd64.tar.gz \
+            | sudo tar -C /usr/local/bin -xz hcloud
+          hcloud version
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}" > ~/.ssh/hetzner_ci_ed25519
+          chmod 600 ~/.ssh/hetzner_ci_ed25519
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HOME/.ssh/hetzner_ci_ed25519" >> "$GITHUB_ENV"
+
+      - name: Resolve target IP (persistent)
+        if: inputs.target == 'persistent'
+        run: |
+          ip='${{ secrets.HETZNER_TEST_SERVER_IP }}'
+          if [ -z "$ip" ]; then
+            echo "HETZNER_TEST_SERVER_IP secret is empty" >&2; exit 1
+          fi
+          mkdir -p ci/.artifacts
+          printf '%s' "$ip" > ci/.artifacts/server-ip
+          printf '%s' "yaver-test-ephemeral" > ci/.artifacts/server-name
+          echo "$ip (persistent)"
+
+      - name: Create ephemeral box
+        if: inputs.target == 'ephemeral'
+        run: ./ci/hcloud/create-server.sh
+
+      - name: Wait for SSH
+        run: ./ci/hcloud/wait-for-ssh.sh
+
+      - name: Sync repo
+        run: ./ci/hcloud/sync-repo.sh
+
+      - name: Run verify
+        run: |
+          ip=$(cat ci/.artifacts/server-ip)
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=40 \
+              "root@$ip" 'bash /opt/yaver/ci/remote/verify.sh'
+
+      - name: Gather logs
+        if: always()
+        run: ./ci/hcloud/gather-logs.sh
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-verify-${{ inputs.target }}-${{ github.run_id }}
+          path: ci/.artifacts/
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Delete ephemeral box
+        if: always() && inputs.target == 'ephemeral'
+        run: ./ci/hcloud/delete-server.sh
