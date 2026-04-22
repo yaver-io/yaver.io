@@ -152,7 +152,7 @@ describe('P2PClient', () => {
       };
 
       const result = await client.uploadFeedback(bundle);
-      expect(result).toBe('report-123');
+      expect(result).toEqual({ id: 'report-123' });
 
       expect(mockFetch).toHaveBeenCalledWith(
         'http://localhost:18080/feedback',

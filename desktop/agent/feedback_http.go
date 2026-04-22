@@ -167,6 +167,12 @@ func (s *HTTPServer) handleFeedbackByID(w http.ResponseWriter, r *http.Request) 
 		case "transcript":
 			s.handleFeedbackTranscript(w, r, feedbackID)
 			return
+		case "change-set":
+			s.handleFeedbackChangeSet(w, r, feedbackID)
+			return
+		case "review":
+			s.handleFeedbackReview(w, r, feedbackID)
+			return
 		}
 	}
 
@@ -226,11 +232,23 @@ func (s *HTTPServer) handleFeedbackFix(w http.ResponseWriter, r *http.Request, f
 		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	var req struct {
+		Mode    string `json:"mode"`
+		Comment string `json:"comment"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
 
 	prompt, err := s.feedbackMgr.GenerateFixPrompt(feedbackID)
 	if err != nil {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
+	}
+	if req.Mode == "candidate" {
+		if _, err := s.feedbackMgr.UpdateChangeSet(feedbackID, FeedbackChangeSet{Status: "building"}); err != nil {
+			// Best effort: feedback without a change set can still proceed.
+		}
 	}
 
 	// Inject black box context if available for this device
@@ -261,6 +279,11 @@ func (s *HTTPServer) handleFeedbackFix(w http.ResponseWriter, r *http.Request, f
 		// would otherwise give a malicious end-user arbitrary code execution
 		// against the dev machine's filesystem + network.
 		opts := TaskCreateOptions{}
+		if report, ok := s.feedbackMgr.GetFeedback(feedbackID); ok {
+			if report.Project.ProjectPath != "" {
+				opts.WorkDir = report.Project.ProjectPath
+			}
+		}
 		guestUID := r.Header.Get("X-Yaver-GuestUserID")
 		if guestUID != "" && s.guestConfigMgr != nil {
 			guestCfg := s.guestConfigMgr.GetConfig(guestUID)
@@ -285,7 +308,9 @@ func (s *HTTPServer) handleFeedbackFix(w http.ResponseWriter, r *http.Request, f
 				// Pin the task to the resolved project directory so the AI
 				// agent operates inside the right repo instead of whatever
 				// the agent's current workdir happens to be.
-				if projectName != "" {
+				if report.Project.ProjectPath != "" {
+					opts.WorkDir = report.Project.ProjectPath
+				} else if projectName != "" {
 					if mp := findMobileProjectByName(projectName); mp != nil && mp.Path != "" {
 						opts.WorkDir = mp.Path
 					}
@@ -316,17 +341,28 @@ func (s *HTTPServer) handleFeedbackFix(w http.ResponseWriter, r *http.Request, f
 			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		var changeSet *FeedbackChangeSet
+		if req.Mode == "candidate" {
+			changeSet, _ = s.feedbackMgr.UpdateChangeSet(feedbackID, FeedbackChangeSet{
+				Status: "review_required",
+				TaskID: task.ID,
+			})
+		} else {
+			changeSet, _ = s.feedbackMgr.GetChangeSet(feedbackID)
+		}
 		jsonReply(w, http.StatusOK, map[string]interface{}{
-			"ok":     true,
-			"taskId": task.ID,
-			"prompt": prompt,
+			"ok":        true,
+			"taskId":    task.ID,
+			"prompt":    prompt,
+			"changeSet": changeSet,
 		})
 		return
 	}
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{
-		"ok":     true,
-		"prompt": prompt,
+		"ok":        true,
+		"prompt":    prompt,
+		"changeSet": nil,
 	})
 }
 
@@ -350,4 +386,56 @@ func (s *HTTPServer) handleFeedbackTranscript(w http.ResponseWriter, r *http.Req
 		return
 	}
 	jsonReply(w, http.StatusOK, map[string]string{"ok": "true"})
+}
+
+func (s *HTTPServer) handleFeedbackChangeSet(w http.ResponseWriter, r *http.Request, feedbackID string) {
+	switch r.Method {
+	case http.MethodGet:
+		changeSet, err := s.feedbackMgr.GetChangeSet(feedbackID)
+		if err != nil {
+			jsonReply(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		jsonReply(w, http.StatusOK, changeSet)
+	case http.MethodPost:
+		var patch FeedbackChangeSet
+		if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+			return
+		}
+		changeSet, err := s.feedbackMgr.UpdateChangeSet(feedbackID, patch)
+		if err != nil {
+			jsonReply(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		jsonReply(w, http.StatusOK, changeSet)
+	default:
+		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
+}
+
+func (s *HTTPServer) handleFeedbackReview(w http.ResponseWriter, r *http.Request, feedbackID string) {
+	if r.Method != http.MethodPost {
+		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req struct {
+		Action         string `json:"action"`
+		Comment        string `json:"comment"`
+		DesiredOutcome string `json:"desiredOutcome"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	if req.Action == "" {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "missing review action"})
+		return
+	}
+	changeSet, err := s.feedbackMgr.AddReview(feedbackID, req.Action, req.Comment, req.DesiredOutcome)
+	if err != nil {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	jsonReply(w, http.StatusOK, changeSet)
 }

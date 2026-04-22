@@ -25,6 +25,37 @@ export interface FeedbackConfig {
    * The SDK never auto-hooks window.onerror — no conflicts with Sentry, etc.
    */
   maxCapturedErrors?: number;
+  /** Project/app label shown in feedback reports and fix prompts. */
+  appName?: string;
+  /** Canonical project name for candidate/self-improving flows. */
+  projectName?: string;
+  /**
+   * Optional absolute local project path on the developer machine.
+   * Useful when the host app knows exactly which repo/worktree should receive
+   * candidate fixes.
+   */
+  projectPath?: string;
+  /** Which surface is being improved. */
+  surface?: 'web' | 'mobile' | 'backend';
+  /** Which release lane the user is currently exercising. */
+  releaseChannel?: 'production' | 'candidate' | 'development';
+  /** Candidate deploy metadata for safe self-improving flows. */
+  candidate?: FeedbackCandidateConfig;
+  /**
+   * When true, the SDK immediately asks the agent to create a candidate fix
+   * task after the report upload succeeds.
+   */
+  autoFixOnSend?: boolean;
+  /** Called after the report upload succeeds. */
+  onReportSent?: (result: FeedbackReportSummary) => void | Promise<void>;
+}
+
+export interface FeedbackCandidateConfig {
+  enabled?: boolean;
+  label?: string;
+  baseBranch?: string;
+  targetBranch?: string;
+  previewUrl?: string;
 }
 
 export interface TimelineEvent {
@@ -52,6 +83,8 @@ export interface FeedbackBundle {
     timeline: TimelineEvent[];
     transcript?: string;
     consoleErrors?: string[];
+    project?: FeedbackProjectRef;
+    candidate?: FeedbackCandidateMetadata;
   };
   video?: Blob;
   audio?: Blob;
@@ -74,4 +107,59 @@ export interface DiscoveryResult {
   hostname: string;
   version: string;
   latency: number; // ms
+}
+
+export interface FeedbackProjectRef {
+  appName?: string;
+  projectName?: string;
+  projectPath?: string;
+  surface?: 'web' | 'mobile' | 'backend';
+  releaseChannel?: 'production' | 'candidate' | 'development';
+}
+
+export interface FeedbackCandidateMetadata {
+  enabled?: boolean;
+  label?: string;
+  baseBranch?: string;
+  targetBranch?: string;
+  previewUrl?: string;
+}
+
+export interface FeedbackReviewEntry {
+  id: string;
+  action: 'comment' | 'approve' | 'revert' | 'change_again';
+  comment?: string;
+  desiredOutcome?: string;
+  createdAt: string;
+}
+
+export interface FeedbackChangeSet {
+  id: string;
+  feedbackId: string;
+  projectName?: string;
+  projectPath?: string;
+  surface?: 'web' | 'mobile' | 'backend';
+  releaseChannel?: 'production' | 'candidate' | 'development';
+  status:
+    | 'draft'
+    | 'building'
+    | 'candidate_ready'
+    | 'review_required'
+    | 'approved'
+    | 'reverted'
+    | 'superseded';
+  summary?: string;
+  candidateLabel?: string;
+  candidateUrl?: string;
+  baseBranch?: string;
+  targetBranch?: string;
+  taskId?: string;
+  createdAt: string;
+  updatedAt: string;
+  reviews?: FeedbackReviewEntry[];
+}
+
+export interface FeedbackReportSummary {
+  id: string;
+  changeSet?: FeedbackChangeSet;
 }

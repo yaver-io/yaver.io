@@ -1,4 +1,10 @@
-import type { FeedbackConfig, FeedbackBundle, TimelineEvent, DeviceInfo } from './types';
+import type {
+  FeedbackBundle,
+  FeedbackConfig,
+  FeedbackReportSummary,
+  TimelineEvent,
+  DeviceInfo,
+} from './types';
 import { YaverDiscovery } from './discovery';
 import { getToken as getCachedToken } from './auth';
 import { openLoginModal } from './LoginModal';
@@ -30,6 +36,7 @@ export class YaverFeedback {
   private static recording = false;
   private static consoleErrors: string[] = [];
   private static widget: HTMLElement | null = null;
+  private static lastUploadResult: FeedbackReportSummary | null = null;
 
   /** Initialize the feedback SDK. Call once in your app entry point. */
   static async init(config: FeedbackConfig = {}): Promise<void> {
@@ -223,6 +230,22 @@ export class YaverFeedback {
         url: window.location.href,
         timeline: YaverFeedback.timeline,
         consoleErrors: YaverFeedback.consoleErrors,
+        project: {
+          appName: YaverFeedback.config?.appName,
+          projectName: YaverFeedback.config?.projectName,
+          projectPath: YaverFeedback.config?.projectPath,
+          surface: YaverFeedback.config?.surface,
+          releaseChannel: YaverFeedback.config?.releaseChannel,
+        },
+        candidate: YaverFeedback.config?.candidate
+          ? {
+              enabled: YaverFeedback.config.candidate.enabled,
+              label: YaverFeedback.config.candidate.label,
+              baseBranch: YaverFeedback.config.candidate.baseBranch,
+              targetBranch: YaverFeedback.config.candidate.targetBranch,
+              previewUrl: YaverFeedback.config.candidate.previewUrl,
+            }
+          : undefined,
       },
       video: video.size > 0 ? video : undefined,
       audio: audio.size > 0 ? audio : undefined,
@@ -278,8 +301,27 @@ export class YaverFeedback {
         return null;
       }
 
-      const result = await resp.json();
+      const result = (await resp.json()) as FeedbackReportSummary;
+      YaverFeedback.lastUploadResult = result;
       console.log(`[yaver-feedback] Report sent: ${result.id}`);
+      if (YaverFeedback.config?.autoFixOnSend && result.id) {
+        const fixResp = await fetch(`${agentUrl}/feedback/${result.id}/fix`, {
+          method: 'POST',
+          headers: {
+            ...(YaverFeedback.config?.authToken
+              ? { Authorization: `Bearer ${YaverFeedback.config.authToken}` }
+              : {}),
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ mode: 'candidate' }),
+        });
+        if (fixResp.ok) {
+          const fix = await fixResp.json();
+          if (result.changeSet && fix?.changeSet) result.changeSet = fix.changeSet;
+          console.log(`[yaver-feedback] Candidate fix queued: ${fix?.taskId ?? 'unknown task'}`);
+        }
+      }
+      await YaverFeedback.config?.onReportSent?.(result);
       return result.id;
     } catch (err) {
       console.error('[yaver-feedback] Upload error:', err);
@@ -321,7 +363,7 @@ export class YaverFeedback {
       <div style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:99998;display:flex;align-items:center;justify-content:center;">
         <div style="background:#1a1a2e;color:#e0e0e0;padding:24px;border-radius:12px;max-width:360px;width:90%;font-family:-apple-system,sans-serif;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
           <h3 style="margin:0 0 16px;font-size:16px;">Yaver Feedback</h3>
-          <p style="margin:0 0 16px;font-size:13px;color:#888;">Record your screen and voice to report bugs. The AI agent will fix them.</p>
+          <p style="margin:0 0 16px;font-size:13px;color:#888;">Record your screen and voice to report bugs. ${YaverFeedback.config?.candidate?.enabled ? 'The agent will route fixes into the candidate lane first.' : 'The AI agent will fix them.'}</p>
           <div style="display:flex;flex-direction:column;gap:8px;">
             <button id="yaver-fb-record" style="padding:10px;border:none;border-radius:8px;background:#dc2626;color:white;cursor:pointer;font-size:13px;">Start Recording</button>
             <button id="yaver-fb-screenshot" style="padding:10px;border:none;border-radius:8px;background:#2563eb;color:white;cursor:pointer;font-size:13px;">Take Screenshot</button>
@@ -357,7 +399,12 @@ export class YaverFeedback {
       status.textContent = 'Sending report...';
       const id = await YaverFeedback.stopAndSend();
       if (id) {
-        status.textContent = `Report sent! (${id})`;
+        const changeSet = YaverFeedback.lastUploadResult?.changeSet;
+        if (changeSet?.candidateLabel) {
+          status.textContent = `Report sent! (${id}) Candidate: ${changeSet.candidateLabel}`;
+        } else {
+          status.textContent = `Report sent! (${id})`;
+        }
         setTimeout(() => overlay.remove(), 2000);
       } else {
         status.textContent = 'Failed to send. Check console.';
@@ -416,5 +463,9 @@ export class YaverFeedback {
         YaverFeedback.startReport();
       }
     });
+  }
+
+  static getLastUploadResult(): FeedbackReportSummary | null {
+    return YaverFeedback.lastUploadResult;
   }
 }

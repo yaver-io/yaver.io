@@ -33,6 +33,8 @@ func TestFeedbackManagerCRUD(t *testing.T) {
 		"source": "yaver-app",
 		"appVersion": "1.0.0",
 		"deviceInfo": {"platform": "ios", "model": "iPhone 16", "osVersion": "18.2"},
+		"project": {"appName": "talos-web", "projectName": "talos-web", "surface": "web", "releaseChannel": "candidate"},
+		"candidate": {"enabled": true, "label": "talos-web-candidate", "targetBranch": "feedback/candidate"},
 		"timeline": [
 			{"time": 15.0, "type": "voice", "text": "login button broken"},
 			{"time": 15.0, "type": "screenshot", "file": "screen_0015.jpg"}
@@ -64,6 +66,12 @@ func TestFeedbackManagerCRUD(t *testing.T) {
 	}
 	if len(report.Timeline) != 2 {
 		t.Errorf("expected 2 timeline events, got %d", len(report.Timeline))
+	}
+	if report.ChangeSet == nil {
+		t.Fatal("expected change set to be created")
+	}
+	if report.ChangeSet.CandidateLabel != "talos-web-candidate" {
+		t.Errorf("expected candidate label, got %q", report.ChangeSet.CandidateLabel)
 	}
 
 	// List
@@ -113,6 +121,8 @@ func TestFeedbackGeneratePrompt(t *testing.T) {
 		"source": "in-app-sdk",
 		"appVersion": "2.0.0-beta",
 		"deviceInfo": {"platform": "android", "model": "Pixel 8", "osVersion": "15"},
+		"project": {"appName": "talos-web", "projectName": "talos-web", "projectPath": "/tmp/talos", "surface": "web", "releaseChannel": "candidate"},
+		"candidate": {"enabled": true, "label": "talos-web-candidate", "targetBranch": "feedback/candidate", "previewUrl": "https://candidate.talos.local"},
 		"timeline": [
 			{"time": 5.0, "type": "voice", "text": "app crashes on startup"},
 			{"time": 10.0, "type": "screenshot", "file": "crash_screen.jpg"}
@@ -141,6 +151,9 @@ func TestFeedbackGeneratePrompt(t *testing.T) {
 	if !strings.Contains(prompt, "crashes immediately after the splash") {
 		t.Error("prompt missing transcript")
 	}
+	if !strings.Contains(prompt, "candidate lane") {
+		t.Error("prompt missing candidate-lane instruction")
+	}
 }
 
 func TestFeedbackHTTPUpload(t *testing.T) {
@@ -158,7 +171,9 @@ func TestFeedbackHTTPUpload(t *testing.T) {
 	// Add metadata
 	writer.WriteField("metadata", `{
 		"source": "yaver-app",
-		"deviceInfo": {"platform": "ios", "model": "iPhone 16", "osVersion": "18.2"}
+		"deviceInfo": {"platform": "ios", "model": "iPhone 16", "osVersion": "18.2"},
+		"project": {"appName": "talos-web", "projectName": "talos-web", "surface": "web", "releaseChannel": "candidate"},
+		"candidate": {"enabled": true, "label": "talos-web-candidate"}
 	}`)
 
 	// Add screenshot file
@@ -187,6 +202,39 @@ func TestFeedbackHTTPUpload(t *testing.T) {
 	}
 	if report.VideoPath == "" {
 		t.Error("expected video path")
+	}
+	if report.ChangeSet == nil {
+		t.Error("expected change set in upload response")
+	}
+}
+
+func TestFeedbackChangeSetReview(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	os.MkdirAll(filepath.Join(tmpDir, ".yaver"), 0700)
+
+	fm, _ := NewFeedbackManager()
+	report, err := fm.ReceiveFeedback(json.RawMessage(`{
+		"source": "in-app-sdk",
+		"deviceInfo": {"platform": "web", "model": "Chrome", "osVersion": "macOS"},
+		"project": {"projectName": "talos-web", "surface": "web", "releaseChannel": "candidate"},
+		"candidate": {"enabled": true, "label": "talos-web-candidate"}
+	}`), nil)
+	if err != nil {
+		t.Fatalf("ReceiveFeedback: %v", err)
+	}
+	if _, err := fm.AddReview(report.ID, "approve", "looks good", ""); err != nil {
+		t.Fatalf("AddReview: %v", err)
+	}
+	cs, err := fm.GetChangeSet(report.ID)
+	if err != nil {
+		t.Fatalf("GetChangeSet: %v", err)
+	}
+	if cs.Status != "approved" {
+		t.Fatalf("expected approved, got %s", cs.Status)
+	}
+	if len(cs.Reviews) != 1 || cs.Reviews[0].Comment != "looks good" {
+		t.Fatal("expected review comment to be persisted")
 	}
 }
 

@@ -39,18 +39,20 @@ type CapturedError struct {
 
 // FeedbackReport represents a visual bug report from device testing.
 type FeedbackReport struct {
-	ID          string          `json:"id"`
-	Source      string          `json:"source"` // "yaver-app" or "in-app-sdk"
-	VideoPath   string          `json:"videoPath,omitempty"`
-	AudioPath   string          `json:"audioPath,omitempty"`
-	Transcript  string          `json:"transcript,omitempty"`
-	Screenshots []string        `json:"screenshots,omitempty"`
-	Timeline    []TimelineEvent `json:"timeline,omitempty"`
-	Errors      []CapturedError `json:"errors,omitempty"`
-	DeviceInfo  DeviceFBInfo    `json:"deviceInfo"`
-	AppVersion  string          `json:"appVersion,omitempty"`
-	BuildID     string          `json:"buildId,omitempty"`
-	CreatedAt   string          `json:"createdAt"`
+	ID          string             `json:"id"`
+	Source      string             `json:"source"` // "yaver-app" or "in-app-sdk"
+	VideoPath   string             `json:"videoPath,omitempty"`
+	AudioPath   string             `json:"audioPath,omitempty"`
+	Transcript  string             `json:"transcript,omitempty"`
+	Screenshots []string           `json:"screenshots,omitempty"`
+	Timeline    []TimelineEvent    `json:"timeline,omitempty"`
+	Errors      []CapturedError    `json:"errors,omitempty"`
+	DeviceInfo  DeviceFBInfo       `json:"deviceInfo"`
+	AppVersion  string             `json:"appVersion,omitempty"`
+	BuildID     string             `json:"buildId,omitempty"`
+	Project     FeedbackProject    `json:"project,omitempty"`
+	ChangeSet   *FeedbackChangeSet `json:"changeSet,omitempty"`
+	CreatedAt   string             `json:"createdAt"`
 }
 
 // TimelineEvent is a timestamped annotation in a feedback report.
@@ -67,6 +69,49 @@ type DeviceFBInfo struct {
 	Model     string `json:"model"`     // iPhone 16, Pixel 8
 	OSVersion string `json:"osVersion"` // 18.2, 15
 	AppName   string `json:"appName,omitempty"`
+}
+
+type FeedbackProject struct {
+	AppName        string `json:"appName,omitempty"`
+	ProjectName    string `json:"projectName,omitempty"`
+	ProjectPath    string `json:"projectPath,omitempty"`
+	Surface        string `json:"surface,omitempty"`
+	ReleaseChannel string `json:"releaseChannel,omitempty"`
+}
+
+type FeedbackCandidateMetadata struct {
+	Enabled      bool   `json:"enabled,omitempty"`
+	Label        string `json:"label,omitempty"`
+	BaseBranch   string `json:"baseBranch,omitempty"`
+	TargetBranch string `json:"targetBranch,omitempty"`
+	PreviewURL   string `json:"previewUrl,omitempty"`
+}
+
+type FeedbackReviewEntry struct {
+	ID             string `json:"id"`
+	Action         string `json:"action"`
+	Comment        string `json:"comment,omitempty"`
+	DesiredOutcome string `json:"desiredOutcome,omitempty"`
+	CreatedAt      string `json:"createdAt"`
+}
+
+type FeedbackChangeSet struct {
+	ID             string                `json:"id"`
+	FeedbackID     string                `json:"feedbackId"`
+	ProjectName    string                `json:"projectName,omitempty"`
+	ProjectPath    string                `json:"projectPath,omitempty"`
+	Surface        string                `json:"surface,omitempty"`
+	ReleaseChannel string                `json:"releaseChannel,omitempty"`
+	Status         string                `json:"status"`
+	Summary        string                `json:"summary,omitempty"`
+	CandidateLabel string                `json:"candidateLabel,omitempty"`
+	CandidateURL   string                `json:"candidateUrl,omitempty"`
+	BaseBranch     string                `json:"baseBranch,omitempty"`
+	TargetBranch   string                `json:"targetBranch,omitempty"`
+	TaskID         string                `json:"taskId,omitempty"`
+	CreatedAt      string                `json:"createdAt"`
+	UpdatedAt      string                `json:"updatedAt"`
+	Reviews        []FeedbackReviewEntry `json:"reviews,omitempty"`
 }
 
 // FeedbackSummary is returned by list.
@@ -137,6 +182,11 @@ func (fm *FeedbackManager) ReceiveFeedback(metadata json.RawMessage, files map[s
 	if err := json.Unmarshal(metadata, &report); err != nil {
 		return nil, fmt.Errorf("invalid metadata: %w", err)
 	}
+	var raw struct {
+		Project   FeedbackProject           `json:"project"`
+		Candidate FeedbackCandidateMetadata `json:"candidate"`
+	}
+	_ = json.Unmarshal(metadata, &raw)
 
 	if report.ID == "" {
 		report.ID = uuid.New().String()[:8]
@@ -144,6 +194,19 @@ func (fm *FeedbackManager) ReceiveFeedback(metadata json.RawMessage, files map[s
 	if report.CreatedAt == "" {
 		report.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
+	if report.Project.AppName == "" {
+		report.Project = raw.Project
+	}
+	if report.DeviceInfo.AppName == "" && report.Project.AppName != "" {
+		report.DeviceInfo.AppName = report.Project.AppName
+	}
+	if report.Project.ProjectName == "" && report.DeviceInfo.AppName != "" {
+		report.Project.ProjectName = report.DeviceInfo.AppName
+	}
+	if report.Project.AppName == "" {
+		report.Project.AppName = report.Project.ProjectName
+	}
+	report.ChangeSet = buildFeedbackChangeSet(report.ID, report.Project, raw.Candidate, report.CreatedAt)
 
 	// Create report directory
 	reportDir := filepath.Join(fm.baseDir, report.ID)
@@ -170,16 +233,52 @@ func (fm *FeedbackManager) ReceiveFeedback(metadata json.RawMessage, files map[s
 		}
 	}
 
-	// Save metadata
-	metaData, _ := json.MarshalIndent(report, "", "  ")
-	os.WriteFile(filepath.Join(reportDir, "metadata.json"), metaData, 0600)
-
 	fm.mu.Lock()
 	fm.reports[report.ID] = &report
 	fm.mu.Unlock()
+	_ = fm.writeReportMetadata(&report)
 
 	log.Printf("[feedback] Received report %s: video=%v screenshots=%d", report.ID, report.VideoPath != "", len(report.Screenshots))
 	return &report, nil
+}
+
+func buildFeedbackChangeSet(
+	feedbackID string,
+	project FeedbackProject,
+	candidate FeedbackCandidateMetadata,
+	createdAt string,
+) *FeedbackChangeSet {
+	projectName := feedbackFirstNonEmpty(project.ProjectName, project.AppName)
+	if projectName == "" && !candidate.Enabled {
+		return nil
+	}
+	now := createdAt
+	if now == "" {
+		now = time.Now().UTC().Format(time.RFC3339)
+	}
+	status := "draft"
+	if candidate.Enabled {
+		status = "review_required"
+	}
+	label := candidate.Label
+	if label == "" && projectName != "" {
+		label = projectName + "-candidate"
+	}
+	return &FeedbackChangeSet{
+		ID:             "cs_" + uuid.New().String()[:8],
+		FeedbackID:     feedbackID,
+		ProjectName:    projectName,
+		ProjectPath:    project.ProjectPath,
+		Surface:        project.Surface,
+		ReleaseChannel: feedbackFirstNonEmpty(project.ReleaseChannel, "production"),
+		Status:         status,
+		CandidateLabel: label,
+		CandidateURL:   candidate.PreviewURL,
+		BaseBranch:     candidate.BaseBranch,
+		TargetBranch:   candidate.TargetBranch,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
 }
 
 // GetFeedback returns a report by ID.
@@ -244,6 +343,30 @@ func (fm *FeedbackManager) GenerateFixPrompt(id string) (string, error) {
 	sb.WriteString(fmt.Sprintf("Device: %s %s, %s %s\n", r.DeviceInfo.Model, r.DeviceInfo.Platform, r.DeviceInfo.Platform, r.DeviceInfo.OSVersion))
 	if r.AppVersion != "" {
 		sb.WriteString(fmt.Sprintf("App version: %s\n", r.AppVersion))
+	}
+	if r.Project.ProjectName != "" || r.Project.Surface != "" || r.Project.ReleaseChannel != "" {
+		sb.WriteString(fmt.Sprintf(
+			"Project: %s\nSurface: %s\nCurrent lane: %s\n",
+			feedbackFirstNonEmpty(r.Project.ProjectName, r.Project.AppName),
+			feedbackFirstNonEmpty(r.Project.Surface, "unknown"),
+			feedbackFirstNonEmpty(r.Project.ReleaseChannel, "production"),
+		))
+		if r.Project.ProjectPath != "" {
+			sb.WriteString(fmt.Sprintf("Project path: %s\n", r.Project.ProjectPath))
+		}
+		if r.ChangeSet != nil {
+			sb.WriteString(fmt.Sprintf(
+				"Candidate change set: %s (%s)\n",
+				r.ChangeSet.ID,
+				feedbackFirstNonEmpty(r.ChangeSet.CandidateLabel, "candidate"),
+			))
+			if r.ChangeSet.TargetBranch != "" {
+				sb.WriteString(fmt.Sprintf("Target branch: %s\n", r.ChangeSet.TargetBranch))
+			}
+			if r.ChangeSet.CandidateURL != "" {
+				sb.WriteString(fmt.Sprintf("Candidate preview URL: %s\n", r.ChangeSet.CandidateURL))
+			}
+		}
 	}
 	sb.WriteString("\n")
 
@@ -310,6 +433,9 @@ func (fm *FeedbackManager) GenerateFixPrompt(id string) (string, error) {
 
 	sb.WriteString("Please fix these issues based on the user's feedback. The user tested the app on their physical device and recorded these problems.\n")
 	sb.WriteString("Note: If a live black box stream is active for this device, the full app log context (console logs, navigation history, error traces, network requests) will be included separately.\n")
+	if r.ChangeSet != nil {
+		sb.WriteString("Important: keep this work in the candidate lane first. Do not send changes directly to main or production. Prefer Fast Refresh-safe edits for web/mobile UI work, and leave a short review summary for the user.\n")
+	}
 
 	return sb.String(), nil
 }
@@ -343,10 +469,110 @@ func (fm *FeedbackManager) SaveTranscript(id, transcript string) error {
 	}
 	r.Transcript = transcript
 
-	// Update metadata on disk
-	reportDir := filepath.Join(fm.baseDir, id)
-	metaData, _ := json.MarshalIndent(r, "", "  ")
+	return fm.writeReportMetadata(r)
+}
+
+func (fm *FeedbackManager) GetChangeSet(id string) (*FeedbackChangeSet, error) {
+	fm.mu.RLock()
+	defer fm.mu.RUnlock()
+	r, ok := fm.reports[id]
+	if !ok {
+		return nil, fmt.Errorf("feedback %q not found", id)
+	}
+	if r.ChangeSet == nil {
+		return nil, fmt.Errorf("feedback %q has no change set", id)
+	}
+	cp := *r.ChangeSet
+	return &cp, nil
+}
+
+func (fm *FeedbackManager) UpdateChangeSet(id string, patch FeedbackChangeSet) (*FeedbackChangeSet, error) {
+	fm.mu.Lock()
+	defer fm.mu.Unlock()
+	r, ok := fm.reports[id]
+	if !ok {
+		return nil, fmt.Errorf("feedback %q not found", id)
+	}
+	if r.ChangeSet == nil {
+		r.ChangeSet = buildFeedbackChangeSet(id, r.Project, FeedbackCandidateMetadata{}, time.Now().UTC().Format(time.RFC3339))
+	}
+	cs := r.ChangeSet
+	if patch.Status != "" {
+		cs.Status = patch.Status
+	}
+	if patch.Summary != "" {
+		cs.Summary = patch.Summary
+	}
+	if patch.CandidateLabel != "" {
+		cs.CandidateLabel = patch.CandidateLabel
+	}
+	if patch.CandidateURL != "" {
+		cs.CandidateURL = patch.CandidateURL
+	}
+	if patch.BaseBranch != "" {
+		cs.BaseBranch = patch.BaseBranch
+	}
+	if patch.TargetBranch != "" {
+		cs.TargetBranch = patch.TargetBranch
+	}
+	if patch.TaskID != "" {
+		cs.TaskID = patch.TaskID
+	}
+	cs.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := fm.writeReportMetadata(r); err != nil {
+		return nil, err
+	}
+	cp := *cs
+	return &cp, nil
+}
+
+func (fm *FeedbackManager) AddReview(id, action, comment, desiredOutcome string) (*FeedbackChangeSet, error) {
+	fm.mu.Lock()
+	defer fm.mu.Unlock()
+	r, ok := fm.reports[id]
+	if !ok {
+		return nil, fmt.Errorf("feedback %q not found", id)
+	}
+	if r.ChangeSet == nil {
+		r.ChangeSet = buildFeedbackChangeSet(id, r.Project, FeedbackCandidateMetadata{}, time.Now().UTC().Format(time.RFC3339))
+	}
+	entry := FeedbackReviewEntry{
+		ID:             "rv_" + uuid.New().String()[:8],
+		Action:         action,
+		Comment:        comment,
+		DesiredOutcome: desiredOutcome,
+		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+	}
+	r.ChangeSet.Reviews = append(r.ChangeSet.Reviews, entry)
+	switch action {
+	case "approve":
+		r.ChangeSet.Status = "approved"
+	case "revert":
+		r.ChangeSet.Status = "reverted"
+	case "change_again":
+		r.ChangeSet.Status = "review_required"
+	}
+	r.ChangeSet.UpdatedAt = entry.CreatedAt
+	if err := fm.writeReportMetadata(r); err != nil {
+		return nil, err
+	}
+	cp := *r.ChangeSet
+	return &cp, nil
+}
+
+func (fm *FeedbackManager) writeReportMetadata(report *FeedbackReport) error {
+	reportDir := filepath.Join(fm.baseDir, report.ID)
+	metaData, _ := json.MarshalIndent(report, "", "  ")
 	return os.WriteFile(filepath.Join(reportDir, "metadata.json"), metaData, 0600)
+}
+
+func feedbackFirstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // interface check

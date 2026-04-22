@@ -1,4 +1,9 @@
-import type { FeedbackBundle } from './types';
+import type {
+  FeedbackBundle,
+  FeedbackChangeSet,
+  FeedbackReportSummary,
+  FeedbackReviewEntry,
+} from './types';
 
 /**
  * P2PClient — lightweight HTTP client for Yaver agent communication.
@@ -39,7 +44,7 @@ export class P2PClient {
   }
 
   /** Upload feedback bundle via multipart POST. Returns report ID. */
-  async uploadFeedback(bundle: FeedbackBundle): Promise<string | null> {
+  async uploadFeedback(bundle: FeedbackBundle): Promise<FeedbackReportSummary | null> {
     const form = new FormData();
     form.append('metadata', JSON.stringify(bundle.metadata));
     if (bundle.video) form.append('video', bundle.video, 'recording.webm');
@@ -52,8 +57,7 @@ export class P2PClient {
     try {
       const resp = await fetch(`${this.baseUrl}/feedback`, { method: 'POST', headers, body: form });
       if (!resp.ok) return null;
-      const result = await resp.json();
-      return result.id;
+      return resp.json();
     } catch {
       return null;
     }
@@ -113,11 +117,61 @@ export class P2PClient {
   }
 
   /** Create a fix task from feedback. */
-  async fixFromFeedback(feedbackId: string): Promise<{ taskId: string } | null> {
+  async fixFromFeedback(
+    feedbackId: string,
+    opts: { mode?: 'candidate' | 'direct'; comment?: string } = {},
+  ): Promise<{ taskId: string; changeSet?: FeedbackChangeSet } | null> {
     try {
       const resp = await fetch(`${this.baseUrl}/feedback/${feedbackId}/fix`, {
         method: 'POST',
         headers: this.headers,
+        body: JSON.stringify(opts),
+      });
+      if (!resp.ok) return null;
+      return resp.json();
+    } catch {
+      return null;
+    }
+  }
+
+  async getFeedbackChangeSet(feedbackId: string): Promise<FeedbackChangeSet | null> {
+    try {
+      const resp = await fetch(`${this.baseUrl}/feedback/${feedbackId}/change-set`, {
+        headers: this.headers,
+      });
+      if (!resp.ok) return null;
+      return resp.json();
+    } catch {
+      return null;
+    }
+  }
+
+  async updateFeedbackChangeSet(
+    feedbackId: string,
+    patch: Partial<FeedbackChangeSet>,
+  ): Promise<FeedbackChangeSet | null> {
+    try {
+      const resp = await fetch(`${this.baseUrl}/feedback/${feedbackId}/change-set`, {
+        method: 'POST',
+        headers: this.headers,
+        body: JSON.stringify(patch),
+      });
+      if (!resp.ok) return null;
+      return resp.json();
+    } catch {
+      return null;
+    }
+  }
+
+  async reviewFeedbackChangeSet(
+    feedbackId: string,
+    review: Pick<FeedbackReviewEntry, 'action' | 'comment' | 'desiredOutcome'>,
+  ): Promise<FeedbackChangeSet | null> {
+    try {
+      const resp = await fetch(`${this.baseUrl}/feedback/${feedbackId}/review`, {
+        method: 'POST',
+        headers: this.headers,
+        body: JSON.stringify(review),
       });
       if (!resp.ok) return null;
       return resp.json();
