@@ -312,7 +312,7 @@ jobs:
               -o UserKnownHostsFile=/dev/null \
               -o ServerAliveInterval=30 -o ServerAliveCountMax=40 \
               "root@$ip" \
-              "REPO_DIR='${REMOTE_REPO_DIR}' CONVEX_SITE_URL='${CONVEX_SITE_URL}' CF_TUNNEL_URL='${CF_TUNNEL_URL}' CF_ACCESS_CLIENT_ID='${CF_ACCESS_CLIENT_ID}' CF_ACCESS_CLIENT_SECRET='${CF_ACCESS_CLIENT_SECRET}' PATH='/usr/local/go/bin:\$PATH' bash '${REMOTE_REPO_DIR}/ci/remote/run_test_suite_section.sh' '${{ matrix.section }}'"
+              "REPO_DIR='${REMOTE_REPO_DIR}' CONVEX_SITE_URL='${CONVEX_SITE_URL}' CF_TUNNEL_URL='${CF_TUNNEL_URL}' CF_ACCESS_CLIENT_ID='${CF_ACCESS_CLIENT_ID}' CF_ACCESS_CLIENT_SECRET='${CF_ACCESS_CLIENT_SECRET}' /bin/bash '${REMOTE_REPO_DIR}/ci/remote/run_test_suite_section.sh' '${{ matrix.section }}'"
 
       - name: Append summary
         if: always()
