@@ -85,6 +85,14 @@
           "backgroundColor": "#0a0a0a"
         }
       ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "15.5"
+          }
+        }
+      ],
       "expo-router",
       "expo-secure-store",
       "expo-apple-authentication",
