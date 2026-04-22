@@ -12,7 +12,13 @@ import {
   View,
 } from 'react-native';
 import { YaverFeedback } from './YaverFeedback';
-import { getQuickIconDisabled, setQuickIconDisabled } from './preferences';
+import {
+  getQuickIconColorPreset,
+  getQuickIconDisabled,
+  QUICK_ICON_COLOR_PRESETS,
+  setQuickIconColorPreset,
+  setQuickIconDisabled,
+} from './preferences';
 
 // Mirror the suppression rule used by YaverFeedback + ShakeDetector:
 // when loaded through Yaver's super-host Hermes bundle, the host owns
@@ -123,6 +129,7 @@ export const QuickActionIcon: React.FC<QuickActionIconProps> = ({
   const didDrag = useRef(false);
 
   const [userDisabled, setUserDisabled] = useState<boolean | null>(null);
+  const [colorPreset, setColorPreset] = useState<keyof typeof QUICK_ICON_COLOR_PRESETS | null>(null);
   const [shakenThisSession, setShakenThisSession] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [hostSuppressed] = useState<boolean>(() => isRunningInsideYaverHost());
@@ -134,6 +141,9 @@ export const QuickActionIcon: React.FC<QuickActionIconProps> = ({
     let alive = true;
     getQuickIconDisabled().then((v) => {
       if (alive) setUserDisabled(v);
+    });
+    getQuickIconColorPreset().then((v) => {
+      if (alive) setColorPreset(v);
     });
     return () => {
       alive = false;
@@ -169,9 +179,18 @@ export const QuickActionIcon: React.FC<QuickActionIconProps> = ({
         setMenuOpen(false);
       },
     );
+    const colorSub = DeviceEventEmitter.addListener(
+      'yaverFeedback:quickIconColorChange',
+      (next: { preset?: keyof typeof QUICK_ICON_COLOR_PRESETS | null }) => {
+        const preset = next?.preset ?? null;
+        setColorPreset(preset);
+        void setQuickIconColorPreset(preset);
+      },
+    );
     return () => {
       showSub.remove();
       hideSub.remove();
+      colorSub.remove();
     };
   }, []);
 
@@ -229,6 +248,7 @@ export const QuickActionIcon: React.FC<QuickActionIconProps> = ({
   if (mode === 'after-shake' && !shakenThisSession) return null;
   if (!YaverFeedback.isEnabled()) return null;
 
+  const presetColors = colorPreset ? QUICK_ICON_COLOR_PRESETS[colorPreset] : null;
   const visualSize = size;
   const radius = visualSize / 2;
 
@@ -271,9 +291,9 @@ export const QuickActionIcon: React.FC<QuickActionIconProps> = ({
               width: visualSize,
               height: visualSize,
               borderRadius: radius,
-              backgroundColor,
-              borderColor,
-              shadowColor,
+              backgroundColor: presetColors?.backgroundColor ?? backgroundColor,
+              borderColor: presetColors?.borderColor ?? borderColor,
+              shadowColor: presetColors?.shadowColor ?? shadowColor,
               opacity: pressed ? 0.85 : 1,
             },
           ]}
@@ -282,7 +302,7 @@ export const QuickActionIcon: React.FC<QuickActionIconProps> = ({
             style={[
               styles.iconLabel,
               {
-                color: foregroundColor,
+                color: presetColors?.foregroundColor ?? foregroundColor,
                 fontSize: Math.round(visualSize * 0.5),
               },
             ]}

@@ -17,6 +17,34 @@ jest.mock('../Discovery', () => ({
   },
 }));
 
+jest.mock('../auth', () => ({
+  configureAuthEndpoints: jest.fn(),
+  setStrictNativeAuth: jest.fn(),
+  getToken: jest.fn(async () => null),
+  getSelectedDeviceId: jest.fn(async () => null),
+  clearToken: jest.fn(async () => {}),
+  clearSelectedDeviceId: jest.fn(async () => {}),
+  listReachableDevices: jest.fn(async () => ({
+    owned: [
+      {
+        deviceId: 'device-1',
+        name: 'Dev Mac',
+        platform: 'darwin',
+        isOnline: true,
+        needsAuth: false,
+        runnerDown: false,
+        lastHeartbeat: Date.now(),
+        isGuest: false,
+        accessScope: 'owner',
+        quicHost: '127.0.0.1',
+        quicPort: 18080,
+      },
+    ],
+    shared: [],
+  })),
+  DEFAULT_CONVEX_SITE_URL: 'https://example.convex.site',
+}));
+
 // Reset module-level state between tests by re-requiring
 beforeEach(() => {
   // YaverFeedback uses module-level variables (config, enabled, p2pClient).
@@ -123,6 +151,20 @@ describe('YaverFeedback', () => {
       expect(cfg).toBeDefined();
       expect(cfg!.authToken).toBe('my-token');
       expect(cfg!.agentUrl).toBe('http://10.0.0.1:18080');
+    });
+  });
+
+  describe('getSelectedRemoteDevice()', () => {
+    it('returns the selected device from the reachable device list', async () => {
+      YaverFeedback.init({
+        authToken: 'tok',
+        preferredDeviceId: 'device-1',
+        enabled: true,
+      });
+
+      const device = await YaverFeedback.getSelectedRemoteDevice();
+      expect(device?.deviceId).toBe('device-1');
+      expect(device?.name).toBe('Dev Mac');
     });
   });
 

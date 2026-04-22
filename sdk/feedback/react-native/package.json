@@ -1,6 +1,6 @@
 {
   "name": "yaver-feedback-react-native",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Visual feedback SDK for Yaver — bug reports, screen recording, voice annotations, and local-first developer workflows",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -40,15 +40,17 @@
     }
   },
   "devDependencies": {
-    "jest": "^29.0.0",
     "@types/jest": "^29.0.0",
+    "@types/react": "^19.2.2",
+    "jest": "^29.0.0",
     "ts-jest": "^29.1.0",
     "typescript": "^5.0.0"
   },
   "scripts": {
-    "build": "rm -rf dist && (tsc || true) && test -f dist/index.js",
+    "build": "rm -rf dist && (tsc -p tsconfig.json || true) && test -f dist/index.js",
     "prepublishOnly": "npm run build",
-    "test": "jest"
+    "test": "jest --runInBand",
+    "test:ci": "npm run build && npm test"
   },
   "jest": {
     "preset": "ts-jest",

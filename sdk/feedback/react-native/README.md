@@ -1,6 +1,6 @@
 # yaver-feedback-react-native
 
-Visual feedback SDK for Yaver. Lets testers and developers shake their phone and then keep a small quick-access icon on screen for hot reload, vibing, screenshot or file upload, and screen recording uploads straight to a Yaver agent running on a dev machine.
+Visual feedback SDK for Yaver. Lets testers and developers shake their phone and then keep a small quick-access icon on screen for hot reload, vibing, and screenshot & fix flows straight to a Yaver agent running on a dev machine.
 
 ## Installation
 
@@ -85,7 +85,7 @@ function App() {
 }
 ```
 
-Shake your phone to open the feedback modal. On mobile the quick-access icon stays hidden until that first shake, then remains tappable for the rest of the session unless the user hides it. From there the sheet exposes four core actions: hot reload, vibing, screenshot or file upload, and screen recording upload.
+Shake your phone to open the feedback modal. On mobile the quick-access icon stays hidden until that first shake, then remains tappable for the rest of the session unless the user hides it. For launch, the sheet exposes three actions only: hot reload, vibing, and screenshot & fix.
 
 ### Quick Icon Styling
 

@@ -2,9 +2,12 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   DeviceEventEmitter,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -13,40 +16,50 @@ import {
 import { YaverFeedback } from './YaverFeedback';
 import {
   captureScreenshot,
-  pickFeedbackFile,
-  startVideoRecording,
-  stopVideoRecording,
+  // Launch scope for the feedback test SDK is intentionally smaller for now.
+  // Keep the dormant file-upload and screen-recording helpers nearby, but
+  // comment them out until we bring them back with stronger test coverage.
+  // pickFeedbackFile,
+  // startVideoRecording,
+  // stopVideoRecording,
 } from './capture';
 import { uploadFeedback } from './upload';
 import { DeviceInfo, FeedbackBundle } from './types';
 import { AuthOverlay } from './AuthOverlay';
 import { QuickActionIcon } from './QuickActionIcon';
+import { listReachableDevices, RemoteDevice } from './auth';
+import {
+  QUICK_ICON_COLOR_PRESETS,
+  QuickIconColorPreset,
+} from './preferences';
 
 /**
- * Simplified feedback modal — 4 actions:
+ * Simplified feedback modal — launch scope is 3 actions:
  *
  *  1. Hot Reload               — instant JS reload (most common use case)
  *  2. Vibing                   — open a vibing session on the agent
- *  3. Screenshot / Upload      — capture the underlying app (modal hidden
- *                                during capture) or upload an existing
- *                                media file through the Go agent
- *  4. Screen Recording         — start recording, then stop + upload
+ *  3. Screenshot & Fix         — capture the underlying app (modal hidden
+ *                                during capture), upload it, and trigger
+ *                                the fix loop
  *
  * The footer also has an explicit Cancel button so the icon tap path
  * feels like a standard action sheet rather than a hidden modal.
  */
 
-interface LastVideo {
-  path: string;
-  duration: number;
-}
-
 type ActionState =
   | 'idle'
   | 'hot-reloading'
   | 'capturing'
-  | 'vibing'
-  | 'uploading-video';
+  | 'vibing';
+
+type MachineCardState = {
+  device: RemoteDevice | null;
+  reachable: boolean | null;
+  loading: boolean;
+  status: 'none' | 'live' | 'attention' | 'offline';
+  title: string;
+  detail: string;
+};
 
 export const FeedbackModal: React.FC = () => {
   const [visible, setVisible] = useState(false);
@@ -54,8 +67,6 @@ export const FeedbackModal: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
-  const [isRecordingVideo, setIsRecordingVideo] = useState(false);
-  const [lastVideo, setLastVideo] = useState<LastVideo | null>(null);
   // Tracks whether the user has hidden the QuickActionIcon via its
   // long-press menu. Shake is always available, so the feedback modal
   // is our guaranteed UI for bringing the icon back — we surface a
@@ -68,9 +79,119 @@ export const FeedbackModal: React.FC = () => {
   // the wrong project because the matcher grepped the prompt itself).
   const [showVibeInput, setShowVibeInput] = useState(false);
   const [vibePrompt, setVibePrompt] = useState('');
-  const [showCaptureChoices, setShowCaptureChoices] = useState(false);
   const [lastVibeTaskId, setLastVibeTaskId] = useState<string | null>(null);
+  const [quickIconColorPreset, setQuickIconColorPreset] =
+    useState<QuickIconColorPreset | null>(null);
+  const [machineCard, setMachineCard] = useState<MachineCardState>({
+    device: null,
+    reachable: null,
+    loading: false,
+    status: 'none',
+    title: 'No machine selected',
+    detail: 'Pick a remote dev machine before using the feedback actions.',
+  });
   const mountedRef = useRef(true);
+
+  const loadSelectedMachine = useCallback(async () => {
+    const cfg = YaverFeedback.getConfig();
+    if (!cfg?.authToken) {
+      if (mountedRef.current) {
+        setMachineCard({
+          device: null,
+          reachable: null,
+          loading: false,
+          status: 'none',
+          title: 'Not signed in',
+          detail: 'Sign in to pick and monitor a remote dev machine.',
+        });
+      }
+      return;
+    }
+    if (!cfg.preferredDeviceId) {
+      if (mountedRef.current) {
+        setMachineCard({
+          device: null,
+          reachable: null,
+          loading: false,
+          status: 'none',
+          title: 'No machine selected',
+          detail: 'Choose which machine this SDK should talk to.',
+        });
+      }
+      return;
+    }
+
+    if (mountedRef.current) {
+      setMachineCard((prev) => ({ ...prev, loading: true }));
+    }
+
+    try {
+      const devices = await listReachableDevices(cfg.authToken);
+      const all = [...devices.owned, ...devices.shared];
+      const device =
+        all.find((candidate) => candidate.deviceId === cfg.preferredDeviceId) ?? null;
+
+      if (!device) {
+        if (mountedRef.current) {
+          setMachineCard({
+            device: null,
+            reachable: null,
+            loading: false,
+            status: 'offline',
+            title: 'Selected machine missing',
+            detail: 'The saved machine was not returned by the device list. Re-select it.',
+          });
+        }
+        return;
+      }
+
+      let reachable: boolean | null = null;
+      const client = YaverFeedback.getP2PClient();
+      if (device.isOnline && !device.needsAuth && client) {
+        reachable = await client.health();
+      }
+
+      const hostHint = device.hostEmail ? ` via ${device.hostEmail}` : '';
+      let status: MachineCardState['status'] = 'live';
+      let detail = `${device.platform}${hostHint}`;
+
+      if (!device.isOnline) {
+        status = 'offline';
+        detail = 'Machine offline. Start `yaver serve` on the selected machine.';
+      } else if (device.needsAuth) {
+        status = 'attention';
+        detail = 'Machine needs pairing again before feedback actions can run.';
+      } else if (device.runnerDown) {
+        status = 'attention';
+        detail = 'Machine is online but the coding agent is down.';
+      } else if (reachable === false) {
+        status = 'offline';
+        detail = 'Machine selected, but the agent is not responding.';
+      }
+
+      if (mountedRef.current) {
+        setMachineCard({
+          device,
+          reachable,
+          loading: false,
+          status,
+          title: device.name || device.deviceId,
+          detail,
+        });
+      }
+    } catch (err) {
+      if (mountedRef.current) {
+        setMachineCard({
+          device: null,
+          reachable: null,
+          loading: false,
+          status: 'offline',
+          title: 'Machine status unavailable',
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -79,8 +200,10 @@ export const FeedbackModal: React.FC = () => {
         setVisible(true);
         setError(null);
         setToast(null);
+        setProgress(null);
         setAction('idle');
-        setShowCaptureChoices(false);
+        setShowVibeInput(false);
+        setVibePrompt('');
         // Re-read the "user hid the quick icon" flag on every open so
         // the re-enable row reflects the latest preference (the user
         // might have hidden or shown it between opens).
@@ -89,6 +212,12 @@ export const FeedbackModal: React.FC = () => {
             if (mountedRef.current) setQuickIconHidden(v);
           })
           .catch(() => {});
+        YaverFeedback.getQuickIconColorPreset()
+          .then((preset) => {
+            if (mountedRef.current) setQuickIconColorPreset(preset);
+          })
+          .catch(() => {});
+        void loadSelectedMachine();
       }
     });
     // Agent streams build / compile progress through the BlackBox
@@ -117,7 +246,15 @@ export const FeedbackModal: React.FC = () => {
       sub.remove();
       statusSub.remove();
     };
-  }, []);
+  }, [loadSelectedMachine]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const interval = setInterval(() => {
+      void loadSelectedMachine();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [loadSelectedMachine, visible]);
 
   const closeSoon = useCallback((delayMs = 1200) => {
     setTimeout(() => {
@@ -129,8 +266,10 @@ export const FeedbackModal: React.FC = () => {
     setVisible(false);
     setError(null);
     setToast(null);
+    setProgress(null);
     setAction('idle');
-    setShowCaptureChoices(false);
+    setShowVibeInput(false);
+    setVibePrompt('');
   }, []);
 
   // Helper: run a P2P call; on network failure, ask YaverFeedback to
@@ -188,28 +327,54 @@ export const FeedbackModal: React.FC = () => {
     setAction('hot-reloading');
     setError(null);
     setProgress(0);
-    setToast('Sending…');
+    setToast('Contacting selected machine…');
     try {
+      await loadSelectedMachine();
+      const selected = await YaverFeedback.getSelectedRemoteDevice();
+      if (!selected) {
+        YaverFeedback.showMachinePicker();
+        throw new Error('No machine selected. Pick a machine and try again.');
+      }
+      if (selected.needsAuth) {
+        YaverFeedback.showMachinePicker();
+        throw new Error('Selected machine needs pairing again.');
+      }
+      if (!selected.isOnline) {
+        throw new Error('Selected machine is offline. Start `yaver serve` on it first.');
+      }
+
       // Default mode: bundle. Always rebuilds via the agent regardless
       // of Metro state. P2PClient.reloadApp auto-resolves projectName +
       // bundleId from expo-constants / NativeModules so the agent can
       // map this app to its MobileProject scan entry without needing
       // `yaver dev start` to have been run.
+      let ackMessage = 'Reload request acknowledged.';
       await runWithReconnect(async (client) => {
-        await client.reloadApp('bundle');
+        const ack = await client.reloadApp('bundle');
+        ackMessage = ack.message;
+        setToast(ack.message);
+        setProgress(0.2);
       });
       // We don't auto-close here — the agent's BlackBox status pings
       // will keep the modal updated, and the on-device YaverBundleLoader
       // will reload the JS once the fresh bundle arrives. Modal stays
       // up for a beat so the user sees the final progress state.
+      setToast(ackMessage);
       closeSoon(2500);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      setToast(
+        message.toLowerCase().indexOf('session expired') >= 0
+          ? 'Session expired. Sign in again.'
+          : 'Hot reload did not start.',
+      );
+      await loadSelectedMachine();
       setProgress(null);
     } finally {
       if (mountedRef.current) setAction('idle');
     }
-  }, [closeSoon, runWithReconnect]);
+  }, [closeSoon, loadSelectedMachine, runWithReconnect]);
 
   const uploadBundleWithOptionalFix = useCallback(async (
     bundle: FeedbackBundle,
@@ -252,15 +417,9 @@ export const FeedbackModal: React.FC = () => {
     }
   }, [closeSoon]);
 
-  // ─── 3. Screenshot / Upload ───────────────────────────────────────
-  const handleCaptureChoiceToggle = useCallback(() => {
-    setShowCaptureChoices((v) => !v);
-  }, []);
-
   const handleScreenshotAndFix = useCallback(async () => {
     setAction('capturing');
     setError(null);
-    setShowCaptureChoices(false);
 
     setVisible(false);
     await new Promise((resolve) => setTimeout(resolve, 350));
@@ -309,51 +468,11 @@ export const FeedbackModal: React.FC = () => {
     }
   }, [uploadBundleWithOptionalFix]);
 
+  /*
   const handleFileUpload = useCallback(async () => {
-    setAction('capturing');
-    setError(null);
-    setShowCaptureChoices(false);
-    try {
-      const picked = await pickFeedbackFile();
-      const { Dimensions } = require('react-native');
-      const { width, height } = Dimensions.get('window');
-      const deviceInfo: DeviceInfo = {
-        platform: Platform.OS,
-        osVersion: String(Platform.Version),
-        model: Platform.OS === 'ios' ? 'iOS Device' : 'Android Device',
-        screenWidth: width,
-        screenHeight: height,
-      };
-      const capturedErrors = YaverFeedback.getCapturedErrors();
-      const bundle: FeedbackBundle = {
-        metadata: {
-          timestamp: new Date().toISOString(),
-          device: deviceInfo,
-          app: {},
-          userNote: `[Uploaded file] ${picked.name}`,
-        },
-        screenshots: picked.kind === 'image' ? [picked.path] : [],
-        video: picked.kind === 'video' ? picked.path : undefined,
-        audio: picked.kind === 'audio' ? picked.path : undefined,
-        errors: capturedErrors.length > 0 ? capturedErrors : undefined,
-      };
-      if (picked.kind === 'unknown') {
-        throw new Error('Pick an image, video, or audio file.');
-      }
-      await uploadBundleWithOptionalFix(
-        bundle,
-        picked.kind === 'image',
-        picked.kind === 'image' ? 'Fix task started' : 'File uploaded',
-      );
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message !== 'File selection canceled.') {
-        setError(message);
-      }
-    } finally {
-      if (mountedRef.current) setAction('idle');
-    }
+    ...
   }, [uploadBundleWithOptionalFix]);
+  */
 
   // ─── 3. Vibing ─────────────────────────────────────────────────────
   // First tap expands the input; second submit fires the actual
@@ -407,113 +526,11 @@ export const FeedbackModal: React.FC = () => {
     }
   }, [vibePrompt]);
 
-  // ─── 4. Screen recording ───────────────────────────────────────────
+  /*
   const handleScreenRecording = useCallback(async () => {
-    setError(null);
-    if (!isRecordingVideo && lastVideo) {
-      const config = YaverFeedback.getConfig();
-      if (!config?.agentUrl) {
-        setError('Not connected to the agent yet.');
-        return;
-      }
-      setAction('uploading-video');
-      try {
-        const { Dimensions } = require('react-native');
-        const { width, height } = Dimensions.get('window');
-        const deviceInfo: DeviceInfo = {
-          platform: Platform.OS,
-          osVersion: String(Platform.Version),
-          model: Platform.OS === 'ios' ? 'iOS Device' : 'Android Device',
-          screenWidth: width,
-          screenHeight: height,
-        };
-        const bundle: FeedbackBundle = {
-          metadata: {
-            timestamp: new Date().toISOString(),
-            device: deviceInfo,
-            app: {},
-            userNote: '[Screen recording]',
-          },
-          screenshots: [],
-          video: lastVideo.path,
-          errors: YaverFeedback.getCapturedErrors().length
-            ? YaverFeedback.getCapturedErrors()
-            : undefined,
-        };
-        await uploadFeedback(config.agentUrl, config.authToken ?? '', bundle);
-        if (mountedRef.current) {
-          setToast(`Recording uploaded — ${Math.round(lastVideo.duration)}s`);
-          setLastVideo(null);
-        }
-        closeSoon(1200);
-      } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (mountedRef.current) setAction('idle');
-      }
-      return;
-    }
-
-    if (isRecordingVideo) {
-      try {
-        const result = await stopVideoRecording();
-        if (mountedRef.current) {
-          setIsRecordingVideo(false);
-          setLastVideo(result);
-          setAction('uploading-video');
-          setToast('Uploading recording…');
-        }
-        const config = YaverFeedback.getConfig();
-        if (!config?.agentUrl) {
-          throw new Error('Not connected to the agent yet.');
-        }
-        const { Dimensions } = require('react-native');
-        const { width, height } = Dimensions.get('window');
-        const deviceInfo: DeviceInfo = {
-          platform: Platform.OS,
-          osVersion: String(Platform.Version),
-          model: Platform.OS === 'ios' ? 'iOS Device' : 'Android Device',
-          screenWidth: width,
-          screenHeight: height,
-        };
-        const bundle: FeedbackBundle = {
-          metadata: {
-            timestamp: new Date().toISOString(),
-            device: deviceInfo,
-            app: {},
-            userNote: '[Screen recording]',
-          },
-          screenshots: [],
-          video: result.path,
-          errors: YaverFeedback.getCapturedErrors().length
-            ? YaverFeedback.getCapturedErrors()
-            : undefined,
-        };
-        await uploadFeedback(config.agentUrl, config.authToken ?? '', bundle);
-        if (mountedRef.current) {
-          setToast(`Recording uploaded — ${Math.round(result.duration)}s`);
-          setLastVideo(null);
-        }
-        closeSoon(1200);
-      } catch (err: unknown) {
-        setIsRecordingVideo(false);
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (mountedRef.current) setAction('idle');
-      }
-    } else {
-      try {
-        await startVideoRecording();
-        if (mountedRef.current) {
-          setIsRecordingVideo(true);
-          setToast('Recording… tap again to stop and upload');
-          setLastVideo(null);
-        }
-      } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : String(err));
-      }
-    }
+    ...
   }, [closeSoon, isRecordingVideo, lastVideo]);
+  */
 
   const busy = action !== 'idle';
 
@@ -529,7 +546,23 @@ export const FeedbackModal: React.FC = () => {
           onRequestClose={handleClose}
         >
           <Pressable style={styles.overlay} onPress={handleClose}>
-            <Pressable style={styles.modal} onPress={(e) => e.stopPropagation()}>
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              style={styles.kbAvoider}
+              pointerEvents="box-none"
+            >
+            <Pressable
+              style={styles.modal}
+              onPress={(e) => {
+                e.stopPropagation();
+                Keyboard.dismiss();
+              }}
+            >
+              <ScrollView
+                style={styles.scroll}
+                contentContainerStyle={styles.scrollContent}
+                keyboardShouldPersistTaps="handled"
+              >
               <View style={styles.header}>
                 <Text style={styles.title}>Send Feedback</Text>
                 <Pressable
@@ -541,6 +574,111 @@ export const FeedbackModal: React.FC = () => {
                 >
                   <Text style={styles.closeIcon}>×</Text>
                 </Pressable>
+              </View>
+
+              <Pressable
+                onPress={() => {
+                  if (!YaverFeedback.isAuthed()) {
+                    YaverFeedback.showLogin();
+                    return;
+                  }
+                  YaverFeedback.showMachinePicker();
+                }}
+                style={[
+                  styles.machineCard,
+                  machineCard.status === 'live' && styles.machineCardLive,
+                  machineCard.status === 'attention' && styles.machineCardAttention,
+                  machineCard.status === 'offline' && styles.machineCardOffline,
+                ]}
+              >
+                <View style={styles.machineHeader}>
+                  <View style={styles.machineTitleWrap}>
+                    <View
+                      style={[
+                        styles.machineDot,
+                        machineCard.status === 'live' && styles.machineDotLive,
+                        machineCard.status === 'attention' && styles.machineDotAttention,
+                        machineCard.status === 'offline' && styles.machineDotOffline,
+                      ]}
+                    />
+                    <Text style={styles.machineLabel}>Selected Machine</Text>
+                  </View>
+                  <Text style={styles.machineAction}>
+                    {machineCard.loading ? 'Refreshing…' : 'Change'}
+                  </Text>
+                </View>
+                <Text style={styles.machineName}>
+                  {machineCard.loading ? 'Checking machine…' : machineCard.title}
+                </Text>
+                <Text style={styles.machineMeta}>{machineCard.detail}</Text>
+              </Pressable>
+
+              {quickIconHidden && (
+                <View style={styles.quickIconNote}>
+                  <Text style={styles.quickIconNoteText}>
+                    Quick access icon is hidden. Shake the phone if you want feedback back fast.
+                  </Text>
+                  <Pressable
+                    onPress={() => {
+                      void YaverFeedback.setQuickIconVisible(true);
+                      setQuickIconHidden(false);
+                    }}
+                    style={({ pressed }) => [
+                      styles.quickIconToggle,
+                      pressed && styles.buttonPressed,
+                    ]}
+                  >
+                    <Text style={styles.quickIconToggleText}>Show quick icon again</Text>
+                  </Pressable>
+                </View>
+              )}
+
+              <View style={styles.iconSelector}>
+                <Text style={styles.iconSelectorTitle}>Quick Icon Color</Text>
+                <Text style={styles.iconSelectorText}>
+                  Pick a runtime color so the floating y icon does not overlap with your app UI.
+                </Text>
+                <View style={styles.iconSelectorGrid}>
+                  {(Object.entries(QUICK_ICON_COLOR_PRESETS) as Array<
+                    [QuickIconColorPreset, (typeof QUICK_ICON_COLOR_PRESETS)[QuickIconColorPreset]]
+                  >).map(([preset, colors]) => {
+                    const selected = quickIconColorPreset === preset;
+                    return (
+                      <Pressable
+                        key={preset}
+                        onPress={() => {
+                          setQuickIconColorPreset(preset);
+                          void YaverFeedback.setQuickIconColorPreset(preset);
+                        }}
+                        style={[
+                          styles.iconOption,
+                          selected && styles.iconOptionSelected,
+                        ]}
+                      >
+                        <View
+                          style={[
+                            styles.iconOptionCircle,
+                            {
+                              backgroundColor: colors.backgroundColor,
+                              borderColor: colors.borderColor,
+                              shadowColor: colors.shadowColor,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.iconOptionLabel,
+                              { color: colors.foregroundColor },
+                            ]}
+                          >
+                            y
+                          </Text>
+                        </View>
+                        <Text style={styles.iconOptionText}>{colors.label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
               </View>
 
               {/* 1. Hot Reload — the common path */}
@@ -613,51 +751,13 @@ export const FeedbackModal: React.FC = () => {
                 </Text>
               )}
 
-              {/* Screenshot / Upload */}
-              {!showCaptureChoices ? (
-                <ActionRow
-                  label={
-                    action === 'capturing'
-                      ? 'Working…'
-                      : 'Screenshot / Upload'
-                  }
-                  tint="#22c55e"
-                  onPress={handleCaptureChoiceToggle}
-                  disabled={busy}
-                  busy={action === 'capturing'}
-                />
-              ) : (
-                <View style={styles.captureChoices}>
-                  <ActionRow
-                    label="Take Screenshot"
-                    tint="#22c55e"
-                    onPress={handleScreenshotAndFix}
-                    disabled={busy}
-                  />
-                  <ActionRow
-                    label="Upload File"
-                    tint="#34d399"
-                    onPress={handleFileUpload}
-                    disabled={busy}
-                  />
-                </View>
-              )}
-
-              {/* 4. Screen recording */}
+              {/* Screenshot & Fix */}
               <ActionRow
-                label={
-                  action === 'uploading-video'
-                    ? 'Uploading…'
-                    : isRecordingVideo
-                      ? 'Stop & Upload Recording'
-                      : lastVideo
-                        ? `Retry Upload Recording · ${Math.round(lastVideo.duration)}s`
-                        : 'Screen Recording'
-                }
-                tint={isRecordingVideo ? '#ef4444' : '#60a5fa'}
-                onPress={handleScreenRecording}
-                disabled={busy && action !== 'uploading-video' && !isRecordingVideo}
-                busy={action === 'uploading-video'}
+                label={action === 'capturing' ? 'Working…' : 'Screenshot & Fix'}
+                tint="#22c55e"
+                onPress={handleScreenshotAndFix}
+                disabled={busy}
+                busy={action === 'capturing'}
               />
 
               {progress !== null && (
@@ -673,34 +773,6 @@ export const FeedbackModal: React.FC = () => {
               {toast && <Text style={styles.toast}>{toast}</Text>}
               {error && <Text style={styles.error}>{error}</Text>}
 
-              {/* Quick-icon toggle. The user's three ways to control
-                  the floating icon are: (1) long-press the icon →
-                  Hide, (2) tap this row to toggle it on/off, (3) shake
-                  → this modal → tap this row. Shake is the unkillable
-                  back-door when the icon is hidden and the dev hasn't
-                  exposed their own settings UI. */}
-              <Pressable
-                onPress={async () => {
-                  const next = !quickIconHidden;
-                  setQuickIconHidden(next);
-                  await YaverFeedback.setQuickIconVisible(!next);
-                }}
-                style={({ pressed }) => [
-                  styles.quickIconToggle,
-                  pressed && { opacity: 0.7 },
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel={
-                  quickIconHidden ? 'Show quick icon' : 'Hide quick icon'
-                }
-              >
-                <Text style={styles.quickIconToggleText}>
-                  {quickIconHidden
-                    ? '◯  Show quick-access icon'
-                    : '●  Hide quick-access icon'}
-                </Text>
-              </Pressable>
-
               <Pressable
                 onPress={handleClose}
                 style={({ pressed }) => [
@@ -712,7 +784,9 @@ export const FeedbackModal: React.FC = () => {
               >
                 <Text style={styles.cancelBtnText}>Cancel</Text>
               </Pressable>
+              </ScrollView>
             </Pressable>
+            </KeyboardAvoidingView>
           </Pressable>
         </Modal>
       )}
@@ -814,6 +888,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.55)',
     justifyContent: 'flex-end',
   },
+  kbAvoider: {
+    width: '100%',
+    justifyContent: 'flex-end',
+  },
   modal: {
     backgroundColor: '#141422',
     borderTopLeftRadius: 22,
@@ -821,6 +899,14 @@ const styles = StyleSheet.create({
     padding: 22,
     paddingBottom: 36,
     gap: 12,
+    maxHeight: '92%',
+  },
+  scroll: {
+    maxHeight: '100%',
+  },
+  scrollContent: {
+    gap: 12,
+    paddingBottom: 8,
   },
   header: {
     flexDirection: 'row',
@@ -861,6 +947,74 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
   },
+  machineCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 14,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  machineCardLive: {
+    backgroundColor: 'rgba(34,197,94,0.10)',
+    borderColor: 'rgba(34,197,94,0.35)',
+  },
+  machineCardAttention: {
+    backgroundColor: 'rgba(245,158,11,0.10)',
+    borderColor: 'rgba(245,158,11,0.35)',
+  },
+  machineCardOffline: {
+    backgroundColor: 'rgba(239,68,68,0.10)',
+    borderColor: 'rgba(239,68,68,0.35)',
+  },
+  machineHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  machineTitleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  machineDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#6b7280',
+  },
+  machineDotLive: {
+    backgroundColor: '#22c55e',
+  },
+  machineDotAttention: {
+    backgroundColor: '#f59e0b',
+  },
+  machineDotOffline: {
+    backgroundColor: '#ef4444',
+  },
+  machineLabel: {
+    color: '#cbd5e1',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  machineAction: {
+    color: '#a5b4fc',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  machineName: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  machineMeta: {
+    color: '#cbd5e1',
+    fontSize: 12,
+    marginTop: 4,
+    lineHeight: 17,
+  },
   captureChoices: {
     gap: 10,
   },
@@ -889,15 +1043,89 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   quickIconToggle: {
-    marginTop: 4,
-    alignSelf: 'center',
+    marginTop: 6,
+    alignSelf: 'flex-start',
     paddingVertical: 6,
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.05)',
   },
   quickIconToggleText: {
-    color: '#9ca3af',
+    color: '#cbd5e1',
     fontSize: 12,
-    fontWeight: '500',
+    fontWeight: '700',
+  },
+  quickIconNote: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(251,191,36,0.28)',
+    backgroundColor: 'rgba(251,191,36,0.08)',
+    padding: 12,
+  },
+  quickIconNoteText: {
+    color: '#fde68a',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  iconSelector: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.09)',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    padding: 12,
+    gap: 10,
+  },
+  iconSelectorTitle: {
+    color: '#f8fafc',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  iconSelectorText: {
+    color: '#cbd5e1',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  iconSelectorGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  iconOption: {
+    width: '31%',
+    minWidth: 84,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(255,255,255,0.02)',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    gap: 8,
+  },
+  iconOptionSelected: {
+    borderColor: 'rgba(129,140,248,0.72)',
+    backgroundColor: 'rgba(129,140,248,0.12)',
+  },
+  iconOptionCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.28,
+    shadowRadius: 5,
+    elevation: 5,
+  },
+  iconOptionLabel: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  iconOptionText: {
+    color: '#e2e8f0',
+    fontSize: 11,
+    fontWeight: '600',
   },
   cancelBtn: {
     marginTop: 4,

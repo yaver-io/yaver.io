@@ -215,4 +215,44 @@ describe('P2PClient', () => {
       expect(result).toEqual(builds);
     });
   });
+
+  describe('reloadApp()', () => {
+    it('returns an acknowledgement for dev reloads', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, changeClass: 'js_only' }),
+      });
+
+      const client = new P2PClient('http://localhost:18080', 'tok');
+      const result = await client.reloadApp('dev');
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          ok: true,
+          mode: 'dev',
+          acknowledged: true,
+          message: 'Hot reload request accepted.',
+        }),
+      );
+    });
+
+    it('returns an acknowledgement for bundle reloads', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ok: true }),
+      });
+
+      const client = new P2PClient('http://localhost:18080', 'tok');
+      const result = await client.reloadApp('bundle');
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          ok: true,
+          mode: 'bundle',
+          acknowledged: true,
+          message: 'Reload request acknowledged. Agent is rebuilding the bundle.',
+        }),
+      );
+    });
+  });
 });

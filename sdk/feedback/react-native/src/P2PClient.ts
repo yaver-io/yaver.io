@@ -7,6 +7,15 @@ export interface FeedbackEvent {
   data: any;
 }
 
+export interface ReloadAck {
+  ok: boolean;
+  mode: 'dev' | 'bundle';
+  acknowledged: boolean;
+  message: string;
+  nativeChangesDetected?: boolean;
+  changeClass?: string;
+}
+
 /**
  * Try to resolve `{projectName, bundleId}` for the running app so the
  * agent can map the reload request to a MobileProject in its scan
@@ -317,7 +326,7 @@ export class P2PClient {
   async reloadApp(
     mode: 'dev' | 'bundle' = 'bundle',
     opts?: { projectName?: string; bundleId?: string; projectPath?: string },
-  ): Promise<{ ok: boolean }> {
+  ): Promise<ReloadAck> {
     // Default path: always rebuild a fresh Hermes bundle.
     //
     // Rationale: the SDK's common caller is a phone user who's not
@@ -338,7 +347,19 @@ export class P2PClient {
         headers: { Authorization: `Bearer ${this.authToken}` },
       });
       if (primary.ok) {
-        return primary.json().catch(() => ({ ok: true }));
+        const payload = await primary.json().catch(() => ({} as Record<string, unknown>));
+        const nativeChangesDetected = payload.nativeChangesDetected === true;
+        return {
+          ok: true,
+          mode: 'dev',
+          acknowledged: true,
+          nativeChangesDetected,
+          changeClass:
+            typeof payload.changeClass === 'string' ? payload.changeClass : undefined,
+          message: nativeChangesDetected
+            ? 'Reload accepted, but native changes need a rebuild.'
+            : 'Hot reload request accepted.',
+        };
       }
       // Dev mode failed — fall through to bundle rebuild below rather
       // than surfacing the raw error, so the user never has to know
@@ -370,7 +391,19 @@ export class P2PClient {
       const text = await res.text().catch(() => '');
       throw new Error(friendlyReloadError(res.status, text));
     }
-    return res.json().catch(() => ({ ok: true }));
+    const payload = await res.json().catch(() => ({} as Record<string, unknown>));
+    return {
+      ok: true,
+      mode: 'bundle',
+      acknowledged: true,
+      changeClass:
+        typeof payload.changeClass === 'string' ? payload.changeClass : undefined,
+      nativeChangesDetected: payload.nativeChangesDetected === true,
+      message:
+        typeof payload.message === 'string' && payload.message.trim()
+          ? payload.message
+          : 'Reload request acknowledged. Agent is rebuilding the bundle.',
+    };
   }
 
   /**

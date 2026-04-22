@@ -9,13 +9,17 @@ import {
   setStrictNativeAuth,
   getToken,
   getSelectedDeviceId,
+  listReachableDevices,
   clearToken,
   clearSelectedDeviceId,
   DEFAULT_CONVEX_SITE_URL,
 } from './auth';
 import {
   getQuickIconDisabled,
+  getQuickIconColorPreset,
   setQuickIconDisabled,
+  setQuickIconColorPreset,
+  QuickIconColorPreset,
 } from './preferences';
 
 // Is this JS runtime the Yaver mobile app's super-host bridge? The
@@ -360,6 +364,15 @@ export class YaverFeedback {
     config.agentUrl = undefined;
     p2pClient = null;
     await YaverFeedback.discoverAgent();
+  }
+
+  /** Resolve the currently selected remote machine from the authenticated device list. */
+  static async getSelectedRemoteDevice() {
+    if (!config?.authToken || !config.preferredDeviceId) return null;
+    const preferredDeviceId = config.preferredDeviceId;
+    const devices = await listReachableDevices(config.authToken);
+    const all = [...devices.owned, ...devices.shared];
+    return all.find((device) => device.deviceId === preferredDeviceId) ?? null;
   }
 
   /**
@@ -857,6 +870,22 @@ export class YaverFeedback {
    */
   static async isQuickIconHidden(): Promise<boolean> {
     return getQuickIconDisabled();
+  }
+
+  static async setQuickIconColorPreset(
+    preset: QuickIconColorPreset | null,
+  ): Promise<void> {
+    await setQuickIconColorPreset(preset);
+    try {
+      const { DeviceEventEmitter } = require('react-native');
+      DeviceEventEmitter.emit('yaverFeedback:quickIconColorChange', { preset });
+    } catch {
+      // emitter unavailable — preference is still persisted
+    }
+  }
+
+  static async getQuickIconColorPreset(): Promise<QuickIconColorPreset | null> {
+    return getQuickIconColorPreset();
   }
 
   /** Clear the persisted "user hid the icon" flag. */

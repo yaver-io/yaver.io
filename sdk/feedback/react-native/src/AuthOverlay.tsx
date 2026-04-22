@@ -87,6 +87,7 @@ export const AuthOverlay: React.FC = () => {
         {token && (
           <YaverMachinePickerScreen
             token={token}
+            currentDeviceId={YaverFeedback.getConfig()?.preferredDeviceId}
             onPick={handleDevicePicked}
             onCancel={() => setPickerVisible(false)}
           />
