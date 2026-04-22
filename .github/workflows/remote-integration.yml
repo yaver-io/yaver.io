@@ -36,7 +36,6 @@ permissions:
 
 jobs:
   remote-integration:
-    if: github.event.inputs.suite == 'all' || github.event.inputs.suite == matrix.section
     runs-on: ubuntu-latest
     timeout-minutes: 70
     strategy:
@@ -136,6 +135,13 @@ jobs:
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           missing=""
+
+          if [ "${{ github.event.inputs.suite || 'all' }}" != "all" ] && [ "${{ github.event.inputs.suite || 'all' }}" != "${{ matrix.section }}" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Remote integration ${{ matrix.section }} skipped by suite selector." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
           for name in HCLOUD_TOKEN HCLOUD_SSH_PRIVATE_KEY CONVEX_SITE_URL; do
             value=""
             case "$name" in
