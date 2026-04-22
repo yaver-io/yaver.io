@@ -52,7 +52,7 @@ export interface QuickActionIconProps {
  * hidden the user can still shake to open feedback.
  *
  * Visibility is controlled by `FeedbackConfig.quickIcon`:
- *  - `'auto'` (default) → `'always'` on iOS/Android, `'off'` on web.
+ *  - `'auto'` (default) → `'after-shake'` on iOS/Android, `'off'` on web.
  *  - `'always'` → visible from first render.
  *  - `'after-shake'` → hidden until `yaverFeedback:firstShake` fires.
  *  - `'off'` → never rendered.
@@ -70,7 +70,7 @@ export const QuickActionIcon: React.FC<QuickActionIconProps> = ({
   const mode: 'always' | 'after-shake' | 'off' = (() => {
     const raw = config?.quickIcon ?? 'auto';
     if (raw === 'auto') {
-      return Platform.OS === 'web' ? 'off' : 'always';
+      return Platform.OS === 'web' ? 'off' : 'after-shake';
     }
     return raw;
   })();

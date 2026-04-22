@@ -8,6 +8,7 @@ import { FeedbackBundle } from './types';
  * - `metadata` (JSON string)
  * - `screenshot_0`, `screenshot_1`, ... (image files)
  * - `video` (video file, if present)
+ * - `audio` (audio file, if present)
  *
  * Returns the parsed agent response — typically `{ ok, id, reportId }`.
  * Callers can inspect `.id` / `.reportId` to drive a follow-up
@@ -40,6 +41,14 @@ export async function uploadFeedback(
         Platform.OS === 'android' ? `file://${bundle.video}` : bundle.video,
       type: 'video/mp4',
       name: 'screen_recording.mp4',
+    } as any);
+  }
+
+  if (bundle.audio) {
+    formData.append('audio', {
+      uri: Platform.OS === 'android' ? `file://${bundle.audio}` : bundle.audio,
+      type: 'audio/m4a',
+      name: 'voice_note.m4a',
     } as any);
   }
 

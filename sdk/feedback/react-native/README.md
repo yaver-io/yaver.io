@@ -1,6 +1,6 @@
 # yaver-feedback-react-native
 
-Visual feedback SDK for Yaver. Lets testers and developers shake their phone (or tap a floating button) to capture screenshots, record voice notes, and send bug reports directly to a Yaver agent running on a dev machine. Built for vibe coding workflows where feedback needs to flow fast.
+Visual feedback SDK for Yaver. Lets testers and developers shake their phone and then keep a small quick-access icon on screen for hot reload, vibing, screenshot or file upload, and screen recording uploads straight to a Yaver agent running on a dev machine.
 
 ## Installation
 
@@ -32,8 +32,8 @@ npm install @react-native-async-storage/async-storage
 # Screenshots
 npm install react-native-view-shot
 
-# Voice notes
-npm install react-native-audio-recorder-player
+# Optional file upload
+npx expo install expo-document-picker
 ```
 
 `expo-apple-authentication` is optional — if it's missing, "Continue with Apple" falls through to in-app browser OAuth on Android. iOS hosts that want true native Apple Sign-In must also enable the **Sign in with Apple** capability in Xcode.
@@ -85,7 +85,7 @@ function App() {
 }
 ```
 
-Shake your phone to open the feedback modal. Take screenshots, record voice notes, and send everything to your Yaver agent in one tap — LAN-direct when available, Convex/relay-routed when you're on cell data.
+Shake your phone to open the feedback modal. On mobile the quick-access icon stays hidden until that first shake, then remains tappable for the rest of the session unless the user hides it. From there the sheet exposes four core actions: hot reload, vibing, screenshot or file upload, and screen recording upload.
 
 ### Opt-out: bring-your-own auth (pre-0.5 behavior)
 

@@ -38,6 +38,80 @@ export async function captureScreenshot(): Promise<string> {
   }
 }
 
+export interface PickedFeedbackFile {
+  path: string;
+  name: string;
+  mimeType?: string;
+  kind: 'image' | 'video' | 'audio' | 'unknown';
+}
+
+function classifyPickedFile(name: string, mimeType?: string): PickedFeedbackFile['kind'] {
+  const lowerName = name.toLowerCase();
+  const lowerMime = (mimeType ?? '').toLowerCase();
+  if (
+    lowerMime.startsWith('image/') ||
+    lowerName.endsWith('.png') ||
+    lowerName.endsWith('.jpg') ||
+    lowerName.endsWith('.jpeg') ||
+    lowerName.endsWith('.webp')
+  ) {
+    return 'image';
+  }
+  if (
+    lowerMime.startsWith('video/') ||
+    lowerName.endsWith('.mp4') ||
+    lowerName.endsWith('.mov') ||
+    lowerName.endsWith('.m4v')
+  ) {
+    return 'video';
+  }
+  if (
+    lowerMime.startsWith('audio/') ||
+    lowerName.endsWith('.m4a') ||
+    lowerName.endsWith('.aac') ||
+    lowerName.endsWith('.wav') ||
+    lowerName.endsWith('.mp3')
+  ) {
+    return 'audio';
+  }
+  return 'unknown';
+}
+
+/**
+ * Pick an existing media file from the device. Requires
+ * `expo-document-picker` to be installed.
+ */
+export async function pickFeedbackFile(): Promise<PickedFeedbackFile> {
+  try {
+    const picker = require('expo-document-picker');
+    const result = await picker.getDocumentAsync({
+      copyToCacheDirectory: true,
+      multiple: false,
+      type: ['image/*', 'video/*', 'audio/*'],
+    });
+    if (result?.canceled) {
+      throw new Error('File selection canceled.');
+    }
+    const asset = result?.assets?.[0];
+    if (!asset?.uri) {
+      throw new Error('No file selected.');
+    }
+    const name = asset.name || asset.uri.split('/').pop() || 'attachment';
+    const mimeType = asset.mimeType as string | undefined;
+    return {
+      path: asset.uri,
+      name,
+      mimeType,
+      kind: classifyPickedFile(name, mimeType),
+    };
+  } catch (err) {
+    throw new Error(
+      '[YaverFeedback] File upload needs `expo-document-picker` as an optional peer dependency. ' +
+        String(err),
+    );
+  }
+}
+
 let videoRecorderModule: any = null;
 let videoRecordingActive = false;
 

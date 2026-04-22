@@ -92,6 +92,7 @@ export class YaverFeedback {
       autoLogin: true,
       ...cfg,
     };
+    firstShakeFired = false;
 
     // Route the in-SDK login screen to prod yaver.io by default; callers may
     // override for staging via authConvexSiteUrl / authWebBaseUrl.
@@ -869,6 +870,7 @@ export class YaverFeedback {
       shakeDetector.stop();
       shakeDetector = null;
     }
+    firstShakeFired = false;
     enabled = false;
     config = null;
     p2pClient = null;

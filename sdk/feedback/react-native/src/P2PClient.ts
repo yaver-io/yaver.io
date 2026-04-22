@@ -179,6 +179,14 @@ export class P2PClient {
       } as any);
     }
 
+    if (bundle.audio) {
+      formData.append('audio', {
+        uri: Platform.OS === 'android' ? `file://${bundle.audio}` : bundle.audio,
+        type: 'audio/m4a',
+        name: 'voice_note.m4a',
+      } as any);
+    }
+
     const response = await fetch(`${this.baseUrl}/feedback`, {
       method: 'POST',
       headers: {

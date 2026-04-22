@@ -48,7 +48,7 @@ export interface FeedbackConfig {
    * Single tap → open the feedback modal; long-press → menu with
    * "Hide icon" (persisted across launches via AsyncStorage).
    *
-   * - `'auto'` (default) → `'always'` on iOS/Android, `'off'` on web.
+   * - `'auto'` (default) → `'after-shake'` on iOS/Android, `'off'` on web.
    * - `'always'` → visible from app launch.
    * - `'after-shake'` → hidden until the first shake this session.
    * - `'off'` → never rendered. Shake still works.
@@ -189,6 +189,8 @@ export interface FeedbackBundle {
   metadata: FeedbackMetadata;
   /** Screen-recording file path, when produced by the "Start Recording" action. */
   video?: string;
+  /** Optional audio attachment path. */
+  audio?: string;
   screenshots: string[];
   /** Captured errors with stack traces, attached via attachError / wrapErrorHandler. */
   errors?: CapturedError[];

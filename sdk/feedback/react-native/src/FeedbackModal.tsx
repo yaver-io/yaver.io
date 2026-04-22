@@ -13,11 +13,9 @@ import {
 import { YaverFeedback } from './YaverFeedback';
 import {
   captureScreenshot,
+  pickFeedbackFile,
   startVideoRecording,
   stopVideoRecording,
-  startAudioRecording,
-  stopAudioRecording,
-  isVoiceCaptureSupported,
 } from './capture';
 import { uploadFeedback } from './upload';
 import { DeviceInfo, FeedbackBundle } from './types';
@@ -25,20 +23,17 @@ import { AuthOverlay } from './AuthOverlay';
 import { QuickActionIcon } from './QuickActionIcon';
 
 /**
- * Simplified feedback modal — 5 actions:
+ * Simplified feedback modal — 4 actions:
  *
  *  1. Hot Reload               — instant JS reload (most common use case)
- *  2. Screenshot + Fix         — capture the underlying app (modal hidden
- *                                during capture), attach errors, trigger
- *                                a fix task on the agent
- *  3. Vibing                   — open a vibing session on the agent
- *  4. Start / Stop Recording   — screen-recording toggle
- *  5. Send Video               — submit the last recorded video
+ *  2. Vibing                   — open a vibing session on the agent
+ *  3. Screenshot / Upload      — capture the underlying app (modal hidden
+ *                                during capture) or upload an existing
+ *                                media file through the Go agent
+ *  4. Screen Recording         — start recording, then stop + upload
  *
- * The header has an explicit X close icon on the right.
- * Live / Narrated / Batch modes, voice notes, and the streaming indicator
- * were removed in 0.7.0 — those flows never worked end-to-end against
- * the Go agent (see MISSINGS_FEEDBACK_SDK.md).
+ * The footer also has an explicit Cancel button so the icon tap path
+ * feels like a standard action sheet rather than a hidden modal.
  */
 
 interface LastVideo {
@@ -51,9 +46,7 @@ type ActionState =
   | 'hot-reloading'
   | 'capturing'
   | 'vibing'
-  | 'sending-video'
-  | 'recording-voice'
-  | 'transcribing-voice';
+  | 'uploading-video';
 
 export const FeedbackModal: React.FC = () => {
   const [visible, setVisible] = useState(false);
@@ -62,10 +55,6 @@ export const FeedbackModal: React.FC = () => {
   const [toast, setToast] = useState<string | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
   const [isRecordingVideo, setIsRecordingVideo] = useState(false);
-  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
-  // Cached once on mount — bare-RN apps without expo-av get a clean
-  // hidden button instead of a runtime error.
-  const voiceSupported = useRef<boolean>(isVoiceCaptureSupported()).current;
   const [lastVideo, setLastVideo] = useState<LastVideo | null>(null);
   // Tracks whether the user has hidden the QuickActionIcon via its
   // long-press menu. Shake is always available, so the feedback modal
@@ -79,6 +68,7 @@ export const FeedbackModal: React.FC = () => {
   // the wrong project because the matcher grepped the prompt itself).
   const [showVibeInput, setShowVibeInput] = useState(false);
   const [vibePrompt, setVibePrompt] = useState('');
+  const [showCaptureChoices, setShowCaptureChoices] = useState(false);
   const [lastVibeTaskId, setLastVibeTaskId] = useState<string | null>(null);
   const mountedRef = useRef(true);
 
@@ -90,6 +80,7 @@ export const FeedbackModal: React.FC = () => {
         setError(null);
         setToast(null);
         setAction('idle');
+        setShowCaptureChoices(false);
         // Re-read the "user hid the quick icon" flag on every open so
         // the re-enable row reflects the latest preference (the user
         // might have hidden or shown it between opens).
@@ -139,6 +130,7 @@ export const FeedbackModal: React.FC = () => {
     setError(null);
     setToast(null);
     setAction('idle');
+    setShowCaptureChoices(false);
   }, []);
 
   // Helper: run a P2P call; on network failure, ask YaverFeedback to
@@ -219,28 +211,61 @@ export const FeedbackModal: React.FC = () => {
     }
   }, [closeSoon, runWithReconnect]);
 
-  // ─── 2. Screenshot + Fix ───────────────────────────────────────────
-  //
-  // Hide the modal first so the screenshot captures the actual screen
-  // (the bug) — not the modal card. Await a short animation delay,
-  // snapshot, upload the feedback bundle with any buffered errors, then
-  // kick `/feedback/{id}/fix` to create the repair task.
-  const handleScreenshotAndFix = useCallback(async () => {
+  const uploadBundleWithOptionalFix = useCallback(async (
+    bundle: FeedbackBundle,
+    fixOnUpload: boolean,
+    successToast: string,
+    failureToast?: string,
+  ) => {
     const client = YaverFeedback.getP2PClient();
     const config = YaverFeedback.getConfig();
     if (!client || !config?.agentUrl) {
       setError('Not connected to the agent yet.');
       return;
     }
+    try {
+      const uploaded = await uploadFeedback(
+        config.agentUrl,
+        config.authToken ?? '',
+        bundle,
+      );
+      // The agent returns the new report id as `id` (see
+      // feedback_http.go::ReceiveFeedback). Trigger the fix loop if we got
+      // one back; otherwise just ack the upload.
+      const reportId =
+        (uploaded as { id?: string; reportId?: string } | null | undefined)?.id ??
+        (uploaded as { reportId?: string } | null | undefined)?.reportId;
+      if (reportId && fixOnUpload) {
+        try {
+          await client.triggerFix(reportId);
+          setToast(successToast);
+        } catch (err: unknown) {
+          setToast(failureToast ?? 'Report uploaded — fix trigger failed');
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      } else {
+        setToast(successToast);
+      }
+      closeSoon(1400);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [closeSoon]);
+
+  // ─── 3. Screenshot / Upload ───────────────────────────────────────
+  const handleCaptureChoiceToggle = useCallback(() => {
+    setShowCaptureChoices((v) => !v);
+  }, []);
+
+  const handleScreenshotAndFix = useCallback(async () => {
     setAction('capturing');
     setError(null);
+    setShowCaptureChoices(false);
 
-    // Step 1: Hide the modal so the screenshot contains the real screen.
     setVisible(false);
-    // Wait out the slide-down animation on both platforms.
     await new Promise((resolve) => setTimeout(resolve, 350));
 
-    let path: string | null = null;
+    let path: string;
     try {
       path = await captureScreenshot();
     } catch (err: unknown) {
@@ -250,7 +275,6 @@ export const FeedbackModal: React.FC = () => {
       return;
     }
 
-    // Step 2: Re-show the modal for progress + ack.
     setVisible(true);
     await new Promise((resolve) => setTimeout(resolve, 150));
 
@@ -264,7 +288,6 @@ export const FeedbackModal: React.FC = () => {
         screenWidth: width,
         screenHeight: height,
       };
-
       const capturedErrors = YaverFeedback.getCapturedErrors();
       const bundle: FeedbackBundle = {
         metadata: {
@@ -276,36 +299,61 @@ export const FeedbackModal: React.FC = () => {
         screenshots: [path],
         errors: capturedErrors.length > 0 ? capturedErrors : undefined,
       };
-
-      const uploaded = await uploadFeedback(
-        config.agentUrl,
-        config.authToken ?? '',
+      await uploadBundleWithOptionalFix(
         bundle,
+        true,
+        'Fix task started',
       );
-      // The agent returns the new report id as `id` (see
-      // feedback_http.go::ReceiveFeedback). Trigger the fix loop if we got
-      // one back; otherwise just ack the upload.
-      const reportId =
-        (uploaded as { id?: string; reportId?: string } | null | undefined)?.id ??
-        (uploaded as { reportId?: string } | null | undefined)?.reportId;
-      if (reportId) {
-        try {
-          await client.triggerFix(reportId);
-          setToast('Fix task started');
-        } catch (err: unknown) {
-          setToast('Report uploaded — fix trigger failed');
-          setError(err instanceof Error ? err.message : String(err));
-        }
-      } else {
-        setToast('Report uploaded');
-      }
-      closeSoon(1400);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
     } finally {
       if (mountedRef.current) setAction('idle');
     }
-  }, [closeSoon]);
+  }, [uploadBundleWithOptionalFix]);
+
+  const handleFileUpload = useCallback(async () => {
+    setAction('capturing');
+    setError(null);
+    setShowCaptureChoices(false);
+    try {
+      const picked = await pickFeedbackFile();
+      const { Dimensions } = require('react-native');
+      const { width, height } = Dimensions.get('window');
+      const deviceInfo: DeviceInfo = {
+        platform: Platform.OS,
+        osVersion: String(Platform.Version),
+        model: Platform.OS === 'ios' ? 'iOS Device' : 'Android Device',
+        screenWidth: width,
+        screenHeight: height,
+      };
+      const capturedErrors = YaverFeedback.getCapturedErrors();
+      const bundle: FeedbackBundle = {
+        metadata: {
+          timestamp: new Date().toISOString(),
+          device: deviceInfo,
+          app: {},
+          userNote: `[Uploaded file] ${picked.name}`,
+        },
+        screenshots: picked.kind === 'image' ? [picked.path] : [],
+        video: picked.kind === 'video' ? picked.path : undefined,
+        audio: picked.kind === 'audio' ? picked.path : undefined,
+        errors: capturedErrors.length > 0 ? capturedErrors : undefined,
+      };
+      if (picked.kind === 'unknown') {
+        throw new Error('Pick an image, video, or audio file.');
+      }
+      await uploadBundleWithOptionalFix(
+        bundle,
+        picked.kind === 'image',
+        picked.kind === 'image' ? 'Fix task started' : 'File uploaded',
+      );
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message !== 'File selection canceled.') {
+        setError(message);
+      }
+    } finally {
+      if (mountedRef.current) setAction('idle');
+    }
+  }, [uploadBundleWithOptionalFix]);
 
   // ─── 3. Vibing ─────────────────────────────────────────────────────
   // First tap expands the input; second submit fires the actual
@@ -359,172 +407,113 @@ export const FeedbackModal: React.FC = () => {
     }
   }, [vibePrompt]);
 
-  // ─── 4. Toggle screen recording ────────────────────────────────────
-  const handleToggleRecording = useCallback(async () => {
+  // ─── 4. Screen recording ───────────────────────────────────────────
+  const handleScreenRecording = useCallback(async () => {
     setError(null);
+    if (!isRecordingVideo && lastVideo) {
+      const config = YaverFeedback.getConfig();
+      if (!config?.agentUrl) {
+        setError('Not connected to the agent yet.');
+        return;
+      }
+      setAction('uploading-video');
+      try {
+        const { Dimensions } = require('react-native');
+        const { width, height } = Dimensions.get('window');
+        const deviceInfo: DeviceInfo = {
+          platform: Platform.OS,
+          osVersion: String(Platform.Version),
+          model: Platform.OS === 'ios' ? 'iOS Device' : 'Android Device',
+          screenWidth: width,
+          screenHeight: height,
+        };
+        const bundle: FeedbackBundle = {
+          metadata: {
+            timestamp: new Date().toISOString(),
+            device: deviceInfo,
+            app: {},
+            userNote: '[Screen recording]',
+          },
+          screenshots: [],
+          video: lastVideo.path,
+          errors: YaverFeedback.getCapturedErrors().length
+            ? YaverFeedback.getCapturedErrors()
+            : undefined,
+        };
+        await uploadFeedback(config.agentUrl, config.authToken ?? '', bundle);
+        if (mountedRef.current) {
+          setToast(`Recording uploaded — ${Math.round(lastVideo.duration)}s`);
+          setLastVideo(null);
+        }
+        closeSoon(1200);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (mountedRef.current) setAction('idle');
+      }
+      return;
+    }
+
     if (isRecordingVideo) {
       try {
         const result = await stopVideoRecording();
         if (mountedRef.current) {
           setIsRecordingVideo(false);
           setLastVideo(result);
-          setToast(`Recording stopped — ${Math.round(result.duration)}s`);
+          setAction('uploading-video');
+          setToast('Uploading recording…');
         }
+        const config = YaverFeedback.getConfig();
+        if (!config?.agentUrl) {
+          throw new Error('Not connected to the agent yet.');
+        }
+        const { Dimensions } = require('react-native');
+        const { width, height } = Dimensions.get('window');
+        const deviceInfo: DeviceInfo = {
+          platform: Platform.OS,
+          osVersion: String(Platform.Version),
+          model: Platform.OS === 'ios' ? 'iOS Device' : 'Android Device',
+          screenWidth: width,
+          screenHeight: height,
+        };
+        const bundle: FeedbackBundle = {
+          metadata: {
+            timestamp: new Date().toISOString(),
+            device: deviceInfo,
+            app: {},
+            userNote: '[Screen recording]',
+          },
+          screenshots: [],
+          video: result.path,
+          errors: YaverFeedback.getCapturedErrors().length
+            ? YaverFeedback.getCapturedErrors()
+            : undefined,
+        };
+        await uploadFeedback(config.agentUrl, config.authToken ?? '', bundle);
+        if (mountedRef.current) {
+          setToast(`Recording uploaded — ${Math.round(result.duration)}s`);
+          setLastVideo(null);
+        }
+        closeSoon(1200);
       } catch (err: unknown) {
         setIsRecordingVideo(false);
         setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (mountedRef.current) setAction('idle');
       }
     } else {
       try {
         await startVideoRecording();
         if (mountedRef.current) {
           setIsRecordingVideo(true);
-          setToast('Recording…');
+          setToast('Recording… tap again to stop and upload');
           setLastVideo(null);
         }
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : String(err));
       }
     }
-  }, [isRecordingVideo]);
-
-  // ─── Voice note: record → transcribe → send as feedback ───────────
-  // Tap once to start; tap again to stop. On stop: upload the audio
-  // to the agent's /voice/transcribe (which routes through whichever
-  // STT provider is configured — Whisper / Deepgram / OpenAI / etc.),
-  // then file the transcript as a bug report. The audio file itself
-  // is also attached to the feedback bundle so the agent can re-play
-  // it if the transcript is wrong.
-  const handleToggleVoice = useCallback(async () => {
-    setError(null);
-    if (!isRecordingVoice) {
-      try {
-        await startAudioRecording();
-        if (mountedRef.current) {
-          setIsRecordingVoice(true);
-          setAction('recording-voice');
-          setToast('Recording voice note…');
-        }
-      } catch (err: unknown) {
-        setIsRecordingVoice(false);
-        setAction('idle');
-        setError(err instanceof Error ? err.message : String(err));
-      }
-      return;
-    }
-
-    // Stopping → transcribe → send.
-    try {
-      const audio = await stopAudioRecording();
-      setIsRecordingVoice(false);
-      if (!audio) {
-        setAction('idle');
-        return;
-      }
-      setAction('transcribing-voice');
-      setToast('Transcribing…');
-
-      const config = YaverFeedback.getConfig();
-      if (!config?.agentUrl) {
-        setError('Not connected to the agent yet.');
-        setAction('idle');
-        return;
-      }
-      let transcript = '';
-      try {
-        const client = YaverFeedback.getP2PClient();
-        if (client) {
-          const res = await client.transcribeVoice(audio.path);
-          transcript = res.text ?? '';
-        }
-      } catch {
-        // Transcription can fail (no STT provider configured on the
-        // agent, network blip, etc.). Don't block the flow — ship
-        // the raw audio file with a "[no transcript]" note so the
-        // agent + human reviewer can still play it back.
-      }
-
-      const { Dimensions } = require('react-native');
-      const { width, height } = Dimensions.get('window');
-      const deviceInfo: DeviceInfo = {
-        platform: Platform.OS,
-        osVersion: String(Platform.Version),
-        model: Platform.OS === 'ios' ? 'iOS Device' : 'Android Device',
-        screenWidth: width,
-        screenHeight: height,
-      };
-      const bundle: FeedbackBundle = {
-        metadata: {
-          timestamp: new Date().toISOString(),
-          device: deviceInfo,
-          app: {},
-          userNote:
-            transcript.length > 0
-              ? `[Voice note] ${transcript}`
-              : `[Voice note · ${Math.round(audio.duration)}s — transcription unavailable]`,
-        },
-        screenshots: [],
-        audio: audio.path,
-        errors: YaverFeedback.getCapturedErrors().length
-          ? YaverFeedback.getCapturedErrors()
-          : undefined,
-      };
-      await uploadFeedback(config.agentUrl, config.authToken ?? '', bundle);
-      setToast(transcript ? `Sent: "${transcript.slice(0, 60)}${transcript.length > 60 ? '…' : ''}"` : 'Voice note sent');
-      closeSoon(1800);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (mountedRef.current) setAction('idle');
-    }
-  }, [isRecordingVoice, closeSoon]);
-
-  // ─── 5. Send the last recorded video ───────────────────────────────
-  const handleSendVideo = useCallback(async () => {
-    const config = YaverFeedback.getConfig();
-    if (!config?.agentUrl) {
-      setError('Not connected to the agent yet.');
-      return;
-    }
-    if (!lastVideo) {
-      setError('No video recorded yet.');
-      return;
-    }
-    setAction('sending-video');
-    setError(null);
-    try {
-      const { Dimensions } = require('react-native');
-      const { width, height } = Dimensions.get('window');
-      const deviceInfo: DeviceInfo = {
-        platform: Platform.OS,
-        osVersion: String(Platform.Version),
-        model: Platform.OS === 'ios' ? 'iOS Device' : 'Android Device',
-        screenWidth: width,
-        screenHeight: height,
-      };
-      const bundle: FeedbackBundle = {
-        metadata: {
-          timestamp: new Date().toISOString(),
-          device: deviceInfo,
-          app: {},
-          userNote: '[Screen recording]',
-        },
-        screenshots: [],
-        video: lastVideo.path,
-        errors: YaverFeedback.getCapturedErrors().length
-          ? YaverFeedback.getCapturedErrors()
-          : undefined,
-      };
-      await uploadFeedback(config.agentUrl, config.authToken ?? '', bundle);
-      setToast('Video sent');
-      setLastVideo(null);
-      closeSoon(1200);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (mountedRef.current) setAction('idle');
-    }
-  }, [lastVideo, closeSoon]);
+  }, [closeSoon, isRecordingVideo, lastVideo]);
 
   const busy = action !== 'idle';
 
@@ -563,19 +552,6 @@ export const FeedbackModal: React.FC = () => {
                 onPress={handleHotReload}
                 disabled={busy}
                 busy={action === 'hot-reloading'}
-              />
-
-              {/* 2. Screenshot + Fix — for bug fixes */}
-              <ActionRow
-                label={
-                  action === 'capturing'
-                    ? 'Capturing…'
-                    : 'Screenshot & Fix'
-                }
-                tint="#22c55e"
-                onPress={handleScreenshotAndFix}
-                disabled={busy}
-                busy={action === 'capturing'}
               />
 
               {/* 3. Vibing — expands to an input box on first tap
@@ -637,46 +613,51 @@ export const FeedbackModal: React.FC = () => {
                 </Text>
               )}
 
-              {/* Voice note — only rendered when expo-av is installed.
-                  Tap to start, tap again to stop → transcribes via
-                  the agent and files as a feedback report. */}
-              {voiceSupported && (
+              {/* Screenshot / Upload */}
+              {!showCaptureChoices ? (
                 <ActionRow
                   label={
-                    action === 'transcribing-voice'
-                      ? 'Transcribing…'
-                      : isRecordingVoice
-                        ? 'Stop & Send Voice'
-                        : 'Voice Note'
+                    action === 'capturing'
+                      ? 'Working…'
+                      : 'Screenshot / Upload'
                   }
-                  tint={isRecordingVoice ? '#ef4444' : '#f472b6'}
-                  onPress={handleToggleVoice}
-                  disabled={busy && action !== 'recording-voice' && action !== 'idle'}
-                  busy={action === 'transcribing-voice'}
+                  tint="#22c55e"
+                  onPress={handleCaptureChoiceToggle}
+                  disabled={busy}
+                  busy={action === 'capturing'}
                 />
+              ) : (
+                <View style={styles.captureChoices}>
+                  <ActionRow
+                    label="Take Screenshot"
+                    tint="#22c55e"
+                    onPress={handleScreenshotAndFix}
+                    disabled={busy}
+                  />
+                  <ActionRow
+                    label="Upload File"
+                    tint="#34d399"
+                    onPress={handleFileUpload}
+                    disabled={busy}
+                  />
+                </View>
               )}
 
-              {/* 4. Start/Stop Recording */}
-              <ActionRow
-                label={isRecordingVideo ? 'Stop Recording' : 'Start Recording'}
-                tint={isRecordingVideo ? '#ef4444' : '#60a5fa'}
-                onPress={handleToggleRecording}
-                disabled={busy && action !== 'idle' && !isRecordingVideo}
-              />
-
-              {/* 5. Send Video (only tappable when a clip is ready) */}
+              {/* 4. Screen recording */}
               <ActionRow
                 label={
-                  action === 'sending-video'
-                    ? 'Sending…'
-                    : lastVideo
-                      ? `Send Video · ${Math.round(lastVideo.duration)}s`
-                      : 'Send Video'
+                  action === 'uploading-video'
+                    ? 'Uploading…'
+                    : isRecordingVideo
+                      ? 'Stop & Upload Recording'
+                      : lastVideo
+                        ? `Retry Upload Recording · ${Math.round(lastVideo.duration)}s`
+                        : 'Screen Recording'
                 }
-                tint="#a78bfa"
-                onPress={handleSendVideo}
-                disabled={busy || !lastVideo}
-                busy={action === 'sending-video'}
+                tint={isRecordingVideo ? '#ef4444' : '#60a5fa'}
+                onPress={handleScreenRecording}
+                disabled={busy && action !== 'uploading-video' && !isRecordingVideo}
+                busy={action === 'uploading-video'}
               />
 
               {progress !== null && (
@@ -718,6 +699,18 @@ export const FeedbackModal: React.FC = () => {
                     ? '◯  Show quick-access icon'
                     : '●  Hide quick-access icon'}
                 </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={handleClose}
+                style={({ pressed }) => [
+                  styles.cancelBtn,
+                  pressed && styles.buttonPressed,
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel"
+              >
+                <Text style={styles.cancelBtnText}>Cancel</Text>
               </Pressable>
             </Pressable>
           </Pressable>
@@ -868,6 +861,9 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
   },
+  captureChoices: {
+    gap: 10,
+  },
   progressTrack: {
     height: 6,
     borderRadius: 3,
@@ -902,5 +898,23 @@ const styles = StyleSheet.create({
     color: '#9ca3af',
     fontSize: 12,
     fontWeight: '500',
+  },
+  cancelBtn: {
+    marginTop: 4,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    paddingVertical: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  cancelBtnText: {
+    color: '#e5e7eb',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  buttonPressed: {
+    opacity: 0.7,
   },
 });

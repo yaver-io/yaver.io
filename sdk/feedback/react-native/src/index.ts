@@ -1,13 +1,15 @@
 /**
  * yaver-feedback-react-native — Visual feedback SDK for Yaver.
  *
- * Shake-to-report surface with five one-tap actions:
+ * Shake-to-report surface with four core actions:
  *  1. Hot Reload              — instant JS reload
- *  2. Screenshot & Fix        — capture the screen under the modal and
- *                               kick a fix task on the agent
- *  3. Vibing                  — open a vibing session on the agent
- *  4. Start / Stop Recording  — screen recording toggle
- *  5. Send Video              — submit the last recording
+ *  2. Vibing                  — open a vibing session on the agent
+ *  3. Screenshot / Upload     — capture the screen under the modal or
+ *                               upload existing media
+ *  4. Screen Recording        — start, then stop + upload
+ *
+ * The small quick-access icon stays hidden until the first shake by
+ * default on mobile, then remains available unless the user hides it.
  *
  * @example
  * ```tsx
@@ -83,6 +85,7 @@ export type {
 } from './auth';
 export {
   captureScreenshot,
+  pickFeedbackFile,
   startVideoRecording,
   stopVideoRecording,
   isVideoRecording,

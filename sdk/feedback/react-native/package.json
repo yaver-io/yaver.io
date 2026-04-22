@@ -22,7 +22,8 @@
     "react-native": ">=0.70.0",
     "@react-native-async-storage/async-storage": ">=1.17.0",
     "expo-web-browser": ">=12.0.0",
-    "expo-apple-authentication": ">=6.0.0"
+    "expo-apple-authentication": ">=6.0.0",
+    "expo-document-picker": ">=13.0.0"
   },
   "peerDependenciesMeta": {
     "@expo/config-plugins": {
@@ -32,6 +33,9 @@
       "optional": true
     },
     "expo-apple-authentication": {
+      "optional": true
+    },
+    "expo-document-picker": {
       "optional": true
     }
   },
