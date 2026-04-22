@@ -16,6 +16,7 @@ const PURE_JS_PACKAGES = new Set([
   '@react-navigation/material-top-tabs',
   'react-native-web', 'react-dom',
   '@expo/metro-runtime', 'expo-router', 'expo-splash-screen', 'expo-status-bar',
+  'three', '@react-three/fiber', '@react-three/drei',
 ]);
 
 // Packages that LOOK native (react-native-*) but are pure JS
