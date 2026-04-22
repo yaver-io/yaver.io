@@ -33,6 +33,10 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TMPDIR="${TMPDIR:-/tmp}"
 TEST_DIR="$TMPDIR/yaver-test-suite-$$"
 
+if [ -x /usr/local/go/bin/go ] && [[ ":$PATH:" != *":/usr/local/go/bin:"* ]]; then
+    export PATH="/usr/local/go/bin:$PATH"
+fi
+
 # ── Colors ──────────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'

@@ -119,6 +119,7 @@ jobs:
       CI_SERVER_LOCATION: hel1
       CI_SERVER_IMAGE: ubuntu-24.04
       HETZNER_TEST_SNAPSHOT_ID: ${{ secrets.HETZNER_TEST_SNAPSHOT_ID }}
+      REMOTE_REPO_DIR: /opt/yaver-ci/${{ github.run_id }}/${{ matrix.section }}
     steps:
       - uses: actions/checkout@v4
 
@@ -311,7 +312,7 @@ jobs:
               -o UserKnownHostsFile=/dev/null \
               -o ServerAliveInterval=30 -o ServerAliveCountMax=40 \
               "root@$ip" \
-              "CONVEX_SITE_URL='${CONVEX_SITE_URL}' CF_TUNNEL_URL='${CF_TUNNEL_URL}' CF_ACCESS_CLIENT_ID='${CF_ACCESS_CLIENT_ID}' CF_ACCESS_CLIENT_SECRET='${CF_ACCESS_CLIENT_SECRET}' bash /opt/yaver/ci/remote/run_test_suite_section.sh '${{ matrix.section }}'"
+              "REPO_DIR='${REMOTE_REPO_DIR}' CONVEX_SITE_URL='${CONVEX_SITE_URL}' CF_TUNNEL_URL='${CF_TUNNEL_URL}' CF_ACCESS_CLIENT_ID='${CF_ACCESS_CLIENT_ID}' CF_ACCESS_CLIENT_SECRET='${CF_ACCESS_CLIENT_SECRET}' PATH='/usr/local/go/bin:\$PATH' bash '${REMOTE_REPO_DIR}/ci/remote/run_test_suite_section.sh' '${{ matrix.section }}'"
 
       - name: Append summary
         if: always()

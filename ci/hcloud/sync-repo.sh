@@ -11,28 +11,29 @@ source "$here/common.sh"
 
 ip="$(cat "$CI_ARTIFACTS/server-ip")"
 repo_root="${REPO_ROOT:-$(pwd)}"
+remote_repo_dir="${REMOTE_REPO_DIR:-/opt/yaver}"
 
-log "clear volatile remote paths under /opt/yaver"
+log "clear volatile remote paths under $remote_repo_dir"
 ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
   -o StrictHostKeyChecking=no \
   -o UserKnownHostsFile=/dev/null \
-  "root@$ip" '
+  "root@$ip" "
     rm -rf \
-      /opt/yaver/mobile/android/.gradle \
-      /opt/yaver/mobile/android/app/.cxx \
-      /opt/yaver/mobile/android/app/build \
-      /opt/yaver/mobile/assets/models \
-      /opt/yaver/scripts/screenshots/output* \
-      /opt/yaver/scripts/generate-demo-videos/output \
-      /opt/yaver/relay/relay-linux-amd64 \
-      /opt/yaver/cli/hermesc \
-      /opt/yaver/demo \
-      /opt/yaver/demos \
-      /opt/yaver/videos
-    mkdir -p /opt/yaver
-  '
+      '$remote_repo_dir'/mobile/android/.gradle \
+      '$remote_repo_dir'/mobile/android/app/.cxx \
+      '$remote_repo_dir'/mobile/android/app/build \
+      '$remote_repo_dir'/mobile/assets/models \
+      '$remote_repo_dir'/scripts/screenshots/output* \
+      '$remote_repo_dir'/scripts/generate-demo-videos/output \
+      '$remote_repo_dir'/relay/relay-linux-amd64 \
+      '$remote_repo_dir'/cli/hermesc \
+      '$remote_repo_dir'/demo \
+      '$remote_repo_dir'/demos \
+      '$remote_repo_dir'/videos
+    mkdir -p '$remote_repo_dir'
+  "
 
-log "rsync $repo_root -> root@$ip:/opt/yaver"
+log "rsync $repo_root -> root@$ip:$remote_repo_dir"
 rsync -az --delete-after \
   -e "ssh -i $HCLOUD_SSH_PRIVATE_KEY_PATH -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
   --exclude '.git' \
@@ -60,4 +61,4 @@ rsync -az --delete-after \
   --exclude 'desktop/agent/yaver' \
   --exclude 'desktop/agent/yaver-*' \
   --exclude 'ci/.artifacts' \
-  "$repo_root/" "root@$ip:/opt/yaver/"
+  "$repo_root/" "root@$ip:$remote_repo_dir/"
