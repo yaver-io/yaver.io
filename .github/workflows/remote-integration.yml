@@ -1,0 +1,346 @@
+name: remote-integration
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Which box to run against
+        type: choice
+        default: persistent
+        options:
+          - persistent
+          - ephemeral
+      suite:
+        description: Which remote integration section to run
+        type: choice
+        default: all
+        options:
+          - all
+          - lan
+          - relay
+          - auth
+          - relay-docker
+          - relay-binary
+          - tailscale
+          - cloudflare
+          - ollama
+          - ollama-ci
+          - hybrid-local
+      server_type:
+        description: Hetzner server type (ephemeral mode)
+        required: false
+        default: cax21
+
+permissions:
+  contents: read
+
+jobs:
+  remote-integration:
+    if: github.event.inputs.suite == 'all' || github.event.inputs.suite == matrix.section
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - section: lan
+            role: host-owner
+            exec_mode: remote_ssh
+            needs_tailscale: false
+            needs_cloudflare: false
+            needs_remote_tailscale: false
+            needs_remote_cloudflared: false
+          - section: relay
+            role: host-owner
+            exec_mode: remote_ssh
+            needs_tailscale: false
+            needs_cloudflare: false
+            needs_remote_tailscale: false
+            needs_remote_cloudflared: false
+          - section: auth
+            role: host-owner
+            exec_mode: remote_ssh
+            needs_tailscale: false
+            needs_cloudflare: false
+            needs_remote_tailscale: false
+            needs_remote_cloudflared: false
+          - section: relay-docker
+            role: host-owner
+            exec_mode: local_cross_machine
+            needs_tailscale: false
+            needs_cloudflare: false
+            needs_remote_tailscale: false
+            needs_remote_cloudflared: false
+          - section: relay-binary
+            role: host-owner
+            exec_mode: local_cross_machine
+            needs_tailscale: false
+            needs_cloudflare: false
+            needs_remote_tailscale: false
+            needs_remote_cloudflared: false
+          - section: tailscale
+            role: host-owner
+            exec_mode: local_cross_machine
+            needs_tailscale: true
+            needs_cloudflare: false
+            needs_remote_tailscale: true
+            needs_remote_cloudflared: false
+          - section: cloudflare
+            role: host-owner
+            exec_mode: remote_ssh
+            needs_tailscale: false
+            needs_cloudflare: true
+            needs_remote_tailscale: false
+            needs_remote_cloudflared: true
+          - section: ollama
+            role: host-owner
+            exec_mode: remote_ssh
+            needs_tailscale: false
+            needs_cloudflare: false
+            needs_remote_tailscale: false
+            needs_remote_cloudflared: false
+          - section: ollama-ci
+            role: host-owner
+            exec_mode: remote_ssh
+            needs_tailscale: false
+            needs_cloudflare: false
+            needs_remote_tailscale: false
+            needs_remote_cloudflared: false
+          - section: hybrid-local
+            role: host-owner
+            exec_mode: remote_ssh
+            needs_tailscale: false
+            needs_cloudflare: false
+            needs_remote_tailscale: false
+            needs_remote_cloudflared: false
+    env:
+      HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+      HCLOUD_SSH_KEY_NAME: yaver-ci
+      CI_SERVER_TYPE: ${{ github.event.inputs.server_type || 'cax21' }}
+      CI_SERVER_LOCATION: hel1
+      CI_SERVER_IMAGE: ubuntu-24.04
+      HETZNER_TEST_SNAPSHOT_ID: ${{ secrets.HETZNER_TEST_SNAPSHOT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preflight
+        id: preflight
+        env:
+          CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+          HETZNER_TEST_SERVER_ID: ${{ secrets.HETZNER_TEST_SERVER_ID }}
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+          HETZNER_TEST_SNAPSHOT_ID: ${{ secrets.HETZNER_TEST_SNAPSHOT_ID }}
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+          CF_TUNNEL_URL: ${{ secrets.CF_TUNNEL_URL }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          missing=""
+          for name in HCLOUD_TOKEN HCLOUD_SSH_PRIVATE_KEY CONVEX_SITE_URL; do
+            value=""
+            case "$name" in
+              HCLOUD_TOKEN) value="${HCLOUD_TOKEN:-}" ;;
+              HCLOUD_SSH_PRIVATE_KEY) value="${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}" ;;
+              CONVEX_SITE_URL) value="${CONVEX_SITE_URL:-}" ;;
+            esac
+            if [ -z "$value" ]; then
+              missing="$missing $name"
+            fi
+          done
+
+          if [ "${{ github.event.inputs.target || 'persistent' }}" = "persistent" ]; then
+            for name in HETZNER_TEST_SERVER_ID HETZNER_TEST_SERVER_IP; do
+              if [ -z "${!name}" ]; then
+                missing="$missing $name"
+              fi
+            done
+          else
+            if [ -z "${HETZNER_TEST_SNAPSHOT_ID:-}" ]; then
+              missing="$missing HETZNER_TEST_SNAPSHOT_ID"
+            fi
+          fi
+
+          if [ "${{ matrix.needs_tailscale }}" = "true" ] && [ -z "${TAILSCALE_AUTHKEY:-}" ]; then
+            missing="$missing TAILSCALE_AUTHKEY"
+          fi
+
+          if [ "${{ matrix.needs_cloudflare }}" = "true" ]; then
+            for name in CF_TUNNEL_URL CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_SECRET; do
+              if [ -z "${!name}" ]; then
+                missing="$missing $name"
+              fi
+            done
+          fi
+
+          if [ -n "$missing" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Remote integration ${{
+              matrix.section
+            }} skipped. Missing secrets:$missing" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Install hcloud CLI
+        if: steps.preflight.outputs.skip != 'true'
+        run: |
+          curl -fsSL https://github.com/hetznercloud/cli/releases/latest/download/hcloud-linux-amd64.tar.gz \
+            | sudo tar -C /usr/local/bin -xz hcloud
+          hcloud version
+
+      - name: Setup SSH key
+        if: steps.preflight.outputs.skip != 'true'
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}" > ~/.ssh/hetzner_ci_ed25519
+          chmod 600 ~/.ssh/hetzner_ci_ed25519
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HOME/.ssh/hetzner_ci_ed25519" >> "$GITHUB_ENV"
+
+      - name: Hetzner preflight (persistent)
+        if: steps.preflight.outputs.skip != 'true' && (github.event.inputs.target == '' || github.event.inputs.target == 'persistent')
+        env:
+          HETZNER_TEST_SERVER_ID: ${{ secrets.HETZNER_TEST_SERVER_ID }}
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: ./ci/hcloud/preflight.sh persistent
+
+      - name: Hetzner preflight (ephemeral)
+        if: steps.preflight.outputs.skip != 'true' && github.event.inputs.target == 'ephemeral'
+        env:
+          HETZNER_TEST_SNAPSHOT_ID: ${{ secrets.HETZNER_TEST_SNAPSHOT_ID }}
+        run: ./ci/hcloud/preflight.sh ephemeral
+
+      - name: Create ephemeral box
+        if: steps.preflight.outputs.skip != 'true' && github.event.inputs.target == 'ephemeral'
+        run: ./ci/hcloud/create-server.sh
+
+      - name: Wait for SSH
+        if: steps.preflight.outputs.skip != 'true'
+        run: ./ci/hcloud/wait-for-ssh.sh
+
+      - name: Sync repo
+        if: steps.preflight.outputs.skip != 'true'
+        run: ./ci/hcloud/sync-repo.sh
+
+      - name: Connect GitHub runner to Tailscale
+        if: steps.preflight.outputs.skip != 'true' && matrix.needs_tailscale
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          hostname: gha-yaver-${{ matrix.section }}-${{ github.run_id }}
+          tags: tag:ci
+
+      - name: Ensure remote Tailscale
+        if: steps.preflight.outputs.skip != 'true' && matrix.needs_remote_tailscale
+        env:
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+        run: |
+          ip="$(cat ci/.artifacts/server-ip)"
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              "root@$ip" '
+                set -euo pipefail
+                if ! command -v tailscale >/dev/null 2>&1; then
+                  curl -fsSL https://tailscale.com/install.sh | sh
+                fi
+                systemctl enable --now tailscaled || true
+                tailscale up --authkey "'"${TAILSCALE_AUTHKEY}"'" \
+                  --hostname "yaver-ci-remote-${{ github.run_id }}-${{ github.run_attempt }}" \
+                  --reset
+                tailscale ip -4
+              '
+
+      - name: Ensure remote cloudflared
+        if: steps.preflight.outputs.skip != 'true' && matrix.needs_remote_cloudflared
+        run: |
+          ip="$(cat ci/.artifacts/server-ip)"
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              "root@$ip" '
+                set -euo pipefail
+                if command -v cloudflared >/dev/null 2>&1; then
+                  exit 0
+                fi
+                arch="$(dpkg --print-architecture)"
+                case "$arch" in
+                  amd64) pkg_arch=amd64 ;;
+                  arm64) pkg_arch=arm64 ;;
+                  *) echo "unsupported arch: $arch" >&2; exit 1 ;;
+                esac
+                curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${pkg_arch}.deb" \
+                  -o /tmp/cloudflared.deb
+                dpkg -i /tmp/cloudflared.deb
+                rm -f /tmp/cloudflared.deb
+              '
+
+      - name: Run section from GitHub runner against Hetzner host
+        if: steps.preflight.outputs.skip != 'true' && matrix.exec_mode == 'local_cross_machine'
+        env:
+          CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+          REMOTE_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+          REMOTE_SERVER_SSH_KEY: ${{ env.HCLOUD_SSH_PRIVATE_KEY_PATH }}
+          CF_TUNNEL_URL: ${{ secrets.CF_TUNNEL_URL }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          mkdir -p ci/.artifacts
+          actual_ip="$(cat ci/.artifacts/server-ip)"
+          export REMOTE_SERVER_IP="$actual_ip"
+          ./scripts/test-suite.sh --${{ matrix.section }} 2>&1 | tee "ci/.artifacts/test-suite-${{ matrix.section }}.log"
+
+      - name: Run section on Hetzner host over SSH
+        if: steps.preflight.outputs.skip != 'true' && matrix.exec_mode == 'remote_ssh'
+        env:
+          CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+          CF_TUNNEL_URL: ${{ secrets.CF_TUNNEL_URL }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          ip="$(cat ci/.artifacts/server-ip)"
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=40 \
+              "root@$ip" \
+              "CONVEX_SITE_URL='${CONVEX_SITE_URL}' CF_TUNNEL_URL='${CF_TUNNEL_URL}' CF_ACCESS_CLIENT_ID='${CF_ACCESS_CLIENT_ID}' CF_ACCESS_CLIENT_SECRET='${CF_ACCESS_CLIENT_SECRET}' bash /opt/yaver/ci/remote/run_test_suite_section.sh '${{ matrix.section }}'"
+
+      - name: Append summary
+        if: always()
+        run: |
+          {
+            echo "### remote-integration: ${{ matrix.section }}"
+            echo ""
+            echo "- role: \`${{ matrix.role }}\`"
+            echo "- mode: \`${{ matrix.exec_mode }}\`"
+            echo "- target: \`${{ github.event.inputs.target || 'persistent' }}\`"
+            echo "- skipped: \`${{ steps.preflight.outputs.skip || 'false' }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Gather logs
+        if: always() && steps.preflight.outputs.skip != 'true'
+        run: ./ci/hcloud/gather-logs.sh
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-integration-${{ matrix.section }}-${{ github.event.inputs.target || 'persistent' }}-${{ github.run_id }}
+          path: ci/.artifacts/
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Disconnect remote Tailscale
+        if: always() && steps.preflight.outputs.skip != 'true' && matrix.needs_remote_tailscale
+        run: |
+          ip="$(cat ci/.artifacts/server-ip)"
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              "root@$ip" 'tailscale logout || true'
+
+      - name: Delete ephemeral box
+        if: always() && steps.preflight.outputs.skip != 'true' && github.event.inputs.target == 'ephemeral'
+        run: ./ci/hcloud/delete-server.sh

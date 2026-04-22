@@ -57,9 +57,19 @@ ci/
 └── remote/                    ← runs on the Hetzner box
     ├── bootstrap.sh           ← first-time install of everything above
     └── verify.sh              ← smoke test: toolchain + docker + ollama + go test
+    └── verify-host-share.sh   ← focused borrowed-session / host-share tests
+    └── verify-guest-docker-isolation.sh ← focused guest Docker-isolation tests
 ```
 
 Everything under `ci/hcloud` assumes `HCLOUD_TOKEN` and `HCLOUD_SSH_PRIVATE_KEY_PATH` env vars are set. Scripts write provisioning artifacts (`server-id`, `server-ip`, `server-name`, `server.json`, `snapshot.json`) to `ci/.artifacts/` so later steps — and cleanup — don't have to re-resolve anything. `ci/.artifacts/` is gitignored.
+
+`ci/hcloud/preflight.sh` is the first gate the GitHub-hosted remote workflows run now. It validates:
+
+- `HCLOUD_TOKEN` can actually talk to Hetzner
+- persistent mode: `HETZNER_TEST_SERVER_ID` exists and `HETZNER_TEST_SERVER_IP` still matches the live server
+- ephemeral mode: `HETZNER_TEST_SNAPSHOT_ID` is accessible before create/delete starts
+
+That turns the common “stale secret” failures into immediate, concrete CI errors instead of 3-minute SSH timeouts.
 
 ## GitHub secrets
 
@@ -72,15 +82,31 @@ Set once with `gh secret set <NAME> --repo kivanccakmak/yaver.io`.
 | `HETZNER_TEST_SERVER_ID` | status / label queries | Replace when the persistent box is recreated |
 | `HETZNER_TEST_SERVER_IP` | persistent-mode workflow | Replace when the persistent box is recreated |
 | `HETZNER_TEST_SNAPSHOT_ID` | snapshot restore | Replace after each `snapshot-server.sh` run |
+| `GLM_API_KEY` | GitHub-hosted `runner-integrations.yml` OpenCode GLM lane | Rotate in GLM / Z.AI console; mirrored into `ZAI_API_KEY` at runtime for CLI compatibility |
 
-If the box is ever compromised, **rotate all five**, delete the `yaver-ci` key in Hetzner, and recreate with `ssh-keygen -t ed25519 -f ~/.ssh/hetzner_ci_ed25519`.
+If the box is ever compromised, **rotate all Hetzner box secrets**, delete the `yaver-ci` key in Hetzner, and recreate with `ssh-keygen -t ed25519 -f ~/.ssh/hetzner_ci_ed25519`.
+
+`GLM_API_KEY` is intentionally **not** used on the Hetzner box. It stays on GitHub-hosted runners because OpenCode/GLM integration does not require remote-machine semantics, and `ci/` should keep expensive or internet-backed checks off the Hetzner machine unless that surface is what we are actually validating.
+
+The OpenCode GLM lane uses runtime-only `OPENCODE_CONFIG_CONTENT` with Z.AI's OpenAI-compatible coding endpoint instead of checking any provider config into the repo. That keeps CI hermetic and avoids coupling project config to one vendor.
 
 ## Running
 
 ### Locally from your laptop (quickest for iteration)
 
 ```bash
-export HCLOUD_TOKEN=$(grep '^  token' ~/.config/hcloud/cli.toml | sed -E 's/.*"(.*)".*/\1/')
+export HCLOUD_TOKEN=$(python3 - <<'PY'
+import pathlib, tomllib
+cfg = tomllib.loads((pathlib.Path.home() / ".config/hcloud/cli.toml").read_text())
+active = cfg.get("active_context")
+for ctx in cfg.get("contexts", []):
+    if ctx.get("name") == active:
+        print(ctx["token"])
+        break
+else:
+    raise SystemExit("active hcloud token not found")
+PY
+)
 export HCLOUD_SSH_PRIVATE_KEY_PATH=~/.ssh/hetzner_ci_ed25519
 
 # Point server-ip artifact at the existing persistent box
@@ -94,6 +120,49 @@ ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
     "root@$(cat ci/.artifacts/server-ip)" 'bash /opt/yaver/ci/remote/verify.sh'
 ```
 
+`sync-repo.sh` intentionally skips bulky local artifacts that are not needed for
+remote verification (`dist/`, videos, demo payloads, installer output, mobile
+build caches, local agent binaries). If you add another large generated tree,
+exclude it there before using the persistent box for iteration.
+
+### Locally from your laptop: focused host-share verification
+
+Use this when you are changing borrowed-session / guest-owned repo flows and do
+not want the full `go test ./...` sweep on the remote box:
+
+```bash
+export HCLOUD_TOKEN=$(python3 - <<'PY'
+import pathlib, tomllib
+cfg = tomllib.loads((pathlib.Path.home() / ".config/hcloud/cli.toml").read_text())
+active = cfg.get("active_context")
+for ctx in cfg.get("contexts", []):
+    if ctx.get("name") == active:
+        print(ctx["token"])
+        break
+else:
+    raise SystemExit("active hcloud token not found")
+PY
+)
+export HCLOUD_SSH_PRIVATE_KEY_PATH=~/.ssh/hetzner_ci_ed25519
+
+mkdir -p ci/.artifacts
+hcloud server describe yaver-test-ephemeral -o json \
+  | jq -r '.public_net.ipv4.ip' > ci/.artifacts/server-ip
+
+./ci/hcloud/sync-repo.sh
+ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    "root@$(cat ci/.artifacts/server-ip)" \
+    'bash /opt/yaver/ci/remote/verify-host-share.sh'
+```
+
+This focused path is the preferred check for:
+- `host-share attach-repo`
+- `host-share sync-repo --to-host`
+- `host-share sync-repo --from-host`
+- `host-share end`
+- guest-scoped file sync / workspace bootstrap behavior
+
 ### From GitHub Actions
 
 `.github/workflows/remote-verify.yml` — manual (`workflow_dispatch`), two modes:
@@ -105,6 +174,120 @@ ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
 gh workflow run remote-verify.yml --ref main -f target=persistent
 gh workflow run remote-verify.yml --ref main -f target=ephemeral   # clean slate
 ```
+
+`.github/workflows/remote-host-share-verify.yml` — manual focused borrowed-session check:
+
+- `target=persistent` — reuse the always-on test box
+- `target=ephemeral` — restore a fresh temporary box from snapshot
+
+```bash
+gh workflow run remote-host-share-verify.yml --ref main -f target=persistent
+gh workflow run remote-host-share-verify.yml --ref main -f target=ephemeral
+```
+
+Use this workflow when changing:
+- `host-share attach-repo`
+- `host-share sync-repo`
+- `host-share end`
+- guest-owned repo mirror behavior
+- guest-scoped workspace/file sync
+
+`.github/workflows/remote-host-share-agentless.yml` — manual policy-boundary check:
+
+- guest runs on the GitHub runner
+- host stays on the dedicated Hetzner machine
+- verifies guest can join and use the allowed host-share surface
+- verifies guest cannot self-escalate through `/guests/config` or `/exec`
+- supports `target=persistent|ephemeral`; use `ephemeral` when you want the host side fully reset after the run
+
+Required GitHub secrets for this workflow:
+- `HCLOUD_TOKEN`
+- `HCLOUD_SSH_PRIVATE_KEY`
+- `HETZNER_TEST_SERVER_ID`
+- `HETZNER_TEST_SERVER_IP`
+- `CONVEX_SITE_URL`
+- `HOST_SHARE_HOST_EMAIL`
+- `HOST_SHARE_HOST_PASSWORD`
+
+This workflow now resolves the shared host target from the canonical Hetzner box in CI:
+
+- runs `ci/hcloud/preflight.sh persistent`
+- waits for SSH reachability on that box
+- discovers `HOST_SHARE_HOST_BASE_URL` as `http://<hetzner-ip>:18080`
+- discovers the live `HOST_SHARE_HOST_DEVICE_ID` from `/info`
+
+So the GitHub runner is always the guest user, and the Hetzner box is always the host side of the host-share session.
+The guest account is created as a random throwaway user during the run and deleted with `/auth/delete-account` in cleanup, so the workflow is stateless on the guest-account side.
+
+`.github/workflows/remote-guest-docker-verify.yml` — manual focused Docker security check:
+
+- runs on the Hetzner test box
+- proves a guest-isolated task actually executes in Docker
+- proves mounted workspace visibility and host secret/env/path non-leakage
+
+```bash
+gh workflow run remote-host-share-agentless.yml --ref main -f target=persistent
+gh workflow run remote-host-share-agentless.yml --ref main -f target=ephemeral
+gh workflow run remote-guest-docker-verify.yml --ref main -f target=persistent
+gh workflow run remote-guest-docker-verify.yml --ref main -f target=ephemeral
+```
+
+`.github/workflows/remote-host-share-lifecycle.yml` — manual session-stop enforcement check:
+
+- guest runs on the GitHub runner
+- host stays on the dedicated Hetzner machine
+- creates a throwaway guest account, joins a host-share invite, verifies access
+- host ends the session, then CI proves the guest loses access
+- guest account is deleted during cleanup
+- supports `target=persistent|ephemeral`; `ephemeral` gives you a clean host box plus guest-account cleanup
+
+```bash
+gh workflow run remote-host-share-lifecycle.yml --ref main -f target=persistent
+gh workflow run remote-host-share-lifecycle.yml --ref main -f target=ephemeral
+```
+
+`.github/workflows/ci.yml` also carries the basic account lifecycle smoke now:
+
+- create account via `/auth/signup`
+- log in
+- delete account
+- verify deleted token stops validating
+- verify login is rejected after deletion
+
+Role model for the Hetzner-backed remote workflows:
+
+- `remote-verify.yml`, `remote-host-share-verify.yml`, `remote-guest-docker-verify.yml`
+  GitHub runner acts as the host owner / remote operator. It reaches the Hetzner box over SSH after `ci/hcloud/preflight.sh`.
+- `remote-host-share-agentless.yml`
+  GitHub runner acts as the host's shared guest user. It resolves the Hetzner host via the same preflight, discovers the live `deviceId` from `/info`, then exercises only the guest-allowed host-share surface.
+
+`.github/workflows/remote-integration.yml` — Hetzner-backed network/integration matrix:
+
+- uses the same canonical Hetzner host or snapshot restore path as the other remote workflows
+- walks the connectivity cases one by one: `lan`, local `relay`, `relay-docker`, `relay-binary`, `tailscale`, `cloudflare`
+- treats the GitHub runner as `host-owner` for the cross-machine sections: `relay-docker`, `relay-binary`, `tailscale`
+- SSHes into the Hetzner box for sections that should run on the host itself: `lan`, `relay`, `auth`, `cloudflare`, `ollama`, `ollama-ci`, `hybrid-local`
+- uploads `ci/.artifacts/test-suite-*.log` plus remote `/var/log/yaver-ci/test-suite-*.log` and summary logs as artifacts
+
+Required secrets for `.github/workflows/remote-integration.yml`:
+
+- Always:
+  - `HCLOUD_TOKEN`
+  - `HCLOUD_SSH_PRIVATE_KEY`
+  - `CONVEX_SITE_URL`
+- Persistent target:
+  - `HETZNER_TEST_SERVER_ID`
+  - `HETZNER_TEST_SERVER_IP`
+- Ephemeral target:
+  - `HETZNER_TEST_SNAPSHOT_ID`
+- Tailscale section:
+  - `TAILSCALE_AUTHKEY`
+- Cloudflare section:
+  - `CF_TUNNEL_URL`
+  - `CF_ACCESS_CLIENT_ID`
+  - `CF_ACCESS_CLIENT_SECRET`
+- `remote-host-share-lifecycle.yml`
+  GitHub runner acts as the host's shared guest user, but the focus is session revocation: access must work before `/host-share/end` and fail immediately after.
 
 ## Re-provisioning from scratch
 
@@ -160,3 +343,11 @@ hcloud server delete yaver-test-ephemeral
 - A secret store. No prod tokens, no customer data, no real user-PII test fixtures.
 
 If a test can run on a GH-hosted runner for free, it should. Reach for this box only when the test fundamentally needs remote-machine semantics.
+
+## Secret handling rules for the Hetzner box
+
+- Never commit the box IP, SSH private key, `known_hosts`, or Hetzner API token into any tracked file.
+- Use GitHub secret names only in tracked docs and workflows. Real values stay in GitHub secrets or local gitignored config.
+- Local commands may reference `~/.ssh/hetzner_ci_ed25519` and `~/.config/hcloud/cli.toml`, but never copy their contents into logs, docs, fixtures, or markdown examples.
+- If you need to mention the persistent server in code or docs, use the logical name `yaver-test-ephemeral`, not a raw IP.
+- For GitHub-runner guest tests, keep the host base URL, host device id, host account password, and guest password in secrets only. Do not print invite codes, session ids, or host base URLs into logs unless they are explicitly masked.
