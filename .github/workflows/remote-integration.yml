@@ -338,7 +338,7 @@ jobs:
           name: remote-integration-${{ matrix.section }}-${{ github.event.inputs.target || 'persistent' }}-${{ github.run_id }}
           path: ci/.artifacts/
           retention-days: 7
-          if-no-files-found: warn
+          if-no-files-found: ignore
 
       - name: Disconnect remote Tailscale
         if: always() && steps.preflight.outputs.skip != 'true' && matrix.needs_remote_tailscale
