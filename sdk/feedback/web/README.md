@@ -1,6 +1,6 @@
 # yaver-feedback-web
 
-Visual feedback SDK for web apps — record screen + voice, take screenshots, send bug reports to your Yaver dev machine. The AI agent receives the report and fixes the bugs automatically.
+Visual feedback SDK for web apps. Record the bug, trigger reload, start vibing tasks, and stay connected to a Yaver agent running on your dev machine or over relay.
 
 ## Install
 
@@ -15,7 +15,7 @@ npm install -g yaver-cli
 yaver feedback setup
 ```
 
-## Quick Start (0.2+: native sign-in)
+## Quick Start
 
 ```typescript
 import { YaverFeedback } from 'yaver-feedback-web';
@@ -28,7 +28,14 @@ if (process.env.NODE_ENV === 'development') {
 }
 ```
 
-That's it — no auth token required. The first time the user clicks the floating button (or presses the keyboard shortcut), a compact sign-in modal opens with five OAuth providers (**Apple / Google / GitHub / GitLab / Microsoft**) and email + password. Each provider opens in a popup window that closes itself once authentication completes; the SDK persists the session token in `localStorage` so subsequent reports go straight through.
+That is enough for the common path. The first time the user clicks the floating button, the SDK:
+
+1. opens the in-app sign-in modal
+2. lets the user choose one of their reachable Yaver machines
+3. discovers the agent directly on LAN or through relay
+4. keeps a command stream open so reload/status messages can come back into the browser app
+
+Sign-in uses popup OAuth for **Apple / Google / GitHub / GitLab / Microsoft** plus email/password. The issued session token and selected device are cached in `localStorage`.
 
 If your app already authenticates against yaver.io and you want to pass a ready token (e.g. from your own server), opt out of the modal:
 
@@ -39,22 +46,61 @@ YaverFeedback.init({
 });
 ```
 
-A small "Y" button appears in the corner. Click it to:
-1. Record your screen + microphone
-2. Take annotated screenshots
-3. Send the report to your Yaver agent
+A small `Y` button appears in the corner. From there the web SDK can:
 
-The AI agent gets screen recordings, voice transcripts, console errors, and a timeline — then fixes the bugs and hot-reloads.
+1. record screen + microphone
+2. capture screenshots and notes
+3. send reports to `/feedback`
+4. trigger hot reloads
+5. start vibing tasks on the connected agent
 
-## Auto-Discovery
+## Discovery And Device Picking
 
-The SDK automatically finds your Yaver agent on the local network. No manual URL configuration needed — just run `yaver serve` on your dev machine.
+If the user is signed in, discovery is account-aware:
+
+- fetch reachable devices from Yaver
+- prefer the selected device
+- probe direct LAN addresses first
+- fall back to relay when direct probing fails
+
+If you already know the target agent URL, you can still pass it directly:
 
 ```typescript
 // Explicit URL (optional — auto-discovers if not set)
 YaverFeedback.init({
   agentUrl: 'http://192.168.1.100:18080',
   authToken: 'your-token',
+});
+```
+
+## Remote Control
+
+The web SDK now exposes the same core control loop the mobile feedback SDK uses:
+
+```typescript
+await YaverFeedback.reloadApp('dev');
+
+const eligibility = await YaverFeedback.getVibingEligibility();
+if (eligibility.canVibe) {
+  await YaverFeedback.vibing('Fix the checkout form validation bug.');
+}
+```
+
+Agent-driven commands come back over `/blackbox/command-stream`. By default:
+
+- `reload` -> `window.location.reload()`
+- `reload_bundle` -> `window.location.reload()`
+- `status` -> `onStatus` callback and a `window` event named `yaver-feedback:status`
+
+Override those defaults if your host app wants custom behavior:
+
+```typescript
+YaverFeedback.init({
+  trigger: 'floating-button',
+  onReload: () => router.refresh(),
+  onStatus: (status) => {
+    console.log(status.phase, status.message, status.progress);
+  },
 });
 ```
 
@@ -69,7 +115,7 @@ import { FeedbackWidget } from 'yaver-feedback-web';
 FeedbackWidget.mount(document.getElementById('yaver-panel'));
 ```
 
-Shows: connection status, agent discovery, manual URL input, and feedback controls.
+Shows: connection status, discovery/manual connect, bug report controls, reload, and vibing.
 
 ## Trigger Modes
 
@@ -88,6 +134,11 @@ YaverFeedback.init(config?: FeedbackConfig): Promise<void>
 // Manual trigger
 YaverFeedback.startReport(): void
 
+// Remote control
+YaverFeedback.reloadApp(mode?: 'dev' | 'bundle'): Promise<ReloadAck>
+YaverFeedback.getVibingEligibility(): Promise<{ canVibe: boolean; ... }>
+YaverFeedback.vibing(prompt: string): Promise<{ taskId: string }>
+
 // Programmatic recording
 YaverFeedback.startRecording(): Promise<void>
 YaverFeedback.captureScreenshot(annotation?: string): void
@@ -95,7 +146,7 @@ YaverFeedback.addAnnotation(text: string): void
 YaverFeedback.stopAndSend(): Promise<string | null>  // returns report ID
 
 // Discovery
-YaverDiscovery.discover(): Promise<DiscoveryResult | null>
+YaverDiscovery.discover(options?): Promise<DiscoveryResult | null>
 YaverDiscovery.connect(url: string): Promise<DiscoveryResult | null>
 ```
 
@@ -140,12 +191,11 @@ try {
 
 ## How It Works
 
-1. You test your web app and find a bug
-2. Click the feedback button (or press Ctrl+Shift+F)
-3. Record your screen while narrating the issue
-4. The SDK sends everything to your Yaver agent via HTTP multipart
-5. Run `yaver feedback fix <id>` — the AI agent generates a fix task
-6. Agent fixes the code, you see the changes via hot reload
+1. You test your web app and hit a bug
+2. Open the SDK, sign in, and connect to the right machine
+3. Record, screenshot, or type a vibing prompt
+4. The SDK talks to the agent over HTTP plus command-stream SSE
+5. The agent can fix, reload, and stream status back into the app
 
 ## Development Only
 
@@ -160,6 +210,7 @@ YaverFeedback.init({ enabled: false }); // explicitly disable
 - Yaver CLI running on your dev machine (`yaver serve`)
 - Modern browser with `getDisplayMedia` support (Chrome 72+, Firefox 66+, Edge 79+)
 - HTTPS or localhost (required by `getDisplayMedia`)
+- A signed-in Yaver account if you want account-backed discovery, shared machines, relay routing, or vibing
 
 ## License
 

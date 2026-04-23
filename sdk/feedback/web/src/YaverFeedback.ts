@@ -1,13 +1,23 @@
 import type {
+  AgentCommand,
   FeedbackBundle,
   FeedbackConfig,
   FeedbackReportSummary,
+  FeedbackStatusUpdate,
   TimelineEvent,
   DeviceInfo,
+  ReloadAck,
 } from './types';
 import { YaverDiscovery } from './discovery';
-import { getToken as getCachedToken } from './auth';
+import {
+  configureAuthEndpoints,
+  DEFAULT_CONVEX_SITE_URL,
+  getSelectedDeviceId,
+  getToken as getCachedToken,
+} from './auth';
 import { openLoginModal } from './LoginModal';
+import { openDevicePickerModal } from './DevicePickerModal';
+import { P2PClient } from './P2PClient';
 
 /**
  * YaverFeedback — visual feedback SDK for web apps.
@@ -37,6 +47,11 @@ export class YaverFeedback {
   private static consoleErrors: string[] = [];
   private static widget: HTMLElement | null = null;
   private static lastUploadResult: FeedbackReportSummary | null = null;
+  private static client: P2PClient | null = null;
+  private static commandAbortController: AbortController | null = null;
+  private static commandReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private static deviceId: string | null = null;
+  private static reportStyleInjected = false;
 
   /** Initialize the feedback SDK. Call once in your app entry point. */
   static async init(config: FeedbackConfig = {}): Promise<void> {
@@ -47,17 +62,36 @@ export class YaverFeedback {
         : !window.location.hostname.includes('prod');
     }
 
-    if (!config.enabled) return;
+    if (!config.enabled) {
+      YaverFeedback.config = { ...config };
+      return;
+    }
+
+    configureAuthEndpoints({
+      convexSiteUrl: config.authConvexSiteUrl,
+      webBaseUrl: config.authWebBaseUrl,
+    });
+    if (!config.convexUrl) {
+      config.convexUrl = config.authConvexSiteUrl ?? DEFAULT_CONVEX_SITE_URL;
+    }
 
     // Hydrate auth token from localStorage if caller didn't pass one.
     if (!config.authToken) {
       const cached = getCachedToken();
       if (cached) config.authToken = cached;
     }
+    if (!config.preferredDeviceId) {
+      const selected = getSelectedDeviceId();
+      if (selected) config.preferredDeviceId = selected;
+    }
 
     // Auto-discover agent if no URL provided
     if (!config.agentUrl) {
-      const agent = await YaverDiscovery.discover();
+      const agent = await YaverDiscovery.discover({
+        convexUrl: config.convexUrl,
+        authToken: config.authToken,
+        preferredDeviceId: config.preferredDeviceId,
+      });
       if (agent) {
         config.agentUrl = agent.url;
         console.log(`[yaver-feedback] Connected to ${agent.hostname} (${agent.url})`);
@@ -67,6 +101,9 @@ export class YaverFeedback {
     }
 
     YaverFeedback.config = config;
+    YaverFeedback.client = config.agentUrl
+      ? new P2PClient(config.agentUrl, config.authToken ?? '')
+      : null;
 
     // Set up trigger
     if (config.trigger === 'floating-button') {
@@ -87,6 +124,8 @@ export class YaverFeedback {
     window.addEventListener('error', (e) => {
       YaverFeedback.consoleErrors.push(`${e.message} at ${e.filename}:${e.lineno}`);
     });
+
+    YaverFeedback.connectCommandStream();
   }
 
   /** Check if SDK is initialized and enabled. */
@@ -257,11 +296,12 @@ export class YaverFeedback {
 
   /** Upload feedback bundle to Yaver agent via multipart POST. */
   static async upload(bundle: FeedbackBundle): Promise<string | null> {
-    const agentUrl = YaverFeedback.config?.agentUrl;
-    if (!agentUrl) {
+    const ready = await YaverFeedback.ensureAgentConnection();
+    if (!ready || !YaverFeedback.config?.agentUrl) {
       console.error('[yaver-feedback] No agent URL configured');
       return null;
     }
+    const agentUrl = YaverFeedback.config.agentUrl;
 
     // Lazy auth: prompt the user to sign in if we don't have a token yet.
     // No-op when caller passed `authToken` or `autoLogin: false`.
@@ -344,33 +384,84 @@ export class YaverFeedback {
     if (YaverFeedback.config?.autoLogin === false) return false;
     try {
       const token = await openLoginModal();
-      if (YaverFeedback.config) YaverFeedback.config.authToken = token;
+      if (YaverFeedback.config) {
+        YaverFeedback.config.authToken = token;
+      }
+      YaverFeedback.syncClient();
+      YaverFeedback.connectCommandStream();
       return true;
     } catch {
       return false;
     }
   }
 
+  static async reloadApp(mode: 'dev' | 'bundle' = 'dev'): Promise<ReloadAck> {
+    const client = await YaverFeedback.getClient();
+    return client.reloadApp(mode, YaverFeedback.projectIdentity());
+  }
+
+  static async getVibingEligibility(): Promise<{
+    canVibe: boolean;
+    reason?: string;
+    guidance?: string;
+    projectName?: string;
+    projectPath?: string;
+    provider?: string;
+    repoFullName?: string;
+  }> {
+    const client = await YaverFeedback.getClient();
+    return client.getVibingEligibility(YaverFeedback.projectIdentity());
+  }
+
+  static async vibing(prompt: string): Promise<{ taskId: string }> {
+    const client = await YaverFeedback.getClient();
+    return client.vibing(prompt, YaverFeedback.projectIdentity());
+  }
+
   /** Manually trigger the feedback report UI. */
   static startReport(): void {
-    // Auth happens lazily — at upload time, not at trigger time. The user
-    // can record + screenshot without a session; we only need a token to
-    // POST the bundle to the agent.
-    // Create a simple overlay UI
+    YaverFeedback.injectReportStyles();
     const overlay = document.createElement('div');
     overlay.id = 'yaver-feedback-overlay';
     overlay.innerHTML = `
-      <div style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:99998;display:flex;align-items:center;justify-content:center;">
-        <div style="background:#1a1a2e;color:#e0e0e0;padding:24px;border-radius:12px;max-width:360px;width:90%;font-family:-apple-system,sans-serif;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
-          <h3 style="margin:0 0 16px;font-size:16px;">Yaver Feedback</h3>
-          <p style="margin:0 0 16px;font-size:13px;color:#888;">Record your screen and voice to report bugs. ${YaverFeedback.config?.candidate?.enabled ? 'The agent will route fixes into the candidate lane first.' : 'The AI agent will fix them.'}</p>
-          <div style="display:flex;flex-direction:column;gap:8px;">
-            <button id="yaver-fb-record" style="padding:10px;border:none;border-radius:8px;background:#dc2626;color:white;cursor:pointer;font-size:13px;">Start Recording</button>
-            <button id="yaver-fb-screenshot" style="padding:10px;border:none;border-radius:8px;background:#2563eb;color:white;cursor:pointer;font-size:13px;">Take Screenshot</button>
-            <button id="yaver-fb-send" style="padding:10px;border:none;border-radius:8px;background:#16a34a;color:white;cursor:pointer;font-size:13px;display:none;">Stop & Send Report</button>
-            <button id="yaver-fb-cancel" style="padding:10px;border:none;border-radius:8px;background:#333;color:#888;cursor:pointer;font-size:13px;">Cancel</button>
+      <div class="yvr-fb-shell">
+        <div class="yvr-fb-card">
+          <div class="yvr-fb-header">
+            <div>
+              <h3 class="yvr-fb-title">Yaver Feedback</h3>
+              <p class="yvr-fb-subtitle">Report the bug, reload the app, or send the next vibing task to the selected machine.</p>
+            </div>
+            <button id="yaver-fb-close" class="yvr-fb-close" type="button" aria-label="Close">×</button>
           </div>
-          <p id="yaver-fb-status" style="margin:12px 0 0;font-size:11px;color:#666;"></p>
+
+          <button id="yaver-fb-machine" class="yvr-fb-machine" type="button">
+            <div class="yvr-fb-machine-top">
+              <span class="yvr-fb-machine-label">Selected Machine</span>
+              <span id="yaver-fb-machine-action" class="yvr-fb-machine-action">Change</span>
+            </div>
+            <div id="yaver-fb-machine-name" class="yvr-fb-machine-name">Checking connection…</div>
+            <div id="yaver-fb-machine-meta" class="yvr-fb-machine-meta">Sign in and pick a machine to unlock reload and vibing.</div>
+          </button>
+
+          <div class="yvr-fb-actions">
+            <button id="yaver-fb-record" class="yvr-fb-action yvr-fb-action-record" type="button">Start Recording</button>
+            <button id="yaver-fb-screenshot" class="yvr-fb-action yvr-fb-action-screenshot" type="button">Screenshot Note</button>
+            <button id="yaver-fb-reload" class="yvr-fb-action yvr-fb-action-reload" type="button">Hot Reload</button>
+            <button id="yaver-fb-send" class="yvr-fb-action yvr-fb-action-send" type="button" style="display:none;">Stop & Send Report</button>
+          </div>
+
+          <div class="yvr-fb-vibe-block">
+            <label class="yvr-fb-vibe-label" for="yaver-fb-vibe-prompt">Vibing</label>
+            <textarea id="yaver-fb-vibe-prompt" class="yvr-fb-vibe-input" placeholder="Describe what Yaver should work on next..."></textarea>
+            <button id="yaver-fb-vibe" class="yvr-fb-action yvr-fb-action-vibe" type="button">Start Vibing Task</button>
+          </div>
+
+          <div id="yaver-fb-progress-track" class="yvr-fb-progress-track" style="display:none;">
+            <div id="yaver-fb-progress-fill" class="yvr-fb-progress-fill"></div>
+          </div>
+          <p id="yaver-fb-status" class="yvr-fb-status"></p>
+          <p id="yaver-fb-last-report" class="yvr-fb-last-report"></p>
+          <button id="yaver-fb-cancel" class="yvr-fb-cancel" type="button">Cancel</button>
         </div>
       </div>
     `;
@@ -379,35 +470,174 @@ export class YaverFeedback {
     const recordBtn = document.getElementById('yaver-fb-record')!;
     const sendBtn = document.getElementById('yaver-fb-send')!;
     const screenshotBtn = document.getElementById('yaver-fb-screenshot')!;
+    const reloadBtn = document.getElementById('yaver-fb-reload')!;
+    const machineBtn = document.getElementById('yaver-fb-machine')!;
+    const machineName = document.getElementById('yaver-fb-machine-name')!;
+    const machineMeta = document.getElementById('yaver-fb-machine-meta')!;
+    const vibePrompt = document.getElementById('yaver-fb-vibe-prompt') as HTMLTextAreaElement;
+    const vibeBtn = document.getElementById('yaver-fb-vibe')!;
     const cancelBtn = document.getElementById('yaver-fb-cancel')!;
+    const closeBtn = document.getElementById('yaver-fb-close')!;
     const status = document.getElementById('yaver-fb-status')!;
+    const lastReport = document.getElementById('yaver-fb-last-report')!;
+    const progressTrack = document.getElementById('yaver-fb-progress-track')!;
+    const progressFill = document.getElementById('yaver-fb-progress-fill')!;
+
+    let busy = false;
+    const setBusy = (nextBusy: boolean) => {
+      busy = nextBusy;
+      [recordBtn, sendBtn, screenshotBtn, reloadBtn, vibeBtn, machineBtn].forEach((el) => {
+        (el as HTMLButtonElement).disabled = nextBusy;
+      });
+      vibePrompt.disabled = nextBusy;
+    };
+    const setStatus = (message: string, progress?: number) => {
+      status.textContent = message;
+      if (typeof progress === 'number') {
+        progressTrack.style.display = 'block';
+        progressFill.style.width = `${Math.max(0, Math.min(100, progress * 100))}%`;
+      } else {
+        progressTrack.style.display = 'none';
+        progressFill.style.width = '0%';
+      }
+    };
+    const refreshLastReport = () => {
+      const report = YaverFeedback.getLastUploadResult();
+      if (!report?.id) {
+        lastReport.textContent = '';
+        return;
+      }
+      lastReport.textContent = report.changeSet?.candidateLabel
+        ? `Last report: ${report.id} • ${report.changeSet.candidateLabel}`
+        : `Last report: ${report.id}`;
+    };
+    const refreshMachineCard = async () => {
+      machineName.textContent = 'Checking connection…';
+      machineMeta.textContent = 'Sign in and pick a machine to unlock reload and vibing.';
+      try {
+        const ready = await YaverFeedback.ensureAgentConnection();
+        if (!ready || !YaverFeedback.config?.agentUrl) {
+          machineName.textContent = YaverFeedback.config?.authToken ? 'No machine selected' : 'Sign in required';
+          machineMeta.textContent = YaverFeedback.config?.authToken
+            ? 'Pick one of your reachable Yaver machines.'
+            : 'Use your Yaver account to connect this browser to a dev machine.';
+          return;
+        }
+        const client = await YaverFeedback.getClient();
+        const info = await client.info();
+        machineName.textContent = info?.hostname || YaverFeedback.config.agentUrl;
+        machineMeta.textContent = info
+          ? `${info.platform} • ${info.version} • ${YaverFeedback.config.agentUrl}`
+          : YaverFeedback.config.agentUrl;
+      } catch (err) {
+        machineName.textContent = 'Connection needs attention';
+        machineMeta.textContent = err instanceof Error ? err.message : 'Unable to inspect the selected machine.';
+      }
+    };
+    const statusListener = ((event: Event) => {
+      const detail = (event as CustomEvent<FeedbackStatusUpdate>).detail;
+      if (!detail) return;
+      setStatus(detail.message || 'Working…', detail.progress);
+    }) as EventListener;
+    window.addEventListener('yaver-feedback:status', statusListener);
+    refreshLastReport();
+    void refreshMachineCard();
 
     recordBtn.onclick = async () => {
+      setBusy(true);
       await YaverFeedback.startRecording();
       recordBtn.style.display = 'none';
       sendBtn.style.display = 'block';
-      status.textContent = 'Recording... narrate the bugs you see.';
+      setStatus('Recording… narrate the bug while you move through the broken flow.');
+      setBusy(false);
     };
 
     screenshotBtn.onclick = () => {
       const note = prompt('Describe this bug (optional):') || '';
       YaverFeedback.captureScreenshot(note);
-      status.textContent = `Screenshot captured${note ? ': ' + note : ''}`;
+      setStatus(`Screenshot captured${note ? `: ${note}` : ''}`);
+    };
+
+    reloadBtn.onclick = async () => {
+      setBusy(true);
+      setStatus('Requesting reload…');
+      try {
+        const ack = await YaverFeedback.reloadApp('dev');
+        setStatus(ack.message);
+      } catch (err) {
+        setStatus(err instanceof Error ? err.message : 'Reload failed.');
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    vibeBtn.onclick = async () => {
+      const promptText = vibePrompt.value.trim();
+      if (!promptText) {
+        setStatus('Enter a vibing prompt first.');
+        return;
+      }
+      setBusy(true);
+      setStatus('Checking vibing access…');
+      try {
+        const eligibility = await YaverFeedback.getVibingEligibility();
+        if (!eligibility.canVibe) {
+          setStatus(
+            eligibility.guidance && eligibility.guidance.trim()
+              ? `${eligibility.reason ?? 'Vibing unavailable.'} ${eligibility.guidance}`
+              : eligibility.reason ?? 'Vibing unavailable.',
+          );
+          return;
+        }
+        setStatus('Creating vibing task…');
+        const result = await YaverFeedback.vibing(promptText);
+        setStatus(`Vibing task created: ${result.taskId}`);
+        vibePrompt.value = '';
+      } catch (err) {
+        setStatus(err instanceof Error ? err.message : 'Vibing failed.');
+      } finally {
+        setBusy(false);
+      }
     };
 
     sendBtn.onclick = async () => {
-      status.textContent = 'Sending report...';
+      setBusy(true);
+      setStatus('Sending report…');
       const id = await YaverFeedback.stopAndSend();
       if (id) {
         const changeSet = YaverFeedback.lastUploadResult?.changeSet;
         if (changeSet?.candidateLabel) {
-          status.textContent = `Report sent! (${id}) Candidate: ${changeSet.candidateLabel}`;
+          setStatus(`Report sent: ${id} • ${changeSet.candidateLabel}`);
         } else {
-          status.textContent = `Report sent! (${id})`;
+          setStatus(`Report sent: ${id}`);
         }
+        refreshLastReport();
         setTimeout(() => overlay.remove(), 2000);
       } else {
-        status.textContent = 'Failed to send. Check console.';
+        setStatus('Failed to send. Check console.');
+        setBusy(false);
+      }
+    };
+
+    machineBtn.onclick = async () => {
+      setBusy(true);
+      setStatus('Refreshing machine connection…');
+      try {
+        if (YaverFeedback.config?.authToken || (await YaverFeedback.ensureAuthToken())) {
+          YaverFeedback.config!.agentUrl = undefined;
+          YaverFeedback.config!.preferredDeviceId = undefined;
+          const ready = await YaverFeedback.ensureAgentConnection();
+          if (ready) {
+            setStatus('Connected to selected machine.');
+          } else {
+            setStatus('Machine selection cancelled.');
+          }
+        }
+      } catch (err) {
+        setStatus(err instanceof Error ? err.message : 'Unable to change machine.');
+      } finally {
+        await refreshMachineCard();
+        setBusy(false);
       }
     };
 
@@ -417,7 +647,12 @@ export class YaverFeedback {
         YaverFeedback.audioRecorder?.stop();
         YaverFeedback.recording = false;
       }
+      window.removeEventListener('yaver-feedback:status', statusListener);
       overlay.remove();
+    };
+    closeBtn.onclick = cancelBtn.onclick;
+    overlay.onclick = (event) => {
+      if (event.target === overlay) cancelBtn.onclick?.(event as any);
     };
   }
 
@@ -467,5 +702,241 @@ export class YaverFeedback {
 
   static getLastUploadResult(): FeedbackReportSummary | null {
     return YaverFeedback.lastUploadResult;
+  }
+
+  private static async getClient(): Promise<P2PClient> {
+    const ready = await YaverFeedback.ensureAgentConnection();
+    if (!ready || !YaverFeedback.config?.agentUrl) {
+      throw new Error('No Yaver agent connected.');
+    }
+    YaverFeedback.syncClient();
+    if (!YaverFeedback.client) {
+      throw new Error('No Yaver agent connected.');
+    }
+    return YaverFeedback.client;
+  }
+
+  private static async ensureAgentConnection(): Promise<boolean> {
+    if (!YaverFeedback.config) return false;
+    const authed = await YaverFeedback.ensureAuthToken();
+    if (!authed) return false;
+    if (YaverFeedback.config.agentUrl) {
+      YaverFeedback.syncClient();
+      YaverFeedback.connectCommandStream();
+      return true;
+    }
+    if (!YaverFeedback.config.preferredDeviceId && YaverFeedback.config.autoLogin !== false) {
+      try {
+        const device = await openDevicePickerModal(YaverFeedback.config.authToken!);
+        YaverFeedback.config.preferredDeviceId = device.deviceId;
+      } catch {
+        return false;
+      }
+    }
+    const discovered = await YaverDiscovery.discover({
+      convexUrl: YaverFeedback.config.convexUrl,
+      authToken: YaverFeedback.config.authToken,
+      preferredDeviceId: YaverFeedback.config.preferredDeviceId,
+    });
+    if (!discovered) return false;
+    YaverFeedback.config.agentUrl = discovered.url;
+    YaverFeedback.syncClient();
+    YaverFeedback.connectCommandStream();
+    return true;
+  }
+
+  private static syncClient(): void {
+    if (!YaverFeedback.config?.agentUrl) {
+      YaverFeedback.client = null;
+      return;
+    }
+    if (!YaverFeedback.client) {
+      YaverFeedback.client = new P2PClient(
+        YaverFeedback.config.agentUrl,
+        YaverFeedback.config.authToken ?? '',
+      );
+      return;
+    }
+    YaverFeedback.client.setBaseUrl(YaverFeedback.config.agentUrl);
+    YaverFeedback.client.setAuthToken(YaverFeedback.config.authToken ?? '');
+  }
+
+  private static connectCommandStream(): void {
+    if (!YaverFeedback.config?.agentUrl || !YaverFeedback.config?.authToken) return;
+    if (YaverFeedback.commandAbortController) return;
+    YaverFeedback.syncClient();
+    if (!YaverFeedback.client) return;
+    const controller = new AbortController();
+    YaverFeedback.commandAbortController = controller;
+    void YaverFeedback.client
+      .connectCommandStream(
+        (command) => YaverFeedback.handleAgentCommand(command),
+        {
+          deviceId: YaverFeedback.getDeviceId(),
+          platform: 'web',
+          appName: YaverFeedback.config?.appName,
+          signal: controller.signal,
+        },
+      )
+      .catch(() => {
+        // reconnect handled below
+      })
+      .finally(() => {
+        if (YaverFeedback.commandAbortController === controller) {
+          YaverFeedback.commandAbortController = null;
+        }
+        if (YaverFeedback.config?.enabled !== false) {
+          YaverFeedback.scheduleCommandReconnect();
+        }
+      });
+  }
+
+  private static scheduleCommandReconnect(): void {
+    if (YaverFeedback.commandReconnectTimer) return;
+    YaverFeedback.commandReconnectTimer = setTimeout(() => {
+      YaverFeedback.commandReconnectTimer = null;
+      YaverFeedback.connectCommandStream();
+    }, 5000);
+  }
+
+  private static handleAgentCommand(command: AgentCommand): void {
+    if (command.command === 'reload') {
+      if (YaverFeedback.config?.onReload) {
+        YaverFeedback.config.onReload();
+      } else {
+        window.location.reload();
+      }
+      return;
+    }
+    if (command.command === 'reload_bundle') {
+      const bundleUrl =
+        typeof command.data?.bundleUrl === 'string' ? command.data.bundleUrl : undefined;
+      const assetsUrl =
+        typeof command.data?.assetsUrl === 'string' ? command.data.assetsUrl : undefined;
+      if (YaverFeedback.config?.onReloadBundle) {
+        YaverFeedback.config.onReloadBundle(bundleUrl, assetsUrl);
+      } else {
+        window.location.reload();
+      }
+      return;
+    }
+    if (command.command === 'status') {
+      const status: FeedbackStatusUpdate = {
+        message:
+          typeof command.data?.message === 'string' ? command.data.message : '',
+        phase:
+          typeof command.data?.phase === 'string' ? command.data.phase : undefined,
+        progress:
+          typeof command.data?.progress === 'number' ? command.data.progress : undefined,
+        at: Date.now(),
+      };
+      YaverFeedback.config?.onStatus?.(status);
+      window.dispatchEvent(new CustomEvent('yaver-feedback:status', { detail: status }));
+    }
+  }
+
+  private static getDeviceId(): string {
+    if (YaverFeedback.deviceId) return YaverFeedback.deviceId;
+    try {
+      const key = 'yaver_feedback_web_device_id';
+      const existing = localStorage.getItem(key);
+      if (existing) {
+        YaverFeedback.deviceId = existing;
+        return existing;
+      }
+      const generated = `web-${Math.random().toString(36).slice(2, 10)}`;
+      localStorage.setItem(key, generated);
+      YaverFeedback.deviceId = generated;
+      return generated;
+    } catch {
+      const fallback = `web-${Math.random().toString(36).slice(2, 10)}`;
+      YaverFeedback.deviceId = fallback;
+      return fallback;
+    }
+  }
+
+  private static projectIdentity(): {
+    projectName?: string;
+    projectPath?: string;
+    bundleId?: string;
+  } {
+    return {
+      projectName: YaverFeedback.config?.projectName,
+      projectPath: YaverFeedback.config?.projectPath,
+      bundleId:
+        typeof document !== 'undefined'
+          ? document.querySelector<HTMLMetaElement>('meta[name="application-name"]')?.content
+          : undefined,
+    };
+  }
+
+  private static injectReportStyles(): void {
+    if (YaverFeedback.reportStyleInjected || typeof document === 'undefined') return;
+    const style = document.createElement('style');
+    style.id = 'yaver-feedback-report-style';
+    style.textContent = `
+      .yvr-fb-shell {
+        position: fixed;
+        inset: 0;
+        z-index: 99998;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(2, 6, 23, 0.62);
+        backdrop-filter: blur(8px);
+        padding: 16px;
+      }
+      .yvr-fb-card {
+        width: min(420px, 100%);
+        background: #0f172a;
+        color: #e2e8f0;
+        border-radius: 14px;
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        padding: 18px;
+        box-shadow: 0 24px 60px rgba(15, 23, 42, 0.52);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .yvr-fb-header { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+      .yvr-fb-title { margin: 0; font-size: 16px; }
+      .yvr-fb-subtitle { margin: 4px 0 0; font-size: 12px; color: #94a3b8; line-height: 1.45; }
+      .yvr-fb-close {
+        border: none; background: transparent; color: #94a3b8; cursor: pointer; font-size: 22px; line-height: 1; padding: 0 4px;
+      }
+      .yvr-fb-machine {
+        width: 100%; text-align: left; background: rgba(15, 23, 42, 0.78); border: 1px solid rgba(148, 163, 184, 0.18);
+        color: inherit; border-radius: 10px; padding: 12px; margin-bottom: 12px; cursor: pointer;
+      }
+      .yvr-fb-machine-top { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+      .yvr-fb-machine-label, .yvr-fb-machine-action { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #94a3b8; }
+      .yvr-fb-machine-name { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+      .yvr-fb-machine-meta { font-size: 12px; color: #94a3b8; line-height: 1.45; word-break: break-word; }
+      .yvr-fb-actions, .yvr-fb-vibe-block { display: grid; gap: 8px; }
+      .yvr-fb-vibe-block { margin-top: 12px; }
+      .yvr-fb-vibe-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #94a3b8; }
+      .yvr-fb-vibe-input {
+        min-height: 86px; resize: vertical; border-radius: 10px; border: 1px solid rgba(148, 163, 184, 0.18);
+        background: rgba(15, 23, 42, 0.78); color: inherit; padding: 10px 12px; font: inherit; box-sizing: border-box;
+      }
+      .yvr-fb-action, .yvr-fb-cancel {
+        border: none; border-radius: 10px; padding: 11px 12px; color: white; cursor: pointer; font: inherit; font-size: 13px; font-weight: 600;
+      }
+      .yvr-fb-action:disabled, .yvr-fb-machine:disabled { opacity: 0.6; cursor: not-allowed; }
+      .yvr-fb-action-record { background: #dc2626; }
+      .yvr-fb-action-screenshot { background: #2563eb; }
+      .yvr-fb-action-reload { background: #7c3aed; }
+      .yvr-fb-action-send { background: #16a34a; }
+      .yvr-fb-action-vibe { background: #0891b2; }
+      .yvr-fb-progress-track {
+        margin-top: 12px; width: 100%; height: 8px; background: rgba(148, 163, 184, 0.16); border-radius: 999px; overflow: hidden;
+      }
+      .yvr-fb-progress-fill {
+        height: 100%; width: 0%; background: linear-gradient(90deg, #38bdf8 0%, #22c55e 100%);
+      }
+      .yvr-fb-status, .yvr-fb-last-report { margin: 12px 0 0; font-size: 12px; line-height: 1.45; color: #cbd5e1; }
+      .yvr-fb-last-report { color: #94a3b8; }
+      .yvr-fb-cancel { width: 100%; background: #334155; color: #e2e8f0; margin-top: 12px; }
+    `;
+    document.head.appendChild(style);
+    YaverFeedback.reportStyleInjected = true;
   }
 }

@@ -9,6 +9,7 @@ function AuthContent() {
   const params = useSearchParams();
   const error = params.get("error");
   const client = params.get("client") || "web";
+  const isSdkPopup = client === "sdk";
   const returnUrl = params.get("return");
   const isDeviceAuth = !!returnUrl && returnUrl.startsWith("/auth/device");
   const pendingDeviceCode = isDeviceAuth ? new URLSearchParams(returnUrl.split("?")[1] || "").get("code") : null;
@@ -108,12 +109,18 @@ function AuthContent() {
   };
 
   const displayError = formError || error;
+  const containerClass = isSdkPopup
+    ? "w-full max-w-[380px] rounded-3xl border border-surface-800 bg-surface-950/95 px-6 py-6 shadow-2xl shadow-black/40"
+    : "w-full max-w-sm";
+  const controlClass = isSdkPopup
+    ? "rounded-xl px-4 py-3.5"
+    : "rounded-lg px-4 py-3";
 
   return (
-    <div className="flex min-h-[70vh] items-center justify-center px-6 py-20">
-      <div className="w-full max-w-sm">
-        <div className="mb-8 text-center">
-          <span className="text-2xl font-bold tracking-tight text-surface-50">
+    <div className={`flex items-center justify-center px-6 ${isSdkPopup ? "min-h-screen py-8" : "min-h-[70vh] py-20"}`}>
+      <div className={containerClass}>
+        <div className={`${isSdkPopup ? "mb-6" : "mb-8"} text-center`}>
+          <span className={`${isSdkPopup ? "text-xl" : "text-2xl"} font-bold tracking-tight text-surface-50`}>
             yaver<span className="font-normal text-surface-500">.io</span>
           </span>
           {isDeviceAuth && (
@@ -134,12 +141,16 @@ function AuthContent() {
               )}
             </div>
           )}
-          <p className="mt-3 text-sm text-surface-500">
-            {mode === "signin"
-              ? isDeviceAuth
-                ? "Sign in to continue authorizing the remote machine"
-                : "Sign in to get started"
-              : "Create an account with email"}
+          <p className={`mt-3 ${isSdkPopup ? "text-[13px]" : "text-sm"} text-surface-500`}>
+            {isSdkPopup
+              ? mode === "signin"
+                ? "Sign in to connect this browser app to your Yaver machine."
+                : "Create a Yaver account for the SDK popup flow."
+              : mode === "signin"
+                ? isDeviceAuth
+                  ? "Sign in to continue authorizing the remote machine"
+                  : "Sign in to get started"
+                : "Create an account with email"}
           </p>
         </div>
 
@@ -152,7 +163,7 @@ function AuthContent() {
         <div className="space-y-3">
           <button
             onClick={() => handleOAuth("apple")}
-            className="flex w-full items-center justify-center gap-3 rounded-lg border border-surface-700 bg-surface-900 px-4 py-3 text-sm font-medium text-surface-200 transition-colors hover:border-surface-600 hover:text-surface-50"
+            className={`flex w-full items-center justify-center gap-3 border border-surface-700 bg-surface-900 text-sm font-medium text-surface-200 transition-colors hover:border-surface-600 hover:text-surface-50 ${controlClass}`}
           >
             <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
               <path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z" />
@@ -162,7 +173,7 @@ function AuthContent() {
 
           <button
             onClick={() => handleOAuth("github")}
-            className="flex w-full items-center justify-center gap-3 rounded-lg border border-surface-700 bg-surface-900 px-4 py-3 text-sm font-medium text-surface-200 transition-colors hover:border-surface-600 hover:text-surface-50"
+            className={`flex w-full items-center justify-center gap-3 border border-surface-700 bg-surface-900 text-sm font-medium text-surface-200 transition-colors hover:border-surface-600 hover:text-surface-50 ${controlClass}`}
           >
             <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
               <path d="M12 .5C5.65.5.5 5.7.5 12.12c0 5.14 3.3 9.5 7.88 11.03.58.11.79-.25.79-.57 0-.28-.01-1.02-.02-2-3.2.71-3.88-1.57-3.88-1.57-.52-1.35-1.28-1.71-1.28-1.71-1.04-.73.08-.72.08-.72 1.15.08 1.75 1.19 1.75 1.19 1.02 1.77 2.67 1.26 3.32.96.1-.76.4-1.27.73-1.56-2.56-.29-5.26-1.3-5.26-5.77 0-1.27.45-2.31 1.18-3.13-.12-.29-.51-1.47.11-3.06 0 0 .97-.32 3.18 1.2a10.9 10.9 0 0 1 5.8 0c2.2-1.52 3.17-1.2 3.17-1.2.63 1.59.24 2.77.12 3.06.73.82 1.18 1.86 1.18 3.13 0 4.48-2.7 5.48-5.28 5.77.41.36.78 1.08.78 2.18 0 1.58-.02 2.85-.02 3.24 0 .32.2.69.8.57A11.63 11.63 0 0 0 23.5 12.12C23.5 5.7 18.35.5 12 .5z" />
@@ -172,7 +183,7 @@ function AuthContent() {
 
           <button
             onClick={() => handleOAuth("gitlab")}
-            className="flex w-full items-center justify-center gap-3 rounded-lg border border-surface-700 bg-surface-900 px-4 py-3 text-sm font-medium text-surface-200 transition-colors hover:border-surface-600 hover:text-surface-50"
+            className={`flex w-full items-center justify-center gap-3 border border-surface-700 bg-surface-900 text-sm font-medium text-surface-200 transition-colors hover:border-surface-600 hover:text-surface-50 ${controlClass}`}
           >
             <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-orange-500/15 text-[10px] font-semibold text-orange-300">GL</span>
             Continue with GitLab
@@ -180,7 +191,7 @@ function AuthContent() {
 
           <button
             onClick={() => handleOAuth("google")}
-            className="flex w-full items-center justify-center gap-3 rounded-lg border border-surface-700 bg-surface-900 px-4 py-3 text-sm font-medium text-surface-200 transition-colors hover:border-surface-600 hover:text-surface-50"
+            className={`flex w-full items-center justify-center gap-3 border border-surface-700 bg-surface-900 text-sm font-medium text-surface-200 transition-colors hover:border-surface-600 hover:text-surface-50 ${controlClass}`}
           >
             <svg className="h-5 w-5" viewBox="0 0 24 24">
               <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
@@ -193,7 +204,7 @@ function AuthContent() {
 
           <button
             onClick={() => handleOAuth("microsoft")}
-            className="flex w-full items-center justify-center gap-3 rounded-lg border border-surface-700 bg-surface-900 px-4 py-3 text-sm font-medium text-surface-200 transition-colors hover:border-surface-600 hover:text-surface-50"
+            className={`flex w-full items-center justify-center gap-3 border border-surface-700 bg-surface-900 text-sm font-medium text-surface-200 transition-colors hover:border-surface-600 hover:text-surface-50 ${controlClass}`}
           >
             <svg className="h-5 w-5" viewBox="0 0 24 24">
               <path fill="#F25022" d="M1 1h10v10H1z" />
@@ -207,7 +218,7 @@ function AuthContent() {
         </div>
 
         {/* Divider */}
-        <div className="my-6 flex items-center gap-3">
+        <div className={`${isSdkPopup ? "my-5" : "my-6"} flex items-center gap-3`}>
           <div className="h-px flex-1 bg-surface-700" />
           <span className="text-xs text-surface-500">or</span>
           <div className="h-px flex-1 bg-surface-700" />
@@ -222,7 +233,7 @@ function AuthContent() {
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               required
-              className="w-full rounded-lg border border-surface-700 bg-surface-900 px-4 py-3 text-sm text-surface-200 placeholder-surface-500 outline-none transition-colors focus:border-surface-500"
+              className={`w-full border border-surface-700 bg-surface-900 px-4 py-3 text-sm text-surface-200 placeholder-surface-500 outline-none transition-colors focus:border-surface-500 ${isSdkPopup ? "rounded-xl" : "rounded-lg"}`}
             />
           )}
           <input
@@ -231,7 +242,7 @@ function AuthContent() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
-            className="w-full rounded-lg border border-surface-700 bg-surface-900 px-4 py-3 text-sm text-surface-200 placeholder-surface-500 outline-none transition-colors focus:border-surface-500"
+            className={`w-full border border-surface-700 bg-surface-900 px-4 py-3 text-sm text-surface-200 placeholder-surface-500 outline-none transition-colors focus:border-surface-500 ${isSdkPopup ? "rounded-xl" : "rounded-lg"}`}
           />
           <input
             type="password"
@@ -239,7 +250,7 @@ function AuthContent() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
-            className="w-full rounded-lg border border-surface-700 bg-surface-900 px-4 py-3 text-sm text-surface-200 placeholder-surface-500 outline-none transition-colors focus:border-surface-500"
+            className={`w-full border border-surface-700 bg-surface-900 px-4 py-3 text-sm text-surface-200 placeholder-surface-500 outline-none transition-colors focus:border-surface-500 ${isSdkPopup ? "rounded-xl" : "rounded-lg"}`}
           />
           {mode === "signup" && (
             <input
@@ -248,13 +259,13 @@ function AuthContent() {
               value={rePassword}
               onChange={(e) => setRePassword(e.target.value)}
               required
-              className="w-full rounded-lg border border-surface-700 bg-surface-900 px-4 py-3 text-sm text-surface-200 placeholder-surface-500 outline-none transition-colors focus:border-surface-500"
+              className={`w-full border border-surface-700 bg-surface-900 px-4 py-3 text-sm text-surface-200 placeholder-surface-500 outline-none transition-colors focus:border-surface-500 ${isSdkPopup ? "rounded-xl" : "rounded-lg"}`}
             />
           )}
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-lg bg-surface-50 px-4 py-3 text-sm font-medium text-surface-950 transition-colors hover:bg-surface-200 disabled:opacity-50"
+            className={`w-full bg-surface-50 px-4 py-3 text-sm font-medium text-surface-950 transition-colors hover:bg-surface-200 disabled:opacity-50 ${isSdkPopup ? "rounded-xl" : "rounded-lg"}`}
           >
             {loading ? "Please wait..." : mode === "signin" ? "Sign In" : "Sign Up"}
           </button>
@@ -273,7 +284,7 @@ function AuthContent() {
         )}
 
         {/* Toggle mode */}
-        <p className="mt-4 text-center text-sm text-surface-500">
+        <p className={`${isSdkPopup ? "mt-5" : "mt-4"} text-center text-sm text-surface-500`}>
           {mode === "signin" ? (
             <>
               Don&apos;t have an account?{" "}
@@ -297,7 +308,7 @@ function AuthContent() {
           )}
         </p>
 
-        <p className="mt-6 text-center text-xs text-surface-600">
+        <p className={`${isSdkPopup ? "mt-5" : "mt-6"} text-center text-xs text-surface-600`}>
           By continuing, you agree to our{" "}
           <Link href="/terms" className="text-surface-400 hover:text-surface-50">Terms</Link>{" "}
           and{" "}

@@ -2,6 +2,7 @@ export { YaverFeedback } from './YaverFeedback';
 export { YaverDiscovery } from './discovery';
 export { FeedbackWidget } from './FeedbackWidget';
 export { P2PClient } from './P2PClient';
+export { openDevicePickerModal } from './DevicePickerModal';
 export { LoginModal, openLoginModal } from './LoginModal';
 export type { LoginModalOptions } from './LoginModal';
 export {
@@ -36,4 +37,7 @@ export type {
   TimelineEvent,
   DeviceInfo,
   DiscoveryResult,
+  FeedbackStatusUpdate,
+  ReloadAck,
+  AgentCommand,
 } from './types';

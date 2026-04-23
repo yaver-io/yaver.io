@@ -4,6 +4,22 @@ export interface FeedbackConfig {
   /** Bearer auth token. Optional in 0.2+: omit to use the in-app sign-in modal. */
   authToken?: string;
   /**
+   * Override the Yaver public endpoints used for in-SDK auth and cloud-backed
+   * device discovery. Defaults to production yaver.io / Convex URLs.
+   */
+  authConvexSiteUrl?: string;
+  authWebBaseUrl?: string;
+  /**
+   * Convex site URL used for device-backed discovery. When omitted, the SDK
+   * uses `authConvexSiteUrl` (or the production default).
+   */
+  convexUrl?: string;
+  /**
+   * Preferred device ID from `/devices/list`. If omitted, the SDK can prompt
+   * the user to choose one after sign-in.
+   */
+  preferredDeviceId?: string;
+  /**
    * When true (default), the SDK auto-opens its sign-in modal the first time
    * the user triggers feedback and no `authToken` is provided/cached. Set false
    * to opt out (you must provide `authToken` yourself).
@@ -48,6 +64,21 @@ export interface FeedbackConfig {
   autoFixOnSend?: boolean;
   /** Called after the report upload succeeds. */
   onReportSent?: (result: FeedbackReportSummary) => void | Promise<void>;
+  /**
+   * Called when the agent pushes a `reload` command over the command stream.
+   * Defaults to `window.location.reload()`.
+   */
+  onReload?: () => void;
+  /**
+   * Called when the agent pushes a `reload_bundle` command. Web targets usually
+   * map this to a hard page reload unless the host wants custom behavior.
+   */
+  onReloadBundle?: (bundleUrl?: string, assetsUrl?: string) => void;
+  /**
+   * Called when the agent streams progress updates (`status` commands) during a
+   * reload/build workflow.
+   */
+  onStatus?: (status: FeedbackStatusUpdate) => void;
 }
 
 export interface FeedbackCandidateConfig {
@@ -162,4 +193,25 @@ export interface FeedbackChangeSet {
 export interface FeedbackReportSummary {
   id: string;
   changeSet?: FeedbackChangeSet;
+}
+
+export interface FeedbackStatusUpdate {
+  message: string;
+  phase?: string;
+  progress?: number;
+  at: number;
+}
+
+export interface AgentCommand {
+  command: string;
+  data?: Record<string, unknown>;
+}
+
+export interface ReloadAck {
+  ok: boolean;
+  mode: 'dev' | 'bundle';
+  acknowledged: boolean;
+  message: string;
+  nativeChangesDetected?: boolean;
+  changeClass?: string;
 }

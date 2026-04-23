@@ -290,4 +290,106 @@ describe('P2PClient', () => {
       );
     });
   });
+
+  describe('reloadApp()', () => {
+    it('uses /dev/reload for dev reloads', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({}),
+      });
+
+      const client = new P2PClient('http://localhost:18080', 'tok');
+      const result = await client.reloadApp('dev');
+
+      expect(result.mode).toBe('dev');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:18080/dev/reload',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer tok',
+          }),
+        }),
+      );
+    });
+
+    it('falls back to /dev/reload-app when dev reload fails', async () => {
+      mockFetch
+        .mockResolvedValueOnce({ ok: false, status: 500, text: () => Promise.resolve('bad') })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ message: 'Bundle rebuild queued.' }),
+        });
+
+      const client = new P2PClient('http://localhost:18080', 'tok');
+      const result = await client.reloadApp('dev', { projectName: 'web-app' });
+
+      expect(result.mode).toBe('bundle');
+      expect(result.message).toBe('Bundle rebuild queued.');
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        'http://localhost:18080/dev/reload-app',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            mode: 'bundle',
+            projectName: 'web-app',
+            projectPath: undefined,
+            bundleId: undefined,
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('vibing()', () => {
+    it('posts vibing tasks to the agent', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ taskId: 'task-123' }),
+      });
+
+      const client = new P2PClient('http://localhost:18080', 'tok');
+      const result = await client.vibing('fix the checkout bug', {
+        projectName: 'shop-web',
+        projectPath: '/repo/web',
+      });
+
+      expect(result.taskId).toBe('task-123');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:18080/vibing/execute',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            prompt: 'fix the checkout bug',
+            projectName: 'shop-web',
+            projectPath: '/repo/web',
+            bundleId: undefined,
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('getVibingEligibility()', () => {
+    it('queries vibing eligibility with project hints', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ canVibe: true }),
+      });
+
+      const client = new P2PClient('http://localhost:18080', 'tok');
+      const result = await client.getVibingEligibility({
+        projectName: 'shop-web',
+        projectPath: '/repo/web',
+      });
+
+      expect(result.canVibe).toBe(true);
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:18080/vibing/eligibility?projectName=shop-web&projectPath=%2Frepo%2Fweb',
+        expect.objectContaining({
+          method: 'GET',
+        }),
+      );
+    });
+  });
 });

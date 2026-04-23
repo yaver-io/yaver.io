@@ -70,6 +70,13 @@ export class FeedbackWidget {
             <button id="yaver-widget-report" style="padding:8px;border:none;border-radius:6px;background:#dc2626;color:white;cursor:pointer;font-size:12px;">
               Start Bug Report
             </button>
+            <button id="yaver-widget-reload" style="padding:8px;border:none;border-radius:6px;background:#7c3aed;color:white;cursor:pointer;font-size:12px;">
+              Hot Reload
+            </button>
+            <textarea id="yaver-widget-vibe-prompt" placeholder="Tell Yaver what to work on..." style="min-height:72px;padding:8px;border:1px solid #333;border-radius:6px;background:#0d0d1a;color:#e0e0e0;font-size:12px;box-sizing:border-box;resize:vertical;"></textarea>
+            <button id="yaver-widget-vibe" style="padding:8px;border:none;border-radius:6px;background:#0891b2;color:white;cursor:pointer;font-size:12px;">
+              Start Vibing
+            </button>
           </div>
         </div>
         ` : ''}
@@ -84,6 +91,9 @@ export class FeedbackWidget {
     const urlInput = FeedbackWidget.container.querySelector('#yaver-widget-url') as HTMLInputElement;
     const statusEl = FeedbackWidget.container.querySelector('#yaver-widget-status') as HTMLElement;
     const reportBtn = FeedbackWidget.container.querySelector('#yaver-widget-report') as HTMLButtonElement | null;
+    const reloadBtn = FeedbackWidget.container.querySelector('#yaver-widget-reload') as HTMLButtonElement | null;
+    const vibeBtn = FeedbackWidget.container.querySelector('#yaver-widget-vibe') as HTMLButtonElement | null;
+    const vibePrompt = FeedbackWidget.container.querySelector('#yaver-widget-vibe-prompt') as HTMLTextAreaElement | null;
 
     discoverBtn.onclick = async () => {
       statusEl.textContent = 'Scanning network...';
@@ -116,6 +126,41 @@ export class FeedbackWidget {
 
     if (reportBtn) {
       reportBtn.onclick = () => YaverFeedback.startReport();
+    }
+    if (reloadBtn) {
+      reloadBtn.onclick = async () => {
+        statusEl.textContent = 'Requesting reload...';
+        try {
+          const ack = await YaverFeedback.reloadApp('dev');
+          statusEl.textContent = ack.message;
+        } catch (err) {
+          statusEl.textContent = err instanceof Error ? err.message : 'Reload failed.';
+        }
+      };
+    }
+    if (vibeBtn && vibePrompt) {
+      vibeBtn.onclick = async () => {
+        const prompt = vibePrompt.value.trim();
+        if (!prompt) {
+          statusEl.textContent = 'Enter a vibing prompt first.';
+          return;
+        }
+        statusEl.textContent = 'Checking vibing access...';
+        try {
+          const eligibility = await YaverFeedback.getVibingEligibility();
+          if (!eligibility.canVibe) {
+            statusEl.textContent =
+              eligibility.guidance && eligibility.guidance.trim()
+                ? `${eligibility.reason ?? 'Vibing unavailable.'} ${eligibility.guidance}`
+                : eligibility.reason ?? 'Vibing unavailable.';
+            return;
+          }
+          const result = await YaverFeedback.vibing(prompt);
+          statusEl.textContent = `Vibing task created: ${result.taskId}`;
+        } catch (err) {
+          statusEl.textContent = err instanceof Error ? err.message : 'Vibing failed.';
+        }
+      };
     }
   }
 }

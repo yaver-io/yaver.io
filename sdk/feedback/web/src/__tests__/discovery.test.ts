@@ -207,5 +207,106 @@ describe('YaverDiscovery', () => {
       const result = await YaverDiscovery.discover();
       expect(result).toBeNull();
     });
+
+    it('prefers Convex-backed device discovery when auth is available', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              devices: [
+                {
+                  deviceId: 'dev-1',
+                  name: 'MacBook',
+                  platform: 'darwin',
+                  isOnline: true,
+                  needsAuth: false,
+                  runnerDown: false,
+                  lastHeartbeat: Date.now(),
+                  isGuest: false,
+                  accessScope: 'owner',
+                  quicHost: '192.168.1.30',
+                  quicPort: 18080,
+                  localIps: ['10.0.0.20'],
+                },
+              ],
+            }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ hostname: 'MacBook', version: '1.0' }),
+        });
+
+      const result = await YaverDiscovery.discover({
+        authToken: 'tok',
+        convexUrl: 'https://convex.example',
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.url).toBe('http://192.168.1.30:18080');
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        1,
+        'https://shocking-echidna-394.eu-west-1.convex.site/devices/list',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer tok',
+          }),
+        }),
+      );
+    });
+
+    it('falls back to relay when direct probe fails', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              devices: [
+                {
+                  deviceId: 'dev-1',
+                  name: 'MacBook',
+                  platform: 'darwin',
+                  isOnline: true,
+                  needsAuth: false,
+                  runnerDown: false,
+                  lastHeartbeat: Date.now(),
+                  isGuest: false,
+                  accessScope: 'owner',
+                  quicHost: '192.168.1.30',
+                  quicPort: 18080,
+                },
+              ],
+            }),
+        })
+        .mockRejectedValueOnce(new Error('direct down'))
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              relayUrl: 'https://relay.example',
+              relayPassword: 'pw',
+            }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ hostname: 'RelayMac', version: '1.1' }),
+        });
+
+      const result = await YaverDiscovery.discoverFromConvex(
+        'https://convex.example',
+        'tok',
+      );
+
+      expect(result).not.toBeNull();
+      expect(result!.url).toBe('https://relay.example/d/dev-1');
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        'https://relay.example/d/dev-1/health',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'X-Relay-Password': 'pw',
+          }),
+        }),
+      );
+    });
   });
 });

@@ -1,8 +1,14 @@
+import {
+  DEFAULT_CONVEX_SITE_URL,
+  listReachableDevices,
+  type RemoteDevice,
+} from './auth';
 import type { DiscoveryResult } from './types';
 
 const STORAGE_KEY = 'yaver_feedback_agent';
 const DEFAULT_PORT = 18080;
 const TIMEOUT_MS = 2000;
+const RELAY_TIMEOUT_MS = 6000;
 
 // Common local network prefixes to scan
 const LOCAL_PREFIXES = ['192.168.1', '192.168.0', '10.0.0', '10.0.1', '172.16.0'];
@@ -16,7 +22,23 @@ export class YaverDiscovery {
    * Try to discover a Yaver agent on the local network.
    * Checks stored URL first, then scans common local IPs.
    */
-  static async discover(): Promise<DiscoveryResult | null> {
+  static async discover(options?: {
+    convexUrl?: string;
+    authToken?: string;
+    preferredDeviceId?: string;
+  }): Promise<DiscoveryResult | null> {
+    if (options?.authToken) {
+      const result = await YaverDiscovery.discoverFromConvex(
+        options.convexUrl ?? DEFAULT_CONVEX_SITE_URL,
+        options.authToken,
+        options.preferredDeviceId,
+      );
+      if (result) {
+        YaverDiscovery.store(result);
+        return result;
+      }
+    }
+
     // 1. Check stored connection
     const stored = YaverDiscovery.getStored();
     if (stored) {
@@ -54,6 +76,35 @@ export class YaverDiscovery {
     return null;
   }
 
+  static async discoverFromConvex(
+    convexUrl: string,
+    authToken: string,
+    preferredDeviceId?: string,
+  ): Promise<DiscoveryResult | null> {
+    const devices = await listReachableDevices(authToken);
+    const all = [...devices.owned, ...devices.shared];
+    if (all.length === 0) return null;
+
+    const target =
+      all.find((device) => device.deviceId === preferredDeviceId) ??
+      all.find((device) => device.isOnline && !device.needsAuth && !device.runnerDown) ??
+      all[0];
+    if (!target) return null;
+
+    const port = readNumberField(target, 'httpPort') ?? target.quicPort ?? DEFAULT_PORT;
+    const candidates = new Set<string>();
+    if (target.quicHost) candidates.add(`http://${target.quicHost}:${port}`);
+    const localIps = readStringArrayField(target, 'localIps') ?? readStringArrayField(target, 'lanIps');
+    for (const ip of localIps ?? []) {
+      candidates.add(`http://${ip}:${port}`);
+    }
+
+    const direct = await YaverDiscovery.probeCandidates(Array.from(candidates));
+    if (direct) return direct;
+
+    return YaverDiscovery.discoverViaRelay(convexUrl, authToken, target.deviceId);
+  }
+
   /**
    * Probe a specific URL to check if a Yaver agent is running there.
    */
@@ -76,6 +127,29 @@ export class YaverDiscovery {
         hostname: data.hostname || 'unknown',
         version: data.version || 'unknown',
         latency,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  static async probeWithHeaders(
+    url: string,
+    headers: Record<string, string>,
+  ): Promise<DiscoveryResult | null> {
+    try {
+      const start = Date.now();
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), RELAY_TIMEOUT_MS);
+      const resp = await fetch(`${url}/health`, { headers, signal: controller.signal });
+      clearTimeout(timeout);
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      return {
+        url,
+        hostname: data.hostname || 'unknown',
+        version: data.version || 'unknown',
+        latency: Date.now() - start,
       };
     } catch {
       return null;
@@ -128,4 +202,66 @@ export class YaverDiscovery {
       // ignore
     }
   }
+
+  private static async probeCandidates(urls: string[]): Promise<DiscoveryResult | null> {
+    if (urls.length === 0) return null;
+    const results = await Promise.allSettled(urls.map((url) => YaverDiscovery.probe(url)));
+    for (const result of results) {
+      if (result.status === 'fulfilled' && result.value) {
+        return result.value;
+      }
+    }
+    return null;
+  }
+
+  private static async discoverViaRelay(
+    convexUrl: string,
+    authToken: string,
+    deviceId: string,
+  ): Promise<DiscoveryResult | null> {
+    try {
+      const base = convexUrl.replace(/\/$/, '');
+      let relayUrl: string | undefined;
+      let relayPassword: string | undefined;
+
+      const validate = await fetch(`${base}/auth/validate`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (validate.ok) {
+        const data = await validate.json();
+        relayUrl = data.relayUrl;
+        relayPassword = data.relayPassword;
+      }
+
+      if (!relayUrl) {
+        const config = await fetch(`${base}/platform-config?key=relay_servers`);
+        if (config.ok) {
+          const data = await config.json();
+          const servers = typeof data.value === 'string' ? JSON.parse(data.value) : data.value;
+          if (Array.isArray(servers)) {
+            const relay = servers.find((candidate: { httpUrl?: string }) => candidate.httpUrl);
+            relayUrl = relay?.httpUrl;
+          }
+        }
+      }
+
+      if (!relayUrl) return null;
+      const headers: Record<string, string> = {};
+      if (relayPassword) headers['X-Relay-Password'] = relayPassword;
+      const relayBase = `${relayUrl.replace(/\/$/, '')}/d/${deviceId}`;
+      return YaverDiscovery.probeWithHeaders(relayBase, headers);
+    } catch {
+      return null;
+    }
+  }
+}
+
+function readNumberField(device: RemoteDevice, key: string): number | undefined {
+  const value = (device as unknown as Record<string, unknown>)[key];
+  return typeof value === 'number' ? value : undefined;
+}
+
+function readStringArrayField(device: RemoteDevice, key: string): string[] | undefined {
+  const value = (device as unknown as Record<string, unknown>)[key];
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : undefined;
 }
