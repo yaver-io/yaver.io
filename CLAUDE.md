@@ -2030,6 +2030,92 @@ cd relay && ./deploy/down.sh <server-ip>
 curl https://<your-relay-domain>/health
 ```
 
+### Rebuilding mobile from a cold machine — IPA + AAB from scratch
+
+Both `mobile/ios/` and `mobile/android/` are gitignored, but a handful of per-project overlay files inside each are force-tracked via `git add -f` (they show up in `git ls-files mobile/ios/Yaver/` even though `.gitignore` excludes the parent dir). `npx expo prebuild --clean` regenerates the platform dirs from `mobile/app.json`; `git checkout -- mobile/ios/ mobile/android/` restores the tracked overlays on top.
+
+Exact sequence that gets you a signed **IPA** and a signed **AAB** on a machine that has never built this repo before:
+
+```bash
+cd mobile
+
+# 1. RN peer-dep conflicts are chronic — --legacy-peer-deps is required, not optional
+npm install --legacy-peer-deps
+
+# 2. Regenerate ios/ and android/ scaffolding (Podfile, MainActivity.kt, gradlew, Expo.plist, ...)
+#    Use --clean because partial/stale generated state causes prebuild to bail out
+#    with ENOENT on Yaver/Supporting/Expo.plist or MainActivity.kt.
+npx expo prebuild --platform ios     --clean --no-install
+npx expo prebuild --platform android --clean --no-install
+
+# 3. Restore Yaver's force-tracked overlay files on top of the clean scaffold
+cd ..
+git checkout -- mobile/ios/ mobile/android/
+
+# 4. Copy the sdk-manifest resource referenced by the iOS bundle (gitignored copy
+#    inside Yaver/ is force-added, but after a clean prebuild the source-of-truth
+#    version at mobile/sdk-manifest.json is authoritative and may have drifted)
+cp mobile/sdk-manifest.json mobile/ios/Yaver/sdk-manifest.json
+
+# 5. iOS pods — 217 pods, ~20-30 min on first run, ~1-2 GB download
+cd mobile/ios && pod install && cd ../..
+
+# 6. Android keystore.properties (keys/yaver-upload.keystore is in the ANDROID_KEYSTORE
+#    GH secret — GH never exposes secret values, so local compile needs a fallback).
+#    See "Android signing keys — recovery + dev fallback" below.
+cat > mobile/android/keystore.properties <<'EOF'
+storeFile=../../../keys/yaver-upload.keystore
+storePassword=<real password from password manager>
+keyAlias=yaver-upload
+keyPassword=<real password from password manager>
+EOF
+
+# 7. Build — 25-30 min each; parallelize with `&` if you want
+./scripts/deploy-testflight.sh          # iOS → TestFlight
+JAVA_HOME=$(/usr/libexec/java_home -v 17) ./scripts/deploy-playstore.sh    # Android AAB
+```
+
+**Verified compile time on this Mac (2026-04-24, cold caches):** `npm install` 2 min · iOS `pod install` 28 min · `xcodebuild archive` 15-20 min · `xcodebuild -exportArchive` → IPA ~30 s · Android `./gradlew bundleRelease` 28 min. Full web (`cd web && npm install && npm run build`) finishes in under 2 min and is the only path that does not require any mobile scaffolding.
+
+### Force-tracked iOS overlay files — full list (keep in sync when adding new natives)
+
+`mobile/ios/Yaver.xcodeproj/project.pbxproj` holds build-phase references to every Swift/ObjC source below. If any one is missing at archive time, `xcodebuild` fails with `error: lstat(/.../Yaver/<Name>): No such file or directory`. When adding a new native module, you must **both** put it on disk **and** `git add -f` it (the parent `mobile/ios/` is gitignored).
+
+| File | Role | Notes |
+|------|------|-------|
+| `mobile/ios/Yaver/AppDelegate.swift` | Super-host bootstrap | Wires ShakeDetectingWindow, `YaverHTTPServer.shared.start()`, safe bridge reload. |
+| `mobile/ios/Yaver/Yaver-Bridging-Header.h` | Swift ↔ ObjC bridge | Imports GCDWebServer headers for HTTPServer. |
+| `mobile/ios/Yaver/YaverBundleLoader.swift` + `.m` | `NativeModules.YaverBundleLoader` | Drives Hermes bundle push / "Open in Yaver". |
+| `mobile/ios/Yaver/YaverScreenRecorder.swift` + `.m` | Feedback SDK visual capture | Shake-to-report + `/feedback/visual`. |
+| `mobile/ios/Yaver/YaverHTTPServer.swift` | Port-8347 bundle-receive server | **Currently a stub** — real implementation pending. pbxproj references existed before the file did; a no-op stub keeps the archive passing. |
+| `mobile/ios/Yaver/YaverInfo.swift` + `.m` | `isYaver` detection from guest RN bundles | **Currently a stub** returning `{isYaver: true, version, build}` from `Bundle.main`. |
+| `mobile/ios/Yaver/YaverBundleValidator.swift` | HBC/MD5/size validation + `SDKManifest` singleton | **Currently a stub** — `validateMetadata` / `validateBundle` return nil (no-op). `SDKManifest.shared` reads `sdk-manifest.json` from `Bundle.main` and exposes `hermesBytecodeVersion` + `raw`. |
+| `mobile/ios/Yaver/sdk-manifest.json` | Hermes BC version, native-module contract | Copy of `mobile/sdk-manifest.json` that Xcode's "Copy Bundle Resources" phase ships inside the app. |
+
+The three stubs (HTTPServer, Info, BundleValidator) exist because pbxproj references them but the original authors never committed the implementations. The archive compiles and the app runs; **runtime behaviour they should enable (port-8347 bundle receive, HBC validation, guest `isYaver` RPC)** is degraded to the no-op fallbacks. When filling in the real implementations, match the signatures already expected by `YaverBundleLoader.swift` and `AppDelegate.swift`:
+
+- `YaverHTTPServer.shared: YaverHTTPServer` (singleton) with `var onBundleReceived: (() -> Void)?`, `func start()`, `func stop()`.
+- `YaverBundleValidator.validateMetadata(_ metadata: BundleMetadata) -> BundleValidationError?` and `YaverBundleValidator.validateBundle(data: Data, metadata: BundleMetadata) -> BundleValidationError?`. `BundleMetadata` is a `Codable` struct used elsewhere (fields: `size: Int`, `md5: String`, `hermesBCVersion: Int`, `moduleName: String`, `format: String`). `BundleValidationError` must carry `code: String` + `localizedDescription: String` so callers can do `reject(err.code, err.localizedDescription, nil)`.
+- `SDKManifest.shared.hermesBytecodeVersion: UInt32` and `.raw: [String: Any]` (the parsed `sdk-manifest.json` contents).
+
+### Android signing keys — recovery + dev fallback
+
+`keys/yaver-upload.keystore` + `keys/google-play-service-account.json` + `mobile/android/keystore.properties` are all gitignored. The canonical copies live:
+
+1. **GH Actions secrets** — `ANDROID_KEYSTORE` (base64), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. GitHub's API does **not** expose secret values (`gh secret list` only shows names), so you cannot pull the keystore down onto a new machine by asking GH. CI uses them because workflows run inside a runner that `secrets` are injected into.
+2. **Password manager / backup drive** — the practical recovery path for a lost-on-disk keystore.
+3. **Last-resort dev keystore** — generate a throwaway `keys/yaver-upload-dev.keystore` just to make `./gradlew bundleRelease` complete. The AAB it produces is *not* uploadable to Play (signature mismatch) but is compile-proof:
+```bash
+keytool -genkeypair \
+  -keystore keys/yaver-upload-dev.keystore \
+  -alias yaver-upload \
+  -keyalg RSA -keysize 2048 -validity 10000 \
+  -storepass yaverdev -keypass yaverdev \
+  -dname "CN=Yaver Dev, OU=Dev, O=Yaver, L=Istanbul, ST=Istanbul, C=TR"
+# then point keystore.properties at storeFile=../../../keys/yaver-upload-dev.keystore
+```
+This is compile-only — never rename the dev keystore to the non-dev name, never try to upload its AAB, and never commit either. The `-dev` suffix is the trip-wire.
+
 ### Mobile Release Policy — Local-First, CI Optional
 
 **Primary path: local deploys from this Mac.** The iOS signing keychain, Apple `.p8` under `~/Workspace/talos/mobile/ios/`, and upload keystore under `keys/yaver-upload.keystore` live on the host, and local builds are the fastest feedback loop. **Secondary path: `release-mobile.yml` on GitHub Actions** — free to run on a public repo, uses the `APP_STORE_CONNECT_API_KEY_*` + `ANDROID_KEYSTORE*` secrets. CI fires automatically on every `mobile/v*` tag push or via `workflow_dispatch`.
