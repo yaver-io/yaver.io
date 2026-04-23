@@ -2,7 +2,7 @@
 
 import { useAuth } from "@/lib/use-auth";
 import { useDevices, type Device } from "@/lib/use-devices";
-import { agentClient, type Task, type ConnectionState, type Runner, type AgentInfo } from "@/lib/agent-client";
+import { agentClient, type Task, type ConnectionState, type Runner, type AgentInfo, type ConnectAttemptDiagnostic } from "@/lib/agent-client";
 import { CONVEX_URL } from "@/lib/constants";
 import { useState, useEffect, useRef } from "react";
 import { useTheme } from "@/components/ThemeProvider";
@@ -60,6 +60,8 @@ export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "tools" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "domains">("home");
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [connectDiagnostics, setConnectDiagnostics] = useState<ConnectAttemptDiagnostic[]>([]);
+  const [copiedReauth, setCopiedReauth] = useState(false);
   const [relayReady, setRelayReady] = useState(false);
   const [previewTargetId, setPreviewTargetId] = useState<string | null>(null);
   // Primary-device preference — the device auto-connect prefers when the
@@ -157,6 +159,7 @@ export default function DashboardPage() {
     if (!token) return;
     setConnectedDevice(device);
     setConnectError(null);
+    setConnectDiagnostics([]);
 
     // Wait for relay config to be loaded (web dashboard MUST use relay)
     if (relayReadyPromiseRef.current) {
@@ -165,10 +168,12 @@ export default function DashboardPage() {
 
     try {
       await agentClient.connect(device.host, device.port, token, device.id);
+      setConnectDiagnostics(agentClient.lastConnectDiagnostics);
       try { setAgentInfo(await agentClient.getInfo()); } catch {}
       try { setRunners(await agentClient.getRunners()); } catch {}
     } catch (err: any) {
       setConnectError(err?.message || "Could not connect to device");
+      setConnectDiagnostics(agentClient.lastConnectDiagnostics);
     }
   };
 
@@ -400,17 +405,80 @@ export default function DashboardPage() {
                     <p className="text-xs text-surface-600">Trying relay servers</p>
                   </div>
                 ) : connState === "error" ? (
-                  <div className="flex flex-col items-center gap-3">
-                    <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3 text-left">
-                      <p className="text-sm text-red-400 font-medium mb-1">Connection failed</p>
-                      <p className="text-xs text-surface-500">{connectError || "Could not reach agent (direct or via relay)"}</p>
-                      <p className="text-xs text-surface-600 mt-2">Make sure <code className="rounded bg-surface-800 px-1 py-0.5 text-surface-400">yaver serve</code> is running on your machine</p>
-                    </div>
-                    <div className="flex gap-2">
-                      {connectedDevice && <button onClick={() => connectToDevice(connectedDevice)} className="rounded-md bg-amber-500/10 border border-amber-500/20 px-4 py-2 text-xs text-amber-400 hover:bg-amber-500/20">Retry</button>}
-                      <button onClick={disconnect} className="rounded-md border border-surface-700 px-4 py-2 text-xs text-surface-400 hover:text-surface-300">Back</button>
-                    </div>
-                  </div>
+                  (() => {
+                    const authExpired = connectDiagnostics.some((d) => d.authExpired);
+                    const anyReached = connectDiagnostics.some((d) => d.status && d.status > 0);
+                    // If /health responded at all, the box is up — box auth is the problem.
+                    // If no attempt got a status, the box is either unreachable or all relays rejected the probe (e.g. 404 from relay = device not registered).
+                    const headline = authExpired
+                      ? "Agent reachable, but its auth is expired"
+                      : anyReached
+                        ? "Agent responded, but the connection was rejected"
+                        : "Could not reach agent";
+                    const reauthCmd = "yaver auth";
+                    return (
+                      <div className="flex flex-col items-center gap-3 w-full max-w-md">
+                        <div className="w-full rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3 text-left">
+                          <p className="text-sm text-red-400 font-medium mb-1">{headline}</p>
+                          <p className="text-xs text-surface-500">{connectError || "Could not reach agent (direct or via relay)"}</p>
+
+                          {connectDiagnostics.length > 0 ? (
+                            <div className="mt-3 space-y-1">
+                              {connectDiagnostics.map((d, i) => (
+                                <div
+                                  key={i}
+                                  className="flex items-center gap-2 text-[10px] font-mono text-surface-500"
+                                >
+                                  <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${d.ok ? "bg-emerald-400" : d.authExpired ? "bg-amber-400" : "bg-red-400"}`} />
+                                  <span className="text-surface-400 w-14 shrink-0">
+                                    {d.path === "relay" ? `relay · ${d.relayId || "?"}` : "direct"}
+                                  </span>
+                                  <span className={`shrink-0 ${d.authExpired ? "text-amber-300" : d.ok ? "text-emerald-300" : "text-red-300"}`}>
+                                    {d.authExpired ? "auth expired" : d.ok ? "ok" : d.status ? `HTTP ${d.status}` : (d.error || "error")}
+                                  </span>
+                                  {d.durationMs !== undefined ? (
+                                    <span className="text-surface-700 ml-auto">{d.durationMs}ms</span>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+
+                          {authExpired ? (
+                            <div className="mt-3 rounded border border-amber-500/20 bg-amber-500/5 p-2 text-left">
+                              <p className="text-[11px] text-amber-300">
+                                The agent can&apos;t validate its session with Convex anymore. SSH to the remote box and re-run:
+                              </p>
+                              <div className="mt-2 flex items-center gap-2">
+                                <code className="flex-1 rounded bg-surface-900 px-2 py-1 text-[11px] text-surface-300 font-mono">{reauthCmd}</code>
+                                <button
+                                  onClick={() => {
+                                    navigator.clipboard?.writeText(reauthCmd);
+                                    setCopiedReauth(true);
+                                    setTimeout(() => setCopiedReauth(false), 1500);
+                                  }}
+                                  className="rounded border border-amber-500/30 px-2 py-1 text-[10px] text-amber-300 hover:bg-amber-500/10"
+                                >
+                                  {copiedReauth ? "copied" : "copy"}
+                                </button>
+                              </div>
+                              <p className="mt-2 text-[10px] text-surface-600">
+                                Web-side re-auth (without shell access) lands once the agent ships <code>/reauth/start</code>.
+                              </p>
+                            </div>
+                          ) : !anyReached ? (
+                            <p className="mt-3 text-xs text-surface-600">
+                              Make sure <code className="rounded bg-surface-800 px-1 py-0.5 text-surface-400">yaver serve</code> is running on this machine and it&apos;s reachable from your relay.
+                            </p>
+                          ) : null}
+                        </div>
+                        <div className="flex gap-2">
+                          {connectedDevice && <button onClick={() => connectToDevice(connectedDevice)} className="rounded-md bg-amber-500/10 border border-amber-500/20 px-4 py-2 text-xs text-amber-400 hover:bg-amber-500/20">Retry</button>}
+                          <button onClick={disconnect} className="rounded-md border border-surface-700 px-4 py-2 text-xs text-surface-400 hover:text-surface-300">Back</button>
+                        </div>
+                      </div>
+                    );
+                  })()
                 ) : (
                   <>
                     <p className="mb-6 text-sm text-surface-500">Connect to a device running <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-300">yaver serve</code></p>

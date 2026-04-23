@@ -205,6 +205,20 @@ export interface DevTargetPreference {
   targetDeviceClass?: string;
 }
 
+/**
+ * Per-attempt diagnostic captured during connect(). Lets the dashboard show
+ * WHY each relay / direct path failed instead of a single flat error line.
+ */
+export interface ConnectAttemptDiagnostic {
+  path: "relay" | "direct";
+  relayId?: string;
+  ok: boolean;
+  status?: number;
+  authExpired?: boolean;
+  error?: string;
+  durationMs?: number;
+}
+
 export interface MobileWorkerPreviewSession {
   hasTarget: boolean;
   targetDeviceId?: string;
@@ -674,6 +688,7 @@ class AgentClient {
   private activeRelayUrl: string | null = null;
   private _connectionState: ConnectionState = "disconnected";
   private pollInterval: ReturnType<typeof setInterval> | null = null;
+  private _lastConnectDiagnostics: ConnectAttemptDiagnostic[] = [];
 
   // Reconnection
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1658,9 +1673,58 @@ class AgentClient {
 
   // ── Connection + reconnection ──────────────────────────────────────
 
+  /** Diagnostics from the most recent connect() attempt. UI reads this to
+   *  explain a failed connection: per-path status codes, authExpired flag
+   *  pulled from the agent's unauthenticated /health, and the raw error. */
+  get lastConnectDiagnostics(): ConnectAttemptDiagnostic[] {
+    return this._lastConnectDiagnostics.slice();
+  }
+
+  private async probeHealth(
+    url: string,
+    headers: Record<string, string>,
+    timeoutMs: number,
+    path: "relay" | "direct",
+    relayId?: string,
+  ): Promise<ConnectAttemptDiagnostic> {
+    const started = Date.now();
+    try {
+      const res = await this.fetchWithTimeout(`${url}/health`, { headers }, timeoutMs);
+      const diag: ConnectAttemptDiagnostic = {
+        path,
+        relayId,
+        ok: res.ok,
+        status: res.status,
+        durationMs: Date.now() - started,
+      };
+      // /health is unauthenticated on the agent. When the agent's OWN Convex
+      // session has gone stale it sets authExpired:true in the body — that's
+      // how we tell "box is up but needs `yaver auth`" from "box offline".
+      try {
+        const body = await res.clone().json();
+        if (body && typeof body === "object" && body.authExpired === true) {
+          diag.authExpired = true;
+        }
+      } catch {}
+      if (!res.ok && !diag.error) {
+        diag.error = `HTTP ${res.status}`;
+      }
+      return diag;
+    } catch (e: any) {
+      return {
+        path,
+        relayId,
+        ok: false,
+        error: e?.name === "AbortError" ? "timeout" : e?.message || "network error",
+        durationMs: Date.now() - started,
+      };
+    }
+  }
+
   private async attemptConnect(): Promise<void> {
     this.setConnectionState("connecting");
     this.activeRelayUrl = null;
+    const diagnostics: ConnectAttemptDiagnostic[] = [];
     try {
       let connected = false;
 
@@ -1670,44 +1734,45 @@ class AgentClient {
       // 1. Try relay servers first (when deviceId and relays are available)
       if (this.deviceId && this.relayServers.length > 0) {
         for (const relay of this.relayServers) {
-          try {
-            const relayDeviceUrl = `${relay.httpUrl}/d/${this.deviceId}`;
-            const relayHeaders: Record<string, string> = { ...this.authHeaders };
-            if (relay.password) relayHeaders["X-Relay-Password"] = relay.password;
-            const res = await this.fetchWithTimeout(`${relayDeviceUrl}/health`, {
-              headers: relayHeaders,
-            }, 8000);
-            if (res.ok) {
-              this.activeRelayUrl = relay.httpUrl;
-              this.activeRelayPassword = relay.password || null;
-              connected = true;
-              console.log("[AgentClient] Relay connection succeeded via", relay.id);
-              break;
-            }
-          } catch (e) {
-            console.log("[AgentClient] Relay", relay.id, "failed:", e);
+          const relayDeviceUrl = `${relay.httpUrl}/d/${this.deviceId}`;
+          const relayHeaders: Record<string, string> = { ...this.authHeaders };
+          if (relay.password) relayHeaders["X-Relay-Password"] = relay.password;
+          const diag = await this.probeHealth(relayDeviceUrl, relayHeaders, 8000, "relay", relay.id);
+          diagnostics.push(diag);
+          if (diag.ok) {
+            this.activeRelayUrl = relay.httpUrl;
+            this.activeRelayPassword = relay.password || null;
+            connected = true;
+            console.log("[AgentClient] Relay connection succeeded via", relay.id);
+            break;
           }
+          console.log("[AgentClient] Relay", relay.id, "failed:", diag.error || diag.status);
         }
       }
 
       // 2. Try direct connection as fallback
       if (!connected) {
-        try {
-          const directUrl = `http://${this.host}:${this.port}`;
-          const res = await this.fetchWithTimeout(`${directUrl}/health`, {
-            headers: this.authHeaders,
-          }, 5000);
-          if (res.ok) {
-            this.activeRelayUrl = null;
-            connected = true;
-            console.log("[AgentClient] Direct connection succeeded");
-          }
-        } catch (e) {
-          console.log("[AgentClient] Direct failed:", e);
+        const directUrl = `http://${this.host}:${this.port}`;
+        const diag = await this.probeHealth(directUrl, this.authHeaders, 5000, "direct");
+        diagnostics.push(diag);
+        if (diag.ok) {
+          this.activeRelayUrl = null;
+          connected = true;
+          console.log("[AgentClient] Direct connection succeeded");
+        } else {
+          console.log("[AgentClient] Direct failed:", diag.error || diag.status);
         }
       }
 
+      this._lastConnectDiagnostics = diagnostics;
+
       if (!connected) {
+        // Pick the most informative error: prefer "auth expired" over raw transport
+        // errors so the UI can guide the user to `yaver auth` on the box.
+        const authExpired = diagnostics.some((d) => d.authExpired);
+        if (authExpired) {
+          throw new Error("Agent reached, but its Convex session is expired — run `yaver auth` on the remote device");
+        }
         throw new Error("Could not reach agent (direct or via relay)");
       }
 
@@ -1715,6 +1780,7 @@ class AgentClient {
       this.setConnectionState("connected");
       this.startPolling();
     } catch (err) {
+      this._lastConnectDiagnostics = diagnostics;
       this.setConnectionState("error");
       this.scheduleReconnect();
       if (this.reconnectAttempt === 0) {
@@ -3811,19 +3877,30 @@ class AgentClient {
           onConflict: item.onConflict,
         });
         out.pushes.push({ kind: "dev-hw", result });
-      } else if (item.kind === "yaver-cloud") {
-        const result = await this.pushPhoneProject(req.slug, {
-          kind: "yaver-cloud",
-          cloudBaseUrl: item.cloudBaseUrl,
-          cloudAuthToken: item.cloudAuthToken,
+    } else if (item.kind === "yaver-cloud") {
+      const result = await this.pushPhoneProject(req.slug, {
+        kind: "yaver-cloud",
+        cloudBaseUrl: item.cloudBaseUrl,
+        cloudAuthToken: item.cloudAuthToken,
         }, {
           includeData: req.includeData,
           containerize: true,
           onConflict: item.onConflict,
-        });
-        out.pushes.push({ kind: "yaver-cloud", result });
-      }
+      });
+      out.pushes.push({ kind: "yaver-cloud", result });
+    } else if (item.kind === "custom") {
+      const result = await this.pushPhoneProject(req.slug, {
+        kind: "custom",
+        baseUrl: item.baseUrl,
+        authToken: item.authToken,
+      }, {
+        includeData: req.includeData,
+        containerize: true,
+        onConflict: item.onConflict,
+      });
+      out.pushes.push({ kind: "custom", result });
     }
+  }
     for (const item of exports) {
       if (item.kind === "convex") {
         out.promotes.push({ kind: "convex", result: await this.promotePhoneProject(req.slug, "convex-cloud", { run: !!item.run, dryRun: item.dryRun ?? !!req.dryRun }) });
@@ -4096,12 +4173,13 @@ export interface PhoneRuntimeDeployRequest {
     | { kind: "cloudflare-workers"; run?: boolean; dryRun?: boolean }
     | { kind: "dev-hw"; deviceId: string; relayHttpUrl: string; onConflict?: "reject" | "rename" | "overwrite" }
     | { kind: "yaver-cloud"; cloudBaseUrl?: string; cloudAuthToken?: string; onConflict?: "reject" | "rename" | "overwrite" }
+    | { kind: "custom"; baseUrl: string; authToken?: string; onConflict?: "reject" | "rename" | "overwrite" }
   >;
 }
 
 export interface PhoneRuntimeDeployResult {
   runtime?: ProjectRuntimeApplyResponse;
-  pushes: Array<{ kind: "dev-hw" | "yaver-cloud"; result: PhonePushResult }>;
+  pushes: Array<{ kind: "dev-hw" | "yaver-cloud" | "custom"; result: PhonePushResult }>;
   promotes: Array<{ kind: "convex" | "cloudflare-workers"; result: PhonePromoteResult }>;
 }
 
