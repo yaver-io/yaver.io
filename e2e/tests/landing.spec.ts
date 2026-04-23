@@ -28,15 +28,12 @@ test.describe("landing page", () => {
     await page.goto("/");
 
     await expect(page).toHaveTitle(/Yaver/i);
-    // The landing h1 is split across two lines via <br>. The tagline
-    // evolves as the landing page gets refreshed — keep the
-    // assertion on the current "Your machine. / Your cloud."
-    // phrasing (web/app/page.tsx:868). Update both halves here
-    // whenever copy changes.
+    // The landing h1 is split across two lines via <br>. Keep the
+    // assertion aligned with the current mobile-first feedback wedge.
     const hero = page.getByRole("heading", { level: 1 });
     await expect(hero).toBeVisible();
-    await expect(hero).toContainText(/Your machine/i);
-    await expect(hero).toContainText(/Your cloud/i);
+    await expect(hero).toContainText(/Turn mobile feedback into/i);
+    await expect(hero).toContainText(/AI-ready fixes/i);
 
     expect(errors, `console errors on /: ${errors.join(" | ")}`).toEqual([]);
   });

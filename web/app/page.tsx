@@ -11,7 +11,7 @@ import { useAuth } from "@/lib/use-auth";
 // third-party dev-portal gate) rather than specific competitor names,
 // per LEGAL_SAFETY.md §2 (trademark) and §3 (comparative claims).
 const LANDING_TAGLINE =
-  "Yaver is a free, open-source (FSL-1.1 core, Apache-2.0 SDKs) self-hosted development client for React Native. Push bundles from your machine to any paired device — no developer portal, no cloud build minutes, no upload limits. Peer-to-peer. Works with Claude Code, Codex, Aider, and Ollama.";
+  "Yaver is an open-source, mobile-first feedback and AI-debugging SDK for app teams. Install one SDK in your app, capture user context from real phones, and hand incidents to Claude Code, Codex, Aider, or local models without giving up self-hosting.";
 
 // Option B (Phone-first BaaS) is the YC-application framing, not the
 // launch hero. When closer to the 2026-05-04 YC submission, swap
@@ -24,7 +24,7 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   // ── What is it ──────────────────────────────────────────────────────
   {
     q: "What is Yaver?",
-    a: "A free, open-source self-hosted development client. Build React Native apps without a developer portal, run a backend that starts on your phone and grows to your own hardware, and pair it with any terminal AI agent — Claude Code, Codex, Aider, or local Ollama. Everything flows P2P between your devices; central servers are only used for sign-in and peer discovery.",
+    a: "An open-source, mobile-first feedback and AI-debugging platform for app teams. Install the SDK in your app, capture screenshots, logs, session context, and bug reports from a real phone, then hand that incident to Claude Code, Codex, Aider, or local models. Yaver stays local-first and self-host friendly.",
   },
   {
     q: "How is this different from AWS or Vercel?",
@@ -32,7 +32,7 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: "Can I use this for web apps, not just mobile?",
-    a: "Yes. Yaver works with any project — Next.js, Vite, Remix, SvelteKit, APIs, Docker containers. The Push-to-Device feature is React Native specific, but everything else (project creation, local backends, database dashboards, deployment, AI tasks) works with any stack.",
+    a: "Yes. The current deepest workflow is mobile-first, especially React-based apps, but Yaver also has SDKs and integrations for web, Flutter, and Unity paths. The landing story starts with mobile because that is where user-context capture and reproduction pain are sharpest.",
   },
 
   // ── Push to Device (Section 6) ──────────────────────────────────────
@@ -46,7 +46,7 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: "Can I hot-reload my app on a real phone while editing on my laptop?",
-    a: "Yes. yaver dev start runs Metro on your machine; the mobile app proxies through the agent and reloads on save. Native code changes flow through Build + Deploy (one button to TestFlight / Play Store internal track). The Feedback SDK adds a floating Hot Reload button inside any embedding app.",
+    a: "Yes. yaver dev start runs Metro on your machine; the mobile app proxies through the agent and reloads on save. Native code changes flow through Build + Deploy (one button to TestFlight / Play Store internal track). The Feedback SDK adds a floating feedback/debug button inside any embedding app, and the Yaver mobile app is the operator surface for triage when you are away from your desk.",
   },
 
   // ── Phone-first backend (Section 4) ─────────────────────────────────
@@ -132,12 +132,12 @@ const LANDING_HOWTO_STEPS: ReadonlyArray<{ name: string; text: string; url?: str
   },
   {
     name: "Install the Yaver mobile app",
-    text: "Download Yaver from the App Store or Google Play and sign in with Apple, Google, or Microsoft SSO.",
+    text: "Download the Yaver mobile app from the App Store or Google Play and sign in with Apple, Google, or Microsoft SSO.",
     url: "https://yaver.io/download",
   },
   {
-    name: "Push your React Native project to your phone",
-    text: "In your existing RN project: yaver push. The CLI compiles your JS to Hermes bytecode, validates the bundle, and pushes it to the Yaver app on a paired device — which loads it in a native container with full TurboModules, Fabric, and New Architecture support. No native rebuild, no third-party developer-portal gate.",
+    name: "Embed the SDK and start the feedback loop",
+    text: "In your existing app, install the Feedback SDK and pair it with Yaver. For React Native projects, yaver push compiles your JS to Hermes bytecode, validates the bundle, and pushes it to the Yaver app on a paired device. Once paired, app context and feedback incidents flow straight to your machine and your coding agent.",
     url: "https://yaver.io/manuals/cli-setup",
   },
 ];
@@ -1069,22 +1069,18 @@ export default function HomePage() {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationLd) }}
       />
-      {/* ── Section 1: Hero — self-hosted RN dev client wedge ──
-          Copy complies with LEGAL_SAFETY.md §2 (no "Expo Go alternative"
-          framing, no disparagement of named competitor products) and
-          §3 (no unverifiable time claims without a cited benchmark). */}
+      {/* ── Section 1: Hero — mobile-first feedback + AI debugging wedge ── */}
       <section className="px-6 pb-10 pt-20 md:pt-28">
         <div className="mx-auto max-w-5xl text-center">
           <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-4 py-1.5 text-xs font-medium text-emerald-300">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-            Free, self-hosted, open source
+            Open source, self-hosted, mobile first
           </div>
 
-          <h1 className="mb-6 text-5xl font-bold leading-[1.05] tracking-tight text-surface-50 sm:text-6xl md:text-7xl">
-            Your React Native app{" "}
-            <br className="hidden sm:block" />
+          <h1 className="mb-5 text-4xl font-bold leading-[1.02] tracking-tight text-surface-50 sm:text-5xl md:text-6xl">
+            Turn mobile feedback into{" "}
             <span className="bg-gradient-to-r from-indigo-400 to-emerald-400 bg-clip-text text-transparent">
-              on any phone.
+              AI-ready fixes.
             </span>
           </h1>
 
@@ -1092,16 +1088,19 @@ export default function HomePage() {
               search answers to "what is Yaver?". */}
           <p className="sr-only">{LANDING_TAGLINE}</p>
 
-          <p className="mx-auto max-w-2xl text-base leading-relaxed text-surface-300 md:text-lg">
-            Push bundles from your machine to any paired device. No developer
-            portal, no cloud build minutes, no upload limits.
+          <p className="mx-auto max-w-2xl text-sm leading-relaxed text-surface-300 sm:text-base md:text-[17px]">
+            Open-source, mobile-first feedback and AI-debugging SDK for app
+            teams. Install one SDK to capture screenshots, logs, and session
+            context from real devices.
           </p>
 
-          <p className="mx-auto mt-4 max-w-xl text-sm text-surface-500">
-            Peer-to-peer. Works with Claude Code, Codex, Aider, and Ollama.
+          <p className="mx-auto mt-3 max-w-xl text-xs leading-relaxed text-surface-500 sm:text-sm">
+            Route incidents to Claude Code, Codex, Aider, or local models.
+            Triage from the Yaver mobile app while your own machine or cloud box
+            does the work.
           </p>
 
-          <div className="mt-8 flex flex-col items-center justify-center gap-2">
+          <div className="mt-7 flex flex-col items-center justify-center gap-2">
             <div className="terminal inline-flex w-full max-w-sm items-center gap-3 rounded-lg border border-surface-800 bg-surface-950 px-4 py-3 font-mono text-sm text-surface-200 sm:w-auto">
               <span className="text-emerald-400">$</span>
               <span className="flex-1 select-all">npm install -g yaver-cli</span>
@@ -1114,8 +1113,8 @@ export default function HomePage() {
             </p>
           </div>
 
-          <p className="mt-6 text-xs uppercase tracking-[0.18em] text-surface-600">
-            RN 0.81+ &middot; New Architecture &middot; Full TurboModules &middot; Hermes bytecode
+          <p className="mt-5 text-[11px] uppercase tracking-[0.16em] text-surface-600">
+            React Native first &middot; Real-device feedback &middot; P2P and self-hosted &middot; Agent-ready incidents
           </p>
         </div>
       </section>
@@ -1139,10 +1138,11 @@ export default function HomePage() {
               recordings + rebuild recipe live at GitHub Release
               yaver-hosting-demo-v1 and in demo-videos/ at the repo root. */}
           <p className="mx-auto mt-4 max-w-2xl text-center text-xs text-surface-500">
-            A real React Native app running on a phone. Shake it, type what you
-            want changed, a coding agent edits it on your Mac, and the phone
-            reloads with the change &mdash; live. No rebuild, no app-store round
-            trip.
+            Show the product loop in this order: the feedback SDK inside the app,
+            then the Yaver mobile app as the triage surface, then the coding
+            agent fixing the issue. The landing video should center the SDK
+            first; the mobile app matters because it proves the mobile-first
+            workflow and remote control story.
           </p>
         </div>
       </section>
@@ -1155,14 +1155,14 @@ export default function HomePage() {
       <section id="get-started" className="border-t border-surface-800/60 px-6 py-16">
         <div className="mx-auto max-w-5xl">
           <h2 className="mb-10 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            The short-term product path
+            The first incident loop
           </h2>
           <div className="grid gap-6 md:grid-cols-2 md:items-start">
             {/* Column 1 — Install the agent (the dense one) */}
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
               <div className="mb-3 flex items-center gap-2">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">1</span>
-                <span className="text-sm font-semibold text-surface-100">Install the agent</span>
+                <span className="text-sm font-semibold text-surface-100">Connect your machine</span>
               </div>
               <div className="terminal">
                 <div className="terminal-header">
@@ -1177,7 +1177,7 @@ export default function HomePage() {
               </div>
               <p className="mt-3 text-[11px] text-surface-500">
                 Recommended: <code>npm install -g yaver-cli</code>. Installs the
-                agent and the RN push toolchain in one go;{" "}
+                agent, feedback transport, and the RN push toolchain in one go;{" "}
                 <code>yaver auth</code> starts the agent automatically. Homebrew,{" "}
                 <code>apt</code>, AppImage, <code>.deb</code>/<code>.rpm</code>,
                 tarball, and install script work too &mdash;{" "}
@@ -1228,7 +1228,7 @@ export default function HomePage() {
                 Sign in with the same OAuth account you used for <code>yaver auth</code>. The app auto-pairs with your dev machine over LAN, or via relay on cellular &mdash; no QR code, no IP to type.
               </p>
               <p className="mt-2 text-[11px] text-surface-500">
-                Once paired, it&apos;s the control surface for the sandbox, deploy targets, and remote agent. For React Native, the normal flow is Hermes bundle reload into Yaver on the phone, not a native Xcode install.
+                Once paired, it&apos;s the control surface for incidents, deploy targets, and the remote agent. For React Native, the normal flow is Hermes bundle reload into Yaver on the phone, not a native Xcode install.
               </p>
             </div>
 
@@ -1236,7 +1236,7 @@ export default function HomePage() {
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
               <div className="mb-3 flex items-center gap-2">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">3</span>
-                <span className="text-sm font-semibold text-surface-100">Start local, then grow</span>
+                <span className="text-sm font-semibold text-surface-100">Install the SDK, then grow</span>
               </div>
               <div className="terminal">
                 <div className="terminal-header">
@@ -1245,15 +1245,15 @@ export default function HomePage() {
                   <div className="terminal-dot bg-[#28c840]" />
                 </div>
                 <div className="terminal-body space-y-1 text-[12px]">
-                  <div className="text-surface-500"># From phone or yaver.io: tap [+ New Project]</div>
-                  <div className="text-surface-500"># Pick [This device], [Dev Machine], or [Cloud]</div>
+                  <div className="text-surface-500"># In your app: install the Feedback SDK</div>
+                  <div className="text-surface-500"># Pair the app, the Yaver mobile app, and your machine</div>
                   <div className="my-1 h-px bg-surface-800/60" />
                   <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver phone push my-app --to http://your-machine</span></div>
-                  <div className="text-[11px] text-green-400/80">{"\u2192 Promoted without changing backend shape"}</div>
+                  <div className="text-[11px] text-green-400/80">{"\u2192 Feedback, context, and agent tasks now flow through the same loop"}</div>
                 </div>
               </div>
               <p className="mt-3 text-[11px] text-surface-500">
-                Local-first is the default. Cloud is a promotion step, not the starting requirement.
+                Local-first is still the default. Managed cloud is a later promotion step, not the starting requirement.
               </p>
             </div>
             </div>
@@ -1265,7 +1265,7 @@ export default function HomePage() {
             </p>
             <p className="text-xs leading-relaxed text-surface-400">
               Yaver has broader features in the repo, but the near-term product story stays focused on one flow:
-              create on the phone, keep it local, then promote to your own machine.
+              feedback from the app, triage from the phone, fix on your machine.
             </p>
           </div>
         </div>
@@ -1282,7 +1282,7 @@ export default function HomePage() {
           </h2>
           <p className="mx-auto mb-12 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
             The same phone project can stay on the device or move to your own hardware.
-            The point is continuity, not forcing infrastructure on day one.
+            The point is continuity, not forcing infrastructure on day one. That hardware can also be a remote coding box running your web app, backend, and agents.
           </p>
 
           <div className="grid gap-10 lg:grid-cols-2 lg:items-start">
@@ -1291,9 +1291,10 @@ export default function HomePage() {
               {[
                 { n: 1, t: "Phone sandbox first", d: "Create a phone project with schema, auth personas, seed data, CRUD, and local persistence." },
                 { n: 2, t: "Run the same project on your hardware", d: "Push it to `yaver serve` on macOS, Linux, WSL, a Pi, or a VPS without changing the backend shape." },
-                { n: 3, t: "Promote without rewrites", d: "Use the same portable project bundle and the same agent binary when you move from phone to your own hardware." },
-                { n: 4, t: "Wire in third-party apps", d: "Mint per-project tokens and let a React Native, web, or Node app call the Yaver runtime API while the project stays local-first." },
-                { n: 5, t: "Keep exports as escape hatches", d: "Supabase, Convex, and other systems remain optional exits, not the default destination." },
+                { n: 3, t: "Use a remote coding box", d: "Treat that machine as the web UI + backend box, run Claude Code / Codex / similar agents there, and watch runs or tests from the phone." },
+                { n: 4, t: "Promote without rewrites", d: "Use the same portable project bundle and the same agent binary when you move from phone to your own hardware." },
+                { n: 5, t: "Wire in third-party apps", d: "Mint per-project tokens and let a React Native, web, or Node app call the Yaver runtime API while the project stays local-first." },
+                { n: 6, t: "Keep exports as escape hatches", d: "Supabase, Convex, and other systems remain optional exits, not the default destination." },
               ].map((s) => (
                 <li key={s.n} className="flex gap-4">
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">{s.n}</span>
@@ -1363,12 +1364,13 @@ export default function HomePage() {
             <span className="inline-block rounded-full bg-[#6366f1]/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#a5b4fc]">Device Testing</span>
           </div>
           <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
-            Push to device, in seconds
+            Install one SDK. Debug from a real phone.
           </h2>
           <p className="mx-auto mb-10 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
-            A self-hosted native container for any existing React Native project.
-            Real native views, not WebView. 40+ pre-installed modules. Works over
-            WiFi, 4G, or through a relay.
+            The feedback loop starts inside your app: capture screenshots, logs,
+            navigation, crashes, and user notes from a real device. React Native
+            is the deepest path today, with the same model expanding to other
+            client runtimes over time.
           </p>
 
           {/* Terminal demo */}
@@ -1395,11 +1397,11 @@ export default function HomePage() {
           {/* Feature grid */}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {[
-              { icon: "\uD83D\uDC1B", color: "text-[#f87171] bg-[#f87171]/10", t: "Feedback SDK", d: "Drop <FloatingButton /> in your app. Shake to report bugs. AI sees your screen, writes the fix, hot reloads." },
+              { icon: "\uD83D\uDC1B", color: "text-[#f87171] bg-[#f87171]/10", t: "Feedback SDK", d: "Drop <FloatingButton /> in your app. Users or internal testers report issues with screenshots, logs, and context attached." },
               { icon: "\u25B6", color: "text-[#a78bfa] bg-[#a78bfa]/10", t: "Autonomous Testing", d: "Agent navigates every screen, catches crashes, fixes them, hot reloads, repeats. Fix report shows all changes." },
               { icon: "\u2692", color: "text-[#60a5fa] bg-[#60a5fa]/10", t: "Build + Deploy", d: "One button: iOS + Android \u2192 TestFlight + Play Store. Both platforms or one." },
               { icon: "\u21BB", color: "text-[#fbbf24] bg-[#fbbf24]/10", t: "Watch Mode", d: "--watch re-pushes on every save. Edit \u2192 save \u2192 see on device in ~1s." },
-              { icon: "\u25CF", color: "text-[#22c55e] bg-[#22c55e]/10", t: "BlackBox", d: "Streams logs, navigation events, crashes to agent like a flight recorder." },
+              { icon: "\u25CF", color: "text-[#22c55e] bg-[#22c55e]/10", t: "BlackBox", d: "Streams logs, navigation events, crashes, and runtime breadcrumbs into the incident like a flight recorder." },
               { icon: "\uD83D\uDD12", color: "text-[#818cf8] bg-[#818cf8]/10", t: "Security", d: "Scoped tokens, IP binding, HTTPS on LAN, key rotation. Auto-disabled in production." },
             ].map((f) => (
               <div key={f.t} className="flex items-start gap-3 rounded-xl border border-surface-800 bg-surface-900/50 p-4">
@@ -1444,10 +1446,12 @@ return (
           </div>
 
           <div className="mt-10 rounded-xl border-l-2 border-emerald-500/60 bg-surface-900/50 p-5 text-sm leading-relaxed text-surface-300">
-            <strong className="text-surface-100">Always Hermes. Always native. Never WebView.</strong>
+            <strong className="text-surface-100">The landing should sell the SDK loop first, then the Yaver mobile app.</strong>
             <br />
-            Your JS is compiled to Hermes bytecode, loaded into a native bridge with
-            TurboModules, Fabric, JSI. Same runtime as a production Xcode build.
+            The SDK is the wedge because it installs inside the customer&apos;s app.
+            The Yaver mobile app is the operator surface that makes the workflow
+            feel mobile-first and remote-friendly. Show both, but lead with the
+            embedded feedback moment.
           </div>
         </div>
       </section>
