@@ -47,7 +47,7 @@ jobs:
       CI_SERVER_IMAGE: ubuntu-24.04
       HETZNER_TEST_SNAPSHOT_ID: ${{ secrets.HETZNER_TEST_SNAPSHOT_ID }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install hcloud CLI
         run: |
@@ -63,17 +63,18 @@ jobs:
           chmod 600 ~/.ssh/hetzner_ci_ed25519
           echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HOME/.ssh/hetzner_ci_ed25519" >> "$GITHUB_ENV"
 
-      - name: Resolve target IP (persistent)
+      - name: Hetzner preflight (persistent)
         if: inputs.target == 'persistent'
-        run: |
-          ip='${{ secrets.HETZNER_TEST_SERVER_IP }}'
-          if [ -z "$ip" ]; then
-            echo "HETZNER_TEST_SERVER_IP secret is empty" >&2; exit 1
-          fi
-          mkdir -p ci/.artifacts
-          printf '%s' "$ip" > ci/.artifacts/server-ip
-          printf '%s' "yaver-test-ephemeral" > ci/.artifacts/server-name
-          echo "$ip (persistent)"
+        env:
+          HETZNER_TEST_SERVER_ID: ${{ secrets.HETZNER_TEST_SERVER_ID }}
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: ./ci/hcloud/preflight.sh persistent
+
+      - name: Hetzner preflight (ephemeral)
+        if: inputs.target == 'ephemeral'
+        env:
+          HETZNER_TEST_SNAPSHOT_ID: ${{ secrets.HETZNER_TEST_SNAPSHOT_ID }}
+        run: ./ci/hcloud/preflight.sh ephemeral
 
       - name: Create ephemeral box
         if: inputs.target == 'ephemeral'
@@ -100,7 +101,7 @@ jobs:
 
       - name: Upload artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: remote-verify-${{ inputs.target }}-${{ github.run_id }}
           path: ci/.artifacts/

@@ -36,7 +36,8 @@ if ! ollama list | grep -q '^qwen2.5-coder:1.5b'; then
   echo "qwen2.5-coder:1.5b not pulled — pulling now"
   ollama pull qwen2.5-coder:1.5b
 fi
-ollama run qwen2.5-coder:1.5b 'print hello in python one line' </dev/null | head -5
+ollama_output="$(ollama run qwen2.5-coder:1.5b 'print hello in python one line' </dev/null)"
+printf '%s\n' "$ollama_output" | sed -n '1,5p'
 
 banner "yaver help"
 yaver --help 2>&1 | head -20 || true
@@ -45,5 +46,14 @@ banner "yaver go test (desktop/agent)"
 cd "$REPO/desktop/agent"
 export PATH=/usr/local/go/bin:$PATH
 go test -count=1 -timeout 5m ./... 2>&1 | tail -40
+
+banner "qwen codegen smoke"
+bash "$REPO/ci/remote/verify_qwen_codegen.sh"
+
+banner "ops ollama smoke"
+bash "$REPO/ci/remote/verify_ops_ollama.sh"
+
+banner "hybrid loop smoke"
+bash "$REPO/ci/remote/verify_hybrid_loop.sh"
 
 banner "verify done"

@@ -86,17 +86,17 @@ Goal: CI-driven "can a user sign in via provider X" tests that never touch `acco
 
 ## Phase 4 — qwen writes hello-world (new test, small)
 
-- [ ] `ci/remote/verify_qwen_codegen.sh`
+- [x] `ci/remote/verify_qwen_codegen.sh`
   - Pose: "write a single-line Python program that prints 'hello yaver'" to `ollama run qwen2.5-coder:1.5b`
   - Capture first code block, extract Python source
   - Pipe through `python3`, assert stdout contains `hello yaver`
   - Retry once on parse miss (qwen 1.5b is dumb; occasionally echoes prose instead of code)
-- [ ] `ci/remote/verify_ops_ollama.sh`
+- [x] `ci/remote/verify_ops_ollama.sh`
   - Start `yaver serve` on the box
   - Call `/ops run --cmd="ollama run qwen2.5-coder:1.5b 'hello'"` via localhost HTTP
   - Assert 200 + non-empty stdout
-- [ ] `ci/remote/verify_hybrid_loop.sh`
-  - One kick of `yaver autodev --engine hybrid --runner aider-ollama --model ollama_chat/qwen2.5-coder:1.5b` against a trivial throwaway project on the box
+- [x] `ci/remote/verify_hybrid_loop.sh`
+  - One kick of the local hybrid planner→implementer loop against a trivial throwaway project on the box
   - Assert a commit or file-change happens. Quality doesn't matter; just that the planner→implementer handoff works.
 - [x] `ci/remote/verify_host_share_agentless.sh`
   - Agentless Hetzner shell authenticates directly to Convex as a guest, joins a host-share invite for a live host device, verifies the guest can see `codex` in `/agent/runners`, and writes/runs `hello_yaver.py` over the brokered terminal.
@@ -124,8 +124,8 @@ Goal: CI-driven "can a user sign in via provider X" tests that never touch `acco
 - [ ] Docker `hello-world` pull in `verify.sh` runs every time — cheap, but we could cache. Low priority.
 - [ ] `verify.sh` runs `go test ./...` in `/opt/yaver/desktop/agent`. Needs build cache volume; first run is slow. Add Docker volume or GOCACHE location persisted between runs.
 - [ ] Align the Hetzner box with the advertised Node toolchain before npm release gating
-  - `ci/remote/bootstrap.sh` says Node 22, but the current persistent box still reports Node `18.19.1`
-  - Either upgrade the box or relax the dependent package engine requirement before calling npm publish "ready"
+  - `ci/remote/bootstrap.sh` says Node 22; the persistent box was updated manually and now reports Node `22.22.2`
+  - Keep the box image/bootstrap path in sync so a fresh persistent restore does not drift back to Node 18
 - [ ] opencode on the box has no API key → can't actually run a real completion. Either wire a scoped OpenAI key (new secret `OPENCODE_OPENAI_KEY`) or skip the opencode smoke and just assert `opencode --version`.
 - [x] GitHub-hosted OpenCode coverage now has a separate GLM lane via `runner-integrations.yml` + `GLM_API_KEY`. Keep real OpenCode API smoke on GH-hosted runners; do not spend Hetzner capacity on this.
 - [ ] aider same story — needs at least a model config. Skip real-call tests; verify `--version` is enough for now.

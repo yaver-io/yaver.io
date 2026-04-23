@@ -57,6 +57,9 @@ ci/
 └── remote/                    ← runs on the Hetzner box
     ├── bootstrap.sh           ← first-time install of everything above
     └── verify.sh              ← smoke test: toolchain + docker + ollama + go test
+    └── verify_qwen_codegen.sh ← focused qwen hello-world codegen smoke
+    └── verify_ops_ollama.sh   ← focused localhost /ops → ollama smoke
+    └── verify_hybrid_loop.sh  ← focused hybrid planner→implementer file-change smoke
     └── verify-host-share.sh   ← focused borrowed-session / host-share tests
     └── verify-guest-docker-isolation.sh ← focused guest Docker-isolation tests
 ```
@@ -351,3 +354,5 @@ If a test can run on a GH-hosted runner for free, it should. Reach for this box 
 - Local commands may reference `~/.ssh/hetzner_ci_ed25519` and `~/.config/hcloud/cli.toml`, but never copy their contents into logs, docs, fixtures, or markdown examples.
 - If you need to mention the persistent server in code or docs, use the logical name `yaver-test-ephemeral`, not a raw IP.
 - For GitHub-runner guest tests, keep the host base URL, host device id, host account password, and guest password in secrets only. Do not print invite codes, session ids, or host base URLs into logs unless they are explicitly masked.
+
+For a persistent shared-owner setup on that box, including vault-backed Codex auth and multi-user/guest guidance, see [docs/hetzner-shared-owner-runbook.md](/Users/kivanccakmak/Workspace/yaver.io/docs/hetzner-shared-owner-runbook.md:1).
