@@ -25,9 +25,9 @@ test("buildManagedCloudInit writes managed agent config and service", () => {
   assert.match(cloudInit, /ExecStart=\/usr\/local\/bin\/yaver serve --debug --port 18080/);
   assert.match(cloudInit, /systemctl enable --now yaver-agent/);
   assert.match(cloudInit, /git clone 'https:\/\/github\.com\/example\/repo\.git' \/srv\/yaver\/workspace/);
-  assert.match(cloudInit, /command -v claude >/dev\/null 2>&1 \|\| missing_pkgs="\$missing_pkgs @anthropic-ai\/claude-code"/);
-  assert.match(cloudInit, /command -v codex >/dev\/null 2>&1 \|\| missing_pkgs="\$missing_pkgs @openai\/codex"/);
-  assert.match(cloudInit, /command -v opencode >/dev\/null 2>&1 \|\| missing_pkgs="\$missing_pkgs opencode-ai"/);
+  assert.match(cloudInit, /command -v claude >\/dev\/null 2>&1 \|\| missing_pkgs="\$missing_pkgs @anthropic-ai\/claude-code"/);
+  assert.match(cloudInit, /command -v codex >\/dev\/null 2>&1 \|\| missing_pkgs="\$missing_pkgs @openai\/codex"/);
+  assert.match(cloudInit, /command -v opencode >\/dev\/null 2>&1 \|\| missing_pkgs="\$missing_pkgs opencode-ai"/);
   assert.match(cloudInit, /npm install -g \$missing_pkgs/);
 });
 
