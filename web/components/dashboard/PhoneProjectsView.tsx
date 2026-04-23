@@ -120,7 +120,7 @@ export default function PhoneProjectsView() {
     () => devMachines.find((d) => d.id === selectedDevMachineId) ?? null,
     [devMachines, selectedDevMachineId],
   );
-  const [deploying, setDeploying] = useState<"dev-hw" | "yaver-cloud" | null>(null);
+  const [deploying, setDeploying] = useState<"dev-hw" | "yaver-cloud" | "both" | null>(null);
   const [lastDeploy, setLastDeploy] = useState<{ kind: "dev-hw" | "yaver-cloud"; url: string; via: string } | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const importedBrief = useMemo(
@@ -318,6 +318,41 @@ export default function PhoneProjectsView() {
       "yaver-cloud",
       "Yaver Cloud",
     );
+  }
+
+  async function deployToBoth() {
+    if (!selected) return;
+    if (!selectedDevMachine) {
+      alert("No dev machine paired. Install Yaver on your Mac/Linux/Pi and sign in with the same account.");
+      return;
+    }
+    const relayHttpUrl = agentClient.activeRelayHttpUrl;
+    if (!relayHttpUrl) {
+      alert("Web dashboard is not relay-routed. Cannot deploy to a sibling device from here.");
+      return;
+    }
+    setDeploying("both");
+    try {
+      const result = await agentClient.deployPhoneProjectRuntime({
+        slug: selected.slug,
+        includeData: true,
+        exports: [
+          { kind: "dev-hw", deviceId: selectedDevMachine.id, relayHttpUrl, onConflict: "overwrite" },
+          { kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken: token ?? undefined, onConflict: "overwrite" },
+        ],
+      });
+      const cloud = result.pushes.find((push) => push.kind === "yaver-cloud");
+      const local = result.pushes.find((push) => push.kind === "dev-hw");
+      if (cloud) {
+        setLastDeploy({ kind: "yaver-cloud", via: "Yaver Cloud + Dev Machine", url: cloud.result.browseUrl || deriveTargetUrl({ kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken: token ?? undefined }, cloud.result) });
+      } else if (local) {
+        setLastDeploy({ kind: "dev-hw", via: "Dev Machine + Yaver Cloud", url: local.result.browseUrl || deriveTargetUrl({ kind: "dev-hw", deviceId: selectedDevMachine.id, relayHttpUrl }, local.result) });
+      }
+    } catch (e) {
+      alert(`Deploy failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDeploying(null);
+    }
   }
 
   return (
@@ -627,6 +662,15 @@ export default function PhoneProjectsView() {
                             </option>
                           ))}
                         </select>
+                      ) : null}
+                      {canUseYaverCloud ? (
+                        <button
+                          disabled={deploying !== null || !selectedDevMachine}
+                          onClick={() => void deployToBoth()}
+                          className="rounded border border-indigo-300/40 px-3 py-1.5 text-xs font-medium text-indigo-100 hover:bg-indigo-500/10 disabled:opacity-50"
+                        >
+                          {deploying === "both" ? "Deploying Both…" : "Deploy Both →"}
+                        </button>
                       ) : null}
                     </div>
                   </div>

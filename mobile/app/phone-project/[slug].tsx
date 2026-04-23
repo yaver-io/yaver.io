@@ -38,6 +38,7 @@ import {
   bindPhoneProjectToTarget,
   browsePhoneTable,
   clearPhoneProjectBinding,
+  deployPhoneProjectRuntime,
   deletePhoneProject,
   deletePhoneRow,
   getPhoneProjectAccess,
@@ -106,7 +107,7 @@ export default function PhoneProjectDetailScreen() {
     [devices, activeDevice?.id],
   );
   const [selectedDevMachineId, setSelectedDevMachineId] = useState<string | null>(null);
-  const [deploying, setDeploying] = useState<"dev-hw" | "yaver-cloud" | null>(null);
+  const [deploying, setDeploying] = useState<"dev-hw" | "yaver-cloud" | "both" | null>(null);
   const [lastDeploy, setLastDeploy] = useState<{ kind: "dev-hw" | "yaver-cloud"; url: string; via?: string } | null>(null);
   const [showAdvancedPromote, setShowAdvancedPromote] = useState(false);
   const [escapeRoutes, setEscapeRoutes] = useState<EscapeRoute[]>([]);
@@ -476,6 +477,64 @@ export default function PhoneProjectDetailScreen() {
       { kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken },
       "yaver-cloud",
     );
+  }
+
+  async function deployToBoth() {
+    if (!slugStr) return;
+    if (!selectedDevMachine) {
+      if (devMachines.length === 0) {
+        Alert.alert(
+          "No dev machine paired",
+          "Install Yaver on your Mac/Linux/Pi and sign in with the same account. It'll appear here.",
+        );
+        return;
+      }
+      if (devMachines.length > 1) {
+        pickDevMachine();
+        return;
+      }
+    }
+    const target = selectedDevMachine ?? devMachines[0];
+    if (!target) return;
+    const relayHttpUrl = quicClient.activeRelayHttpUrl;
+    if (!relayHttpUrl) {
+      Alert.alert(
+        "No relay in use",
+        "Your phone is connected directly to this device. Switch to a relay-routed connection to deploy to a different machine.",
+      );
+      return;
+    }
+    setDeploying("both");
+    try {
+      const cloudAuthToken = (await getLocalSecret(LOCAL_KEYS.yaverCloudToken)) ?? token ?? undefined;
+      const result = await deployPhoneProjectRuntime({
+        slug: slugStr,
+        includeData: true,
+        exports: [
+          { kind: "dev-hw", deviceId: target.id, relayHttpUrl, onConflict: "overwrite" },
+          { kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken, onConflict: "overwrite" },
+        ],
+      });
+      const cloud = result.pushes.find((push) => push.kind === "yaver-cloud");
+      const local = result.pushes.find((push) => push.kind === "dev-hw");
+      if (cloud) {
+        setLastDeploy({
+          kind: "yaver-cloud",
+          via: "Dev Machine + Yaver Cloud",
+          url: cloud.result.browseUrl || deriveTargetUrl({ kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken }, cloud.result),
+        });
+      } else if (local) {
+        setLastDeploy({
+          kind: "dev-hw",
+          via: "Dev Machine + Yaver Cloud",
+          url: local.result.browseUrl || deriveTargetUrl({ kind: "dev-hw", deviceId: target.id, relayHttpUrl }, local.result),
+        });
+      }
+    } catch (e: any) {
+      Alert.alert("Deploy failed", e?.message ?? "deploy failed");
+    } finally {
+      setDeploying(null);
+    }
   }
 
   function pickDevMachine() {
@@ -907,6 +966,34 @@ export default function PhoneProjectDetailScreen() {
               </Text>
             </View>
             {deploying === "yaver-cloud" ? (
+              <ActivityIndicator color={c.accent} />
+            ) : (
+              <Text style={[styles.deployArrow, { color: c.accent }]}>→</Text>
+            )}
+          </Pressable>
+        ) : null}
+
+        {canUseYaverCloud ? (
+          <Pressable
+            onPress={deployToBoth}
+            disabled={deploying !== null}
+            style={[
+              styles.deployCard,
+              {
+                backgroundColor: c.bgCard,
+                borderColor: c.border,
+                opacity: deploying !== null && deploying !== "both" ? 0.5 : 1,
+                marginTop: 8,
+              },
+            ]}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.deployLabel, { color: c.textPrimary }]}>Dev Machine + Cloud</Text>
+              <Text style={[styles.deploySub, { color: c.textMuted }]}>
+                Push the same sandbox to your own box and Yaver Cloud in one go
+              </Text>
+            </View>
+            {deploying === "both" ? (
               <ActivityIndicator color={c.accent} />
             ) : (
               <Text style={[styles.deployArrow, { color: c.accent }]}>→</Text>

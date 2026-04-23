@@ -1108,6 +1108,57 @@ This is the intended full-stack vibe-coding loop:
 
 One important promoted shape is the remote dev box: the app lives on a Linux/macOS/VPS machine, that machine runs the web UI and backend plus coding agents like Claude Code or Codex, and Yaver uses the phone as the control/view surface. In that flow the phone does not just trigger prompts. It can tell the box to run the app, run tests, and surface a live terminal, recording, or VNC-like stream so the user can watch what the remote box is doing from mobile.
 
+### Project-Owned Remote Command Contract
+
+For monorepos and self-hosted app stacks, the clean pattern is to let the repo expose one stable argv contract that Yaver can call on the selected machine.
+
+Example:
+
+```bash
+./scripts/yaver_project_entry.sh \
+  --project my-app \
+  --machine primary \
+  --build web
+```
+
+or:
+
+```bash
+./scripts/yaver_project_entry.sh \
+  --project my-app \
+  --machine primary \
+  --build test-selenium
+```
+
+The important part is not the filename. The important part is the shape:
+
+- `--project <project>`
+- `--machine <alias>`
+- `--build <target>`
+
+`primary` is the safe public example because Yaver already resolves it to the user's selected machine. Public docs should prefer aliases like `primary` or `selected-machine` over real hostnames, IPs, or internal device labels.
+
+Typical `--build` values a repo might support:
+
+- `bootstrap`
+- `web`
+- `stop-web`
+- `test-yaver`
+- `test-selenium`
+- `deploy-web`
+- `deploy-backend`
+- `deploy-all`
+
+When `--build web` starts a preview, the repo-owned command should print a user-openable URL such as:
+
+```text
+APP_URL=http://127.0.0.1:4173
+```
+
+and ideally persist the same result to a small JSON status file so mobile, web UI, HTTP, or MCP can read it back without scraping logs.
+
+That URL is what the human opens. If the project has Yaver's web feedback SDK wired to the selected agent, the opened page can immediately participate in screenshot/fix/reload loops from the phone.
+
 ### Containerized Backend Export
 
 If you want the phone-created backend to land on your own server with Docker,

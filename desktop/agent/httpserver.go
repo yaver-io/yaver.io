@@ -796,6 +796,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/secrets/rotate", s.auth(s.handleSecretRotate))
 
 	// Declarative project manifest (`.yaver/project.yaml`)
+	mux.HandleFunc("/project/runtime", s.auth(s.handleProjectRuntime))
+	mux.HandleFunc("/project/runtime/apply", s.auth(s.handleProjectRuntimeApply))
 	mux.HandleFunc("/manifest/get", s.auth(s.handleManifestGet))
 	mux.HandleFunc("/manifest/set", s.auth(s.handleManifestSet))
 	mux.HandleFunc("/manifest/apply", s.auth(s.handleManifestApply))
@@ -8165,6 +8167,21 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpSwitchCleanup(a.Dir))
+	case "project_runtime":
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpProjectRuntime(a.Dir))
+	case "project_runtime_apply":
+		var a ProjectRuntimeApplyRequest
+		var wrapper struct {
+			Directory string `json:"directory"`
+			ProjectRuntimeApplyRequest
+		}
+		json.Unmarshal(call.Arguments, &wrapper)
+		a = wrapper.ProjectRuntimeApplyRequest
+		return mcpToolJSON(mcpProjectRuntimeApply(wrapper.Directory, a))
 	// --- Accounts manager ---
 	case "account_list":
 		return mcpToolJSON(mcpAccountList())

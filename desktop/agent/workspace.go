@@ -68,6 +68,15 @@ type WorkspaceConfig struct {
 	Relay string `yaml:"relay" json:"relay,omitempty"`
 	// Vault: "local" | "shared". Shared vault is a follow-up.
 	Vault string `yaml:"vault" json:"vault,omitempty"`
+	// Placement: repo-wide defaults for runtime-role resolution. Phase 1 only
+	// reads these for summaries; later phases will use them during apply/plan.
+	Placement WorkspacePlacementConfig `yaml:"placement,omitempty" json:"placement,omitempty"`
+}
+
+type WorkspacePlacementConfig struct {
+	DefaultExecutionRole string `yaml:"default_execution_role,omitempty" json:"defaultExecutionRole,omitempty"`
+	ManagedCloudFallback bool   `yaml:"managed_cloud_fallback,omitempty" json:"managedCloudFallback,omitempty"`
+	BudgetMode           string `yaml:"budget_mode,omitempty" json:"budgetMode,omitempty"`
 }
 
 // WorkspaceApp is one app / package / service in the monorepo.
@@ -95,6 +104,13 @@ type WorkspaceApp struct {
 	// Env: per-app env var names to populate from the shared vault /
 	// host environment when kicking any action.
 	Env []string `yaml:"env" json:"env,omitempty"`
+	// Runtime: coarse runtime hints for app-level placement.
+	Runtime WorkspaceAppRuntime `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+}
+
+type WorkspaceAppRuntime struct {
+	PublicSurface bool   `yaml:"public_surface,omitempty" json:"publicSurface,omitempty"`
+	MachineRole   string `yaml:"machine_role,omitempty" json:"machineRole,omitempty"`
 }
 
 // WorkspaceShared declares repo-wide shared bits (env, secrets).

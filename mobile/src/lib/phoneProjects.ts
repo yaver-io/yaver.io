@@ -146,6 +146,83 @@ export interface PhoneProjectAccess {
   boundAt?: string;
 }
 
+export interface ProjectRuntimeProviderInput {
+  provider: string;
+  label?: string;
+  fields?: Record<string, string>;
+}
+
+export interface ProjectRuntimePhonePromotion {
+  slug: string;
+  target: string;
+  run?: boolean;
+  dryRun?: boolean;
+}
+
+export interface ProjectRuntimeApplyRequest {
+  name?: string;
+  phoneSlug?: string;
+  backend?: string;
+  stack?: string;
+  auth?: string;
+  runtime?: Record<string, unknown>;
+  placement?: Record<string, unknown>;
+  jobs?: unknown[];
+  domains?: unknown[];
+  env?: Record<string, string>;
+  providers?: ProjectRuntimeProviderInput[];
+  phonePromotions?: ProjectRuntimePhonePromotion[];
+  runManifestApply?: boolean;
+  dryRun?: boolean;
+}
+
+export interface ProjectRuntimeProviderRequirement {
+  provider: string;
+  label?: string;
+  authType?: string;
+  fields?: string[];
+  credentialRef?: string;
+  requiredBy?: string[];
+  connected: boolean;
+  authSource?: string;
+  warning?: string;
+}
+
+export interface ProjectRuntimeExportPlan {
+  name: string;
+  source: string;
+  kind?: string;
+  provider?: string;
+  target?: string;
+  app?: string;
+  projectSlug?: string;
+  credentialRef?: string;
+  machineRole?: string;
+  reason?: string;
+  providerReady: boolean;
+  providerAuthSource?: string;
+  warning?: string;
+}
+
+export interface ProjectRuntimeSummary {
+  projectDir: string;
+  manifest?: Record<string, unknown>;
+  providerRequirements?: ProjectRuntimeProviderRequirement[];
+  exportPlans?: ProjectRuntimeExportPlan[];
+  warnings?: string[];
+}
+
+export interface ProjectRuntimeApplyResponse {
+  ok?: boolean;
+  actions?: Array<{ kind: string; target?: string; details?: string }>;
+  manifestSaved?: boolean;
+  accountsApplied?: string[];
+  manifestApply?: { steps?: string[]; diff?: string[]; error?: string };
+  phoneSwitches?: Array<Record<string, unknown>>;
+  summary?: ProjectRuntimeSummary;
+  error?: string;
+}
+
 const LOCAL_PHONE_TEMPLATES: PhoneTemplate[] = [
   { id: "blank", label: "Blank", description: "Empty project — define your own schema." },
   { id: "crud", label: "Generic CRUD", description: "users + items table with a few personas." },
@@ -1312,6 +1389,93 @@ export async function promotePhoneProject(
     run: !!opts.run,
     dryRun: !!opts.dryRun,
   });
+}
+
+export async function getProjectRuntimeSummary(directory?: string): Promise<ProjectRuntimeSummary | null> {
+  const suffix = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+  return get<ProjectRuntimeSummary>(`/project/runtime${suffix}`);
+}
+
+export async function applyProjectRuntime(
+  req: ProjectRuntimeApplyRequest,
+  opts: { directory?: string } = {},
+): Promise<ProjectRuntimeApplyResponse | null> {
+  const suffix = opts.directory ? `?directory=${encodeURIComponent(opts.directory)}` : "";
+  return post<ProjectRuntimeApplyResponse>(`/project/runtime/apply${suffix}`, req);
+}
+
+export interface PhoneRuntimeDeployRequest {
+  slug: string;
+  includeData?: boolean;
+  runManifestApply?: boolean;
+  dryRun?: boolean;
+  providers?: ProjectRuntimeProviderInput[];
+  exports?: Array<
+    | { kind: "convex"; run?: boolean; dryRun?: boolean }
+    | { kind: "cloudflare-workers"; run?: boolean; dryRun?: boolean }
+    | { kind: "dev-hw"; deviceId: string; relayHttpUrl: string; onConflict?: "reject" | "rename" | "overwrite" }
+    | { kind: "yaver-cloud"; cloudBaseUrl?: string; cloudAuthToken?: string; onConflict?: "reject" | "rename" | "overwrite" }
+  >;
+}
+
+export interface PhoneRuntimeDeployResult {
+  runtime?: ProjectRuntimeApplyResponse | null;
+  pushes: Array<{ kind: "dev-hw" | "yaver-cloud"; result: PhonePushResult }>;
+  promotes: Array<{ kind: "convex" | "cloudflare-workers"; result: PromoteResult | null }>;
+}
+
+export async function deployPhoneProjectRuntime(req: PhoneRuntimeDeployRequest): Promise<PhoneRuntimeDeployResult> {
+  const out: PhoneRuntimeDeployResult = { pushes: [], promotes: [] };
+  const exports = req.exports ?? [];
+  const phonePromotions: ProjectRuntimePhonePromotion[] = [];
+  for (const item of exports) {
+    if (item.kind === "convex") {
+      phonePromotions.push({ slug: req.slug, target: "convex-cloud", run: item.run, dryRun: item.dryRun ?? req.dryRun });
+    } else if (item.kind === "cloudflare-workers") {
+      phonePromotions.push({ slug: req.slug, target: "cloudflare-workers", run: item.run, dryRun: item.dryRun ?? req.dryRun });
+    }
+  }
+  if (phonePromotions.length || req.providers?.length || req.runManifestApply) {
+    out.runtime = await applyProjectRuntime({
+      phoneSlug: req.slug,
+      providers: req.providers,
+      phonePromotions,
+      runManifestApply: req.runManifestApply,
+      dryRun: req.dryRun,
+    });
+  }
+  for (const item of exports) {
+    if (item.kind === "dev-hw") {
+      const result = await pushPhoneProject(req.slug, {
+        kind: "dev-hw",
+        deviceId: item.deviceId,
+        relayHttpUrl: item.relayHttpUrl,
+      }, {
+        includeData: req.includeData,
+        onConflict: item.onConflict,
+      });
+      out.pushes.push({ kind: "dev-hw", result });
+    } else if (item.kind === "yaver-cloud") {
+      const result = await pushPhoneProject(req.slug, {
+        kind: "yaver-cloud",
+        cloudBaseUrl: item.cloudBaseUrl,
+        cloudAuthToken: item.cloudAuthToken,
+      }, {
+        includeData: req.includeData,
+        containerize: true,
+        onConflict: item.onConflict,
+      });
+      out.pushes.push({ kind: "yaver-cloud", result });
+    }
+  }
+  for (const item of exports) {
+    if (item.kind === "convex") {
+      out.promotes.push({ kind: "convex", result: await promotePhoneProject(req.slug, "convex-cloud", { run: !!item.run, dryRun: item.dryRun ?? !!req.dryRun }) });
+    } else if (item.kind === "cloudflare-workers") {
+      out.promotes.push({ kind: "cloudflare-workers", result: await promotePhoneProject(req.slug, "cloudflare-workers", { run: !!item.run, dryRun: item.dryRun ?? !!req.dryRun }) });
+    }
+  }
+  return out;
 }
 
 // ---- Push (export-and-receive) to a dev machine or Yaver cloud ----

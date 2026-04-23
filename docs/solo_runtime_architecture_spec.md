@@ -16,6 +16,14 @@ Define the smallest coherent Yaver product for the target persona:
 
 This spec is not "integrate every vendor." It is the opposite: pick the common stack and make it obvious, cheap, and operable from the phone, CLI, MCP, and vibing flows.
 
+Mainline product shape:
+
+- one monorepo
+- React Native app plus fullstack web/backend
+- mobile sandbox backend can be exported to real runtimes
+- exports can target self-hosted machine, Yaver managed cloud, or both at the same time
+- mobile and web feedback SDKs remain the operator entry points for vibing and bug-to-fix loops
+
 ## Product Thesis
 
 Yaver should be the orchestration layer for a solo developer's runtime.
@@ -135,6 +143,17 @@ runtime:
     ota:
       provider: yaver
       channel: production
+    sandbox:
+      project_slug: carrotbet-sandbox
+      exports:
+        - kind: convex
+          project_slug: carrotbet-sandbox
+          target: self-hosted-machine
+          credential_ref: team.convex
+        - kind: cloudflare-workers
+          app: mobile-api
+          target: managed-cloud
+          credential_ref: team.cloudflare
 
 placement:
   roles:
@@ -217,6 +236,50 @@ Purpose:
 - express the whole project runtime in one place
 - keep deploy, domain, jobs, and machine placement together
 - give vibing and MCP a structured target to edit
+- make export topology explicit instead of hiding it in ad-hoc deploy commands
+- allow concurrent exports when the same logical runtime should exist on both owned hardware and Yaver cloud
+
+## Export Layer
+
+The export layer is the bridge from:
+
+- mobile sandbox backend
+- monorepo app runtime declarations
+- Yaver jobs and placement
+
+to:
+
+- Cloudflare Pages or Workers
+- Convex
+- self-hosted Yaver machines
+- Yaver managed cloud
+
+Rules:
+
+- `runtime.*.exports[]` is additive. More than one export means "run both", not "pick one".
+- the same project can export web to Cloudflare, backend to Convex, and admin/cron flows to a self-hosted machine at the same time
+- the same mobile sandbox can export to Convex and also to Yaver-managed or self-hosted infrastructure during migration or dual-run
+- every export may reference a `credential_ref`, but the actual source of truth for provider credentials is the user's connected Yaver provider accounts
+
+## Provider Accounts
+
+Yaver should treat Cloudflare and Convex deployment credentials like GitHub/GitLab onboarding:
+
+- connected once per user account
+- visible as provider readiness in web/mobile
+- executable from the selected own machine or from Yaver managed cloud
+- referenceable from manifests via `credential_ref`
+
+Minimum first-class providers for the mainline:
+
+- `cloudflare`
+- `convex`
+- `yaver`
+
+Execution rule:
+
+- a manifest can declare that an export should run on a self-hosted machine, managed cloud, or both
+- the selected execution machine must have both runtime eligibility and provider auth readiness
 
 ## Machine Role Model
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -136,6 +137,25 @@ func phoneProjectMCPTools() []map[string]interface{} {
 					"target":  map[string]interface{}{"type": "string"},
 					"run":     map[string]interface{}{"type": "boolean"},
 					"dry_run": map[string]interface{}{"type": "boolean"},
+				},
+			},
+		},
+		{
+			"name":        "phone_project_runtime_deploy",
+			"description": "High-level runtime deploy for a phone sandbox. Can connect provider accounts, promote to Convex Cloud or Cloudflare Workers, push to Yaver Cloud or a custom/self-hosted Yaver target, or do several of those in one call.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"slug"},
+				"properties": map[string]interface{}{
+					"slug":              map[string]interface{}{"type": "string"},
+					"providers":         map[string]interface{}{"type": "array", "description": "Optional provider account writes. Each item: {provider,label,fields}"},
+					"targets":           map[string]interface{}{"type": "array", "description": "Any of: convex-cloud, cloudflare-workers, yaver-cloud, custom"},
+					"target_base_url":   map[string]interface{}{"type": "string", "description": "Required when targets includes custom"},
+					"target_auth_token": map[string]interface{}{"type": "string", "description": "Optional bearer token for yaver-cloud/custom push target"},
+					"include_data":      map[string]interface{}{"type": "boolean"},
+					"containerize":      map[string]interface{}{"type": "boolean"},
+					"run":               map[string]interface{}{"type": "boolean"},
+					"dry_run":           map[string]interface{}{"type": "boolean"},
 				},
 			},
 		},
@@ -393,6 +413,124 @@ func dispatchPhoneMCP(s *HTTPServer, name string, arguments json.RawMessage) (bo
 			}
 		}
 		return true, mcpToolJSON(map[string]interface{}{"state": state})
+
+	case "phone_project_runtime_deploy":
+		var args struct {
+			Slug            string                        `json:"slug"`
+			Providers       []ProjectRuntimeProviderInput `json:"providers"`
+			Targets         []string                      `json:"targets"`
+			TargetBaseURL   string                        `json:"target_base_url"`
+			TargetAuthToken string                        `json:"target_auth_token"`
+			IncludeData     bool                          `json:"include_data"`
+			Containerize    bool                          `json:"containerize"`
+			Run             bool                          `json:"run"`
+			DryRun          bool                          `json:"dry_run"`
+		}
+		_ = json.Unmarshal(arguments, &args)
+		if strings.TrimSpace(args.Slug) == "" {
+			return true, mcpToolError("slug is required")
+		}
+		targets := make([]string, 0, len(args.Targets))
+		seenTargets := map[string]bool{}
+		for _, target := range args.Targets {
+			target = strings.ToLower(strings.TrimSpace(target))
+			if target == "" || seenTargets[target] {
+				continue
+			}
+			seenTargets[target] = true
+			targets = append(targets, target)
+		}
+		if len(targets) == 0 {
+			targets = []string{"yaver-cloud"}
+		}
+
+		req := ProjectRuntimeApplyRequest{
+			PhoneSlug:        args.Slug,
+			Providers:        args.Providers,
+			RunManifestApply: false,
+			DryRun:           args.DryRun,
+		}
+		for _, target := range targets {
+			switch target {
+			case "convex-cloud":
+				req.PhonePromotions = append(req.PhonePromotions, ProjectRuntimePhonePromotion{
+					Slug:   args.Slug,
+					Target: "convex-cloud",
+					Run:    args.Run,
+					DryRun: args.DryRun,
+				})
+			case "cloudflare-workers":
+				req.PhonePromotions = append(req.PhonePromotions, ProjectRuntimePhonePromotion{
+					Slug:   args.Slug,
+					Target: "cloudflare-workers",
+					Run:    args.Run,
+					DryRun: args.DryRun,
+				})
+			case "yaver-cloud", "custom":
+				// handled below as explicit push targets
+			default:
+				return true, mcpToolError("unsupported target: " + target)
+			}
+		}
+
+		out := map[string]interface{}{}
+		if len(req.PhonePromotions) > 0 || len(req.Providers) > 0 {
+			resp, err := ApplyProjectRuntimeMutation(context.Background(), s, "", req)
+			if err != nil {
+				return true, mcpToolJSON(map[string]interface{}{"error": err.Error(), "runtime": resp})
+			}
+			out["runtime"] = resp
+		}
+
+		needsPush := false
+		for _, target := range targets {
+			if target == "yaver-cloud" || target == "custom" {
+				needsPush = true
+				break
+			}
+		}
+		if needsPush {
+			bundle, err := ExportPhoneProjectWithOptions(args.Slug, PhoneExportOptions{
+				IncludeData:  args.IncludeData,
+				Containerize: args.Containerize || containsString(targets, "yaver-cloud"),
+			})
+			if err != nil {
+				return true, mcpToolError("export: " + err.Error())
+			}
+			token := strings.TrimSpace(args.TargetAuthToken)
+			if token == "" {
+				if cfg, err := LoadConfig(); err == nil && strings.TrimSpace(cfg.AuthToken) != "" {
+					token = strings.TrimSpace(cfg.AuthToken)
+				}
+			}
+			pushes := []map[string]interface{}{}
+			for _, target := range targets {
+				var base string
+				switch target {
+				case "yaver-cloud":
+					base = strings.TrimRight(cloudPreviewBaseURL(), "/")
+				case "custom":
+					base = strings.TrimRight(args.TargetBaseURL, "/")
+					if base == "" {
+						return true, mcpToolError("target_base_url required for custom target")
+					}
+				default:
+					continue
+				}
+				result, err := pushPhoneBundle(base, token, bundle, args.Slug, "overwrite", false)
+				if err != nil {
+					return true, mcpToolJSON(map[string]interface{}{"error": err.Error(), "result": out})
+				}
+				pushes = append(pushes, map[string]interface{}{
+					"target": target,
+					"result": result,
+				})
+			}
+			if len(pushes) > 0 {
+				out["pushes"] = pushes
+			}
+		}
+		return true, mcpToolJSON(out)
 	}
 	return false, nil
 }

@@ -3243,6 +3243,27 @@ class AgentClient {
     return res.json();
   }
 
+  async projectRuntime(directory?: string): Promise<ProjectRuntimeSummary> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/project/runtime${q}`, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  async projectRuntimeApply(
+    req: ProjectRuntimeApplyRequest,
+    directory?: string,
+  ): Promise<ProjectRuntimeApplyResponse> {
+    this.assertConnected();
+    const q = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const res = await fetch(`${this.baseUrl}/project/runtime/apply${q}`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    });
+    return res.json();
+  }
+
   // ── Cloud emulators ──────────────────────────────────────────────
 
   async cloudEmuStatus(directory?: string): Promise<{ emulators: { name: string; provider: string; running: boolean; port: number; health: string }[] }> {
@@ -3758,6 +3779,60 @@ class AgentClient {
     if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
     return data as PhonePromoteResult;
   }
+
+  async deployPhoneProjectRuntime(req: PhoneRuntimeDeployRequest): Promise<PhoneRuntimeDeployResult> {
+    const out: PhoneRuntimeDeployResult = { pushes: [], promotes: [] };
+    const exports = req.exports ?? [];
+    const phonePromotions: ProjectRuntimePhonePromotion[] = [];
+    for (const item of exports) {
+      if (item.kind === "convex") {
+        phonePromotions.push({ slug: req.slug, target: "convex-cloud", run: item.run, dryRun: item.dryRun ?? req.dryRun });
+      } else if (item.kind === "cloudflare-workers") {
+        phonePromotions.push({ slug: req.slug, target: "cloudflare-workers", run: item.run, dryRun: item.dryRun ?? req.dryRun });
+      }
+    }
+    if (phonePromotions.length || req.providers?.length || req.runManifestApply) {
+      out.runtime = await this.projectRuntimeApply({
+        phoneSlug: req.slug,
+        providers: req.providers,
+        phonePromotions,
+        runManifestApply: req.runManifestApply,
+        dryRun: req.dryRun,
+      });
+    }
+    for (const item of exports) {
+      if (item.kind === "dev-hw") {
+        const result = await this.pushPhoneProject(req.slug, {
+          kind: "dev-hw",
+          deviceId: item.deviceId,
+          relayHttpUrl: item.relayHttpUrl,
+        }, {
+          includeData: req.includeData,
+          onConflict: item.onConflict,
+        });
+        out.pushes.push({ kind: "dev-hw", result });
+      } else if (item.kind === "yaver-cloud") {
+        const result = await this.pushPhoneProject(req.slug, {
+          kind: "yaver-cloud",
+          cloudBaseUrl: item.cloudBaseUrl,
+          cloudAuthToken: item.cloudAuthToken,
+        }, {
+          includeData: req.includeData,
+          containerize: true,
+          onConflict: item.onConflict,
+        });
+        out.pushes.push({ kind: "yaver-cloud", result });
+      }
+    }
+    for (const item of exports) {
+      if (item.kind === "convex") {
+        out.promotes.push({ kind: "convex", result: await this.promotePhoneProject(req.slug, "convex-cloud", { run: !!item.run, dryRun: item.dryRun ?? !!req.dryRun }) });
+      } else if (item.kind === "cloudflare-workers") {
+        out.promotes.push({ kind: "cloudflare-workers", result: await this.promotePhoneProject(req.slug, "cloudflare-workers", { run: !!item.run, dryRun: item.dryRun ?? !!req.dryRun }) });
+      }
+    }
+    return out;
+  }
 }
 
 // ── Phone-first mini backend types (mirror desktop/agent/phone_backend.go) ──
@@ -3923,6 +3998,111 @@ export interface RecordingDriverStatus {
   target: string;
   available: boolean;
   reason?: string;
+}
+
+export interface ProjectRuntimeProviderInput {
+  provider: string;
+  label?: string;
+  fields?: Record<string, string>;
+}
+
+export interface ProjectRuntimePhonePromotion {
+  slug: string;
+  target: string;
+  run?: boolean;
+  dryRun?: boolean;
+}
+
+export interface ProjectRuntimeApplyRequest {
+  name?: string;
+  phoneSlug?: string;
+  backend?: string;
+  stack?: string;
+  auth?: string;
+  runtime?: Record<string, unknown>;
+  placement?: Record<string, unknown>;
+  jobs?: unknown[];
+  domains?: unknown[];
+  env?: Record<string, string>;
+  providers?: ProjectRuntimeProviderInput[];
+  phonePromotions?: ProjectRuntimePhonePromotion[];
+  runManifestApply?: boolean;
+  dryRun?: boolean;
+}
+
+export interface ProjectRuntimeResolvedAssignment {
+  name: string;
+  role: string;
+  reason?: string;
+  machine?: { deviceID?: string; name?: string; provider?: string } | null;
+}
+
+export interface ProjectRuntimeProviderRequirement {
+  provider: string;
+  label?: string;
+  authType?: string;
+  fields?: string[];
+  credentialRef?: string;
+  requiredBy?: string[];
+  connected: boolean;
+  authSource?: string;
+  warning?: string;
+}
+
+export interface ProjectRuntimeExportPlan {
+  name: string;
+  source: string;
+  kind?: string;
+  provider?: string;
+  target?: string;
+  app?: string;
+  projectSlug?: string;
+  credentialRef?: string;
+  machineRole?: string;
+  reason?: string;
+  providerReady: boolean;
+  providerAuthSource?: string;
+  warning?: string;
+}
+
+export interface ProjectRuntimeSummary {
+  projectDir: string;
+  manifest?: Record<string, unknown>;
+  resolvedAssignments?: ProjectRuntimeResolvedAssignment[];
+  providerRequirements?: ProjectRuntimeProviderRequirement[];
+  exportPlans?: ProjectRuntimeExportPlan[];
+  warnings?: string[];
+}
+
+export interface ProjectRuntimeApplyResponse {
+  ok?: boolean;
+  actions?: Array<{ kind: string; target?: string; details?: string }>;
+  manifestSaved?: boolean;
+  accountsApplied?: string[];
+  manifestApply?: { steps?: string[]; diff?: string[]; error?: string };
+  phoneSwitches?: Array<Record<string, unknown>>;
+  summary?: ProjectRuntimeSummary;
+  error?: string;
+}
+
+export interface PhoneRuntimeDeployRequest {
+  slug: string;
+  includeData?: boolean;
+  runManifestApply?: boolean;
+  dryRun?: boolean;
+  providers?: ProjectRuntimeProviderInput[];
+  exports?: Array<
+    | { kind: "convex"; run?: boolean; dryRun?: boolean }
+    | { kind: "cloudflare-workers"; run?: boolean; dryRun?: boolean }
+    | { kind: "dev-hw"; deviceId: string; relayHttpUrl: string; onConflict?: "reject" | "rename" | "overwrite" }
+    | { kind: "yaver-cloud"; cloudBaseUrl?: string; cloudAuthToken?: string; onConflict?: "reject" | "rename" | "overwrite" }
+  >;
+}
+
+export interface PhoneRuntimeDeployResult {
+  runtime?: ProjectRuntimeApplyResponse;
+  pushes: Array<{ kind: "dev-hw" | "yaver-cloud"; result: PhonePushResult }>;
+  promotes: Array<{ kind: "convex" | "cloudflare-workers"; result: PhonePromoteResult }>;
 }
 
 // ── Deploy target shapes (mirror mobile/src/lib/phoneProjects.ts) ──
