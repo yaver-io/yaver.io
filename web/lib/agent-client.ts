@@ -325,6 +325,53 @@ export interface RunnerAuthStatusRow {
   detail?: string;
 }
 
+export interface GitProviderStatusRow {
+  host: string;
+  provider: string;
+  username: string;
+  avatarUrl?: string;
+  hasSsh: boolean;
+  setupAt: string;
+}
+
+export interface GitRemoteRepo {
+  id?: string | number;
+  name: string;
+  fullName: string;
+  description?: string;
+  private?: boolean;
+  language?: string;
+  cloneUrl?: string;
+  sshUrl?: string;
+}
+
+export interface GitCommitRow {
+  hash: string;
+  shortHash: string;
+  message: string;
+  author: string;
+  date: string;
+  filesChanged: number;
+}
+
+export interface GitStatusRow {
+  branch?: string;
+  ahead?: number;
+  behind?: number;
+  clean?: boolean;
+  staged?: Array<{ path: string }>;
+  modified?: Array<{ path: string }>;
+  untracked?: Array<{ path: string }>;
+}
+
+export interface GitActionResult {
+  ok?: string;
+  hash?: string;
+  branch?: string;
+  message?: string;
+  error?: string;
+}
+
 export interface RunnerAuthSetParams {
   runner: "claude" | "claude-code" | "codex" | "opencode";
   openaiApiKey?: string;
@@ -517,6 +564,19 @@ export interface InfraSummary {
   sharing: InfraSharingSummary;
   sandbox: SandboxStatus;
   capabilities: InfraCapabilities;
+  packageManagers?: string[];
+  binaries?: { name: string; path: string; manager?: string }[];
+}
+
+export interface TailscaleStatus {
+  running: boolean;
+  backendState?: string;
+  self?: {
+    hostName?: string;
+    tailAddr?: string;
+    tags?: string[];
+    addrs?: string[];
+  };
 }
 
 export interface SandboxStatus {
@@ -790,6 +850,37 @@ class AgentClient {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
+  }
+
+  async createTask(params: {
+    title: string;
+    description: string;
+    runner?: string;
+    model?: string;
+    customCommand?: string;
+    projectName?: string;
+    workDir?: string;
+  }): Promise<Task> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/tasks`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: params.title,
+        description: params.description,
+        runner: params.runner ?? "",
+        model: params.model ?? "",
+        customCommand: params.customCommand ?? "",
+        projectName: params.projectName ?? "",
+        workDir: params.workDir ?? "",
+        source: "web",
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data?.error || `Failed to create task: ${res.status}`);
+    }
+    return this.getTask(data.taskId);
   }
 
   async listTasks(limit?: number): Promise<Task[]> {
@@ -1304,18 +1395,45 @@ class AgentClient {
   // ── SSE Task Output Stream ───────────────────────────────────────
 
   streamTaskOutput(taskId: string, onLine: (line: string) => void): () => void {
+    const controller = new AbortController();
     const url = `${this.baseUrl}/tasks/${taskId}/output`;
-    const es = new EventSource(url);
-    // EventSource doesn't support custom headers, so we fall back to
-    // polling for auth-protected endpoints. Use the existing poll mechanism
-    // but also try SSE for unauthenticated or relay-proxied streams.
-    es.onmessage = (e) => {
-      if (e.data) onLine(e.data);
-    };
-    es.onerror = () => {
-      es.close();
-    };
-    return () => es.close();
+    (async () => {
+      try {
+        const res = await fetch(url, {
+          method: "GET",
+          headers: { ...this.authHeaders, Accept: "text/event-stream" },
+          signal: controller.signal,
+        });
+        const reader = res.body?.getReader();
+        if (!reader) return;
+        const decoder = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let idx: number;
+          while ((idx = buf.indexOf("\n\n")) >= 0) {
+            const frame = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            const dataLines = frame
+              .split("\n")
+              .filter((line) => line.startsWith("data:"))
+              .map((line) => line.slice(5).trimStart());
+            if (dataLines.length === 0) continue;
+            try {
+              const event = JSON.parse(dataLines.join("\n"));
+              if (event?.type === "output" && event.text) onLine(String(event.text));
+            } catch {
+              // Ignore malformed frames.
+            }
+          }
+        }
+      } catch {
+        // Silent best-effort stream; callers usually poll task status too.
+      }
+    })();
+    return () => controller.abort();
   }
 
   /**
@@ -2725,6 +2843,13 @@ class AgentClient {
     return res.json();
   }
 
+  async tailscaleStatus(): Promise<TailscaleStatus> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/machine/tailscale`, { headers: this.authHeaders });
+    const data = await res.json();
+    return data?.status || { running: false };
+  }
+
   async infraServiceAction(scope: "dev" | "system", name: string, action: "start" | "stop" | "restart" | "status"): Promise<any> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/infra/services/action`, {
@@ -3560,7 +3685,7 @@ class AgentClient {
 
   // ── Git ───────────────────────────────────────────────────────────
 
-  async gitPull(workDir: string): Promise<{ ok: string; message: string }> {
+  async gitPull(workDir: string): Promise<GitActionResult> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/git/pull?workDir=${encodeURIComponent(workDir)}`, {
       method: "POST",
@@ -3569,10 +3694,115 @@ class AgentClient {
     return res.json();
   }
 
-  async gitStatus(workDir: string): Promise<unknown> {
+  async gitPush(workDir: string): Promise<GitActionResult> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/push?workDir=${encodeURIComponent(workDir)}`, {
+      method: "POST",
+      headers: this.authHeaders,
+    });
+    return res.json();
+  }
+
+  async gitCommit(workDir: string, message: string, files?: string[]): Promise<GitActionResult> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/commit?workDir=${encodeURIComponent(workDir)}`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ message, files: files ?? [] }),
+    });
+    return res.json();
+  }
+
+  async gitStash(workDir: string): Promise<GitActionResult> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/stash?workDir=${encodeURIComponent(workDir)}`, {
+      method: "POST",
+      headers: this.authHeaders,
+    });
+    return res.json();
+  }
+
+  async gitStashPop(workDir: string): Promise<GitActionResult> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/stash-pop?workDir=${encodeURIComponent(workDir)}`, {
+      method: "POST",
+      headers: this.authHeaders,
+    });
+    return res.json();
+  }
+
+  async gitRevert(workDir: string, hash: string): Promise<GitActionResult> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/revert?workDir=${encodeURIComponent(workDir)}`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ hash }),
+    });
+    return res.json();
+  }
+
+  async gitStatus(workDir: string): Promise<GitStatusRow> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/git/status?workDir=${encodeURIComponent(workDir)}`, {
       headers: this.authHeaders,
+    });
+    return res.json();
+  }
+  async gitLog(workDir: string, limit = 10): Promise<GitCommitRow[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/log?workDir=${encodeURIComponent(workDir)}&limit=${encodeURIComponent(String(limit))}`, {
+      headers: this.authHeaders,
+    });
+    return res.json();
+  }
+  async gitProviderStatus(): Promise<GitProviderStatusRow[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/provider/status`, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    return Array.isArray(data?.providers) ? data.providers : [];
+  }
+  async gitProviderDetect(): Promise<GitProviderStatusRow[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/provider/detect`, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `git/provider/detect ${res.status}`);
+    return Array.isArray(data?.providers) ? data.providers : [];
+  }
+  async gitProviderSetup(params: {
+    provider: "github" | "gitlab";
+    token: string;
+  }): Promise<{ ok: boolean; username?: string; host?: string; provider?: string; error?: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/provider/setup`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+    return res.json();
+  }
+  async gitProviderRepos(host: string): Promise<GitRemoteRepo[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/provider/repos?host=${encodeURIComponent(host)}&per_page=100`, {
+      headers: this.authHeaders,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `git/provider/repos ${res.status}`);
+    return Array.isArray(data?.repos) ? data.repos : [];
+  }
+  async gitProviderRemove(host: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/provider/${encodeURIComponent(host)}`, {
+      method: "DELETE",
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`git/provider/${host} ${res.status}`);
+  }
+  async cloneRepo(url: string): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/repos/clone`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ url, autoInit: true }),
     });
     return res.json();
   }
