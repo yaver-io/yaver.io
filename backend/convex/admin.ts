@@ -267,6 +267,110 @@ export const clearTable = mutation({
   },
 });
 
+/** Inspect one active guest grant by host+guest email. CLI/dashboard only. */
+export const getActiveGuestGrantByEmails = query({
+  args: {
+    hostEmail: v.string(),
+    guestEmail: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const host = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", args.hostEmail.trim().toLowerCase()))
+      .unique();
+    const guest = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", args.guestEmail.trim().toLowerCase()))
+      .unique();
+    if (!host || !guest) {
+      return {
+        hostFound: !!host,
+        guestFound: !!guest,
+        guestAccess: null,
+        infraGrant: null,
+      };
+    }
+
+    const guestAccess = await ctx.db
+      .query("guestAccess")
+      .withIndex("by_host_guest", (q) => q.eq("hostUserId", host._id).eq("guestUserId", guest._id))
+      .filter((q) => q.eq(q.field("revokedAt"), undefined))
+      .first();
+
+    const infraGrant = await ctx.db
+      .query("infraAccessGrants")
+      .withIndex("by_host_guest", (q) => q.eq("hostUserId", host._id).eq("guestUserId", guest._id))
+      .filter((q) => q.neq(q.field("status"), "revoked"))
+      .first();
+
+    return {
+      hostFound: true,
+      guestFound: true,
+      hostUserId: host._id,
+      guestUserId: guest._id,
+      guestAccess,
+      infraGrant,
+    };
+  },
+});
+
+/** Patch one active guest grant in place by host+guest email. CLI/dashboard only. */
+export const patchActiveGuestGrantByEmails = mutation({
+  args: {
+    hostEmail: v.string(),
+    guestEmail: v.string(),
+    scope: v.optional(v.union(v.literal("full"), v.literal("feedback-only"), v.literal("sdk-project"))),
+    allowedProjects: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const host = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", args.hostEmail.trim().toLowerCase()))
+      .unique();
+    if (!host) throw new Error("Host user not found");
+
+    const guest = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", args.guestEmail.trim().toLowerCase()))
+      .unique();
+    if (!guest) throw new Error("Guest user not found");
+
+    const guestAccess = await ctx.db
+      .query("guestAccess")
+      .withIndex("by_host_guest", (q) => q.eq("hostUserId", host._id).eq("guestUserId", guest._id))
+      .filter((q) => q.eq(q.field("revokedAt"), undefined))
+      .first();
+    if (!guestAccess) throw new Error("Active guestAccess row not found");
+
+    const patch: Record<string, unknown> = {};
+    if (args.scope !== undefined) patch.scope = args.scope;
+    if (args.allowedProjects !== undefined) {
+      const cleaned = args.allowedProjects.map((s) => s.trim()).filter(Boolean);
+      patch.allowedProjects = cleaned.length > 0 ? cleaned : undefined;
+    }
+    if (Object.keys(patch).length === 0) {
+      throw new Error("Nothing to patch");
+    }
+
+    await ctx.db.patch(guestAccess._id, patch);
+
+    const updatedGuestAccess = await ctx.db.get(guestAccess._id);
+    const infraGrant = await ctx.db
+      .query("infraAccessGrants")
+      .withIndex("by_host_guest", (q) => q.eq("hostUserId", host._id).eq("guestUserId", guest._id))
+      .filter((q) => q.neq(q.field("status"), "revoked"))
+      .first();
+
+    return {
+      ok: true,
+      hostEmail: host.email,
+      guestEmail: guest.email,
+      guestAccess: updatedGuestAccess,
+      infraGrant,
+    };
+  },
+});
+
 /** Delete a user and ALL their data by user _id. */
 export const deleteUserData = mutation({
   args: { userId: v.id("users") },

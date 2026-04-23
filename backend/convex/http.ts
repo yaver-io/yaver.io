@@ -22,8 +22,22 @@ function errorResponse(message: string, status = 400): Response {
   return jsonResponse({ error: message }, status);
 }
 
+function errorMessageIncludes(err: any, code: string): boolean {
+  return String(err?.message || "").includes(code);
+}
+
 function isCloudPreviewUser(email?: string | null): boolean {
-  return (email ?? "").trim() !== "";
+  const normalized = (email ?? "").trim().toLowerCase();
+  if (!normalized) return false;
+  const raw =
+    process.env.YAVER_CLOUD_PREVIEW_EMAILS ||
+    process.env.NEXT_PUBLIC_YAVER_CLOUD_PREVIEW_EMAILS ||
+    CLOUD_PREVIEW_EMAIL;
+  const allowed = raw
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+  return allowed.includes(normalized);
 }
 
 function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
@@ -316,6 +330,7 @@ for (const path of [
   "/auth/logout", "/auth/update-profile", "/auth/delete-account",
   "/auth/forgot-password", "/auth/reset-password", "/auth/change-password",
   "/auth/verify-totp", "/auth/providers", "/auth/oauth-link/start", "/auth/oauth-link/complete",
+  "/auth/test/oauth-signin",
   "/auth/device-code/authorize",
   "/devices/list", "/devices/owner-by-hardware", "/config", "/settings", "/packages",
   "/billing/yaver-cloud/checkout",
@@ -323,6 +338,10 @@ for (const path of [
   "/guests/invite", "/guests/accept", "/guests/accept-code",
   "/guests/find-by-code", "/guests/revoke", "/guests/list", "/guests/hosts",
   "/guests/allowed", "/guests/config", "/guests/usage",
+  "/host-share/create", "/host-share/invite", "/host-share/join",
+  "/host-share/revoke", "/host-share/list", "/host-share/sessions",
+  "/host-share/access", "/host-share/touch",
+  "/host-share/peer-access",
   "/users/lookup",
 ]) {
   http.route({
@@ -705,14 +724,14 @@ http.route({
       }
       return jsonResponse(result);
     } catch (e: any) {
-      if (e?.message === "Unauthorized") return errorResponse("Unauthorized", 401);
-      if (e?.message === "ONLY_IDENTITY") {
+      if (errorMessageIncludes(e, "Unauthorized")) return errorResponse("Unauthorized", 401);
+      if (errorMessageIncludes(e, "ONLY_IDENTITY")) {
         return errorResponse("Refusing to unlink the only sign-in method — add another provider first.", 409);
       }
-      if (e?.message === "TOTP_REQUIRED") {
+      if (errorMessageIncludes(e, "TOTP_REQUIRED")) {
         return errorResponse("TOTP code required (2FA is enabled on this account).", 412);
       }
-      if (e?.message === "INVALID_TOTP") {
+      if (errorMessageIncludes(e, "INVALID_TOTP")) {
         return errorResponse("Invalid 2FA code.", 403);
       }
       return errorResponse(e?.message || "Failed to unlink provider", 400);
@@ -737,17 +756,17 @@ http.route({
       });
       return jsonResponse(result);
     } catch (e: any) {
-      if (e?.message === "Unauthorized") return errorResponse("Unauthorized", 401);
-      if (e?.message === "TOTP_REQUIRED") {
+      if (errorMessageIncludes(e, "Unauthorized")) return errorResponse("Unauthorized", 401);
+      if (errorMessageIncludes(e, "TOTP_REQUIRED")) {
         return errorResponse("TOTP code required (2FA is enabled on this account).", 412);
       }
-      if (e?.message === "INVALID_TOTP") {
+      if (errorMessageIncludes(e, "INVALID_TOTP")) {
         return errorResponse("Invalid 2FA code.", 403);
       }
-      if (e?.message === "TOO_MANY_PENDING_MERGES") {
+      if (errorMessageIncludes(e, "TOO_MANY_PENDING_MERGES")) {
         return errorResponse("Too many pending merge intents. Cancel an existing one first.", 429);
       }
-      if (e?.message === "MERGE_RATE_LIMIT") {
+      if (errorMessageIncludes(e, "MERGE_RATE_LIMIT")) {
         return errorResponse("Too many merge requests in the last hour. Try again later.", 429);
       }
       return errorResponse(e?.message || "Failed to start merge", 400);
@@ -792,16 +811,16 @@ http.route({
       });
       return jsonResponse(result);
     } catch (e: any) {
-      if (e?.message === "Unauthorized") return errorResponse("Unauthorized", 401);
-      if (e?.message === "INVALID_MERGE_TOKEN") return errorResponse("Invalid merge token", 404);
-      if (e?.message === "MERGE_ALREADY_RESOLVED") return errorResponse("Merge already completed or cancelled", 409);
-      if (e?.message === "MERGE_TOKEN_EXPIRED") return errorResponse("Merge token expired", 410);
-      if (e?.message === "CANNOT_MERGE_SELF") return errorResponse("Cannot merge an account into itself", 400);
-      if (e?.message === "TARGET_USER_NOT_FOUND") return errorResponse("Target account no longer exists", 404);
-      if (e?.message === "TOTP_REQUIRED") {
+      if (errorMessageIncludes(e, "Unauthorized")) return errorResponse("Unauthorized", 401);
+      if (errorMessageIncludes(e, "INVALID_MERGE_TOKEN")) return errorResponse("Invalid merge token", 404);
+      if (errorMessageIncludes(e, "MERGE_ALREADY_RESOLVED")) return errorResponse("Merge already completed or cancelled", 409);
+      if (errorMessageIncludes(e, "MERGE_TOKEN_EXPIRED")) return errorResponse("Merge token expired", 410);
+      if (errorMessageIncludes(e, "CANNOT_MERGE_SELF")) return errorResponse("Cannot merge an account into itself", 400);
+      if (errorMessageIncludes(e, "TARGET_USER_NOT_FOUND")) return errorResponse("Target account no longer exists", 404);
+      if (errorMessageIncludes(e, "TOTP_REQUIRED")) {
         return errorResponse("TOTP code required (source account has 2FA enabled).", 412);
       }
-      if (e?.message === "INVALID_TOTP") {
+      if (errorMessageIncludes(e, "INVALID_TOTP")) {
         return errorResponse("Invalid 2FA code.", 403);
       }
       return errorResponse(e?.message || "Merge failed", 400);
@@ -845,6 +864,38 @@ http.route({
       expiresAt: body.expiresAt,
     });
     return jsonResponse({ sessionId });
+  }),
+});
+
+/** POST /auth/test/oauth-signin — Test-only OAuth shortcut for mocked-provider CI. */
+http.route({
+  path: "/auth/test/oauth-signin",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (!parseBooleanEnv(process.env.TEST_MODE_ENABLED, false)) {
+      return errorResponse("Not found", 404);
+    }
+
+    const body = await request.json().catch(() => ({}));
+    if (!body?.provider || !body?.providerId || !body?.email) {
+      return errorResponse("provider, providerId, email required", 400);
+    }
+
+    const provider = String(body.provider).trim();
+    if (!["google", "microsoft", "apple", "github", "gitlab", "email"].includes(provider)) {
+      return errorResponse("unknown provider", 400);
+    }
+
+    const userId = await ctx.runMutation(api.auth.createOrUpdateUser, {
+      email: String(body.email).trim().toLowerCase(),
+      fullName: typeof body.fullName === "string" ? body.fullName.trim() : "",
+      provider: provider as "google" | "microsoft" | "apple" | "github" | "gitlab" | "email",
+      providerId: String(body.providerId).trim(),
+      avatarUrl: typeof body.avatarUrl === "string" ? body.avatarUrl : undefined,
+    });
+
+    const token = await createSessionToken(ctx, userId, typeof body.deviceId === "string" ? body.deviceId : undefined);
+    return jsonResponse({ ok: true, token, userId: String(userId) });
   }),
 });
 
@@ -1075,6 +1126,7 @@ http.route({
       publicKey: body.publicKey || undefined,
       quicHost: body.quicHost,
       quicPort: body.quicPort,
+      publicEndpoints: Array.isArray(body.publicEndpoints) ? body.publicEndpoints : undefined,
       hardwareId: body.hardwareId || undefined,
     });
 
@@ -1194,6 +1246,7 @@ http.route({
       // at all — then undefined is correct and the mutation leaves the
       // stored list untouched.
       localIps: Array.isArray(body.localIps) ? body.localIps : undefined,
+      publicEndpoints: Array.isArray(body.publicEndpoints) ? body.publicEndpoints : undefined,
       hardwareId: body.hardwareId || undefined,
       deviceClass: body.deviceClass || undefined,
       edgeProfile: body.edgeProfile || undefined,
@@ -2201,9 +2254,10 @@ http.route({
       case "subscription_updated":
       case "subscription_resumed": {
         const productType = payload.meta?.custom_data?.product_type || "relay";
+        const machineType = payload.meta?.custom_data?.machine_type === "gpu" ? "gpu" : "cpu";
         const isCloudPreviewProduct = productType === "yaver-cloud";
         const plan = isCloudPreviewProduct
-          ? "yaver-cloud-preview"
+          ? `yaver-cloud-${machineType}`
           : data.variant_name?.includes("yearly")
             ? "relay-yearly"
             : "relay-monthly";
@@ -2226,9 +2280,9 @@ http.route({
           if (productType === "cpu" || productType === "gpu" || isCloudPreviewProduct) {
             // Cloud dev machine — create and provision
             const teamId = payload.meta?.custom_data?.team_id;
-            const machineId = await ctx.runMutation(api.cloudMachines.create, {
+            const machineId = await ctx.runMutation(api.cloudMachines.ensureForSubscription, {
               userId: user._id,
-              machineType: productType === "gpu" ? "gpu" : "cpu",
+              machineType: productType === "gpu" ? "gpu" : machineType,
               teamId,
               region,
               subscriptionId: subId,
@@ -2261,28 +2315,43 @@ http.route({
 
       case "subscription_cancelled":
       case "subscription_expired": {
-        await ctx.runMutation(internal.subscriptions.cancel, { lemonSqueezyId });
+        const sub = await ctx.runMutation(internal.subscriptions.cancel, { lemonSqueezyId });
 
-        // If expired (past grace period), deprovision the relay
-        if (eventName === "subscription_expired") {
-          const relay = await ctx.runQuery(internal.managedRelays.getByUserInternal, { userId: user._id });
-          if (relay && relay.hetznerServerId && relay.domain) {
-            await ctx.scheduler.runAfter(0, internal.provisionRelay.deprovision, {
-              relayId: relay._id,
-              hetznerServerId: relay.hetznerServerId,
-              domain: relay.domain,
-            });
+        if (sub && eventName === "subscription_expired") {
+          const [relays, machines] = await Promise.all([
+            ctx.runQuery(internal.managedRelays.listBySubscription, { subscriptionId: sub }),
+            ctx.runQuery(internal.cloudMachines.listBySubscription, { subscriptionId: sub }),
+          ]);
+
+          for (const relay of relays) {
+            if (relay.hetznerServerId && relay.domain) {
+              await ctx.scheduler.runAfter(0, internal.provisionRelay.deprovision, {
+                relayId: relay._id,
+                hetznerServerId: relay.hetznerServerId,
+                domain: relay.domain,
+              });
+            }
+          }
+
+          for (const machine of machines) {
+            if (machine.status !== "stopped" && machine.status !== "stopping") {
+              await ctx.runMutation(api.cloudMachines.deprovision, {
+                machineId: machine._id,
+              });
+            }
           }
         }
         break;
       }
 
       case "subscription_payment_failed": {
+        const productType = payload.meta?.custom_data?.product_type || "relay";
+        const machineType = payload.meta?.custom_data?.machine_type === "gpu" ? "gpu" : "cpu";
         await ctx.runMutation(internal.subscriptions.upsertFromWebhook, {
           lemonSqueezyId,
           lemonSqueezyCustomerId: customerId,
           userId: user._id,
-          plan: "relay-monthly",
+          plan: productType === "relay" ? "relay-monthly" : `yaver-cloud-${machineType}`,
           status: "past_due",
           currentPeriodEnd: Date.now(),
         });
@@ -2305,7 +2374,7 @@ http.route({
       return errorResponse("Yaver Cloud is private-preview only on this account", 403);
     }
 
-    let body: { region?: string } = {};
+    let body: { region?: string; machineType?: string } = {};
     try {
       body = await request.json();
     } catch {
@@ -2319,6 +2388,7 @@ http.route({
         custom: {
           user_email: session.email,
           product_type: "yaver-cloud",
+          machine_type: body.machineType === "gpu" ? "gpu" : "cpu",
           region,
         },
       });
@@ -2375,9 +2445,10 @@ http.route({
     const userDocId = await ctx.runQuery(api.auth.getUserDocId, { tokenHash });
     if (!userDocId) return errorResponse("User not found", 404);
 
-    const [subscription, relay] = await Promise.all([
+    const [subscription, relay, machines] = await Promise.all([
       ctx.runQuery(api.subscriptions.getByUser, { userId: userDocId }),
       ctx.runQuery(api.managedRelays.getByUser, { userId: userDocId }),
+      ctx.runQuery(api.cloudMachines.listForUser, { userId: userDocId }),
     ]);
 
     return jsonResponse({
@@ -2394,6 +2465,18 @@ http.route({
         quicPort: relay.quicPort,
         httpPort: relay.httpPort,
       } : null,
+      machines: Array.isArray(machines)
+        ? machines.map((machine) => ({
+            id: String(machine._id),
+            machineType: machine.machineType,
+            status: machine.status,
+            hostname: machine.hostname,
+            serverIp: machine.serverIp,
+            region: machine.region,
+            errorMessage: machine.errorMessage,
+            subscriptionId: machine.subscriptionId ? String(machine.subscriptionId) : null,
+          }))
+        : [],
     });
   }),
 });
@@ -2775,6 +2858,68 @@ http.route({
 });
 
 /**
+ * POST /guests/sdk-token — Mint a delegated Feedback SDK token for a repo-scoped
+ * guest grant. Bearer auth: guest's normal session token.
+ * Body: { hostUserId, targetDeviceId }
+ */
+http.route({
+  path: "/guests/sdk-token",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const user = await authenticateRequest(ctx, request);
+    if (!user) return errorResponse("Unauthorized", 401);
+
+    let body: { hostUserId?: string; targetDeviceId?: string };
+    try {
+      body = await request.json();
+    } catch {
+      return errorResponse("Invalid JSON", 400);
+    }
+    if (!body.hostUserId) return errorResponse("hostUserId is required");
+    if (!body.targetDeviceId) return errorResponse("targetDeviceId is required");
+
+    const authHeader = request.headers.get("Authorization")!;
+    const guestTokenHash = await sha256Hex(authHeader.slice(7));
+
+    const tokenBytes = new Uint8Array(32);
+    crypto.getRandomValues(tokenBytes);
+    const sdkToken = Array.from(tokenBytes)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    const sdkTokenHash = await sha256Hex(sdkToken);
+
+    const result = await ctx.runMutation((api as any).guests.mintGuestFeedbackSdkToken, {
+      guestTokenHash,
+      sdkTokenHash,
+      hostUserId: body.hostUserId,
+      targetDeviceId: body.targetDeviceId,
+    });
+
+    return jsonResponse({
+      token: sdkToken,
+      expiresAt: result.expiresAt,
+      allowedProjects: result.allowedProjects ?? [],
+      sourceSurface: "feedback-sdk",
+    });
+  }),
+});
+
+http.route({
+  path: "/guests/sdk-token",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      },
+    });
+  }),
+});
+
+/**
  * POST /sdk/token/rotate — Rotate an SDK token.
  * Bearer auth: current SDK token.
  * Returns: { token, expiresAt } (new token; old valid for 5min grace).
@@ -2920,6 +3065,13 @@ http.route({
     const email = typeof body.email === "string" ? body.email : undefined;
     const userId = typeof body.userId === "string" ? body.userId : undefined;
     const proposedDeviceIds = Array.isArray(body.deviceIds) ? body.deviceIds.map(String) : undefined;
+    const scope =
+      body.scope === "full" || body.scope === "feedback-only" || body.scope === "sdk-project"
+        ? body.scope
+        : undefined;
+    const allowedProjects = Array.isArray(body.allowedProjects)
+      ? body.allowedProjects.map(String)
+      : undefined;
     if (!email && !userId) {
       return errorResponse("email or userId is required");
     }
@@ -2930,6 +3082,8 @@ http.route({
         guestEmail: email,
         guestUserId: userId,
         proposedDeviceIds,
+        scope,
+        allowedProjects,
       });
       return jsonResponse({
         ok: true,
@@ -3173,6 +3327,10 @@ http.route({
       await ctx.runMutation(api.guests.updateGuestConfig, {
         tokenHash,
         guestEmail: body.email,
+        scope:
+          body.scope === "full" || body.scope === "feedback-only" || body.scope === "sdk-project"
+            ? body.scope
+            : undefined,
         dailyTokenLimit: body.dailyTokenLimit,
         allowedRunners: body.allowedRunners,
         usageMode: body.usageMode,
@@ -3191,6 +3349,7 @@ http.route({
         ramLimitMb: body.ramLimitMb,
         priorityMode: body.priorityMode,
         schedule: body.schedule,
+        allowedProjects: Array.isArray(body.allowedProjects) ? body.allowedProjects.map(String) : undefined,
       });
       return jsonResponse({ ok: true });
     } catch (e: any) {
@@ -3247,6 +3406,239 @@ http.route({
 
     const usage = await ctx.runQuery(api.guests.getGuestUsage, { tokenHash, date });
     return jsonResponse({ usage });
+  }),
+});
+
+// ── Host-Share Leases ───────────────────────────────────────────────
+
+const hostShareApi = (api as any).hostShare;
+
+/** POST /host-share/create — Create a host-backed coding invite. */
+http.route({
+  path: "/host-share/create",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json();
+
+    try {
+      const result = await ctx.runMutation(hostShareApi.createInvite, {
+        tokenHash,
+        guestEmail: typeof body.guestEmail === "string" ? body.guestEmail : undefined,
+        guestUserId: typeof body.guestUserId === "string" ? body.guestUserId : undefined,
+        label: typeof body.label === "string" ? body.label : undefined,
+        hostDeviceId: typeof body.hostDeviceId === "string" ? body.hostDeviceId : undefined,
+        inviteTtlMinutes: typeof body.inviteTtlMinutes === "number" ? body.inviteTtlMinutes : undefined,
+        sessionTtlMinutes: typeof body.sessionTtlMinutes === "number" ? body.sessionTtlMinutes : undefined,
+        idleTimeoutMinutes: typeof body.idleTimeoutMinutes === "number" ? body.idleTimeoutMinutes : undefined,
+        toolingPreset: typeof body.toolingPreset === "string" ? body.toolingPreset : undefined,
+        resourcePreset: typeof body.resourcePreset === "string" ? body.resourcePreset : undefined,
+        allowInfra: typeof body.allowInfra === "boolean" ? body.allowInfra : undefined,
+        allowTerminal: typeof body.allowTerminal === "boolean" ? body.allowTerminal : undefined,
+        allowTunnel: typeof body.allowTunnel === "boolean" ? body.allowTunnel : undefined,
+        useHostAgentTools: typeof body.useHostAgentTools === "boolean" ? body.useHostAgentTools : undefined,
+        useHostInfra: typeof body.useHostInfra === "boolean" ? body.useHostInfra : undefined,
+        allowedRunners: Array.isArray(body.allowedRunners) ? body.allowedRunners.map(String) : undefined,
+        allowedProjects: Array.isArray(body.allowedProjects) ? body.allowedProjects.map(String) : undefined,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to create host-share invite", 400);
+    }
+  }),
+});
+
+/** GET /host-share/invite?code=XXXX — Preview a host-share invite. */
+http.route({
+  path: "/host-share/invite",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const url = new URL(request.url);
+    const inviteCode = url.searchParams.get("code") ?? "";
+    if (!inviteCode) return errorResponse("code is required");
+    try {
+      const invite = await ctx.runQuery(hostShareApi.findInviteByCode, { tokenHash, inviteCode });
+      if (!invite) return errorResponse("Invite not found or expired", 404);
+      return jsonResponse(invite);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to load host-share invite", 400);
+    }
+  }),
+});
+
+/** POST /host-share/join — Redeem a host-share invite by code. */
+http.route({
+  path: "/host-share/join",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json();
+    if (typeof body.code !== "string" || !body.code.trim()) return errorResponse("code is required");
+    try {
+      const result = await ctx.runMutation(hostShareApi.joinByCode, {
+        tokenHash,
+        inviteCode: body.code,
+        guestDeviceId: typeof body.guestDeviceId === "string" ? body.guestDeviceId : undefined,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to join host-share session", 400);
+    }
+  }),
+});
+
+/** POST /host-share/revoke — Revoke a host-share invite by code. */
+http.route({
+  path: "/host-share/revoke",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json();
+    if (typeof body.code !== "string" || !body.code.trim()) return errorResponse("code is required");
+    try {
+      const result = await ctx.runMutation(hostShareApi.revokeInvite, {
+        tokenHash,
+        inviteCode: body.code,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to revoke host-share invite", 400);
+    }
+  }),
+});
+
+/** GET /host-share/list?role=host|guest — List invites for the caller. */
+http.route({
+  path: "/host-share/list",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const role = (new URL(request.url).searchParams.get("role") ?? "host") as "host" | "guest";
+    const invites = await ctx.runQuery(hostShareApi.listInvites, { tokenHash, role });
+    return jsonResponse({ invites });
+  }),
+});
+
+/** GET /host-share/sessions?role=host|guest — List active sessions for the caller. */
+http.route({
+  path: "/host-share/sessions",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const role = (new URL(request.url).searchParams.get("role") ?? "host") as "host" | "guest";
+    const sessions = await ctx.runQuery(hostShareApi.listSessions, { tokenHash, role });
+    return jsonResponse({ sessions });
+  }),
+});
+
+/** POST /host-share/end — End an active host-share session by session id. */
+http.route({
+  path: "/host-share/end",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json();
+    if (typeof body.sessionId !== "string" || !body.sessionId.trim()) {
+      return errorResponse("sessionId is required");
+    }
+    try {
+      const result = await ctx.runMutation(hostShareApi.endSession, {
+        tokenHash,
+        sessionId: body.sessionId,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to end host-share session", 400);
+    }
+  }),
+});
+
+/** GET /host-share/access?guestUserId=...&deviceId=... — Resolve active host-share access on this host/device. */
+http.route({
+  path: "/host-share/access",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const url = new URL(request.url);
+    const guestUserId = url.searchParams.get("guestUserId") ?? "";
+    const deviceId = url.searchParams.get("deviceId") ?? undefined;
+    if (!guestUserId) return errorResponse("guestUserId is required");
+    try {
+      const access = await ctx.runQuery(hostShareApi.getAccessForHostDevice, {
+        tokenHash,
+        guestUserId,
+        deviceId,
+      });
+      if (!access) return jsonResponse({ access: null });
+      return jsonResponse({ access });
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to resolve host-share access", 400);
+    }
+  }),
+});
+
+/** POST /host-share/touch — Refresh last-activity timestamp for an active session. */
+http.route({
+  path: "/host-share/touch",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json();
+    if (typeof body.sessionId !== "string" || !body.sessionId.trim()) return errorResponse("sessionId is required");
+    try {
+      const result = await ctx.runMutation(hostShareApi.touchSessionActivity, {
+        tokenHash,
+        sessionId: body.sessionId,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to touch host-share session", 400);
+    }
+  }),
+});
+
+/** GET /host-share/peer-access?hostUserId=...&deviceId=... — Resolve active host-share access on guest-owned agent for the host caller. */
+http.route({
+  path: "/host-share/peer-access",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const url = new URL(request.url);
+    const hostUserId = url.searchParams.get("hostUserId") ?? "";
+    const deviceId = url.searchParams.get("deviceId") ?? undefined;
+    if (!hostUserId) return errorResponse("hostUserId is required");
+    try {
+      const access = await ctx.runQuery(hostShareApi.getAccessForGuestDevice, {
+        tokenHash,
+        hostUserId,
+        deviceId,
+      });
+      if (!access) return jsonResponse({ access: null });
+      return jsonResponse({ access });
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to resolve host-share peer access", 400);
+    }
   }),
 });
 

@@ -15,7 +15,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
-import { quicClient, type MachineInfo } from "../../src/lib/quic";
+import { quicClient, type HealthMonitorTarget, type MachineInfo } from "../../src/lib/quic";
 import { describeConnectionStatus } from "../../src/lib/connection";
 import {
   listGuests,
@@ -61,20 +61,6 @@ interface QualityResult {
   passed?: boolean;
   exitCode?: number;
   startedAt?: string;
-}
-
-// ── Health Monitor types ───────────────────────────────────────────
-
-interface HealthTarget {
-  id: string;
-  url: string;
-  label?: string;
-  status?: string;
-  statusCode?: number;
-  responseMs?: number;
-  uptimePercent?: number;
-  lastChecked?: string;
-  history?: { status: string; responseMs: number; time: string }[];
 }
 
 // ── Git types ──────────────────────────────────────────────────────
@@ -295,7 +281,7 @@ function formatHealthTime(time: string) {
 }
 
 function HealthMonitorSection({ c }: { c: ReturnType<typeof useColors> }) {
-  const [targets, setTargets] = useState<HealthTarget[]>([]);
+  const [targets, setTargets] = useState<HealthMonitorTarget[]>([]);
   const [loading, setLoading] = useState(true);
   const [addingUrl, setAddingUrl] = useState(false);
   const [newUrl, setNewUrl] = useState("");
@@ -432,8 +418,15 @@ function HealthMonitorSection({ c }: { c: ReturnType<typeof useColors> }) {
 
       {/* Target cards — task-card style */}
       {targets.map((t) => {
-        const isUp = t.status === "up" || t.statusCode === 200;
-        const statusKey = t.status ? (isUp ? "up" : "down") : "unknown";
+        const statusKey =
+          t.status === "warning"
+            ? "warning"
+            : t.status === "up" || t.statusCode === 200
+            ? "up"
+            : t.status === "down"
+            ? "down"
+            : t.status || "unknown";
+        const isUp = statusKey === "up";
         const statusColor = HEALTH_STATUS_COLORS[statusKey] || HEALTH_STATUS_COLORS.unknown;
         const isExpanded = expandedTarget === t.id;
         const isChecking = checkingId === t.id;
@@ -526,10 +519,15 @@ function HealthMonitorSection({ c }: { c: ReturnType<typeof useColors> }) {
                       Recent Checks
                     </Text>
                     {t.history.slice(0, 10).map((h, i) => {
-                      const hUp = h.status === "up";
+                      const hColor =
+                        h.status === "warning"
+                          ? "#f59e0b"
+                          : h.status === "up"
+                          ? "#22c55e"
+                          : "#ef4444";
                       return (
                         <View key={i} style={hs.historyRow}>
-                          <View style={[hs.historyDot, { backgroundColor: hUp ? "#22c55e" : "#ef4444" }]} />
+                          <View style={[hs.historyDot, { backgroundColor: hColor }]} />
                           <Text style={{ color: c.textPrimary, fontSize: 12, flex: 1 }}>
                             {h.responseMs}ms
                           </Text>
@@ -956,6 +954,55 @@ function RepoSyncSection({ c }: { c: ReturnType<typeof useColors> }) {
     }
   }, [loadData]);
 
+  const handleDeleteRepo = useCallback((repo: RepoInfoItem) => {
+    Alert.alert(
+      "Delete Remote Repo",
+      `Delete ${repo.name} from the connected machine?\n\nThis removes the source code directory on that machine.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            setActionLoading(`delete-${repo.path}`);
+            try {
+              await quicClient.deleteRepo(repo.path);
+              if (expandedRepo === repo.path) setExpandedRepo(null);
+              await loadData();
+            } catch (e) {
+              Alert.alert("Delete Failed", e instanceof Error ? e.message : "Unknown error");
+            } finally {
+              setActionLoading(null);
+            }
+          },
+        },
+      ],
+    );
+  }, [expandedRepo, loadData]);
+
+  const handleWorkspaceBootstrap = useCallback(async (repo: RepoInfoItem) => {
+    setActionLoading(`workspace-${repo.path}`);
+    try {
+      const started = await quicClient.startExec("yaver workspace init --scaffold", {
+        workDir: repo.path,
+        timeout: 10 * 60_000,
+      });
+      const exec = await quicClient.waitForExec(started.execId, { timeoutMs: 10 * 60_000, pollMs: 1000 });
+      if (exec.exitCode && exec.exitCode !== 0) {
+        throw new Error(exec.stderr || exec.stdout || "workspace bootstrap failed");
+      }
+      Alert.alert(
+        "Workspace Ready",
+        exec.stdout?.trim() || `Scaffolded and initialized workspace in ${repo.name}.`,
+      );
+      await loadData();
+    } catch (e) {
+      Alert.alert("Workspace Bootstrap Failed", e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setActionLoading(null);
+    }
+  }, [loadData]);
+
   const handleAddCred = useCallback(async () => {
     if (!credHost.trim() || !credToken.trim()) return;
     setActionLoading("AddCred");
@@ -1206,6 +1253,30 @@ function RepoSyncSection({ c }: { c: ReturnType<typeof useColors> }) {
                       <Text style={[s.actionBtnText, { color: c.textPrimary }]}>Pull</Text>
                     )}
                   </Pressable>
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+                    <Pressable
+                      style={[s.actionBtn, { backgroundColor: c.bgCard, borderWidth: 1, borderColor: c.border }]}
+                      onPress={() => handleWorkspaceBootstrap(repo)}
+                      disabled={actionLoading === `workspace-${repo.path}`}
+                    >
+                      {actionLoading === `workspace-${repo.path}` ? (
+                        <ActivityIndicator size="small" color={c.accent} />
+                      ) : (
+                        <Text style={[s.actionBtnText, { color: c.textPrimary }]}>Workspace Init</Text>
+                      )}
+                    </Pressable>
+                    <Pressable
+                      style={[s.actionBtn, { backgroundColor: "#7f1d1d", borderWidth: 1, borderColor: "#991b1b" }]}
+                      onPress={() => handleDeleteRepo(repo)}
+                      disabled={actionLoading === `delete-${repo.path}`}
+                    >
+                      {actionLoading === `delete-${repo.path}` ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={[s.actionBtnText, { color: "#fff" }]}>Delete Remote</Text>
+                      )}
+                    </Pressable>
+                  </View>
                 </View>
               )}
             </View>

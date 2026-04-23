@@ -27,6 +27,7 @@ import type * as downloads from "../downloads.js";
 import type * as edgePlacement from "../edgePlacement.js";
 import type * as email from "../email.js";
 import type * as guests from "../guests.js";
+import type * as hostShare from "../hostShare.js";
 import type * as http from "../http.js";
 import type * as managedRelays from "../managedRelays.js";
 import type * as mobileStreamLogs from "../mobileStreamLogs.js";
@@ -69,6 +70,7 @@ declare const fullApi: ApiFromModules<{
   edgePlacement: typeof edgePlacement;
   email: typeof email;
   guests: typeof guests;
+  hostShare: typeof hostShare;
   http: typeof http;
   managedRelays: typeof managedRelays;
   mobileStreamLogs: typeof mobileStreamLogs;

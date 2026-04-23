@@ -705,8 +705,8 @@ export async function createLocalPhoneProject(spec: PhoneCreateSpec): Promise<Ph
  *  we're currently connected to. Used by the "Create project" flow in
  *  mobile/app/phone-projects.tsx when the user picks [Your Dev Machine] or
  *  [Yaver Cloud] as the start-point (roadmap §Wedge Demo). Goes through the
- *  same auth headers as the local agent; the three tiers in the Yaver-native
- *  continuum share the same owner-token model.
+ *  same auth headers as the local agent, with an optional override token for
+ *  managed-cloud or custom targets that need a different bearer.
  *
  *  Use `pushPhoneProject` when you already have a local project and want to
  *  replicate it — this is the greenfield case. */
@@ -717,9 +717,19 @@ export async function createPhoneProjectAt(
   const h = headers();
   if (!h) throw new Error("no source agent connected");
   const base = resolvePhonePushTargetBase(target);
+  const overrideToken =
+    target.kind === "yaver-cloud"
+      ? target.cloudAuthToken
+      : target.kind === "custom"
+        ? target.authToken
+        : undefined;
   const res = await fetch(`${base}/phone/projects/create`, {
     method: "POST",
-    headers: { ...h, "Content-Type": "application/json" },
+    headers: {
+      ...h,
+      ...(overrideToken ? { Authorization: `Bearer ${overrideToken}` } : {}),
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify(spec),
   });
   const body = await res.text().catch(() => "");
@@ -1308,11 +1318,8 @@ export async function promotePhoneProject(
 
 export type PhonePushTarget =
   | { kind: "dev-hw"; deviceId: string; relayHttpUrl: string }
-  // `cloudAuthToken` is the CLOUD_OWNER_TOKEN the managed cloud agent
-  // accepts via its own-token fast path. It's separate from the user's
-  // Convex OAuth session because the cloud box's ownerUserID is empty
-  // (by design — single-tenant shared-secret). Callers that already
-  // paid can cache the token after checkout succeeds.
+  // Optional auth override for legacy/shared-tenant cloud paths. Dedicated
+  // managed machines should usually accept the caller's normal Yaver session.
   | { kind: "yaver-cloud"; cloudBaseUrl?: string; cloudAuthToken?: string }
   | { kind: "custom"; baseUrl: string; authToken?: string };
 
@@ -1401,9 +1408,8 @@ export async function pushPhoneProject(
 
   const targetBase = resolveTargetBase(target);
 
-  // Swap auth header when pushing to yaver-cloud/custom with an explicit
-  // token — the managed cloud agent accepts CLOUD_OWNER_TOKEN via its
-  // own-token fast path, not the user's personal OAuth session.
+  // Swap auth header when pushing with an explicit override token. This is
+  // mainly for legacy/shared-tenant cloud paths and custom targets.
   const overrideToken =
     target.kind === "yaver-cloud"
       ? target.cloudAuthToken
@@ -1448,7 +1454,7 @@ export async function pushPhoneProject(
     }
     if (receiveRes.status === 401 || receiveRes.status === 403) {
       const hint = target.kind === "yaver-cloud"
-        ? " (pass cloudAuthToken with your CLOUD_OWNER_TOKEN)"
+        ? " (pass cloudAuthToken if this cloud target requires an override token)"
         : "";
       throw new Error(`receive failed: ${receiveRes.status} ${body}${hint}`);
     }

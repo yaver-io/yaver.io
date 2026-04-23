@@ -47,18 +47,34 @@ func boolOrDefault(v *bool, fallback bool) bool {
 	return *v
 }
 
-func loadVaultEntryOptional(name string) *VaultEntry {
-	entry, err := openVault().Get(name)
-	if err != nil || entry == nil || strings.TrimSpace(entry.Value) == "" {
-		return nil
+func openVaultOptional() (*VaultStore, error) {
+	passphrase := strings.TrimSpace(os.Getenv("YAVER_VAULT_PASSPHRASE"))
+	if passphrase == "" {
+		cfg, err := LoadConfig()
+		if err != nil || cfg == nil || strings.TrimSpace(cfg.AuthToken) == "" {
+			return nil, fmt.Errorf("not authenticated")
+		}
+		passphrase = DerivePassphraseFromToken(cfg.AuthToken)
 	}
-	return entry
+	return NewVaultStore(passphrase)
+}
+
+func loadVaultEntryOptional(name string) (*VaultEntry, error) {
+	vs, err := openVaultOptional()
+	if err != nil {
+		return nil, err
+	}
+	entry, err := vs.Get(name)
+	if err != nil || entry == nil || strings.TrimSpace(entry.Value) == "" {
+		return nil, nil
+	}
+	return entry, nil
 }
 
 func collectMachineOnboardingStatus() machineOnboardingStatus {
 	githubCred := findCredentialForHost("github.com")
 	githubProvider := findProvider("github.com")
-	githubVault := loadVaultEntryOptional("github-token")
+	githubVault, vaultErr := loadVaultEntryOptional("github-token")
 
 	gitlabHost := "gitlab.com"
 	var gitlabCred *GitCredential
@@ -79,9 +95,15 @@ func collectMachineOnboardingStatus() machineOnboardingStatus {
 	if gitlabCred == nil {
 		gitlabCred = findCredentialForHost(gitlabHost)
 	}
-	gitlabVault := loadVaultEntryOptional("gitlab-token")
+	gitlabVault, gitlabVaultErr := loadVaultEntryOptional("gitlab-token")
+	if vaultErr == nil && gitlabVaultErr != nil {
+		vaultErr = gitlabVaultErr
+	}
 
-	openAIEntry := loadVaultEntryOptional("OPENAI_API_KEY")
+	openAIEntry, openAIVaultErr := loadVaultEntryOptional("OPENAI_API_KEY")
+	if vaultErr == nil && openAIVaultErr != nil {
+		vaultErr = openAIVaultErr
+	}
 	openAISource := ""
 	openAIConfigured := false
 	if openAIEntry != nil {
@@ -172,11 +194,23 @@ func collectMachineOnboardingStatus() machineOnboardingStatus {
 		},
 	}
 
+	vaultWarning := ""
+	if vaultErr != nil {
+		vaultWarning = "Vault unavailable: " + vaultErr.Error()
+	}
+
 	for i := range out {
 		if out[i].ID == "openai" {
 			if !out[i].Configured {
 				out[i].Warning = "No OPENAI_API_KEY configured"
 				out[i].Detail = "No OPENAI_API_KEY configured"
+			}
+			if vaultWarning != "" {
+				if out[i].Warning == "" {
+					out[i].Warning = vaultWarning
+				} else {
+					out[i].Warning = out[i].Warning + "; " + vaultWarning
+				}
 			}
 			continue
 		}
@@ -194,6 +228,13 @@ func collectMachineOnboardingStatus() machineOnboardingStatus {
 		} else {
 			out[i].Warning = "Not configured"
 			out[i].Detail = "Not configured"
+		}
+		if vaultWarning != "" && !out[i].CIReady {
+			if out[i].Warning == "" {
+				out[i].Warning = vaultWarning
+			} else {
+				out[i].Warning = out[i].Warning + "; " + vaultWarning
+			}
 		}
 	}
 
@@ -245,7 +286,11 @@ func upsertGitProvider(host, provider, username, avatarURL, token string) error 
 }
 
 func setVaultEntry(name, category, value, notes string) error {
-	return openVault().Set(VaultEntry{
+	vs, err := openVaultOptional()
+	if err != nil {
+		return err
+	}
+	return vs.Set(VaultEntry{
 		Name:     name,
 		Category: category,
 		Value:    value,

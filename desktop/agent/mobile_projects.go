@@ -17,7 +17,7 @@ import (
 type MobileProject struct {
 	Name        string `json:"name"`
 	Path        string `json:"path"`
-	Framework   string `json:"framework"`            // "flutter", "expo", "react-native"
+	Framework   string `json:"framework"`            // "flutter", "expo", "react-native", "unity"
 	SDKVersion  string `json:"sdkVersion,omitempty"` // e.g. "52.0.0", "55.0.6"
 	HasDevBuild bool   `json:"hasDevBuild"`          // true if ios/ or android/ prebuild exists
 	Branch      string `json:"branch,omitempty"`
@@ -43,7 +43,8 @@ var mobileProjectCache struct {
 }
 
 // scanMobileProjects walks workspace roots looking for mobile projects.
-// Detects: pubspec.yaml (Flutter), package.json with expo/react-native.
+// Detects: pubspec.yaml (Flutter), package.json with expo/react-native,
+// and Unity projects via ProjectSettings/ProjectVersion.txt.
 // Skips: node_modules, .git, build artifacts, system dirs, caches.
 func scanMobileProjects() []MobileProject {
 	roots := projectDiscoveryRoots()
@@ -138,6 +139,13 @@ func scanMobileProjects() []MobileProject {
 						framework = "react-native"
 					}
 				}
+			case "ProjectVersion.txt":
+				if filepath.Base(dir) == "ProjectSettings" &&
+					projectFileExists(filepath.Join(dir, "ProjectSettings.asset")) &&
+					projectFileExists(filepath.Join(filepath.Dir(dir), "Packages", "manifest.json")) {
+					dir = filepath.Dir(dir)
+					framework = "unity"
+				}
 			default:
 				return nil
 			}
@@ -180,7 +188,8 @@ func scanMobileProjects() []MobileProject {
 			// Detect SDK version and dev build status
 			sdkVersion := detectExpoSDK(dir, framework)
 			hasDevBuild := fileExists(filepath.Join(dir, "ios", "Podfile")) ||
-				fileExists(filepath.Join(dir, "android", "build.gradle"))
+				fileExists(filepath.Join(dir, "android", "build.gradle")) ||
+				framework == "unity"
 
 			proj := MobileProject{
 				Name:        appName,
@@ -253,6 +262,9 @@ func dirSizeHuman(dir string) string {
 
 // detectExpoSDK reads the Expo SDK version from package.json.
 func detectExpoSDK(dir, framework string) string {
+	if framework == "unity" {
+		return detectUnityVersion(dir)
+	}
 	if framework != "expo" && framework != "react-native" {
 		return ""
 	}
@@ -272,6 +284,20 @@ func detectExpoSDK(dir, framework string) string {
 	// Strip semver prefix: "~52.0.0" → "52.0.0", "^55.0.6" → "55.0.6"
 	expoVer = strings.TrimLeft(expoVer, "~^>=<")
 	return expoVer
+}
+
+func detectUnityVersion(dir string) string {
+	data, err := os.ReadFile(filepath.Join(dir, "ProjectSettings", "ProjectVersion.txt"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "m_EditorVersion:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "m_EditorVersion:"))
+		}
+	}
+	return ""
 }
 
 // ── Startup prebuild ──────────────────────────────────────────────────
@@ -553,12 +579,15 @@ func prebuildExpoProject(p MobileProject) {
 // parseAppName reads the real app name from framework config files.
 // - Expo/RN: app.json → expo.name or name; app.config.js not parsed (JS)
 // - Flutter: pubspec.yaml → name: field
+// - Unity: ProjectSettings/ProjectSettings.asset productName
 func parseAppName(dir, framework string) string {
 	switch framework {
 	case "expo", "react-native":
 		return parseExpoAppName(dir)
 	case "flutter":
 		return parseFlutterAppName(dir)
+	case "unity":
+		return parseUnityAppName(dir)
 	}
 	return ""
 }
@@ -618,6 +647,24 @@ func parseFlutterAppName(dir string) string {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "name:") {
 			name := strings.TrimSpace(strings.TrimPrefix(line, "name:"))
+			name = strings.Trim(name, `"'`)
+			if name != "" {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+func parseUnityAppName(dir string) string {
+	data, err := os.ReadFile(filepath.Join(dir, "ProjectSettings", "ProjectSettings.asset"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "productName:") {
+			name := strings.TrimSpace(strings.TrimPrefix(line, "productName:"))
 			name = strings.Trim(name, `"'`)
 			if name != "" {
 				return name

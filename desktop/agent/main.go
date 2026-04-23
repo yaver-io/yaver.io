@@ -4574,6 +4574,7 @@ func printStatusSharing(client *http.Client, cfg *Config) {
 	}
 	fmt.Printf("  Guests: %d total, %d active\n", len(guests), activeGuests)
 	if len(guests) == 0 {
+		printStatusRunnableMachines(cfg)
 		return
 	}
 
@@ -4590,6 +4591,68 @@ func printStatusSharing(client *http.Client, cfg *Config) {
 			g.Status,
 			statusUnixMilliOrDash(since),
 			summarizeGuestAccess(cfg),
+		)
+	}
+	w.Flush()
+
+	printStatusRunnableMachines(cfg)
+}
+
+func printStatusRunnableMachines(cfg *Config) {
+	devices, err := listDevices(cfg.ConvexSiteURL, cfg.AuthToken)
+	if err != nil {
+		fmt.Printf("  Runnable machines: unavailable (%v)\n", err)
+		return
+	}
+
+	if len(devices) == 0 {
+		fmt.Println("  Runnable machines: none")
+		return
+	}
+
+	runnable := make([]DeviceInfo, 0, len(devices))
+	for _, d := range devices {
+		if strings.TrimSpace(d.DeviceID) == "" {
+			continue
+		}
+		runnable = append(runnable, d)
+	}
+	if len(runnable) == 0 {
+		fmt.Println("  Runnable machines: none")
+		return
+	}
+
+	onlineCount := 0
+	for _, d := range runnable {
+		if d.IsOnline {
+			onlineCount++
+		}
+	}
+
+	sort.Slice(runnable, func(i, j int) bool {
+		if runnable[i].IsOnline != runnable[j].IsOnline {
+			return runnable[i].IsOnline
+		}
+		if runnable[i].IsGuest != runnable[j].IsGuest {
+			return !runnable[i].IsGuest
+		}
+		return strings.ToLower(runnable[i].Name) < strings.ToLower(runnable[j].Name)
+	})
+
+	fmt.Printf("  Runnable machines: %d total, %d up\n", len(runnable), onlineCount)
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "    NAME\tSTATUS\tACCESS\tSESSION\tADDRESS")
+	for _, d := range runnable {
+		status := "down"
+		if d.IsOnline {
+			status = "up"
+		}
+		fmt.Fprintf(w, "    %s\t%s\t%s\t%s\t%s\n",
+			statusDeviceLabel(d, cfg.DeviceID),
+			status,
+			deviceAccessLabel(d),
+			deviceSessionBindingLabel(d),
+			deviceAddressLabel(d),
 		)
 	}
 	w.Flush()
@@ -5400,6 +5463,45 @@ func runDoctor() {
 		warning("sdk-manifest.json not found in cwd")
 	}
 
+	fmt.Println("\n── Unity ──")
+	check("Unity Editor")
+	if unityPath, unityVer := detectUnityEditor(); unityPath != "" {
+		if unityVer != "" && unityVer != "unknown" {
+			pass(fmt.Sprintf("%s (%s)", unityPath, unityVer))
+		} else {
+			pass(unityPath)
+		}
+	} else {
+		warning("not detected — Unity SDK feedback loop still works for source integration, but local editor/build tooling was not found")
+	}
+
+	check("Unity projects")
+	unityCount := 0
+	projectDetails := []string{}
+	for _, p := range scanMobileProjects() {
+		if p.Framework != "unity" {
+			continue
+		}
+		unityCount++
+		detail := p.Name
+		if p.SDKVersion != "" {
+			detail += " (" + p.SDKVersion + ")"
+		}
+		projectDetails = append(projectDetails, detail)
+	}
+	if unityCount == 0 {
+		warning("no Unity projects detected in discovery roots")
+	} else {
+		pass(fmt.Sprintf("%d detected — %s", unityCount, strings.Join(projectDetails, ", ")))
+	}
+
+	check("Unity fast iteration path")
+	if unityCount > 0 {
+		pass("feedback SDK + relay/tailscale/vpn can support remote vibing, content refresh, scene reload, and redeploy workflows")
+	} else {
+		warning("detect a Unity project first, then run `yaver sdk add feedback --platform unity`")
+	}
+
 	// 8. Local CI integrations (yaver-test-sdk M4+)
 	// What the dev needs on their own machine to run the embedded test
 	// runner against the various targets — so they can stop paying for
@@ -5718,26 +5820,6 @@ func runDevices(args []string) {
 		if d.IsOnline {
 			status = "online"
 		}
-		sessionBinding := "-"
-		access := "OWN"
-		if d.IsGuest {
-			label := "SHARED"
-			if d.HostName != "" {
-				label = "SHARED:" + d.HostName
-			} else if d.HostEmail != "" {
-				label = "SHARED:" + d.HostEmail
-			}
-			if len(label) > 22 {
-				label = label[:21] + "…"
-			}
-			access = label
-		} else {
-			if d.SessionBinding != "" {
-				sessionBinding = d.SessionBinding
-			} else {
-				sessionBinding = "legacy-shared"
-			}
-		}
 		id := d.DeviceID
 		if len(id) > 8 {
 			id = id[:8] + "..."
@@ -5750,8 +5832,59 @@ func runDevices(args []string) {
 			runners = runners[:35] + "…"
 		}
 		fmt.Printf("%-10s  %-20s  %-8s  %-8s  %-22s  %-14s  %-36s  %s:%d\n",
-			id, d.Name, d.Platform, status, access, sessionBinding, runners, d.QuicHost, d.QuicPort)
+			id, d.Name, d.Platform, status, deviceAccessLabel(d), deviceSessionBindingLabel(d), runners, d.QuicHost, d.QuicPort)
 	}
+}
+
+func deviceAccessLabel(d DeviceInfo) string {
+	if !d.IsGuest {
+		return "OWN"
+	}
+	label := "SHARED"
+	if d.HostName != "" {
+		label = "SHARED:" + d.HostName
+	} else if d.HostEmail != "" {
+		label = "SHARED:" + d.HostEmail
+	}
+	if len(label) > 22 {
+		label = label[:21] + "…"
+	}
+	return label
+}
+
+func deviceSessionBindingLabel(d DeviceInfo) string {
+	if d.IsGuest {
+		return "-"
+	}
+	if d.SessionBinding != "" {
+		return d.SessionBinding
+	}
+	return "legacy-shared"
+}
+
+func deviceAddressLabel(d DeviceInfo) string {
+	host := strings.TrimSpace(d.QuicHost)
+	if host == "" {
+		return "-"
+	}
+	if d.QuicPort > 0 {
+		return fmt.Sprintf("%s:%d", host, d.QuicPort)
+	}
+	return host
+}
+
+func statusDeviceLabel(d DeviceInfo, currentDeviceID string) string {
+	name := strings.TrimSpace(d.Name)
+	if name == "" {
+		name = strings.TrimSpace(d.DeviceID)
+	}
+	if name == "" {
+		name = "unnamed-device"
+	}
+	if strings.TrimSpace(d.DeviceID) != "" && strings.TrimSpace(d.DeviceID) == strings.TrimSpace(currentDeviceID) {
+		return name + " (this machine)"
+	}
+	return name
 }
 
 func summarizeDeviceRunners(cfg *Config, device DeviceInfo) string {

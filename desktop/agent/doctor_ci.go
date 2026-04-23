@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -94,6 +95,46 @@ func detectBinaryWithVersion(name, versionFlag string) (path, version string) {
 		return p, "unknown"
 	}
 	return p, firstLine(strings.TrimSpace(string(out)))
+}
+
+func detectUnityEditor() (path, version string) {
+	candidates := []string{}
+	switch runtime.GOOS {
+	case "darwin":
+		candidates = []string{
+			"/Applications/Unity/Hub/Editor/Unity.app/Contents/MacOS/Unity",
+			"/Applications/Unity Hub.app/Contents/MacOS/Unity Hub",
+		}
+		if matches, err := filepath.Glob("/Applications/Unity/Hub/Editor/*/Unity.app/Contents/MacOS/Unity"); err == nil {
+			candidates = append(candidates, matches...)
+		}
+	case "linux":
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			if matches, globErr := filepath.Glob(filepath.Join(home, "Unity", "Hub", "Editor", "*", "Editor", "Unity")); globErr == nil {
+				candidates = append(candidates, matches...)
+			}
+		}
+		candidates = append(candidates,
+			"/opt/Unity/Editor/Unity",
+			"/usr/bin/unity-editor",
+			"/usr/local/bin/unity-editor",
+		)
+	}
+	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
+		if pathExists(c) {
+			return c, filepath.Base(filepath.Dir(filepath.Dir(c)))
+		}
+	}
+	if p, err := exec.LookPath("unity-editor"); err == nil {
+		return p, "unknown"
+	}
+	if p, err := exec.LookPath("Unity"); err == nil {
+		return p, "unknown"
+	}
+	return "", ""
 }
 
 func firstLine(s string) string {

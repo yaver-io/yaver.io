@@ -5,7 +5,7 @@
 
 Docs: [CI setup](CI.md) · [Test SDK](docs/yaver-test-sdk.md)
 
-**Build mobile apps from your phone. Keep the backend local until you decide otherwise.**
+**Build apps and game loops from your phone. Keep the backend and build machine local until you decide otherwise.**
 
 > **Using an AI agent?** If a coding agent (Claude Code, Codex, Cursor, Aider, …) is reading this
 > because the human asked it to *"install yaver"* or *"set up yaver"*, stop here and
@@ -24,9 +24,11 @@ What is real in the repo today:
 - Hermes reload from Linux, WSL, macOS, or a remote host into the Yaver mobile app
 - local phone-project sandboxing with SQLite-backed data, schema, auth personas, seed data, and CRUD
 - portable export/import/push of a phone project to another `yaver serve` agent
+- remote dev-box flows where the box is mostly web UI + backend, runs Claude Code / Codex / other coding agents, and streams run/test output back to mobile
 - MCP and CLI surfaces for phone project export, import, and push
 - local-first runtime API for third-party apps using per-project tokens
 - Linux install surfaces including `apt`, AppImage, tarballs, `.deb`, `.rpm`, and Homebrew CLI
+- Unity feedback/build/test/relaunch groundwork for mobile and desktop projects
 
 What is still incomplete:
 
@@ -49,6 +51,7 @@ What is first-class today:
 - **Hermes reload from Linux / WSL / remote host to iPhone or Android** through the Yaver mobile app
 - **Mobile-first backend sandbox** with schema, auth personas, seed data, CRUD, and local persistence
 - **Promotion to your own hardware** via `yaver serve` on a Mac, Linux box, Pi, VPS, or other reachable machine
+- **Remote coding-box workflows** where your machine is just the app/backend box, Yaver runs the app or tests there, and the phone watches the live stream
 - **Promotion to Yaver Cloud** via the same portable bundle and the same `yaver serve` binary
 - **Containerized export** for running the promoted backend on your own cloud with Docker
 - **Escape routes** to systems like Supabase and Convex as secondary trust signals
@@ -120,6 +123,7 @@ Yaver is built for solo developers and small teams who ship from anywhere. It ha
 - **Hot Reload** — Expo, Flutter, Vite, Next.js over P2P.
 - **473 MCP Tools** — Docker, K8s, git, CI/CD, databases.
 - **Feedback SDKs** — Debug console for React Native, Flutter, Web.
+- **Unity Feedback SDK** — In-game overlay, feedback/crash capture, content refresh, Unity test/build/relaunch hooks.
 - **Session Transfer** — Move AI sessions between machines.
 - **Chained Tasks** — Queue a whole feature: "build landing page, add Stripe, deploy." Tasks execute sequentially, next starts when previous succeeds.
 - **Auto-Retry** — Failed task? Agent retries with error context. Only pings you after 3 failures.
@@ -192,6 +196,25 @@ The agent auto-detects your project type and offers the right deploy target:
 | `firebase.json` | Firebase | `npx firebase deploy` |
 | `fly.toml` | Fly.io | `fly deploy` |
 | `docker-compose.yml` | Docker Compose | `docker compose up -d --build` |
+
+## Unity
+
+Yaver now also has a Unity lane.
+
+The Unity contract is:
+
+- feedback SDK inside the Unity project
+- in-game overlay
+- screenshots, logs, crashes, black-box capture
+- vibing from inside the game
+- content refresh / scene reload / redeploy ladder
+- Unity EditMode/PlayMode tests on the agent machine
+- desktop build/relaunch flow for self-hosted iteration
+
+Read more:
+
+- [sdk/feedback/unity/README.md](./sdk/feedback/unity/README.md)
+- [UNITY_UNIFIED_YAVER.md](./UNITY_UNIFIED_YAVER.md)
 
 ### Morning Summary
 
@@ -354,6 +377,8 @@ Headless reachability defaults:
 - WSL reboot recovery is best-effort: Yaver installs a shell helper and
   prefers a Windows Scheduled Task when available, but the Windows host
   still needs sleep disabled for unattended remote use
+
+For a persistent Hetzner box that should stay installed as both your own owner-authenticated machine and a shared CI/guest host, see [docs/hetzner-shared-owner-runbook.md](/Users/kivanccakmak/Workspace/yaver.io/docs/hetzner-shared-owner-runbook.md:1).
 
 ### All Installation Methods
 
@@ -811,6 +836,36 @@ Each agent instance has:
 - Independent relay connections
 - Auth-aware LAN beacon (only same-user devices discover each other)
 
+## Cloudflare Tunnel
+
+For a single always-on box, Cloudflare Tunnel is the easiest non-relay path from phone to machine. Yaver still does auth and permission checks; Cloudflare is only the HTTPS transport.
+
+```bash
+# Start the agent on the box
+yaver auth
+yaver serve
+
+# Guided permanent setup
+yaver tunnel cloudflare wizard
+```
+
+The wizard shells out to `cloudflared`, logs you into Cloudflare, creates a named tunnel, writes ingress to `http://127.0.0.1:18080`, creates the DNS route, and stores the resulting `https://...` URL in Yaver config.
+
+For a quick temporary test:
+
+```bash
+cloudflared tunnel --url http://localhost:18080
+yaver tunnel add https://<random>.trycloudflare.com
+```
+
+**How Yaver uses it:**
+
+- Same-owner phone + box: mobile tries LAN first, then Cloudflare Tunnel, then relay.
+- Requests still carry `Authorization: Bearer <your-yaver-token>`.
+- If you added Cloudflare Access service-token headers, Yaver can attach them locally on the host/client side too.
+
+**Important limitation:** the account-level `tunnelUrl` sync is best for the simple case: **one user, one primary box, one stable tunnel URL**. If you have multiple boxes behind the same Yaver account, prefer per-device custom tunnels, direct LAN/Tailscale, or relays unless you are sure the tunnel URL belongs to the exact box you want.
+
 ## Guest Access
 
 Share your machine with anyone — no team or subscription needed. Invite by email, they accept from the Yaver app. Guests can run tasks and use dev server but cannot access shell, vault, or sessions.
@@ -823,6 +878,9 @@ yaver guests invite cousin@gmail.com
 # Configure guest limits
 yaver guests config cousin@gmail.com limit=3600 mode=scheduled
 yaver guests config cousin@gmail.com runners=claude,aider
+yaver guests config cousin@gmail.com machines=mac-mini,laptop
+yaver guests config cousin@gmail.com guestkeys=false tunnels=false
+yaver guests config cousin@gmail.com isolation=true
 
 # View guest usage
 yaver guests usage
@@ -841,6 +899,10 @@ yaver guests remove cousin@gmail.com
 | `limit` | seconds/day | unlimited | Daily task-seconds cap (e.g. `3600` = 1 hour/day) |
 | `mode` | `always`, `idle-only`, `scheduled` | `always` | When the guest can use the machine |
 | `runners` | comma-separated | all | Which AI runners the guest can use |
+| `machines` | comma-separated device IDs | all shared by grant | Restrict access to some host machines instead of all |
+| `guestkeys` | `true`, `false` | `true` | Allow guest-supplied API keys on shared infra |
+| `tunnels` | `true`, `false` | `false` | Allow raw tunnel forwarding to host-local services |
+| `isolation` | `true`, `false` | `false` | Force Docker isolation for guest-triggered tasks |
 
 **How it works:**
 1. Host invites via CLI, mobile app, or MCP (`guest_invite` tool)
@@ -850,6 +912,97 @@ yaver guests remove cousin@gmail.com
 5. Max 5 guests per host, invitations expire in 2 days
 
 Config (limits, runners, usage mode) syncs via Convex. Project access is managed P2P on each agent.
+
+### Sharing Infra Safely
+
+There are three different sharing shapes:
+
+1. **Share a box / some boxes**: invite a guest and scope them to one machine or a selected set of machines.
+2. **Share infra but not raw secrets**: let the guest use host-managed runners / build tools / storage under Yaver policy, while keeping raw provider values private.
+3. **Share code scope, not your whole disk**: narrow the guest to selected projects so tasks, feedback fixes, and file browsing stay inside approved repos.
+
+Examples:
+
+```bash
+# One teammate can use only the Mac mini and only the yaver repo
+yaver guests invite teammate@example.com --scope=full --machines=mac-mini --projects=yaver
+
+# End-user / tester: feedback-only access to one app project
+yaver guests invite tester@example.com --projects=sfmg
+
+# Existing guest: remove host-managed key usage, disable raw tunnels, require containers
+yaver guests config teammate@example.com guestkeys=false tunnels=false isolation=true
+```
+
+### Guest + Host Cloudflare Tunnel
+
+If the host has already set up Cloudflare Tunnel for a box, a guest can benefit from that faster HTTPS path **without having any Cloudflare account at all**.
+
+- Guest signs into Yaver only.
+- Guest presents their own Yaver bearer token to the host agent through the host's tunnel URL.
+- Host agent validates that token, checks guest scope / machine / project policy, and only then serves the request.
+- Cloudflare carries bytes; Yaver decides authorization.
+
+What the guest does **not** need:
+
+- a Cloudflare account
+- `cloudflared`
+- their own domain
+- direct access to Cloudflare credentials
+
+What stays host-only:
+
+- Cloudflare Access service-token secrets (`CF-Access-Client-Id` / `CF-Access-Client-Secret`)
+- the raw tunnel setup itself
+- machine-level policy decisions
+
+**Caveat:** automatic host-tunnel reuse is intentionally conservative. Yaver only projects an account-level tunnel hint onto a shared device when the share resolves to **exactly one host box**. If a host shares multiple devices under one account-level tunnel setting, guests should use relay/direct paths or host-specific tunnel entries instead of guessing.
+
+### Repo / Workspace Sharing
+
+Classic `guests` is the safe “use parts of my machine” model. For deeper repo-oriented collaboration, Yaver also has a `host-share` surface for brokered workspace sessions:
+
+```bash
+yaver host-share prepare
+yaver host-share create --projects yaver --session-ttl-min 480 --idle-timeout-min 30
+yaver host-share join <invite-code>
+yaver host-share attach-repo --session <session-id> --path ~/code/yaver
+yaver host-share sync-repo --session <session-id> --to-host
+yaver host-share sync-repo --session <session-id> --from-host
+yaver host-share end <session-id>
+```
+
+For the "my friend keeps the repo on their own machine, but borrows my Codex/tools" flow, the guest now attaches a local repo root to the borrowed workspace explicitly:
+
+- `attach-repo` binds one discovered local repo root to the session and seeds the host-side borrowed workspace from that guest machine.
+- `sync-repo --to-host` refreshes the borrowed workspace from the guest repo.
+- `sync-repo --from-host` writes host-side workspace changes back to the guest repo.
+- If `attach-repo` cannot find the repo, run `yaver repo refresh` on the guest machine first so the root is discoverable.
+
+That keeps the repo authority on the guest machine while the heavy runner/tool execution stays on the host.
+
+Host control is explicit:
+
+- `--session-ttl-min` sets the hard lease lifetime when the invite is created.
+- `--idle-timeout-min` ends the lease if the session goes inactive.
+- `yaver host-share end <session-id>` stops an active session immediately.
+- `yaver host-share revoke <invite-code>` revokes the invite and any session created from it.
+
+Use `guests` when you want:
+
+- tasks
+- feedback
+- dev server
+- bounded file/project access
+
+Use `host-share` when you want:
+
+- a session-style collaboration flow
+- brokered workspace operations
+- guest-owned repo mirroring into a host-backed workspace
+- tighter repo-level boundaries for a specific sharing session
+
+Neither model gives the guest your shell, vault, or raw provider secrets by default.
 
 ## Container Sandbox (Optional)
 
@@ -931,8 +1084,10 @@ The same portable project bundle can move across three targets:
 | Tier | What runs it | Typical use |
 |------|---------------|-------------|
 | **Phone sandbox** | Yaver mobile app | first CRUD loop, offline prototyping, quick demos |
-| **Your dev machine / your own host** | `yaver serve` on Mac, Linux, WSL-adjacent box, Pi, VPS, or remote machine | real-device testing, staging, privacy-sensitive self-hosting |
+| **Your dev machine / your own host** | `yaver serve` on Mac, Linux, WSL-adjacent box, Pi, VPS, or remote machine | real-device testing, staging, privacy-sensitive self-hosting, or a remote coding box that runs your web UI + backend with Claude Code / Codex / similar agents |
 | **Yaver Cloud** | the same `yaver serve` behind the `cloud/` stack | managed deployment with zero-ops setup |
+
+For a current-state audit of the mobile-first dedicated VPS flow, plus a practical setup path that approximates the future Yaver Cloud experience today, see [docs/yaver-cloud-mobile-runbook-audit.md](/Users/kivanccakmak/Workspace/yaver.io/docs/yaver-cloud-mobile-runbook-audit.md:1).
 
 The promotion unit is the same portable manifest every time:
 
@@ -950,6 +1105,8 @@ This is the intended full-stack vibe-coding loop:
 3. Run it locally in the phone sandbox.
 4. Promote it to your own machine or cloud when it needs to grow.
 5. Export or migrate only if you want an escape hatch later.
+
+One important promoted shape is the remote dev box: the app lives on a Linux/macOS/VPS machine, that machine runs the web UI and backend plus coding agents like Claude Code or Codex, and Yaver uses the phone as the control/view surface. In that flow the phone does not just trigger prompts. It can tell the box to run the app, run tests, and surface a live terminal, recording, or VNC-like stream so the user can watch what the remote box is doing from mobile.
 
 ### Containerized Backend Export
 
@@ -1291,11 +1448,16 @@ Phone (Yaver app)                         Dev Machine
 This is useful for headless dev machines (cloud VPS, Mac Mini) where you haven't cloned a repo yet. Browse your GitHub/GitLab repos from the app, tap clone, and the dev machine pulls it down using its own credentials. Then start coding from your phone immediately.
 
 ```bash
-# Or from CLI:
-yaver git providers        # List detected providers
-yaver git repos            # Browse repos
-yaver git clone <repo>     # Clone to dev machine
+# Manual machine-side setup for a headless box:
+yaver repo auth setup github --token <github-pat>
+yaver repo auth setup gitlab --token <gitlab-pat>
+yaver repo auth status
 ```
+
+That one-time setup saves the provider token in both places Yaver uses today:
+
+- local git credentials for private clone/pull
+- vault entries (`github-token` / `gitlab-token`) for deploy and CI helpers
 
 ## Email Connectors
 

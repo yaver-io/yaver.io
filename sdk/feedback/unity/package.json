@@ -1,0 +1,22 @@
+{
+  "name": "io.yaver.feedback.unity",
+  "displayName": "Yaver Feedback for Unity",
+  "version": "0.1.0",
+  "unity": "2021.3",
+  "description": "Self-hosted feedback and fast-iteration SDK for Unity mobile and desktop projects. Captures screenshots, logs, crash context, and black-box events, then routes feedback and build/test/relaunch workflows to a Yaver agent running on your own machine.",
+  "documentationUrl": "https://github.com/yaver-io/yaver.io/tree/main/sdk/feedback/unity",
+  "changelogUrl": "https://github.com/yaver-io/yaver.io/tree/main/sdk/feedback/unity/CHANGELOG.md",
+  "keywords": [
+    "unity",
+    "feedback",
+    "bug-reporting",
+    "mobile",
+    "desktop",
+    "hypercasual",
+    "self-hosted"
+  ],
+  "author": {
+    "name": "Yaver"
+  },
+  "license": "MIT"
+}

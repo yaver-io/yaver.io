@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query, internalMutation } from "./_generated/server";
+import { mutation, query, internalMutation, internalQuery } from "./_generated/server";
 
 // Get user's active subscription
 export const getByUser = query({
@@ -8,6 +8,16 @@ export const getByUser = query({
     return await ctx.db
       .query("subscriptions")
       .withIndex("by_user", (q) => q.eq("userId", userId))
+      .first();
+  },
+});
+
+export const getByLemonId = internalQuery({
+  args: { lemonSqueezyId: v.string() },
+  handler: async (ctx, { lemonSqueezyId }) => {
+    return await ctx.db
+      .query("subscriptions")
+      .withIndex("by_lemon_id", (q) => q.eq("lemonSqueezyId", lemonSqueezyId))
       .first();
   },
 });
@@ -65,7 +75,9 @@ export const cancel = internalMutation({
         cancelledAt: Date.now(),
         updatedAt: Date.now(),
       });
+      return sub._id;
     }
+    return null;
   },
 });
 

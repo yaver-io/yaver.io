@@ -167,6 +167,12 @@ export default defineSchema({
     // from the phone (Tailscale on cellular, Wi-Fi on same LAN, etc.).
     // Optional for backwards-compat with agents that haven't upgraded.
     localIps: v.optional(v.array(v.string())),
+    // Public HTTPS origins that can reach this specific device, such as
+    // Cloudflare Tunnel front doors or other reverse-proxy endpoints.
+    // Optional and device-scoped so the transport resolver can treat them
+    // as first-class runtime candidates instead of guessing from account
+    // level tunnel settings.
+    publicEndpoints: v.optional(v.array(v.string())),
     quicPort: v.number(),
     isOnline: v.boolean(),
     runnerDown: v.optional(v.boolean()),  // true when runner crashed and all retries exhausted
@@ -603,7 +609,7 @@ export default defineSchema({
     //                     /info is redacted of project metadata; /projects returns 403.
     // Absent on legacy rows → treated as "full" at runtime (backward-compat). New invites
     // default to "feedback-only" (safer for Feedback-SDK-distributed end-users).
-    scope: v.optional(v.union(v.literal("full"), v.literal("feedback-only"))),
+    scope: v.optional(v.union(v.literal("full"), v.literal("feedback-only"), v.literal("sdk-project"))),
     // Optional project narrowing at invite time — copied into guestAccess.allowedProjects
     // when the invitation is accepted. See guestAccess.allowedProjects for semantics.
     allowedProjects: v.optional(v.array(v.string())),
@@ -626,7 +632,7 @@ export default defineSchema({
     revokedAt: v.optional(v.number()),  // null = active, set = revoked
     // Access tier inherited from the accepted invitation. See guestInvitations.scope for semantics.
     // Absent on legacy rows → treated as "full" at runtime.
-    scope: v.optional(v.union(v.literal("full"), v.literal("feedback-only"))),
+    scope: v.optional(v.union(v.literal("full"), v.literal("feedback-only"), v.literal("sdk-project"))),
     // Project narrowing — scopes the grant to a subset of the host's
     // projects/repos even within the allowed path list. Most useful with
     // scope=feedback-only when a dev wants to let end-users of Project
@@ -710,6 +716,76 @@ export default defineSchema({
     .index("by_hostUserId", ["hostUserId"])
     .index("by_machine_guest", ["machineId", "guestUserId"]),
 
+  hostShareInvites: defineTable({
+    hostUserId: v.id("users"),
+    hostDeviceId: v.optional(v.string()),
+    guestEmail: v.optional(v.string()),
+    guestUserId: v.optional(v.id("users")),
+    acceptedByGuestUserId: v.optional(v.id("users")),
+    inviteCode: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("accepted"),
+      v.literal("revoked"),
+      v.literal("expired"),
+    ),
+    label: v.optional(v.string()),
+    inviteExpiresAt: v.number(),
+    sessionTtlMinutes: v.number(),
+    idleTimeoutMinutes: v.number(),
+    toolingPreset: v.optional(v.string()),
+    resourcePreset: v.optional(v.string()),
+    allowInfra: v.boolean(),
+    allowTerminal: v.boolean(),
+    allowTunnel: v.boolean(),
+    useHostAgentTools: v.boolean(),
+    useHostInfra: v.boolean(),
+    allowedRunners: v.optional(v.array(v.string())),
+    allowedProjects: v.optional(v.array(v.string())),
+    createdAt: v.number(),
+    acceptedAt: v.optional(v.number()),
+    revokedAt: v.optional(v.number()),
+  })
+    .index("by_hostUserId", ["hostUserId"])
+    .index("by_guestUserId", ["guestUserId"])
+    .index("by_inviteCode", ["inviteCode"]),
+
+  hostShareSessions: defineTable({
+    inviteId: v.id("hostShareInvites"),
+    hostUserId: v.id("users"),
+    hostDeviceId: v.optional(v.string()),
+    guestUserId: v.id("users"),
+    guestDeviceId: v.optional(v.string()),
+    status: v.union(
+      v.literal("active"),
+      v.literal("ended"),
+      v.literal("expired"),
+      v.literal("revoked"),
+    ),
+    label: v.optional(v.string()),
+    policy: v.object({
+      toolingPreset: v.optional(v.string()),
+      resourcePreset: v.optional(v.string()),
+      allowInfra: v.boolean(),
+      allowTerminal: v.boolean(),
+      allowTunnel: v.boolean(),
+      useHostAgentTools: v.boolean(),
+      useHostInfra: v.boolean(),
+      allowedRunners: v.array(v.string()),
+      allowedProjects: v.array(v.string()),
+    }),
+    createdAt: v.number(),
+    startedAt: v.number(),
+    expiresAt: v.number(),
+    idleTimeoutMinutes: v.number(),
+    lastActivityAt: v.number(),
+    endedAt: v.optional(v.number()),
+    endedReason: v.optional(v.string()),
+  })
+    .index("by_invite", ["inviteId"])
+    .index("by_host_status", ["hostUserId", "status"])
+    .index("by_guest_status", ["guestUserId", "status"]),
+
   // Guest usage tracking — daily task-seconds consumed per guest
   guestUsage: defineTable({
     hostUserId: v.id("users"),
@@ -727,6 +803,11 @@ export default defineSchema({
     label: v.optional(v.string()), // human-readable label (e.g. "AcmeStore dev build")
     scopes: v.optional(v.array(v.string())), // allowed scopes: "feedback","blackbox","voice","builds"
     allowedCIDRs: v.optional(v.array(v.string())), // IP binding: "192.168.1.0/24"
+    delegatedGuestUserId: v.optional(v.id("users")), // guest driving the host through Feedback SDK
+    delegatedGuestScope: v.optional(v.string()), // currently "sdk-project"
+    sourceSurface: v.optional(v.string()), // e.g. "feedback-sdk"
+    targetDeviceId: v.optional(v.string()), // host device this token may hit
+    allowedProjects: v.optional(v.array(v.string())), // repo/project allowlist for delegated guest use
     replacedBy: v.optional(v.string()),  // tokenHash of replacement (rotation)
     replacedAt: v.optional(v.number()),  // when replaced (5min grace period)
     expiresAt: v.number(),        // 1 year from creation (or custom)

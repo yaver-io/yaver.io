@@ -845,6 +845,63 @@ function FAQItem({ question, answer }: { question: string; answer: string }) {
   );
 }
 
+function ResourceCardsSection() {
+  const cards = [
+    {
+      eyebrow: "Manual",
+      title: "MacBook to Windows AI Box over SSH",
+      text: "OpenSSH, Tailscale, always-on power settings, Ollama with Qwen, and a clean remote coding loop for a stronger Windows box behind a MacBook.",
+      href: "/manuals/windows-ssh-coding-box",
+      cta: "Read setup guide",
+    },
+    {
+      eyebrow: "Blog",
+      title: "Why this setup is worth doing",
+      text: "The higher-level reasoning for using a Windows workstation as the always-on AI box while keeping the MacBook as the thin client.",
+      href: "/blog/mac-to-windows-ai-box-over-ssh",
+      cta: "Read blog post",
+    },
+    {
+      eyebrow: "Developer Docs",
+      title: "Operational notes for the repo",
+      text: "Short-form developer reference for the remote Windows box pattern, including transport, model sizing, and always-on behavior.",
+      href: "/docs/developers#remote-windows-box",
+      cta: "Open developer docs",
+    },
+  ];
+
+  return (
+    <section className="border-t border-surface-800/60 px-6 py-24">
+      <div className="mx-auto max-w-5xl">
+        <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
+          Remote Box Guides
+        </h2>
+        <p className="mx-auto mb-10 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
+          Running a stronger Windows machine as the always-on AI box behind a MacBook is a real
+          path. These three pages cover the setup, the reasoning, and the developer-facing
+          operational notes.
+        </p>
+        <div className="grid gap-4 md:grid-cols-3">
+          {cards.map((card) => (
+            <Link
+              key={card.href}
+              href={card.href}
+              className="rounded-xl border border-surface-800 bg-surface-900/50 p-5 transition-colors hover:border-surface-600"
+            >
+              <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">
+                {card.eyebrow}
+              </p>
+              <h3 className="mb-3 text-lg font-semibold text-surface-100">{card.title}</h3>
+              <p className="mb-5 text-sm leading-relaxed text-surface-400">{card.text}</p>
+              <span className="text-sm font-medium text-[#a5b4fc]">{card.cta} &rarr;</span>
+            </Link>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function MCPIntegrationSection() {
   const [mcpTab, setMcpTab] = useState<"stdio" | "http" | "cli">("stdio");
 
@@ -1078,7 +1135,8 @@ export default function HomePage() {
           </div>
 
           <h1 className="mb-5 text-4xl font-bold leading-[1.02] tracking-tight text-surface-50 sm:text-5xl md:text-6xl">
-            Turn mobile feedback into{" "}
+            Turn mobile feedback into
+            <br className="hidden sm:block" />
             <span className="bg-gradient-to-r from-indigo-400 to-emerald-400 bg-clip-text text-transparent">
               AI-ready fixes.
             </span>
@@ -1089,15 +1147,9 @@ export default function HomePage() {
           <p className="sr-only">{LANDING_TAGLINE}</p>
 
           <p className="mx-auto max-w-2xl text-sm leading-relaxed text-surface-300 sm:text-base md:text-[17px]">
-            Open-source, mobile-first feedback and AI-debugging SDK for app
-            teams. Install one SDK to capture screenshots, logs, and session
-            context from real devices.
-          </p>
-
-          <p className="mx-auto mt-3 max-w-xl text-xs leading-relaxed text-surface-500 sm:text-sm">
-            Route incidents to Claude Code, Codex, Aider, or local models.
-            Triage from the Yaver mobile app while your own machine or cloud box
-            does the work.
+            Yaver is an open-source, mobile-first feedback and AI-debugging SDK.
+            Capture user context from real phones and hand incidents to your team
+            or coding agents without giving up self-hosting.
           </p>
 
           <div className="mt-7 flex flex-col items-center justify-center gap-2">
@@ -1615,7 +1667,10 @@ return (
       {/* ── Section 10: MCP ── */}
       <MCPIntegrationSection />
 
-      {/* ── Section 11: FAQ ── */}
+      {/* ── Section 11: Remote box guides ── */}
+      <ResourceCardsSection />
+
+      {/* ── Section 12: FAQ ── */}
       <section id="faq" className="border-t border-surface-800/60 px-6 py-24">
         <div className="mx-auto max-w-3xl">
           <h2 className="mb-10 text-center text-2xl font-bold text-surface-50 md:text-3xl">

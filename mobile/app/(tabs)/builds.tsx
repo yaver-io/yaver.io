@@ -35,6 +35,24 @@ type PublishConfigView = {
   path: string;
 };
 
+type UnityRunSummary = {
+  ok: boolean;
+  status?: string;
+  stage?: string;
+  projectPath?: string;
+  mode?: string;
+  buildTarget?: string;
+  executeMethod?: string;
+  outputPath?: string;
+  executablePath?: string;
+  logPath?: string;
+  resultsPath?: string;
+  summary?: string;
+  artifacts?: string[];
+  nextAction?: string;
+  command?: string[];
+};
+
 // ── Status helpers ──────────────────────────────────────────────────
 
 const STATUS_COLORS: Record<string, string> = {
@@ -62,6 +80,17 @@ function PlatformBadge({ platform }: { platform: string }) {
       <Text style={[styles.badgeText, { color: "#60a5fa" }]}>{platform}</Text>
     </View>
   );
+}
+
+function unityRunLabel(run: UnityRunSummary) {
+  if (run.stage === "test") return `Tests${run.mode ? ` · ${run.mode}` : ""}`;
+  if (run.stage === "build") return `Build${run.buildTarget ? ` · ${run.buildTarget}` : ""}`;
+  if (run.stage === "relaunch") return "Relaunch";
+  return run.stage || "Unity";
+}
+
+function unityRunPath(run: UnityRunSummary) {
+  return run.executablePath || run.outputPath || run.resultsPath || run.logPath || run.projectPath || "";
 }
 
 // ── Build Item ──────────────────────────────────────────────────────
@@ -192,6 +221,7 @@ export default function BuildsScreen() {
   const [selectedPublishProject, setSelectedPublishProject] = useState<string>("");
   const [publishBusy, setPublishBusy] = useState<string | null>(null);
   const [allowGitHubFallback, setAllowGitHubFallback] = useState(false);
+  const [unityRuns, setUnityRuns] = useState<UnityRunSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -200,8 +230,12 @@ export default function BuildsScreen() {
   const fetchBuilds = useCallback(async () => {
     if (!isConnected) return;
     try {
-      const list = await quicClient.listBuilds();
+      const [list, runs] = await Promise.all([
+        quicClient.listBuilds(),
+        quicClient.listUnityRuns(),
+      ]);
       setBuilds(list);
+      setUnityRuns(runs);
     } catch {
       // silent
     }
@@ -524,6 +558,48 @@ export default function BuildsScreen() {
             </>
           )}
 
+          {unityRuns.length > 0 && (
+            <>
+              <View style={[styles.sectionHeader, { marginTop: 16 }]}>
+                <Text style={[styles.sectionTitle, { color: c.textMuted }]}>Unity Runs</Text>
+              </View>
+              <View style={styles.publishRunsList}>
+                {unityRuns.slice(0, 8).map((run, index) => {
+                  const pathHint = unityRunPath(run);
+                  const status = run.status || (run.ok ? "completed" : "failed");
+                  return (
+                    <View
+                      key={`${run.projectPath || "unity"}-${run.stage || "run"}-${index}`}
+                      style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+                    >
+                      <View style={styles.cardHeader}>
+                        <Text style={[styles.buildId, { color: c.textMuted }]} numberOfLines={1}>
+                          {unityRunLabel(run)}
+                        </Text>
+                        <StatusBadge status={status} />
+                      </View>
+                      {run.summary ? (
+                        <Text style={[styles.unitySummaryText, { color: c.textSecondary }]}>
+                          {run.summary}
+                        </Text>
+                      ) : null}
+                      {run.nextAction ? (
+                        <Text style={[styles.unityMetaText, { color: c.textMuted }]}>
+                          Next: {run.nextAction}
+                        </Text>
+                      ) : null}
+                      {pathHint ? (
+                        <Text style={[styles.unityMetaText, { color: c.textMuted }]} numberOfLines={1}>
+                          {pathHint}
+                        </Text>
+                      ) : null}
+                    </View>
+                  );
+                })}
+              </View>
+            </>
+          )}
+
           {/* ── Build Artifacts ── */}
           {builds.length > 0 && (
             <>
@@ -695,6 +771,15 @@ const styles = StyleSheet.create({
   },
   publishRunsList: {
     gap: 8,
+  },
+  unitySummaryText: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 4,
+  },
+  unityMetaText: {
+    fontSize: 12,
+    lineHeight: 16,
   },
   // Machine + Repo cards
   sectionHeader: {

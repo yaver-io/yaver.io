@@ -1,8 +1,8 @@
 import { mutation, query, internalMutation, internalAction, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import { listActiveInfraGrantsForGuest, listGrantedMachineIdsForGrant } from "./access";
-import { sha256Hex } from "./auth";
+import { randomHex, sha256Hex } from "./auth";
 
 // Machine specs by type. The Hetzner server_type strings are what you pass
 // to POST https://api.hetzner.cloud/v1/servers.
@@ -24,6 +24,228 @@ const MACHINE_SPECS = {
     vram: 20,
   },
 };
+
+type ManagedCloudBootstrapSpec = {
+  convexSite: string;
+  machineId: string;
+  machineToken: string;
+  userSessionToken: string;
+  deviceId: string;
+  hostname: string;
+  yaverArch: "amd64" | "arm64";
+  yaverReleaseUrl: string;
+  repoUrl?: string;
+  gpu: boolean;
+};
+
+type CreateCloudMachineArgs = {
+  userId: string;
+  machineType: string;
+  teamId?: string;
+  region?: string;
+  repoUrl?: string;
+  sshPublicKey?: string;
+  subscriptionId?: string;
+  customDomain?: string;
+};
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+function jsonString(value: string): string {
+  return JSON.stringify(value);
+}
+
+export function buildManagedCloudInit(spec: ManagedCloudBootstrapSpec): string {
+  const repoCloneSnippet = spec.repoUrl
+    ? `  # Optional starter repo clone
+  - |
+    if [ ! -d /srv/yaver/workspace/.git ]; then
+      git clone ${shellSingleQuote(spec.repoUrl)} /srv/yaver/workspace || echo "[cloud-init] repo clone skipped"
+      chown -R root:root /srv/yaver/workspace
+    fi
+`
+    : "";
+
+  const gpuSnippet = spec.gpu
+    ? `  # GPU tier: NVIDIA drivers + Ollama
+  - apt-get install -y nvidia-driver-550
+  - |
+    curl -fsSL https://ollama.com/install.sh | sh
+  - systemctl enable ollama
+`
+    : "";
+
+  return `#cloud-config
+package_update: true
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - gnupg
+  - jq
+  - tmux
+  - ufw
+  - unzip
+  - build-essential
+  - python3
+  - python3-pip
+  - nginx
+  - certbot
+  - python3-certbot-nginx
+  - docker.io
+  - docker-compose-v2
+runcmd:
+  - systemctl enable docker && systemctl start docker
+  # Node.js 22 LTS
+  - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  - apt-get install -y nodejs
+  # Go 1.22
+  - |
+    curl -fsSL https://go.dev/dl/go1.22.6.linux-${spec.yaverArch}.tar.gz -o /tmp/go.tgz \
+      && tar -C /usr/local -xzf /tmp/go.tgz \
+      && ln -sf /usr/local/go/bin/go /usr/local/bin/go \
+      && ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+  # Rust (rustup, default stable)
+  - |
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+  # Expo + EAS + hosted coding runners
+  - npm install -g expo-cli eas-cli
+  - |
+    missing_pkgs=""
+    command -v claude >/dev/null 2>&1 || missing_pkgs="$missing_pkgs @anthropic-ai/claude-code"
+    command -v codex >/dev/null 2>&1 || missing_pkgs="$missing_pkgs @openai/codex"
+    command -v opencode >/dev/null 2>&1 || missing_pkgs="$missing_pkgs opencode-ai"
+    if [ -n "$missing_pkgs" ]; then
+      npm install -g $missing_pkgs
+    fi
+  # Yaver CLI
+  - |
+    ( curl -fsSL "${spec.yaverReleaseUrl}" -o /usr/local/bin/yaver \
+      && chmod +x /usr/local/bin/yaver \
+      && /usr/local/bin/yaver --version >/dev/null 2>&1 ) || echo "[cloud-init] yaver install skipped"
+  # Basic UFW — SSH, HTTP, HTTPS, yaver HTTP, QUIC relay port.
+  - ufw allow 22/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw allow 18080/tcp
+  - ufw allow 4433/udp
+  - ufw --force enable || true
+
+  # ── Managed Yaver agent bootstrap ─────────────────────────────
+  - mkdir -p /root/.yaver /srv/yaver/workspace /etc/yaver
+  - |
+    cat > /root/.yaver/config.json <<'EOF'
+    {
+      "auth_token": ${jsonString(spec.userSessionToken)},
+      "convex_site_url": ${jsonString(spec.convexSite)},
+      "device_id": ${jsonString(spec.deviceId)}
+    }
+    EOF
+  - chmod 0600 /root/.yaver/config.json
+  - |
+    cat > /etc/systemd/system/yaver-agent.service <<'EOF'
+    [Unit]
+    Description=Yaver managed cloud agent
+    Wants=network-online.target
+    After=network-online.target docker.service
+
+    [Service]
+    Type=simple
+    WorkingDirectory=/srv/yaver/workspace
+    Environment=HOME=/root
+    Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.cargo/bin:/usr/local/go/bin
+    Environment=YAVER_HOSTNAME=${jsonString(spec.hostname)}
+    ExecStart=/usr/local/bin/yaver serve --debug --port 18080
+    Restart=always
+    RestartSec=5
+
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+${repoCloneSnippet}  - systemctl daemon-reload
+  - systemctl enable --now yaver-agent
+
+  # ── TLS reconciler ─────────────────────────────────────────────
+  - |
+    cat > /etc/yaver/machine.json <<'EOF'
+    {"machineId":${jsonString(spec.machineId)},"machineToken":${jsonString(spec.machineToken)},"convexSite":${jsonString(spec.convexSite)}}
+    EOF
+  - chmod 0600 /etc/yaver/machine.json
+  - |
+    cat > /usr/local/bin/yaver-tls-reconciler <<'SCRIPT'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    conf=/etc/yaver/machine.json
+    MACHINE_ID=$(jq -r .machineId "$conf")
+    MACHINE_TOKEN=$(jq -r .machineToken "$conf")
+    CONVEX=$(jq -r .convexSite "$conf")
+    resp=$(curl -fsSL -H "X-Machine-Token: $MACHINE_TOKEN" \
+      "$CONVEX/machine/pending-tls?machineId=$MACHINE_ID" || echo '{"domains":[]}')
+    echo "$resp" | jq -r '.domains[]?.domain' | while read -r d; do
+      [ -z "$d" ] && continue
+      echo "[yaver-tls] issuing cert for $d"
+      conf_file="/etc/nginx/sites-available/$d"
+      if [ ! -f "$conf_file" ]; then
+        cat > "$conf_file" <<NGINX
+    server {
+        listen 80;
+        server_name $d;
+        location / {
+            proxy_pass http://127.0.0.1:18080;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_read_timeout 300s;
+            proxy_buffering off;
+        }
+    }
+    NGINX
+        ln -sf "$conf_file" "/etc/nginx/sites-enabled/$d"
+        nginx -t && systemctl reload nginx
+      fi
+      if certbot --nginx -d "$d" --non-interactive --agree-tos \
+           -m admin@yaver.io --redirect --no-eff-email; then
+        curl -fsSL -X POST "$CONVEX/machine/tls-issued" \
+          -H "Content-Type: application/json" \
+          -H "X-Machine-Token: $MACHINE_TOKEN" \
+          -d "{\"machineId\":\"$MACHINE_ID\",\"domain\":\"$d\"}" >/dev/null || true
+      else
+        curl -fsSL -X POST "$CONVEX/machine/tls-error" \
+          -H "Content-Type: application/json" \
+          -H "X-Machine-Token: $MACHINE_TOKEN" \
+          -d "{\"machineId\":\"$MACHINE_ID\",\"domain\":\"$d\",\"error\":\"certbot failed\"}" >/dev/null || true
+      fi
+    done
+    SCRIPT
+  - chmod +x /usr/local/bin/yaver-tls-reconciler
+  - |
+    cat > /etc/systemd/system/yaver-tls.service <<'EOF'
+    [Unit]
+    Description=Yaver TLS reconciler
+    After=network-online.target nginx.service yaver-agent.service
+    [Service]
+    Type=oneshot
+    ExecStart=/usr/local/bin/yaver-tls-reconciler
+    EOF
+  - |
+    cat > /etc/systemd/system/yaver-tls.timer <<'EOF'
+    [Unit]
+    Description=Yaver TLS reconciler (5-min)
+    [Timer]
+    OnBootSec=3min
+    OnUnitActiveSec=5min
+    Unit=yaver-tls.service
+    [Install]
+    WantedBy=timers.target
+    EOF
+  - systemctl daemon-reload
+  - systemctl enable --now yaver-tls.timer
+
+${gpuSnippet}`;
+}
 
 // ─── Queries ────────────────────────────────────────────────────
 
@@ -99,7 +321,81 @@ export const getInternal = internalQuery({
   handler: async (ctx, { machineId }) => ctx.db.get(machineId),
 });
 
+export const listBySubscription = internalQuery({
+  args: { subscriptionId: v.id("subscriptions") },
+  handler: async (ctx, { subscriptionId }) => {
+    const rows = await ctx.db.query("cloudMachines").collect();
+    return rows.filter((machine) => machine.subscriptionId === subscriptionId);
+  },
+});
+
 // ─── Mutations ──────────────────────────────────────────────────
+
+async function createCloudMachine(
+  ctx: { db: any; scheduler: any },
+  args: CreateCloudMachineArgs,
+) {
+  const specDef = MACHINE_SPECS[args.machineType as keyof typeof MACHINE_SPECS];
+  if (!specDef) throw new Error("Invalid machine type: " + args.machineType);
+
+  const now = Date.now();
+  const tools = [
+    "nodejs",
+    "python",
+    "go",
+    "rust",
+    "docker",
+    "expo-cli",
+    "eas-cli",
+    "claude-code",
+    "codex",
+    "opencode",
+  ];
+  if (args.machineType === "gpu") {
+    tools.push("ollama", "personaplex", "whisper", "cuda");
+  }
+
+  const specs: {
+    vcpu: number;
+    ramGb: number;
+    diskGb: number;
+    arch: string;
+    gpu?: string;
+    vram?: number;
+  } = {
+    vcpu: specDef.vcpu,
+    ramGb: specDef.ramGb,
+    diskGb: specDef.diskGb,
+    arch: specDef.arch,
+  };
+  if ("gpu" in specDef) {
+    specs.gpu = specDef.gpu;
+    specs.vram = specDef.vram;
+  }
+
+  const machineId = await ctx.db.insert("cloudMachines", {
+    userId: args.userId,
+    teamId: args.teamId,
+    subscriptionId: args.subscriptionId,
+    machineType: args.machineType,
+    status: "provisioning",
+    multiUser: !!args.teamId,
+    region: args.region ?? "eu",
+    tools,
+    repoUrl: args.repoUrl,
+    sshPublicKey: args.sshPublicKey,
+    specs,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await ctx.scheduler.runAfter(0, internal.cloudMachines.provision, {
+    machineId,
+    customDomain: args.customDomain,
+  });
+
+  return machineId;
+}
 
 /** Create a new cloud machine and start provisioning. */
 export const create = mutation({
@@ -113,60 +409,35 @@ export const create = mutation({
     subscriptionId: v.optional(v.id("subscriptions")),
     customDomain: v.optional(v.string()),
   },
+  handler: async (ctx, args) => createCloudMachine(ctx, args),
+});
+
+export const ensureForSubscription = mutation({
+  args: {
+    userId: v.id("users"),
+    machineType: v.string(),
+    teamId: v.optional(v.string()),
+    region: v.optional(v.string()),
+    repoUrl: v.optional(v.string()),
+    sshPublicKey: v.optional(v.string()),
+    subscriptionId: v.id("subscriptions"),
+    customDomain: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
-    const specDef = MACHINE_SPECS[args.machineType as keyof typeof MACHINE_SPECS];
-    if (!specDef) throw new Error("Invalid machine type: " + args.machineType);
+    const existing = (await ctx.db
+      .query("cloudMachines")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect())
+      .find(
+        (machine) =>
+          machine.subscriptionId === args.subscriptionId &&
+          machine.machineType === args.machineType &&
+          machine.status !== "stopped" &&
+          machine.status !== "error",
+      );
+    if (existing) return existing._id;
 
-    const now = Date.now();
-    const tools = ["nodejs", "python", "go", "rust", "docker", "expo-cli", "eas-cli"];
-    if (args.machineType === "gpu") {
-      tools.push("ollama", "personaplex", "whisper", "cuda");
-    }
-
-    const specs: {
-      vcpu: number;
-      ramGb: number;
-      diskGb: number;
-      arch: string;
-      gpu?: string;
-      vram?: number;
-    } = {
-      vcpu: specDef.vcpu,
-      ramGb: specDef.ramGb,
-      diskGb: specDef.diskGb,
-      arch: specDef.arch,
-    };
-    if ("gpu" in specDef) {
-      specs.gpu = specDef.gpu;
-      specs.vram = specDef.vram;
-    }
-
-    const machineId = await ctx.db.insert("cloudMachines", {
-      userId: args.userId,
-      teamId: args.teamId,
-      subscriptionId: args.subscriptionId,
-      machineType: args.machineType,
-      status: "provisioning",
-      multiUser: !!args.teamId,
-      region: args.region ?? "eu",
-      tools,
-      repoUrl: args.repoUrl,
-      sshPublicKey: args.sshPublicKey,
-      specs,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    // Schedule provisioning (runs async — provision is an action so it
-    // can call the Hetzner + Cloudflare APIs). Passing customDomain via the
-    // scheduler payload keeps it out of the DB until we know which server IP
-    // to wire it to.
-    await ctx.scheduler.runAfter(0, internal.cloudMachines.provision, {
-      machineId,
-      customDomain: args.customDomain,
-    });
-
-    return machineId;
+    return await createCloudMachine(ctx, args);
   },
 });
 
@@ -281,172 +552,27 @@ export const provision = internalAction({
     // the box, only the hash is persisted. Used by the TLS reconciler
     // systemd timer to fetch pending custom-domain TLS jobs from Convex
     // (GET /machine/pending-tls) and report the result back.
-    const machineToken = [
-      Math.random().toString(36).substring(2),
-      Math.random().toString(36).substring(2),
-      Math.random().toString(36).substring(2),
-    ].join("").substring(0, 48);
+    const machineToken = randomHex(24);
     const machineTokenHash = await sha256Hex(machineToken);
     const convexSite = process.env.CONVEX_SITE_URL || "https://shocking-echidna-394.eu-west-1.convex.site";
     const machineIdStr = machine._id.toString();
+    const userSessionToken = randomHex(32);
+    const userSessionTokenHash = await sha256Hex(userSessionToken);
+    const deviceId = `cloud-${shortId}`;
+    const sessionExpiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000;
 
-    // cloud-init: install dev tools, yaver CLI, docker; for GPU tier, also
-    // Ollama + CUDA drivers. The same box runs as both a customer-owned
-    // yaver agent AND a dev server for their apps — so we install the full
-    // stack the user might reach for, not a stripped-down set.
-    const cloudInit = `#cloud-config
-package_update: true
-packages:
-  - ca-certificates
-  - curl
-  - git
-  - gnupg
-  - jq
-  - tmux
-  - ufw
-  - unzip
-  - build-essential
-  - python3
-  - python3-pip
-  - nginx
-  - certbot
-  - python3-certbot-nginx
-  - docker.io
-  - docker-compose-v2
-runcmd:
-  - systemctl enable docker && systemctl start docker
-  # Node.js 22 LTS
-  - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-  - apt-get install -y nodejs
-  # Go 1.22
-  - |
-    curl -fsSL https://go.dev/dl/go1.22.6.linux-${yaverArch}.tar.gz -o /tmp/go.tgz \
-      && tar -C /usr/local -xzf /tmp/go.tgz \
-      && ln -sf /usr/local/go/bin/go /usr/local/bin/go \
-      && ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
-  # Rust (rustup, default stable)
-  - |
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
-  # Expo + EAS
-  - npm install -g expo-cli eas-cli
-  # Yaver CLI itself (the user reaches this box via yaver serve / MCP /
-  # HTTP, so the CLI is the primary admin surface).
-  - |
-    ( curl -fsSL "${yaverReleaseUrl}" -o /usr/local/bin/yaver \
-      && chmod +x /usr/local/bin/yaver \
-      && /usr/local/bin/yaver --version >/dev/null 2>&1 ) || echo "[cloud-init] yaver install skipped"
-  # Basic UFW — SSH, HTTP, HTTPS, yaver HTTP, QUIC relay port.
-  - ufw allow 22/tcp
-  - ufw allow 80/tcp
-  - ufw allow 443/tcp
-  - ufw allow 18080/tcp
-  - ufw allow 4433/udp
-  - ufw --force enable || true
-
-  # ── TLS reconciler ─────────────────────────────────────────────
-  # Write the per-machine auth file. The token is long-lived; its
-  # hash is stored in Convex and compared on every /machine/* call.
-  - mkdir -p /etc/yaver
-  - |
-    cat > /etc/yaver/machine.json <<'EOF'
-    {"machineId":"${machineIdStr}","machineToken":"${machineToken}","convexSite":"${convexSite}"}
-    EOF
-  - chmod 0600 /etc/yaver/machine.json
-
-  # Install the reconciler — bash + jq + curl + certbot, all already
-  # in the package list above. Runs every 5 minutes via a systemd timer
-  # (below). On each tick:
-  #   1. GET /machine/pending-tls for this machine → list of verified
-  #      userDomains rows that need a cert issued.
-  #   2. For each, write an nginx http-only server block, reload nginx,
-  #      run certbot --nginx to upgrade it to https (also sets the
-  #      auto-renew timer).
-  #   3. POST /machine/tls-issued or /machine/tls-error back to Convex
-  #      so the web UI flips the row from "verified" → "active".
-  - |
-    cat > /usr/local/bin/yaver-tls-reconciler <<'SCRIPT'
-    #!/usr/bin/env bash
-    set -euo pipefail
-    conf=/etc/yaver/machine.json
-    MACHINE_ID=$(jq -r .machineId "$conf")
-    MACHINE_TOKEN=$(jq -r .machineToken "$conf")
-    CONVEX=$(jq -r .convexSite "$conf")
-    resp=$(curl -fsSL -H "X-Machine-Token: $MACHINE_TOKEN" \
-      "$CONVEX/machine/pending-tls?machineId=$MACHINE_ID" || echo '{"domains":[]}')
-    echo "$resp" | jq -r '.domains[]?.domain' | while read -r d; do
-      [ -z "$d" ] && continue
-      echo "[yaver-tls] issuing cert for $d"
-      conf_file="/etc/nginx/sites-available/$d"
-      if [ ! -f "$conf_file" ]; then
-        cat > "$conf_file" <<NGINX
-    server {
-        listen 80;
-        server_name $d;
-        location / {
-            proxy_pass http://127.0.0.1:18080;
-            proxy_set_header Host \$host;
-            proxy_set_header X-Real-IP \$remote_addr;
-            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto \$scheme;
-            proxy_read_timeout 300s;
-            proxy_buffering off;
-        }
-    }
-    NGINX
-        ln -sf "$conf_file" "/etc/nginx/sites-enabled/$d"
-        nginx -t && systemctl reload nginx
-      fi
-      if certbot --nginx -d "$d" --non-interactive --agree-tos \
-           -m admin@yaver.io --redirect --no-eff-email; then
-        curl -fsSL -X POST "$CONVEX/machine/tls-issued" \
-          -H "Content-Type: application/json" \
-          -H "X-Machine-Token: $MACHINE_TOKEN" \
-          -d "{\"machineId\":\"$MACHINE_ID\",\"domain\":\"$d\"}" >/dev/null || true
-      else
-        curl -fsSL -X POST "$CONVEX/machine/tls-error" \
-          -H "Content-Type: application/json" \
-          -H "X-Machine-Token: $MACHINE_TOKEN" \
-          -d "{\"machineId\":\"$MACHINE_ID\",\"domain\":\"$d\",\"error\":\"certbot failed\"}" >/dev/null || true
-      fi
-    done
-    SCRIPT
-  - chmod +x /usr/local/bin/yaver-tls-reconciler
-
-  # Systemd service + timer: runs every 5 min.
-  - |
-    cat > /etc/systemd/system/yaver-tls.service <<'EOF'
-    [Unit]
-    Description=Yaver TLS reconciler
-    After=network-online.target nginx.service
-    [Service]
-    Type=oneshot
-    ExecStart=/usr/local/bin/yaver-tls-reconciler
-    EOF
-  - |
-    cat > /etc/systemd/system/yaver-tls.timer <<'EOF'
-    [Unit]
-    Description=Yaver TLS reconciler (5-min)
-    [Timer]
-    OnBootSec=3min
-    OnUnitActiveSec=5min
-    Unit=yaver-tls.service
-    [Install]
-    WantedBy=timers.target
-    EOF
-  - systemctl daemon-reload
-  - systemctl enable --now yaver-tls.timer
-
-  ${
-    isGpu
-      ? `# GPU tier: NVIDIA drivers + Ollama
-  - apt-get install -y nvidia-driver-550
-  - |
-    curl -fsSL https://ollama.com/install.sh | sh
-  - systemctl enable ollama
-`
-      : ""
-  }
-`;
+    const cloudInit = buildManagedCloudInit({
+      convexSite,
+      machineId: machineIdStr,
+      machineToken,
+      userSessionToken,
+      deviceId,
+      hostname: autoDomain,
+      yaverArch,
+      yaverReleaseUrl,
+      repoUrl: machine.repoUrl,
+      gpu: isGpu,
+    });
 
     try {
       // ── 1. Hetzner server ───────────────────────────────────────
@@ -479,6 +605,13 @@ runcmd:
       };
       const hetznerServerId = String(hetznerData.server.id);
       const serverIp = hetznerData.server.public_net.ipv4.ip;
+
+      await ctx.runMutation(api.auth.createSession, {
+        tokenHash: userSessionTokenHash,
+        userId: machine.userId,
+        deviceId,
+        expiresAt: sessionExpiresAt,
+      });
 
       // ── 2. Cloudflare DNS for the auto subdomain ───────────────
       const cfResp = await fetch(

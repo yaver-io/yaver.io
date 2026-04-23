@@ -6,12 +6,14 @@
 // MobileClient method, with JSON on stdout so humans + CI can pipe
 // to jq.
 
+import * as fs from "node:fs";
+import * as path from "node:path";
 import minimist from "minimist";
 import { MobileClient } from "../mobile-client.js";
 
 async function main() {
   const argv = minimist(process.argv.slice(2), {
-    string: ["token", "email", "password", "device", "target", "platform", "data-dir", "tool", "preset", "parent-dir", "convex-url", "relay", "verb", "machine", "payload"],
+    string: ["token", "email", "password", "device", "target", "platform", "data-dir", "tool", "preset", "parent-dir", "convex-url", "relay", "verb", "machine", "payload", "name", "template", "slug", "prompt", "base-url", "target-token", "on-conflict", "bundle-url", "module-name", "repo-url", "branch", "commit", "manifest-url", "workflow", "run-id", "provider", "out", "dir"],
     alias: { t: "token", d: "device" },
   });
 
@@ -150,6 +152,142 @@ async function main() {
       out(await mobile.wizard.generate(session, argv["parent-dir"]));
       break;
     }
+    case "phone-projects": {
+      out(await mobile.phoneProjects.list());
+      break;
+    }
+    case "phone-project-get": {
+      const slug = argv.slug || rest[0];
+      if (!slug) die("phone-project-get needs --slug <slug>");
+      out(await mobile.phoneProjects.get(String(slug)));
+      break;
+    }
+    case "phone-project-create": {
+      const name = argv.name || rest[0];
+      if (!name) die("phone-project-create needs --name <name>");
+      out(await mobile.phoneProjects.create({
+        name: String(name),
+        slug: argv.slug ? String(argv.slug) : undefined,
+        template: argv.template ? String(argv.template) : undefined,
+        prompt: argv.prompt ? String(argv.prompt) : undefined,
+      }));
+      break;
+    }
+    case "phone-project-create-at": {
+      const name = argv.name || rest[0];
+      const baseUrl = argv["base-url"];
+      if (!name || !baseUrl) die("phone-project-create-at needs --name <name> --base-url <url>");
+      out(await mobile.phoneProjects.createAt({
+        baseUrl: String(baseUrl),
+        authToken: argv["target-token"] ? String(argv["target-token"]) : undefined,
+      }, {
+        name: String(name),
+        slug: argv.slug ? String(argv.slug) : undefined,
+        template: argv.template ? String(argv.template) : undefined,
+        prompt: argv.prompt ? String(argv.prompt) : undefined,
+      }));
+      break;
+    }
+    case "phone-project-export": {
+      const slug = argv.slug || rest[0];
+      if (!slug) die("phone-project-export needs --slug <slug>");
+      const exported = await mobile.phoneProjects.export(String(slug), {
+        includeData: !!argv["include-data"],
+        containerize: !!argv.containerize,
+      });
+      out({
+        slug,
+        size: exported.size,
+        contentType: exported.contentType,
+      });
+      break;
+    }
+    case "phone-project-push": {
+      const slug = argv.slug || rest[0];
+      const baseUrl = argv["base-url"];
+      if (!slug || !baseUrl) die("phone-project-push needs --slug <slug> --base-url <url>");
+      out(await mobile.phoneProjects.push(String(slug), {
+        baseUrl: String(baseUrl),
+        authToken: argv["target-token"] ? String(argv["target-token"]) : undefined,
+      }, {
+        onConflict: argv["on-conflict"] as any,
+        includeData: !!argv["include-data"],
+        containerize: !!argv.containerize,
+        skipSeed: !!argv["skip-seed"],
+      }));
+      break;
+    }
+    case "todo-cloud-bootstrap": {
+      const name = argv.name || rest[0];
+      const baseUrl = argv["base-url"];
+      if (!name || !baseUrl) die("todo-cloud-bootstrap needs --name <name> --base-url <url>");
+      out(await mobile.phoneProjects.bootstrapTodoDeploy({
+        name: String(name),
+        slug: argv.slug ? String(argv.slug) : undefined,
+        prompt: argv.prompt ? String(argv.prompt) : undefined,
+        template: argv.template ? String(argv.template) : "todos",
+        target: {
+          baseUrl: String(baseUrl),
+          authToken: argv["target-token"] ? String(argv["target-token"]) : undefined,
+        },
+        includeData: !!argv["include-data"],
+        containerize: argv.containerize !== false,
+        onConflict: (argv["on-conflict"] as any) || "rename",
+      }));
+      break;
+    }
+    case "preview-manifest-create": {
+      const name = argv.name || rest[0];
+      const bundleUrl = argv["bundle-url"];
+      if (!name || !bundleUrl) die("preview-manifest-create needs --name <name> --bundle-url <url>");
+      const manifest = {
+        version: 1,
+        name: String(name),
+        description: argv.prompt ? String(argv.prompt) : undefined,
+        bundleUrl: String(bundleUrl),
+        moduleName: argv["module-name"] ? String(argv["module-name"]) : "main",
+        runtime: "hermes",
+        git: {
+          repoUrl: argv["repo-url"] ? String(argv["repo-url"]) : undefined,
+          branch: argv.branch ? String(argv.branch) : undefined,
+          commit: argv.commit ? String(argv.commit) : undefined,
+        },
+        feedback: {
+          sdk: "yaver",
+          compileTimeInjected: !!argv["compile-time-injected"],
+        },
+        ci: {
+          provider: argv.provider ? String(argv.provider) : "github-actions",
+          workflow: argv.workflow ? String(argv.workflow) : undefined,
+          runId: argv["run-id"] ? String(argv["run-id"]) : undefined,
+        },
+        sharing: {
+          hostVisible: argv["host-visible"] !== false,
+          guestVisible: !!argv["guest-visible"],
+        },
+      };
+      const outPath = argv.out ? path.resolve(String(argv.out)) : "";
+      if (outPath) {
+        fs.mkdirSync(path.dirname(outPath), { recursive: true });
+        fs.writeFileSync(outPath, JSON.stringify(manifest, null, 2) + "\n", "utf8");
+        out({ ok: true, path: outPath, manifest });
+      } else {
+        out(manifest);
+      }
+      break;
+    }
+    case "repo-bootstrap-remote": {
+      const repoUrl = argv["repo-url"] || rest[0];
+      if (!repoUrl) die("repo-bootstrap-remote needs --repo-url <url>");
+      out(await mobile.repos.bootstrapRemote({
+        repoUrl: String(repoUrl),
+        branch: argv.branch ? String(argv.branch) : undefined,
+        targetDir: argv.dir ? String(argv.dir) : undefined,
+        feedbackPlatform: (argv.platform ? String(argv.platform) : "react-native") as any,
+        ciTargets: rest.slice(1).length ? rest.slice(1).map(String) : undefined,
+      }));
+      break;
+    }
     case "guests": {
       out(await mobile.guests.list());
       break;
@@ -209,6 +347,15 @@ Usage:
   yaver-mobile-headless wizard-start
   yaver-mobile-headless wizard-answer <session> <question> <answer>
   yaver-mobile-headless wizard-generate <session> [--parent-dir=...]
+  yaver-mobile-headless phone-projects
+  yaver-mobile-headless phone-project-get --slug=<slug>
+  yaver-mobile-headless phone-project-create --name="Todo App" [--template=todos] [--prompt=...]
+  yaver-mobile-headless phone-project-create-at --base-url=<host> --name="Todo App"
+  yaver-mobile-headless phone-project-export --slug=<slug> [--include-data] [--containerize]
+  yaver-mobile-headless phone-project-push --slug=<slug> --base-url=<host> [--target-token=...]
+  yaver-mobile-headless todo-cloud-bootstrap --name="Todo App" --base-url=<host> [--target-token=...]
+  yaver-mobile-headless preview-manifest-create --name="Todo Preview" --bundle-url=<url> [--out=preview.json]
+  yaver-mobile-headless repo-bootstrap-remote --repo-url=<url> [--platform=react-native] [hermes feedback]
   yaver-mobile-headless guests
   yaver-mobile-headless raw-get /info
   yaver-mobile-headless raw-post /some/path --body='{"k":"v"}'

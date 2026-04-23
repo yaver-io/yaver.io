@@ -31,7 +31,7 @@ import { clearCache } from "../../src/lib/storage";
 import * as ExpoClipboard from "expo-clipboard";
 import * as ExpoLinking from "expo-linking";
 import { getLogEntries, clearLogEntries, onLogsChanged, LogEntry } from "../../src/lib/logger";
-import { quicClient, type AgentStatus, type EnvironmentProfileApplyResult, type RelayServer, type TunnelServer } from "../../src/lib/quic";
+import { quicClient, type AgentStatus, type EnvironmentProfileApplyResult, type MachineOnboardingProviderStatus, type RelayServer, type RunnerAuthStatusRow, type TunnelServer } from "../../src/lib/quic";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -165,6 +165,13 @@ export default function SettingsScreen() {
   const [isSavingSpeech, setIsSavingSpeech] = useState(false);
   const [isSavingAiProviders, setIsSavingAiProviders] = useState(false);
   const [isSyncingAiVault, setIsSyncingAiVault] = useState(false);
+  const [isSyncingRunnerAuth, setIsSyncingRunnerAuth] = useState(false);
+  const [runnerAuthRows, setRunnerAuthRows] = useState<RunnerAuthStatusRow[]>([]);
+  const [machineOnboardingRows, setMachineOnboardingRows] = useState<MachineOnboardingProviderStatus[]>([]);
+  const [githubToken, setGithubToken] = useState("");
+  const [gitlabToken, setGitlabToken] = useState("");
+  const [gitlabHost, setGitlabHost] = useState("gitlab.com");
+  const [isApplyingMachineOnboarding, setIsApplyingMachineOnboarding] = useState(false);
   const [providerKeyStates, setProviderKeyStates] = useState<Record<string, ProviderKeyState>>({});
   const [showToolchainSync, setShowToolchainSync] = useState(false);
   const [toolchainSourceId, setToolchainSourceId] = useState<string | null>(null);
@@ -853,6 +860,120 @@ export default function SettingsScreen() {
     }
   };
 
+  const loadRunnerAuthStatus = async () => {
+    if (connectionStatus !== "connected" || activeDevice?.isGuest) {
+      setRunnerAuthRows([]);
+      setMachineOnboardingRows([]);
+      return;
+    }
+    const [rows, onboarding] = await Promise.all([
+      quicClient.runnerAuthStatus(),
+      quicClient.machineOnboardingStatus(),
+    ]);
+    setRunnerAuthRows(rows);
+    setMachineOnboardingRows(onboarding);
+  };
+
+  const syncAiProvidersToRunners = async () => {
+    if (connectionStatus !== "connected") {
+      Alert.alert("Connect a device", "Connect to your own Yaver machine to configure runner auth.");
+      return;
+    }
+    if (activeDevice?.isGuest) {
+      Alert.alert("Guest machine", "Runner auth is disabled on guest connections. Connect to your own host machine instead.");
+      return;
+    }
+    const jobs = [
+      {
+        runner: "codex" as const,
+        payload: {
+          runner: "codex" as const,
+          openaiApiKey: openAiApiKey.trim(),
+          notes: "Runner auth synced from Yaver mobile.",
+        },
+      },
+      {
+        runner: "claude" as const,
+        payload: {
+          runner: "claude" as const,
+          anthropicApiKey: anthropicApiKey.trim(),
+          notes: "Runner auth synced from Yaver mobile.",
+        },
+      },
+      {
+        runner: "opencode" as const,
+        payload: {
+          runner: "opencode" as const,
+          openaiApiKey: openAiApiKey.trim(),
+          anthropicApiKey: anthropicApiKey.trim(),
+          glmApiKey: glmApiKey.trim(),
+          notes: "Runner auth synced from Yaver mobile.",
+        },
+      },
+    ].filter((job) =>
+      Object.entries(job.payload).some(([key, value]) => key !== "runner" && key !== "notes" && typeof value === "string" && value.trim().length > 0),
+    );
+    if (jobs.length === 0) {
+      Alert.alert("No keys", "Add at least one provider key first.");
+      return;
+    }
+    setIsSyncingRunnerAuth(true);
+    try {
+      const savedRunners: string[] = [];
+      for (const job of jobs) {
+        const res = await quicClient.runnerAuthSet(job.payload);
+        if (!res.ok) {
+          throw new Error(res.error || `Failed to configure ${job.runner}`);
+        }
+        savedRunners.push(job.runner);
+      }
+      await loadRunnerAuthStatus();
+      Alert.alert("Runner auth synced", `Updated ${savedRunners.join(", ")} on the connected machine.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to sync runner auth.";
+      Alert.alert("Error", message);
+    } finally {
+      setIsSyncingRunnerAuth(false);
+    }
+  };
+
+  const applyMachineOnboarding = async () => {
+    if (connectionStatus !== "connected") {
+      Alert.alert("Connect a device", "Connect to your own Yaver machine to configure OpenAI, GitHub, and GitLab.");
+      return;
+    }
+    if (activeDevice?.isGuest) {
+      Alert.alert("Guest machine", "Machine onboarding is disabled on guest connections. Connect to your own host machine instead.");
+      return;
+    }
+    if (!openAiApiKey.trim() && !githubToken.trim() && !gitlabToken.trim()) {
+      Alert.alert("No credentials", "Add at least one OpenAI, GitHub, or GitLab credential first.");
+      return;
+    }
+    setIsApplyingMachineOnboarding(true);
+    try {
+      const res = await quicClient.machineOnboardingApply({
+        openaiApiKey: openAiApiKey.trim(),
+        githubToken: githubToken.trim(),
+        gitlabToken: gitlabToken.trim(),
+        gitlabHost: gitlabHost.trim() || "gitlab.com",
+        applyClone: true,
+        applyCiToken: true,
+        notes: "Saved from Yaver mobile settings.",
+      });
+      if (!res.ok) {
+        throw new Error(res.error || "Failed to apply machine onboarding");
+      }
+      setMachineOnboardingRows(res.providers);
+      Alert.alert("Applied", res.applied.length > 0 ? `Updated ${res.applied.join(", ")}.` : "No changes were needed.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to apply machine onboarding.";
+      Alert.alert("Error", message);
+    } finally {
+      setIsApplyingMachineOnboarding(false);
+    }
+  };
+
   const toolchainSourceCandidates = devices.filter(
     (device) => !device.isGuest && device.id !== activeDevice?.id,
   );
@@ -868,6 +989,11 @@ export default function SettingsScreen() {
       setToolchainSourceId(selectedToolchainSource.id);
     }
   }, [selectedToolchainSource?.id]);
+
+  useEffect(() => {
+    if (!showIntegrations) return;
+    void loadRunnerAuthStatus();
+  }, [showIntegrations, connectionStatus, activeDevice?.id, activeDevice?.isGuest]);
 
   const currentToolchainSyncKinds = () => {
     const kinds: string[] = [];
@@ -3791,6 +3917,122 @@ export default function SettingsScreen() {
                     {isSyncingAiVault ? "Syncing..." : "Sync To Host Vault"}
                   </Text>
                 </Pressable>
+              </View>
+
+              <Pressable
+                onPress={syncAiProvidersToRunners}
+                disabled={isSyncingRunnerAuth || connectionStatus !== "connected" || !!activeDevice?.isGuest}
+                style={({ pressed }) => [
+                  {
+                    marginTop: 10,
+                    paddingVertical: 10,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: c.border,
+                    backgroundColor: c.bg,
+                    alignItems: "center",
+                    opacity: (isSyncingRunnerAuth || connectionStatus !== "connected" || !!activeDevice?.isGuest) ? 0.5 : 1,
+                  },
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 14 }}>
+                  {isSyncingRunnerAuth ? "Syncing..." : "Sync To Host Runners"}
+                </Text>
+              </Pressable>
+
+              <View style={{ marginTop: 12, gap: 6 }}>
+                {runnerAuthRows.length === 0 ? (
+                  <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                    {connectionStatus === "connected" && !activeDevice?.isGuest
+                      ? "Runner auth status will appear here."
+                      : "Connect to your own machine to inspect runner auth."}
+                  </Text>
+                ) : (
+                  runnerAuthRows.map((row) => (
+                    <Text key={row.id} style={{ color: row.ready ? c.success : c.textMuted, fontSize: 11 }}>
+                      {row.name}: {row.detail || (row.ready ? "ready" : "needs auth")}
+                    </Text>
+                  ))
+                )}
+              </View>
+
+              <View style={[styles.separator, { backgroundColor: c.borderSubtle, marginVertical: 16 }]} />
+
+              <Text style={{ color: c.textPrimary, fontWeight: "700", fontSize: 15 }}>Remote machine onboarding</Text>
+              <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 4 }}>
+                Push OpenAI, GitHub, and GitLab onboarding into the connected machine through the Yaver agent. Git tokens are stored for both clone/pull and CI/deploy use.
+              </Text>
+
+              <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 14 }}>GitHub token</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: c.bgInput, color: c.textPrimary, borderColor: c.border }]}
+                placeholder="ghp_..."
+                placeholderTextColor={c.textMuted}
+                value={githubToken}
+                onChangeText={setGithubToken}
+                autoCapitalize="none"
+                autoCorrect={false}
+                secureTextEntry
+              />
+
+              <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 12 }}>GitLab token</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: c.bgInput, color: c.textPrimary, borderColor: c.border }]}
+                placeholder="glpat-..."
+                placeholderTextColor={c.textMuted}
+                value={gitlabToken}
+                onChangeText={setGitlabToken}
+                autoCapitalize="none"
+                autoCorrect={false}
+                secureTextEntry
+              />
+
+              <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 12 }}>GitLab host</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: c.bgInput, color: c.textPrimary, borderColor: c.border }]}
+                placeholder="gitlab.com"
+                placeholderTextColor={c.textMuted}
+                value={gitlabHost}
+                onChangeText={setGitlabHost}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+
+              <Pressable
+                onPress={applyMachineOnboarding}
+                disabled={isApplyingMachineOnboarding || connectionStatus !== "connected" || !!activeDevice?.isGuest}
+                style={({ pressed }) => [
+                  {
+                    marginTop: 10,
+                    paddingVertical: 10,
+                    borderRadius: 8,
+                    backgroundColor: c.accent,
+                    alignItems: "center",
+                    opacity: (isApplyingMachineOnboarding || connectionStatus !== "connected" || !!activeDevice?.isGuest) ? 0.5 : 1,
+                  },
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <Text style={{ color: "#fff", fontWeight: "600", fontSize: 14 }}>
+                  {isApplyingMachineOnboarding ? "Applying..." : "Apply Machine Onboarding"}
+                </Text>
+              </Pressable>
+
+              <View style={{ marginTop: 12, gap: 6 }}>
+                {machineOnboardingRows.length === 0 ? (
+                  <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                    {connectionStatus === "connected" && !activeDevice?.isGuest
+                      ? "OpenAI / GitHub / GitLab status will appear here."
+                      : "Connect to your own machine to inspect provider onboarding."}
+                  </Text>
+                ) : (
+                  machineOnboardingRows.map((row) => (
+                    <Text key={row.id} style={{ color: row.ready ? c.success : row.configured ? c.accent : c.textMuted, fontSize: 11 }}>
+                      {row.name}: {row.detail || row.warning || (row.ready ? "ready" : "not configured")}
+                    </Text>
+                  ))
+                )}
               </View>
 
               <View style={[styles.separator, { backgroundColor: c.borderSubtle, marginVertical: 16 }]} />

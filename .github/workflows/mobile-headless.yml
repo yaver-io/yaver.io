@@ -49,9 +49,14 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.23"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
       - name: Install deps
         working-directory: mobile-headless
         run: bun install
+      - name: Install OpenCode
+        run: npm install -g opencode-ai
       - name: Build agent
         working-directory: desktop/agent
         run: go build -o /tmp/yaver-agent .
@@ -72,6 +77,7 @@ jobs:
           YMH_DATA_DIR: /tmp/ymh-ci
           YMH_SMOKE_AGENT_URL: http://127.0.0.1:18080
           YMH_SMOKE_AGENT_TOKEN: ci-smoke-token
+          YMH_GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
         run: |
           mkdir -p "$YMH_DATA_DIR"
           bun test test/smoke-local.test.ts

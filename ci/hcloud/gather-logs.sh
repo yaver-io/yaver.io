@@ -25,6 +25,7 @@ ssh_opts=(-i "$HCLOUD_SSH_PRIVATE_KEY_PATH"
           -o BatchMode=yes)
 
 scp "${ssh_opts[@]}" "root@$ip:/var/log/yaver-*.log" "$dest/" 2>/dev/null || true
+scp "${ssh_opts[@]}" "root@$ip:/var/log/yaver-ci/*.log" "$dest/" 2>/dev/null || true
 ssh "${ssh_opts[@]}" "root@$ip" \
   'docker ps -a 2>/dev/null; echo ---; docker logs yaver 2>&1 | tail -200 || true; \
    echo ---; journalctl -u ollama --no-pager -n 200 2>/dev/null || true' \

@@ -151,18 +151,27 @@ jobs:
       - name: Build web
         run: cd web && npm ci && npm run build
 
-  mobile-typecheck:
+  mobile-cloud-surface:
     needs: changes
-    if: needs.changes.outputs.mobile == 'true'
+    if: needs.changes.outputs.mobile == 'true' || needs.changes.outputs.cli == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+          cache-dependency-path: desktop/agent/go.sum
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: mobile/package-lock.json
-      - name: Typecheck mobile
+      - name: Lock shared-box guest repo policy
+        run: |
+          cd desktop/agent
+          go test -v -count=1 -run 'TestGuestScopeAllowList|TestGuestProjectScoping' ./...
+      - name: Typecheck mobile shared cloud surface
         run: |
           cd mobile
           npm ci
@@ -195,9 +204,248 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: sdk/feedback/react-native/package-lock.json
-      - name: Test Feedback SDK (React Native)
-        run: cd sdk/feedback/react-native && npm ci && npm test -- --passWithNoTests
+          cache-dependency-path: |
+            sdk/feedback/web/package-lock.json
+            sdk/feedback/react-native/package-lock.json
+            sdk/feedback/test-app/web/package-lock.json
+      - name: Build and test Feedback SDK (Web)
+        run: cd sdk/feedback/web && npm ci && npm run test:ci
+      - name: Compile and test dummy React host app for web Feedback SDK
+        run: cd sdk/feedback/test-app/web && npm ci && npm run test:ci
+      - name: Build and test Feedback SDK (React Native)
+        run: cd sdk/feedback/react-native && npm ci && npm run test:ci
+
+  unity-sdk-tests:
+    needs: changes
+    if: |
+      needs.changes.outputs.sdk == 'true' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Verify Unity license secret
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -z "$UNITY_LICENSE" ]; then
+            echo "Missing UNITY_LICENSE GitHub Actions secret."
+            exit 1
+          fi
+      - name: Validate Unity package metadata
+        run: node scripts/validate-unity-package.mjs
+      - name: Run Unity package EditMode tests
+        id: unity_sdk_editmode
+        uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        with:
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+          packageMode: true
+          projectPath: sdk/feedback/unity
+          unityVersion: 2021.3.45f1
+          testMode: EditMode
+          artifactsPath: artifacts/unity-sdk
+          coverageOptions: generateAdditionalMetrics;generateHtmlReport;generateBadgeReport;assemblyFilters:+Yaver.*
+      - name: Upload Unity test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-sdk-test-artifacts
+          path: artifacts/unity-sdk
+          if-no-files-found: ignore
+      - name: Upload Unity SDK coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-sdk-coverage
+          path: ${{ steps.unity_sdk_editmode.outputs.coveragePath }}
+          if-no-files-found: ignore
+
+  unity-sample-editor-tests:
+    needs: changes
+    if: |
+      needs.changes.outputs.sdk == 'true' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Verify Unity license secret
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -z "$UNITY_LICENSE" ]; then
+            echo "Missing UNITY_LICENSE GitHub Actions secret."
+            exit 1
+          fi
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: sdk/feedback/test-app/unity/Library
+          key: unity-sample-library-${{ runner.os }}-${{ hashFiles('sdk/feedback/test-app/unity/Packages/manifest.json', 'sdk/feedback/test-app/unity/ProjectSettings/ProjectVersion.txt', 'sdk/feedback/test-app/unity/Assets/**', 'sdk/feedback/unity/**') }}
+          restore-keys: |
+            unity-sample-library-${{ runner.os }}-
+      - name: Run sample project EditMode tests
+        id: sample_editmode
+        uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        with:
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+          projectPath: sdk/feedback/test-app/unity
+          unityVersion: 2021.3.45f1
+          testMode: EditMode
+          artifactsPath: artifacts/unity-sample-tests
+          coverageOptions: generateAdditionalMetrics;generateHtmlReport;generateBadgeReport;assemblyFilters:+Yaver.*
+      - name: Upload sample test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-sample-test-artifacts
+          path: artifacts/unity-sample-tests
+          if-no-files-found: ignore
+      - name: Upload sample EditMode coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-sample-editmode-coverage
+          path: ${{ steps.sample_editmode.outputs.coveragePath }}
+          if-no-files-found: ignore
+
+  unity-sample-playmode-tests:
+    needs: changes
+    if: |
+      needs.changes.outputs.sdk == 'true' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Verify Unity license secret
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -z "$UNITY_LICENSE" ]; then
+            echo "Missing UNITY_LICENSE GitHub Actions secret."
+            exit 1
+          fi
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: sdk/feedback/test-app/unity/Library
+          key: unity-sample-playmode-library-${{ runner.os }}-${{ hashFiles('sdk/feedback/test-app/unity/Packages/manifest.json', 'sdk/feedback/test-app/unity/ProjectSettings/ProjectVersion.txt', 'sdk/feedback/test-app/unity/Assets/**', 'sdk/feedback/unity/**') }}
+          restore-keys: |
+            unity-sample-playmode-library-${{ runner.os }}-
+      - name: Run sample project PlayMode tests
+        id: sample_playmode
+        uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        with:
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+          projectPath: sdk/feedback/test-app/unity
+          unityVersion: 2021.3.45f1
+          testMode: PlayMode
+          artifactsPath: artifacts/unity-sample-playmode-tests
+          coverageOptions: generateAdditionalMetrics;generateHtmlReport;generateBadgeReport;assemblyFilters:+Yaver.*
+      - name: Upload sample playmode test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-sample-playmode-test-artifacts
+          path: artifacts/unity-sample-playmode-tests
+          if-no-files-found: ignore
+      - name: Upload sample PlayMode coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-sample-playmode-coverage
+          path: ${{ steps.sample_playmode.outputs.coveragePath }}
+          if-no-files-found: ignore
+
+  unity-sample-builds:
+    needs: changes
+    if: |
+      needs.changes.outputs.sdk == 'true' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - targetPlatform: StandaloneWindows64
+            buildMethod: YaverBuildTools.BuildWindows64
+            buildName: desktop-windows64
+          - targetPlatform: StandaloneLinux64
+            buildMethod: YaverBuildTools.BuildLinux64
+            buildName: desktop-linux64
+          - targetPlatform: Android
+            buildMethod: YaverBuildTools.BuildAndroid
+            buildName: mobile-android
+          - targetPlatform: WebGL
+            buildMethod: YaverBuildTools.BuildWebGL
+            buildName: webgl
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Verify Unity license secret
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -z "$UNITY_LICENSE" ]; then
+            echo "Missing UNITY_LICENSE GitHub Actions secret."
+            exit 1
+          fi
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: sdk/feedback/test-app/unity/Library
+          key: unity-sample-build-library-${{ matrix.targetPlatform }}-${{ hashFiles('sdk/feedback/test-app/unity/Packages/manifest.json', 'sdk/feedback/test-app/unity/ProjectSettings/ProjectVersion.txt', 'sdk/feedback/test-app/unity/Assets/**', 'sdk/feedback/unity/**') }}
+          restore-keys: |
+            unity-sample-build-library-${{ matrix.targetPlatform }}-
+            unity-sample-build-library-
+      - if: matrix.targetPlatform == 'Android'
+        uses: jlumbroso/free-disk-space@main
+      - name: Build sample project
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        with:
+          projectPath: sdk/feedback/test-app/unity
+          unityVersion: 2021.3.45f1
+          targetPlatform: ${{ matrix.targetPlatform }}
+          buildMethod: ${{ matrix.buildMethod }}
+          buildsPath: build
+          buildName: ${{ matrix.buildName }}
+          customParameters: -yaverBuildOutput Builds/CI/${{ matrix.buildName }} -yaverBuildManifest .yaver-build/unity/ci-build-result.json
+      - name: Upload sample build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-sample-${{ matrix.buildName }}
+          path: build/${{ matrix.targetPlatform }}
+          if-no-files-found: warn
 
   pi-image-validate:
     needs: changes
@@ -382,9 +630,43 @@ jobs:
               || echo "SKIP: OAuth $provider returned $CODE (may need creds)"
           done
 
-          # 7. Cleanup — delete the test account.
-          curl -sf -X POST "$URL/auth/delete-account" -H "Authorization: Bearer $TOKEN" 2>/dev/null \
-            && echo "PASS: Test account deleted" || echo "SKIP: Delete may not be supported"
+          # 7. Delete the test account.
+          DELETE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$URL/auth/delete-account" \
+            -H "Authorization: Bearer $TOKEN" 2>/dev/null || true)
+          case "$DELETE_CODE" in
+            200|204) echo "PASS: Test account deleted ($DELETE_CODE)" ;;
+            *) echo "FAIL: Delete account returned $DELETE_CODE"; exit 1 ;;
+          esac
+
+          # 8. Deleted token should stop validating.
+          VALIDATE_AFTER_DELETE=$(curl -s -o /tmp/ci-auth-validate-after-delete.json -w "%{http_code}" \
+            "$URL/auth/validate" -H "Authorization: Bearer $TOKEN" 2>/dev/null || true)
+          case "$VALIDATE_AFTER_DELETE" in
+            401|403) echo "PASS: Deleted token rejected ($VALIDATE_AFTER_DELETE)" ;;
+            *)
+              if python3 -c 'import json, sys; data=json.load(open(sys.argv[1], "r", encoding="utf-8")); raise SystemExit(0 if data.get("valid") is False else 1)' /tmp/ci-auth-validate-after-delete.json 2>/dev/null
+              then
+                echo "PASS: Deleted token marked invalid by body"
+              else
+                echo "FAIL: Deleted token still validated ($VALIDATE_AFTER_DELETE)"
+                cat /tmp/ci-auth-validate-after-delete.json 2>/dev/null || true
+                exit 1
+              fi
+              ;;
+          esac
+
+          # 9. Login with deleted account should fail.
+          LOGIN_AFTER_DELETE=$(curl -s -o /tmp/ci-auth-login-after-delete.json -w "%{http_code}" \
+            -X POST "$URL/auth/login" -H "Content-Type: application/json" \
+            -d "{\"email\":\"$SIGNUP_EMAIL\",\"password\":\"TestPass2026!\"}" 2>/dev/null || true)
+          case "$LOGIN_AFTER_DELETE" in
+            400|401|404) echo "PASS: Deleted account login rejected ($LOGIN_AFTER_DELETE)" ;;
+            *)
+              echo "FAIL: Deleted account login unexpectedly succeeded ($LOGIN_AFTER_DELETE)"
+              cat /tmp/ci-auth-login-after-delete.json 2>/dev/null || true
+              exit 1
+              ;;
+          esac
 
           echo "=== Auth tests complete ==="
 

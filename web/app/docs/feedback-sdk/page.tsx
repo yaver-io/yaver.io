@@ -115,6 +115,7 @@ export default function FeedbackSdkPage() {
               ["overview", "Overview"],
               ["installation", "Installation"],
               ["quick-start", "Quick Start"],
+              ["unity", "Unity Usage Cases"],
               ["error-capture", "Error Capture"],
               ["black-box", "Black Box Streaming"],
               ["hot-reload", "Hot Reload Button"],
@@ -197,6 +198,29 @@ export default function FeedbackSdkPage() {
                 everything that led up to it.
               </p>
             </div>
+          </div>
+        </section>
+
+        <section className="mb-20">
+          <SectionHeading id="unity">Unity Usage Cases</SectionHeading>
+          <Prose>
+            Unity support is built for self-hosted game-development loops. The package is useful
+            for mobile hypercasual prototypes, casual desktop games, QA-heavy test builds, and
+            teams that want feedback, tests, builds, and relaunches to happen on their own
+            machines.
+          </Prose>
+          <div className="space-y-4">
+            {[
+              "Capture gameplay bugs on real phones with screenshots, logs, crash context, and black-box history.",
+              "Run Unity EditMode and PlayMode tests on the agent machine from the same Yaver flow.",
+              "Use content refresh for JSON gameplay values before escalating to full rebuilds.",
+              "Relaunch desktop Unity players from the agent machine for tighter self-hosted iteration.",
+              "Use the same SDK for a solo home-machine setup or a studio runner/VPS setup.",
+            ].map((item) => (
+              <div key={item} className="card">
+                <p className="text-sm leading-relaxed text-surface-400">{item}</p>
+              </div>
+            ))}
           </div>
         </section>
 

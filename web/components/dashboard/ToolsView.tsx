@@ -6,8 +6,8 @@
 // onto their dev machine (or any paired peer) without touching a
 // terminal. Progress streams live from /streams/install:<tool>.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { agentClient, type InfraSummary } from "@/lib/agent-client";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { agentClient, type InfraSummary, type MachineOnboardingProviderStatus, type RunnerAuthStatusRow } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
 
 type InstallEntry = { name: string; installed: boolean; description: string };
@@ -55,11 +55,31 @@ function fmtUptime(s?: number) {
 export default function ToolsView({ devices = [] }: Props) {
   const [summary, setSummary] = useState<InfraSummary | null>(null);
   const [catalogue, setCatalogue] = useState<InstallEntry[]>([]);
+  const [runnerAuthRows, setRunnerAuthRows] = useState<RunnerAuthStatusRow[]>([]);
+  const [onboardingRows, setOnboardingRows] = useState<MachineOnboardingProviderStatus[]>([]);
   const [target, setTarget] = useState<string | undefined>(undefined);
   const [installing, setInstalling] = useState<string | null>(null);
+  const [savingRunnerAuth, setSavingRunnerAuth] = useState<string | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [result, setResult] = useState<{ tool: string; status: string } | null>(null);
+  const [runnerAuthResult, setRunnerAuthResult] = useState<string | null>(null);
+  const [onboardingResult, setOnboardingResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [onboardingError, setOnboardingError] = useState<string | null>(null);
+  const [codexOpenAIKey, setCodexOpenAIKey] = useState("");
+  const [claudeAnthropicKey, setClaudeAnthropicKey] = useState("");
+  const [claudeAuthToken, setClaudeAuthToken] = useState("");
+  const [claudeOAuthToken, setClaudeOAuthToken] = useState("");
+  const [opencodeOpenAIKey, setOpencodeOpenAIKey] = useState("");
+  const [opencodeAnthropicKey, setOpencodeAnthropicKey] = useState("");
+  const [opencodeGLMKey, setOpencodeGLMKey] = useState("");
+  const [opencodeZAIKey, setOpencodeZAIKey] = useState("");
+  const [machineOpenAIKey, setMachineOpenAIKey] = useState("");
+  const [machineGitHubToken, setMachineGitHubToken] = useState("");
+  const [machineGitLabToken, setMachineGitLabToken] = useState("");
+  const [machineGitLabHost, setMachineGitLabHost] = useState("gitlab.com");
+  const [savingOnboarding, setSavingOnboarding] = useState(false);
   const cancelStreamRef = useRef<(() => void) | null>(null);
 
   const peers = useMemo(
@@ -86,18 +106,38 @@ export default function ToolsView({ devices = [] }: Props) {
     }
   }, [target]);
 
+  const loadRunnerAuth = useCallback(async () => {
+    try {
+      setRunnerAuthRows(await agentClient.runnerAuthStatus(target));
+    } catch {
+      /* soft-fail */
+    }
+  }, [target]);
+
+  const loadOnboarding = useCallback(async () => {
+    try {
+      setOnboardingRows(await agentClient.machineOnboardingStatus(target));
+    } catch {
+      /* soft-fail */
+    }
+  }, [target]);
+
   useEffect(() => {
     loadSummary();
     loadCatalogue();
+    loadRunnerAuth();
+    loadOnboarding();
     const i = setInterval(() => {
       loadSummary();
       loadCatalogue();
+      loadRunnerAuth();
+      loadOnboarding();
     }, 15_000);
     return () => {
       clearInterval(i);
       cancelStreamRef.current?.();
     };
-  }, [loadSummary, loadCatalogue]);
+  }, [loadSummary, loadCatalogue, loadRunnerAuth, loadOnboarding]);
 
   async function runInstall(tool: string) {
     if (installing) return;
@@ -121,8 +161,62 @@ export default function ToolsView({ devices = [] }: Props) {
         if (ev.status !== "ok" && ev.error) setError(ev.error);
         void loadCatalogue();
         void loadSummary();
+        void loadRunnerAuth();
+        void loadOnboarding();
       }
     });
+  }
+
+  async function saveRunnerAuth(runner: "claude" | "codex" | "opencode") {
+    if (savingRunnerAuth) return;
+    setSavingRunnerAuth(runner);
+    setAuthError(null);
+    setRunnerAuthResult(null);
+    const res = await agentClient.runnerAuthSet(
+      {
+        runner,
+        openaiApiKey: runner === "codex" ? codexOpenAIKey : opencodeOpenAIKey,
+        anthropicApiKey: runner === "claude" ? claudeAnthropicKey : opencodeAnthropicKey,
+        anthropicAuthToken: runner === "claude" ? claudeAuthToken : undefined,
+        claudeCodeOauthToken: runner === "claude" ? claudeOAuthToken : undefined,
+        glmApiKey: runner === "opencode" ? opencodeGLMKey : undefined,
+        zaiApiKey: runner === "opencode" ? opencodeZAIKey : undefined,
+      },
+      target,
+    );
+    setSavingRunnerAuth(null);
+    if (!res.ok) {
+      setAuthError(res.error || "Runner auth update failed");
+      return;
+    }
+    setRunnerAuthRows(res.runners);
+    setRunnerAuthResult(`${labelForRunner(runner)} auth saved`);
+  }
+
+  async function saveMachineOnboarding() {
+    if (savingOnboarding) return;
+    setSavingOnboarding(true);
+    setOnboardingError(null);
+    setOnboardingResult(null);
+    const res = await agentClient.machineOnboardingApply(
+      {
+        openaiApiKey: machineOpenAIKey,
+        githubToken: machineGitHubToken,
+        gitlabToken: machineGitLabToken,
+        gitlabHost: machineGitLabHost,
+        applyClone: true,
+        applyCiToken: true,
+        notes: "Saved from Yaver web dashboard.",
+      },
+      target,
+    );
+    setSavingOnboarding(false);
+    if (!res.ok) {
+      setOnboardingError(res.error || "Machine onboarding update failed");
+      return;
+    }
+    setOnboardingRows(res.providers);
+    setOnboardingResult(res.applied.length > 0 ? `Applied ${res.applied.join(", ")}` : "Nothing changed");
   }
 
   const metrics = summary?.metrics;
@@ -206,6 +300,50 @@ export default function ToolsView({ devices = [] }: Props) {
       )}
 
       <section>
+        <h3 className="text-sm font-semibold text-surface-300 mb-3">Remote onboarding</h3>
+        <div className="rounded-2xl border border-surface-800 bg-surface-900/40 p-4 space-y-4">
+          <p className="text-sm text-surface-400">
+            Configure OpenAI, GitHub, and GitLab on the selected machine in one pass. GitHub and GitLab write both clone credentials and CI/deploy vault tokens.
+          </p>
+          <div className="grid gap-3 md:grid-cols-2">
+            <SecretField label="OpenAI API key" value={machineOpenAIKey} onChange={setMachineOpenAIKey} placeholder="sk-..." />
+            <SecretField label="GitHub token" value={machineGitHubToken} onChange={setMachineGitHubToken} placeholder="ghp_..." />
+            <SecretField label="GitLab token" value={machineGitLabToken} onChange={setMachineGitLabToken} placeholder="glpat-..." />
+            <SecretField label="GitLab host" value={machineGitLabHost} onChange={setMachineGitLabHost} placeholder="gitlab.com" secret={false} />
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={saveMachineOnboarding}
+              disabled={savingOnboarding}
+              className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
+            >
+              {savingOnboarding ? "Applying..." : "Apply Onboarding"}
+            </button>
+            {onboardingResult && <span className="text-sm text-emerald-300">{onboardingResult}</span>}
+            {onboardingError && <span className="text-sm text-rose-300">{onboardingError}</span>}
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            {onboardingRows.map((row) => (
+              <div key={row.id} className="rounded-xl border border-surface-800 bg-surface-950/60 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-semibold text-surface-50">{row.name}</span>
+                  <span className={`text-xs font-semibold ${row.ready ? "text-emerald-300" : row.configured ? "text-amber-300" : "text-surface-500"}`}>
+                    {row.ready ? "Ready" : row.configured ? "Partial" : "Missing"}
+                  </span>
+                </div>
+                <p className="mt-2 text-xs text-surface-400">{row.detail || row.warning || "No status yet"}</p>
+                {(row.host || row.username) && (
+                  <p className="mt-2 text-[11px] text-surface-500">
+                    {[row.host, row.username].filter(Boolean).join(" · ")}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section>
         <h3 className="text-sm font-semibold text-surface-300 mb-3">Install catalogue</h3>
         {catalogue.length === 0 ? (
           <p className="text-sm text-surface-500">
@@ -259,6 +397,69 @@ export default function ToolsView({ devices = [] }: Props) {
         )}
       </section>
 
+      <section>
+        <div className="flex items-start justify-between gap-4 mb-3">
+          <div>
+            <h3 className="text-sm font-semibold text-surface-300">Runner auth</h3>
+            <p className="text-xs text-surface-500 mt-1">
+              Push API keys or auth tokens into the selected machine so Claude Code, Codex, and OpenCode are usable headlessly.
+            </p>
+          </div>
+          <button
+            onClick={() => void loadRunnerAuth()}
+            className="rounded-lg border border-surface-700 px-3 py-2 text-xs font-semibold text-surface-300 hover:border-surface-600"
+          >
+            Refresh
+          </button>
+        </div>
+        <div className="grid gap-3">
+          <RunnerAuthCard
+            title="Codex"
+            status={runnerAuthRows.find((row) => row.id === "codex")}
+            busy={savingRunnerAuth === "codex"}
+            onSave={() => void saveRunnerAuth("codex")}
+          >
+            <SecretInput label="OpenAI API key" value={codexOpenAIKey} onChange={setCodexOpenAIKey} placeholder="sk-..." />
+          </RunnerAuthCard>
+
+          <RunnerAuthCard
+            title="Claude Code"
+            status={runnerAuthRows.find((row) => row.id === "claude")}
+            busy={savingRunnerAuth === "claude"}
+            onSave={() => void saveRunnerAuth("claude")}
+          >
+            <div className="grid gap-3 md:grid-cols-3">
+              <SecretInput label="Anthropic API key" value={claudeAnthropicKey} onChange={setClaudeAnthropicKey} placeholder="sk-ant-..." />
+              <SecretInput label="Anthropic auth token" value={claudeAuthToken} onChange={setClaudeAuthToken} placeholder="oauth/session token" />
+              <SecretInput label="Claude Code OAuth token" value={claudeOAuthToken} onChange={setClaudeOAuthToken} placeholder="oauth token" />
+            </div>
+          </RunnerAuthCard>
+
+          <RunnerAuthCard
+            title="OpenCode"
+            status={runnerAuthRows.find((row) => row.id === "opencode")}
+            busy={savingRunnerAuth === "opencode"}
+            onSave={() => void saveRunnerAuth("opencode")}
+          >
+            <div className="grid gap-3 md:grid-cols-2">
+              <SecretInput label="OpenAI API key" value={opencodeOpenAIKey} onChange={setOpencodeOpenAIKey} placeholder="sk-..." />
+              <SecretInput label="Anthropic API key" value={opencodeAnthropicKey} onChange={setOpencodeAnthropicKey} placeholder="sk-ant-..." />
+              <SecretInput label="GLM API key" value={opencodeGLMKey} onChange={setOpencodeGLMKey} placeholder="zai_... or glm_..." />
+              <SecretInput label="ZAI API key" value={opencodeZAIKey} onChange={setOpencodeZAIKey} placeholder="zai_..." />
+            </div>
+          </RunnerAuthCard>
+        </div>
+        {(runnerAuthResult || authError) && (
+          <div className={`mt-3 rounded-xl border px-4 py-3 text-sm ${
+            authError
+              ? "border-red-500/30 bg-red-500/10 text-red-300"
+              : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+          }`}>
+            {authError || runnerAuthResult}
+          </div>
+        )}
+      </section>
+
       {(log.length > 0 || error) && (
         <section className="rounded-2xl border border-surface-800 bg-black p-4">
           <div className="text-[10px] font-bold text-surface-400 mb-2">
@@ -279,6 +480,114 @@ export default function ToolsView({ devices = [] }: Props) {
         </section>
       )}
     </div>
+  );
+}
+
+function SecretField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  secret = true,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  secret?: boolean;
+}) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-surface-500">{label}</span>
+      <input
+        type={secret ? "password" : "text"}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="rounded-xl border border-surface-800 bg-surface-950 px-3 py-2 text-sm text-surface-100 outline-none placeholder:text-surface-600"
+      />
+    </label>
+  );
+}
+
+function labelForRunner(runner: "claude" | "codex" | "opencode") {
+  if (runner === "claude") return "Claude Code";
+  if (runner === "codex") return "Codex";
+  return "OpenCode";
+}
+
+function runnerStatusTone(status?: RunnerAuthStatusRow) {
+  if (!status?.installed) return "bg-surface-800 text-surface-400";
+  if (status.ready) return "bg-emerald-500/15 text-emerald-300";
+  return "bg-amber-500/15 text-amber-300";
+}
+
+function RunnerAuthCard({
+  title,
+  status,
+  busy,
+  onSave,
+  children,
+}: {
+  title: string;
+  status?: RunnerAuthStatusRow;
+  busy: boolean;
+  onSave: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-2xl border border-surface-800 bg-surface-900/40 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-surface-50">{title}</span>
+            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${runnerStatusTone(status)}`}>
+              {!status?.installed ? "NOT INSTALLED" : status.ready ? "READY" : "NEEDS AUTH"}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-surface-400">
+            {status?.detail || "No status yet."}
+          </p>
+        </div>
+        <button
+          onClick={onSave}
+          disabled={busy}
+          className={`rounded-lg px-3 py-2 text-xs font-semibold ${
+            busy
+              ? "cursor-wait bg-surface-800 text-surface-400"
+              : "bg-indigo-500 text-white hover:bg-indigo-400"
+          }`}
+        >
+          {busy ? "Saving…" : "Save auth"}
+        </button>
+      </div>
+      <div className="mt-4">{children}</div>
+    </div>
+  );
+}
+
+function SecretInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+}) {
+  return (
+    <label className="block">
+      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-surface-500">{label}</div>
+      <input
+        type="password"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className="w-full rounded-xl border border-surface-800 bg-surface-950 px-3 py-2 text-sm text-surface-100 outline-none placeholder:text-surface-600 focus:border-indigo-500/60"
+      />
+    </label>
   );
 }
 

@@ -16,6 +16,10 @@ export interface MockAgentHandle {
 export async function startMockAgent(opts?: { token?: string }): Promise<MockAgentHandle> {
   const token = opts?.token ?? "mock-token";
   const streamSubs = new Map<string, Set<http.ServerResponse>>();
+  const phoneProjects = new Map<string, any>();
+  const repos = new Map<string, any>();
+  const execs = new Map<string, any>();
+  let execCounter = 0;
 
   const pushFrame = (streamName: string, frame: any) => {
     const subs = streamSubs.get(streamName) ?? new Set();
@@ -39,6 +43,59 @@ export async function startMockAgent(opts?: { token?: string }): Promise<MockAge
 
     if (path === "/info") return json(200, { hostname: "mock", deviceId: "mock-device", mode: "owner" });
     if (path === "/agent/runners") return json(200, { runners: [{ id: "claude-code", name: "Claude Code", installed: true, active: true, models: [] }] });
+    if (path === "/repos/list" && req.method === "GET") {
+      return json(200, Array.from(repos.values()));
+    }
+    if (path === "/repos/clone" && req.method === "POST") {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+      const repoName = String(body.url || "repo").split("/").pop()?.replace(/\.git$/, "") || "repo";
+      const path = `${body.dir || "/tmp/mock-repos"}/${repoName}`;
+      const repo = {
+        name: repoName,
+        path,
+        branch: body.branch || "main",
+        remote: body.url,
+        dirty: false,
+      };
+      repos.set(path, repo);
+      return json(200, { ok: true, path, output: `cloned ${body.url}` });
+    }
+    if (path === "/exec" && req.method === "GET") {
+      return json(200, { execs: Array.from(execs.values()) });
+    }
+    if (path === "/exec" && req.method === "POST") {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+      const execId = `exec-${++execCounter}`;
+      const command = String(body.command || "");
+      const now = new Date().toISOString();
+      const exec = {
+        id: execId,
+        command,
+        status: "completed",
+        exitCode: 0,
+        stdout: command.includes("yaver sdk add feedback")
+          ? "installed yaver feedback sdk"
+          : command.includes("yaver ci add")
+            ? `wrote workflow for ${command.split(" ").pop()}`
+            : `ran ${command}`,
+        stderr: "",
+        pid: 1000 + execCounter,
+        startedAt: now,
+        finishedAt: now,
+      };
+      execs.set(execId, exec);
+      return json(200, { ok: true, execId, pid: exec.pid });
+    }
+    if (path.startsWith("/exec/") && req.method === "GET") {
+      const execId = path.slice("/exec/".length);
+      const exec = execs.get(execId);
+      if (!exec) return json(404, { error: "exec not found" });
+      return json(200, { exec });
+    }
     if (path === "/infra/summary") return json(200, {
       machine: { name: "mock", platform: "linux", arch: "amd64", deviceId: "mock-device", isOnline: true },
       metrics: { cpuPct: 5, ramPct: 40, ramUsed: 4e9, ramTotal: 16e9, diskPct: 30, diskUsed: 120e9, diskTotal: 500e9, cores: 8, uptime: 1000, hostname: "mock" },
@@ -94,6 +151,68 @@ export async function startMockAgent(opts?: { token?: string }): Promise<MockAge
     }
     if (path === "/project/wizard/generate" && req.method === "POST") {
       return json(200, { ok: true, directory: "/tmp/mock-project", files: ["README.md"], nextSteps: ["cd mock-project"] });
+    }
+    if (path === "/phone/projects/list" && req.method === "GET") {
+      return json(200, { projects: Array.from(phoneProjects.values()) });
+    }
+    if (path === "/phone/projects/get" && req.method === "GET") {
+      const slug = url.searchParams.get("slug") || "";
+      return json(200, phoneProjects.get(slug) ?? null);
+    }
+    if (path === "/phone/projects/create" && req.method === "POST") {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+      const now = new Date().toISOString();
+      const slug = String(body.slug || body.name || "project").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+      const project = {
+        slug,
+        name: String(body.name || slug),
+        template: body.template || "crud",
+        dir: `/tmp/mock-phone-projects/${slug}`,
+        createdAt: now,
+        updatedAt: now,
+        schema: null,
+        auth: null,
+        seed: null,
+        app: body.prompt ? { summary: `Kickoff prompt: ${body.prompt}` } : null,
+        stats: { tableCount: 0, rowCount: 0, perTable: {}, dbBytes: 0 },
+      };
+      phoneProjects.set(slug, project);
+      return json(200, project);
+    }
+    if (path === "/phone/projects/export" && req.method === "GET") {
+      const slug = url.searchParams.get("slug") || "";
+      const project = phoneProjects.get(slug);
+      if (!project) return json(404, { error: "project not found" });
+      const payload = Buffer.from(JSON.stringify({ slug, project }), "utf8");
+      res.writeHead(200, { "Content-Type": "application/gzip", "Content-Length": String(payload.byteLength) });
+      res.end(payload);
+      return;
+    }
+    if (path === "/phone/projects/receive" && req.method === "POST") {
+      const slug = url.searchParams.get("slug") || `received-${phoneProjects.size + 1}`;
+      const now = new Date().toISOString();
+      const project = {
+        slug,
+        name: slug,
+        template: "imported",
+        dir: `/tmp/mock-phone-projects/${slug}`,
+        createdAt: now,
+        updatedAt: now,
+        schema: null,
+        auth: null,
+        seed: null,
+        app: { summary: "Imported from another agent" },
+        stats: { tableCount: 0, rowCount: 0, perTable: {}, dbBytes: 0 },
+      };
+      phoneProjects.set(slug, project);
+      return json(200, {
+        slug,
+        localUrl: `/phone-project/${slug}`,
+        browseUrl: `/phone-projects/${slug}`,
+        project,
+      });
     }
     json(404, { error: "mock agent: path not covered — " + path });
   });

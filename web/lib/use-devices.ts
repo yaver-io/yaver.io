@@ -11,6 +11,9 @@ export interface Device {
   port: number;
   lastSeen: string;
   online: boolean;
+  publicKey?: string;
+  hardwareId?: string;
+  localIps?: string[];
   deviceClass?: "desktop" | "edge-mobile" | "server";
   edgeProfile?: {
     supportsLocalInference: boolean;
@@ -25,19 +28,16 @@ export interface Device {
   hostName?: string;
   hostEmail?: string;
   accessScope?: "owner" | "shared-scoped" | "shared-legacy";
+  tunnelUrl?: string;
   priorityMode?: string;
   useHostApiKeys?: boolean;
   allowGuestProvidedApiKeys?: boolean;
+  sharedWithGuests?: boolean;
+  sharesAllProjects?: boolean;
+  sharedProjects?: string[];
+  sharesAllRunners?: boolean;
+  sharedRunners?: string[];
   sessionBinding?: "dedicated" | "legacy-shared";
-}
-
-function deviceIdentityKey(device: Pick<Device, "id" | "name" | "isGuest" | "hostEmail" | "hostName">): string {
-  if (device.isGuest) {
-    const hostScope = device.hostEmail || device.hostName || "guest";
-    return `guest:${hostScope}:${device.id || device.name}`;
-  }
-  if (device.id) return `id:${device.id}`;
-  return `name:${device.name.toLowerCase().replace(/\.local$/, "")}`;
 }
 
 interface DevicesState {
@@ -68,49 +68,33 @@ export function useDevices(token: string | null): DevicesState {
         port: d.quicPort || d.port || 18080,
         lastSeen: d.lastHeartbeat ? new Date(d.lastHeartbeat).toISOString() : "",
         online: d.isOnline ?? d.online ?? false,
+        publicKey: d.publicKey,
+        hardwareId: d.hardwareId ?? d.hwid,
+        localIps: Array.isArray(d.localIps) ? d.localIps : undefined,
         deviceClass: d.deviceClass,
         edgeProfile: d.edgeProfile,
         isGuest: d.isGuest ?? false,
         hostName: d.hostName,
         hostEmail: d.hostEmail,
         accessScope: d.accessScope,
+        tunnelUrl: d.tunnelUrl,
         priorityMode: d.priorityMode,
         useHostApiKeys: d.useHostApiKeys,
         allowGuestProvidedApiKeys: d.allowGuestProvidedApiKeys,
+        sharedWithGuests: d.sharedWithGuests,
+        sharesAllProjects: d.sharesAllProjects,
+        sharedProjects: Array.isArray(d.sharedProjects) ? d.sharedProjects : undefined,
+        sharesAllRunners: d.sharesAllRunners,
+        sharedRunners: Array.isArray(d.sharedRunners) ? d.sharedRunners : undefined,
         sessionBinding: d.sessionBinding,
       }));
 
-      // Deduplicate by stable device identity. Guest devices include host
-      // context so two shared devices with the same hostname remain distinct.
-      const seen = new Map<string, Device>();
-      for (const d of mapped) {
-        const key = deviceIdentityKey(d);
-        // Skip IP-only names if we already have a hostname for the same machine
-        if (/^\d+\.\d+\.\d+\.\d+$/.test(d.name)) {
-          // Only keep IP entry if no hostname entry exists
-          if (!seen.has(key)) seen.set(key, d);
-          continue;
-        }
-        const existing = seen.get(key);
-        if (!existing || d.lastSeen > existing.lastSeen) {
-          seen.set(key, d);
-        }
-      }
-
-      // Remove IP entries that have a matching hostname entry
-      const hostnames = new Set<string>();
-      for (const d of seen.values()) {
-        if (!/^\d+\.\d+\.\d+\.\d+$/.test(d.name)) hostnames.add(deviceIdentityKey(d));
-      }
-      const deduped = Array.from(seen.values()).filter(d => {
-        if (/^\d+\.\d+\.\d+\.\d+$/.test(d.name) && hostnames.has(deviceIdentityKey(d))) return false;
-        return true;
+      mapped.sort((a, b) => {
+        if (a.online !== b.online) return a.online ? -1 : 1;
+        return b.lastSeen.localeCompare(a.lastSeen);
       });
 
-      // Sort: online first
-      deduped.sort((a, b) => (a.online === b.online ? 0 : a.online ? -1 : 1));
-
-      setDevices(deduped);
+      setDevices(mapped);
     } catch {
       // Silently fail
     }

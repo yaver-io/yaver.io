@@ -40,6 +40,11 @@ on:
         required: false
         type: boolean
         default: true
+      package_feedback_unity:
+        description: "Build Unity feedback SDK release artifact"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -276,3 +281,32 @@ jobs:
         run: |
           cd sdk/feedback/flutter
           dart pub publish --force
+
+  package-feedback-unity:
+    if: ${{ github.event_name == 'release' || inputs.package_feedback_unity }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Unity package metadata
+        run: |
+          node scripts/validate-unity-package.mjs
+
+      - name: Pack Unity SDK artifact
+        run: |
+          VERSION=$(node -p 'JSON.parse(require("fs").readFileSync("sdk/feedback/unity/package.json","utf8")).version')
+          mkdir -p dist
+          tar -czf "dist/io.yaver.feedback.unity-${VERSION}.tgz" -C sdk/feedback unity
+
+      - name: Upload Unity SDK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-feedback-sdk
+          path: dist/*.tgz
+
+      - name: Upload Unity SDK artifact to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.event.release.tag_name }} dist/*.tgz --repo ${{ github.repository }}

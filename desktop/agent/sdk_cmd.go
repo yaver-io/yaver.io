@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -59,7 +60,7 @@ Yaver is the single entry point:
 func printSDKList() {
 	fmt.Println("Available SDK families:")
 	fmt.Println("  feedback   In-app visual feedback loop, black box recorder, hot reload control")
-	fmt.Println("             Platforms: expo, react-native, flutter, web")
+	fmt.Println("             Platforms: expo, react-native, flutter, web, unity")
 	fmt.Println("  core       Programmatic Yaver client SDK")
 	fmt.Println("             Platforms: js, python, flutter, go")
 }
@@ -94,14 +95,18 @@ func performSDKAdd(family, dir, platform string) error {
 	fmt.Printf("Project:  %s\n", absDir)
 	fmt.Printf("SDK:      %s\n", plan.Family)
 	fmt.Printf("Platform: %s\n", plan.Platform)
-	fmt.Printf("Install:  %s %s\n\n", plan.Command, strings.Join(plan.Args, " "))
+	if plan.Command != "" {
+		fmt.Printf("Install:  %s %s\n\n", plan.Command, strings.Join(plan.Args, " "))
 
-	cmd := osexec.Command(plan.Command, plan.Args...)
-	cmd.Dir = absDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%s install failed: %w", plan.PackageManager, err)
+		cmd := osexec.Command(plan.Command, plan.Args...)
+		cmd.Dir = absDir
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("%s install failed: %w", plan.PackageManager, err)
+		}
+	} else {
+		fmt.Printf("Install:  %s\n\n", plan.PackageManager)
 	}
 
 	if plan.Family == "feedback" && plan.Platform == "expo" {
@@ -109,6 +114,13 @@ func performSDKAdd(family, dir, platform string) error {
 			plan.NextSteps = append(notes, plan.NextSteps...)
 		} else {
 			plan.NextSteps = append([]string{fmt.Sprintf("Could not patch Expo config automatically: %v", err)}, plan.NextSteps...)
+		}
+	}
+	if plan.Family == "feedback" && plan.Platform == "unity" {
+		if notes, err := postInstallUnityFeedback(absDir); err == nil {
+			plan.NextSteps = append(notes, plan.NextSteps...)
+		} else {
+			plan.NextSteps = append([]string{fmt.Sprintf("Could not patch Unity manifest automatically: %v", err)}, plan.NextSteps...)
 		}
 	}
 
@@ -138,6 +150,20 @@ func buildFeedbackInstallPlan(dir, platform string) (*sdkInstallPlan, error) {
 		platform = detectFeedbackPlatform(dir)
 	}
 	switch platform {
+	case "unity":
+		return &sdkInstallPlan{
+			Family:         "feedback",
+			Platform:       "unity",
+			PackageManager: "unity-upm",
+			PackageName:    "io.yaver.feedback.unity",
+			Command:        "",
+			Args:           nil,
+			NextSteps: []string{
+				"Open the Unity project so Package Manager resolves `io.yaver.feedback.unity`.",
+				"Add a bootstrap MonoBehaviour that calls `YaverFeedback.Initialize(...)`.",
+				"Use the built-in overlay for login, feedback, vibing, and reload requests.",
+			},
+		}, nil
 	case "expo":
 		pm := detectPackageManager(dir)
 		cmd, args := jsInstallCommand(pm, "yaver-feedback-react-native")
@@ -198,7 +224,7 @@ func buildFeedbackInstallPlan(dir, platform string) (*sdkInstallPlan, error) {
 			},
 		}, nil
 	default:
-		return nil, fmt.Errorf("could not detect a supported feedback SDK target in %s (supported: expo, react-native, flutter, web)", dir)
+		return nil, fmt.Errorf("could not detect a supported feedback SDK target in %s (supported: expo, react-native, flutter, web, unity)", dir)
 	}
 }
 
@@ -267,6 +293,9 @@ func detectFeedbackPlatform(dir string) string {
 	if isExpoProject(dir) {
 		return "expo"
 	}
+	if hasUnityProjectFiles(dir) {
+		return "unity"
+	}
 	switch detectFramework(dir) {
 	case "react-native":
 		return "react-native"
@@ -279,6 +308,12 @@ func detectFeedbackPlatform(dir string) string {
 		return "web"
 	}
 	return ""
+}
+
+func hasUnityProjectFiles(dir string) bool {
+	return hasFile(dir, filepath.Join("ProjectSettings", "ProjectVersion.txt")) &&
+		hasFile(dir, filepath.Join("ProjectSettings", "ProjectSettings.asset")) &&
+		hasFile(dir, filepath.Join("Packages", "manifest.json"))
 }
 
 func detectCorePlatform(dir string) string {
@@ -352,4 +387,34 @@ func postInstallExpoFeedback(dir string) ([]string, error) {
 		return []string{"Detected `app.config.ts` — add `\"yaver-feedback-react-native\"` to `expo.plugins` manually."}, nil
 	}
 	return []string{"No Expo app config file found — add `\"yaver-feedback-react-native\"` to your Expo plugins manually if needed."}, nil
+}
+
+func postInstallUnityFeedback(dir string) ([]string, error) {
+	manifestPath := filepath.Join(dir, "Packages", "manifest.json")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var manifest map[string]interface{}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return nil, err
+	}
+	deps, _ := manifest["dependencies"].(map[string]interface{})
+	if deps == nil {
+		deps = map[string]interface{}{}
+		manifest["dependencies"] = deps
+	}
+	if _, ok := deps["io.yaver.feedback.unity"]; !ok {
+		deps["io.yaver.feedback.unity"] = "file:../../sdk/feedback/unity"
+	}
+
+	updated, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(manifestPath, append(updated, '\n'), 0o644); err != nil {
+		return nil, err
+	}
+	return []string{"Added `io.yaver.feedback.unity` to `Packages/manifest.json` as a local UPM dependency."}, nil
 }

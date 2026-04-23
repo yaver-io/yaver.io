@@ -22,6 +22,7 @@ import { useAuth } from "../src/context/AuthContext";
 import { getLocalSecret, getUserSettings, LOCAL_KEYS, saveLocalSecret } from "../src/lib/auth";
 import { isCloudPreviewUser } from "../src/lib/cloudPreview";
 import { buildImportedConversationBrief, mergeImportedConversationPrompt } from "../src/lib/conversationImport";
+import { getManagedSubscription } from "../src/lib/subscription";
 import { getYaverCloudBaseUrl } from "../src/lib/yaverCloud";
 import { quicClient } from "../src/lib/quic";
 import {
@@ -68,6 +69,8 @@ export default function PhoneProjectsScreen() {
   const { connectionStatus, devices, activeDevice } = useDevice();
   const connected = connectionStatus === "connected";
   const canUseCloudPreview = isCloudPreviewUser(user?.email);
+  const [hasManagedCloud, setHasManagedCloud] = useState(false);
+  const canUseYaverCloud = canUseCloudPreview || hasManagedCloud;
 
   const [projects, setProjects] = useState<PhoneProject[]>([]);
   const [templates, setTemplates] = useState<PhoneTemplate[]>([]);
@@ -141,6 +144,24 @@ export default function PhoneProjectsScreen() {
       setMobileAiProvider(savedProvider);
     };
     void loadMobileAi();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!token) {
+      setHasManagedCloud(false);
+      return;
+    }
+    void (async () => {
+      const summary = await getManagedSubscription(token);
+      if (cancelled || !summary) return;
+      const hasMachine = Array.isArray(summary.machines)
+        && summary.machines.some((machine) => machine.status !== "stopped");
+      const hasSubscription = !!summary.subscription;
+      setHasManagedCloud(hasMachine || hasSubscription);
+    })();
     return () => {
       cancelled = true;
     };
@@ -301,7 +322,12 @@ export default function PhoneProjectsScreen() {
         p = await createPhoneProjectAt(target, spec);
         await bindPhoneProjectToTarget(p.slug, target, { slug: p.slug, localUrl: "", browseUrl: "", project: p }, selectedDevMachine.name);
       } else {
-        const target: PhonePushTarget = { kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE };
+        const cloudAuthToken = (await getLocalSecret(LOCAL_KEYS.yaverCloudToken)) ?? token ?? undefined;
+        const target: PhonePushTarget = {
+          kind: "yaver-cloud",
+          cloudBaseUrl: YAVER_CLOUD_BASE,
+          cloudAuthToken,
+        };
         p = await createPhoneProjectAt(target, spec);
         await bindPhoneProjectToTarget(p.slug, target, { slug: p.slug, localUrl: "", browseUrl: "", project: p }, "Yaver Cloud");
       }
@@ -648,11 +674,11 @@ export default function PhoneProjectsScreen() {
                       disabled: !connected || devMachines.length === 0,
                       onLongPress: pickDevMachine,
                     },
-                    ...(canUseCloudPreview
+                    ...(canUseYaverCloud
                       ? [{
                           id: "yaver-cloud" as StartMode,
                           label: "Yaver Cloud",
-                          sub: "Private preview",
+                          sub: canUseCloudPreview ? "Private preview" : "Managed machine",
                           disabled: !connected,
                         }]
                       : []),
@@ -685,7 +711,7 @@ export default function PhoneProjectsScreen() {
                   </Pressable>
                 ))}
                 <Text style={[styles.muted, { color: c.textMuted, marginTop: 8 }]}>
-                  Phone-first works immediately. Agent, machine, and cloud targets can take over later for remote coding.
+                  Phone-first works immediately. Agent, machine, and cloud targets can take over later for remote coding, app runs/tests on a dev box, and live mobile viewing of that box.
                 </Text>
               </>
             ) : null}
@@ -785,7 +811,7 @@ export default function PhoneProjectsScreen() {
       templates,
       step,
       startMode,
-      canUseCloudPreview,
+      canUseYaverCloud,
       codingMode,
       openAiKey,
       activeDevice,

@@ -25,6 +25,12 @@ Users select the mode at runtime from within their app.
 ### React Native
 - `react-native-example.tsx` — Mode selector + connection screen + floating button
 
+### Unity
+- `sdk/feedback/unity/Examples~/Basic/YaverExampleBootstrap.cs` — initial bootstrap scaffold
+- `sdk/feedback/test-app/unity/Assets/Scripts/YaverBootstrap.cs` — sample bootstrap
+- `sdk/feedback/test-app/unity/Assets/Scripts/YaverContentReloadDemo.cs` — content refresh demo
+- `sdk/feedback/test-app/unity/Assets/Scripts/YaverGameConfigApplier.cs` — remote-tunable JSON config flow
+
 ## Quick Start
 
 ### Web

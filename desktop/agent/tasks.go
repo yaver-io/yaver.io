@@ -142,7 +142,7 @@ var builtinRunners = map[string]RunnerConfig{
 		RunnerID:   "codex",
 		Name:       "OpenAI Codex",
 		Command:    "codex",
-		Args:       []string{"exec", "--full-auto", "{prompt}"},
+		Args:       []string{"exec", "--full-auto", "--skip-git-repo-check", "{prompt}"},
 		OutputMode: "raw",
 	},
 	"aider": {
@@ -1411,16 +1411,19 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	// System prompt: behave as a remote terminal agent, tailored to the task source.
 	prompt += taskSourcePromptSuffix(task.Source)
 
-	// Inject Yaver dev server proxy context so the runner knows to use /dev/start.
-	// This is critical: the runner must NEVER output exp:// URLs or tell the user
-	// to install Expo Go. Everything flows through the Yaver P2P channel.
-	// Use per-task workDir if detected, otherwise global
-	contextDir := tm.workDir
-	if task.WorkDir != "" {
-		contextDir = task.WorkDir
-	}
 	prompt += formatTaskSliceContract(task.SliceContract)
-	prompt += yaverDevServerContext(contextDir)
+
+	// Only mobile-style tasks need the dev-server transport instructions.
+	// Injecting this into every CLI/web task makes non-mobile runners
+	// opportunistically call /dev/start and fail on placeholder values like
+	// framework="<auto>", which is unrelated to normal coding requests.
+	if task.Source == "mobile" || task.Source == "voice" {
+		contextDir := tm.workDir
+		if task.WorkDir != "" {
+			contextDir = task.WorkDir
+		}
+		prompt += yaverDevServerContext(contextDir)
+	}
 
 	// Append speech context if the user sent this task via voice
 	if sc := task.SpeechContext; sc != nil {
@@ -1548,6 +1551,14 @@ func (tm *TaskManager) startProcess(task *Task) error {
 			useContainer = true
 		} else if task.GuestUserID == "" && tm.ContainerizeHost {
 			useContainer = true
+		}
+		// Hosted coding CLIs like Codex / Claude Code / OpenCode / Aider are
+		// installed and authenticated on the host machine, not inside Yaver's
+		// generic Docker image. Running them in the container makes even valid
+		// host setups fail with "command not found". Keep guest isolation as-is,
+		// but execute these host-owned runners directly on the host.
+		if useContainer && task.GuestUserID == "" && runnerRequiresHostRuntime(runner.RunnerID) {
+			useContainer = false
 		}
 		// Auto-build image on first use if not ready
 		if useContainer && !tm.ContainerRunner.IsImageReady() {
@@ -1833,6 +1844,15 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	}()
 
 	return nil
+}
+
+func runnerRequiresHostRuntime(runnerID string) bool {
+	switch normalizeRunnerID(runnerID) {
+	case "claude", "codex", "opencode", "aider", "aider-ollama", "goose", "amp":
+		return true
+	default:
+		return false
+	}
 }
 
 // readRawOutput reads plain text lines from stdout (for non-JSON runners).

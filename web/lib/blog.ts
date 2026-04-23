@@ -9,6 +9,34 @@ export const POSTS_PER_PAGE = 10;
 
 export const blogPosts: BlogPost[] = [
   {
+    slug: "windows-ollama-box-antigravity-workflow",
+    title: "A Clean Antigravity Workflow with a Windows Ollama Box",
+    date: "2026-04-23",
+    description:
+      "How to keep a Windows machine always-on as a self-hosted LLM box, expose Ollama safely over Tailscale, and drive it from a MacBook through Antigravity, Continue, and OpenCode without turning the editor setup into a mess.",
+  },
+  {
+    slug: "mac-to-windows-ai-box-over-ssh",
+    title: "Turning a Windows PC into a Remote AI Coding Box for a MacBook",
+    date: "2026-04-23",
+    description:
+      "A practical setup for using a 32 GB Windows machine as the always-on coding box: OpenSSH from macOS, Tailscale for stable reachability, Ollama with a Qwen coder model, and a terminal workflow that also fits Antigravity-style remote editing.",
+  },
+  {
+    slug: "unity-feedback-sdk-self-hosted-iteration",
+    title: "Yaver for Unity, Explained Simply",
+    date: "2026-04-23",
+    description:
+      "A plain-language explanation of what Yaver is building for Unity: feedback inside the game, self-hosted iteration, tests, builds, relaunches, and remote supervision on your own machines.",
+  },
+  {
+    slug: "cloudflare-tunnels-shared-boxes",
+    title: "Cloudflare Tunnels, Shared Boxes, and Yaver's Real Trust Boundary",
+    date: "2026-04-22",
+    description:
+      "How a host can put one Yaver box behind Cloudflare Tunnel, share that box with guests, and keep Yaver as the actual authorization boundary.",
+  },
+  {
     slug: "yaver-pi-image",
     title: "Announcing the Yaver Raspberry Pi 5 Dev-Node Image",
     date: "2026-04-19",

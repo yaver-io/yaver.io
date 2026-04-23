@@ -9,6 +9,7 @@
 - **NEVER use WebView to load third-party apps.** All app loading must be native (real UIView/android.view.View via ExpoReactNativeFactory with New Architecture). When "Open App" is tapped, use `/dev/build-native` to compile a Hermes bytecode bundle and load it into a native bridge with full TurboModule support — never a WebView. WebView is only acceptable for web content (landing pages, docs), never for React Native apps.
 - **NEVER commit credentials, IPs, API keys, or secrets to the repo.** The repo is open-source on GitHub. All credentials must go in `.env.test` (gitignored), env vars, or GitHub Actions secrets. This includes Hetzner server IPs, Apple Developer keys, SSH key paths, relay passwords, Tailscale IPs, npm tokens, PyPI tokens, Google Play service account keys. If you see a hardcoded credential, replace it with an env var or placeholder immediately. **Also check git history** — if a credential was accidentally committed, it must be removed from history (via `git filter-branch` or BFG) before pushing to GitHub. Never write `.npmrc` files with tokens to tracked paths — use temp files and delete immediately after use. The npm publish tokens (`npm_...`), Play Store service account JSON, and App Store Connect API keys must never appear in any committed file.
 - **Open-source safety — nothing sensitive may leak through any file that ends up in the repo.** Everything in `yaver.io/` is published publicly. Before saving a file, assume it will be read by strangers: no hardcoded credentials, no private infra IPs or hostnames, no internal-only URLs, no customer data, no personal identifiers, no file paths that embed usernames or secrets, no Slack/issue/PR links that could leak context, no raw logs from real users. Any "dev-only" shim, test fixture, or debug helper that touches real infra belongs outside the repo (e.g. `.env.test`, `../talos/`, or a gitignored scratch dir) — never inline it into a committed file because "it's just local." This applies to CLAUDE.md memory notes too.
+- **Hetzner test-box rule**: when working with the dedicated remote test device, commit only secret names and logical labels such as `yaver-test-ephemeral`. Never commit the real server IP, SSH key material, `known_hosts` contents, `hcloud` token values, or copied terminal output that contains them. For remote usage, follow `ci/README.md`; the focused borrowed-session check is `bash /opt/yaver/ci/remote/verify-host-share.sh` after `./ci/hcloud/sync-repo.sh`.
 
 ### Secrets management
 Every sensitive value lives in exactly one of three places — never in a tracked file or git history:
@@ -18,6 +19,18 @@ Every sensitive value lives in exactly one of three places — never in a tracke
 3. **Runtime env vars** (for ad-hoc scripts): e.g. `HOST=root@relay.example.com ./scripts/check-relay-watchdogs.sh`. Scripts exit 2 if required vars are missing — never fall back to a hardcoded default.
 
 If you find yourself about to put a secret in a tracked file, stop: add the value as a GitHub secret + make the code read from env, then rotate the secret because it passed through your clipboard. If a secret was ever committed, rotate it AND purge from history with `git filter-repo --replace-text`.
+
+### Hetzner remote verification
+
+- Preferred local iteration path: `./ci/hcloud/sync-repo.sh` then run either `bash /opt/yaver/ci/remote/verify.sh` or the focused `bash /opt/yaver/ci/remote/verify-host-share.sh` over SSH to `yaver-test-ephemeral`.
+- Use the focused host-share verifier when touching borrowed-session, guest-owned repo sync, session stop/timeout, or workspace binding logic. It is much faster and isolates regressions better than the full remote `go test ./...` sweep.
+- GitHub Actions path for the same focused check: `.github/workflows/remote-host-share-verify.yml` (`workflow_dispatch`, `target=persistent|ephemeral`).
+- GitHub Actions host/guest boundary path: `.github/workflows/remote-host-share-agentless.yml`. In that flow the guest is the GitHub runner and the host is the Hetzner box behind a secret-backed base URL/device id. Keep those values in secrets only.
+- GitHub Actions host-share lifecycle path: `.github/workflows/remote-host-share-lifecycle.yml`. It uses a throwaway guest account, proves access works, has the host end the session, then proves the guest loses access.
+- GitHub Actions Docker security path: `.github/workflows/remote-guest-docker-verify.yml`. This is the positive proof that guest-isolated tasks execute inside Docker on the Hetzner host.
+- The GitHub-runner guest workflows must create random throwaway guest accounts and delete them with `/auth/delete-account` in cleanup. Do not store guest passwords in repo files or GitHub secrets for these tests.
+- Both GitHub-runner guest workflows support `target=persistent|ephemeral`. Prefer `ephemeral` when you need stateless host-side verification or post-run cleanup of the entire remote box.
+- Keep `ci/hcloud/sync-repo.sh` excludes up to date when large generated trees are added. Remote verification should sync source, not local artifacts.
 
 ## Repository & Deployment
 - **Source of truth**: GitHub (`github.com/kivanccakmak/yaver.io`) — open-source, all development happens here. Push directly to `main` (or via PR). The local `origin` remote may still point at the legacy GitLab mirror — use the `github` remote (`git remote add github https://github.com/kivanccakmak/yaver.io.git`) or just `git push github main`.
@@ -234,11 +247,11 @@ Yaver is an open-source P2P tool that lets developers use any AI coding agent (C
        ▲
        │
 ┌──────┴──────┐
-│  Web (Vercel)│
-│  yaver.io    │
-│  Landing +   │
-│  Sign Up     │
-└─────────────┘
+│ Web (Cloudflare)│
+│ yaver.io        │
+│ Landing +       │
+│ Sign Up         │
+└────────────────┘
 ```
 
 ### Connection strategy (per surface)
@@ -297,7 +310,7 @@ Signing out on one surface does not affect others. The Desktop Electron app neve
 - `backend/` — Convex backend (auth + peer discovery + platform config)
 - `relay/` — QUIC relay server for NAT traversal (Go, self-hostable)
   - `relay/deploy/` — Deployment scripts (up.sh, down.sh, systemd unit)
-- `web/` — Next.js web app (landing page + dashboard), deployed on Vercel at yaver.io
+- `web/` — Next.js web app (landing page + dashboard), deployed on Cloudflare Workers at yaver.io
 - `keys/` — Private keys, signing scripts (gitignored, not in repo — see `keys/CLAUDE.md` for details)
 
 ## Privacy Contract — what lives in Convex vs. on your machine
@@ -348,7 +361,7 @@ If you need to add a new sync path, append the new forbidden keys to `fieldsWeFo
 - **Desktop Agent**: Go with quic-go, runs any AI agent CLI in tmux
 - **Desktop Installer**: Electron (electron-builder for DMG/EXE/DEB)
 - **Mobile**: React Native (native builds via xcodebuild/Gradle)
-- **Web**: Next.js, deployed on Vercel (yaver.io)
+- **Web**: Next.js, deployed on Cloudflare Workers (yaver.io)
 - **Backend**: Convex (auth tables + device registry + platform config for relay servers)
 
 ## Key Design Decisions

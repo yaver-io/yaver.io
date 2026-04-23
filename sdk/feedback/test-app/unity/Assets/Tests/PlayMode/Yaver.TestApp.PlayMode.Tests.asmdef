@@ -1,0 +1,21 @@
+{
+  "name": "Yaver.TestApp.PlayMode.Tests",
+  "rootNamespace": "Yaver.TestApp.PlayMode.Tests",
+  "references": [
+    "Yaver.Feedback"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [
+    "Editor"
+  ],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": false,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false,
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ]
+}

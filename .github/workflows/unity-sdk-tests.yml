@@ -1,0 +1,92 @@
+name: Unity SDK Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdk/feedback/unity/**"
+      - "scripts/validate-unity-package.mjs"
+      - ".github/workflows/unity-sdk-tests.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "sdk/feedback/unity/**"
+      - "scripts/validate-unity-package.mjs"
+      - ".github/workflows/unity-sdk-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: unity-sdk-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unity-sdk-tests:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Verify Unity license secret
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -z "$UNITY_LICENSE" ]; then
+            echo "Missing UNITY_LICENSE GitHub Actions secret."
+            echo "Add a Unity license secret before running Unity package tests in CI."
+            exit 1
+          fi
+
+      - name: Validate Unity package metadata
+        run: node scripts/validate-unity-package.mjs
+
+      - name: Run Unity package EditMode tests
+        id: unity_sdk_editmode
+        uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        with:
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+          packageMode: true
+          projectPath: sdk/feedback/unity
+          unityVersion: 2021.3.45f1
+          testMode: EditMode
+          artifactsPath: artifacts/unity-sdk
+          coverageOptions: generateAdditionalMetrics;generateHtmlReport;generateBadgeReport;assemblyFilters:+Yaver.*
+
+      - name: Write Unity SDK CI summary
+        if: always()
+        run: |
+          {
+            echo "## Unity SDK CI"
+            echo ""
+            echo "- Package: \`io.yaver.feedback.unity\`"
+            echo "- Unity version: \`2021.3.45f1\`"
+            echo "- Mode: \`EditMode\`"
+            echo "- Artifacts: \`artifacts/unity-sdk\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Unity test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-sdk-test-artifacts
+          path: artifacts/unity-sdk
+          if-no-files-found: ignore
+
+      - name: Upload Unity SDK coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-sdk-coverage
+          path: ${{ steps.unity_sdk_editmode.outputs.coveragePath }}
+          if-no-files-found: ignore

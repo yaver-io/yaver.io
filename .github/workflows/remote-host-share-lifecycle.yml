@@ -1,0 +1,137 @@
+name: remote-host-share-lifecycle
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Which box to run against
+        type: choice
+        default: persistent
+        options:
+          - persistent
+          - ephemeral
+      server_type:
+        description: Hetzner server type (ephemeral mode)
+        required: false
+        default: cax21
+
+concurrency:
+  group: remote-host-share-lifecycle-${{ inputs.target }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  remote-host-share-lifecycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+      HCLOUD_SSH_KEY_NAME: yaver-ci
+      CI_SERVER_TYPE: ${{ inputs.server_type }}
+      CI_SERVER_LOCATION: hel1
+      CI_SERVER_IMAGE: ubuntu-24.04
+      HETZNER_TEST_SNAPSHOT_ID: ${{ secrets.HETZNER_TEST_SNAPSHOT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install hcloud CLI
+        run: |
+          curl -fsSL https://github.com/hetznercloud/cli/releases/latest/download/hcloud-linux-amd64.tar.gz \
+            | sudo tar -C /usr/local/bin -xz hcloud
+          hcloud version
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}" > ~/.ssh/hetzner_ci_ed25519
+          chmod 600 ~/.ssh/hetzner_ci_ed25519
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HOME/.ssh/hetzner_ci_ed25519" >> "$GITHUB_ENV"
+
+      - name: Hetzner preflight (persistent)
+        if: inputs.target == 'persistent'
+        env:
+          HETZNER_TEST_SERVER_ID: ${{ secrets.HETZNER_TEST_SERVER_ID }}
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: ./ci/hcloud/preflight.sh persistent
+
+      - name: Hetzner preflight (ephemeral)
+        if: inputs.target == 'ephemeral'
+        env:
+          HETZNER_TEST_SNAPSHOT_ID: ${{ secrets.HETZNER_TEST_SNAPSHOT_ID }}
+        run: ./ci/hcloud/preflight.sh ephemeral
+
+      - name: Create ephemeral box
+        if: inputs.target == 'ephemeral'
+        run: ./ci/hcloud/create-server.sh
+
+      - name: Wait for SSH
+        run: ./ci/hcloud/wait-for-ssh.sh
+
+      - name: Sync repo
+        run: ./ci/hcloud/sync-repo.sh
+
+      - name: Resolve Hetzner host-share target
+        id: target
+        run: |
+          ip="$(cat ci/.artifacts/server-ip)"
+          base_url="http://${ip}:18080"
+          device_id="$(
+            curl -fsS "${base_url}/info" \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin).get("deviceId",""))' 2>/dev/null || true
+          )"
+          if [ -z "$device_id" ]; then
+            echo "could not resolve deviceId from ${base_url}/info" >&2
+            exit 1
+          fi
+          echo "host_base_url=${base_url}" >> "$GITHUB_OUTPUT"
+          echo "host_device_id=${device_id}" >> "$GITHUB_OUTPUT"
+
+      - name: Preflight
+        id: preflight
+        env:
+          CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+          HOST_SHARE_HOST_EMAIL: ${{ secrets.HOST_SHARE_HOST_EMAIL }}
+          HOST_SHARE_HOST_PASSWORD: ${{ secrets.HOST_SHARE_HOST_PASSWORD }}
+        run: |
+          missing=""
+          for name in CONVEX_SITE_URL HOST_SHARE_HOST_EMAIL HOST_SHARE_HOST_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              missing="$missing $name"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Host-share lifecycle skipped. Missing secrets:$missing" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Run lifecycle smoke
+        if: steps.preflight.outputs.skip != 'true'
+        env:
+          CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+          HOST_SHARE_HOST_BASE_URL: ${{ steps.target.outputs.host_base_url }}
+          HOST_SHARE_HOST_DEVICE_ID: ${{ steps.target.outputs.host_device_id }}
+          HOST_SHARE_HOST_EMAIL: ${{ secrets.HOST_SHARE_HOST_EMAIL }}
+          HOST_SHARE_HOST_PASSWORD: ${{ secrets.HOST_SHARE_HOST_PASSWORD }}
+        run: ./ci/remote/verify-host-share-lifecycle.sh
+
+      - name: Gather logs
+        if: always()
+        run: ./ci/hcloud/gather-logs.sh
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-host-share-lifecycle-${{ inputs.target }}-${{ github.run_id }}
+          path: ci/.artifacts/
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Delete ephemeral box
+        if: always() && inputs.target == 'ephemeral'
+        run: ./ci/hcloud/delete-server.sh

@@ -1,0 +1,140 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/* Base Reset & Variables                                                       */
+/* ─────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --board-width: min(90vw, 900px);
+  --board-height: calc(var(--board-width) * 0.55);
+  --point-width: calc(var(--board-width) / 13);
+  --checker-size: calc(var(--point-width) * 0.82);
+  --bar-width: calc(var(--point-width));
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+}
+
+body {
+  background: #050914;
+  color: #f0e6d3;
+  font-family: 'Outfit', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/* Custom scrollbar                                                             */
+/* ─────────────────────────────────────────────────────────────────────────── */
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #080f22; }
+::-webkit-scrollbar-thumb { background: #3d2a10; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #fbbf24; }
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/* Utility classes not easily handled by Tailwind config                        */
+/* ─────────────────────────────────────────────────────────────────────────── */
+
+.glass {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-heavy {
+  background: rgba(255, 255, 255, 0.10);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.text-gradient-gold {
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 40%, #fde68a 70%, #f59e0b 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.text-gradient-silver {
+  background: linear-gradient(135deg, #e2e8f0 0%, #94a3b8 40%, #e2e8f0 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.bg-noise {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/* Board-specific styles                                                        */
+/* ─────────────────────────────────────────────────────────────────────────── */
+
+.board-point-up {
+  clip-path: polygon(50% 90%, 0% 0%, 100% 0%);
+}
+
+.board-point-down {
+  clip-path: polygon(50% 10%, 0% 100%, 100% 100%);
+}
+
+.checker-white {
+  background: radial-gradient(circle at 35% 30%, #ffffff 0%, #e8d9bc 35%, #c4a870 65%, #8b6440 100%);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.6), inset 0 1px 3px rgba(255,255,255,0.8), inset 0 -2px 4px rgba(0,0,0,0.3);
+}
+
+.checker-black {
+  background: radial-gradient(circle at 35% 30%, #8b3a2a 0%, #5c1f15 35%, #3d1008 65%, #1a0604 100%);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.7), inset 0 1px 3px rgba(180,80,60,0.4), inset 0 -2px 4px rgba(0,0,0,0.5);
+}
+
+.checker-selected {
+  box-shadow: 0 0 0 3px #fbbf24, 0 4px 20px rgba(251,191,36,0.6), 0 0 30px rgba(251,191,36,0.3) !important;
+  transform: scale(1.08) translateY(-3px);
+}
+
+.checker-legal-target {
+  position: relative;
+}
+
+.checker-legal-target::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid rgba(251,191,36,0.8);
+  animation: pulseLegal 1.5s ease-in-out infinite;
+}
+
+/* Dice faces */
+.die-face {
+  display: grid;
+  gap: 4px;
+}
+
+.die-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #1a0f05;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.5);
+}
+
+/* No select on game elements */
+.no-select {
+  user-select: none;
+  -webkit-user-select: none;
+}

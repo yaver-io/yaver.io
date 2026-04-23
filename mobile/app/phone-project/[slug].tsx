@@ -22,6 +22,7 @@ import { useDevice, type Device } from "../../src/context/DeviceContext";
 import { AppBackButton } from "../../src/components/AppBackButton";
 import { isCloudPreviewUser } from "../../src/lib/cloudPreview";
 import { describeConnectionStatus } from "../../src/lib/connection";
+import { getManagedSubscription } from "../../src/lib/subscription";
 import { getYaverCloudBaseUrl } from "../../src/lib/yaverCloud";
 import { quicClient } from "../../src/lib/quic";
 import { getLocalSecret, LOCAL_KEYS } from "../../src/lib/auth";
@@ -76,12 +77,14 @@ function pickDevMachines(all: Device[], currentId: string | undefined): Device[]
 
 export default function PhoneProjectDetailScreen() {
   const c = useColors();
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { slug } = useLocalSearchParams<{ slug: string }>();
   const slugStr = String(slug ?? "");
   const canUseCloudPreview = isCloudPreviewUser(user?.email);
+  const [hasManagedCloud, setHasManagedCloud] = useState(false);
+  const canUseYaverCloud = canUseCloudPreview || hasManagedCloud;
 
   const [project, setProject] = useState<PhoneProject | null>(null);
   const [access, setAccess] = useState<PhoneProjectAccess | null>(null);
@@ -118,6 +121,24 @@ export default function PhoneProjectDetailScreen() {
       if (h) setCostHints(h);
     })();
   }, []);
+  useEffect(() => {
+    let cancelled = false;
+    if (!token) {
+      setHasManagedCloud(false);
+      return;
+    }
+    void (async () => {
+      const summary = await getManagedSubscription(token);
+      if (cancelled || !summary) return;
+      const hasMachine = Array.isArray(summary.machines)
+        && summary.machines.some((machine) => machine.status !== "stopped");
+      const hasSubscription = !!summary.subscription;
+      setHasManagedCloud(hasMachine || hasSubscription);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   // Pull curated escape routes once the user opens the Advanced collapsible.
   // Phone projects are SQLite-backed, so we ask for "yaver"-origin routes
@@ -448,11 +469,9 @@ export default function PhoneProjectDetailScreen() {
 
   async function deployToCloud() {
     if (!slugStr) return;
-    // Pull the cached CLOUD_OWNER_TOKEN (set via a one-time paste from the
-    // web dashboard after the user completes checkout on yaver.io/pricing).
-    // If it's missing, the push still fires so the user sees the cloud
-    // tenant's 401 hint — that's the signal to finish web setup.
-    const cloudAuthToken = (await getLocalSecret(LOCAL_KEYS.yaverCloudToken)) ?? undefined;
+    // Optional legacy auth override for the shared preview host. Dedicated
+    // managed machines should accept the signed-in user's normal session.
+    const cloudAuthToken = (await getLocalSecret(LOCAL_KEYS.yaverCloudToken)) ?? token ?? undefined;
     await runPush(
       { kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken },
       "yaver-cloud",
@@ -867,7 +886,7 @@ export default function PhoneProjectDetailScreen() {
           )}
         </Pressable>
 
-        {canUseCloudPreview ? (
+        {canUseYaverCloud ? (
           <Pressable
             onPress={deployToCloud}
             disabled={deploying !== null}
@@ -884,7 +903,7 @@ export default function PhoneProjectDetailScreen() {
             <View style={{ flex: 1 }}>
               <Text style={[styles.deployLabel, { color: c.textPrimary }]}>Yaver Cloud</Text>
               <Text style={[styles.deploySub, { color: c.textMuted }]}>
-                Private preview at {YAVER_CLOUD_BASE.replace(/^https?:\/\//, "")}
+                {(canUseCloudPreview ? "Private preview" : "Managed machine") + " at " + YAVER_CLOUD_BASE.replace(/^https?:\/\//, "")}
               </Text>
             </View>
             {deploying === "yaver-cloud" ? (

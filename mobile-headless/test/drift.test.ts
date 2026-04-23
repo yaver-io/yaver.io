@@ -13,6 +13,9 @@ const REQUIRED_ON_QUIC_CLIENT = [
   // devices + agent
   "infraSummary",
   "getRunners",
+  "startExec",
+  "getExec",
+  "listExecs",
   // install catalogue (new this cycle, easy to remove accidentally)
   "listInstallables",
   "installTool",

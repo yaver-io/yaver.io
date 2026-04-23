@@ -48,6 +48,13 @@ const manuals = [
     tags: ["Docker", "VPS", "nginx"],
   },
   {
+    title: "Cloudflare Tunnel + Box Sharing",
+    description:
+      "Use Cloudflare Tunnel for a single always-on box, then share that box safely through Yaver guest access or host-share sessions. Covers machine scoping, project scoping, and the security caveats.",
+    href: "/manuals/cloudflare-share",
+    tags: ["Cloudflare", "Guests", "Sharing", "Security"],
+  },
+  {
     title: "Zero-cost local AI coding setup",
     description:
       "Run AI coding agents entirely on your own hardware — no API keys, no cloud services, no recurring costs. Set up Ollama, a coding agent, and Tailscale for remote access.",
@@ -74,6 +81,13 @@ const manuals = [
       "Turn any machine into a permanent AI development server. Systemd service, OAuth that survives reboots, auto-updates, project discovery — your always-on dev companion from your pocket.",
     href: "/manuals/auto-boot",
     tags: ["systemd", "macOS", "Linux", "headless"],
+  },
+  {
+    title: "MacBook to Windows AI Box over SSH",
+    description:
+      "Use a Windows machine as the always-on coding box behind a MacBook: OpenSSH, Tailscale, Ollama with Qwen, OpenCode, and the power settings that keep it alive.",
+    href: "/manuals/windows-ssh-coding-box",
+    tags: ["Windows", "SSH", "Tailscale", "Ollama"],
   },
 ];
 

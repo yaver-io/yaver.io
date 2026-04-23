@@ -70,6 +70,8 @@ func runTest(args []string) {
 		runTestUnit(args[1:])
 	case "flutter":
 		runTestFramework("flutter_test", "flutter test --reporter compact", args[1:])
+	case "unity":
+		runTestUnity(args[1:])
 	case "android":
 		runTestAndroid(args[1:])
 	case "ios":
@@ -103,6 +105,7 @@ func printTestUsage() {
   yaver test schedule <cron> [root]   Register a cron entry with the agent scheduler
   yaver test unit [--dir <path>]      Auto-detect and run unit tests (legacy spawn)
   yaver test flutter [--dir <path>]   Run Flutter tests (legacy spawn)
+  yaver test unity [--dir <path>]     Run Unity EditMode/PlayMode tests via local Unity Editor
   yaver test android [--dir <path>]   Run Android tests (legacy spawn)
   yaver test ios [--dir <path>]       Run iOS tests (legacy spawn)
   yaver test e2e [--dir <path>]       Run E2E tests (legacy spawn)
@@ -372,10 +375,10 @@ func runTestSchedule(args []string) {
 	// POST /schedules to the local agent — registers a "yaver test
 	// run" entry that the agent's existing scheduler will fire.
 	body := map[string]interface{}{
-		"name":      "yaver-test-sdk",
-		"cron":      cron,
-		"command":   "yaver test run " + specRoot,
-		"work_dir":  ".",
+		"name":              "yaver-test-sdk",
+		"cron":              cron,
+		"command":           "yaver test run " + specRoot,
+		"work_dir":          ".",
 		"on_failure_notify": true,
 		"hardware_aware":    true,
 	}
@@ -630,6 +633,32 @@ func runTestAndroid(args []string) {
 	dir := fs.String("dir", "", "Project directory")
 	fs.Parse(args)
 	startTestViaAgent("espresso", "", *dir, "unit")
+}
+
+func runTestUnity(args []string) {
+	fs := flag.NewFlagSet("test unity", flag.ExitOnError)
+	dir := fs.String("dir", "", "Unity project directory")
+	mode := fs.String("mode", "EditMode", "Unity test platform: EditMode | PlayMode | All")
+	filter := fs.String("filter", "", "Optional Unity test filter")
+	fs.Parse(args)
+
+	body := map[string]any{
+		"projectPath": *dir,
+		"testMode":    *mode,
+	}
+	if *filter != "" {
+		body["testFilter"] = *filter
+	}
+
+	resp, err := localAgentRequest("POST", "/unity/test", body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Is the agent running, and does this machine have Unity installed?")
+		os.Exit(1)
+	}
+
+	enc, _ := json.MarshalIndent(resp, "", "  ")
+	fmt.Println(string(enc))
 }
 
 func runTestIOS(args []string) {

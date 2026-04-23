@@ -42,6 +42,103 @@ type Device = {
   lastHeartbeat?: number;
 };
 
+export type ExecStatus = "running" | "completed" | "failed" | "killed";
+
+export interface ExecSession {
+  id: string;
+  command: string;
+  status: ExecStatus;
+  exitCode?: number;
+  stdout: string;
+  stderr: string;
+  pid?: number;
+  startedAt: string;
+  finishedAt?: string;
+}
+
+export interface ExecOptions {
+  workDir?: string;
+  timeout?: number;
+  env?: Record<string, string>;
+}
+
+export interface PhoneProject {
+  slug: string;
+  name: string;
+  template?: string;
+  dir: string;
+  createdAt: string;
+  updatedAt: string;
+  schema?: Record<string, unknown> | null;
+  auth?: Record<string, unknown> | null;
+  seed?: Record<string, unknown> | null;
+  app?: Record<string, unknown> | null;
+  stats?: Record<string, unknown> | null;
+}
+
+export interface PhoneCreateSpec {
+  slug?: string;
+  name: string;
+  template?: string;
+  schema?: Record<string, unknown>;
+  auth?: Record<string, unknown>;
+  seed?: Record<string, unknown>;
+  app?: Record<string, unknown>;
+  prompt?: string;
+  runner?: string;
+  importUrl?: string;
+  importContent?: string;
+  importTitle?: string;
+}
+
+export interface HeadlessPhoneTarget {
+  baseUrl: string;
+  authToken?: string;
+}
+
+export interface PhonePushResult {
+  slug: string;
+  localUrl: string;
+  browseUrl: string;
+  project: PhoneProject;
+}
+
+export interface BootstrapTodoDeployOptions {
+  name: string;
+  prompt?: string;
+  target: HeadlessPhoneTarget;
+  slug?: string;
+  template?: string;
+  includeData?: boolean;
+  containerize?: boolean;
+  onConflict?: "reject" | "rename" | "overwrite";
+}
+
+export interface BootstrapTodoDeployResult {
+  localProject: PhoneProject;
+  remote: PhonePushResult;
+}
+
+export interface RepoCloneResult {
+  ok: boolean;
+  path: string;
+  output: string;
+}
+
+export interface RemoteBootstrapRepoOptions {
+  repoUrl: string;
+  branch?: string;
+  targetDir?: string;
+  feedbackPlatform?: "expo" | "react-native" | "flutter" | "web";
+  ciTargets?: string[];
+}
+
+export interface RemoteBootstrapRepoResult {
+  clone: RepoCloneResult;
+  feedbackInstall: ExecSession;
+  ciRuns: Array<{ target: string; exec: ExecSession }>;
+}
+
 export class MobileClient {
   readonly opts: Required<Omit<MobileClientOptions, "agentBaseUrl">> & { agentBaseUrl?: string };
   private agentBaseUrl?: string;
@@ -126,6 +223,53 @@ export class MobileClient {
 
   async infraSummary(target?: string): Promise<any> {
     return (await this.raw.get(this.peerPath(target, "/infra/summary"))).body;
+  }
+
+  // ── Exec (remote command execution) ───────────────────────────
+  async startExec(command: string, opts?: ExecOptions): Promise<{ execId: string; pid: number }> {
+    const body: Record<string, unknown> = { command };
+    if (opts?.workDir) body.workDir = opts.workDir;
+    if (opts?.timeout) body.timeout = opts.timeout;
+    if (opts?.env) body.env = opts.env;
+    const r = await this.raw.post("/exec", body);
+    if (r.status >= 400) {
+      throw new Error(r.body?.error ?? `startExec: HTTP ${r.status}`);
+    }
+    if (!r.body?.ok || !r.body?.execId) {
+      throw new Error("startExec: malformed response");
+    }
+    return { execId: r.body.execId, pid: r.body.pid ?? 0 };
+  }
+
+  async getExec(execId: string): Promise<ExecSession> {
+    const r = await this.raw.get(`/exec/${encodeURIComponent(execId)}`);
+    if (r.status >= 400) {
+      throw new Error(r.body?.error ?? `getExec: HTTP ${r.status}`);
+    }
+    return r.body?.exec;
+  }
+
+  async listExecs(): Promise<ExecSession[]> {
+    const r = await this.raw.get("/exec");
+    if (r.status >= 400) {
+      throw new Error(r.body?.error ?? `listExecs: HTTP ${r.status}`);
+    }
+    return r.body?.execs ?? [];
+  }
+
+  async waitForExec(execId: string, opts: { timeoutMs?: number; pollMs?: number } = {}): Promise<ExecSession> {
+    const deadline = Date.now() + (opts.timeoutMs ?? 5 * 60_000);
+    const pollMs = opts.pollMs ?? 1000;
+    while (true) {
+      const exec = await this.getExec(execId);
+      if (exec.status === "completed" || exec.status === "failed" || exec.status === "killed") {
+        return exec;
+      }
+      if (Date.now() > deadline) {
+        throw new Error(`waitForExec timed out after ${opts.timeoutMs ?? 5 * 60_000}ms`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
   }
 
   async getRunners(): Promise<any[]> {
@@ -349,6 +493,153 @@ export class MobileClient {
     reload: async () => (await this.raw.post("/dev/reload")).body,
   };
 
+  // ── Repos ──────────────────────────────────────────────────────
+  readonly repos = {
+    clone: async (url: string, dir?: string, branch?: string): Promise<RepoCloneResult> => {
+      const r = await this.raw.post("/repos/clone", { url, dir, branch });
+      if (r.status >= 400) throw new Error(r.body?.error ?? `cloneRepo: HTTP ${r.status}`);
+      return r.body as RepoCloneResult;
+    },
+    list: async (): Promise<Array<{ name: string; path: string; branch: string; remote: string; dirty: boolean }>> => {
+      const r = await this.raw.get("/repos/list");
+      if (r.status >= 400) throw new Error(r.body?.error ?? `listRepos: HTTP ${r.status}`);
+      return r.body ?? [];
+    },
+    bootstrapRemote: async (opts: RemoteBootstrapRepoOptions): Promise<RemoteBootstrapRepoResult> => {
+      const clone = await this.repos.clone(opts.repoUrl, opts.targetDir, opts.branch);
+      const feedbackPlatform = opts.feedbackPlatform ?? "react-native";
+      const ciTargets = opts.ciTargets?.length ? opts.ciTargets : ["hermes", "feedback"];
+
+      const feedbackInstallStart = await this.startExec(
+        `yaver sdk add feedback --platform ${feedbackPlatform}`,
+        { workDir: clone.path, timeout: 10 * 60_000 },
+      );
+      const feedbackInstall = await this.waitForExec(feedbackInstallStart.execId, { timeoutMs: 10 * 60_000 });
+      if (feedbackInstall.status !== "completed" || (feedbackInstall.exitCode ?? 0) !== 0) {
+        throw new Error(feedbackInstall.stderr || feedbackInstall.stdout || "feedback SDK bootstrap failed");
+      }
+
+      const ciRuns: Array<{ target: string; exec: ExecSession }> = [];
+      for (const target of ciTargets) {
+        const started = await this.startExec(
+          `yaver ci add ${target} --force`,
+          { workDir: clone.path, timeout: 10 * 60_000 },
+        );
+        const exec = await this.waitForExec(started.execId, { timeoutMs: 10 * 60_000 });
+        if (exec.status !== "completed" || (exec.exitCode ?? 0) !== 0) {
+          throw new Error(exec.stderr || exec.stdout || `ci bootstrap failed for ${target}`);
+        }
+        ciRuns.push({ target, exec });
+      }
+
+      return { clone, feedbackInstall, ciRuns };
+    },
+  };
+
+  // ── Phone projects ────────────────────────────────────────────
+  readonly phoneProjects = {
+    list: async (): Promise<PhoneProject[]> => {
+      const r = await this.raw.get("/phone/projects/list");
+      if (r.status >= 400) throw new Error(r.body?.error ?? `listPhoneProjects: HTTP ${r.status}`);
+      return r.body?.projects ?? [];
+    },
+    get: async (slug: string): Promise<PhoneProject | null> => {
+      const r = await this.raw.get(`/phone/projects/get?slug=${encodeURIComponent(slug)}`);
+      if (r.status >= 400) throw new Error(r.body?.error ?? `getPhoneProject: HTTP ${r.status}`);
+      return r.body ?? null;
+    },
+    create: async (spec: PhoneCreateSpec): Promise<PhoneProject> => {
+      const r = await this.raw.post("/phone/projects/create", spec);
+      if (r.status >= 400) throw new Error(r.body?.error ?? `createPhoneProject: HTTP ${r.status}`);
+      return r.body as PhoneProject;
+    },
+    createAt: async (target: HeadlessPhoneTarget, spec: PhoneCreateSpec): Promise<PhoneProject> => {
+      const res = await fetch(this.absoluteUrl(target.baseUrl, "/phone/projects/create"), {
+        method: "POST",
+        headers: {
+          ...this.authForTarget(target.authToken),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(spec),
+      });
+      const body = await safeJson(res);
+      if (!res.ok) throw new Error(body?.error ?? `createPhoneProjectAt: HTTP ${res.status}`);
+      return body as PhoneProject;
+    },
+    export: async (
+      slug: string,
+      opts: { includeData?: boolean; containerize?: boolean } = {},
+    ): Promise<{ size: number; contentType: string; body: Uint8Array }> => {
+      const q = new URLSearchParams({ slug });
+      if (opts.includeData) q.set("includeData", "true");
+      if (opts.containerize) q.set("containerize", "true");
+      const res = await fetch(this.agentURL(`/phone/projects/export?${q.toString()}`), {
+        headers: this.authHeaders(),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(body || `exportPhoneProject: HTTP ${res.status}`);
+      }
+      const buf = new Uint8Array(await res.arrayBuffer());
+      return {
+        size: buf.byteLength,
+        contentType: res.headers.get("content-type") ?? "application/octet-stream",
+        body: buf,
+      };
+    },
+    push: async (
+      slug: string,
+      target: HeadlessPhoneTarget,
+      opts: {
+        onConflict?: "reject" | "rename" | "overwrite";
+        skipSeed?: boolean;
+        includeData?: boolean;
+        containerize?: boolean;
+      } = {},
+    ): Promise<PhonePushResult> => {
+      const exported = await this.phoneProjects.export(slug, {
+        includeData: opts.includeData,
+        containerize: opts.containerize,
+      });
+      const bundleBuffer = exported.body.buffer.slice(
+        exported.body.byteOffset,
+        exported.body.byteOffset + exported.body.byteLength,
+      ) as ArrayBuffer;
+      const form = new FormData();
+      form.append(
+        "bundle",
+        new Blob([bundleBuffer], { type: exported.contentType }),
+        `${slug}.tgz`,
+      );
+      if (opts.onConflict) form.append("onConflict", opts.onConflict);
+      if (opts.skipSeed) form.append("skipSeed", "true");
+      const res = await fetch(this.absoluteUrl(target.baseUrl, "/phone/projects/receive"), {
+        method: "POST",
+        headers: this.authForTarget(target.authToken),
+        body: form,
+      });
+      const body = await safeJson(res);
+      if (!res.ok) throw new Error(body?.error ?? `pushPhoneProject: HTTP ${res.status}`);
+      return body as PhonePushResult;
+    },
+    bootstrapTodoDeploy: async (
+      opts: BootstrapTodoDeployOptions,
+    ): Promise<BootstrapTodoDeployResult> => {
+      const localProject = await this.phoneProjects.create({
+        name: opts.name,
+        slug: opts.slug,
+        template: opts.template ?? "todos",
+        prompt: opts.prompt,
+      });
+      const remote = await this.phoneProjects.push(localProject.slug, opts.target, {
+        includeData: opts.includeData,
+        containerize: opts.containerize ?? true,
+        onConflict: opts.onConflict ?? "rename",
+      });
+      return { localProject, remote };
+    },
+  };
+
   // ── Raw escape hatch ──────────────────────────────────────────
   readonly raw = {
     get: async (p: string) => {
@@ -397,6 +688,12 @@ export class MobileClient {
   private agentURL(p: string): string {
     const base = this.agentBaseUrl ?? "http://127.0.0.1:18080";
     return base.replace(/\/$/, "") + (p.startsWith("/") ? p : "/" + p);
+  }
+  private absoluteUrl(base: string, p: string): string {
+    return base.replace(/\/$/, "") + (p.startsWith("/") ? p : "/" + p);
+  }
+  private authForTarget(token?: string): Record<string, string> {
+    return token ? { Authorization: "Bearer " + token } : this.authHeaders();
   }
   private peerPath(target: string | undefined, p: string): string {
     if (!target) return p;

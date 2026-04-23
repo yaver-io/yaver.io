@@ -40,6 +40,47 @@ function platformLabel(platform: string): string {
   }
 }
 
+function isLikelyWSLDevice(device: Pick<Device, "name" | "platform" | "host">): boolean {
+  const platform = String(device.platform || "").trim().toLowerCase();
+  if (platform !== "linux") return false;
+  const name = String(device.name || "").trim().toUpperCase();
+  const host = String(device.host || "").trim();
+  const windowsHostLike =
+    name.startsWith("DESKTOP-") ||
+    name.startsWith("LAPTOP-") ||
+    name.startsWith("WIN-");
+  const wslNatLike = /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(host);
+  return windowsHostLike || wslNatLike;
+}
+
+function devicePlatformLabel(device: Pick<Device, "name" | "platform" | "host">): string {
+  const base = platformLabel(device.platform);
+  if (isLikelyWSLDevice(device)) {
+    return "Linux (likely WSL)";
+  }
+  return base;
+}
+
+function formatRunnerChipLabel(runner: string): string {
+  const cleaned = String(runner || "").trim();
+  if (!cleaned) return cleaned;
+  if (cleaned === "claude-code") return "claude";
+  return cleaned;
+}
+
+function deviceShareSummary(device: Pick<Device, "isGuest" | "sharedWithGuests" | "sharesAllProjects" | "sharedProjects" | "sharesAllRunners" | "sharedRunners">) {
+  const hasSharedState = device.isGuest || device.sharedWithGuests;
+  if (!hasSharedState) return null;
+  const sharedProjects = Array.isArray(device.sharedProjects) ? device.sharedProjects.filter(Boolean) : [];
+  const sharedRunners = Array.isArray(device.sharedRunners) ? device.sharedRunners.filter(Boolean) : [];
+  return {
+    projectLabel: device.sharesAllProjects ? "All Resources" : "Project Only",
+    projectChips: device.sharesAllProjects ? [] : sharedProjects,
+    runnerLabel: device.sharesAllRunners ? "All Agents" : "Some Agents",
+    runnerChips: device.sharesAllRunners ? [] : sharedRunners.map(formatRunnerChipLabel),
+  };
+}
+
 interface DevicesViewProps {
   devices: Device[];
   onRefresh: () => Promise<void>;
@@ -140,8 +181,10 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
           <div className="rounded-xl border border-amber-500/20 bg-amber-500/8 px-4 py-3 text-xs text-amber-100">
             If a machine finishes browser OAuth but still shows stale auth locally, run <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-100">yaver auth factory-reset</code> on that machine. MCP clients can call <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-100">yaver_auth_factory_reset</code>.
           </div>
-          {devices.map((device) => (
-            <div key={device.id} className="card flex items-center gap-4">
+          {devices.map((device) => {
+            const shareSummary = deviceShareSummary(device);
+            return (
+            <div key={device.id} className="card flex items-start gap-4">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-surface-800 text-surface-400">
                 <DeviceIcon platform={device.platform} />
               </div>
@@ -181,12 +224,40 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                   </span>
                 </div>
                 <p className="text-sm text-surface-500">
-                  {platformLabel(device.platform)} -- Last seen {device.lastSeen}
+                  {devicePlatformLabel(device)} -- Last seen {device.lastSeen}
                 </p>
                 {device.edgeProfile ? (
                   <p className="text-xs text-surface-500">
                     {device.edgeProfile.supportsLocalInference ? "Local inference" : "No local inference"} · max {device.edgeProfile.maxModelClass} model · {device.edgeProfile.preferredTasks.slice(0, 3).join(", ")}
                   </p>
+                ) : null}
+                {shareSummary ? (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                      shareSummary.projectLabel === "All Resources"
+                        ? "border-sky-500/40 bg-sky-500/10 text-sky-200"
+                        : "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                    }`}>
+                      {shareSummary.projectLabel}
+                    </span>
+                    {shareSummary.projectChips.map((project) => (
+                      <span key={`${device.id}:project:${project}`} className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-amber-200">
+                        {project}
+                      </span>
+                    ))}
+                    <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                      shareSummary.runnerLabel === "All Agents"
+                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                        : "border-violet-500/40 bg-violet-500/10 text-violet-200"
+                    }`}>
+                      {shareSummary.runnerLabel}
+                    </span>
+                    {shareSummary.runnerChips.map((runner) => (
+                      <span key={`${device.id}:runner:${runner}`} className="rounded border border-violet-500/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-violet-200">
+                        {runner}
+                      </span>
+                    ))}
+                  </div>
                 ) : null}
                 <p className="text-xs text-surface-600 font-mono">
                   {device.id.substring(0, 8)}...
@@ -207,7 +278,8 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                 ) : null}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

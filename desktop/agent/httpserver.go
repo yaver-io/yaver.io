@@ -551,6 +551,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/dev/native-bundle", s.handleServeNativeBundle) // No auth — serves compiled bundle
 	mux.HandleFunc("/dev/native-assets", s.handleServeNativeAssets) // No auth — serves compiled assets
 	mux.HandleFunc("/dev/", s.handleDevServerProxy)                 // No auth — serves app bundle in WebView (not sensitive)
+	mux.HandleFunc("/unity/test", s.authSDKOrGuest(s.handleUnityTest))
+	mux.HandleFunc("/unity/build", s.authSDKOrGuest(s.handleUnityBuild))
+	mux.HandleFunc("/unity/relaunch", s.authSDKOrGuest(s.handleUnityRelaunch))
+	mux.HandleFunc("/unity/runs", s.auth(s.handleUnityRuns))
 	mux.HandleFunc("/mobile-workers/preview-session", s.authSDK(s.handleMobileWorkerPreviewSession))
 	mux.HandleFunc("/mobile-workers/preview-session/command", s.authSDK(s.handleMobileWorkerPreviewCommand))
 
@@ -1017,7 +1021,7 @@ var scopePathPrefixes = map[string][]string{
 	"testapp":      {"/test-app/"},
 	"health":       {"/health"},
 	"todolist":     {"/todolist"},
-	"guest-reload": {"/dev/reload", "/dev/reload-app", "/dev/status", "/dev/target", "/dev/events", "/dev/compatibility"},
+	"guest-reload": {"/dev/reload", "/dev/reload-app", "/dev/status", "/dev/target", "/dev/events", "/dev/compatibility", "/unity/test", "/unity/build", "/unity/relaunch"},
 	"guest-vibing": {"/vibing"},
 }
 
@@ -2433,7 +2437,7 @@ func (s *HTTPServer) handleRunnerSwitch(w http.ResponseWriter, r *http.Request) 
 			RunnerID:   "codex",
 			Name:       "OpenAI Codex",
 			Command:    "codex",
-			Args:       []string{"exec", "--full-auto", "{prompt}"},
+			Args:       []string{"exec", "--full-auto", "--skip-git-repo-check", "{prompt}"},
 			OutputMode: "raw",
 		}
 	case "aider":
@@ -3181,6 +3185,35 @@ func (s *HTTPServer) handleDoctor(w http.ResponseWriter, r *http.Request) {
 		addCheck("hermes", "Hermes reload path", "pass", "ready for React Native / Expo bundle reload into Yaver mobile")
 	} else {
 		addCheck("hermes", "Hermes reload path", "warn", "run `yaver install mobile` to provision the Node runtime and verify hermesc")
+	}
+
+	if unityPath, unityVer := detectUnityEditor(); unityPath != "" {
+		if unityVer != "" && unityVer != "unknown" {
+			addCheck("unity", "Unity Editor", "pass", fmt.Sprintf("%s (%s)", unityPath, unityVer))
+		} else {
+			addCheck("unity", "Unity Editor", "pass", unityPath)
+		}
+	} else {
+		addCheck("unity", "Unity Editor", "warn", "not detected")
+	}
+
+	unityProjects := []string{}
+	for _, p := range scanMobileProjects() {
+		if p.Framework != "unity" {
+			continue
+		}
+		label := p.Name
+		if p.SDKVersion != "" {
+			label += " (" + p.SDKVersion + ")"
+		}
+		unityProjects = append(unityProjects, label)
+	}
+	if len(unityProjects) > 0 {
+		addCheck("unity", "Unity projects", "pass", strings.Join(unityProjects, ", "))
+		addCheck("unity", "Unity fast iteration path", "pass", "feedback SDK + remote vibing + content refresh/scene reload/redeploy workflow available")
+	} else {
+		addCheck("unity", "Unity projects", "warn", "no Unity projects detected in discovery roots")
+		addCheck("unity", "Unity fast iteration path", "warn", "run `yaver sdk add feedback --platform unity` inside a Unity project")
 	}
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{
@@ -4088,30 +4121,30 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 				return mcpToolError(fmt.Sprintf("remote handoff export failed: %v", err))
 			}
 			body := map[string]interface{}{
-				"sourceBundle":      bundle,
-				"engine":            args.Engine,
-				"runner":            args.Runner,
-				"workDir":           args.WorkDir,
-				"maxKicks":          args.MaxKicks,
-				"deadlineSec":       args.DeadlineSec,
-				"extraPrompt":       args.Message,
-				"stopSource":        stopSource,
-				"autodev":           args.Autodev,
-				"hours":             args.Hours,
-				"load":              args.Load,
-				"prompt":            args.Prompt,
-				"loopTarget":        args.LoopTarget,
-				"branch":            args.Branch,
-				"autoBranch":        args.AutoBranch,
-				"deploy":            args.Deploy,
-				"notify":            args.Notify,
-				"noAutotest":        args.NoAutotest,
-				"autoIdeas":         args.AutoIdeas,
-				"remainedFile":      args.RemainedFile,
-				"harden":            args.Harden,
-				"model":             args.Model,
-				"planner":           args.Planner,
-				"implementer":       args.Implementer,
+				"sourceBundle": bundle,
+				"engine":       args.Engine,
+				"runner":       args.Runner,
+				"workDir":      args.WorkDir,
+				"maxKicks":     args.MaxKicks,
+				"deadlineSec":  args.DeadlineSec,
+				"extraPrompt":  args.Message,
+				"stopSource":   stopSource,
+				"autodev":      args.Autodev,
+				"hours":        args.Hours,
+				"load":         args.Load,
+				"prompt":       args.Prompt,
+				"loopTarget":   args.LoopTarget,
+				"branch":       args.Branch,
+				"autoBranch":   args.AutoBranch,
+				"deploy":       args.Deploy,
+				"notify":       args.Notify,
+				"noAutotest":   args.NoAutotest,
+				"autoIdeas":    args.AutoIdeas,
+				"remainedFile": args.RemainedFile,
+				"harden":       args.Harden,
+				"model":        args.Model,
+				"planner":      args.Planner,
+				"implementer":  args.Implementer,
 			}
 			target := resolveDeviceURL(cfg, args.Target, true)
 			payload, _ := json.Marshal(body)
@@ -4243,29 +4276,29 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 				return mcpToolError(fmt.Sprintf("remote session_complete export failed: %v", err))
 			}
 			body := map[string]interface{}{
-				"sourceBundle":      bundle,
-				"engine":            spec.Engine,
-				"runner":            spec.Runner,
-				"workDir":           spec.WorkDir,
-				"maxKicks":          spec.MaxKicks,
-				"deadlineSec":       spec.DeadlineSec,
-				"extraPrompt":       spec.ExtraPrompt,
-				"stopSource":        spec.StopSource,
-				"hours":             spec.Hours,
-				"load":              spec.Load,
-				"prompt":            spec.Prompt,
-				"loopTarget":        spec.LoopTarget,
-				"branch":            spec.Branch,
-				"autoBranch":        spec.AutoBranch,
-				"deploy":            spec.Deploy,
-				"notify":            spec.Notify,
-				"noAutotest":        spec.NoAutotest,
-				"autoIdeas":         spec.AutoIdeas,
-				"remainedFile":      spec.RemainedFile,
-				"harden":            spec.Harden,
-				"model":             spec.Model,
-				"planner":           spec.Planner,
-				"implementer":       spec.Implementer,
+				"sourceBundle": bundle,
+				"engine":       spec.Engine,
+				"runner":       spec.Runner,
+				"workDir":      spec.WorkDir,
+				"maxKicks":     spec.MaxKicks,
+				"deadlineSec":  spec.DeadlineSec,
+				"extraPrompt":  spec.ExtraPrompt,
+				"stopSource":   spec.StopSource,
+				"hours":        spec.Hours,
+				"load":         spec.Load,
+				"prompt":       spec.Prompt,
+				"loopTarget":   spec.LoopTarget,
+				"branch":       spec.Branch,
+				"autoBranch":   spec.AutoBranch,
+				"deploy":       spec.Deploy,
+				"notify":       spec.Notify,
+				"noAutotest":   spec.NoAutotest,
+				"autoIdeas":    spec.AutoIdeas,
+				"remainedFile": spec.RemainedFile,
+				"harden":       spec.Harden,
+				"model":        spec.Model,
+				"planner":      spec.Planner,
+				"implementer":  spec.Implementer,
 			}
 			target := resolveDeviceURL(cfg, spec.Target, true)
 			payload, _ := json.Marshal(body)

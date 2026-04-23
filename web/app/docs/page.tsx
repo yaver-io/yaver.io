@@ -37,6 +37,13 @@ const docs = [
     tags: ["SDK", "React Native", "Flutter", "Security"],
   },
   {
+    title: "Unity",
+    description:
+      "Unity setup, self-hosted runner patterns, mobile and desktop usage cases, CI, and publishing paths.",
+    href: "/docs/unity",
+    tags: ["Unity", "Games", "Self-hosted"],
+  },
+  {
     title: "Cloud machines",
     description:
       "Dedicated CPU ($49/mo) and GPU ($449/mo) dev machines with multi-user team access, shared GPU, and isolated workspaces.",
@@ -71,6 +78,10 @@ const manualLinks = [
   {
     title: "Auto-boot on power restore",
     href: "/manuals/auto-boot",
+  },
+  {
+    title: "MacBook to Windows AI box over SSH",
+    href: "/manuals/windows-ssh-coding-box",
   },
 ];
 

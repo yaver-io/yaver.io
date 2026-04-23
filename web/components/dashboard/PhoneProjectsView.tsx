@@ -17,6 +17,7 @@ import { useDevices, type Device } from "@/lib/use-devices";
 import { useAuth } from "@/lib/use-auth";
 import { isCloudPreviewUser } from "@/lib/cloud-preview";
 import { buildImportedConversationBrief, mergeImportedConversationPrompt } from "@/lib/conversation-import";
+import { getManagedSubscription } from "@/lib/subscription";
 import { getYaverCloudBaseUrl } from "@/lib/yaver-cloud";
 
 const ADVANCED_PROMOTE_TARGETS: Array<{ id: string; label: string; sub: string }> = [
@@ -84,6 +85,8 @@ export default function PhoneProjectsView() {
   const { token, user } = useAuth();
   const { devices } = useDevices(token);
   const canUseCloudPreview = isCloudPreviewUser(user?.email);
+  const [hasManagedCloud, setHasManagedCloud] = useState(false);
+  const canUseYaverCloud = canUseCloudPreview || hasManagedCloud;
   const [currentDeviceId] = useState<string | undefined>(undefined);
   const devMachines = useMemo(
     () => pickDevMachines(devices, currentDeviceId),
@@ -95,6 +98,24 @@ export default function PhoneProjectsView() {
       setSelectedDevMachineId(devMachines[0].id);
     }
   }, [devMachines, selectedDevMachineId]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!token) {
+      setHasManagedCloud(false);
+      return;
+    }
+    void (async () => {
+      const summary = await getManagedSubscription(token);
+      if (cancelled || !summary) return;
+      const hasMachine = Array.isArray(summary.machines)
+        && summary.machines.some((machine) => machine.status !== "stopped");
+      const hasSubscription = !!summary.subscription;
+      setHasManagedCloud(hasMachine || hasSubscription);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
   const selectedDevMachine = useMemo(
     () => devMachines.find((d) => d.id === selectedDevMachineId) ?? null,
     [devMachines, selectedDevMachineId],
@@ -292,7 +313,11 @@ export default function PhoneProjectsView() {
   }
 
   async function deployToCloud() {
-    await runPush({ kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE }, "yaver-cloud", "Yaver Cloud");
+    await runPush(
+      { kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken: token ?? undefined },
+      "yaver-cloud",
+      "Yaver Cloud",
+    );
   }
 
   return (
@@ -606,11 +631,11 @@ export default function PhoneProjectsView() {
                     </div>
                   </div>
 
-                  {canUseCloudPreview ? (
+                  {canUseYaverCloud ? (
                     <div className="rounded-lg border-2 border-surface-700 bg-surface-950 p-4">
                       <div className="text-base font-semibold text-surface-100">Yaver Cloud</div>
                       <div className="mt-0.5 text-xs text-surface-400">
-                        Private preview at {YAVER_CLOUD_BASE.replace(/^https?:\/\//, "")}
+                        {canUseCloudPreview ? "Private preview" : "Managed machine"} at {YAVER_CLOUD_BASE.replace(/^https?:\/\//, "")}
                       </div>
                       <div className="mt-3">
                         <button

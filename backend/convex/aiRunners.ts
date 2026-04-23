@@ -18,7 +18,7 @@ export const PREDEFINED_RUNNERS = [
     runnerId: "codex",
     name: "OpenAI Codex",
     command: "codex",
-    args: JSON.stringify(["--quiet", "--full-auto", "{prompt}"]),
+    args: JSON.stringify(["exec", "--full-auto", "--skip-git-repo-check", "{prompt}"]),
     outputMode: "raw" as const,
     resumeSupported: false,
     exitCommand: "exit",

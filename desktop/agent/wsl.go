@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -131,7 +132,13 @@ func trySetSysctl(key string, value int) bool {
 
 func preferredUnixShell() string {
 	if shell := strings.TrimSpace(os.Getenv("SHELL")); shell != "" {
-		return shell
+		if filepath.IsAbs(shell) {
+			if info, err := os.Stat(shell); err == nil && !info.IsDir() {
+				return shell
+			}
+		} else if path, err := exec.LookPath(shell); err == nil {
+			return path
+		}
 	}
 	if path, err := exec.LookPath("bash"); err == nil {
 		return path

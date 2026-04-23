@@ -2,7 +2,11 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { Doc } from "./_generated/dataModel";
 import { validateSessionInternal } from "./auth";
-import { listActiveInfraGrantsForGuest, listGrantedDeviceIdsForGrant } from "./access";
+import {
+  getLegacyGuestAccess,
+  listActiveInfraGrantsForGuest,
+  listGrantedDeviceIdsForGrant,
+} from "./access";
 import { recommendPlacement } from "./edgePlacement";
 
 // HEARTBEAT_STALE_MS: how long after the last heartbeat we still
@@ -24,6 +28,208 @@ function deriveIsOnline(d: { isOnline: boolean; lastHeartbeat: number }): boolea
   if (!d.isOnline) return false;
   const age = Date.now() - d.lastHeartbeat;
   return age < HEARTBEAT_STALE_MS;
+}
+
+type ListedDevice = {
+  deviceId: string;
+  name: string;
+  platform: string;
+  publicKey?: string;
+  hardwareId?: string;
+  quicHost: string;
+  localIps: string[];
+  publicEndpoints: string[];
+  quicPort: number;
+  isOnline: boolean;
+  needsAuth: boolean;
+  runnerDown: boolean;
+  runners: Doc<"devices">["runners"];
+  lastHeartbeat: number;
+  isGuest: boolean;
+  hostUserId?: string;
+  hostName?: string;
+  hostEmail?: string;
+  hostUserIdString?: string;
+  accessScope: "owner" | "shared-scoped" | "shared-legacy";
+  tunnelUrl?: string;
+  priorityMode?: string;
+  useHostApiKeys?: boolean;
+  allowGuestProvidedApiKeys?: boolean;
+  sharedWithGuests?: boolean;
+  sharesAllProjects?: boolean;
+  sharedProjects?: string[];
+  sharesAllRunners?: boolean;
+  sharedRunners?: string[];
+  sessionBinding?: "dedicated" | "legacy-shared";
+  deviceClass?: "desktop" | "edge-mobile" | "server";
+  edgeProfile?: Doc<"devices">["edgeProfile"];
+};
+
+type ShareRule = {
+  allowedProjects?: string[];
+  allowedRunners?: string[];
+};
+
+function normalizeDeviceName(name: string | undefined): string {
+  return String(name || "").trim().toLowerCase().replace(/\.local$/i, "");
+}
+
+function normalizeDeviceHost(host: string | undefined): string {
+  return String(host || "").trim().toLowerCase().replace(/\.local$/i, "");
+}
+
+function listedDeviceIdentityKey(device: ListedDevice): string {
+  if (device.hardwareId) return `hwid:${device.hardwareId}`;
+  if (device.publicKey) return `pub:${device.publicKey}`;
+  if (device.isGuest) {
+    const scope = device.hostEmail || device.hostName || "guest";
+    return `guest:${scope}:${device.deviceId || device.name}`;
+  }
+  const normalizedName = normalizeDeviceName(device.name);
+  const normalizedPlatform = String(device.platform || "").trim().toLowerCase();
+  if (normalizedName && normalizedPlatform) return `host:${normalizedPlatform}:${normalizedName}`;
+  if (device.deviceId) return `id:${device.deviceId}`;
+  return `name:${device.name}`;
+}
+
+function listedDeviceAliasKey(device: ListedDevice): string | null {
+  if (device.isGuest) return null;
+  const normalizedName = normalizeDeviceName(device.name);
+  const normalizedPlatform = String(device.platform || "").trim().toLowerCase();
+  if (!normalizedName || !normalizedPlatform) return null;
+  return `${normalizedPlatform}:${normalizedName}`;
+}
+
+function listedDeviceEndpointKey(device: ListedDevice): string | null {
+  if (device.isGuest) return null;
+  const normalizedHost = normalizeDeviceHost(device.quicHost);
+  if (!normalizedHost) return null;
+  return `${normalizedHost}:${device.quicPort || 0}`;
+}
+
+function mergeListedDevices(a: ListedDevice, b: ListedDevice): ListedDevice {
+  const incomingWins =
+    (!!a.needsAuth && !b.needsAuth) ||
+    (b.lastHeartbeat || 0) > (a.lastHeartbeat || 0) ||
+    (!!b.isOnline && !a.isOnline);
+  const base = incomingWins ? b : a;
+  const other = incomingWins ? a : b;
+  return {
+    ...other,
+    ...base,
+    quicHost: base.quicHost || other.quicHost,
+    quicPort: base.quicPort || other.quicPort,
+    isOnline: base.isOnline || other.isOnline,
+    runnerDown: base.runnerDown && other.runnerDown,
+    publicKey: base.publicKey || other.publicKey,
+    hardwareId: base.hardwareId || other.hardwareId,
+    lastHeartbeat: Math.max(a.lastHeartbeat || 0, b.lastHeartbeat || 0),
+    localIps: [...new Set([...(a.localIps || []), ...(b.localIps || [])].filter(Boolean))],
+    publicEndpoints: [...new Set([...(a.publicEndpoints || []), ...(b.publicEndpoints || [])].filter(Boolean))],
+    runners: (base.runners && base.runners.length > 0) ? base.runners : other.runners,
+    sharedWithGuests: base.sharedWithGuests ?? other.sharedWithGuests,
+    sharesAllProjects: (base.sharesAllProjects ?? false) || (other.sharesAllProjects ?? false),
+    sharedProjects: [...new Set([...(a.sharedProjects || []), ...(b.sharedProjects || [])].filter(Boolean))],
+    sharesAllRunners: (base.sharesAllRunners ?? false) || (other.sharesAllRunners ?? false),
+    sharedRunners: [...new Set([...(a.sharedRunners || []), ...(b.sharedRunners || [])].filter(Boolean))],
+  };
+}
+
+function pickActiveListedDevice(a: ListedDevice, b: ListedDevice): ListedDevice | null {
+  const aDead = a.needsAuth && !a.isOnline;
+  const bDead = b.needsAuth && !b.isOnline;
+  const aLive = !a.needsAuth && a.isOnline;
+  const bLive = !b.needsAuth && b.isOnline;
+  if (aDead && bLive) return b;
+  if (bDead && aLive) return a;
+  return null;
+}
+
+function collapseListedDevices(devices: ListedDevice[]): ListedDevice[] {
+  if (!Array.isArray(devices) || devices.length === 0) return [];
+
+  const byIdentity = new Map<string, ListedDevice>();
+  for (const device of devices) {
+    const key = listedDeviceIdentityKey(device);
+    const existing = byIdentity.get(key);
+    byIdentity.set(key, existing ? mergeListedDevices(existing, device) : device);
+  }
+
+  const byAlias = new Map<string, ListedDevice>();
+  for (const device of byIdentity.values()) {
+    const key = listedDeviceAliasKey(device);
+    if (!key) {
+      byAlias.set(`id:${device.deviceId}`, device);
+      continue;
+    }
+    const existing = byAlias.get(key);
+    if (!existing) {
+      byAlias.set(key, device);
+      continue;
+    }
+    const strongConflict =
+      (!!existing.hardwareId && !!device.hardwareId && existing.hardwareId !== device.hardwareId) ||
+      (!!existing.publicKey && !!device.publicKey && existing.publicKey !== device.publicKey);
+    if (strongConflict) {
+      const winner = pickActiveListedDevice(existing, device);
+      if (winner) {
+        byAlias.set(key, winner);
+        continue;
+      }
+    }
+    byAlias.set(key, mergeListedDevices(existing, device));
+  }
+
+  const byEndpoint = new Map<string, ListedDevice>();
+  for (const device of byAlias.values()) {
+    const key = listedDeviceEndpointKey(device);
+    if (!key) {
+      byEndpoint.set(`id:${device.deviceId}`, device);
+      continue;
+    }
+    const existing = byEndpoint.get(key);
+    byEndpoint.set(key, existing ? mergeListedDevices(existing, device) : device);
+  }
+
+  return [...byEndpoint.values()];
+}
+
+function normalizeScopedList(items: string[] | undefined): string[] {
+  return Array.isArray(items)
+    ? items.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+}
+
+function summarizeShareRules(rules: ShareRule[]): Pick<ListedDevice, "sharedWithGuests" | "sharesAllProjects" | "sharedProjects" | "sharesAllRunners" | "sharedRunners"> {
+  const projects = new Set<string>();
+  const runners = new Set<string>();
+  let sharesAllProjects = false;
+  let sharesAllRunners = false;
+
+  for (const rule of rules) {
+    const allowedProjects = normalizeScopedList(rule.allowedProjects);
+    const allowedRunners = normalizeScopedList(rule.allowedRunners);
+
+    if (allowedProjects.length === 0) {
+      sharesAllProjects = true;
+    } else {
+      allowedProjects.forEach((project) => projects.add(project));
+    }
+
+    if (allowedRunners.length === 0) {
+      sharesAllRunners = true;
+    } else {
+      allowedRunners.forEach((runner) => runners.add(runner));
+    }
+  }
+
+  return {
+    sharedWithGuests: rules.length > 0,
+    sharesAllProjects,
+    sharedProjects: [...projects],
+    sharesAllRunners,
+    sharedRunners: [...runners],
+  };
 }
 
 /**
@@ -74,6 +280,7 @@ export const registerDevice = mutation({
     publicKey: v.optional(v.string()),
     quicHost: v.string(),
     quicPort: v.number(),
+    publicEndpoints: v.optional(v.array(v.string())),
     hardwareId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -106,6 +313,7 @@ export const registerDevice = mutation({
         publicKey: args.publicKey,
         quicHost: args.quicHost,
         quicPort: args.quicPort,
+        publicEndpoints: args.publicEndpoints,
         isOnline: true,
         needsAuth: false,
         lastHeartbeat: Date.now(),
@@ -147,6 +355,7 @@ export const registerDevice = mutation({
       publicKey: args.publicKey,
       quicHost: args.quicHost,
       quicPort: args.quicPort,
+      publicEndpoints: args.publicEndpoints,
       isOnline: true,
       lastHeartbeat: Date.now(),
       createdAt: Date.now(),
@@ -198,6 +407,7 @@ export const heartbeat = mutation({
     }))),
     quicHost: v.optional(v.string()),
     localIps: v.optional(v.array(v.string())),
+    publicEndpoints: v.optional(v.array(v.string())),
     hardwareId: v.optional(v.string()),
     deviceClass: v.optional(
       v.union(
@@ -256,6 +466,9 @@ export const heartbeat = mutation({
     // strand stale addresses on the record forever.
     if (args.localIps !== undefined) {
       patch.localIps = args.localIps;
+    }
+    if (args.publicEndpoints !== undefined) {
+      patch.publicEndpoints = args.publicEndpoints;
     }
     // Capture hardwareId on heartbeats too — older agents that
     // were registered before the field existed will pick it up
@@ -349,36 +562,66 @@ export const listMyDevices = query({
       .withIndex("by_userId", (q) => q.eq("userId", session.user._id))
       .collect();
 
-    const result: Array<{
-      deviceId: string;
-      name: string;
-      platform: string;
-      publicKey?: string;
-      quicHost: string;
-      localIps: string[];
-      quicPort: number;
-      isOnline: boolean;
-      needsAuth: boolean;
-      runnerDown: boolean;
-      runners: Doc<"devices">["runners"];
-      lastHeartbeat: number;
-      isGuest: boolean;
-      hostName?: string;
-      hostEmail?: string;
-      accessScope: "owner" | "shared-scoped" | "shared-legacy";
-      priorityMode?: string;
-      useHostApiKeys?: boolean;
-      allowGuestProvidedApiKeys?: boolean;
-      sessionBinding?: "dedicated" | "legacy-shared";
-      deviceClass?: "desktop" | "edge-mobile" | "server";
-      edgeProfile?: Doc<"devices">["edgeProfile"];
-    }> = ownDevices.map((d) => ({
+    const activeGuestAccessRecords = await ctx.db
+      .query("guestAccess")
+      .withIndex("by_hostUserId", (q) => q.eq("hostUserId", session.user._id))
+      .filter((q) => q.eq(q.field("revokedAt"), undefined))
+      .collect();
+
+    const activeGuestAccessByGuest = new Map(
+      activeGuestAccessRecords.map((access) => [access.guestUserId.toString(), access]),
+    );
+
+    const activeHostInfraGrants = await ctx.db
+      .query("infraAccessGrants")
+      .withIndex("by_hostUserId", (q) => q.eq("hostUserId", session.user._id))
+      .filter((q) => q.eq(q.field("status"), "active"))
+      .collect();
+
+    const shareRulesByDeviceId = new Map<string, ShareRule[]>();
+    const pushShareRule = (deviceId: string, rule: ShareRule) => {
+      if (!deviceId) return;
+      const existing = shareRulesByDeviceId.get(deviceId) || [];
+      existing.push(rule);
+      shareRulesByDeviceId.set(deviceId, existing);
+    };
+
+    for (const grant of activeHostInfraGrants) {
+      const access = activeGuestAccessByGuest.get(grant.guestUserId.toString());
+      const rule: ShareRule = {
+        allowedProjects: access?.allowedProjects,
+        allowedRunners: grant.allowedRunners ?? access?.allowedRunners,
+      };
+      if (grant.shareAllDevices) {
+        for (const device of ownDevices) pushShareRule(device.deviceId, rule);
+        continue;
+      }
+      for (const deviceId of await listGrantedDeviceIdsForGrant(ctx, grant._id)) {
+        pushShareRule(deviceId, rule);
+      }
+    }
+
+    for (const access of activeGuestAccessRecords) {
+      const hasScopedGrant = activeHostInfraGrants.some(
+        (grant) => grant.guestUserId.toString() === access.guestUserId.toString(),
+      );
+      if (hasScopedGrant) continue;
+      const rule: ShareRule = {
+        allowedProjects: access.allowedProjects,
+        allowedRunners: access.allowedRunners,
+      };
+      for (const device of ownDevices) pushShareRule(device.deviceId, rule);
+    }
+
+    const result: ListedDevice[] = ownDevices.map((d) => ({
       deviceId: d.deviceId,
       name: d.name,
       platform: d.platform,
       publicKey: d.publicKey,
+      hardwareId: d.hardwareId,
       quicHost: d.quicHost,
       localIps: d.localIps ?? [],
+      publicEndpoints: d.publicEndpoints ?? [],
       quicPort: d.quicPort,
       isOnline: deriveIsOnline(d),
       needsAuth: d.needsAuth ?? false,
@@ -388,10 +631,14 @@ export const listMyDevices = query({
       isGuest: false as boolean,
       hostName: undefined as string | undefined,
       hostEmail: undefined as string | undefined,
+      hostUserId: undefined as string | undefined,
+      hostUserIdString: undefined as string | undefined,
       accessScope: "owner" as "owner" | "shared-scoped" | "shared-legacy",
+      tunnelUrl: undefined as string | undefined,
       priorityMode: undefined as string | undefined,
       useHostApiKeys: undefined as boolean | undefined,
       allowGuestProvidedApiKeys: undefined as boolean | undefined,
+      ...summarizeShareRules(shareRulesByDeviceId.get(d.deviceId) || []),
       sessionBinding: dedicatedSessionDeviceIds.has(d.deviceId) ? "dedicated" as const : "legacy-shared" as const,
       deviceClass: d.deviceClass,
       edgeProfile: d.edgeProfile,
@@ -404,6 +651,11 @@ export const listMyDevices = query({
       scopedHosts.add(grant.hostUserId.toString());
       const host = await ctx.db.get(grant.hostUserId);
       if (!host) continue;
+      const access = await getLegacyGuestAccess(ctx, grant.hostUserId, session.user._id);
+      const hostSettings = await ctx.db
+        .query("userSettings")
+        .withIndex("by_userId", (q) => q.eq("userId", grant.hostUserId))
+        .first();
 
       const hostDevices = grant.shareAllDevices
         ? await ctx.db
@@ -418,6 +670,10 @@ export const listMyDevices = query({
                 .unique(),
             ),
           ).then((devices) => devices.filter((device): device is Doc<"devices"> => device !== null));
+      // An account-level tunnelUrl can only be attached safely when this grant
+      // resolves to exactly one host device. Otherwise the guest could be given
+      // a transport hint that belongs to another box under the same host.
+      const sharedTunnelUrl = hostDevices.length === 1 ? hostSettings?.tunnelUrl : undefined;
 
       for (const d of hostDevices) {
         result.push({
@@ -425,8 +681,10 @@ export const listMyDevices = query({
           name: d.name,
           platform: d.platform,
           publicKey: d.publicKey,
+          hardwareId: d.hardwareId,
           quicHost: d.quicHost,
           localIps: d.localIps ?? [],
+          publicEndpoints: d.publicEndpoints ?? [],
           quicPort: d.quicPort,
           isOnline: deriveIsOnline(d),
           needsAuth: d.needsAuth ?? false,
@@ -434,12 +692,19 @@ export const listMyDevices = query({
           runners: d.runners ?? [],
           lastHeartbeat: d.lastHeartbeat,
           isGuest: true,
+          hostUserId: String(grant.hostUserId),
           hostName: host.fullName,
           hostEmail: host.email,
+          hostUserIdString: host.userId,
           accessScope: "shared-scoped",
+          tunnelUrl: sharedTunnelUrl,
           priorityMode: grant.priorityMode,
           useHostApiKeys: grant.useHostApiKeys,
           allowGuestProvidedApiKeys: grant.allowGuestProvidedApiKeys,
+          ...summarizeShareRules([{
+            allowedProjects: access?.allowedProjects,
+            allowedRunners: grant.allowedRunners ?? access?.allowedRunners,
+          }]),
           sessionBinding: undefined as "dedicated" | "legacy-shared" | undefined,
           deviceClass: d.deviceClass,
           edgeProfile: d.edgeProfile,
@@ -459,11 +724,16 @@ export const listMyDevices = query({
       if (scopedHosts.has(access.hostUserId.toString())) continue;
       const host = await ctx.db.get(access.hostUserId);
       if (!host) continue;
+      const hostSettings = await ctx.db
+        .query("userSettings")
+        .withIndex("by_userId", (q) => q.eq("userId", access.hostUserId))
+        .first();
 
       const hostDevices = await ctx.db
         .query("devices")
         .withIndex("by_userId", (q) => q.eq("userId", access.hostUserId))
         .collect();
+      const sharedTunnelUrl = hostDevices.length === 1 ? hostSettings?.tunnelUrl : undefined;
 
       for (const d of hostDevices) {
         result.push({
@@ -471,8 +741,10 @@ export const listMyDevices = query({
           name: d.name,
           platform: d.platform,
           publicKey: d.publicKey,
+          hardwareId: d.hardwareId,
           quicHost: d.quicHost,
           localIps: d.localIps ?? [],
+          publicEndpoints: d.publicEndpoints ?? [],
           quicPort: d.quicPort,
           isOnline: deriveIsOnline(d),
           needsAuth: d.needsAuth ?? false,
@@ -480,12 +752,19 @@ export const listMyDevices = query({
           runners: d.runners ?? [],
           lastHeartbeat: d.lastHeartbeat,
           isGuest: true,
+          hostUserId: String(access.hostUserId),
           hostName: host.fullName,
           hostEmail: host.email,
+          hostUserIdString: host.userId,
           accessScope: "shared-legacy",
+          tunnelUrl: sharedTunnelUrl,
           priorityMode: access.usageMode === "idle-only" ? "spare-capacity" : undefined,
           useHostApiKeys: undefined,
           allowGuestProvidedApiKeys: true,
+          ...summarizeShareRules([{
+            allowedProjects: access.allowedProjects,
+            allowedRunners: access.allowedRunners,
+          }]),
           sessionBinding: undefined as "dedicated" | "legacy-shared" | undefined,
           deviceClass: d.deviceClass,
           edgeProfile: d.edgeProfile,
@@ -493,7 +772,7 @@ export const listMyDevices = query({
       }
     }
 
-    return result;
+    return collapseListedDevices(result);
   },
 });
 
@@ -522,7 +801,28 @@ export const recommendTaskPlacement = query({
       .collect();
 
     return recommendPlacement(
-      ownDevices.map((device) => ({
+      collapseListedDevices(
+        ownDevices.map((device) => ({
+          deviceId: device.deviceId,
+          name: device.name,
+          platform: device.platform,
+          publicKey: device.publicKey,
+          hardwareId: device.hardwareId,
+          quicHost: device.quicHost,
+          localIps: device.localIps ?? [],
+          publicEndpoints: device.publicEndpoints ?? [],
+          quicPort: device.quicPort,
+          isOnline: deriveIsOnline(device),
+          needsAuth: device.needsAuth,
+          runnerDown: device.runnerDown,
+          runners: device.runners ?? [],
+          lastHeartbeat: device.lastHeartbeat,
+          isGuest: false,
+          accessScope: "owner",
+          deviceClass: device.deviceClass,
+          edgeProfile: device.edgeProfile,
+        })),
+      ).map((device) => ({
         deviceId: device.deviceId,
         name: device.name,
         platform: device.platform,

@@ -15,21 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
-import { quicClient } from "../../src/lib/quic";
-
-// ── Types ────────────────────────────────────────────────────────────
-
-interface HealthTarget {
-  id: string;
-  url: string;
-  label?: string;
-  status?: string; // "up" | "warning" | "down"
-  statusCode?: number;
-  responseMs?: number;
-  uptimePercent?: number;
-  lastChecked?: string;
-  history?: { status: string; responseMs: number; time: string }[];
-}
+import { quicClient, type HealthMonitorTarget } from "../../src/lib/quic";
 
 const STATUS_COLORS: Record<string, string> = {
   up: "#22c55e",
@@ -59,7 +45,7 @@ export default function HealthMonitorScreen() {
   const { connectionStatus } = useDevice();
   const connected = connectionStatus === "connected";
 
-  const [targets, setTargets] = useState<HealthTarget[]>([]);
+  const [targets, setTargets] = useState<HealthMonitorTarget[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [addingUrl, setAddingUrl] = useState(false);
@@ -139,7 +125,7 @@ export default function HealthMonitorScreen() {
     [loadTargets]
   );
 
-  const resolveStatus = (t: HealthTarget) => {
+  const resolveStatus = (t: HealthMonitorTarget) => {
     if (t.status === "warning") return "warning";
     if (t.status === "up" || t.statusCode === 200) return "up";
     if (t.status === "down") return "down";
@@ -147,7 +133,7 @@ export default function HealthMonitorScreen() {
     return "unknown";
   };
 
-  const renderTarget = ({ item: t }: { item: HealthTarget }) => {
+  const renderTarget = ({ item: t }: { item: HealthMonitorTarget }) => {
     const statusKey = resolveStatus(t);
     const statusColor = STATUS_COLORS[statusKey] || STATUS_COLORS.unknown;
     const isExpanded = expandedTarget === t.id;

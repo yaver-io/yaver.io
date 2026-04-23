@@ -426,6 +426,7 @@ export default function AppsScreen() {
       }
       // Always prepend "Vibing" + orchestration surfaces as the first options.
       const projectAction = { label: "Project Overview", target: ".", type: "project", icon: "\u{1F4CB}", framework: "", platform: "", command: "" };
+      const previewManifestAction = { label: "Preview Manifest", target: ".", type: "preview-manifest", icon: "\u{1F9EA}", framework: hermesFramework || secondClassFramework || "", platform: Platform.OS, command: "" };
       const vibingAction = { label: "Vibing", target: ".", type: "vibing", icon: "\u{1F3B5}", framework: "", platform: "", command: "" };
       const agentAction = { label: "Agent Mode", target: ".", type: "agent", icon: "\u{1F9E0}", framework: "", platform: "", command: "" };
       const autoDevAction = { label: "Auto Dev", target: ".", type: "autodev", icon: "\u{1F916}", framework: "", platform: "", command: "" };
@@ -476,7 +477,7 @@ export default function AppsScreen() {
         },
       ] : [];
       result.actions = result.actions.filter((a: any) => !(isSecondClassMobileFramework(a.framework) && a.type === "dev-server"));
-      result.actions = [projectAction, ...hermesActions, ...secondClassActions, vibingAction, agentAction, autoDevAction, autoTestAction, gitSyncAction, ...result.actions];
+      result.actions = [projectAction, previewManifestAction, ...hermesActions, ...secondClassActions, vibingAction, agentAction, autoDevAction, autoTestAction, gitSyncAction, ...result.actions];
       setActionSheet({ ...result, compatibility });
     } catch (e) {
       // Don't silently send a vague task — the user just tapped a project and
@@ -527,6 +528,11 @@ export default function AppsScreen() {
 
     if (action.type === "project") {
       router.navigate({ pathname: "/(tabs)/project", params: { dir: path } } as any);
+      return;
+    }
+
+    if (action.type === "preview-manifest") {
+      router.navigate({ pathname: "/preview-manifest", params: { project, path, framework: action.framework || "" } } as any);
       return;
     }
 

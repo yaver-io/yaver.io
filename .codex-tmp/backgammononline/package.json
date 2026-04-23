@@ -1,0 +1,22 @@
+{
+  "name": "backgammon-platform",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0",
+    "typescript": "^5.4.5"
+  },
+  "packageManager": "npm@10.8.0",
+  "engines": {
+    "node": ">=20"
+  }
+}

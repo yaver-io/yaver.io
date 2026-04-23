@@ -25,6 +25,26 @@ bun run src/bin/cli.ts sign-in --token=...
 bun run src/bin/cli.ts devices
 bun run src/bin/cli.ts install-list
 bun run src/bin/cli.ts install ollama
+
+# create a phone-backed todo app locally, then push its backend to a remote Yaver/Hetzner box
+bun run src/bin/cli.ts phone-project-create --name="Todo App" --template=todos --prompt="Ship a mobile todo app backend"
+bun run src/bin/cli.ts phone-project-push --slug=todo-app --base-url=https://your-box.example.com --target-token=$CLOUD_OWNER_TOKEN --include-data --containerize
+
+# same flow as one command
+bun run src/bin/cli.ts todo-cloud-bootstrap --name="Todo App" --base-url=https://your-box.example.com --target-token=$CLOUD_OWNER_TOKEN --prompt="Deploy the backend to my paid cloud box"
+
+# emit a Hermes preview manifest with git + CI metadata for reopening inside Yaver
+bun run src/bin/cli.ts preview-manifest-create \
+  --name="Todo Preview" \
+  --bundle-url=https://your-box.example.com/dev/index.bundle?platform=ios&dev=true \
+  --repo-url=https://github.com/you/todo-app \
+  --branch=main \
+  --commit=abc1234 \
+  --workflow=yaver-hermes \
+  --run-id=123456789 \
+  --compile-time-injected \
+  --guest-visible \
+  --out .yaver/preview-manifest.json
 ```
 
 ## Env knobs

@@ -23,6 +23,23 @@ interface PublishRun {
   startedAt?: string;
   message?: string;
 }
+interface UnityRun {
+  ok: boolean;
+  status?: string;
+  stage?: string;
+  projectPath?: string;
+  mode?: string;
+  buildTarget?: string;
+  executeMethod?: string;
+  outputPath?: string;
+  executablePath?: string;
+  logPath?: string;
+  resultsPath?: string;
+  summary?: string;
+  artifacts?: string[];
+  nextAction?: string;
+  command?: string[];
+}
 
 export default function BuildsView({ onTaskCreated }: { onTaskCreated?: (taskId: string) => void }) {
   const [builds, setBuilds] = useState<Build[]>([]);
@@ -31,10 +48,11 @@ export default function BuildsView({ onTaskCreated }: { onTaskCreated?: (taskId:
   const [selectedPath, setSelectedPath] = useState("");
   const [publishConfig, setPublishConfig] = useState<PublishConfigResponse | null>(null);
   const [publishRuns, setPublishRuns] = useState<PublishRun[]>([]);
+  const [unityRuns, setUnityRuns] = useState<UnityRun[]>([]);
   const [allowGitHubFallback, setAllowGitHubFallback] = useState(false);
   const [publishBusy, setPublishBusy] = useState<string | null>(null);
 
-  useEffect(() => { void loadBuilds(); void loadProjects(); void loadPublishes(); }, []);
+  useEffect(() => { void loadBuilds(); void loadProjects(); void loadPublishes(); void loadUnityRuns(); }, []);
   useEffect(() => {
     if (!selectedPath) return;
     void loadPublishConfig(selectedPath);
@@ -67,6 +85,12 @@ export default function BuildsView({ onTaskCreated }: { onTaskCreated?: (taskId:
   async function loadPublishes() {
     try {
       setPublishRuns(await agentClient.listPublishes() as PublishRun[]);
+    } catch {}
+  }
+
+  async function loadUnityRuns() {
+    try {
+      setUnityRuns(await agentClient.listUnityRuns() as UnityRun[]);
     } catch {}
   }
 
@@ -106,6 +130,17 @@ export default function BuildsView({ onTaskCreated }: { onTaskCreated?: (taskId:
     if (s === "failed") return "bg-red-500/10 text-red-400";
     if (s === "dispatched") return "bg-sky-500/10 text-sky-400";
     return "bg-surface-800 text-surface-400";
+  }
+
+  function unityTitle(run: UnityRun) {
+    if (run.stage === "test") return `Tests${run.mode ? ` · ${run.mode}` : ""}`;
+    if (run.stage === "build") return `Build${run.buildTarget ? ` · ${run.buildTarget}` : ""}`;
+    if (run.stage === "relaunch") return "Relaunch";
+    return run.stage || "Unity";
+  }
+
+  function unityPathHint(run: UnityRun) {
+    return run.executablePath || run.outputPath || run.resultsPath || run.logPath || run.projectPath || "";
   }
 
   return (
@@ -171,6 +206,32 @@ export default function BuildsView({ onTaskCreated }: { onTaskCreated?: (taskId:
                 {run.message && <div className="mt-2 text-xs text-surface-500">{run.message}</div>}
               </div>
             ))}
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-surface-800 bg-surface-900/40 p-4">
+        <div className="mb-3 text-xs font-medium uppercase tracking-wider text-surface-500">Recent Unity Runs</div>
+        {unityRuns.length === 0 ? (
+          <div className="text-sm text-surface-500">No Unity test, build, or relaunch runs yet.</div>
+        ) : (
+          <div className="space-y-2">
+            {unityRuns.slice(0, 8).map((run, index) => {
+              const pathHint = unityPathHint(run);
+              return (
+                <div key={`${run.projectPath || "unity"}-${run.stage || "run"}-${index}`} className="rounded-lg border border-surface-800 bg-surface-900/60 p-3">
+                  <div className="flex items-center gap-3">
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${statusColor(run.status || (run.ok ? "completed" : "failed"))}`}>
+                      {run.status || (run.ok ? "completed" : "failed")}
+                    </span>
+                    <span className="text-sm text-surface-200">{unityTitle(run)}</span>
+                    {run.nextAction && <span className="text-xs text-surface-500">{run.nextAction}</span>}
+                  </div>
+                  {run.summary && <div className="mt-2 text-sm text-surface-300">{run.summary}</div>}
+                  {pathHint && <div className="mt-1 truncate text-xs font-mono text-surface-500">{pathHint}</div>}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

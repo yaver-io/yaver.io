@@ -25,10 +25,42 @@ jobs:
         include:
           - runner: codex
             install: npm install -g @openai/codex
-            needs_openai: true
-          - runner: opencode
+            runner_spec: codex
+            required_secret: OPENAI_API_KEY
+          - runner: opencode-openai
             install: npm install -g opencode-ai
-            needs_openai: true
+            runner_spec: opencode
+            required_secret: OPENAI_API_KEY
+            opencode_model: openai/gpt-5.4
+          - runner: opencode-glm
+            install: npm install -g opencode-ai
+            runner_spec: opencode
+            required_secret: GLM_API_KEY
+            opencode_model: glm/glm-4.5-air
+            opencode_config_content: |
+              {
+                "$schema": "https://opencode.ai/config.json",
+                "model": "{env:YAVER_OPENCODE_MODEL}",
+                "provider": {
+                  "glm": {
+                    "npm": "@ai-sdk/openai-compatible",
+                    "name": "GLM Coding Plan",
+                    "options": {
+                      "baseURL": "https://api.z.ai/api/coding/paas/v4",
+                      "apiKey": "{env:GLM_API_KEY}"
+                    },
+                    "models": {
+                      "glm-4.5-air": {
+                        "name": "GLM-4.5-Air",
+                        "limit": {
+                          "context": 131072,
+                          "output": 98304
+                        }
+                      }
+                    }
+                  }
+                }
+              }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -45,15 +77,25 @@ jobs:
         run: go build -o /tmp/yaver .
       - name: Run real wrapper integration
         env:
-          NEEDS_OPENAI: ${{ matrix.needs_openai }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+          ZAI_API_KEY: ${{ secrets.GLM_API_KEY }}
+          OPENCODE_CONFIG_CONTENT: ${{ matrix.opencode_config_content }}
+          REQUIRED_SECRET: ${{ matrix.required_secret }}
+          RUNNER_SPEC: ${{ matrix.runner_spec }}
+          YAVER_OPENCODE_MODEL: ${{ matrix.opencode_model }}
           YAVER_BIN: /tmp/yaver
         run: |
-          if [[ "${NEEDS_OPENAI:-}" == "true" && -z "${OPENAI_API_KEY:-}" ]]; then
-            echo "Skipping ${{ matrix.runner }} because OPENAI_API_KEY is not configured."
+          REQUIRED_VALUE=""
+          case "${REQUIRED_SECRET:-}" in
+            OPENAI_API_KEY) REQUIRED_VALUE="${OPENAI_API_KEY:-}" ;;
+            GLM_API_KEY) REQUIRED_VALUE="${GLM_API_KEY:-}" ;;
+          esac
+          if [[ -n "${REQUIRED_SECRET:-}" && -z "${REQUIRED_VALUE:-}" ]]; then
+            echo "Skipping ${{ matrix.runner }} because ${REQUIRED_SECRET} is not configured."
             exit 0
           fi
-          bash scripts/test-runner-integration.sh "${{ matrix.runner }}"
+          bash scripts/test-runner-integration.sh "${RUNNER_SPEC}"
 
   local-provider-smoke:
     runs-on: ubuntu-latest

@@ -2495,6 +2495,30 @@ export class QuicClient {
     return `${this.baseUrl}/builds/${buildId}/artifact`;
   }
 
+  async listUnityRuns(): Promise<{
+    ok: boolean;
+    status?: string;
+    stage?: string;
+    projectPath?: string;
+    mode?: string;
+    buildTarget?: string;
+    executeMethod?: string;
+    outputPath?: string;
+    executablePath?: string;
+    logPath?: string;
+    resultsPath?: string;
+    summary?: string;
+    artifacts?: string[];
+    nextAction?: string;
+    command?: string[];
+  }[]> {
+    const resp = await this.fetchWithTimeout(`${this.baseUrl}/unity/runs`, {
+      headers: this.authHeaders,
+    }, 10_000);
+    if (!resp.ok) return [];
+    return resp.json();
+  }
+
   /** Start a new build on the connected agent. */
   async startBuild(platform: string, workDir?: string, installOnDevice?: boolean): Promise<BuildInfo> {
     this.assertConnected();

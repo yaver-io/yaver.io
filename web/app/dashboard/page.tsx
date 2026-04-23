@@ -237,7 +237,7 @@ export default function DashboardPage() {
     { id: "convex", label: "Convex", icon: "\u26A1" },
     { id: "storage", label: "Storage", icon: "\uD83D\uDCC2" },
     { id: "vault", label: "Vault", icon: "\uD83D\uDD12" },
-    { id: "apikeys", label: "API Keys", icon: "\uD83D\uDD11" },
+    { id: "apikeys", label: "Yaver Tokens", icon: "\uD83D\uDD11" },
     { id: "schedules", label: "Schedules", icon: "\u23F0" },
     { id: "phone", label: "Phone Backend", icon: "\u26A1" },
     { id: "domains", label: "Domains", icon: "\uD83C\uDF10" },

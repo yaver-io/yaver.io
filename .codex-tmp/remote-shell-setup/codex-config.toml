@@ -1,0 +1,6 @@
+[profiles.gpt54]
+model = "gpt-5.4"
+
+[mcp_servers.yaver]
+command = "yaver"
+args = ["mcp"]

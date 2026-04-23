@@ -258,7 +258,7 @@ async function mergeUserInto(
     .withIndex("by_userId", (q) => q.eq("userId", sourceUserId))
     .collect();
   for (const session of sessions) {
-    await ctx.db.patch(session._id, { userId: targetUserId });
+    await ctx.db.delete(session._id);
   }
 
   const devices = await ctx.db
@@ -294,12 +294,19 @@ async function mergeUserInto(
     .withIndex("by_userId", (q) => q.eq("userId", sourceUserId))
     .collect();
   for (const identity of identities) {
-    try {
-      await ensureAuthIdentity(ctx, targetUserId, identity.provider, identity.providerId, identity.email);
-    } catch {
-      // ignore exact duplicates already on target
+    const existing = await ctx.db
+      .query("authIdentities")
+      .withIndex("by_provider", (q) => q.eq("provider", identity.provider).eq("providerId", identity.providerId))
+      .unique();
+    if (existing && existing._id !== identity._id && existing.userId === targetUserId) {
+      await ctx.db.delete(identity._id);
+      continue;
     }
-    await ctx.db.delete(identity._id);
+    await ctx.db.patch(identity._id, {
+      userId: targetUserId,
+      email: identity.email,
+      lastUsedAt: Date.now(),
+    });
   }
 
   const surveys = await ctx.db
@@ -323,27 +330,32 @@ async function mergeUserInto(
   // against regressions by seeding a row in every listed table and
   // asserting ownership flips.
 
-  const singleOwnerTables: Array<{ table: any; index: string; field: string }> = [
-    { table: "subscriptions", index: "by_userId", field: "userId" },
-    { table: "managedRelays", index: "by_userId", field: "userId" },
-    { table: "cloudMachines", index: "by_user", field: "userId" },
-    { table: "sdkTokens", index: "by_userId", field: "userId" },
-    { table: "securityEvents", index: "by_userId", field: "userId" },
-    { table: "authLogs", index: "by_userId", field: "userId" },
-    { table: "userProjects", index: "by_userId", field: "userId" },
-    { table: "userServices", index: "by_userId", field: "userId" },
-    { table: "userDeployments", index: "by_userId", field: "userId" },
-    { table: "userActivity", index: "by_userId", field: "userId" },
-    { table: "runnerUsage", index: "by_userId", field: "userId" },
-    { table: "dailyTaskCounts", index: "by_userId_date", field: "userId" },
+  const singleOwnerTables: Array<{
+    table: any;
+    index: string;
+    field: string;
+    sourceValue: Id<"users"> | string;
+    targetValue: Id<"users"> | string;
+  }> = [
+    { table: "subscriptions", index: "by_user", field: "userId", sourceValue: sourceUserId, targetValue: targetUserId },
+    { table: "managedRelays", index: "by_user", field: "userId", sourceValue: sourceUserId, targetValue: targetUserId },
+    { table: "cloudMachines", index: "by_user", field: "userId", sourceValue: sourceUserId, targetValue: targetUserId },
+    { table: "sdkTokens", index: "by_userId", field: "userId", sourceValue: sourceUserId, targetValue: targetUserId },
+    { table: "securityEvents", index: "by_userId", field: "userId", sourceValue: sourceUserId, targetValue: targetUserId },
+    { table: "userProjects", index: "by_user", field: "userId", sourceValue: sourceUserId, targetValue: targetUserId },
+    { table: "userServices", index: "by_user", field: "userId", sourceValue: sourceUserId, targetValue: targetUserId },
+    { table: "userDeployments", index: "by_user", field: "userId", sourceValue: sourceUserId, targetValue: targetUserId },
+    { table: "userActivity", index: "by_user", field: "userId", sourceValue: sourceUserId, targetValue: targetUserId },
+    { table: "runnerUsage", index: "by_userId", field: "userId", sourceValue: sourceUser.userId, targetValue: targetUser.userId },
+    { table: "dailyTaskCounts", index: "by_userId_date", field: "userId", sourceValue: sourceUser.userId, targetValue: targetUser.userId },
   ];
-  for (const { table, index, field } of singleOwnerTables) {
+  for (const { table, index, field, sourceValue, targetValue } of singleOwnerTables) {
     const rows = await ctx.db
       .query(table as any)
-      .withIndex(index as any, (q: any) => q.eq(field, sourceUserId))
+      .withIndex(index as any, (q: any) => q.eq(field, sourceValue))
       .collect();
     for (const row of rows as any[]) {
-      await ctx.db.patch(row._id, { [field]: targetUserId } as any);
+      await ctx.db.patch(row._id, { [field]: targetValue } as any);
     }
   }
 
@@ -394,6 +406,8 @@ async function mergeUserInto(
     { table: "infraAccessGrants", hostIndex: "by_hostUserId", guestIndex: "by_guestUserId" },
     { table: "infraAccessGrantDevices", hostIndex: "by_hostUserId", guestIndex: "by_guestUserId" },
     { table: "infraAccessGrantMachines", hostIndex: "by_hostUserId", guestIndex: "by_guestUserId" },
+    { table: "hostShareInvites", hostIndex: "by_hostUserId", guestIndex: "by_guestUserId" },
+    { table: "hostShareSessions", hostIndex: "by_host_status", guestIndex: "by_guest_status" },
   ];
   for (const { table, hostIndex, guestIndex } of guestDualTables) {
     if (hostIndex) {
@@ -432,14 +446,24 @@ async function mergeUserInto(
   // be actively surprising (the user didn't consent to those on target).
   // deviceCodes has no userId column — they're looked up by opaque code
   // and expire on their own, so we leave them alone.
-  const ephemeralTables = ["passwordResets", "pendingAuth", "oauthLinkIntents"];
-  for (const tableName of ephemeralTables) {
-    const rows = await ctx.db
-      .query(tableName as any)
-      .withIndex("by_userId" as any, (q: any) => q.eq("userId", sourceUserId))
-      .collect();
+  const ephemeralTables: Array<{ table: any; index?: string }> = [
+    { table: "passwordResets" },
+    { table: "pendingAuth" },
+    { table: "oauthLinkIntents", index: "by_userId" },
+  ];
+  for (const { table, index } of ephemeralTables) {
+    const rows = index
+      ? await ctx.db
+          .query(table as any)
+          .withIndex(index as any, (q: any) => q.eq("userId", sourceUserId))
+          .collect()
+      : await ctx.db
+          .query(table as any)
+          .collect();
     for (const row of rows as any[]) {
-      await ctx.db.delete(row._id);
+      if (row.userId === sourceUserId) {
+        await ctx.db.delete(row._id);
+      }
     }
   }
 
@@ -1419,6 +1443,11 @@ export const validateSdkToken = query({
       provider: user.provider,
       scopes: sdkToken.scopes ?? DEFAULT_SDK_SCOPES,
       allowedCIDRs: sdkToken.allowedCIDRs ?? [],
+      delegatedGuestUserId: sdkToken.delegatedGuestUserId ? String(sdkToken.delegatedGuestUserId) : undefined,
+      delegatedGuestScope: sdkToken.delegatedGuestScope,
+      sourceSurface: sdkToken.sourceSurface,
+      targetDeviceId: sdkToken.targetDeviceId,
+      allowedProjects: sdkToken.allowedProjects ?? [],
     };
   },
 });
@@ -1449,6 +1478,11 @@ export const rotateSdkToken = mutation({
       label: current.label,
       scopes: current.scopes,
       allowedCIDRs: current.allowedCIDRs,
+      delegatedGuestUserId: current.delegatedGuestUserId,
+      delegatedGuestScope: current.delegatedGuestScope,
+      sourceSurface: current.sourceSurface,
+      targetDeviceId: current.targetDeviceId,
+      allowedProjects: current.allowedProjects,
       expiresAt,
       createdAt: Date.now(),
     });

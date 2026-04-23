@@ -125,6 +125,7 @@ export default function DevelopersPage() {
           <nav className="space-y-2 text-sm">
             {[
               ["whats-new", "What's New"],
+              ["remote-windows-box", "Remote Windows AI Box"],
               ["four-parts", "Architecture"],
               ["push-to-device", "Push to Device (yaver-cli)"],
               ["direct-device-install", "Direct Device Install (iOS WiFi)"],
@@ -145,6 +146,7 @@ export default function DevelopersPage() {
               ["session-transfer", "Session Transfer"],
               ["pr-rules", "Pull Request Rules"],
               ["feedback-sdk", "Feedback SDK & Test Loop"],
+              ["unity", "Unity Developer Cases"],
               ["guest-access", "Guest Access & Config"],
               ["sdk-token-security", "SDK Token Security"],
               ["sdk", "SDK — Embed Yaver"],
@@ -199,6 +201,10 @@ export default function DevelopersPage() {
                 title: "Dynamic Project Switching",
                 desc: "Say \"fix login in my-app\" and the agent auto-switches to the right project directory using brute-force word matching against discovered projects.",
               },
+              {
+                title: "Unity feedback/build loop",
+                desc: "Unity projects are now detected by yaver doctor, Unity feedback SDK injection exists, and the agent can run Unity tests, trigger project-defined builds, and relaunch desktop players.",
+              },
             ].map((item) => (
               <div
                 key={item.title}
@@ -211,6 +217,87 @@ export default function DevelopersPage() {
               </div>
             ))}
           </div>
+        </section>
+
+        <section className="mb-20">
+          <SectionHeading id="unity">Unity Developer Cases</SectionHeading>
+          <Prose>
+            Unity is now a real Yaver lane. The right mental model is not “Hermes for games.”
+            The right model is self-hosted feedback, content refresh, tests, builds, relaunches,
+            and remote supervision for Unity mobile and desktop projects.
+          </Prose>
+          <div className="space-y-4">
+            {[
+              {
+                title: "Unity mobile",
+                desc: "Use the SDK for in-game feedback, screenshots, crashes, logs, black-box capture, content refresh, scene reload, and redeploy requests.",
+              },
+              {
+                title: "Unity desktop",
+                desc: "Use the same SDK for overlay-driven feedback, EditMode/PlayMode tests, desktop builds, and relaunch loops from the agent machine.",
+              },
+              {
+                title: "Solo and studio",
+                desc: "The same package works for a solo developer on a home machine or a studio using a shared runner, VPN, or GPU VPS.",
+              },
+            ].map((item) => (
+              <div
+                key={item.title}
+                className="rounded-lg border border-surface-800 bg-surface-900/50 p-4"
+              >
+                <p className="text-sm font-semibold text-surface-200">{item.title}</p>
+                <p className="mt-1 text-xs text-surface-400">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="mb-20">
+          <SectionHeading id="remote-windows-box">Remote Windows AI Box</SectionHeading>
+          <Prose>
+            A practical supported setup is a MacBook as the control surface and a stronger Windows
+            machine as the always-on coding box. The box should expose OpenSSH, stay awake on AC,
+            join Tailscale for a stable private address, and run the local model or coding agent.
+          </Prose>
+          <div className="space-y-4">
+            {[
+              {
+                title: "Transport first",
+                desc: "Make plain SSH from macOS work before adding editor-specific remote workflows. Key-based auth is the baseline.",
+              },
+              {
+                title: "Always-on settings",
+                desc: "Disable sleep and hibernation on AC for boxes intended to host long-running agent or Ollama sessions.",
+              },
+              {
+                title: "Stable network path",
+                desc: "Prefer Tailscale hostnames over raw LAN IPs for daily use, especially once the MacBook leaves the local network.",
+              },
+              {
+                title: "Model sizing",
+                desc: "For a 32 GB Windows host, qwen2.5-coder:14b is the conservative default. It is a better trade than oversizing the model and thrashing memory.",
+              },
+            ].map((item) => (
+              <div
+                key={item.title}
+                className="rounded-lg border border-surface-800 bg-surface-900/50 p-4"
+              >
+                <p className="text-sm font-semibold text-surface-200">{item.title}</p>
+                <p className="mt-1 text-xs text-surface-400">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+          <Prose>
+            The full walkthrough is in{" "}
+            <Link href="/manuals/windows-ssh-coding-box" className="underline hover:text-surface-200">
+              MacBook to Windows AI Box over SSH
+            </Link>
+            . A higher-level rationale and tradeoff write-up is in{" "}
+            <Link href="/blog/mac-to-windows-ai-box-over-ssh" className="underline hover:text-surface-200">
+              the blog post
+            </Link>
+            .
+          </Prose>
         </section>
 
         {/* ─── Four-Part Architecture ─── */}

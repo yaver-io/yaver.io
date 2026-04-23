@@ -39,7 +39,7 @@ export const invite = mutation({
     // Access tier: "full" (classic teammate) or "feedback-only" (hardened end-user).
     // Default is "feedback-only" — end-user distribution via Feedback SDK is the common
     // case and safer by default. Use --scope=full for teammate invites.
-    scope: v.optional(v.union(v.literal("full"), v.literal("feedback-only"))),
+    scope: v.optional(v.union(v.literal("full"), v.literal("feedback-only"), v.literal("sdk-project"))),
     // Optional project narrowing — restrict this grant to one or more project
     // slugs/names on the host. Useful when a dev wants to let users file
     // feedback about Project A without exposing B & C. Empty = all projects.
@@ -162,7 +162,7 @@ export const invite = mutation({
     const now = Date.now();
     // Default new invitations to the hardened scope. Hosts who want the
     // classic teammate access must opt in with scope=full.
-    const scope: "full" | "feedback-only" = args.scope ?? "feedback-only";
+    const scope: "full" | "feedback-only" | "sdk-project" = args.scope ?? "feedback-only";
     const invitationDoc: Record<string, unknown> = {
       hostUserId,
       guestEmail: storedEmail,
@@ -402,6 +402,86 @@ export const acceptByCode = mutation({
       ok: true,
       hostName: host?.fullName ?? "Unknown",
       hostEmail: host?.email ?? "Unknown",
+    };
+  },
+});
+
+/**
+ * Mint a delegated Feedback SDK token for a guest who has the hardened
+ * repo-scoped SDK grant. The token is owned by the host account but carries
+ * guest identity + project/device narrowing so the host agent can enforce
+ * "Feedback SDK only, this repo only, this device only" on every request.
+ */
+export const mintGuestFeedbackSdkToken = mutation({
+  args: {
+    guestTokenHash: v.string(),
+    sdkTokenHash: v.string(),
+    hostUserId: v.id("users"),
+    targetDeviceId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.guestTokenHash);
+    if (!session) throw new Error("Unauthorized");
+
+    const access = await ctx.db
+      .query("guestAccess")
+      .withIndex("by_host_guest", (q) =>
+        q.eq("hostUserId", args.hostUserId).eq("guestUserId", session.user._id)
+      )
+      .filter((q) => q.eq(q.field("revokedAt"), undefined))
+      .first();
+    if (!access) throw new Error("No active guest access for this host");
+    if ((access.scope ?? "full") !== "sdk-project") {
+      throw new Error("This guest grant is not enabled for Feedback SDK repo-scoped access");
+    }
+
+    const allowed = await guestCanReachSpecificHostDevice(
+      ctx,
+      args.hostUserId,
+      session.user._id,
+      args.targetDeviceId,
+    );
+    if (!allowed) {
+      throw new Error("This guest grant does not allow the selected host device");
+    }
+
+    const existing = await ctx.db
+      .query("sdkTokens")
+      .withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.sdkTokenHash))
+      .unique();
+    if (existing) throw new Error("SDK token already exists");
+
+    const allowedProjects = Array.isArray(access.allowedProjects)
+      ? access.allowedProjects.map((item) => String(item).trim()).filter(Boolean)
+      : [];
+
+    const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
+    await ctx.db.insert("sdkTokens", {
+      tokenHash: args.sdkTokenHash,
+      userId: args.hostUserId,
+      label: `guest-feedback-sdk:${session.user.email}:${args.targetDeviceId}`,
+      scopes: [
+        "feedback",
+        "blackbox",
+        "voice",
+        "health",
+        "todolist",
+        "guest-reload",
+        "guest-vibing",
+      ],
+      delegatedGuestUserId: session.user._id,
+      delegatedGuestScope: "sdk-project",
+      sourceSurface: "feedback-sdk",
+      targetDeviceId: args.targetDeviceId,
+      ...(allowedProjects.length > 0 ? { allowedProjects } : {}),
+      expiresAt,
+      createdAt: Date.now(),
+    });
+
+    return {
+      ok: true,
+      expiresAt,
+      allowedProjects,
     };
   },
 });
@@ -812,7 +892,7 @@ export const getGuestConfig = query({
       guestUserId: string;
       guestEmail: string;
       guestName: string;
-      scope: "full" | "feedback-only";
+      scope: "full" | "feedback-only" | "sdk-project";
       allowedProjects?: string[];
       dailyTokenLimit?: number;
       allowedRunners?: string[];
@@ -914,7 +994,7 @@ export const updateGuestConfig = mutation({
     // Change the access tier on an existing grant. Use with care: downgrading
     // "full" → "feedback-only" immediately takes effect on the agent (within
     // the 10s config refresh); upgrading is equally immediate.
-    scope: v.optional(v.union(v.literal("full"), v.literal("feedback-only"))),
+    scope: v.optional(v.union(v.literal("full"), v.literal("feedback-only"), v.literal("sdk-project"))),
     // Narrow (or clear, by passing []) the set of projects this guest can
     // see feedback for / trigger fix-tasks against.
     allowedProjects: v.optional(v.array(v.string())),

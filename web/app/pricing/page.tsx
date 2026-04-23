@@ -1,22 +1,44 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/use-auth";
 import { isCloudPreviewUser } from "@/lib/cloud-preview";
 import { CONVEX_URL } from "@/lib/constants";
+import { getManagedSubscription } from "@/lib/subscription";
 import { getYaverCloudHost } from "@/lib/yaver-cloud";
 
 export default function PricingPage() {
   const { user, token, isLoading } = useAuth();
   const canSeeCloudPreview = isCloudPreviewUser(user?.email);
+  const [hasManagedCloud, setHasManagedCloud] = useState(false);
   const [startingCheckout, setStartingCheckout] = useState(false);
   const [activatingPreview, setActivatingPreview] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const canShowCloud = canSeeCloudPreview || hasManagedCloud;
+  const cloudHeading = canSeeCloudPreview ? "Private Preview" : "Managed Cloud";
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!token) {
+      setHasManagedCloud(false);
+      return;
+    }
+    void getManagedSubscription(token).then((summary) => {
+      if (cancelled || !summary) return;
+      const hasMachine = Array.isArray(summary.machines)
+        && summary.machines.some((machine) => machine.status !== "stopped");
+      const hasSubscription = !!summary.subscription;
+      setHasManagedCloud(hasMachine || hasSubscription);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   async function startCloudCheckout() {
     if (!token) {
-      setCheckoutError("Sign in with the preview account first.");
+      setCheckoutError("Sign in first.");
       return;
     }
     setStartingCheckout(true);
@@ -44,7 +66,7 @@ export default function PricingPage() {
 
   async function activatePreviewWithoutCheckout() {
     if (!token) {
-      setCheckoutError("Sign in with the preview account first.");
+      setCheckoutError("Sign in first.");
       return;
     }
     setActivatingPreview(true);
@@ -131,10 +153,10 @@ export default function PricingPage() {
           </div>
         </section>
 
-        {!isLoading && canSeeCloudPreview ? (
+        {!isLoading && canShowCloud ? (
           <section className="mt-10 rounded-3xl border border-indigo-500/30 bg-indigo-500/10 p-8">
             <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-indigo-300">
-              Private Preview
+              {cloudHeading}
             </div>
             <h2 className="text-2xl font-semibold text-surface-50">Yaver Cloud</h2>
             <p className="mt-3 max-w-3xl text-sm leading-relaxed text-surface-300">
@@ -162,14 +184,16 @@ export default function PricingPage() {
                   cloud machine, but they do not present billing flows.
                 </p>
                 <div className="mt-5 flex flex-wrap gap-3">
-                  <button
-                    type="button"
-                    disabled={activatingPreview}
-                    onClick={() => void activatePreviewWithoutCheckout()}
-                    className="inline-flex rounded-xl bg-indigo-500 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {activatingPreview ? "Activating…" : "Activate preview machine"}
-                  </button>
+                  {canSeeCloudPreview ? (
+                    <button
+                      type="button"
+                      disabled={activatingPreview}
+                      onClick={() => void activatePreviewWithoutCheckout()}
+                      className="inline-flex rounded-xl bg-indigo-500 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {activatingPreview ? "Activating…" : "Activate preview machine"}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     disabled={startingCheckout}
@@ -185,9 +209,9 @@ export default function PricingPage() {
                   </div>
                 ) : null}
                 <div className="mt-4 text-xs leading-relaxed text-surface-500">
-                  Preview runs on the shared Yaver public machine for now. DNS, TLS, relay, and
-                  callback-friendly hosted URLs stay bundled so GitHub, GitLab, Google, Microsoft,
-                  Apple, and similar OAuth providers can point at one stable cloud host.
+                  {canSeeCloudPreview
+                    ? "Preview runs on the shared Yaver public machine for now. DNS, TLS, relay, and callback-friendly hosted URLs stay bundled so GitHub, GitLab, Google, Microsoft, Apple, and similar OAuth providers can point at one stable cloud host."
+                    : "Managed cloud machines stay web-provisioned, then show up automatically in Yaver mobile, desktop, and web once the account is active."}
                 </div>
               </div>
             </div>

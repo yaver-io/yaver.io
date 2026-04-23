@@ -41,6 +41,8 @@ export interface CoreDevice {
   hostName?: string;
   hostEmail?: string;
   accessScope?: 'owner' | 'shared-scoped' | 'shared-legacy';
+  /** Optional transport hint for a shared device when the host exposed exactly one box. */
+  tunnelUrl?: string;
   /** Primary LAN IP (or tunnel host) the agent advertised. */
   quicHost: string;
   quicPort: number;

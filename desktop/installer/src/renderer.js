@@ -627,7 +627,7 @@ async function saveAllSettings() {
   showToast('Settings saved');
 }
 
-// ---- Managed Relay ----
+// ---- Managed infrastructure ----
 
 const MANAGED_RELAY_STEPS = [
   { label: 'Creating your dedicated server...', key: 'creating' },
@@ -640,6 +640,45 @@ const MANAGED_RELAY_STEPS = [
 
 let managedRelayPollTimer = null;
 
+function machineLabel(machine) {
+  const type = machine.machineType === 'gpu' ? 'GPU cloud machine' : 'CPU cloud machine';
+  const region = machine.region ? ` · ${String(machine.region).toUpperCase()}` : '';
+  return `${type}${region}`;
+}
+
+function renderMachineSummary(machine) {
+  const address = escapeHtml(machine.hostname || machine.serverIp || 'Provisioning…');
+  const tone =
+    machine.status === 'active'
+      ? 'rgba(34,197,94,0.08)'
+      : machine.status === 'error'
+        ? 'rgba(239,68,68,0.08)'
+        : 'rgba(99,102,241,0.06)';
+  const border =
+    machine.status === 'active'
+      ? 'rgba(34,197,94,0.2)'
+      : machine.status === 'error'
+        ? 'rgba(239,68,68,0.2)'
+        : 'rgba(99,102,241,0.2)';
+  const title =
+    machine.status === 'active'
+      ? 'Active cloud machine'
+      : machine.status === 'error'
+        ? 'Cloud machine needs attention'
+        : 'Cloud machine provisioning';
+
+  return `
+    <div style="padding: 12px; background: ${tone}; border-radius: 8px; border: 1px solid ${border};">
+      <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+        <strong style="color: #e5e5e5; font-size: 13px;">${title}</strong>
+      </div>
+      <div style="font-size: 12px; color: #aaa; margin-bottom: 4px;">${machineLabel(machine)}</div>
+      <div style="font-family: monospace; font-size: 13px; color: #6366f1;">${address}</div>
+      ${machine.errorMessage ? `<div style="font-size: 12px; color: #fca5a5; margin-top: 8px;">${escapeHtml(machine.errorMessage)}</div>` : ''}
+    </div>
+  `;
+}
+
 async function loadManagedRelayStatus() {
   const container = document.getElementById('managed-relay-status');
   if (!container) return;
@@ -649,16 +688,32 @@ async function loadManagedRelayStatus() {
     if (!sub) {
       container.innerHTML = `
         <p style="color: var(--text-muted, #888); font-size: 13px; margin-bottom: 8px;">
-          Get a dedicated relay server with 20TB bandwidth and your own subdomain.
+          Connect your own infrastructure for free, or buy a managed Yaver machine on the web.
         </p>
         <button class="btn btn-primary btn-sm" onclick="openManagedRelayPurchase()">
-          Get a dedicated relay server &mdash; $10/mo
+          Open managed cloud options
         </button>
       `;
       return;
     }
 
-    if (sub.status === 'active' && sub.provisioningStatus === 'ready') {
+    const machines = Array.isArray(sub.machines) ? sub.machines : [];
+    const subscription = sub.subscription || null;
+    const relay = sub.relay || null;
+    const activeMachine = machines.find((machine) => machine.status === 'active');
+    const pendingMachine = machines.find((machine) => machine.status !== 'stopped');
+    if (activeMachine || pendingMachine) {
+      const machine = activeMachine || pendingMachine;
+      container.innerHTML = renderMachineSummary(machine);
+      if (machine.status === 'active' || machine.status === 'error') {
+        if (managedRelayPollTimer) { clearInterval(managedRelayPollTimer); managedRelayPollTimer = null; }
+      } else if (!managedRelayPollTimer) {
+        managedRelayPollTimer = setInterval(loadManagedRelayStatus, 3000);
+      }
+      return;
+    }
+
+    if (subscription?.status === 'active' && relay?.status === 'active') {
       container.innerHTML = `
         <div style="padding: 12px; background: rgba(34,197,94,0.08); border-radius: 8px; border: 1px solid rgba(34,197,94,0.2);">
           <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
@@ -666,19 +721,37 @@ async function loadManagedRelayStatus() {
             <strong style="color: #e5e5e5; font-size: 13px;">Active</strong>
           </div>
           <div style="font-size: 12px; color: #aaa; margin-bottom: 4px;">Relay URL</div>
-          <div style="font-family: monospace; font-size: 13px; color: #6366f1;">${sub.relayUrl || 'N/A'}</div>
-          ${sub.region ? `<div style="font-size: 12px; color: #888; margin-top: 6px;">Region: ${sub.region}</div>` : ''}
+          <div style="font-family: monospace; font-size: 13px; color: #6366f1;">${escapeHtml(relay.domain || 'N/A')}</div>
+          ${relay.region ? `<div style="font-size: 12px; color: #888; margin-top: 6px;">Region: ${escapeHtml(relay.region)}</div>` : ''}
         </div>
       `;
       if (managedRelayPollTimer) { clearInterval(managedRelayPollTimer); managedRelayPollTimer = null; }
       return;
     }
 
+    if (!relay) {
+      container.innerHTML = `
+        <p style="color: var(--text-muted, #888); font-size: 13px; margin-bottom: 8px;">
+          No managed infrastructure is attached to this account yet.
+        </p>
+        <button class="btn btn-primary btn-sm" onclick="openManagedRelayPurchase()">
+          Open managed cloud options
+        </button>
+      `;
+      if (managedRelayPollTimer) { clearInterval(managedRelayPollTimer); managedRelayPollTimer = null; }
+      return;
+    }
+
     // Provisioning in progress
-    const currentIndex = MANAGED_RELAY_STEPS.findIndex(s => s.key === sub.provisioningStatus);
+    const currentIndex = relay?.status === 'provisioning'
+      ? 0
+      : relay?.status === 'error'
+        ? -1
+        : MANAGED_RELAY_STEPS.length - 2;
     let stepsHtml = MANAGED_RELAY_STEPS.map((step, i) => {
-      const isComplete = i < currentIndex || sub.provisioningStatus === 'ready';
-      const isCurrent = i === currentIndex && sub.provisioningStatus !== 'ready';
+      const isReady = relay?.status === 'active';
+      const isComplete = i < currentIndex || isReady;
+      const isCurrent = i === currentIndex && !isReady;
       const icon = isComplete ? '<span style="color:#22c55e;">&#10003;</span>'
         : isCurrent ? '<span class="spinner-sm"></span>'
         : '<span style="color:#555;">&#9679;</span>';
@@ -693,6 +766,7 @@ async function loadManagedRelayStatus() {
       <div style="padding: 12px; background: rgba(99,102,241,0.06); border-radius: 8px; border: 1px solid rgba(99,102,241,0.2);">
         <strong style="color: #e5e5e5; font-size: 13px; display: block; margin-bottom: 10px;">Setting up your relay...</strong>
         ${stepsHtml}
+        ${relay?.errorMessage ? `<div style="font-size: 12px; color: #fca5a5; margin-top: 8px;">${escapeHtml(relay.errorMessage)}</div>` : ''}
       </div>
     `;
 
@@ -703,10 +777,10 @@ async function loadManagedRelayStatus() {
   } catch (e) {
     container.innerHTML = `
       <p style="color: var(--text-muted, #888); font-size: 13px; margin-bottom: 8px;">
-        Get a dedicated relay server with 20TB bandwidth and your own subdomain.
+        Connect your own infrastructure for free, or buy a managed Yaver machine on the web.
       </p>
       <button class="btn btn-primary btn-sm" onclick="openManagedRelayPurchase()">
-        Get a dedicated relay server &mdash; $10/mo
+        Open managed cloud options
       </button>
     `;
   }

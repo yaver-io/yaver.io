@@ -43,6 +43,16 @@ export default function SupportPage() {
   const [cmd, setCmd] = useState("");
   const [cmdOut, setCmdOut] = useState("");
   const [cmdRunning, setCmdRunning] = useState(false);
+  const [terminalSessionId, setTerminalSessionId] = useState("");
+  const [terminalOutput, setTerminalOutput] = useState("");
+  const [terminalInput, setTerminalInput] = useState("");
+  const [terminalConnected, setTerminalConnected] = useState(false);
+  const [terminalStatus, setTerminalStatus] = useState("Disconnected");
+  const [terminalPrompt, setTerminalPrompt] = useState("");
+  const terminalWSRef = useRef<WebSocket | null>(null);
+  const terminalReconnectTimerRef = useRef<number | null>(null);
+  const terminalShouldReconnectRef = useRef(false);
+  const terminalSessionIdRef = useRef("");
 
   // Read query params on first render so a link from the CLI fires
   // everything in one shot.
@@ -103,6 +113,10 @@ export default function SupportPage() {
       }
       setBearer(info.token);
       setSession(info);
+      setTerminalOutput("");
+      setTerminalPrompt("");
+      setTerminalSessionId("");
+      terminalSessionIdRef.current = "";
       setBanner({
         kind: "info",
         text: `Connected to ${info.host ?? "remote"}. The bearer is kept in memory only — close the tab to end your side of the session.`,
@@ -184,6 +198,150 @@ export default function SupportPage() {
     [],
   );
 
+  useEffect(() => {
+    terminalSessionIdRef.current = terminalSessionId;
+  }, [terminalSessionId]);
+
+  function appendTerminalOutput(chunk: string) {
+    setTerminalOutput((prev) => {
+      const next = prev + chunk;
+      return next.length > 256000 ? next.slice(next.length - 256000) : next;
+    });
+  }
+
+  function closeTerminalSocket() {
+    const ws = terminalWSRef.current;
+    terminalWSRef.current = null;
+    if (ws) {
+      try {
+        ws.close();
+      } catch {}
+    }
+  }
+
+  function scheduleTerminalReconnect() {
+    if (!terminalShouldReconnectRef.current || !agentBase || !bearer) return;
+    if (terminalReconnectTimerRef.current !== null) return;
+    terminalStatusUpdate("Reconnecting…");
+    terminalReconnectTimerRef.current = window.setTimeout(() => {
+      terminalReconnectTimerRef.current = null;
+      void connectTerminal(true);
+    }, 1200);
+  }
+
+  function terminalStatusUpdate(status: string) {
+    setTerminalStatus(status);
+  }
+
+  async function connectTerminal(isReconnect = false) {
+    if (!agentBase || !bearer) return;
+    if (terminalWSRef.current && terminalWSRef.current.readyState <= WebSocket.OPEN) return;
+    if (terminalReconnectTimerRef.current !== null) {
+      window.clearTimeout(terminalReconnectTimerRef.current);
+      terminalReconnectTimerRef.current = null;
+    }
+    terminalShouldReconnectRef.current = true;
+    terminalStatusUpdate(isReconnect ? "Reconnecting…" : "Connecting…");
+    const wsBase = agentBase.replace(/^http/i, "ws");
+    const params = new URLSearchParams({ token: bearer });
+    if (terminalSessionIdRef.current) params.set("session_id", terminalSessionIdRef.current);
+    const ws = new WebSocket(`${wsBase}/ws/terminal?${params.toString()}`);
+    ws.binaryType = "arraybuffer";
+    terminalWSRef.current = ws;
+
+    ws.onopen = () => {
+      setTerminalConnected(true);
+      terminalStatusUpdate(terminalSessionIdRef.current ? "Connected (resumed)" : "Connected");
+      setTerminalPrompt("");
+    };
+
+    ws.onmessage = async (event) => {
+      if (typeof event.data === "string") {
+        try {
+          const msg = JSON.parse(event.data) as {
+            type?: string;
+            sessionId?: string;
+            resumed?: boolean;
+            prompt?: string;
+          };
+          if (msg.type === "terminal_session" && msg.sessionId) {
+            setTerminalSessionId(msg.sessionId);
+            terminalSessionIdRef.current = msg.sessionId;
+            terminalStatusUpdate(msg.resumed ? "Connected (resumed)" : "Connected");
+            return;
+          }
+          if (msg.type === "sudo_prompt") {
+            setTerminalPrompt(msg.prompt || "Sudo password required");
+            appendTerminalOutput(`\n[sudo] ${msg.prompt || "Password required"}\n`);
+            return;
+          }
+        } catch {
+          appendTerminalOutput(event.data);
+        }
+        return;
+      }
+      if (event.data instanceof Blob) {
+        appendTerminalOutput(await event.data.text());
+        return;
+      }
+      if (event.data instanceof ArrayBuffer) {
+        appendTerminalOutput(new TextDecoder().decode(event.data));
+      }
+    };
+
+    ws.onerror = () => {
+      terminalStatusUpdate("Connection error");
+    };
+
+    ws.onclose = () => {
+      if (terminalWSRef.current === ws) terminalWSRef.current = null;
+      setTerminalConnected(false);
+      if (terminalShouldReconnectRef.current) {
+        scheduleTerminalReconnect();
+      } else {
+        terminalStatusUpdate("Disconnected");
+      }
+    };
+  }
+
+  function disconnectTerminal() {
+    terminalShouldReconnectRef.current = false;
+    if (terminalReconnectTimerRef.current !== null) {
+      window.clearTimeout(terminalReconnectTimerRef.current);
+      terminalReconnectTimerRef.current = null;
+    }
+    closeTerminalSocket();
+    setTerminalConnected(false);
+    setTerminalPrompt("");
+    terminalStatusUpdate("Disconnected");
+  }
+
+  function sendTerminalLine() {
+    const ws = terminalWSRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !terminalInput.trim()) return;
+    ws.send(`${terminalInput}\n`);
+    setTerminalInput("");
+  }
+
+  useEffect(() => {
+    if (!session || !bearer || !agentBase) {
+      disconnectTerminal();
+      setTerminalSessionId("");
+      terminalSessionIdRef.current = "";
+      return;
+    }
+    void connectTerminal(false);
+    return () => {
+      terminalShouldReconnectRef.current = false;
+      if (terminalReconnectTimerRef.current !== null) {
+        window.clearTimeout(terminalReconnectTimerRef.current);
+        terminalReconnectTimerRef.current = null;
+      }
+      closeTerminalSocket();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, bearer, agentBase]);
+
   return (
     <main className="mx-auto max-w-3xl px-4 py-12 text-surface-100">
       <h1 className="text-2xl font-semibold">Yaver Remote Support</h1>
@@ -249,37 +407,102 @@ export default function SupportPage() {
       </section>
 
       {session && (
-        <section className="mt-8 rounded border border-surface-700 bg-surface-950/40 p-4">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-surface-400">
-            Run a command
-          </h2>
-          <div className="mt-2 flex gap-2">
-            <input
-              className="flex-1 rounded border border-surface-700 bg-surface-900 px-3 py-2 font-mono text-sm"
-              value={cmd}
-              onChange={(e) => setCmd(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !cmdRunning) void runCommand();
-              }}
-              placeholder="uname -a"
-              autoComplete="off"
-            />
-            <button
-              type="button"
-              disabled={!cmd.trim() || cmdRunning}
-              onClick={() => void runCommand()}
-              className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {cmdRunning ? "Running…" : "Run"}
-            </button>
-          </div>
-          <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap rounded bg-black/40 p-3 font-mono text-xs">
-            {cmdOut || "(no output yet)"}
-          </pre>
-          <p className="mt-2 text-xs text-surface-500">
-            Allowed endpoints: {session.allowed?.join(", ") || "(unknown)"}
-          </p>
-        </section>
+        <>
+          <section className="mt-8 rounded border border-surface-700 bg-surface-950/40 p-4">
+            <div className="flex items-center justify-between gap-4">
+              <h2 className="text-xs font-semibold uppercase tracking-wider text-surface-400">
+                Terminal
+              </h2>
+              <div className="flex items-center gap-2 text-[11px] text-surface-500">
+                <span>{terminalStatus}</span>
+                {terminalSessionId && <code className="rounded bg-surface-900 px-1.5 py-0.5">{terminalSessionId.slice(0, 12)}</code>}
+              </div>
+            </div>
+            <pre className="mt-3 max-h-[28rem] min-h-[18rem] overflow-auto whitespace-pre-wrap rounded bg-black/50 p-3 font-mono text-xs text-surface-100">
+              {terminalOutput || "(terminal connected, waiting for output)"}
+            </pre>
+            {terminalPrompt && (
+              <p className="mt-2 text-xs text-amber-300">
+                {terminalPrompt}
+              </p>
+            )}
+            <div className="mt-3 flex gap-2">
+              <input
+                className="flex-1 rounded border border-surface-700 bg-surface-900 px-3 py-2 font-mono text-sm"
+                value={terminalInput}
+                onChange={(e) => setTerminalInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") sendTerminalLine();
+                }}
+                placeholder="git status"
+                autoComplete="off"
+              />
+              <button
+                type="button"
+                disabled={!terminalConnected || !terminalInput.trim()}
+                onClick={sendTerminalLine}
+                className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Send
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTerminalOutput("");
+                  setTerminalPrompt("");
+                }}
+                className="rounded border border-surface-700 px-3 py-2 text-sm text-surface-200"
+              >
+                Clear
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (terminalConnected) disconnectTerminal();
+                  else void connectTerminal(Boolean(terminalSessionIdRef.current));
+                }}
+                className="rounded border border-surface-700 px-3 py-2 text-sm text-surface-200"
+              >
+                {terminalConnected ? "Disconnect" : "Reconnect"}
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-surface-500">
+              The terminal session is resumable. If transport flips between LAN, tunnel, or relay, the browser reconnects with the saved session id.
+            </p>
+          </section>
+
+          <section className="mt-8 rounded border border-surface-700 bg-surface-950/40 p-4">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-surface-400">
+              Run a command
+            </h2>
+            <div className="mt-2 flex gap-2">
+              <input
+                className="flex-1 rounded border border-surface-700 bg-surface-900 px-3 py-2 font-mono text-sm"
+                value={cmd}
+                onChange={(e) => setCmd(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !cmdRunning) void runCommand();
+                }}
+                placeholder="uname -a"
+                autoComplete="off"
+              />
+              <button
+                type="button"
+                disabled={!cmd.trim() || cmdRunning}
+                onClick={() => void runCommand()}
+                className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {cmdRunning ? "Running…" : "Run"}
+              </button>
+            </div>
+            <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap rounded bg-black/40 p-3 font-mono text-xs">
+              {cmdOut || "(no output yet)"}
+            </pre>
+            <p className="mt-2 text-xs text-surface-500">
+              Allowed endpoints: {session.allowed?.join(", ") || "(unknown)"}
+            </p>
+          </section>
+        </>
       )}
 
       <footer className="mt-12 text-xs text-surface-500">

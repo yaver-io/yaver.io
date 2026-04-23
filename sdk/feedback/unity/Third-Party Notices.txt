@@ -1,0 +1,9 @@
+Yaver Feedback for Unity
+========================
+
+This package is authored by Yaver and distributed under the MIT license.
+
+At the time of writing, the package does not bundle third-party runtime code inside
+the Unity package itself beyond Unity's standard engine/runtime references.
+
+If this changes in future releases, third-party notices should be added here.

@@ -1,0 +1,238 @@
+name: Unity Sample CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdk/feedback/unity/**"
+      - "sdk/feedback/test-app/unity/**"
+      - "scripts/validate-unity-package.mjs"
+      - ".github/workflows/unity-sample-ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "sdk/feedback/unity/**"
+      - "sdk/feedback/test-app/unity/**"
+      - "scripts/validate-unity-package.mjs"
+      - ".github/workflows/unity-sample-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: unity-sample-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sample-editor-tests:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Verify Unity license secret
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -z "$UNITY_LICENSE" ]; then
+            echo "Missing UNITY_LICENSE GitHub Actions secret."
+            exit 1
+          fi
+
+      - name: Validate Unity package metadata
+        run: node scripts/validate-unity-package.mjs
+
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: sdk/feedback/test-app/unity/Library
+          key: unity-sample-library-${{ runner.os }}-${{ hashFiles('sdk/feedback/test-app/unity/Packages/manifest.json', 'sdk/feedback/test-app/unity/ProjectSettings/ProjectVersion.txt', 'sdk/feedback/unity/**') }}
+          restore-keys: |
+            unity-sample-library-${{ runner.os }}-
+
+      - name: Run sample project EditMode tests
+        id: sample_editmode
+        uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        with:
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+          projectPath: sdk/feedback/test-app/unity
+          unityVersion: 2021.3.45f1
+          testMode: EditMode
+          artifactsPath: artifacts/unity-sample-tests
+          coverageOptions: generateAdditionalMetrics;generateHtmlReport;generateBadgeReport;assemblyFilters:+Yaver.*
+
+      - name: Upload sample test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-sample-test-artifacts
+          path: artifacts/unity-sample-tests
+          if-no-files-found: ignore
+
+      - name: Upload sample EditMode coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-sample-editmode-coverage
+          path: ${{ steps.sample_editmode.outputs.coveragePath }}
+          if-no-files-found: ignore
+
+  sample-playmode-tests:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Verify Unity license secret
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -z "$UNITY_LICENSE" ]; then
+            echo "Missing UNITY_LICENSE GitHub Actions secret."
+            exit 1
+          fi
+
+      - name: Validate Unity package metadata
+        run: node scripts/validate-unity-package.mjs
+
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: sdk/feedback/test-app/unity/Library
+          key: unity-sample-playmode-library-${{ runner.os }}-${{ hashFiles('sdk/feedback/test-app/unity/Packages/manifest.json', 'sdk/feedback/test-app/unity/ProjectSettings/ProjectVersion.txt', 'sdk/feedback/test-app/unity/Assets/**', 'sdk/feedback/unity/**') }}
+          restore-keys: |
+            unity-sample-playmode-library-${{ runner.os }}-
+
+      - name: Run sample project PlayMode tests
+        id: sample_playmode
+        uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        with:
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+          projectPath: sdk/feedback/test-app/unity
+          unityVersion: 2021.3.45f1
+          testMode: PlayMode
+          artifactsPath: artifacts/unity-sample-playmode-tests
+          coverageOptions: generateAdditionalMetrics;generateHtmlReport;generateBadgeReport;assemblyFilters:+Yaver.*
+
+      - name: Upload sample playmode test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-sample-playmode-test-artifacts
+          path: artifacts/unity-sample-playmode-tests
+          if-no-files-found: ignore
+
+      - name: Upload sample PlayMode coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-sample-playmode-coverage
+          path: ${{ steps.sample_playmode.outputs.coveragePath }}
+          if-no-files-found: ignore
+
+  sample-builds:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - targetPlatform: StandaloneWindows64
+            buildMethod: YaverBuildTools.BuildWindows64
+            buildName: desktop-windows64
+          - targetPlatform: StandaloneLinux64
+            buildMethod: YaverBuildTools.BuildLinux64
+            buildName: desktop-linux64
+          - targetPlatform: Android
+            buildMethod: YaverBuildTools.BuildAndroid
+            buildName: mobile-android
+          - targetPlatform: WebGL
+            buildMethod: YaverBuildTools.BuildWebGL
+            buildName: webgl
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Verify Unity license secret
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -z "$UNITY_LICENSE" ]; then
+            echo "Missing UNITY_LICENSE GitHub Actions secret."
+            exit 1
+          fi
+
+      - name: Validate Unity package metadata
+        run: node scripts/validate-unity-package.mjs
+
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: sdk/feedback/test-app/unity/Library
+          key: unity-sample-build-library-${{ matrix.targetPlatform }}-${{ hashFiles('sdk/feedback/test-app/unity/Packages/manifest.json', 'sdk/feedback/test-app/unity/ProjectSettings/ProjectVersion.txt', 'sdk/feedback/test-app/unity/Assets/**', 'sdk/feedback/unity/**') }}
+          restore-keys: |
+            unity-sample-build-library-${{ matrix.targetPlatform }}-
+            unity-sample-build-library-
+
+      - if: matrix.targetPlatform == 'Android'
+        uses: jlumbroso/free-disk-space@main
+
+      - name: Build sample project
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        with:
+          projectPath: sdk/feedback/test-app/unity
+          unityVersion: 2021.3.45f1
+          targetPlatform: ${{ matrix.targetPlatform }}
+          buildMethod: ${{ matrix.buildMethod }}
+          buildsPath: build
+          buildName: ${{ matrix.buildName }}
+          customParameters: -yaverBuildOutput Builds/CI/${{ matrix.buildName }} -yaverBuildManifest .yaver-build/unity/ci-build-result.json
+
+      - name: Upload sample build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-sample-${{ matrix.buildName }}
+          path: build/${{ matrix.targetPlatform }}
+          if-no-files-found: warn
+
+  unity-ci-summary:
+    if: always()
+    needs: [sample-editor-tests, sample-playmode-tests, sample-builds]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write Unity sample CI summary
+        run: |
+          {
+            echo "## Unity Sample CI"
+            echo ""
+            echo "- EditMode tests: \`${{ needs.sample-editor-tests.result }}\`"
+            echo "- PlayMode tests: \`${{ needs.sample-playmode-tests.result }}\`"
+            echo "- Builds matrix: \`${{ needs.sample-builds.result }}\`"
+            echo "- Targets: \`StandaloneWindows64\`, \`StandaloneLinux64\`, \`Android\`, \`WebGL\`"
+          } >> "$GITHUB_STEP_SUMMARY"

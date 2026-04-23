@@ -128,10 +128,10 @@ type MobileProjectSummary struct {
 
 // ListMobileProjectsResponse wraps the scanner payload.
 type ListMobileProjectsResponse struct {
-	OK        bool            `json:"ok"`
+	OK        bool                   `json:"ok"`
 	Projects  []MobileProjectSummary `json:"projects"`
-	Scanning  bool            `json:"scanning"`
-	ScannedAt string          `json:"scannedAt"`
+	Scanning  bool                   `json:"scanning"`
+	ScannedAt string                 `json:"scannedAt"`
 }
 
 // ListMobileProjects hits GET /projects/mobile — the same call the
@@ -251,6 +251,24 @@ type BuildNativeBundleResult struct {
 	HasAssets  bool   `json:"hasAssets"`
 }
 
+type UnityRunResult struct {
+	OK             bool     `json:"ok"`
+	Status         string   `json:"status,omitempty"`
+	Stage          string   `json:"stage,omitempty"`
+	ProjectPath    string   `json:"projectPath,omitempty"`
+	Mode           string   `json:"mode,omitempty"`
+	BuildTarget    string   `json:"buildTarget,omitempty"`
+	ExecuteMethod  string   `json:"executeMethod,omitempty"`
+	OutputPath     string   `json:"outputPath,omitempty"`
+	ExecutablePath string   `json:"executablePath,omitempty"`
+	LogPath        string   `json:"logPath,omitempty"`
+	ResultsPath    string   `json:"resultsPath,omitempty"`
+	Summary        string   `json:"summary,omitempty"`
+	Artifacts      []string `json:"artifacts,omitempty"`
+	NextAction     string   `json:"nextAction,omitempty"`
+	Command        []string `json:"command,omitempty"`
+}
+
 // BuildNativeBundle hits POST /dev/build-native — the same call the
 // mobile Hot Reload "Open in Yaver" button makes. Agent runs
 // metro+hermesc, validates the HBC header, writes the bundle, and
@@ -265,6 +283,52 @@ func (c *MobileClient) BuildNativeBundle(ctx context.Context, platform string) (
 		return nil, err
 	}
 	return &out, nil
+}
+
+func (c *MobileClient) RunUnityTests(ctx context.Context, projectPath, testMode string) (*UnityRunResult, error) {
+	body := map[string]string{
+		"projectPath": projectPath,
+		"testMode":    testMode,
+	}
+	var out UnityRunResult
+	if err := c.doJSON(ctx, "POST", "/unity/test", body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *MobileClient) BuildUnity(ctx context.Context, projectPath, buildTarget, executeMethod, outputPath string) (*UnityRunResult, error) {
+	body := map[string]string{
+		"projectPath":   projectPath,
+		"buildTarget":   buildTarget,
+		"executeMethod": executeMethod,
+		"outputPath":    outputPath,
+	}
+	var out UnityRunResult
+	if err := c.doJSON(ctx, "POST", "/unity/build", body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *MobileClient) RelaunchUnity(ctx context.Context, projectPath, executablePath string) (*UnityRunResult, error) {
+	body := map[string]string{
+		"projectPath":    projectPath,
+		"executablePath": executablePath,
+	}
+	var out UnityRunResult
+	if err := c.doJSON(ctx, "POST", "/unity/relaunch", body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *MobileClient) ListUnityRuns(ctx context.Context) ([]UnityRunResult, error) {
+	var out []UnityRunResult
+	if err := c.doJSON(ctx, "GET", "/unity/runs", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // DownloadBundleAndValidate GETs the compiled HBC bundle from

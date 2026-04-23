@@ -91,6 +91,7 @@ export interface GuestConfigEntry {
   guestUserId: string;
   guestEmail: string;
   guestName: string;
+  scope?: "full" | "feedback-only" | "sdk-project";
   dailyTokenLimit?: number;
   allowedRunners?: string[];
   usageMode?: string; // "always" | "idle-only" | "scheduled"
@@ -126,6 +127,7 @@ export interface GuestUsageEntry {
 
 export interface GuestConfigUpdate {
   email: string;
+  scope?: "full" | "feedback-only" | "sdk-project";
   dailyTokenLimit?: number;
   allowedRunners?: string[];
   usageMode?: string;
@@ -220,7 +222,15 @@ export async function acceptGuestByCode(
  */
 export async function inviteGuest(
   token: string,
-  target: { email?: string; userId?: string; deviceIds?: string[] } | string
+  target:
+    | {
+        email?: string;
+        userId?: string;
+        deviceIds?: string[];
+        scope?: "full" | "feedback-only" | "sdk-project";
+        allowedProjects?: string[];
+      }
+    | string
 ): Promise<{ inviteCode: string; guestRegistered: boolean; guestUserId?: string; guestEmail?: string }> {
   const body: Record<string, unknown> =
     typeof target === "string"
@@ -229,6 +239,8 @@ export async function inviteGuest(
           email: target.email,
           userId: target.userId,
           deviceIds: target.deviceIds,
+          scope: target.scope,
+          allowedProjects: target.allowedProjects,
         };
   const res = await fetch(`${CONVEX_SITE_URL}/guests/invite`, {
     method: "POST",

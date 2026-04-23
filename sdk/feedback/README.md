@@ -2,13 +2,14 @@
 
 Visual bug reports + Black Box flight recorder, embedded in your app. Testers shake their phone (or click a floating button), narrate the bug, and the AI agent on your dev machine receives the report and fixes it.
 
-The Feedback SDK ships across four runtimes — **React Native (mobile)**, **Flutter (mobile)**, **Web (browser)**, and **Python (server-side / scripts)**. They share one auth model, one Yaver backend, one wire protocol. Pick the package that matches your stack; the API shape is the same.
+The Feedback SDK ships across five runtimes — **React Native (mobile)**, **Flutter (mobile)**, **Web (browser)**, **Unity (mobile games)**, and **Python (server-side / scripts)**. They share one auth model, one Yaver backend, and one local-first philosophy. Unity is intentionally scoped around feedback/build loops rather than Hermes-style runtime code swapping.
 
 | Package | Runtime | Install | Version | Auth UX |
 |---|---|---|---|---|
 | `yaver-feedback-react-native` | React Native iOS + Android | `npm install yaver-feedback-react-native` | 0.6+ | Native Apple + in-app browser OAuth + email |
 | `yaver-feedback-web` | Browser (any framework) | `npm install yaver-feedback-web` | 0.2+ | Popup OAuth + email |
 | `yaver_feedback` (Flutter) | Flutter iOS + Android | `flutter pub add yaver_feedback` | 0.2+ | Native Apple + `flutter_web_auth_2` OAuth + email (via host bindings) |
+| `io.yaver.feedback.unity` | Unity mobile games | Local UPM package | 0.1+ | Bring your own auth token for the initial scaffold |
 | `yaver` (Python) | Server / CLI / scripts | `pip install yaver` | 0.3+ | `signin_via_browser()` (CLI-style local listener) or direct email/password |
 
 > **Umbrella install:** `npm install -g yaver-cli` brings down the Yaver CLI binary. Run `yaver feedback setup` inside any project root and it will detect the stack and install the right package automatically.
@@ -205,6 +206,58 @@ final res = await signInWithOAuth(
   provider: OAuthProvider.google,
   openAuthSession: bindings.openAuthSession!,
 );
+```
+
+---
+
+## Unity (`io.yaver.feedback.unity`)
+
+Unity support is aimed at mobile game developers, especially hypercasual/hybrid-casual teams that want self-hosted bug capture and a local build/install loop.
+
+The Unity contract is:
+
+- screenshots
+- logs and exceptions
+- black-box events
+- scene/device/build metadata
+- agent upload to your own machine
+
+The Unity contract is not:
+
+- universal Hermes-equivalent runtime injection
+- universal code hot-swapping for arbitrary IL2CPP mobile builds
+
+See:
+
+- [sdk/feedback/unity/README.md](unity/README.md)
+- [UNITY_HYPERCASUAL_CASE.md](../../UNITY_HYPERCASUAL_CASE.md)
+- [UNITY_UNIFIED_YAVER.md](../../UNITY_UNIFIED_YAVER.md)
+- [DESKTOP_UNITY_YAVER_FEEDBACK_SDK_AUIDT.md](../../DESKTOP_UNITY_YAVER_FEEDBACK_SDK_AUIDT.md)
+
+Quick sketch:
+
+```csharp
+using UnityEngine;
+using Yaver.Feedback;
+
+public sealed class YaverBootstrap : MonoBehaviour
+{
+    [SerializeField] private string agentUrl = "http://192.168.1.10:18080";
+    [SerializeField] private string authToken = "";
+
+    private void Awake()
+    {
+        YaverFeedback.Initialize(new YaverFeedbackConfig
+        {
+            AgentUrl = agentUrl,
+            AuthToken = authToken,
+            AppName = Application.productName,
+            BuildVersion = Application.version,
+            AutoStartBlackBox = true,
+            CaptureUnityLogs = true
+        });
+    }
+}
 ```
 
 ---

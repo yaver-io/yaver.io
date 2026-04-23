@@ -23,6 +23,16 @@ export const getByUserInternal = internalQuery({
   },
 });
 
+export const listBySubscription = internalQuery({
+  args: { subscriptionId: v.id("subscriptions") },
+  handler: async (ctx, { subscriptionId }) => {
+    return await ctx.db
+      .query("managedRelays")
+      .withIndex("by_subscription", (q) => q.eq("subscriptionId", subscriptionId))
+      .collect();
+  },
+});
+
 // Create a pending managed relay (called after payment confirmed)
 export const create = internalMutation({
   args: {

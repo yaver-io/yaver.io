@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { useVideoPlayer, VideoView } from "expo-video";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
@@ -44,6 +45,7 @@ export default function StudioScreen() {
   const [recordTarget, setRecordTarget] = useState<RecordTarget>("both");
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [uploadingMobile, setUploadingMobile] = useState(false);
+  const [selectedClip, setSelectedClip] = useState<any | null>(null);
 
   // Chat
   const [conversations, setConversations] = useState<any[]>([]);
@@ -236,8 +238,13 @@ export default function StudioScreen() {
                 const hasMerged = streams.some((st) => st.kind === "merged" && st.uploaded);
                 const hasAgent = streams.some((st) => st.kind === "agent-screen" && st.uploaded);
                 const hasMobile = streams.some((st) => st.kind === "mobile-screen" && st.uploaded);
+                const preferredFile = hasMerged ? "merged.mp4" : hasAgent ? "agent-screen.mp4" : hasMobile ? "mobile-screen.mp4" : null;
                 return (
-                  <View key={cl.id} style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+                  <Pressable
+                    key={cl.id}
+                    onPress={() => preferredFile && setSelectedClip({ ...cl, preferredFile })}
+                    style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border, opacity: preferredFile ? 1 : 0.7 }]}
+                  >
                     <Text style={[s.cardTitle, { color: c.textPrimary }]}>{cl.title || cl.id}</Text>
                     <Text style={[s.cardMeta, { color: c.textMuted }]}>/clips/{cl.id} · {cl.durationSec || 0}s</Text>
                     <View style={{ flexDirection: "row", marginTop: 6, gap: 6 }}>
@@ -245,7 +252,7 @@ export default function StudioScreen() {
                       {hasMobile && <Text style={s.badge}>Mobile</Text>}
                       {hasMerged && <Text style={[s.badge, { backgroundColor: "#22c55e" }]}>Merged</Text>}
                     </View>
-                  </View>
+                  </Pressable>
                 );
               })}
             </View>
@@ -331,7 +338,54 @@ export default function StudioScreen() {
           )}
         </ScrollView>
       )}
+      <ClipPreviewModal clip={selectedClip} onClose={() => setSelectedClip(null)} />
     </View>
+  );
+}
+
+function ClipPreviewModal({ clip, onClose }: { clip: any | null; onClose: () => void }) {
+  const c = useColors();
+  const req = clip ? quicClient.clipPrivateVideoRequest(clip.id, clip.preferredFile) : null;
+  const player = useVideoPlayer(req ? { uri: req.uri, headers: req.headers } : null, (p) => {
+    p.loop = false;
+    p.muted = false;
+  });
+
+  return (
+    <Modal visible={!!clip} animationType="slide" onRequestClose={onClose}>
+      <View style={[s.modalWrap, { backgroundColor: c.bg }]}>
+        <View style={[s.header, { borderBottomColor: c.border, paddingTop: 20 }]}>
+          <Pressable onPress={onClose} style={{ paddingVertical: 8 }}>
+            <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>Done</Text>
+          </Pressable>
+          <Text style={{ fontSize: 17, fontWeight: "700", color: c.textPrimary }} numberOfLines={1}>
+            {clip?.title || clip?.id || "Clip"}
+          </Text>
+          <View style={{ width: 50 }} />
+        </View>
+        <View style={s.modalBody}>
+          {req ? (
+            <VideoView
+              player={player}
+              style={s.previewVideo}
+              contentFit="contain"
+              nativeControls
+              allowsFullscreen
+            />
+          ) : (
+            <Text style={{ color: c.textMuted, textAlign: "center" }}>No playable stream for this clip.</Text>
+          )}
+        </View>
+        {clip ? (
+          <View style={s.modalCopy}>
+            <Text style={{ color: c.textPrimary, fontWeight: "600" }}>{clip.title || clip.id}</Text>
+            <Text style={{ color: c.textMuted, fontSize: 12 }}>
+              Private replay stays on the authenticated agent path. Public share links remain separate under /clips/{clip.id}.
+            </Text>
+          </View>
+        ) : null}
+      </View>
+    </Modal>
   );
 }
 
@@ -348,4 +402,8 @@ const s = StyleSheet.create({
   btnText: { color: "#fff", fontWeight: "700" },
   input: { borderWidth: 1, borderRadius: 8, padding: 12, marginTop: 10, fontSize: 15 },
   badge: { fontSize: 10, fontWeight: "700", color: "#fff", backgroundColor: "#334155", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, overflow: "hidden" },
+  modalWrap: { flex: 1 },
+  modalBody: { flex: 1, justifyContent: "center" },
+  previewVideo: { width: "100%", aspectRatio: 16 / 9, backgroundColor: "#000" },
+  modalCopy: { padding: 16, gap: 6 },
 });

@@ -59,6 +59,8 @@ export default function GuestsScreen() {
   const [inviteLookup, setInviteLookup] = useState<PublicUserLookup | null>(null);
   const [inviteLookupErr, setInviteLookupErr] = useState<string | null>(null);
   const [inviteProposedDeviceIds, setInviteProposedDeviceIds] = useState<string[]>([]);
+  const [inviteScope, setInviteScope] = useState<"full" | "feedback-only" | "sdk-project">("full");
+  const [inviteProjects, setInviteProjects] = useState("");
   const [inviting, setInviting] = useState(false);
   const [lastCode, setLastCode] = useState<string | null>(null);
   const [lastTarget, setLastTarget] = useState<string | null>(null);
@@ -144,16 +146,21 @@ export default function GuestsScreen() {
     if (!v) return;
     setInviting(true);
     try {
+      const allowedProjects = inviteProjects
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
       const payload =
         inviteKind === "email"
-          ? { email: v, deviceIds: inviteProposedDeviceIds }
-          : { userId: v, deviceIds: inviteProposedDeviceIds };
+          ? { email: v, deviceIds: inviteProposedDeviceIds, scope: inviteScope, allowedProjects }
+          : { userId: v, deviceIds: inviteProposedDeviceIds, scope: inviteScope, allowedProjects };
       const r = await inviteGuest(token, payload);
       setLastCode(r.inviteCode);
       setLastTarget(inviteKind === "email" ? v : inviteLookup?.email || ("user " + v));
       setInviteTarget("");
       setInviteLookup(null);
       setInviteProposedDeviceIds([]);
+      setInviteProjects("");
       loadGuests();
     } catch (e: any) {
       Alert.alert("Invite failed", e?.message || String(e));
@@ -387,6 +394,43 @@ export default function GuestsScreen() {
                 <Text style={{ color: "#ef4444", fontSize: 12 }}>{inviteLookupErr}</Text>
               )}
 
+              <View style={{ gap: 6 }}>
+                <Text style={sectionLabel as any}>Access tier</Text>
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  <ChipToggle
+                    c={c}
+                    label="Yaver full"
+                    active={inviteScope === "full"}
+                    onPress={() => setInviteScope("full")}
+                  />
+                  <ChipToggle
+                    c={c}
+                    label="Feedback SDK"
+                    active={inviteScope === "feedback-only"}
+                    onPress={() => setInviteScope("feedback-only")}
+                  />
+                </View>
+                <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                  Full = tasks, vibing, projects, remote coding. Feedback SDK = feedback, blackbox, voice only.
+                </Text>
+              </View>
+
+              <View style={{ gap: 6 }}>
+                <Text style={sectionLabel as any}>Project scope</Text>
+                <TextInput
+                  value={inviteProjects}
+                  onChangeText={setInviteProjects}
+                  placeholder="optional: sfmg,another-project"
+                  placeholderTextColor={c.textMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={[inputStyle(c), { fontFamily: "Menlo" }]}
+                />
+                <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                  Optional comma-separated project slugs. Empty means all projects the selected tier allows.
+                </Text>
+              </View>
+
               {/* Machine picker */}
               {ownDevices.length > 0 && (
                 <View style={{ gap: 6 }}>
@@ -452,7 +496,7 @@ export default function GuestsScreen() {
                 )}
               </Pressable>
               <Text style={{ color: c.textMuted, fontSize: 10 }}>
-                Max 5 guests. Codes expire in 2 days. Guests can create tasks + use Data/Ops but can't touch vault, session, or exec.
+                Max 5 guests. Codes expire in 2 days. Full guests can code through Yaver but still cannot touch vault, sessions, or raw exec.
               </Text>
             </View>
 

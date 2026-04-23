@@ -32,6 +32,74 @@ export interface Task {
   deviceName?: string;
 }
 
+export interface EnvironmentProjectSummary {
+  path: string;
+  branch?: string;
+}
+
+export interface EnvironmentRunnerSummary {
+  id: string;
+  name: string;
+  command: string;
+  installed: boolean;
+  ready: boolean;
+  authConfigured?: boolean;
+  authSource?: string;
+  warning?: string;
+  error?: string;
+}
+
+export interface EnvironmentSyncSummary {
+  kind: string;
+  count: number;
+}
+
+export interface ToolchainGitCredentialSummary {
+  host: string;
+  username?: string;
+  hasToken: boolean;
+}
+
+export interface SyncItem<T = any> {
+  key: string;
+  value?: T;
+  updatedAt: number;
+  updatedBy: string;
+  deleted?: boolean;
+}
+
+export interface EnvironmentProfile {
+  generatedAt: string;
+  sourceDeviceId?: string;
+  hostname?: string;
+  platform: string;
+  arch: string;
+  workDir?: string;
+  discoveredProjects?: EnvironmentProjectSummary[];
+  binaries?: { name: string; path: string; manager?: string }[];
+  runners?: EnvironmentRunnerSummary[];
+  syncKinds?: EnvironmentSyncSummary[];
+  gitCredentials?: ToolchainGitCredentialSummary[];
+}
+
+export interface EnvironmentProfileApplyResult {
+  ok: boolean;
+  status: string;
+  sourcePlatform?: string;
+  targetPlatform: string;
+  installPlan?: string[];
+  installed?: string[];
+  alreadyPresent?: string[];
+  importedSyncKinds?: string[];
+  manualSteps?: string[];
+  projectHints?: string[];
+  notes?: string[];
+  removalPlan?: string[];
+  removed?: string[];
+  importedGitHosts?: string[];
+  removedGitHosts?: string[];
+}
+
 // Hybrid Mode — mirror of Go structs in desktop/agent/hybrid.go.
 export interface HybridRunRequest {
   planner?: string;
@@ -228,6 +296,56 @@ export interface Runner {
   installed: boolean;
   active: boolean;
   models?: string[];
+}
+
+export interface RunnerAuthStatusRow {
+  id: string;
+  name: string;
+  installed: boolean;
+  ready: boolean;
+  authConfigured: boolean;
+  authSource?: string;
+  warning?: string;
+  error?: string;
+  path?: string;
+  detail?: string;
+}
+
+export interface RunnerAuthSetParams {
+  runner: "claude" | "claude-code" | "codex" | "opencode";
+  openaiApiKey?: string;
+  anthropicApiKey?: string;
+  anthropicAuthToken?: string;
+  claudeCodeOauthToken?: string;
+  glmApiKey?: string;
+  zaiApiKey?: string;
+  notes?: string;
+}
+
+export interface MachineOnboardingProviderStatus {
+  id: "openai" | "github" | "gitlab" | string;
+  name: string;
+  ready: boolean;
+  configured: boolean;
+  cloneReady?: boolean;
+  ciReady?: boolean;
+  authSource?: string;
+  cloneSource?: string;
+  ciSource?: string;
+  username?: string;
+  host?: string;
+  detail?: string;
+  warning?: string;
+}
+
+export interface MachineOnboardingApplyParams {
+  openaiApiKey?: string;
+  githubToken?: string;
+  gitlabToken?: string;
+  gitlabHost?: string;
+  applyClone?: boolean;
+  applyCiToken?: boolean;
+  notes?: string;
 }
 
 export interface AgentNodePlacement {
@@ -432,6 +550,7 @@ export interface GuestConfigEntry {
   guestUserId: string;
   guestEmail: string;
   guestName: string;
+  scope?: "full" | "feedback-only" | "sdk-project";
   dailyTokenLimit?: number;
   allowedRunners?: string[];
   usageMode?: string;
@@ -893,6 +1012,66 @@ class AgentClient {
     return data.runners || [];
   }
 
+  async getToolchainSyncProfile(): Promise<EnvironmentProfile> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/agent/toolchain-sync/profile`, {
+      headers: this.authHeaders,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Failed to get environment profile: ${res.status}`);
+    return data.profile as EnvironmentProfile;
+  }
+
+  async applyToolchainSync(params: {
+    profile?: EnvironmentProfile;
+    sourceDeviceId?: string;
+    installMissing?: boolean;
+    syncKinds?: string[];
+    syncPayload?: Record<string, SyncItem[]>;
+    includeGitCredentials?: boolean;
+    gitCredentials?: { host: string; username?: string; token: string }[];
+    removeMissing?: boolean;
+    dryRun?: boolean;
+  }): Promise<EnvironmentProfileApplyResult> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/agent/toolchain-sync/apply`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        profile: params.profile,
+        sourceDeviceId: params.sourceDeviceId ?? "",
+        installMissing: !!params.installMissing,
+        syncKinds: params.syncKinds ?? [],
+        syncPayload: params.syncPayload ?? {},
+        includeGitCredentials: !!params.includeGitCredentials,
+        gitCredentials: params.gitCredentials ?? [],
+        removeMissing: !!params.removeMissing,
+        dryRun: params.dryRun !== false,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Failed to apply environment profile: ${res.status}`);
+    return data as EnvironmentProfileApplyResult;
+  }
+
+  async getEnvironmentProfile(): Promise<EnvironmentProfile> {
+    return this.getToolchainSyncProfile();
+  }
+
+  async applyEnvironmentProfile(params: {
+    profile?: EnvironmentProfile;
+    sourceDeviceId?: string;
+    installMissing?: boolean;
+    syncKinds?: string[];
+    syncPayload?: Record<string, SyncItem[]>;
+    includeGitCredentials?: boolean;
+    gitCredentials?: { host: string; username?: string; token: string }[];
+    removeMissing?: boolean;
+    dryRun?: boolean;
+  }): Promise<EnvironmentProfileApplyResult> {
+    return this.applyToolchainSync(params);
+  }
+
   /**
    * Fetch the installable catalogue from GET /install/list. When
    * `target` is set, the call is forwarded to a paired peer via
@@ -930,6 +1109,93 @@ class AgentClient {
       return { ok: false, tool, stream: "", error: data.error || `HTTP ${res.status}` };
     }
     return { ok: true, tool: data.tool || tool, stream: data.stream || `install:${tool}` };
+  }
+
+  async runnerAuthStatus(target?: string): Promise<RunnerAuthStatusRow[]> {
+    this.assertConnected();
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/status`
+      : `${this.baseUrl}/runner-auth/status`;
+    const res = await fetch(base, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Failed to get runner auth status: ${res.status}`);
+    const data = await res.json().catch(() => ({}));
+    return Array.isArray(data?.runners) ? data.runners : [];
+  }
+
+  async runnerAuthSet(
+    params: RunnerAuthSetParams,
+    target?: string,
+  ): Promise<{ ok: boolean; saved: string[]; runners: RunnerAuthStatusRow[]; error?: string }> {
+    this.assertConnected();
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/set`
+      : `${this.baseUrl}/runner-auth/set`;
+    const res = await fetch(base, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        runner: params.runner,
+        openai_api_key: params.openaiApiKey,
+        anthropic_api_key: params.anthropicApiKey,
+        anthropic_auth_token: params.anthropicAuthToken,
+        claude_code_oauth_token: params.claudeCodeOauthToken,
+        glm_api_key: params.glmApiKey,
+        zai_api_key: params.zaiApiKey,
+        notes: params.notes,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, saved: [], runners: [], error: data?.error || `HTTP ${res.status}` };
+    }
+    return {
+      ok: true,
+      saved: Array.isArray(data?.saved) ? data.saved : [],
+      runners: Array.isArray(data?.runners) ? data.runners : [],
+    };
+  }
+
+  async machineOnboardingStatus(target?: string): Promise<MachineOnboardingProviderStatus[]> {
+    this.assertConnected();
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/machine/onboarding/status`
+      : `${this.baseUrl}/machine/onboarding/status`;
+    const res = await fetch(base, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Failed to get machine onboarding status: ${res.status}`);
+    const data = await res.json().catch(() => ({}));
+    return Array.isArray(data?.providers) ? data.providers : [];
+  }
+
+  async machineOnboardingApply(
+    params: MachineOnboardingApplyParams,
+    target?: string,
+  ): Promise<{ ok: boolean; applied: string[]; providers: MachineOnboardingProviderStatus[]; error?: string }> {
+    this.assertConnected();
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/machine/onboarding/apply`
+      : `${this.baseUrl}/machine/onboarding/apply`;
+    const res = await fetch(base, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        openai_api_key: params.openaiApiKey,
+        github_token: params.githubToken,
+        gitlab_token: params.gitlabToken,
+        gitlab_host: params.gitlabHost,
+        apply_clone: params.applyClone,
+        apply_ci_token: params.applyCiToken,
+        notes: params.notes,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, applied: [], providers: [], error: data?.error || `HTTP ${res.status}` };
+    }
+    return {
+      ok: true,
+      applied: Array.isArray(data?.applied) ? data.applied : [],
+      providers: Array.isArray(data?.providers) ? data.providers : [],
+    };
   }
 
 
@@ -1524,6 +1790,7 @@ class AgentClient {
 
   async updateGuestConfig(config: {
     email: string;
+    scope?: "full" | "feedback-only" | "sdk-project";
     dailyTokenLimit?: number;
     allowedRunners?: string[];
     usageMode?: string;
@@ -1578,12 +1845,28 @@ class AgentClient {
     return data.guests || [];
   }
 
-  async inviteGuest(email: string): Promise<{ inviteCode: string; guestRegistered: boolean }> {
+  async inviteGuest(target: {
+    email?: string;
+    userId?: string;
+    deviceIds?: string[];
+    scope?: "full" | "feedback-only" | "sdk-project";
+    allowedProjects?: string[];
+  } | string): Promise<{ inviteCode: string; guestRegistered: boolean }> {
     this.assertConnected();
+    const body =
+      typeof target === "string"
+        ? { email: target }
+        : {
+            email: target.email,
+            userId: target.userId,
+            deviceIds: target.deviceIds,
+            scope: target.scope,
+            allowedProjects: target.allowedProjects,
+          };
     const res = await fetch(`${this.baseUrl}/guests/invite`, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ email }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
@@ -1876,6 +2159,34 @@ class AgentClient {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/builds/${id}`, { headers: this.authHeaders });
     return res.json();
+  }
+
+  async listUnityRuns(): Promise<{
+    ok: boolean;
+    status?: string;
+    stage?: string;
+    projectPath?: string;
+    mode?: string;
+    buildTarget?: string;
+    executeMethod?: string;
+    outputPath?: string;
+    executablePath?: string;
+    logPath?: string;
+    resultsPath?: string;
+    summary?: string;
+    artifacts?: string[];
+    nextAction?: string;
+    command?: string[];
+  }[]> {
+    this.assertConnected();
+    try {
+      const res = await fetch(`${this.baseUrl}/unity/runs`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    } catch {
+      return [];
+    }
   }
 
   // ── Universal backend (any adapter) ──────────────────────────────
@@ -3418,9 +3729,17 @@ class AgentClient {
     if (opts.skipSeed) form.append("skipSeed", "true");
 
     const base = resolvePhonePushBase(target);
+    const overrideToken =
+      target.kind === "yaver-cloud"
+        ? target.cloudAuthToken
+        : target.kind === "custom"
+          ? target.authToken
+          : undefined;
     const res = await fetch(`${base}/phone/projects/receive`, {
       method: "POST",
-      headers: this.authHeaders, // let fetch set the multipart boundary
+      headers: overrideToken
+        ? { ...this.authHeaders, Authorization: `Bearer ${overrideToken}` }
+        : this.authHeaders, // let fetch set the multipart boundary
       body: form,
     });
     const text = await res.text().catch(() => "");
@@ -3610,8 +3929,8 @@ export interface RecordingDriverStatus {
 
 export type PhonePushTarget =
   | { kind: "dev-hw"; deviceId: string; relayHttpUrl: string }
-  | { kind: "yaver-cloud"; cloudBaseUrl?: string }
-  | { kind: "custom"; baseUrl: string };
+  | { kind: "yaver-cloud"; cloudBaseUrl?: string; cloudAuthToken?: string }
+  | { kind: "custom"; baseUrl: string; authToken?: string };
 
 export interface PhonePushResult {
   slug: string;
