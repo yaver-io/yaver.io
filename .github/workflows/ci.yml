@@ -716,6 +716,10 @@ jobs:
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
       - name: Start agent (real mode)
+        env:
+          # Pin HOME to a scratch dir — see mobile-headless.yml for rationale.
+          # The agent reads config via os.UserHomeDir() which honors $HOME.
+          HOME: ${{ runner.temp }}/yaver-home
         run: |
           mkdir -p ~/.yaver
           echo "{\"auth_token\":\"${{ steps.auth.outputs.token }}\",\"convex_site_url\":\"${{ steps.auth.outputs.url }}\",\"device_id\":\"ci-ollama\"}" > ~/.yaver/config.json

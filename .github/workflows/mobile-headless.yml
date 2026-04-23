@@ -61,6 +61,15 @@ jobs:
         working-directory: desktop/agent
         run: go build -o /tmp/yaver-agent .
       - name: Start agent in background
+        env:
+          # Pin HOME to a scratch dir so the config write below cannot
+          # clobber a real ~/.yaver/config.json if this job's steps are
+          # ever replayed outside a GitHub runner (act, local shell copy,
+          # LLM copy-paste while debugging). The agent reads config from
+          # $HOME/.yaver/config.json; isolating HOME isolates the blast
+          # radius. Must match every subsequent step that talks to the
+          # agent so they all see the same config.
+          HOME: ${{ runner.temp }}/yaver-home
         run: |
           mkdir -p "$HOME/.yaver"
           echo '{"auth_token":"ci-smoke-token","device_id":"ci-mobile-headless","convex_site_url":"https://perceptive-minnow-557.eu-west-1.convex.site"}' > "$HOME/.yaver/config.json"
@@ -74,6 +83,7 @@ jobs:
       - name: Run smoke tests against live agent
         working-directory: mobile-headless
         env:
+          HOME: ${{ runner.temp }}/yaver-home
           YMH_DATA_DIR: /tmp/ymh-ci
           YMH_SMOKE_AGENT_URL: http://127.0.0.1:18080
           YMH_SMOKE_AGENT_TOKEN: ci-smoke-token
@@ -84,12 +94,15 @@ jobs:
       - name: CLI spot-check
         working-directory: mobile-headless
         env:
+          HOME: ${{ runner.temp }}/yaver-home
           YMH_DATA_DIR: /tmp/ymh-ci
         run: |
           bun run src/bin/cli.ts install-list --token=ci-smoke-token | head -20 || true
           bun run src/bin/cli.ts raw-get /info --token=ci-smoke-token | head -20 || true
       - name: Stop agent
         if: always()
+        env:
+          HOME: ${{ runner.temp }}/yaver-home
         run: |
           kill $(cat /tmp/agent.pid) || true
           tail -80 /tmp/agent.log || true

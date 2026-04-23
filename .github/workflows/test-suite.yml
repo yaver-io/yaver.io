@@ -192,6 +192,10 @@ jobs:
           echo "convex_url=$CONVEX_URL" >> "$GITHUB_OUTPUT"
 
       - name: Start agent in background
+        env:
+          # Pin HOME to a scratch dir — see mobile-headless.yml for rationale.
+          # The agent reads config via os.UserHomeDir() which honors $HOME.
+          HOME: ${{ runner.temp }}/yaver-home
         run: |
           cd desktop/agent
           mkdir -p ~/.yaver
@@ -317,6 +321,10 @@ jobs:
           echo "convex_url=$CONVEX_URL" >> "$GITHUB_OUTPUT"
 
       - name: Start agent in dummy mode
+        env:
+          # Pin HOME to a scratch dir — see mobile-headless.yml for rationale.
+          # The agent reads config via os.UserHomeDir() which honors $HOME.
+          HOME: ${{ runner.temp }}/yaver-home
         run: |
           cd desktop/agent
           mkdir -p ~/.yaver

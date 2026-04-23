@@ -60,6 +60,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -665,7 +666,13 @@ func notifyConvexBootstrap(cfg *Config, httpPort int) {
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode >= 400 {
-			log.Printf("[bootstrap-convex] Convex returned %d", resp.StatusCode)
+			// Read a short snippet of the body so the real error shows up in
+			// logs instead of an opaque status code. The most common cause is
+			// "Device not found" (config.json carries a deviceId Convex has
+			// never seen — e.g. a CI-stamped value leaking onto a real user
+			// machine). Cap at 512 bytes in case Convex ever returns HTML.
+			snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+			log.Printf("[bootstrap-convex] Convex returned %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 			return
 		}
 		log.Printf("[bootstrap-convex] Registered as needs-auth (device %s)", cfg.DeviceID[:8])
