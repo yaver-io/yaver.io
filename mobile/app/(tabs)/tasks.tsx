@@ -91,6 +91,28 @@ const BANNER_CONFIG: Record<
   },
 };
 
+type DeviceProbeState = {
+  reachable: boolean;
+  needsAuth: boolean;
+  checkedAt: number;
+};
+
+async function probeDeviceInfo(device: { host: string; port: number }): Promise<DeviceProbeState | null> {
+  try {
+    const res = await fetch(`http://${device.host}:${device.port || 18080}/info`, {
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!res.ok) {
+      return { reachable: false, needsAuth: false, checkedAt: Date.now() };
+    }
+    const info = await res.json().catch(() => ({}));
+    const needsAuth = info?.needsAuth === true || info?.mode === "bootstrap";
+    return { reachable: true, needsAuth, checkedAt: Date.now() };
+  } catch {
+    return { reachable: false, needsAuth: false, checkedAt: Date.now() };
+  }
+}
+
 // ── Typing indicator ─────────────────────────────────────────────────
 
 function TypingIndicator({ color }: { color: string }) {
@@ -659,8 +681,9 @@ export default function TasksScreen() {
   const shouldOpenNew =
     typeof taskParams.openNew === "string" &&
     (taskParams.openNew === "1" || taskParams.openNew === "true");
-  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce } = useDevice();
+  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce } = useDevice();
   const unreachableSet = useMemo(() => new Set(unreachableDeviceIds), [unreachableDeviceIds]);
+  const [deviceProbeMap, setDeviceProbeMap] = useState<Record<string, DeviceProbeState>>({});
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>(getLogEntries());
   const [isRefreshingDevices, setIsRefreshingDevices] = useState(false);
@@ -1497,6 +1520,12 @@ export default function TasksScreen() {
     setIsReconnecting(true);
     setReconnectError(null);
     try {
+      if (!device.isGuest && unreachableSet.has(device.id) && device.online) {
+        const recovery = await recoverDeviceAuth(device);
+        if (recovery && !recovery.ok && recovery.error) {
+          console.log(`[tasks] auth recovery before reconnect failed for ${device.name}: ${recovery.error}`);
+        }
+      }
       await selectDevice(device);
       // Give it a moment to establish connection
       await new Promise(resolve => setTimeout(resolve, 3000));
@@ -1518,6 +1547,34 @@ export default function TasksScreen() {
   const banner = BANNER_CONFIG[effectiveState];
   const isEffectivelyConnected = effectiveState === "connected";
   const modeLabel = connMode === "relay" ? " via Relay" : connMode === "direct" ? " Direct" : "";
+
+  useEffect(() => {
+    if (isEffectivelyConnected || devices.length === 0) return;
+    let cancelled = false;
+    const targets = devices.filter((device) => !device.isGuest && (device.online || unreachableSet.has(device.id)));
+    if (targets.length === 0) return;
+
+    const run = async () => {
+      const updates = await Promise.all(
+        targets.map(async (device) => ({ id: device.id, result: await probeDeviceInfo(device) }))
+      );
+      if (cancelled) return;
+      setDeviceProbeMap((prev) => {
+        const next = { ...prev };
+        for (const update of updates) {
+          if (update.result) next[update.id] = update.result;
+        }
+        return next;
+      });
+    };
+
+    void run();
+    const iv = setInterval(run, 8000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, [devices, isEffectivelyConnected, unreachableSet]);
 
   // Fetch agent info (project, todo stats) every 5s
   useEffect(() => {
@@ -1911,12 +1968,29 @@ export default function TasksScreen() {
                 </Text>
                 {devices.map((d) => {
                   const unreachable = unreachableSet.has(d.id);
-                  // Three-state status mirroring the Devices tab so the
-                  // user gets the same vocabulary everywhere: green
-                  // online, yellow stale (Convex says live, last connect
-                  // failed), gray offline.
-                  const statusText = d.online && !unreachable ? "Online" : unreachable && d.online ? "Stale" : "Offline";
-                  const statusColor = d.online && !unreachable ? "#22c55e" : unreachable && d.online ? "#eab308" : "#a1a1aa";
+                  const probe = deviceProbeMap[d.id];
+                  const hasReachableProbe = probe?.reachable === true;
+                  const needsAuth = d.needsAuth === true || probe?.needsAuth === true;
+                  const statusText =
+                    needsAuth && hasReachableProbe
+                      ? "Needs Auth"
+                      : d.online && !unreachable
+                        ? "Online"
+                        : hasReachableProbe
+                          ? "Reachable"
+                          : unreachable && d.online
+                            ? "Stale"
+                            : "Offline";
+                  const statusColor =
+                    needsAuth && hasReachableProbe
+                      ? "#f59e0b"
+                      : d.online && !unreachable
+                        ? "#22c55e"
+                        : hasReachableProbe
+                          ? "#38bdf8"
+                          : unreachable && d.online
+                            ? "#eab308"
+                            : "#a1a1aa";
                   const isRetrying = isReconnecting && activeDevice?.id === d.id;
                   return (
                     <Pressable
@@ -1940,12 +2014,20 @@ export default function TasksScreen() {
                             {d.os} · {d.host}
                             {d.deviceClass === "edge-mobile" ? " · mobile worker" : ""}
                           </Text>
-                          {unreachable && d.online && (
-                            <Text style={[s.devicePickerMeta, { color: "#eab308", marginTop: 2 }]}>
-                              Last connect failed — tap to try again
+                          {needsAuth && hasReachableProbe ? (
+                            <Text style={[s.devicePickerMeta, { color: "#f59e0b", marginTop: 2 }]}>
+                              Machine is up, but Yaver auth expired. Tap to recover from this phone.
                             </Text>
-                          )}
-                          {!d.online && (
+                          ) : hasReachableProbe ? (
+                            <Text style={[s.devicePickerMeta, { color: "#38bdf8", marginTop: 2 }]}>
+                              Machine answered an unauthenticated probe. Tap to attach again.
+                            </Text>
+                          ) : unreachable && d.online ? (
+                            <Text style={[s.devicePickerMeta, { color: "#eab308", marginTop: 2 }]}>
+                              Last attach failed. We will keep probing before calling it offline.
+                            </Text>
+                          ) : null}
+                          {!hasReachableProbe && !d.online && (
                             <Text style={[s.devicePickerMeta, { color: c.textMuted, marginTop: 2 }]}>
                               No recent heartbeat. Power on and run yaver serve.
                             </Text>

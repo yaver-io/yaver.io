@@ -215,10 +215,12 @@ function DeviceCard({
   // (without waiting for the /info poll to complete).
   const [needsAuth, setNeedsAuth] = useState<boolean>(device.needsAuth === true);
   const [autoPairing, setAutoPairing] = useState(false);
+  const [directReachable, setDirectReachable] = useState<boolean | null>(null);
   // Three-state status: green / yellow / gray. The old binary
   // online|offline missed the "Convex thinks live, we can't reach"
   // case which flickered between two wrong answers.
-  const isOnline = device.online && !isStale;
+  const authRecoverable = needsAuth || authExpired;
+  const isOnline = device.online && !isStale && !authRecoverable;
   const isOffline = !device.online;
 
   // Keep state in sync when Convex list refreshes
@@ -298,6 +300,7 @@ function DeviceCard({
         }
         console.log(`[auto-pair] ${device.name}: needsAuth=${info.needsAuth} mode=${info.mode} → inBootstrap=${inBootstrap}`);
         if (cancelled) return;
+        setDirectReachable(true);
         setNeedsAuth(inBootstrap);
         if (!inBootstrap) return;
         setAutoPairing(true);
@@ -331,6 +334,7 @@ function DeviceCard({
           if (!cancelled) setAutoPairing(false);
         }
       } catch (err: any) {
+        if (!cancelled) setDirectReachable(false);
         console.log(`[auto-pair] ${device.name}: error ${err?.message || err}`);
       }
     };
@@ -617,8 +621,12 @@ function DeviceCard({
             style={[
               styles.onlineDot,
               {
-                backgroundColor: isOnline
+                backgroundColor: authRecoverable
+                  ? "#f59e0b"
+                  : isOnline
                   ? c.success
+                  : directReachable
+                  ? "#38bdf8"
                   : isStale
                   ? "#eab308" // yellow — Convex says live, we can't reach
                   : c.textMuted, // gray — Convex says offline / wiped
@@ -629,12 +637,12 @@ function DeviceCard({
             style={[
               styles.lastSeen,
               {
-                color: isOnline ? c.success : isStale ? "#eab308" : c.textMuted,
+                color: authRecoverable ? "#f59e0b" : isOnline ? c.success : directReachable ? "#38bdf8" : isStale ? "#eab308" : c.textMuted,
                 fontWeight: "600",
               },
             ]}
           >
-            {isOnline ? "online" : isStale ? "stale" : "offline"}
+            {authRecoverable ? "needs auth" : isOnline ? "online" : directReachable ? "reachable" : isStale ? "stale" : "offline"}
           </Text>
           {device.lastSeen > 0 && (
             <Text style={[styles.lastSeen, { color: c.textMuted, marginTop: 2 }]}>
@@ -656,7 +664,7 @@ function DeviceCard({
       </View>
 
       {/* Runner list + actions — always visible */}
-      {isOnline && (
+      {(isOnline || authRecoverable || directReachable) && (
         <View style={[styles.menuSection, { borderTopColor: c.border }]}>
           {activeRunners.length > 0 && (
             <>

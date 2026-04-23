@@ -519,12 +519,63 @@ export interface RunnerInfo {
   name: string;
   command: string;
   installed: boolean;
+  ready?: boolean;
   authConfigured?: boolean;
   authSource?: string;
   warning?: string;
   error?: string;
   isDefault: boolean;
   models: ModelInfo[];
+}
+
+export interface RunnerAuthStatusRow {
+  id: string;
+  name: string;
+  installed: boolean;
+  ready: boolean;
+  authConfigured: boolean;
+  authSource?: string;
+  warning?: string;
+  error?: string;
+  path?: string;
+  detail?: string;
+}
+
+export interface RunnerAuthSetParams {
+  runner: "claude" | "claude-code" | "codex" | "opencode";
+  openaiApiKey?: string;
+  anthropicApiKey?: string;
+  anthropicAuthToken?: string;
+  claudeCodeOauthToken?: string;
+  glmApiKey?: string;
+  zaiApiKey?: string;
+  notes?: string;
+}
+
+export interface MachineOnboardingProviderStatus {
+  id: "openai" | "github" | "gitlab" | string;
+  name: string;
+  ready: boolean;
+  configured: boolean;
+  cloneReady?: boolean;
+  ciReady?: boolean;
+  authSource?: string;
+  cloneSource?: string;
+  ciSource?: string;
+  username?: string;
+  host?: string;
+  detail?: string;
+  warning?: string;
+}
+
+export interface MachineOnboardingApplyParams {
+  openaiApiKey?: string;
+  githubToken?: string;
+  gitlabToken?: string;
+  gitlabHost?: string;
+  applyClone?: boolean;
+  applyCiToken?: boolean;
+  notes?: string;
 }
 
 export interface AgentStatus {
@@ -706,6 +757,26 @@ export class QuicClient {
 
   get tunnelServerCount(): number {
     return this.effectiveTunnelServers.length;
+  }
+
+  /** Seed reachability metadata for recovery flows without requiring a
+   *  successful attached session first. */
+  primeTarget(
+    host: string,
+    port: number,
+    token: string,
+    deviceId: string,
+    lanIps?: string[],
+    sessionTunnels?: TunnelServer[],
+  ): void {
+    this.host = host;
+    this.port = port;
+    this.token = token;
+    this.deviceId = deviceId;
+    this._lanIps = Array.isArray(lanIps)
+      ? lanIps.filter((s) => typeof s === "string" && s.length > 0)
+      : [];
+    this.setSessionTunnelServers(sessionTunnels);
   }
 
   /** Snapshot of the configured relay servers (highest priority first). Used
@@ -924,12 +995,7 @@ export class QuicClient {
    * Tries direct connection first, then relay servers in priority order.
    */
   async connect(host: string, port: number, token: string, deviceId: string, lanIps?: string[], sessionTunnels?: TunnelServer[]): Promise<void> {
-    this.host = host;
-    this.port = port;
-    this.token = token;
-    this.deviceId = deviceId;
-    this._lanIps = Array.isArray(lanIps) ? lanIps.filter((s) => typeof s === "string" && s.length > 0) : [];
-    this.setSessionTunnelServers(sessionTunnels);
+    this.primeTarget(host, port, token, deviceId, lanIps, sessionTunnels);
     this.activeRelayUrl = null;
     this.activeRelayPassword = null;
     this._reconnectStopped = false;
@@ -2056,6 +2122,101 @@ export class QuicClient {
     } catch {
       return [];
     }
+  }
+
+  async runnerAuthStatus(target?: string): Promise<RunnerAuthStatusRow[]> {
+    if (!this.isConnected && !this.hasConnectionInfo) return [];
+    try {
+      const base = target
+        ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/status`
+        : `${this.baseUrl}/runner-auth/status`;
+      const res = await fetch(base, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json().catch(() => ({}));
+      return Array.isArray(data?.runners) ? data.runners : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async runnerAuthSet(
+    params: RunnerAuthSetParams,
+    target?: string,
+  ): Promise<{ ok: boolean; saved: string[]; runners: RunnerAuthStatusRow[]; error?: string }> {
+    this.assertConnected();
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/set`
+      : `${this.baseUrl}/runner-auth/set`;
+    const res = await fetch(base, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        runner: params.runner,
+        openai_api_key: params.openaiApiKey,
+        anthropic_api_key: params.anthropicApiKey,
+        anthropic_auth_token: params.anthropicAuthToken,
+        claude_code_oauth_token: params.claudeCodeOauthToken,
+        glm_api_key: params.glmApiKey,
+        zai_api_key: params.zaiApiKey,
+        notes: params.notes,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, saved: [], runners: [], error: data?.error || `HTTP ${res.status}` };
+    }
+    return {
+      ok: true,
+      saved: Array.isArray(data?.saved) ? data.saved : [],
+      runners: Array.isArray(data?.runners) ? data.runners : [],
+    };
+  }
+
+  async machineOnboardingStatus(target?: string): Promise<MachineOnboardingProviderStatus[]> {
+    if (!this.isConnected && !this.hasConnectionInfo) return [];
+    try {
+      const base = target
+        ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/machine/onboarding/status`
+        : `${this.baseUrl}/machine/onboarding/status`;
+      const res = await fetch(base, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json().catch(() => ({}));
+      return Array.isArray(data?.providers) ? data.providers : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async machineOnboardingApply(
+    params: MachineOnboardingApplyParams,
+    target?: string,
+  ): Promise<{ ok: boolean; applied: string[]; providers: MachineOnboardingProviderStatus[]; error?: string }> {
+    this.assertConnected();
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/machine/onboarding/apply`
+      : `${this.baseUrl}/machine/onboarding/apply`;
+    const res = await fetch(base, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        openai_api_key: params.openaiApiKey,
+        github_token: params.githubToken,
+        gitlab_token: params.gitlabToken,
+        gitlab_host: params.gitlabHost,
+        apply_clone: params.applyClone,
+        apply_ci_token: params.applyCiToken,
+        notes: params.notes,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, applied: [], providers: [], error: data?.error || `HTTP ${res.status}` };
+    }
+    return {
+      ok: true,
+      applied: Array.isArray(data?.applied) ? data.applied : [],
+      providers: Array.isArray(data?.providers) ? data.providers : [],
+    };
   }
 
   async getToolchainSyncProfile(): Promise<EnvironmentProfile | null> {

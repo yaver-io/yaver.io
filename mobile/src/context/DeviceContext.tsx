@@ -169,10 +169,22 @@ export interface Device {
   accessScope?: "owner" | "shared-scoped" | "shared-legacy";
   /** host scheduling / priority hint for shared usage */
   priorityMode?: string;
+  /** host-advertised tunnel hint for this one shared device */
+  tunnelUrl?: string;
   /** guest may use host-managed credentials without seeing raw secret */
   useHostApiKeys?: boolean;
   /** guest may bring their own credentials on top of host infra */
   allowGuestProvidedApiKeys?: boolean;
+  /** device is shared to one or more guests */
+  sharedWithGuests?: boolean;
+  /** share grants are not project-scoped */
+  sharesAllProjects?: boolean;
+  /** explicitly shared project scopes when narrowed */
+  sharedProjects?: string[];
+  /** share grants are not runner-scoped */
+  sharesAllRunners?: boolean;
+  /** explicitly shared runners when narrowed */
+  sharedRunners?: string[];
   /** whether this owned device is on its own dedicated backend session */
   sessionBinding?: "dedicated" | "legacy-shared";
   /** broad role of the node in Yaver scheduling */
@@ -649,9 +661,15 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             hostName: d.hostName,
             hostEmail: d.hostEmail,
             accessScope: d.accessScope,
+            tunnelUrl: d.tunnelUrl,
             priorityMode: d.priorityMode,
             useHostApiKeys: d.useHostApiKeys,
             allowGuestProvidedApiKeys: d.allowGuestProvidedApiKeys,
+            sharedWithGuests: d.sharedWithGuests,
+            sharesAllProjects: d.sharesAllProjects,
+            sharedProjects: Array.isArray(d.sharedProjects) ? d.sharedProjects : undefined,
+            sharesAllRunners: d.sharesAllRunners,
+            sharedRunners: Array.isArray(d.sharedRunners) ? d.sharedRunners : undefined,
             sessionBinding: d.sessionBinding,
             deviceClass: d.deviceClass,
             edgeProfile: d.edgeProfile,
@@ -721,7 +739,16 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         // agent has reported in heartbeat (Wi-Fi LAN, Tailscale 100.x,
         // Ethernet) so quicClient can race them in parallel against the
         // beacon and Convex-stored primary host.
-        const connectPromise = quicClient.connect(device.host, device.port, token, device.id, device.lanIps);
+        const connectPromise = quicClient.connect(
+          device.host,
+          device.port,
+          token,
+          device.id,
+          device.lanIps,
+          device.tunnelUrl
+            ? [{ id: `shared-${device.id}`, url: device.tunnelUrl, label: `${device.name} shared tunnel`, priority: 0 }]
+            : undefined,
+        );
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("Could not connect in 20s")), 20000)
         );
@@ -1374,8 +1401,23 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       return { ok: false, error: "Not signed in" };
     }
 
+    quicClient.primeTarget(
+      device.host,
+      device.port,
+      token,
+      device.id,
+      device.lanIps,
+      device.tunnelUrl
+        ? [{ id: `shared-${device.id}`, url: device.tunnelUrl, label: `${device.name} shared tunnel`, priority: 0 }]
+        : undefined,
+    );
+
     if (!activeDevice || activeDevice.id !== device.id) {
-      await selectDevice(device);
+      try {
+        await selectDevice(device);
+      } catch (err) {
+        appLog("warn", `Initial connect before auth recovery failed for ${device.name}: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     let recovery = await quicClient.recoverAgent(undefined, "pair");
@@ -1422,10 +1464,11 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     }
     quicClient.agentAuthExpired = false;
     setAgentAuthExpired(false);
+    clearDeviceUnreachable(device.id);
     appLog("info", `Recovered expired agent session for ${device.name} from mobile`);
     setTimeout(() => refreshDevices(), 2000);
     return { ...recovery, ok: true };
-  }, [token, user?.id, activeDevice, selectDevice, refreshDevices]);
+  }, [token, user?.id, activeDevice, selectDevice, refreshDevices, clearDeviceUnreachable]);
 
   // Auth-expired recovery: the agent is still reachable, but its own
   // Convex session is stale. Use the PHONE'S valid bearer token to
