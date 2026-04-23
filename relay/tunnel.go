@@ -163,8 +163,14 @@ func (t *TunnelClient) register(ctx context.Context, conn quic.Connection) error
 func (t *TunnelClient) handleRequest(stream quic.Stream) {
 	defer stream.Close()
 
-	// Read tunnel request
-	data, err := io.ReadAll(io.LimitReader(stream, 10<<20)) // 10MB
+	// Read tunnel request. Capped at 100MB (was 10MB) so large
+	// task prompts, file uploads, and multi-MB JSON payloads aren't
+	// truncated when they arrive over relay. Responses for /dev/*
+	// already allow up to 200MB via maxRespSize below. The request
+	// is fully buffered in memory before being handed to the local
+	// agent, so a higher cap trades memory for correctness — the
+	// agent still enforces per-path auth afterwards.
+	data, err := io.ReadAll(io.LimitReader(stream, 100<<20)) // 100MB
 	if err != nil {
 		log.Printf("[TUNNEL] read request: %v", err)
 		return

@@ -57,7 +57,8 @@ type Config struct {
 	BootstrapSecretHash string   `json:"bootstrap_secret_hash,omitempty"`
 	HAURL               string   `json:"ha_url,omitempty"`
 	HAToken             string   `json:"ha_token,omitempty"`
-	AllowedIPs          []string `json:"allowed_ips,omitempty"`        // IP allowlist CIDRs
+	AllowedIPs          []string `json:"allowed_ips,omitempty"`        // IP allowlist CIDRs (applies to owner + guest; guests can also use AllowedGuestIPs)
+	AllowedGuestIPs     []string `json:"allowed_guest_ips,omitempty"`  // Extra CIDRs admitted ONLY when the request carries a valid guest/SDK bearer (e.g. relay/Tailscale IPs that should not permit anonymous access)
 	TLSFingerprint      string   `json:"tls_fingerprint,omitempty"`    // SHA256 of TLS cert
 	TLSPort             int      `json:"tls_port,omitempty"`           // HTTPS port (default 18443)
 	IOSInstallMethod    string   `json:"ios_install_method,omitempty"` // "auto" (default), "native", "bundle"

@@ -39,6 +39,27 @@ function relayOnboardingKey(userId?: string): string { return userKey(userId, "r
 function relaySyncKey(userId?: string): string { return userKey(userId, "relay_sync_enabled"); }
 function debugLogsKey(): string { return "@yaver/debug_logs_enabled"; } // global, not per-user
 
+// Build the tunnel-server list passed to quicClient.connect for a given
+// device. Merges two sources: (a) `device.tunnelUrl` — the host-wide
+// single tunnel URL from their userSettings, used when a host shares
+// only one machine; (b) `device.publicEndpoints` — the agent-advertised
+// Cloudflare tunnel URLs from /devices/heartbeat publicEndpoints,
+// per-device and authoritative. Deduplicated, stable order, host-wide
+// tunnel last so per-device endpoints race first.
+function tunnelServersForDevice(device: Pick<Device, "id" | "name" | "tunnelUrl" | "publicEndpoints">): TunnelServer[] | undefined {
+  const seen = new Set<string>();
+  const out: TunnelServer[] = [];
+  const add = (url: string, priority: number, label: string) => {
+    const trimmed = url.trim().replace(/\/+$/, "");
+    if (!trimmed || seen.has(trimmed)) return;
+    seen.add(trimmed);
+    out.push({ id: `tunnel-${device.id}-${out.length}`, url: trimmed, label, priority });
+  };
+  (device.publicEndpoints ?? []).forEach((u, i) => add(u, i, `${device.name} endpoint #${i + 1}`));
+  if (device.tunnelUrl) add(device.tunnelUrl, out.length, `${device.name} shared tunnel`);
+  return out.length > 0 ? out : undefined;
+}
+
 // Legacy keys for migration
 export const CUSTOM_RELAYS_KEY = "@yaver/custom_relays";
 export const CUSTOM_TUNNELS_KEY = "@yaver/custom_tunnels";
@@ -171,6 +192,8 @@ export interface Device {
   priorityMode?: string;
   /** host-advertised tunnel hint for this one shared device */
   tunnelUrl?: string;
+  /** agent-advertised Cloudflare / public tunnel URLs (from /devices/heartbeat publicEndpoints). Used as a connect fallback between direct LAN and relay. */
+  publicEndpoints?: string[];
   /** guest may use host-managed credentials without seeing raw secret */
   useHostApiKeys?: boolean;
   /** guest may bring their own credentials on top of host infra */
@@ -662,6 +685,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             hostEmail: d.hostEmail,
             accessScope: d.accessScope,
             tunnelUrl: d.tunnelUrl,
+            publicEndpoints: Array.isArray(d.publicEndpoints) ? d.publicEndpoints : undefined,
             priorityMode: d.priorityMode,
             useHostApiKeys: d.useHostApiKeys,
             allowGuestProvidedApiKeys: d.allowGuestProvidedApiKeys,
@@ -745,9 +769,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           token,
           device.id,
           device.lanIps,
-          device.tunnelUrl
-            ? [{ id: `shared-${device.id}`, url: device.tunnelUrl, label: `${device.name} shared tunnel`, priority: 0 }]
-            : undefined,
+          tunnelServersForDevice(device),
         );
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("Could not connect in 20s")), 20000)
@@ -1419,9 +1441,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       token,
       device.id,
       device.lanIps,
-      device.tunnelUrl
-        ? [{ id: `shared-${device.id}`, url: device.tunnelUrl, label: `${device.name} shared tunnel`, priority: 0 }]
-        : undefined,
+      tunnelServersForDevice(device),
     );
 
     if (!activeDevice || activeDevice.id !== device.id) {

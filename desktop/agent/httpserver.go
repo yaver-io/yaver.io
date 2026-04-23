@@ -101,6 +101,12 @@ type HTTPServer struct {
 
 	// IP allowlist — if non-empty, only these CIDRs can access the agent
 	allowedCIDRs []*net.IPNet
+	// Extra CIDRs that are only admitted when the request carries a
+	// valid bearer token (owner, guest, or SDK). Used to open the
+	// network-layer gate for authenticated traffic from relay /
+	// Tailscale / Cloudflare while keeping anonymous traffic
+	// restricted to the main allowedCIDRs set.
+	allowedGuestCIDRs []*net.IPNet
 
 	// Track seen IPs per token prefix for new-device notifications
 	seenIPs sync.Map // "tokenPrefix_IP" -> true
@@ -1154,18 +1160,62 @@ func parseCIDRs(strs []string) []*net.IPNet {
 
 // ipAllowlist rejects requests from IPs not in the allowlist.
 // If the allowlist is empty, all IPs are allowed.
+//
+// Two tiers:
+//   - allowedCIDRs is the baseline and applies to every request
+//     (including anonymous probes to /health).
+//   - allowedGuestCIDRs, when set, widens the gate but ONLY for
+//     requests that carry a bearer token. The token itself is
+//     validated later by auth()/authSDK() — here we just verify a
+//     bearer is present so an unauthenticated scan can't walk the
+//     agent. This lets a host keep "owner traffic on LAN only"
+//     (small allowedCIDRs) while still permitting guests who arrive
+//     over relay, Tailscale, or Cloudflare tunnel (broad
+//     allowedGuestCIDRs, typically 0.0.0.0/0). Loopback is always
+//     admitted so relay/cloudflared sidecars terminating on 127.0.0.1
+//     never trip the gate.
 func (s *HTTPServer) ipAllowlist(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if len(s.allowedCIDRs) > 0 {
-			ip := clientIP(r)
-			if !ipMatchesCIDRs(ip, s.allowedCIDRs) {
-				log.Printf("[IP] %s %s — blocked IP %s (not in allowlist)", r.Method, r.URL.Path, ip)
-				jsonError(w, http.StatusForbidden, "IP not allowed")
+		if len(s.allowedCIDRs) == 0 && len(s.allowedGuestCIDRs) == 0 {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ip := clientIP(r)
+		// Loopback always admitted — relay tunnel client and cloudflared
+		// both deliver proxied requests over 127.0.0.1/::1, and blocking
+		// those would defeat the point of having tunnels.
+		if ip == "127.0.0.1" || ip == "::1" || ip == "localhost" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if len(s.allowedCIDRs) > 0 && ipMatchesCIDRs(ip, s.allowedCIDRs) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if len(s.allowedGuestCIDRs) > 0 && ipMatchesCIDRs(ip, s.allowedGuestCIDRs) {
+			// Widened gate applies only to bearer-carrying requests.
+			// The bearer is NOT validated here — auth()/authSDK() does
+			// that. We just need proof the caller is claiming an
+			// identity, which turns this from "public ingress" into
+			// "authenticated ingress."
+			if hasBearer(r) {
+				next.ServeHTTP(w, r)
 				return
 			}
 		}
-		next.ServeHTTP(w, r)
+		log.Printf("[IP] %s %s — blocked IP %s (not in allowlist)", r.Method, r.URL.Path, ip)
+		jsonError(w, http.StatusForbidden, "IP not allowed")
 	})
+}
+
+// hasBearer reports whether the request carries an Authorization
+// header with a Bearer scheme. Does not validate the token.
+func hasBearer(r *http.Request) bool {
+	h := r.Header.Get("Authorization")
+	if h == "" {
+		return false
+	}
+	return strings.HasPrefix(h, "Bearer ") || strings.HasPrefix(h, "bearer ")
 }
 
 // auth is for full-access endpoints (tasks, exec, agent commands, vault, etc.).

@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.19"
+const version = "1.99.20"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -1626,7 +1626,8 @@ func runServe(args []string) {
 	multiUser := fs.Bool("multi-user", false, "Enable multi-user mode (shared machines)")
 	teamID := fs.String("team", "", "Restrict access to team members (requires --multi-user)")
 	maxUsers := fs.Int("max-users", 0, "Max concurrent users in multi-user mode (0 = unlimited)")
-	allowIPs := fs.String("allow-ips", "", "IP allowlist: comma-separated CIDRs (e.g. 192.168.1.0/24)")
+	allowIPs := fs.String("allow-ips", "", "IP allowlist: comma-separated CIDRs (e.g. 192.168.1.0/24). Applies to every request, including anonymous probes.")
+	allowGuestIPs := fs.String("allow-guest-ips", "", "Extra CIDRs admitted only when the request carries a bearer token. Use when --allow-ips is LAN-scoped but guests arrive over relay/Tailscale/Cloudflare (e.g. --allow-guest-ips=0.0.0.0/0,::/0).")
 	tlsPort := fs.Int("tls-port", 18443, "HTTPS server port (0 to disable)")
 	noTLS := fs.Bool("no-tls", false, "Disable HTTPS server")
 	installSystemd := fs.Bool("install-systemd", false, "Install and enable systemd user service, then exit")
@@ -1778,6 +1779,9 @@ func runServe(args []string) {
 		}
 		if *allowIPs != "" {
 			childArgs = append(childArgs, fmt.Sprintf("--allow-ips=%s", *allowIPs))
+		}
+		if *allowGuestIPs != "" {
+			childArgs = append(childArgs, fmt.Sprintf("--allow-guest-ips=%s", *allowGuestIPs))
 		}
 		if *noTLS {
 			childArgs = append(childArgs, "--no-tls")
@@ -2313,6 +2317,17 @@ func runServe(args []string) {
 	}
 	if allowIPsList != "" {
 		httpServer.allowedCIDRs = parseCIDRs(strings.Split(allowIPsList, ","))
+	}
+	// Guest IP allowlist — widens the gate for bearer-carrying
+	// requests only. Typical use: --allow-ips="192.168.0.0/16"
+	// (owner on LAN) + --allow-guest-ips="0.0.0.0/0,::/0" (guests
+	// from anywhere, authenticated by token).
+	allowGuestIPsList := *allowGuestIPs
+	if allowGuestIPsList == "" && len(cfg.AllowedGuestIPs) > 0 {
+		allowGuestIPsList = strings.Join(cfg.AllowedGuestIPs, ",")
+	}
+	if allowGuestIPsList != "" {
+		httpServer.allowedGuestCIDRs = parseCIDRs(strings.Split(allowGuestIPsList, ","))
 	}
 
 	// TLS setup
