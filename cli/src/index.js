@@ -7,6 +7,7 @@ const { devices } = require('./commands/devices');
 const { modules } = require('./commands/modules');
 const { reset } = require('./commands/reset');
 const { status } = require('./commands/status');
+const { feedback } = require('./commands/feedback');
 
 const PUSH_HELP = `
 yaver push — Push existing React Native projects to the Yaver mobile host
@@ -47,6 +48,13 @@ Push-to-device commands:
   yaver push devices                Scan LAN for Yaver mobile hosts
   yaver push reset                  Clear pushed bundle on the selected device
   yaver push status                 Show project + device push status
+
+Feedback SDK commands (web and mobile SDKs are separate packages):
+  yaver feedback init               Install the right feedback SDK for this project
+  yaver feedback init --platform web          Force web (yaver-feedback-web)
+  yaver feedback init --platform react-native Force RN (yaver-feedback-react-native)
+  yaver feedback init --platform expo         Expo (yaver-feedback-react-native)
+  yaver feedback init --platform flutter      Flutter (yaver_feedback)
 
 Compatibility:
   yaver-push <command>              Legacy alias for the push subcommands above
@@ -131,6 +139,14 @@ async function runUnified(args) {
 
   if (DIRECT_PUSH_ALIASES.has(command)) {
     await runPushCli([DIRECT_PUSH_ALIASES.get(command), ...args.slice(1)]);
+    return;
+  }
+
+  if (command === 'feedback') {
+    // `feedback init` is handled locally in JS so web devs who never install
+    // the Go binary can still wire up the SDK. Other subcommands (list, show,
+    // fix, delete) fall through to the Go agent inside feedback() itself.
+    await feedback(args.slice(1));
     return;
   }
 

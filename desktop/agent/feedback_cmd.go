@@ -14,7 +14,7 @@ func runFeedback(args []string) {
 	}
 
 	switch args[0] {
-	case "setup":
+	case "init", "setup":
 		runFeedbackSetup(args[1:])
 	case "list", "ls":
 		runFeedbackList()
@@ -45,24 +45,31 @@ func runFeedback(args []string) {
 
 func printFeedbackUsage() {
 	fmt.Print(`Usage:
-  yaver feedback setup [--dir <path>] [--platform <name>]
-  yaver feedback list              List feedback reports from device testing
-  yaver feedback show <id>         Show feedback details + transcript
-  yaver feedback fix <id>          Create AI task from feedback (auto-generates prompt)
-  yaver feedback delete <id>       Delete a feedback report
+  yaver feedback init [--dir <path>] [--platform <name>]   Install the Feedback SDK into this project
+  yaver feedback setup                                     Alias of init (kept for back-compat)
+  yaver feedback list                                      List feedback reports from device testing
+  yaver feedback show <id>                                 Show feedback details + transcript
+  yaver feedback fix <id>                                  Create AI task from feedback (auto-generates prompt)
+  yaver feedback delete <id>                               Delete a feedback report
 
 Setup flow:
-  Install Yaver once: npm install -g yaver-cli
-  Then inject the SDK into a project with:
-    yaver feedback setup
-    yaver sdk add feedback
+  Install Yaver once with either install point:
+    npm install -g yaver-cli            (Node-first; works without the Go binary)
+    brew install yaver                  (or any other platform install)
+  Then, inside a project:
+    yaver feedback init                 Autodetect project, install the right SDK
+    yaver feedback init --platform web  Force a specific platform
+
+Platform → package (web and mobile are deliberately separate — each is
+optimized for its runtime; do not cross-install):
+  web          yaver-feedback-web              (browsers)
+  expo / rn    yaver-feedback-react-native     (React Native, Expo)
+  flutter      yaver_feedback                  (pub.dev)
+  unity        io.yaver.feedback.unity         (UPM)
 
 Feedback is sent from:
   A) Yaver mobile app — record screen + voice while testing your build
-  B) In-app SDK — shake-to-report embedded in your app (dev mode only)
-     npm: yaver-feedback-react-native
-     pub.dev: yaver_feedback
-     web: @yaver/feedback-web
+  B) In-app SDK — trigger embedded in your app (dev mode only)
 
 The AI agent receives screen recordings, voice transcripts, screenshots,
 and a timeline — then fixes the bugs and rebuilds.
