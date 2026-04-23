@@ -3732,4 +3732,48 @@ http.route({
   }),
 });
 
+// External cron runner — Hetzner systemd timers POST { name } here instead
+// of using Convex built-in crons. Bearer auth via CRON_TRIGGER_SECRET env
+// (verified through internal.cronSecret.verify for httpAction-runtime parity).
+const runCron = httpAction(async (ctx, req) => {
+  const authHeader = req.headers.get("authorization") ?? "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  const check = await ctx.runAction(internal.cronSecret.verify, { token });
+  if (!check.secretConfigured) {
+    return new Response("CRON_TRIGGER_SECRET not set", { status: 500 });
+  }
+  if (!check.ok) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+  let body: { name?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return new Response("Bad JSON", { status: 400 });
+  }
+  const name = body.name;
+  switch (name) {
+    case "pruneAuthLogs":
+      await ctx.scheduler.runAfter(0, internal.cleanup.pruneAuthLogs, {});
+      break;
+    case "pruneMobileStreamLogs":
+      await ctx.scheduler.runAfter(0, internal.cleanup.pruneMobileStreamLogs, {});
+      break;
+    case "pruneDeveloperLogs":
+      await ctx.scheduler.runAfter(0, internal.cleanup.pruneDeveloperLogs, {});
+      break;
+    case "pruneDeviceEvents":
+      await ctx.scheduler.runAfter(0, internal.cleanup.pruneDeviceEvents, {});
+      break;
+    default:
+      return new Response(`Unknown cron: ${name}`, { status: 404 });
+  }
+  return new Response(JSON.stringify({ ok: true, scheduled: name }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+});
+
+http.route({ path: "/crons/run", method: "POST", handler: runCron });
+
 export default http;
