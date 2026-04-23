@@ -274,8 +274,16 @@ export default function DevelopersPage() {
                 desc: "Prefer Tailscale hostnames over raw LAN IPs for daily use, especially once the MacBook leaves the local network.",
               },
               {
+                title: "Continue, not the native picker",
+                desc: "For Antigravity on macOS, use Continue inside the editor for remote Ollama models. The built-in Antigravity cloud model picker is a different path.",
+              },
+              {
                 title: "Model sizing",
                 desc: "For a 32 GB Windows host, qwen2.5-coder:14b is the conservative default. It is a better trade than oversizing the model and thrashing memory.",
+              },
+              {
+                title: "Config schema matters",
+                desc: "On the validated setup, Continue required a top-level version field in config.yaml. Without it, the model picker stayed empty even though the Tailscale endpoint was reachable.",
               },
             ].map((item) => (
               <div

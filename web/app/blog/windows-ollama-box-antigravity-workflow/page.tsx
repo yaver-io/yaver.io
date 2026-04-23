@@ -71,11 +71,25 @@ export default function WindowsOllamaBoxAntigravityWorkflowPage() {
             A Clean Antigravity Workflow with a Windows Ollama Box
           </h1>
           <p className="text-surface-400">
-            The right way to use a stronger Windows machine for local coding models is to make it a
-            boring, stable LLM server and keep the MacBook as the development surface. The editor
-            should stay light. The box should stay awake. Tailscale should remove network drama.
+            The right way to use a stronger Windows machine for local coding models is to make it
+            a boring, stable LLM server and keep the MacBook as the development surface. The
+            editor should stay light. The box should stay awake. Tailscale should remove network
+            drama. And the editor should use Continue for Ollama, not Antigravity&apos;s native model
+            picker.
           </p>
         </header>
+
+        <section>
+          <h2 className="mb-3 text-xl font-semibold text-surface-100">The mistake people make first</h2>
+          <p>
+            The native Antigravity model selector looks like the obvious place to wire in a remote
+            Ollama box. It is not. That dropdown is for Antigravity&apos;s own cloud-backed models.
+          </p>
+          <p className="mt-4">
+            The working setup is Antigravity as the editor shell and Continue inside it as the
+            model client. That is where the Windows-hosted Qwen models show up.
+          </p>
+        </section>
 
         <section>
           <h2 className="mb-3 text-xl font-semibold text-surface-100">The split that actually works</h2>
@@ -96,6 +110,35 @@ Windows box
         </section>
 
         <section>
+          <h2 className="mb-3 text-xl font-semibold text-surface-100">The two remote variants we actually used</h2>
+          <p>
+            There are two practical remote variants for the MacBook.
+          </p>
+          <ul className="mt-4 list-disc space-y-2 pl-6 text-surface-400">
+            <li>
+              Tailscale default:
+              <code className="mx-1 rounded bg-surface-900 px-1.5 py-0.5 text-xs text-surface-200">
+                http://carrotbytepc.tailc32088.ts.net:11434
+              </code>
+            </li>
+            <li>
+              LAN fallback:
+              <code className="mx-1 rounded bg-surface-900 px-1.5 py-0.5 text-xs text-surface-200">
+                http://192.168.1.104:11434
+              </code>
+            </li>
+          </ul>
+          <p className="mt-4">
+            In the validated setup, Tailscale was the version that actually answered from the Mac.
+            The LAN path remained a fallback because raw access to
+            <code className="mx-1 rounded bg-surface-900 px-1.5 py-0.5 text-xs text-surface-200">
+              192.168.1.104:11434
+            </code>
+            still timed out.
+          </p>
+        </section>
+
+        <section>
           <h2 className="mb-3 text-xl font-semibold text-surface-100">Make the Windows box operational first</h2>
           <p>
             The machine is only useful if it behaves like infrastructure. That means OpenSSH
@@ -113,6 +156,10 @@ Windows box
               /v1
             </code>
             .
+          </p>
+          <p className="mt-4">
+            In the validated setup, that Tailscale endpoint returned model data from the MacBook.
+            The raw LAN endpoint still timed out, so Tailscale was the right default.
           </p>
         </section>
 
@@ -158,9 +205,121 @@ Windows box
           <ol className="mt-4 list-decimal space-y-2 pl-6 text-surface-400">
             <li>Use Continue inside Antigravity for in-editor chat, edit, and context-aware changes.</li>
             <li>Point Continue at the remote Ollama endpoint over Tailscale.</li>
+            <li>Make sure Continue&apos;s YAML includes the required top-level <code className="rounded bg-surface-900 px-1.5 py-0.5 text-xs text-surface-200">version</code> field.</li>
+            <li>Ignore Antigravity&apos;s internal localhost ports when reading logs unless the editor itself is crashing.</li>
             <li>Use OpenCode in Terminal for heavier agent loops or session-based coding.</li>
             <li>Keep a few named workflows instead of retyping model flags every time.</li>
           </ol>
+        </section>
+
+        <section>
+          <h2 className="mb-3 text-xl font-semibold text-surface-100">The config bug that made the setup look broken</h2>
+          <p>
+            In the verified setup, Continue initially showed no models even though the Windows
+            Ollama box was reachable over Tailscale. The actual failure was schema validation.
+          </p>
+          <p className="mt-4">
+            The active Continue build required:
+          </p>
+          <pre className="mt-4 overflow-x-auto rounded-lg bg-surface-900 p-4 text-xs text-surface-300">
+{`name: Windows Remote Ollama (Tailscale)
+version: "1.0.0"
+models:
+  - name: Qwen 14B Windows Tailscale
+    provider: ollama
+    model: qwen2.5-coder:14b
+    apiBase: http://carrotbytepc.tailc32088.ts.net:11434
+    roles: [chat, edit, apply]`}
+          </pre>
+          <p className="mt-4">
+            Without the top-level <code className="rounded bg-surface-900 px-1.5 py-0.5 text-xs text-surface-200">version</code>,
+            Continue rejected the file and surfaced an empty model picker. That was the real bug,
+            not the remote endpoint.
+          </p>
+        </section>
+
+        <section>
+          <h2 className="mb-3 text-xl font-semibold text-surface-100">The actual config files</h2>
+          <p>
+            The practical setup only became reliable when the config files matched the real tools
+            in use instead of a generic “OpenAI-compatible endpoint” idea.
+          </p>
+          <p className="mt-4">
+            That also meant using the correct file format for each tool. In this stack, Continue
+            used YAML and sometimes TypeScript, while OpenCode used JSON. Saving the Continue
+            config as TOML would not have worked.
+          </p>
+          <p className="mt-4">
+            For Continue inside Antigravity or Cursor on the Mac, the active file was YAML:
+          </p>
+          <pre className="mt-4 overflow-x-auto rounded-lg bg-surface-900 p-4 text-xs text-surface-300">
+{`~/.continue/config.yaml
+
+name: Windows Remote Ollama (Tailscale)
+version: "1.0.0"
+models:
+  - name: Qwen 14B Windows Tailscale
+    provider: ollama
+    model: qwen2.5-coder:14b
+    apiBase: http://carrotbytepc.tailc32088.ts.net:11434
+    roles:
+      - chat
+      - edit
+      - apply`}
+          </pre>
+          <p className="mt-4">
+            On that Mac, Continue also had a repo-style TypeScript config path present, so the same
+            models were injected there too:
+          </p>
+          <pre className="mt-4 overflow-x-auto rounded-lg bg-surface-900 p-4 text-xs text-surface-300">
+{`~/.continue/config.ts
+
+export function modifyConfig(config: Config): Config {
+  return {
+    ...config,
+    models: [
+      {
+        name: "Qwen 14B Windows Tailscale",
+        provider: "ollama",
+        model: "qwen2.5-coder:14b",
+        apiBase: "http://carrotbytepc.tailc32088.ts.net:11434",
+        roles: ["chat", "edit", "apply"],
+      },
+    ],
+  };
+}`}
+          </pre>
+          <p className="mt-4">
+            For OpenCode on the Mac, the endpoint lived in JSON:
+          </p>
+          <pre className="mt-4 overflow-x-auto rounded-lg bg-surface-900 p-4 text-xs text-surface-300">
+{`~/.config/opencode/opencode.json
+
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama",
+      "options": {
+        "baseURL": "http://carrotbytepc.tailc32088.ts.net:11434/v1"
+      },
+      "models": {
+        "qwen2.5-coder:14b": {
+          "name": "qwen2.5-coder:14b"
+        }
+      }
+    }
+  }
+}`}
+          </pre>
+          <p className="mt-4">
+            And on the Windows machine itself, the local version stayed pointed at
+            <code className="mx-1 rounded bg-surface-900 px-1.5 py-0.5 text-xs text-surface-200">
+              http://127.0.0.1:11434
+            </code>
+            because that box was both the editor host and the Ollama host.
+          </p>
         </section>
 
         <section>
@@ -198,8 +357,13 @@ Deep coding:
             <code className="rounded bg-surface-900 px-1.5 py-0.5 text-xs text-surface-200">
               opencode run
             </code>{" "}
-            invocation from the MacBook using the remote model. Once that works, the rest is just
-            quality-of-life around the same endpoint.
+            invocation from the MacBook using the remote model. In this setup, the direct proof was
+            a successful
+            <code className="mx-1 rounded bg-surface-900 px-1.5 py-0.5 text-xs text-surface-200">
+              curl http://carrotbytepc.tailc32088.ts.net:11434/api/tags
+            </code>
+            from the MacBook. Once that works, the rest is just quality-of-life around the same
+            endpoint.
           </p>
         </section>
 
