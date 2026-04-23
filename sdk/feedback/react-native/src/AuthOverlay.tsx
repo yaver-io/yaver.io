@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { DeviceEventEmitter, Modal } from 'react-native';
 import { YaverLoginScreen } from './LoginScreen';
 import { YaverMachinePickerScreen } from './MachinePickerScreen';
@@ -26,6 +26,35 @@ export const AuthOverlay: React.FC = () => {
   const [pickerVisible, setPickerVisible] = useState(false);
   const [token, setToken] = useState<string | null>(null);
   const [pendingInviteCode, setPendingInviteCode] = useState<string | null>(null);
+  const activeOverlayRef = useRef<'none' | 'login' | 'guest' | 'picker'>('none');
+
+  const openLogin = useCallback(() => {
+    activeOverlayRef.current = 'login';
+    setGuestVisible(false);
+    setPickerVisible(false);
+    setLoginVisible(true);
+  }, []);
+
+  const openGuest = useCallback(() => {
+    activeOverlayRef.current = 'guest';
+    setLoginVisible(false);
+    setPickerVisible(false);
+    setGuestVisible(true);
+  }, []);
+
+  const openPicker = useCallback(() => {
+    activeOverlayRef.current = 'picker';
+    setLoginVisible(false);
+    setGuestVisible(false);
+    setPickerVisible(true);
+  }, []);
+
+  const closeAll = useCallback(() => {
+    activeOverlayRef.current = 'none';
+    setLoginVisible(false);
+    setGuestVisible(false);
+    setPickerVisible(false);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -36,14 +65,18 @@ export const AuthOverlay: React.FC = () => {
 
     const loginSub = DeviceEventEmitter.addListener(
       'yaverFeedback:startLogin',
-      () => setLoginVisible(true),
+      () => {
+        if (activeOverlayRef.current !== 'none') return;
+        openLogin();
+      },
     );
     const pickerSub = DeviceEventEmitter.addListener(
       'yaverFeedback:startMachinePicker',
       async () => {
+        if (activeOverlayRef.current !== 'none') return;
         const cached = await getToken();
         if (cached) setToken(cached);
-        if (cached) setPickerVisible(true);
+        if (cached) openPicker();
       },
     );
     return () => {
@@ -51,24 +84,23 @@ export const AuthOverlay: React.FC = () => {
       loginSub.remove();
       pickerSub.remove();
     };
-  }, []);
+  }, [openLogin, openPicker]);
 
   const continueAfterAuth = async (newToken: string, inviteCode?: string) => {
     setToken(newToken);
     await YaverFeedback.setAuthToken(newToken);
     const devices = await listReachableDevices(newToken).catch(() => ({ owned: [], shared: [] }));
-    setLoginVisible(false);
     const cleanedInviteCode = (inviteCode ?? '').trim().toUpperCase();
     if (cleanedInviteCode) {
       setPendingInviteCode(cleanedInviteCode);
-      setGuestVisible(true);
+      openGuest();
       return;
     }
     if (devices.owned.length === 0 && devices.shared.length === 0) {
-      setGuestVisible(true);
+      openGuest();
       return;
     }
-    setPickerVisible(true);
+    openPicker();
   };
 
   const handleLoggedIn = async (newToken: string, opts?: { inviteCode?: string }) => {
@@ -77,8 +109,7 @@ export const AuthOverlay: React.FC = () => {
 
   const handleDevicePicked = async (device: RemoteDevice) => {
     await YaverFeedback.setPreferredDevice(device.deviceId);
-    setPickerVisible(false);
-    setGuestVisible(false);
+    closeAll();
     // Continue straight into the feedback flow the user originally triggered.
     DeviceEventEmitter.emit('yaverFeedback:startReport');
   };
@@ -89,11 +120,11 @@ export const AuthOverlay: React.FC = () => {
         visible={loginVisible}
         animationType="slide"
         presentationStyle="fullScreen"
-        onRequestClose={() => setLoginVisible(false)}
+        onRequestClose={closeAll}
       >
         <YaverLoginScreen
           onLoggedIn={handleLoggedIn}
-          onCancel={() => setLoginVisible(false)}
+          onCancel={closeAll}
           initialInviteCode={pendingInviteCode ?? YaverFeedback.getConfig()?.guestInviteCode}
         />
       </Modal>
@@ -102,14 +133,14 @@ export const AuthOverlay: React.FC = () => {
         visible={pickerVisible && !!token}
         animationType="slide"
         presentationStyle="fullScreen"
-        onRequestClose={() => setPickerVisible(false)}
+        onRequestClose={closeAll}
       >
         {token && (
           <YaverMachinePickerScreen
             token={token}
             currentDeviceId={YaverFeedback.getConfig()?.preferredDeviceId}
             onPick={handleDevicePicked}
-            onCancel={() => setPickerVisible(false)}
+            onCancel={closeAll}
           />
         )}
       </Modal>
@@ -118,21 +149,19 @@ export const AuthOverlay: React.FC = () => {
         visible={guestVisible && !!token}
         animationType="slide"
         presentationStyle="fullScreen"
-        onRequestClose={() => setGuestVisible(false)}
+        onRequestClose={closeAll}
       >
         {token && (
           <YaverGuestOnboardingScreen
             token={token}
             initialInviteCode={pendingInviteCode ?? YaverFeedback.getConfig()?.guestInviteCode}
             onContinue={() => {
-              setGuestVisible(false);
               setPendingInviteCode(null);
-              setPickerVisible(true);
+              openPicker();
             }}
             onCancel={() => {
-              setGuestVisible(false);
               setPendingInviteCode(null);
-              setPickerVisible(true);
+              openPicker();
             }}
           />
         )}

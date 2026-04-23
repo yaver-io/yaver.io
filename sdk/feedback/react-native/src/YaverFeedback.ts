@@ -51,6 +51,7 @@ let enabled = false;
 let p2pClient: P2PClient | null = null;
 let shakeDetector: ShakeDetector | null = null;
 let p2pAuthToken: string | null = null;
+let reportLaunchInFlight = false;
 
 /** Ring buffer of captured errors. */
 let errorBuffer: CapturedError[] = [];
@@ -450,47 +451,64 @@ export class YaverFeedback {
     if (!enabled) {
       return;
     }
-
-    // If the caller has autoLogin enabled and we have no session yet, show
-    // the in-SDK login flow instead of a failing discovery + warning spam.
-    if (!config.authToken) {
-      if (config.autoLogin !== false) {
-        await YaverFeedback.hydrateSession();
-      }
-      if (!config.authToken) {
-        YaverFeedback.showLogin();
-        return;
-      }
+    if (reportLaunchInFlight) {
+      return;
     }
 
-    // Auto-discover if no agent URL was provided
-    if (!config.agentUrl) {
-      try {
-        const result = await YaverDiscovery.discover({
-          convexUrl: config.convexUrl,
-          authToken: config.authToken,
-          preferredDeviceId: config.preferredDeviceId,
-        });
-        if (result) {
-          config.agentUrl = result.url;
-          await YaverFeedback.rebuildP2PClient(result.url);
-        } else if (config.autoLogin !== false && !config.preferredDeviceId) {
-          // No agent discovered and no device picked yet — prompt the user
-          // to pick one of their machines (handles the non-LAN case where
-          // relay discovery requires knowing which deviceId to target).
-          YaverFeedback.showMachinePicker();
-          return;
-        } else {
-          console.warn('[YaverFeedback] No agent found. Check that `yaver serve` is running on the selected machine.');
-        }
-      } catch (err) {
-        console.warn('[YaverFeedback] Auto-discovery failed:', err);
-      }
-    }
-
-    // Emit event that the FeedbackModal listens for
+    reportLaunchInFlight = true;
     const { DeviceEventEmitter } = require('react-native');
-    DeviceEventEmitter.emit('yaverFeedback:startReport');
+    DeviceEventEmitter.emit('yaverFeedback:reportLaunch', {
+      state: 'starting',
+      at: Date.now(),
+    });
+    try {
+
+      // If the caller has autoLogin enabled and we have no session yet, show
+      // the in-SDK login flow instead of a failing discovery + warning spam.
+      if (!config.authToken) {
+        if (config.autoLogin !== false) {
+          await YaverFeedback.hydrateSession();
+        }
+        if (!config.authToken) {
+          YaverFeedback.showLogin();
+          return;
+        }
+      }
+
+      // Auto-discover if no agent URL was provided
+      if (!config.agentUrl) {
+        try {
+          const result = await YaverDiscovery.discover({
+            convexUrl: config.convexUrl,
+            authToken: config.authToken,
+            preferredDeviceId: config.preferredDeviceId,
+          });
+          if (result) {
+            config.agentUrl = result.url;
+            await YaverFeedback.rebuildP2PClient(result.url);
+          } else if (config.autoLogin !== false && !config.preferredDeviceId) {
+            // No agent discovered and no device picked yet — prompt the user
+            // to pick one of their machines (handles the non-LAN case where
+            // relay discovery requires knowing which deviceId to target).
+            YaverFeedback.showMachinePicker();
+            return;
+          } else {
+            console.warn('[YaverFeedback] No agent found. Check that `yaver serve` is running on the selected machine.');
+          }
+        } catch (err) {
+          console.warn('[YaverFeedback] Auto-discovery failed:', err);
+        }
+      }
+
+      // Emit event that the FeedbackModal listens for
+      DeviceEventEmitter.emit('yaverFeedback:startReport');
+    } finally {
+      reportLaunchInFlight = false;
+      DeviceEventEmitter.emit('yaverFeedback:reportLaunch', {
+        state: 'settled',
+        at: Date.now(),
+      });
+    }
   }
 
   /** Returns true if the SDK has been initialized. */

@@ -133,6 +133,7 @@ export const QuickActionIcon: React.FC<QuickActionIconProps> = ({
   const [shakenThisSession, setShakenThisSession] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [hostSuppressed] = useState<boolean>(() => isRunningInsideYaverHost());
+  const [launching, setLaunching] = useState(false);
 
   // Load the persisted disable flag once on mount. Until it resolves we
   // render nothing — a one-frame flash of the icon before hiding would
@@ -194,6 +195,37 @@ export const QuickActionIcon: React.FC<QuickActionIconProps> = ({
     };
   }, []);
 
+  useEffect(() => {
+    const launchSub = DeviceEventEmitter.addListener(
+      'yaverFeedback:reportLaunch',
+      (event?: { state?: string }) => {
+        if (event?.state === 'starting') {
+          setLaunching(true);
+          return;
+        }
+        setLaunching(false);
+      },
+    );
+    const reportSub = DeviceEventEmitter.addListener(
+      'yaverFeedback:startReport',
+      () => setLaunching(false),
+    );
+    const loginSub = DeviceEventEmitter.addListener(
+      'yaverFeedback:startLogin',
+      () => setLaunching(false),
+    );
+    const pickerSub = DeviceEventEmitter.addListener(
+      'yaverFeedback:startMachinePicker',
+      () => setLaunching(false),
+    );
+    return () => {
+      launchSub.remove();
+      reportSub.remove();
+      loginSub.remove();
+      pickerSub.remove();
+    };
+  }, []);
+
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -231,9 +263,10 @@ export const QuickActionIcon: React.FC<QuickActionIconProps> = ({
   ).current;
 
   const openFeedback = useCallback(() => {
+    if (launching) return;
     setMenuOpen(false);
     void YaverFeedback.startReport();
-  }, []);
+  }, [launching]);
 
   const hideForever = useCallback(() => {
     setMenuOpen(false);
@@ -275,10 +308,12 @@ export const QuickActionIcon: React.FC<QuickActionIconProps> = ({
               didDrag.current = false;
               return;
             }
+            if (launching) return;
             openFeedback();
           }}
           onLongPress={() => {
             if (didDrag.current) return;
+            if (launching) return;
             setMenuOpen((m) => !m);
           }}
           delayLongPress={LONG_PRESS_MS}
@@ -294,7 +329,7 @@ export const QuickActionIcon: React.FC<QuickActionIconProps> = ({
               backgroundColor: presetColors?.backgroundColor ?? backgroundColor,
               borderColor: presetColors?.borderColor ?? borderColor,
               shadowColor: presetColors?.shadowColor ?? shadowColor,
-              opacity: pressed ? 0.85 : 1,
+              opacity: launching ? 0.62 : pressed ? 0.85 : 1,
             },
           ]}
         >
