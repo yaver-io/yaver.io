@@ -578,7 +578,7 @@ export default function DashboardPage() {
               { id: "devices",  label: "Devices",  icon: "💻" },
               { id: "git",      label: "Git",      icon: "⎇" },
               { id: "builds",   label: "Builds",   icon: "🛠️" },
-              { id: "preview",  label: "Preview",  icon: "📱" },
+              { id: "preview",  label: "Hot Reload", icon: "📱" },
               { id: "guests",   label: "Guests",   icon: "👥" },
               { id: "vault",    label: "Vault",    icon: "🔐" },
             ] as const).map((it) => (

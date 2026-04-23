@@ -11,14 +11,12 @@ interface PreviewTarget {
 type DeviceSkin = {
   id: string;
   label: string;
-  // Logical viewport dimensions (portrait).
   width: number;
   height: number;
   radius: number;
   bezel: number;
   notch?: { width: number; height: number };
   punchHole?: { size: number; offsetTop: number };
-  // Pure desktop / no-chrome fallback.
   plain?: boolean;
 };
 
@@ -33,8 +31,39 @@ const DEVICES: DeviceSkin[] = [
 
 const SKIN_STORAGE_KEY = "yaver_preview_skin";
 const ORIENTATION_STORAGE_KEY = "yaver_preview_orientation";
+const LOG_TAIL = 6;
 
 type Orientation = "portrait" | "landscape";
+
+type Project = {
+  name: string;
+  path: string;
+  framework?: string;
+  branch?: string;
+  tags?: string[];
+};
+
+function frameworkIcon(fw?: string): string {
+  const f = (fw || "").toLowerCase();
+  if (f.includes("expo")) return "📱";
+  if (f.includes("react-native") || f.includes("rn")) return "⚛";
+  if (f.includes("flutter")) return "🦆";
+  if (f.includes("next")) return "▲";
+  if (f.includes("vite")) return "⚡";
+  if (f === "react") return "⚛";
+  return "💻";
+}
+
+function likelyFramework(project: Project): string {
+  if (project.framework) return project.framework;
+  const tags = (project.tags || []).map((t) => t.toLowerCase());
+  if (tags.includes("expo")) return "expo";
+  if (tags.includes("react-native")) return "react-native";
+  if (tags.includes("flutter")) return "flutter";
+  if (tags.includes("next") || tags.includes("nextjs")) return "nextjs";
+  if (tags.includes("vite")) return "vite";
+  return "vite";
+}
 
 export default function PreviewPane({
   selectedPreviewTarget,
@@ -49,18 +78,23 @@ export default function PreviewPane({
     running: boolean;
     framework?: string;
     workDir?: string;
+    port?: number;
     targetDeviceName?: string;
   } | null>(null);
   const [workerSession, setWorkerSession] = useState<MobileWorkerPreviewSession | null>(null);
+  const [projects, setProjects] = useState<Project[] | null>(null);
   const [iframeKey, setIframeKey] = useState(0);
   const [skinId, setSkinId] = useState<string>("iphone-15");
   const [orientation, setOrientation] = useState<Orientation>("portrait");
   const [stageSize, setStageSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [shotPulse, setShotPulse] = useState(false);
+  const [logLines, setLogLines] = useState<string[]>([]);
+  const [showLogs, setShowLogs] = useState(true);
+  const [startingPath, setStartingPath] = useState<string | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
 
-  // Restore persisted skin/orientation.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const s = window.localStorage.getItem(SKIN_STORAGE_KEY);
@@ -79,23 +113,45 @@ export default function PreviewPane({
     window.localStorage.setItem(ORIENTATION_STORAGE_KEY, orientation);
   }, [orientation]);
 
+  // Poll dev server + worker-session status.
   useEffect(() => {
+    let alive = true;
     const poll = async () => {
       try {
         const [status, session] = await Promise.all([
           agentClient.getDevServerStatus(),
           agentClient.getMobileWorkerPreviewSession(),
         ]);
+        if (!alive) return;
         setDevStatus(status);
         setWorkerSession(session);
       } catch {}
     };
     poll();
     const interval = setInterval(poll, 3000);
-    return () => clearInterval(interval);
+    return () => {
+      alive = false;
+      clearInterval(interval);
+    };
   }, []);
 
-  // SSE for live reload from dev server.
+  // Fetch project list for the empty-state picker.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const rows = await agentClient.listProjects();
+        if (alive) setProjects(rows as Project[]);
+      } catch {
+        if (alive) setProjects([]);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [devStatus?.running]);
+
+  // SSE: reload on ready/reload events, also capture `line` events for the tail.
   useEffect(() => {
     if (!devStatus?.running) return;
     const previewUrl = agentClient.devPreviewUrl;
@@ -113,18 +169,28 @@ export default function PreviewPane({
         const reader = res.body?.getReader();
         if (!reader) return;
         const decoder = new TextDecoder();
+        let buffer = "";
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          for (const line of decoder.decode(value).split("\n")) {
-            if (line.startsWith("data: ")) {
-              try {
-                const ev = JSON.parse(line.slice(6));
-                if (ev.type === "reload" || ev.type === "ready") {
-                  setIframeKey((k) => k + 1);
-                }
-              } catch {}
-            }
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const ev = JSON.parse(line.slice(6));
+              if (ev.type === "reload" || ev.type === "ready") {
+                setIframeKey((k) => k + 1);
+              } else if (ev.type === "line" && typeof ev.text === "string") {
+                setLogLines((prev) => {
+                  const next = [...prev, ev.text];
+                  return next.length > 200 ? next.slice(-200) : next;
+                });
+              } else if (ev.type === "error" && typeof ev.text === "string") {
+                setLogLines((prev) => [...prev.slice(-200), `[error] ${ev.text}`]);
+              }
+            } catch {}
           }
         }
       } catch {}
@@ -132,7 +198,15 @@ export default function PreviewPane({
     return () => controller.abort();
   }, [devStatus?.running]);
 
-  // Observe stage size for fit-scaling.
+  // Reset logs when dev server transitions stopped → running.
+  useEffect(() => {
+    if (devStatus?.running) {
+      setStartError(null);
+    } else {
+      setLogLines([]);
+    }
+  }, [devStatus?.running]);
+
   useEffect(() => {
     const el = stageRef.current;
     if (!el) return;
@@ -149,7 +223,6 @@ export default function PreviewPane({
   const skin = useMemo(() => DEVICES.find((d) => d.id === skinId) ?? DEVICES[0], [skinId]);
   const previewUrl = agentClient.devPreviewUrl;
 
-  // Outer frame dimensions after orientation.
   const frame = useMemo(() => {
     if (skin.plain) return { width: 0, height: 0 };
     const w = orientation === "portrait" ? skin.width : skin.height;
@@ -162,10 +235,9 @@ export default function PreviewPane({
     } as { width: number; height: number; innerWidth: number; innerHeight: number };
   }, [skin, orientation]);
 
-  // Fit-scale the device frame inside the stage.
   const scale = useMemo(() => {
     if (skin.plain || !frame.width || !frame.height || !stageSize.w || !stageSize.h) return 1;
-    const margin = 32; // breathing room
+    const margin = 32;
     const sx = (stageSize.w - margin) / frame.width;
     const sy = (stageSize.h - margin) / frame.height;
     return Math.min(sx, sy, 1);
@@ -191,11 +263,64 @@ export default function PreviewPane({
     }
   }, []);
 
+  const handleStartProject = useCallback(
+    async (project: Project) => {
+      setStartingPath(project.path);
+      setStartError(null);
+      setLogLines([]);
+      try {
+        await agentClient.startDevServer({
+          framework: likelyFramework(project),
+          workDir: project.path,
+          targetDeviceId: selectedPreviewTarget?.id,
+          targetDeviceName: selectedPreviewTarget?.name,
+        });
+        // status poll will pick up running=true shortly
+      } catch (e: any) {
+        setStartError(e?.message || "Failed to start dev server");
+      }
+      setStartingPath(null);
+    },
+    [selectedPreviewTarget],
+  );
+
+  const mobileProjects = useMemo(() => {
+    if (!projects) return [];
+    return projects.filter((p) => {
+      const fw = (p.framework || "").toLowerCase();
+      const tags = (p.tags || []).map((t) => t.toLowerCase());
+      return (
+        fw.includes("expo") ||
+        fw.includes("react-native") ||
+        fw.includes("flutter") ||
+        tags.includes("expo") ||
+        tags.includes("react-native") ||
+        tags.includes("flutter")
+      );
+    });
+  }, [projects]);
+
+  const webProjects = useMemo(() => {
+    if (!projects) return [];
+    return projects.filter((p) => {
+      const fw = (p.framework || "").toLowerCase();
+      const tags = (p.tags || []).map((t) => t.toLowerCase());
+      return (
+        fw.includes("next") ||
+        fw.includes("vite") ||
+        fw === "react" ||
+        tags.includes("next") ||
+        tags.includes("nextjs") ||
+        tags.includes("vite") ||
+        (tags.includes("react") && !tags.includes("react-native"))
+      );
+    });
+  }, [projects]);
+
   const innerDim = skin.plain
     ? { width: "100%", height: "100%" }
     : { width: `${(frame as { innerWidth: number }).innerWidth}px`, height: `${(frame as { innerHeight: number }).innerHeight}px` };
 
-  // Render the inner screen area: iframe when running, empty-state chrome otherwise.
   const innerContent = devStatus?.running && previewUrl ? (
     <iframe
       key={iframeKey}
@@ -205,28 +330,36 @@ export default function PreviewPane({
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
     />
   ) : (
-    <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-surface-950 text-surface-500">
-      <div className="text-3xl opacity-30">&#x1F3A8;</div>
-      <div className="text-xs">No dev server running</div>
-      <div className="text-[10px] text-surface-600 max-w-[200px] text-center leading-relaxed px-4">
-        Start one from Projects or ask the AI to build something
-      </div>
-    </div>
+    <EmptyPhoneState
+      projects={mobileProjects.length > 0 ? mobileProjects : webProjects}
+      projectsAll={projects}
+      onStart={handleStartProject}
+      startingPath={startingPath}
+      startError={startError}
+    />
   );
+
+  const tail = logLines.slice(-LOG_TAIL);
 
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
       <div className="h-9 flex items-center px-3 gap-2 border-b border-surface-800 bg-surface-900/50 shrink-0">
-        <span className="flex-1 text-[10px] text-surface-500 font-mono truncate">
-          {previewUrl || "preview pane"}
+        <span
+          className={`text-[10px] ${
+            devStatus?.running ? "text-emerald-400" : "text-surface-500"
+          }`}
+        >
+          {devStatus?.running
+            ? `${frameworkIcon(devStatus.framework)} ${devStatus.framework || "dev"}${devStatus.port ? ` :${devStatus.port}` : ""}`
+            : "hot reload"}
         </span>
-        {devStatus?.framework ? (
-          <span className="text-[10px] text-emerald-400">{devStatus.framework}</span>
-        ) : null}
+        <span className="flex-1 text-[10px] text-surface-600 font-mono truncate">
+          {devStatus?.running ? devStatus.workDir || previewUrl : "no dev server running"}
+        </span>
         {devStatus?.running ? (
           <span className="text-[10px] text-sky-300">
-            {devStatus.targetDeviceName || selectedPreviewTarget?.name || "current device"}
+            {devStatus.targetDeviceName || selectedPreviewTarget?.name || "current"}
           </span>
         ) : null}
         {workerSession?.hasTarget ? (
@@ -360,7 +493,6 @@ export default function PreviewPane({
             }}
             className="relative"
           >
-            {/* Bezel */}
             <div
               style={{
                 width: frame.width,
@@ -373,7 +505,6 @@ export default function PreviewPane({
                 padding: skin.bezel,
               }}
             >
-              {/* Screen */}
               <div
                 style={{
                   width: (frame as { innerWidth: number }).innerWidth,
@@ -385,7 +516,6 @@ export default function PreviewPane({
                 }}
               >
                 {innerContent}
-                {/* Notch (iPhone 15). Hide in landscape — notch shifts to side, too fiddly for v1. */}
                 {skin.notch && orientation === "portrait" ? (
                   <div
                     style={{
@@ -402,7 +532,6 @@ export default function PreviewPane({
                     }}
                   />
                 ) : null}
-                {/* Punch hole (Pixel). */}
                 {skin.punchHole && orientation === "portrait" ? (
                   <div
                     style={{
@@ -419,7 +548,6 @@ export default function PreviewPane({
                     }}
                   />
                 ) : null}
-                {/* Home indicator (iOS) */}
                 {skin.notch && orientation === "portrait" ? (
                   <div
                     style={{
@@ -442,6 +570,92 @@ export default function PreviewPane({
           </div>
         )}
       </div>
+
+      {/* Log tail */}
+      {devStatus?.running ? (
+        <div className="border-t border-surface-800 bg-surface-950/80 shrink-0">
+          <button
+            onClick={() => setShowLogs((v) => !v)}
+            className="flex w-full items-center justify-between px-3 py-1 text-[10px] uppercase tracking-widest text-surface-500 hover:text-surface-300"
+          >
+            <span>Dev log ({logLines.length})</span>
+            <span>{showLogs ? "–" : "+"}</span>
+          </button>
+          {showLogs ? (
+            <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-all border-t border-surface-800 bg-surface-950 px-3 py-1 font-mono text-[10px] text-surface-400">
+              {tail.length === 0 ? (
+                <span className="text-surface-600">(waiting for output…)</span>
+              ) : (
+                tail.join("\n")
+              )}
+            </pre>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function EmptyPhoneState({
+  projects,
+  projectsAll,
+  onStart,
+  startingPath,
+  startError,
+}: {
+  projects: Project[];
+  projectsAll: Project[] | null;
+  onStart: (p: Project) => void;
+  startingPath: string | null;
+  startError: string | null;
+}) {
+  return (
+    <div className="w-full h-full flex flex-col gap-3 bg-surface-950 text-surface-400 p-4 overflow-auto">
+      <div className="text-center mt-2">
+        <div className="text-3xl opacity-30">📱</div>
+        <div className="mt-1 text-xs font-medium text-surface-300">Hot reload</div>
+        <div className="text-[10px] text-surface-600">
+          Start a dev server to preview it live in this phone frame.
+        </div>
+      </div>
+      {startError ? (
+        <div className="rounded border border-red-500/30 bg-red-500/5 px-2 py-1 text-[10px] text-red-300">
+          {startError}
+        </div>
+      ) : null}
+      {projectsAll === null ? (
+        <div className="text-center text-[10px] text-surface-600">Scanning projects…</div>
+      ) : projects.length === 0 ? (
+        <div className="text-center text-[10px] text-surface-600 px-4">
+          No RN / Expo / Flutter / Next.js / Vite projects detected on this machine.
+          <br />
+          Start one manually from a shell with <code className="rounded bg-surface-900 px-1">yaver dev start</code>.
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {projects.slice(0, 6).map((p) => (
+            <button
+              key={p.path}
+              onClick={() => onStart(p)}
+              disabled={startingPath === p.path}
+              className={`flex items-center gap-2 rounded border px-2 py-1.5 text-left transition-colors ${
+                startingPath === p.path
+                  ? "cursor-wait border-amber-500/30 bg-amber-500/5 text-amber-200"
+                  : "border-surface-800 bg-surface-900/60 hover:border-emerald-500/30 hover:bg-emerald-500/5"
+              }`}
+            >
+              <span className="text-sm">{frameworkIcon(p.framework)}</span>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[11px] font-medium text-surface-200">{p.name}</div>
+                <div className="truncate text-[9px] text-surface-600 font-mono">{p.path}</div>
+              </div>
+              <span className="shrink-0 text-[9px] uppercase tracking-wider text-surface-500">
+                {startingPath === p.path ? "starting…" : "start"}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
