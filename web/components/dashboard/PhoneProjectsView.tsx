@@ -18,7 +18,7 @@ import { useAuth } from "@/lib/use-auth";
 import { isCloudPreviewUser } from "@/lib/cloud-preview";
 import { buildImportedConversationBrief, mergeImportedConversationPrompt } from "@/lib/conversation-import";
 import { getManagedSubscription } from "@/lib/subscription";
-import { getYaverCloudBaseUrl } from "@/lib/yaver-cloud";
+import { getSelfHostedRuntimeBaseUrl, getSelfHostedRuntimeLabel, getYaverCloudBaseUrl } from "@/lib/yaver-cloud";
 
 const ADVANCED_PROMOTE_TARGETS: Array<{ id: string; label: string; sub: string }> = [
   { id: "sqlite-local", label: "SQLite file", sub: "Copy to a real project dir" },
@@ -30,6 +30,8 @@ const ADVANCED_PROMOTE_TARGETS: Array<{ id: string; label: string; sub: string }
 ];
 
 const YAVER_CLOUD_BASE = getYaverCloudBaseUrl();
+const SELF_HOSTED_BASE = getSelfHostedRuntimeBaseUrl();
+const SELF_HOSTED_LABEL = getSelfHostedRuntimeLabel();
 
 function pickDevMachines(all: Device[], currentId: string | undefined): Device[] {
   return all.filter(
@@ -38,6 +40,16 @@ function pickDevMachines(all: Device[], currentId: string | undefined): Device[]
       !d.isGuest &&
       d.id !== currentId &&
       d.deviceClass !== "edge-mobile",
+  );
+}
+
+function pickMobileDevices(all: Device[], currentId: string | undefined): Device[] {
+  return all.filter(
+    (d) =>
+      d.online &&
+      !d.isGuest &&
+      d.id !== currentId &&
+      d.deviceClass === "edge-mobile",
   );
 }
 
@@ -92,12 +104,22 @@ export default function PhoneProjectsView() {
     () => pickDevMachines(devices, currentDeviceId),
     [devices, currentDeviceId],
   );
+  const mobileDevices = useMemo(
+    () => pickMobileDevices(devices, currentDeviceId),
+    [devices, currentDeviceId],
+  );
   const [selectedDevMachineId, setSelectedDevMachineId] = useState<string | null>(null);
+  const [selectedMobileDeviceId, setSelectedMobileDeviceId] = useState<string | null>(null);
   useEffect(() => {
     if (!selectedDevMachineId && devMachines.length) {
       setSelectedDevMachineId(devMachines[0].id);
     }
   }, [devMachines, selectedDevMachineId]);
+  useEffect(() => {
+    if (!selectedMobileDeviceId && mobileDevices.length) {
+      setSelectedMobileDeviceId(mobileDevices[0].id);
+    }
+  }, [mobileDevices, selectedMobileDeviceId]);
   useEffect(() => {
     let cancelled = false;
     if (!token) {
@@ -120,8 +142,12 @@ export default function PhoneProjectsView() {
     () => devMachines.find((d) => d.id === selectedDevMachineId) ?? null,
     [devMachines, selectedDevMachineId],
   );
-  const [deploying, setDeploying] = useState<"dev-hw" | "yaver-cloud" | "both" | null>(null);
-  const [lastDeploy, setLastDeploy] = useState<{ kind: "dev-hw" | "yaver-cloud"; url: string; via: string } | null>(null);
+  const selectedMobileDevice = useMemo(
+    () => mobileDevices.find((d) => d.id === selectedMobileDeviceId) ?? null,
+    [mobileDevices, selectedMobileDeviceId],
+  );
+  const [deploying, setDeploying] = useState<"dev-hw" | "yaver-cloud" | "custom" | "both" | null>(null);
+  const [lastDeploy, setLastDeploy] = useState<{ kind: "dev-hw" | "yaver-cloud" | "custom"; url: string; via: string } | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const importedBrief = useMemo(
     () => (importedConversation.trim() ? buildImportedConversationBrief(importedConversation) : null),
@@ -281,7 +307,7 @@ export default function PhoneProjectsView() {
 
   // ── Deploy (roadmap §Wedge Demo) ─────────────────────────────────────
 
-  async function runPush(target: PhonePushTarget, kind: "dev-hw" | "yaver-cloud", via: string) {
+  async function runPush(target: PhonePushTarget, kind: "dev-hw" | "yaver-cloud" | "custom", via: string) {
     if (!selected) return;
     setDeploying(kind);
     try {
@@ -312,11 +338,40 @@ export default function PhoneProjectsView() {
     );
   }
 
+  async function deployToMobile() {
+    if (!selectedMobileDevice) {
+      alert("No mobile device online. Open Yaver on the target phone and sign in with the same account.");
+      return;
+    }
+    const relayHttpUrl = agentClient.activeRelayHttpUrl;
+    if (!relayHttpUrl) {
+      alert("Web dashboard is not relay-routed. Cannot export to a sibling mobile device from here.");
+      return;
+    }
+    await runPush(
+      { kind: "dev-hw", deviceId: selectedMobileDevice.id, relayHttpUrl },
+      "dev-hw",
+      `${selectedMobileDevice.name} (mobile)`,
+    );
+  }
+
   async function deployToCloud() {
     await runPush(
       { kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken: token ?? undefined },
       "yaver-cloud",
       "Yaver Cloud",
+    );
+  }
+
+  async function deployToSelfHosted() {
+    if (!selected || !SELF_HOSTED_BASE) {
+      alert("Self-hosted runtime is not configured. Set NEXT_PUBLIC_YAVER_SELF_HOSTED_BASE_URL for the web dashboard.");
+      return;
+    }
+    await runPush(
+      { kind: "custom", baseUrl: SELF_HOSTED_BASE },
+      "custom",
+      SELF_HOSTED_LABEL,
     );
   }
 
@@ -347,6 +402,43 @@ export default function PhoneProjectsView() {
         setLastDeploy({ kind: "yaver-cloud", via: "Yaver Cloud + Dev Machine", url: cloud.result.browseUrl || deriveTargetUrl({ kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken: token ?? undefined }, cloud.result) });
       } else if (local) {
         setLastDeploy({ kind: "dev-hw", via: "Dev Machine + Yaver Cloud", url: local.result.browseUrl || deriveTargetUrl({ kind: "dev-hw", deviceId: selectedDevMachine.id, relayHttpUrl }, local.result) });
+      }
+    } catch (e) {
+      alert(`Deploy failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDeploying(null);
+    }
+  }
+
+  async function deployToSelfHostedAndCloud() {
+    if (!selected || !SELF_HOSTED_BASE) {
+      alert("Self-hosted runtime is not configured. Set NEXT_PUBLIC_YAVER_SELF_HOSTED_BASE_URL for the web dashboard.");
+      return;
+    }
+    setDeploying("both");
+    try {
+      const result = await agentClient.deployPhoneProjectRuntime({
+        slug: selected.slug,
+        includeData: true,
+        exports: [
+          { kind: "custom", baseUrl: SELF_HOSTED_BASE, onConflict: "overwrite" },
+          { kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken: token ?? undefined, onConflict: "overwrite" },
+        ],
+      });
+      const cloud = result.pushes.find((push) => push.kind === "yaver-cloud");
+      const selfHosted = result.pushes.find((push) => push.kind === "custom");
+      if (cloud) {
+        setLastDeploy({
+          kind: "yaver-cloud",
+          via: `${SELF_HOSTED_LABEL} + Yaver Cloud`,
+          url: cloud.result.browseUrl || deriveTargetUrl({ kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken: token ?? undefined }, cloud.result),
+        });
+      } else if (selfHosted) {
+        setLastDeploy({
+          kind: "custom",
+          via: `${SELF_HOSTED_LABEL} + Yaver Cloud`,
+          url: selfHosted.result.browseUrl || deriveTargetUrl({ kind: "custom", baseUrl: SELF_HOSTED_BASE }, selfHosted.result),
+        });
       }
     } catch (e) {
       alert(`Deploy failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -630,10 +722,10 @@ export default function PhoneProjectsView() {
               <div>
                 <div className="mb-2 text-xs uppercase tracking-wide text-surface-500">Deploy</div>
                 <p className="mb-3 text-xs text-surface-400">
-                  Ship this mini-backend in one tap to your own machine.
+                  Ship this mini-backend in one tap to another Yaver peer. The bundle moves agent-to-agent over direct/relay transport; Convex only provides account auth and device discovery, not project contents.
                 </p>
 
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {/* [Your Dev Machine] */}
                   <div className="rounded-lg border-2 border-indigo-500 bg-indigo-500/10 p-4">
                     <div className="text-base font-semibold text-indigo-100">Your Dev Machine</div>
@@ -675,6 +767,40 @@ export default function PhoneProjectsView() {
                     </div>
                   </div>
 
+                  <div className="rounded-lg border-2 border-sky-500/40 bg-sky-500/10 p-4">
+                    <div className="text-base font-semibold text-sky-100">Your Mobile Device</div>
+                    <div className="mt-0.5 text-xs text-sky-200/70">
+                      {selectedMobileDevice
+                        ? `→ ${selectedMobileDevice.name} · relay peer`
+                        : "No mobile device online yet."}
+                    </div>
+                    <div className="mt-3 flex items-center gap-2">
+                      <button
+                        disabled={deploying !== null || !selectedMobileDevice}
+                        onClick={() => void deployToMobile()}
+                        className="rounded bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-50"
+                      >
+                        {deploying === "dev-hw" ? "Exporting…" : "Export →"}
+                      </button>
+                      {mobileDevices.length > 1 ? (
+                        <select
+                          value={selectedMobileDeviceId ?? ""}
+                          onChange={(e) => setSelectedMobileDeviceId(e.target.value || null)}
+                          className="rounded border border-surface-700 bg-surface-950 px-2 py-1 text-xs text-surface-200"
+                        >
+                          {mobileDevices.map((d) => (
+                            <option key={d.id} value={d.id}>
+                              {d.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : null}
+                    </div>
+                    <div className="mt-3 text-[11px] leading-5 text-sky-100/80">
+                      Uses the same peer path as machine export: source agent `GET /phone/projects/export`, target mobile agent `POST /phone/projects/receive`.
+                    </div>
+                  </div>
+
                   {canUseYaverCloud ? (
                     <div className="rounded-lg border-2 border-surface-700 bg-surface-950 p-4">
                       <div className="text-base font-semibold text-surface-100">Yaver Cloud</div>
@@ -688,6 +814,42 @@ export default function PhoneProjectsView() {
                           className="rounded border border-indigo-500 px-3 py-1.5 text-xs font-medium text-indigo-200 hover:bg-indigo-500/10 disabled:opacity-50"
                         >
                           {deploying === "yaver-cloud" ? "Deploying…" : "Deploy →"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {SELF_HOSTED_BASE ? (
+                    <div className="rounded-lg border-2 border-surface-700 bg-surface-950 p-4">
+                      <div className="text-base font-semibold text-surface-100">{SELF_HOSTED_LABEL}</div>
+                      <div className="mt-0.5 text-xs text-surface-400">
+                        {SELF_HOSTED_BASE.replace(/^https?:\/\//, "")}
+                      </div>
+                      <div className="mt-3">
+                        <button
+                          disabled={deploying !== null}
+                          onClick={() => void deployToSelfHosted()}
+                          className="rounded border border-indigo-500 px-3 py-1.5 text-xs font-medium text-indigo-200 hover:bg-indigo-500/10 disabled:opacity-50"
+                        >
+                          {deploying === "custom" ? "Deploying…" : "Deploy →"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {SELF_HOSTED_BASE && canUseYaverCloud ? (
+                    <div className="rounded-lg border-2 border-surface-700 bg-surface-950 p-4">
+                      <div className="text-base font-semibold text-surface-100">{SELF_HOSTED_LABEL} + Cloud</div>
+                      <div className="mt-0.5 text-xs text-surface-400">
+                        Push the same sandbox to your self-hosted runtime and Yaver Cloud in one run.
+                      </div>
+                      <div className="mt-3">
+                        <button
+                          disabled={deploying !== null}
+                          onClick={() => void deployToSelfHostedAndCloud()}
+                          className="rounded border border-indigo-500 px-3 py-1.5 text-xs font-medium text-indigo-200 hover:bg-indigo-500/10 disabled:opacity-50"
+                        >
+                          {deploying === "both" ? "Deploying Both…" : "Deploy Both →"}
                         </button>
                       </div>
                     </div>
