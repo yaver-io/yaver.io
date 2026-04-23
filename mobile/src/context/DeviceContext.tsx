@@ -1146,6 +1146,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // When beacon discovers/loses a device, update device list
   useEffect(() => {
     const unsubDiscover = beaconListener.onDiscovered((discovered) => {
+      const matchedIds: string[] = [];
       setDevices((prev) =>
         collapseAliasDevices(prev.map((d) => {
           if (
@@ -1153,11 +1154,22 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             (!!discovered.hwid && d.hwid === discovered.hwid) ||
             normalizedDeviceName(d.name) === normalizedDeviceName(discovered.name)
           ) {
+            matchedIds.push(d.id);
             return { ...d, host: discovered.ip, port: discovered.port, online: true, local: true, hwid: discovered.hwid || d.hwid };
           }
           return d;
         }))
       );
+      if (matchedIds.length > 0) {
+        setUnreachableSet((prev) => {
+          let changed = false;
+          const next = new Set(prev);
+          for (const id of matchedIds) {
+            if (next.delete(id)) changed = true;
+          }
+          return changed ? next : prev;
+        });
+      }
       sendTelemetry(token, "peer-matched", `${discovered.name} at ${discovered.ip}:${discovered.port}`, discovered.deviceId);
     });
 
