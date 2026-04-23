@@ -1290,6 +1290,456 @@ run_auth_tests() {
     fi
 }
 
+run_oauth_mock_tests() {
+    header "OAuth Mock — callback path without real providers"
+
+    if [ -z "${CONVEX_SITE_URL:-}" ]; then
+        skip "OAuth mock test (CONVEX_SITE_URL not set)"
+        return
+    fi
+
+    if ! command -v go >/dev/null 2>&1; then
+        skip "OAuth mock test (go not installed)"
+        return
+    fi
+
+    if ! command -v npm >/dev/null 2>&1; then
+        skip "OAuth mock test (npm not installed)"
+        return
+    fi
+
+    local mock_port web_port mock_log web_log
+    mock_port=$(get_free_port)
+    web_port=$(get_free_port)
+    mock_log="$TEST_DIR/oauth-mock.log"
+    web_log="$TEST_DIR/oauth-web.log"
+
+    info "Starting mock OAuth server on :$mock_port ..."
+    (
+        cd "$ROOT_DIR/ci/oauth-mock"
+        PORT="$mock_port" go run . >"$mock_log" 2>&1
+    ) &
+    local mock_pid=$!
+    PIDS_TO_KILL+=("$mock_pid")
+
+    local ok=false
+    for _ in $(seq 1 120); do
+        if curl -sf "http://127.0.0.1:${mock_port}/health" >/dev/null 2>&1; then
+            ok=true
+            break
+        fi
+        sleep 0.25
+    done
+    if [ "$ok" != "true" ]; then
+        fail "OAuth mock server did not become healthy"
+        tail -40 "$mock_log" 2>/dev/null || true
+        return
+    fi
+    pass "OAuth mock server healthy"
+
+    if [ ! -x "$ROOT_DIR/web/node_modules/.bin/next" ]; then
+        info "Installing web dependencies for OAuth mock test ..."
+        if ! (cd "$ROOT_DIR/web" && npm ci >"$TEST_DIR/oauth-web-npm.log" 2>&1); then
+            fail "OAuth mock npm ci failed"
+            tail -80 "$TEST_DIR/oauth-web-npm.log" 2>/dev/null || true
+            return
+        fi
+        pass "OAuth mock web dependencies installed"
+    fi
+
+    info "Starting web app on :$web_port with mock OAuth endpoints ..."
+    (
+        cd "$ROOT_DIR/web"
+        PORT="$web_port" \
+        CONVEX_SITE_URL="$CONVEX_SITE_URL" \
+        NEXT_PUBLIC_BASE_URL="http://127.0.0.1:${web_port}" \
+        TEST_MODE_ENABLED=1 \
+        OAUTH_GOOGLE_CLIENT_ID="mock-google-client" \
+        OAUTH_GOOGLE_CLIENT_SECRET="mock-google-secret" \
+        OAUTH_GOOGLE_TOKEN_URL="http://127.0.0.1:${mock_port}/google/token" \
+        OAUTH_GOOGLE_USERINFO_URL="http://127.0.0.1:${mock_port}/google/userinfo" \
+        OAUTH_MICROSOFT_CLIENT_ID="mock-microsoft-client" \
+        OAUTH_MICROSOFT_CLIENT_SECRET="mock-microsoft-secret" \
+        OAUTH_MICROSOFT_TENANT_ID="common" \
+        OAUTH_MICROSOFT_TOKEN_URL="http://127.0.0.1:${mock_port}/microsoft/token" \
+        OAUTH_MICROSOFT_USERINFO_URL="http://127.0.0.1:${mock_port}/microsoft/userinfo" \
+        OAUTH_APPLE_CLIENT_ID="com.yaver.web" \
+        OAUTH_APPLE_CLIENT_SECRET="mock-apple-secret" \
+        OAUTH_APPLE_TOKEN_URL="http://127.0.0.1:${mock_port}/apple/token" \
+        OAUTH_GITHUB_CLIENT_ID="mock-github-client" \
+        OAUTH_GITHUB_CLIENT_SECRET="mock-github-secret" \
+        OAUTH_GITHUB_TOKEN_URL="http://127.0.0.1:${mock_port}/github/token" \
+        OAUTH_GITHUB_USERINFO_URL="http://127.0.0.1:${mock_port}/github/user" \
+        OAUTH_GITHUB_EMAILS_URL="http://127.0.0.1:${mock_port}/github/user/emails" \
+        OAUTH_GITLAB_CLIENT_ID="mock-gitlab-client" \
+        OAUTH_GITLAB_CLIENT_SECRET="mock-gitlab-secret" \
+        OAUTH_GITLAB_TOKEN_URL="http://127.0.0.1:${mock_port}/gitlab/token" \
+        OAUTH_GITLAB_USERINFO_URL="http://127.0.0.1:${mock_port}/gitlab/userinfo" \
+        npm run dev >"$web_log" 2>&1
+    ) &
+    local web_pid=$!
+    PIDS_TO_KILL+=("$web_pid")
+
+    ok=false
+    for _ in $(seq 1 120); do
+        if curl -sf "http://127.0.0.1:${web_port}/auth" >/dev/null 2>&1; then
+            ok=true
+            break
+        fi
+        sleep 1
+    done
+    if [ "$ok" != "true" ]; then
+        fail "OAuth mock web app did not become ready"
+        tail -60 "$web_log" 2>/dev/null || true
+        return
+    fi
+    pass "OAuth mock web app ready"
+
+    make_oauth_state() {
+        python3 - "$1" <<'PY'
+import base64, json, sys
+payload = json.dumps(json.loads(sys.argv[1]), separators=(",", ":")).encode()
+print(base64.urlsafe_b64encode(payload).decode().rstrip("="))
+PY
+    }
+
+    extract_location_header() {
+        python3 - "$1" <<'PY'
+import sys
+from pathlib import Path
+hdrs = Path(sys.argv[1]).read_text().splitlines()
+for line in hdrs:
+    if line.lower().startswith("location:"):
+        print(line.split(":", 1)[1].strip())
+        break
+PY
+    }
+
+    extract_redirect_token() {
+        python3 - "$1" <<'PY'
+import sys
+from urllib.parse import parse_qs, urlparse
+url = sys.argv[1]
+if not url:
+    raise SystemExit(0)
+print((parse_qs(urlparse(url).query).get("token") or [""])[0])
+PY
+    }
+
+    auth_user_field() {
+        local token="$1" field="$2"
+        curl -sf "${CONVEX_SITE_URL}/auth/validate" \
+            -H "Authorization: Bearer ${token}" | \
+            python3 -c 'import json,sys; field=sys.argv[1]; print(json.load(sys.stdin)["user"].get(field, ""))' "$field"
+    }
+
+    auth_providers_csv() {
+        local token="$1"
+        curl -sf "${CONVEX_SITE_URL}/auth/providers" \
+            -H "Authorization: Bearer ${token}" | \
+            python3 -c 'import json,sys; data=json.load(sys.stdin); providers=sorted({item.get("provider","") for item in data.get("identities",[]) if item.get("provider")}); print(",".join(providers))'
+    }
+
+    security_event_types_csv() {
+        local token="$1"
+        curl -sf "${CONVEX_SITE_URL}/security/events" \
+            -H "Authorization: Bearer ${token}" | \
+            python3 -c 'import json,sys; data=json.load(sys.stdin); print(",".join(item.get("eventType","") for item in data.get("events",[]) if item.get("eventType")))'
+    }
+
+    oauth_callback_location() {
+        local provider="$1" state="$2" headers location
+        headers=$(mktemp "$TEST_DIR/oauth-${provider}-headers.XXXXXX")
+        curl -sS -D "$headers" -o /dev/null \
+            "http://127.0.0.1:${web_port}/api/auth/oauth/${provider}/callback?code=mock-${provider}-code-${oauth_run_id}&state=${state}" \
+            -H "Accept: text/html" >/dev/null || true
+        location=$(extract_location_header "$headers")
+        rm -f "$headers"
+        printf '%s\n' "$location"
+    }
+
+    oauth_signin_token() {
+        local provider="$1" state="$2" location
+        location=$(oauth_callback_location "$provider" "$state")
+        extract_redirect_token "$location"
+    }
+
+    http_json_with_status() {
+        local output_file="$1"
+        shift
+        curl -sS -o "$output_file" -w "%{http_code}" "$@"
+    }
+
+    totp_code_for_secret() {
+        local secret="$1" offset="${2:-0}"
+        python3 - "$secret" "$offset" <<'PY'
+import hashlib, hmac, struct, sys, time
+alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+secret = sys.argv[1].strip().upper().rstrip("=")
+offset = int(sys.argv[2])
+bits = 0
+value = 0
+out = bytearray()
+for ch in secret:
+    idx = alphabet.find(ch)
+    if idx < 0:
+        continue
+    value = (value << 5) | idx
+    bits += 5
+    if bits >= 8:
+        out.append((value >> (bits - 8)) & 0xff)
+        bits -= 8
+counter = int(time.time() // 30) + offset
+msg = struct.pack(">Q", counter)
+digest = hmac.new(bytes(out), msg, hashlib.sha1).digest()
+o = digest[-1] & 0x0F
+code = ((digest[o] & 0x7F) << 24) | ((digest[o+1] & 0xFF) << 16) | ((digest[o+2] & 0xFF) << 8) | (digest[o+3] & 0xFF)
+print(str(code % 1000000).zfill(6))
+PY
+    }
+
+    local oauth_run_id signin_state
+    oauth_run_id="$(date +%s)-$$"
+    signin_state=$(make_oauth_state '{"client":"web","intent":"signin","returnTo":"/dashboard"}')
+
+    local providers="google microsoft apple github gitlab"
+    local provider location token
+    local google_token_1="" google_token_2="" microsoft_token="" apple_token="" github_token="" gitlab_token=""
+    for provider in $providers; do
+        info "Testing ${provider} callback via mock provider..."
+        location=$(oauth_callback_location "$provider" "$signin_state")
+        token=$(extract_redirect_token "$location")
+        if echo "$location" | grep -q "/auth/callback?token=" && [ -n "$token" ]; then
+            pass "OAuth mock ${provider} callback issued session redirect"
+            case "$provider" in
+                google) google_token_1="$token" ;;
+                microsoft) microsoft_token="$token" ;;
+                apple) apple_token="$token" ;;
+                github) github_token="$token" ;;
+                gitlab) gitlab_token="$token" ;;
+            esac
+        else
+            fail "OAuth mock ${provider} callback did not issue session redirect"
+            info "Location was: ${location:-<empty>}"
+        fi
+    done
+
+    if [ -z "$google_token_1" ] || [ -z "$gitlab_token" ]; then
+        fail "OAuth mock prerequisite sign-ins missing"
+        return
+    fi
+
+    local google_user_doc_1 google_user_doc_2 gitlab_user_doc
+    google_user_doc_1=$(auth_user_field "$google_token_1" "userDocId")
+    google_token_2=$(oauth_signin_token "google" "$signin_state")
+    google_user_doc_2=$(auth_user_field "$google_token_2" "userDocId")
+    if [ -n "$google_user_doc_1" ] && [ "$google_user_doc_1" = "$google_user_doc_2" ]; then
+        pass "OAuth mock google repeat sign-in reuses the same account"
+    else
+        fail "OAuth mock google repeat sign-in created a different account"
+        info "google userDocIds: first=${google_user_doc_1:-<empty>} second=${google_user_doc_2:-<empty>}"
+    fi
+
+    gitlab_user_doc=$(auth_user_field "$gitlab_token" "userDocId")
+    if [ -n "$gitlab_user_doc" ] && [ "$gitlab_user_doc" != "$google_user_doc_1" ]; then
+        pass "OAuth mock gitlab sign-in created a distinct source account"
+    else
+        fail "OAuth mock gitlab sign-in did not produce a distinct account"
+    fi
+
+    local http_code http_body
+    http_body=$(mktemp "$TEST_DIR/oauth-http.XXXXXX")
+    http_code=$(http_json_with_status "$http_body" \
+        -X DELETE "${CONVEX_SITE_URL}/auth/oauth-link/gitlab" \
+        -H "Authorization: Bearer ${gitlab_token}" \
+        -H "Content-Type: application/json" \
+        -d '{}')
+    if [ "$http_code" = "409" ]; then
+        pass "OAuth mock unlink refuses removing the only sign-in method"
+    else
+        fail "OAuth mock unlink-only-identity returned $http_code"
+        info "Response was: $(cat "$http_body" 2>/dev/null || true)"
+    fi
+    rm -f "$http_body"
+
+    local link_token link_state linked_location providers_csv events_csv
+    link_token=$(curl -sf -X POST "${CONVEX_SITE_URL}/auth/oauth-link/start" \
+        -H "Authorization: Bearer ${google_token_1}" \
+        -H "Content-Type: application/json" \
+        -d '{"provider":"microsoft","client":"web","returnTo":"/dashboard"}' | \
+        python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))')
+    if [ -n "$link_token" ]; then
+        pass "OAuth mock link intent created"
+    else
+        fail "OAuth mock link intent creation failed"
+        return
+    fi
+
+    link_state=$(make_oauth_state "{\"client\":\"web\",\"intent\":\"link\",\"linkToken\":\"${link_token}\",\"returnTo\":\"/dashboard\"}")
+    linked_location=$(oauth_callback_location "microsoft" "$link_state")
+    if echo "$linked_location" | grep -q 'linkedProvider=microsoft' && echo "$linked_location" | grep -q 'linked=1'; then
+        pass "OAuth mock provider-link callback completed"
+    else
+        fail "OAuth mock provider-link callback did not complete"
+        info "Location was: ${linked_location:-<empty>}"
+    fi
+
+    providers_csv=$(auth_providers_csv "$google_token_1")
+    if [ "$providers_csv" = "google,microsoft" ] || [ "$providers_csv" = "microsoft,google" ]; then
+        pass "OAuth mock linked identities show google + microsoft"
+    else
+        fail "OAuth mock linked identities unexpected"
+        info "Providers were: ${providers_csv:-<empty>}"
+    fi
+
+    events_csv=$(security_event_types_csv "$google_token_1")
+    if echo "$events_csv" | grep -q 'link_added'; then
+        pass "OAuth mock link action wrote security event"
+    else
+        fail "OAuth mock link action missing security event"
+        info "Events were: ${events_csv:-<empty>}"
+    fi
+
+    local totp_secret valid_totp_code stale_totp_code
+    totp_secret=$(curl -sf -X POST "${CONVEX_SITE_URL}/auth/totp/setup" \
+        -H "Authorization: Bearer ${google_token_1}" \
+        -H "Content-Type: application/json" \
+        -d '{}' | python3 -c 'import json,sys; print(json.load(sys.stdin).get("secret",""))')
+    if [ -n "$totp_secret" ]; then
+        pass "OAuth mock TOTP setup returned secret"
+    else
+        fail "OAuth mock TOTP setup failed"
+        return
+    fi
+
+    valid_totp_code=$(totp_code_for_secret "$totp_secret" 0)
+    if curl -sf -X POST "${CONVEX_SITE_URL}/auth/totp/enable" \
+        -H "Authorization: Bearer ${google_token_1}" \
+        -H "Content-Type: application/json" \
+        -d "{\"code\":\"${valid_totp_code}\"}" >/dev/null; then
+        pass "OAuth mock TOTP enabled on linked account"
+    else
+        fail "OAuth mock TOTP enable failed"
+        return
+    fi
+
+    stale_totp_code=$(totp_code_for_secret "$totp_secret" -3)
+    http_body=$(mktemp "$TEST_DIR/oauth-http.XXXXXX")
+    http_code=$(http_json_with_status "$http_body" \
+        -X DELETE "${CONVEX_SITE_URL}/auth/oauth-link/microsoft" \
+        -H "Authorization: Bearer ${google_token_1}" \
+        -H "Content-Type: application/json" \
+        -d "{\"totpCode\":\"${stale_totp_code}\"}")
+    if [ "$http_code" = "403" ]; then
+        pass "OAuth mock stale TOTP blocks unlink"
+    else
+        fail "OAuth mock stale TOTP unlink returned $http_code"
+        info "Response was: $(cat "$http_body" 2>/dev/null || true)"
+    fi
+    rm -f "$http_body"
+
+    valid_totp_code=$(totp_code_for_secret "$totp_secret" 0)
+    http_body=$(mktemp "$TEST_DIR/oauth-http.XXXXXX")
+    http_code=$(http_json_with_status "$http_body" \
+        -X DELETE "${CONVEX_SITE_URL}/auth/oauth-link/microsoft" \
+        -H "Authorization: Bearer ${google_token_1}" \
+        -H "Content-Type: application/json" \
+        -d "{\"totpCode\":\"${valid_totp_code}\"}")
+    if [ "$http_code" = "200" ]; then
+        pass "OAuth mock valid TOTP allows unlink"
+    else
+        fail "OAuth mock valid TOTP unlink returned $http_code"
+        info "Response was: $(cat "$http_body" 2>/dev/null || true)"
+    fi
+    rm -f "$http_body"
+
+    providers_csv=$(auth_providers_csv "$google_token_1")
+    if [ "$providers_csv" = "google" ]; then
+        pass "OAuth mock unlink removed microsoft identity"
+    else
+        fail "OAuth mock unlink left unexpected identities"
+        info "Providers were: ${providers_csv:-<empty>}"
+    fi
+
+    events_csv=$(security_event_types_csv "$google_token_1")
+    if echo "$events_csv" | grep -q 'link_removed'; then
+        pass "OAuth mock unlink wrote security event"
+    else
+        fail "OAuth mock unlink missing security event"
+        info "Events were: ${events_csv:-<empty>}"
+    fi
+
+    local merge_token merge_resp merge_status
+    valid_totp_code=$(totp_code_for_secret "$totp_secret" 0)
+    merge_resp=$(curl -sf -X POST "${CONVEX_SITE_URL}/auth/account/merge/start" \
+        -H "Authorization: Bearer ${google_token_1}" \
+        -H "Content-Type: application/json" \
+        -d "{\"client\":\"web\",\"totpCode\":\"${valid_totp_code}\"}")
+    merge_token=$(echo "$merge_resp" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("mergeToken",""))')
+    if [ -n "$merge_token" ]; then
+        pass "OAuth mock merge intent created"
+    else
+        fail "OAuth mock merge intent creation failed"
+        info "Response was: ${merge_resp:-<empty>}"
+        return
+    fi
+
+    merge_status=$(curl -sf "${CONVEX_SITE_URL}/auth/account/merge/status?token=${merge_token}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')
+    if [ "$merge_status" = "pending" ]; then
+        pass "OAuth mock merge status is pending before approval"
+    else
+        fail "OAuth mock merge status before approval was ${merge_status:-<empty>}"
+    fi
+
+    http_body=$(mktemp "$TEST_DIR/oauth-http.XXXXXX")
+    http_code=$(http_json_with_status "$http_body" \
+        -X POST "${CONVEX_SITE_URL}/auth/account/merge/complete" \
+        -H "Authorization: Bearer ${gitlab_token}" \
+        -H "Content-Type: application/json" \
+        -d "{\"mergeToken\":\"${merge_token}\"}")
+    if [ "$http_code" = "200" ]; then
+        pass "OAuth mock merge completed from source account"
+    else
+        fail "OAuth mock merge completion failed"
+        info "Response was: $(cat "$http_body" 2>/dev/null || true)"
+        rm -f "$http_body"
+        return
+    fi
+    rm -f "$http_body"
+
+    merge_status=$(curl -sf "${CONVEX_SITE_URL}/auth/account/merge/status?token=${merge_token}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')
+    if [ "$merge_status" = "completed" ]; then
+        pass "OAuth mock merge status is completed after approval"
+    else
+        fail "OAuth mock merge status after approval was ${merge_status:-<empty>}"
+    fi
+
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+        "${CONVEX_SITE_URL}/auth/validate" \
+        -H "Authorization: Bearer ${gitlab_token}")
+    if [ "$http_code" = "401" ]; then
+        pass "OAuth mock source session is invalid after merge"
+    else
+        fail "OAuth mock source session remained valid after merge ($http_code)"
+    fi
+
+    providers_csv=$(auth_providers_csv "$google_token_1")
+    if [ "$providers_csv" = "gitlab,google" ] || [ "$providers_csv" = "google,gitlab" ]; then
+        pass "OAuth mock merged identities now include gitlab on target"
+    else
+        fail "OAuth mock merge left unexpected target identities"
+        info "Providers were: ${providers_csv:-<empty>}"
+    fi
+
+    events_csv=$(security_event_types_csv "$google_token_1")
+    if echo "$events_csv" | grep -q 'merge_started' && echo "$events_csv" | grep -q 'merge_completed'; then
+        pass "OAuth mock merge wrote target-side security events"
+    else
+        fail "OAuth mock merge missing target-side security events"
+        info "Events were: ${events_csv:-<empty>}"
+    fi
+}
+
 run_sdk_tests() {
     header "SDK Tests"
 
@@ -2481,34 +2931,60 @@ run_ollama_ci_test() {
     local run_docker=false
     local run_ollama=false
     local run_ollama_ci=false
+    local run_oauth_mock=false
     local run_hybrid_local=false
     local run_features=false
     local run_features_auth=false
     local run_features_remote=false
 
-    for arg in "$@"; do
-        case "$arg" in
-            --unit)           run_unit=true; run_all=false ;;
-            --features)       run_features=true; run_all=false ;;
-            --features-auth)  run_features_auth=true; run_all=false ;;
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --unit)            run_unit=true; run_all=false ;;
+            --features)        run_features=true; run_all=false ;;
+            --features-auth)   run_features_auth=true; run_all=false ;;
             --features-remote) run_features_remote=true; run_all=false ;;
-            --builds)         run_builds=true; run_all=false ;;
-            --lan)            run_lan=true; run_all=false ;;
-            --relay)          run_relay=true; run_all=false ;;
-            --relay-docker)   run_relay_docker=true; run_all=false ;;
-            --relay-binary)   run_relay_binary=true; run_all=false ;;
-            --tailscale)      run_tailscale=true; run_all=false ;;
-            --cloudflare)     run_cloudflare=true; run_all=false ;;
-            --sdk)            run_sdk=true; run_all=false ;;
-            --auth)           run_auth=true; run_all=false ;;
-            --feedback)       run_feedback=true; run_all=false ;;
-            --expo)           run_expo=true; run_all=false ;;
-            --voice)          run_voice=true; run_all=false ;;
-            --e2e)            run_e2e=true; run_all=false ;;
-            --docker)         run_docker=true; run_all=false ;;
-            --ollama)         run_ollama=true; run_all=false ;;
-            --ollama-ci)      run_ollama_ci=true; run_all=false ;;
-            --hybrid-local)   run_hybrid_local=true; run_all=false ;;
+            --builds)          run_builds=true; run_all=false ;;
+            --lan)             run_lan=true; run_all=false ;;
+            --relay)           run_relay=true; run_all=false ;;
+            --relay-docker)    run_relay_docker=true; run_all=false ;;
+            --relay-binary)    run_relay_binary=true; run_all=false ;;
+            --tailscale)       run_tailscale=true; run_all=false ;;
+            --cloudflare)      run_cloudflare=true; run_all=false ;;
+            --sdk)             run_sdk=true; run_all=false ;;
+            --auth)            run_auth=true; run_all=false ;;
+            --feedback)        run_feedback=true; run_all=false ;;
+            --expo)            run_expo=true; run_all=false ;;
+            --voice)           run_voice=true; run_all=false ;;
+            --e2e)             run_e2e=true; run_all=false ;;
+            --docker)          run_docker=true; run_all=false ;;
+            --ollama)          run_ollama=true; run_all=false ;;
+            --ollama-ci)       run_ollama_ci=true; run_all=false ;;
+            --oauth-mock)      run_oauth_mock=true; run_all=false ;;
+            --hybrid-local)    run_hybrid_local=true; run_all=false ;;
+            --remote-host)
+                if [ "$#" -lt 2 ]; then
+                    echo "Missing value for --remote-host"
+                    exit 1
+                fi
+                REMOTE_SERVER_IP="$2"
+                shift
+                ;;
+            --remote-ssh-key)
+                if [ "$#" -lt 2 ]; then
+                    echo "Missing value for --remote-ssh-key"
+                    exit 1
+                fi
+                REMOTE_SERVER_SSH_KEY="$2"
+                shift
+                ;;
+            --remote-user)
+                if [ "$#" -lt 2 ]; then
+                    echo "Missing value for --remote-user"
+                    exit 1
+                fi
+                REMOTE_SERVER_USER="$2"
+                shift
+                ;;
             --help|-h)
                 cat << 'HELP'
 Usage: ./scripts/test-suite.sh [FLAGS]
@@ -2533,10 +3009,16 @@ Flags:
   --docker          Docker container sandbox tests (requires Docker daemon)
   --ollama          Ollama integration test — local (requires ollama + qwen2.5-coder:1.5b)
   --ollama-ci       Ollama CI test — installs ollama + model, runs on any Linux runner
+  --oauth-mock      Boot mock OAuth providers + local web app, then hit the real callback route
   --hybrid-local    Hybrid mode end-to-end: aider+ollama+qwen builds a calculator, assert it works
   --features        Feature-focused test pack: vault CRUD, blobs HTTP, schedules,
                     API keys, wipe, two-agent support connect, privacy tripwires.
                     No credentials needed — all over loopback.
+  --remote-host IP  Override remote host instead of reading REMOTE_SERVER_IP.
+  --remote-ssh-key PATH
+                    Override SSH private key instead of reading REMOTE_SERVER_SSH_KEY.
+  --remote-user USER
+                    Override SSH user instead of reading REMOTE_SERVER_USER (default: root).
   --features-auth   Convex slow-path auth smoke via an in-process httptest
                     mock — proves ValidateTokenUser + token cache + owner/
                     non-owner/missing-header branches.
@@ -2555,8 +3037,9 @@ Environment:
 HELP
                 exit 0
                 ;;
-            *) echo "Unknown flag: $arg (use --help)"; exit 1 ;;
+            *) echo "Unknown flag: $1 (use --help)"; exit 1 ;;
         esac
+        shift
     done
 
     if $run_all || $run_unit; then
@@ -2639,6 +3122,10 @@ HELP
 
     if $run_ollama_ci; then
         run_ollama_ci_test
+    fi
+
+    if $run_oauth_mock; then
+        run_oauth_mock_tests
     fi
 
     if $run_hybrid_local; then

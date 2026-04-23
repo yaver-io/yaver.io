@@ -19,6 +19,7 @@ on:
           - lan
           - relay
           - auth
+          - oauth-mock
           - relay-docker
           - relay-binary
           - tailscale
@@ -58,6 +59,13 @@ jobs:
             needs_remote_tailscale: false
             needs_remote_cloudflared: false
           - section: auth
+            role: host-owner
+            exec_mode: remote_ssh
+            needs_tailscale: false
+            needs_cloudflare: false
+            needs_remote_tailscale: false
+            needs_remote_cloudflared: false
+          - section: oauth-mock
             role: host-owner
             exec_mode: remote_ssh
             needs_tailscale: false
@@ -288,16 +296,18 @@ jobs:
         if: steps.preflight.outputs.skip != 'true' && matrix.exec_mode == 'local_cross_machine'
         env:
           CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
-          REMOTE_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
-          REMOTE_SERVER_SSH_KEY: ${{ env.HCLOUD_SSH_PRIVATE_KEY_PATH }}
           CF_TUNNEL_URL: ${{ secrets.CF_TUNNEL_URL }}
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           mkdir -p ci/.artifacts
           actual_ip="$(cat ci/.artifacts/server-ip)"
-          export REMOTE_SERVER_IP="$actual_ip"
-          ./scripts/test-suite.sh --${{ matrix.section }} 2>&1 | tee "ci/.artifacts/test-suite-${{ matrix.section }}.log"
+          ./scripts/test-suite.sh \
+            --remote-host "$actual_ip" \
+            --remote-ssh-key "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+            --remote-user root \
+            --${{ matrix.section }} \
+            2>&1 | tee "ci/.artifacts/test-suite-${{ matrix.section }}.log"
 
       - name: Run section on Hetzner host over SSH
         if: steps.preflight.outputs.skip != 'true' && matrix.exec_mode == 'remote_ssh'
@@ -318,6 +328,25 @@ jobs:
       - name: Append summary
         if: always()
         run: |
+          mkdir -p ci/.artifacts/results
+          status="success"
+          if [ "${{ steps.preflight.outputs.skip || 'false' }}" = "true" ]; then
+            status="skipped"
+          elif [ "${{ job.status }}" != "success" ]; then
+            status="${{ job.status }}"
+          fi
+
+          cat > "ci/.artifacts/results/${{ matrix.section }}.json" <<EOF
+          {
+            "section": "${{ matrix.section }}",
+            "role": "${{ matrix.role }}",
+            "mode": "${{ matrix.exec_mode }}",
+            "target": "${{ github.event.inputs.target || 'persistent' }}",
+            "status": "${status}",
+            "skipped": "${{ steps.preflight.outputs.skip || 'false' }}"
+          }
+          EOF
+
           {
             echo "### remote-integration: ${{ matrix.section }}"
             echo ""
@@ -352,3 +381,45 @@ jobs:
       - name: Delete ephemeral box
         if: always() && steps.preflight.outputs.skip != 'true' && github.event.inputs.target == 'ephemeral'
         run: ./ci/hcloud/delete-server.sh
+
+  summarize:
+    runs-on: ubuntu-latest
+    needs: remote-integration
+    if: always()
+    steps:
+      - name: Download matrix artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/remote-integration-artifacts
+          pattern: remote-integration-*-${{ github.event.inputs.target || 'persistent' }}-${{ github.run_id }}
+          merge-multiple: false
+
+      - name: Build aggregate summary
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+
+          root = pathlib.Path("/tmp/remote-integration-artifacts")
+          rows = []
+          for path in sorted(root.glob("**/results/*.json")):
+              with path.open() as f:
+                  rows.append(json.load(f))
+
+          lines = []
+          lines.append("## remote-integration matrix summary")
+          lines.append("")
+          if not rows:
+              lines.append("No matrix result files were found.")
+          else:
+              lines.append("| section | status | mode | role | target |")
+              lines.append("|---|---|---|---|---|")
+              for row in sorted(rows, key=lambda r: r["section"]):
+                  lines.append(
+                      f"| `{row['section']}` | `{row['status']}` | `{row['mode']}` | `{row['role']}` | `{row['target']}` |"
+                  )
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+              f.write("\n".join(lines) + "\n")
+          PY

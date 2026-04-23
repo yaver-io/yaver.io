@@ -11,14 +11,19 @@ type ProviderConfig = {
   authUrl: string;
   tokenUrl: string;
   userInfoUrl: string;
+  emailUrl?: string;
   clientId: string;
   clientSecret: string;
   scope: string;
 };
 
+function envOr(defaultValue: string, envName: string): string {
+  const value = process.env[envName];
+  return value && value.trim() ? value.trim() : defaultValue;
+}
+
 function getBaseUrl(): string {
   if (process.env.NEXT_PUBLIC_BASE_URL) return process.env.NEXT_PUBLIC_BASE_URL;
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
   return "http://localhost:3000";
 }
 
@@ -30,26 +35,32 @@ function getProviderConfig(provider: OAuthProvider): ProviderConfig {
   switch (provider) {
     case "google":
       return {
-        authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
-        tokenUrl: "https://oauth2.googleapis.com/token",
-        userInfoUrl: "https://www.googleapis.com/oauth2/v2/userinfo",
+        authUrl: envOr("https://accounts.google.com/o/oauth2/v2/auth", "OAUTH_GOOGLE_AUTH_URL"),
+        tokenUrl: envOr("https://oauth2.googleapis.com/token", "OAUTH_GOOGLE_TOKEN_URL"),
+        userInfoUrl: envOr("https://www.googleapis.com/oauth2/v2/userinfo", "OAUTH_GOOGLE_USERINFO_URL"),
         clientId: process.env.OAUTH_GOOGLE_CLIENT_ID || "",
         clientSecret: process.env.OAUTH_GOOGLE_CLIENT_SECRET || "",
         scope: "openid email profile",
       };
     case "microsoft":
       return {
-        authUrl: `https://login.microsoftonline.com/${process.env.OAUTH_MICROSOFT_TENANT_ID || "common"}/oauth2/v2.0/authorize`,
-        tokenUrl: `https://login.microsoftonline.com/${process.env.OAUTH_MICROSOFT_TENANT_ID || "common"}/oauth2/v2.0/token`,
-        userInfoUrl: "https://graph.microsoft.com/v1.0/me",
+        authUrl: envOr(
+          `https://login.microsoftonline.com/${process.env.OAUTH_MICROSOFT_TENANT_ID || "common"}/oauth2/v2.0/authorize`,
+          "OAUTH_MICROSOFT_AUTH_URL",
+        ),
+        tokenUrl: envOr(
+          `https://login.microsoftonline.com/${process.env.OAUTH_MICROSOFT_TENANT_ID || "common"}/oauth2/v2.0/token`,
+          "OAUTH_MICROSOFT_TOKEN_URL",
+        ),
+        userInfoUrl: envOr("https://graph.microsoft.com/v1.0/me", "OAUTH_MICROSOFT_USERINFO_URL"),
         clientId: process.env.OAUTH_MICROSOFT_CLIENT_ID || "",
         clientSecret: process.env.OAUTH_MICROSOFT_CLIENT_SECRET || "",
         scope: "openid email profile",
       };
     case "apple":
       return {
-        authUrl: "https://appleid.apple.com/auth/authorize",
-        tokenUrl: "https://appleid.apple.com/auth/token",
+        authUrl: envOr("https://appleid.apple.com/auth/authorize", "OAUTH_APPLE_AUTH_URL"),
+        tokenUrl: envOr("https://appleid.apple.com/auth/token", "OAUTH_APPLE_TOKEN_URL"),
         userInfoUrl: "",
         clientId: process.env.OAUTH_APPLE_CLIENT_ID || "",
         clientSecret: process.env.OAUTH_APPLE_CLIENT_SECRET || "",
@@ -57,18 +68,19 @@ function getProviderConfig(provider: OAuthProvider): ProviderConfig {
       };
     case "github":
       return {
-        authUrl: "https://github.com/login/oauth/authorize",
-        tokenUrl: "https://github.com/login/oauth/access_token",
-        userInfoUrl: "https://api.github.com/user",
+        authUrl: envOr("https://github.com/login/oauth/authorize", "OAUTH_GITHUB_AUTH_URL"),
+        tokenUrl: envOr("https://github.com/login/oauth/access_token", "OAUTH_GITHUB_TOKEN_URL"),
+        userInfoUrl: envOr("https://api.github.com/user", "OAUTH_GITHUB_USERINFO_URL"),
+        emailUrl: envOr("https://api.github.com/user/emails", "OAUTH_GITHUB_EMAILS_URL"),
         clientId: process.env.OAUTH_GITHUB_CLIENT_ID || "",
         clientSecret: process.env.OAUTH_GITHUB_CLIENT_SECRET || "",
         scope: "read:user user:email",
       };
     case "gitlab":
       return {
-        authUrl: "https://gitlab.com/oauth/authorize",
-        tokenUrl: "https://gitlab.com/oauth/token",
-        userInfoUrl: "https://gitlab.com/oauth/userinfo",
+        authUrl: envOr("https://gitlab.com/oauth/authorize", "OAUTH_GITLAB_AUTH_URL"),
+        tokenUrl: envOr("https://gitlab.com/oauth/token", "OAUTH_GITLAB_TOKEN_URL"),
+        userInfoUrl: envOr("https://gitlab.com/oauth/userinfo", "OAUTH_GITLAB_USERINFO_URL"),
         clientId: process.env.OAUTH_GITLAB_CLIENT_ID || "",
         clientSecret: process.env.OAUTH_GITLAB_CLIENT_SECRET || "",
         scope: "openid profile email",
@@ -234,7 +246,7 @@ export async function getUserInfo(
   if (provider === "github") {
     let email = typeof data.email === "string" ? data.email : "";
     if (!email) {
-      const emailsRes = await fetch("https://api.github.com/user/emails", {
+      const emailsRes = await fetch(config.emailUrl || "https://api.github.com/user/emails", {
         headers: {
           Authorization: `Bearer ${tokens.access_token}`,
           Accept: "application/json",

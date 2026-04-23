@@ -35,6 +35,7 @@ Conventions: `- [ ]` for pending, `- [x]` when done. Organised in the four phase
   - [x] `--cloudflare`
 - [x] Per-section jobs, each skippable via the `suite` input:
   - [x] `--auth` — email/password lifecycle (no extra secrets needed)
+  - [x] `--oauth-mock` — mock provider callback path + auth-link/unlink/merge/TOTP/security-event smoke
   - [x] `--relay-docker` — deploy relay container to box, exercise proxy, teardown
   - [x] `--relay-binary` — same but with native binary
   - [x] `--tailscale` — `tailscale up` with `TAILSCALE_AUTHKEY`, verify cross-machine connect
@@ -43,8 +44,8 @@ Conventions: `- [ ]` for pending, `- [x]` when done. Organised in the four phase
   - [x] `--ollama-ci` — end-to-end ops → runner → ollama path
   - [x] `--hybrid-local` — planner+implementer loop against local qwen
 - [x] Each job uploads `/var/log/yaver-ci/*.log` + `test-suite-*.log` as artifacts
-- [ ] Matrix summary comment (so one failing section doesn't hide the others)
-- [ ] Add `--remote-host` / `--remote-ssh-key` flags to `scripts/test-suite.sh` — today it reads `REMOTE_SERVER_IP` + `REMOTE_SERVER_SSH_KEY` from `.env.test`. The workflow writes those into env before invoking, so zero code changes are needed if we mirror the names.
+- [x] Matrix summary comment / aggregate job summary so one failing section doesn't hide the others.
+- [x] Add `--remote-host` / `--remote-ssh-key` flags to `scripts/test-suite.sh` so callers don't need `.env.test` wiring for cross-machine runs.
 
 ## Phase 3 — mocked OAuth harness (all 6 providers, no real calls)
 
@@ -52,34 +53,34 @@ Goal: CI-driven "can a user sign in via provider X" tests that never touch `acco
 
 ### Architecture
 
-- [ ] New dir `ci/oauth-mock/` — small Go HTTP server mimicking token + userinfo endpoints per provider. Read-only; no state; deterministic responses based on query params.
-- [ ] Web app (and where relevant, Convex) made configurable via env:
-  - `OAUTH_APPLE_TOKEN_URL`, `OAUTH_APPLE_KEYS_URL`
+- [x] New dir `ci/oauth-mock/` — small Go HTTP server mimicking token + userinfo endpoints per provider. Read-only; no state; deterministic responses based on query params.
+- [x] Web app (and where relevant, Convex) made configurable via env:
+  - `OAUTH_APPLE_TOKEN_URL` (current callback path uses `id_token` directly; no JWKS fetch in this flow)
   - `OAUTH_GOOGLE_TOKEN_URL`, `OAUTH_GOOGLE_USERINFO_URL`
   - `OAUTH_MICROSOFT_TOKEN_URL`, `OAUTH_MICROSOFT_USERINFO_URL`
   - `OAUTH_GITHUB_TOKEN_URL`, `OAUTH_GITHUB_USERINFO_URL`
   - `OAUTH_GITLAB_TOKEN_URL`, `OAUTH_GITLAB_USERINFO_URL`
   - Each defaults to the real provider URL; test env overrides to `http://localhost:PORT/<provider>/{token,userinfo}`.
-- [ ] Convex test-mode endpoint `POST /auth/test/oauth-signin` — bypasses the real HTTPS round-trip by accepting pre-built identity claims `(provider, providerId, email, name?)` and returning a real session token. **Gated on `TEST_MODE_ENABLED=1`.** Never enable in prod.
-- [ ] `test-suite.sh --oauth-mock` section that spins up the mock server, runs the callback path with fabricated `code`/`state`, verifies a session comes back.
+- [x] Convex test-mode endpoint `POST /auth/test/oauth-signin` — bypasses the real HTTPS round-trip by accepting pre-built identity claims `(provider, providerId, email, name?)` and returning a real session token. **Gated on `TEST_MODE_ENABLED=1`.** Never enable in prod.
+- [x] `test-suite.sh --oauth-mock` section that spins up the mock server, runs the callback path with fabricated `code`/`state`, verifies a session comes back.
 
 ### Per-provider checklist
 
-- [ ] Apple — realistic ID token JSON (issuer, audience, sub, email, email_verified, is_private_email)
-- [ ] Google — userinfo JSON (sub, email, email_verified, name, picture)
-- [ ] Microsoft — v2.0 id_token claims (oid, preferred_username, email)
-- [ ] GitHub — userinfo endpoint returning `login`, `id`, `email`, `name` + `/user/emails` shape
-- [ ] GitLab — OIDC userinfo (sub, email, name, username)
+- [x] Apple — realistic ID token JSON (issuer, audience, sub, email, email_verified, is_private_email)
+- [x] Google — userinfo JSON (sub, email, email_verified, name, picture)
+- [x] Microsoft — v2.0 id_token claims (oid, preferred_username, email)
+- [x] GitHub — userinfo endpoint returning `login`, `id`, `email`, `name` + `/user/emails` shape
+- [x] GitLab — OIDC userinfo (sub, email, name, username)
 - [ ] Email/password — lifecycle test via `test-suite.sh --auth` (no mock, hits Convex directly)
 
 ### Convex-side auth audits the mock should exercise
 
-- [ ] `findUserForOAuth` — `authIdentities` index hit, primary `(provider, providerId)` fallback, email fallback, all exercised
-- [ ] `createUserFromOAuth` — idempotency (second call with same `(provider, providerId)` reuses the user)
-- [ ] `linkOAuthIdentity` — second provider on an existing account (via `/auth/oauth-link/complete`)
-- [ ] `accountMergeIntent` happy path — totally synthetic, mocks don't matter here
-- [ ] TOTP-gated unlink refuses stale codes (already covered by Convex unit tests — verify via integration)
-- [ ] Security-event audit row written for every link / unlink / merge
+- [x] `findUserForOAuth` — `authIdentities` index hit, primary `(provider, providerId)` fallback, email fallback, all exercised
+- [x] `createUserFromOAuth` — idempotency (second call with same `(provider, providerId)` reuses the user)
+- [x] `linkOAuthIdentity` — second provider on an existing account (via `/auth/oauth-link/complete`)
+- [x] `accountMergeIntent` happy path — totally synthetic, mocks don't matter here
+- [x] TOTP-gated unlink refuses stale codes (already covered by Convex unit tests — verify via integration)
+- [x] Security-event audit row written for every link / unlink / merge
 
 ## Phase 4 — qwen writes hello-world (new test, small)
 
@@ -137,7 +138,7 @@ Goal: CI-driven "can a user sign in via provider X" tests that never touch `acco
 
 ## Documentation follow-ups
 
-- [ ] Add a "How I run remote-verify from my laptop" section to `ci/README.md` with the actual command sequence someone can copy-paste.
+- [x] Add a "How I run remote-verify from my laptop" section to `ci/README.md` with the actual command sequence someone can copy-paste.
 - [ ] Cross-link from `AI_ARCH.md` → `ci/README.md` so new contributors see the test rig when they touch auth/bootstrap.
 - [ ] Note the snapshot-delete-restore cost pattern in the CLAUDE.md "Hetzner Test Server" section (already mentioned, but expand with numbers).
 
