@@ -46,6 +46,8 @@ Conventions: `- [ ]` for pending, `- [x]` when done. Organised in the four phase
 - [x] Each job uploads `/var/log/yaver-ci/*.log` + `test-suite-*.log` as artifacts
 - [x] Matrix summary comment / aggregate job summary so one failing section doesn't hide the others.
 - [x] Add `--remote-host` / `--remote-ssh-key` flags to `scripts/test-suite.sh` so callers don't need `.env.test` wiring for cross-machine runs.
+- [x] Single-suite dispatches now build a filtered matrix up front, so `suite=oauth-mock` creates only the `oauth-mock` job instead of queuing/skipping the full matrix.
+- [x] Workflow artifact/checkout actions moved to Node 24 lines (`checkout@v5`, `upload-artifact@v5`, `download-artifact@v5`) to get ahead of the GitHub-hosted Node 20 deprecation.
 
 ## Phase 3 — mocked OAuth harness (all 6 providers, no real calls)
 

@@ -36,91 +36,139 @@ permissions:
   contents: read
 
 jobs:
+  prepare-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.build.outputs.matrix }}
+    steps:
+      - name: Select matrix
+        id: build
+        env:
+          SUITE: ${{ github.event.inputs.suite || 'all' }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+
+          suite = os.environ["SUITE"]
+          rows = [
+              {
+                  "section": "lan",
+                  "role": "host-owner",
+                  "exec_mode": "remote_ssh",
+                  "needs_tailscale": False,
+                  "needs_cloudflare": False,
+                  "needs_remote_tailscale": False,
+                  "needs_remote_cloudflared": False,
+              },
+              {
+                  "section": "relay",
+                  "role": "host-owner",
+                  "exec_mode": "remote_ssh",
+                  "needs_tailscale": False,
+                  "needs_cloudflare": False,
+                  "needs_remote_tailscale": False,
+                  "needs_remote_cloudflared": False,
+              },
+              {
+                  "section": "auth",
+                  "role": "host-owner",
+                  "exec_mode": "remote_ssh",
+                  "needs_tailscale": False,
+                  "needs_cloudflare": False,
+                  "needs_remote_tailscale": False,
+                  "needs_remote_cloudflared": False,
+              },
+              {
+                  "section": "oauth-mock",
+                  "role": "host-owner",
+                  "exec_mode": "remote_ssh",
+                  "needs_tailscale": False,
+                  "needs_cloudflare": False,
+                  "needs_remote_tailscale": False,
+                  "needs_remote_cloudflared": False,
+              },
+              {
+                  "section": "relay-docker",
+                  "role": "host-owner",
+                  "exec_mode": "local_cross_machine",
+                  "needs_tailscale": False,
+                  "needs_cloudflare": False,
+                  "needs_remote_tailscale": False,
+                  "needs_remote_cloudflared": False,
+              },
+              {
+                  "section": "relay-binary",
+                  "role": "host-owner",
+                  "exec_mode": "local_cross_machine",
+                  "needs_tailscale": False,
+                  "needs_cloudflare": False,
+                  "needs_remote_tailscale": False,
+                  "needs_remote_cloudflared": False,
+              },
+              {
+                  "section": "tailscale",
+                  "role": "host-owner",
+                  "exec_mode": "local_cross_machine",
+                  "needs_tailscale": True,
+                  "needs_cloudflare": False,
+                  "needs_remote_tailscale": True,
+                  "needs_remote_cloudflared": False,
+              },
+              {
+                  "section": "cloudflare",
+                  "role": "host-owner",
+                  "exec_mode": "remote_ssh",
+                  "needs_tailscale": False,
+                  "needs_cloudflare": True,
+                  "needs_remote_tailscale": False,
+                  "needs_remote_cloudflared": True,
+              },
+              {
+                  "section": "ollama",
+                  "role": "host-owner",
+                  "exec_mode": "remote_ssh",
+                  "needs_tailscale": False,
+                  "needs_cloudflare": False,
+                  "needs_remote_tailscale": False,
+                  "needs_remote_cloudflared": False,
+              },
+              {
+                  "section": "ollama-ci",
+                  "role": "host-owner",
+                  "exec_mode": "remote_ssh",
+                  "needs_tailscale": False,
+                  "needs_cloudflare": False,
+                  "needs_remote_tailscale": False,
+                  "needs_remote_cloudflared": False,
+              },
+              {
+                  "section": "hybrid-local",
+                  "role": "host-owner",
+                  "exec_mode": "remote_ssh",
+                  "needs_tailscale": False,
+                  "needs_cloudflare": False,
+                  "needs_remote_tailscale": False,
+                  "needs_remote_cloudflared": False,
+              },
+          ]
+
+          if suite != "all":
+              rows = [row for row in rows if row["section"] == suite]
+
+          matrix = {"include": rows}
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"matrix={json.dumps(matrix, separators=(',', ':'))}\n")
+          PY
+
   remote-integration:
+    needs: prepare-matrix
     runs-on: ubuntu-latest
     timeout-minutes: 70
     strategy:
       fail-fast: false
       max-parallel: 1
-      matrix:
-        include:
-          - section: lan
-            role: host-owner
-            exec_mode: remote_ssh
-            needs_tailscale: false
-            needs_cloudflare: false
-            needs_remote_tailscale: false
-            needs_remote_cloudflared: false
-          - section: relay
-            role: host-owner
-            exec_mode: remote_ssh
-            needs_tailscale: false
-            needs_cloudflare: false
-            needs_remote_tailscale: false
-            needs_remote_cloudflared: false
-          - section: auth
-            role: host-owner
-            exec_mode: remote_ssh
-            needs_tailscale: false
-            needs_cloudflare: false
-            needs_remote_tailscale: false
-            needs_remote_cloudflared: false
-          - section: oauth-mock
-            role: host-owner
-            exec_mode: remote_ssh
-            needs_tailscale: false
-            needs_cloudflare: false
-            needs_remote_tailscale: false
-            needs_remote_cloudflared: false
-          - section: relay-docker
-            role: host-owner
-            exec_mode: local_cross_machine
-            needs_tailscale: false
-            needs_cloudflare: false
-            needs_remote_tailscale: false
-            needs_remote_cloudflared: false
-          - section: relay-binary
-            role: host-owner
-            exec_mode: local_cross_machine
-            needs_tailscale: false
-            needs_cloudflare: false
-            needs_remote_tailscale: false
-            needs_remote_cloudflared: false
-          - section: tailscale
-            role: host-owner
-            exec_mode: local_cross_machine
-            needs_tailscale: true
-            needs_cloudflare: false
-            needs_remote_tailscale: true
-            needs_remote_cloudflared: false
-          - section: cloudflare
-            role: host-owner
-            exec_mode: remote_ssh
-            needs_tailscale: false
-            needs_cloudflare: true
-            needs_remote_tailscale: false
-            needs_remote_cloudflared: true
-          - section: ollama
-            role: host-owner
-            exec_mode: remote_ssh
-            needs_tailscale: false
-            needs_cloudflare: false
-            needs_remote_tailscale: false
-            needs_remote_cloudflared: false
-          - section: ollama-ci
-            role: host-owner
-            exec_mode: remote_ssh
-            needs_tailscale: false
-            needs_cloudflare: false
-            needs_remote_tailscale: false
-            needs_remote_cloudflared: false
-          - section: hybrid-local
-            role: host-owner
-            exec_mode: remote_ssh
-            needs_tailscale: false
-            needs_cloudflare: false
-            needs_remote_tailscale: false
-            needs_remote_cloudflared: false
+      matrix: ${{ fromJson(needs.prepare-matrix.outputs.matrix) }}
     env:
       HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
       HCLOUD_SSH_KEY_NAME: yaver-ci
@@ -130,7 +178,7 @@ jobs:
       HETZNER_TEST_SNAPSHOT_ID: ${{ secrets.HETZNER_TEST_SNAPSHOT_ID }}
       REMOTE_REPO_DIR: /opt/yaver-ci/${{ github.run_id }}/${{ matrix.section }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Preflight
         id: preflight
@@ -145,12 +193,6 @@ jobs:
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           missing=""
-
-          if [ "${{ github.event.inputs.suite || 'all' }}" != "all" ] && [ "${{ github.event.inputs.suite || 'all' }}" != "${{ matrix.section }}" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Remote integration ${{ matrix.section }} skipped by suite selector." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
 
           for name in HCLOUD_TOKEN HCLOUD_SSH_PRIVATE_KEY CONVEX_SITE_URL; do
             value=""
@@ -362,7 +404,7 @@ jobs:
 
       - name: Upload artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: remote-integration-${{ matrix.section }}-${{ github.event.inputs.target || 'persistent' }}-${{ github.run_id }}
           path: ci/.artifacts/
@@ -384,11 +426,13 @@ jobs:
 
   summarize:
     runs-on: ubuntu-latest
-    needs: remote-integration
+    needs:
+      - prepare-matrix
+      - remote-integration
     if: always()
     steps:
       - name: Download matrix artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: /tmp/remote-integration-artifacts
           pattern: remote-integration-*-${{ github.event.inputs.target || 'persistent' }}-${{ github.run_id }}
