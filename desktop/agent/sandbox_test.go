@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"testing"
 )
 
@@ -187,5 +188,166 @@ func TestSandboxEmptyCommand(t *testing.T) {
 	}
 	if err := ValidateCommand("   ", cfg); err != nil {
 		t.Errorf("whitespace command should be allowed: %v", err)
+	}
+}
+
+// TestSandboxCaseInsensitiveHomeDeletion reproduces the class of
+// accident where an agent tries to "clean up" `~/workspace`
+// (lowercase) on macOS, which — because HFS+/APFS is
+// case-insensitive by default — resolves to the same inode as
+// `~/Workspace` and wipes the user's entire project tree. The
+// pre-existing regex patterns did not catch this because they
+// required the literal character `~` or `$HOME`; a fully-expanded
+// path like `/Users/foo/workspace` slipped through.
+func TestSandboxCaseInsensitiveHomeDeletion(t *testing.T) {
+	// Synthetic $HOME under /tmp so tests don't collide with the
+	// legacy `/var` regex on macOS (where t.TempDir() returns a
+	// subpath of /var/folders).
+	home := "/tmp/yaver-sandbox-test-home"
+	t.Setenv("HOME", home)
+
+	cfg := DefaultSandboxConfig()
+
+	blocked := []struct {
+		cmd    string
+		reason string
+	}{
+		{"rm -rf ~/workspace", "tilde lowercase"},
+		{"rm -rf ~/Workspace", "tilde mixed case"},
+		{"rm -rf ~/WORKSPACE", "tilde all caps"},
+		{"rm -rf " + filepath.Join(home, "workspace"), "absolute lowercase"},
+		{"rm -rf " + filepath.Join(home, "Workspace"), "absolute mixed case"},
+		{"rm -rf $HOME/workspace", "$HOME var lowercase"},
+		{"rm -rf ${HOME}/Workspace", "${HOME} var mixed case"},
+		{"rm -rf ~/Documents", "documents dir"},
+		{"rm -rf ~/Desktop", "desktop dir"},
+		{"rm -rf ~/.ssh", "ssh credentials"},
+		{"rm -rf ~/.aws", "aws credentials"},
+		{"rm -rf ~/.yaver", "yaver state"},
+		{"rm -rf ~/Projects", "projects dir"},
+		{"rm -rf ~/code", "code dir lowercase"},
+		{"rm -rf ~/Code", "code dir mixed case"},
+		{"rm --recursive --force ~/workspace", "long flags"},
+		{"rm -Rf ~/workspace", "-Rf flag variant"},
+		{"rm -fr ~/workspace", "-fr flag variant"},
+		{"cd /tmp && rm -rf ~/workspace", "chained with cd"},
+		{"ls && rm -rf " + filepath.Join(home, "workspace"), "chained absolute"},
+		{"rm -rf '" + filepath.Join(home, "workspace") + "'", "single-quoted"},
+		{"rm -rf \"" + filepath.Join(home, "Workspace") + "\"", "double-quoted"},
+		{"/bin/rm -rf ~/workspace", "absolute rm binary"},
+		{"rm -rf /USERS", "/USERS uppercase system path"},
+		{"rm -rf /ETC", "/ETC uppercase system path"},
+	}
+	for _, tc := range blocked {
+		t.Run(tc.reason, func(t *testing.T) {
+			if err := ValidateCommand(tc.cmd, cfg); err == nil {
+				t.Errorf("expected command to be blocked: %q", tc.cmd)
+			}
+		})
+	}
+}
+
+// TestSandboxAllowsLegitimateSubpathDeletion keeps the deny-list
+// narrow: deleting a subdirectory of a protected path (a build
+// output, a specific project clone) must still work.
+func TestSandboxAllowsLegitimateSubpathDeletion(t *testing.T) {
+	home := "/tmp/yaver-sandbox-test-home"
+	t.Setenv("HOME", home)
+
+	cfg := DefaultSandboxConfig()
+
+	allowed := []string{
+		"rm -rf ~/Workspace/yaver.io/dist",
+		"rm -rf ~/Workspace/yaver.io/node_modules",
+		"rm -rf " + filepath.Join(home, "Workspace", "yaver.io", "build"),
+		"rm -rf $HOMEBREW_PREFIX/cache", // $HOMEBREW_PREFIX must not be eaten by $HOME expansion
+		"rm -rf ./node_modules",
+		"rm -rf ./build",
+		"rm -rf ../stale-dir",
+		"rm -rf /tmp/build-cache",
+		"rm file.txt",                  // non-recursive
+		"rm -f file.txt",               // -f without -r
+		"rmdir ./empty",                // rmdir is not rm
+		"find . -name '*.log' -delete", // find -delete bypass is known; not covered by this fix
+	}
+	for _, cmd := range allowed {
+		t.Run(cmd, func(t *testing.T) {
+			if err := ValidateCommand(cmd, cfg); err != nil {
+				t.Errorf("command should be allowed: %q → %v", cmd, err)
+			}
+		})
+	}
+}
+
+func TestSandboxResolveShellPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"~", home},
+		{"~/workspace", filepath.Join(home, "workspace")},
+		{"$HOME", home},
+		{"${HOME}/Documents", filepath.Join(home, "Documents")},
+		{"$HOMEBREW_PREFIX/var", "$HOMEBREW_PREFIX/var"}, // must NOT expand $HOMEBREW
+		{"/etc/passwd", "/etc/passwd"},
+		{"\"~/workspace\"", filepath.Join(home, "workspace")},
+		{"'~/workspace'", filepath.Join(home, "workspace")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			got := resolveShellPath(tc.in)
+			if got != tc.want {
+				t.Errorf("resolveShellPath(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateContainerMount(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	blocked := []string{
+		"/:/host",
+		"/Users:/host",
+		"/users:/host", // case-insensitive
+		"/home:/host",
+		"/etc:/host:ro",
+		"/var/run/docker.sock:/var/run/docker.sock",
+		"/var/lib/docker/docker.sock:/sock",
+		home + ":/host",
+	}
+	for _, spec := range blocked {
+		t.Run("block_"+spec, func(t *testing.T) {
+			if err := validateContainerMount(spec); err == nil {
+				t.Errorf("expected mount to be refused: %q", spec)
+			}
+		})
+	}
+
+	allowed := []string{
+		"/opt/android-sdk:/opt/android-sdk:ro",
+		"/tmp/yaver-cache:/workspace-cache",
+		filepath.Join(home, "projects", "myapp") + ":/workspace-extra:ro",
+	}
+	for _, spec := range allowed {
+		t.Run("allow_"+spec, func(t *testing.T) {
+			if err := validateContainerMount(spec); err != nil {
+				t.Errorf("mount should be allowed: %q → %v", spec, err)
+			}
+		})
+	}
+
+	// Malformed specs should fail closed, not open.
+	bad := []string{"", "just-source", ":/only-dest"}
+	for _, spec := range bad {
+		t.Run("bad_"+spec, func(t *testing.T) {
+			if err := validateContainerMount(spec); err == nil {
+				t.Errorf("malformed spec should be rejected: %q", spec)
+			}
+		})
 	}
 }

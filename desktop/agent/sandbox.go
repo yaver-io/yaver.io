@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -93,6 +95,288 @@ var dangerousPatterns = []struct {
 // sudoPattern matches commands starting with sudo, su, or doas.
 var sudoPattern = regexp.MustCompile(`^\s*(sudo\b|su\s|doas\b)`)
 
+// dangerousAbsolutePaths are absolute paths whose recursive deletion
+// is always refused. Matched case-insensitively so that on
+// case-insensitive filesystems (macOS HFS+/APFS default, Windows NTFS)
+// `rm -rf /Users` and `rm -rf /users` both get caught. Case-insensitive
+// comparison is strictly safer than case-sensitive: on Linux it never
+// blocks a legitimate different-case path (those don't collide with
+// the dangerous one on the filesystem either), and on macOS/Windows
+// it closes a real exploitation gap.
+var dangerousAbsolutePaths = []string{
+	"/",
+	"/Users",    // parent of every macOS user home
+	"/home",     // parent of every Linux user home
+	"/root",
+	"/etc",
+	"/var",
+	"/usr",
+	"/bin",
+	"/sbin",
+	"/boot",
+	"/lib",
+	"/lib64",
+	"/sys",
+	"/proc",
+	"/opt",
+	"/srv",
+	"/System",   // macOS
+	"/Library",  // macOS (user and root)
+	"/Applications",
+}
+
+// dangerousHomeSubdirs are single-component names that, when they
+// appear directly under $HOME, name a directory that an AI agent
+// should never recursively delete: either it holds the user's source
+// code (Workspace, Projects, repos, ...) or it holds credentials
+// (.ssh, .aws, .gnupg). Matched case-insensitively so `~/workspace`
+// and `~/Workspace` both resolve to a blocked target on macOS.
+var dangerousHomeSubdirs = []string{
+	// Common codebase roots
+	"Workspace",
+	"workspace",
+	"Projects",
+	"projects",
+	"Code",
+	"code",
+	"repos",
+	"Repos",
+	"src",
+	"Src",
+	"dev",
+	"Dev",
+	"git",
+	"Git",
+	"Documents",
+	"Desktop",
+	"Downloads",
+	// Credential / config dirs
+	".ssh",
+	".aws",
+	".gnupg",
+	".config",
+	".yaver",
+	".claude",
+	".anthropic",
+	".codex",
+	".openai",
+}
+
+// rmCommandRegex detects an rm invocation anywhere in a segment.
+// Matches `rm`, `/bin/rm`, `/usr/bin/rm`. Does not require any
+// particular flag ordering.
+var rmCommandRegex = regexp.MustCompile(`(?i)(^|[\s;&|(])((?:/[^\s]+/)?rm)(\s|$)`)
+
+// resolveShellPath expands the portion of a shell-style path that
+// Yaver cares about for dangerous-deletion detection: leading `~`,
+// `~/`, `$HOME`, and `${HOME}` are rewritten to the actual home
+// directory. It does NOT execute the shell and does NOT expand
+// arbitrary variables — only the home-directory forms. The result
+// is run through filepath.Clean.
+func resolveShellPath(raw string) string {
+	p := strings.TrimSpace(raw)
+	if len(p) >= 2 {
+		if (p[0] == '"' && p[len(p)-1] == '"') || (p[0] == '\'' && p[len(p)-1] == '\'') {
+			p = p[1 : len(p)-1]
+		}
+	}
+	if p == "" {
+		return ""
+	}
+	home, _ := os.UserHomeDir()
+	if home != "" {
+		switch {
+		case p == "~":
+			p = home
+		case strings.HasPrefix(p, "~/"):
+			p = filepath.Join(home, p[2:])
+		}
+		// Expand ${HOME} and $HOME anywhere in the string. We only
+		// do this when the literal token appears — we never invoke
+		// the shell or dereference other env vars.
+		p = strings.ReplaceAll(p, "${HOME}", home)
+		// $HOME must be followed by a non-identifier char or end
+		// of string to avoid clobbering e.g. $HOMEBREW_PREFIX.
+		p = expandHomeVar(p, home)
+	}
+	return filepath.Clean(p)
+}
+
+// expandHomeVar rewrites `$HOME` to home, but only when the `$HOME`
+// is not immediately followed by an identifier character.
+func expandHomeVar(s, home string) string {
+	const needle = "$HOME"
+	var out strings.Builder
+	for {
+		idx := strings.Index(s, needle)
+		if idx < 0 {
+			out.WriteString(s)
+			return out.String()
+		}
+		out.WriteString(s[:idx])
+		after := idx + len(needle)
+		if after < len(s) {
+			c := s[after]
+			if c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+				// e.g. $HOMEBREW_PREFIX — leave as-is.
+				out.WriteString(needle)
+				s = s[after:]
+				continue
+			}
+		}
+		out.WriteString(home)
+		s = s[after:]
+	}
+}
+
+// pathEqualIgnoreCase compares two paths for equality after
+// filepath.Clean and ASCII lowercasing. Adequate for the POSIX
+// path separators we care about; not a full Unicode case fold.
+func pathEqualIgnoreCase(a, b string) bool {
+	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+}
+
+// isDangerousDeletionTarget returns (true, reason) when `target` —
+// after `~`/$HOME expansion and path cleaning — names a directory
+// that an AI agent should never recursively delete. The check is
+// case-insensitive so macOS's case-insensitive filesystem (where
+// `~/workspace` and `~/Workspace` are the same inode) cannot defeat
+// it. A direct-child-of-$HOME match is the primary guard against
+// the real-world incident where an agent "cleaned up" `~/workspace`
+// and wiped `~/Workspace`.
+func isDangerousDeletionTarget(target string) (bool, string) {
+	if target == "" {
+		return false, ""
+	}
+	resolved := resolveShellPath(target)
+	if resolved == "" || resolved == "." {
+		return false, ""
+	}
+	// Absolute system paths (exact match, case-insensitive).
+	for _, ancestor := range dangerousAbsolutePaths {
+		if pathEqualIgnoreCase(resolved, ancestor) {
+			return true, fmt.Sprintf("recursive deletion of system path %s is refused (resolved from %q)", ancestor, target)
+		}
+	}
+	home, _ := os.UserHomeDir()
+	if home == "" {
+		return false, ""
+	}
+	cleanHome := filepath.Clean(home)
+	if pathEqualIgnoreCase(resolved, cleanHome) {
+		return true, fmt.Sprintf("recursive deletion of $HOME (%s) is refused (resolved from %q)", cleanHome, target)
+	}
+	for _, sub := range dangerousHomeSubdirs {
+		candidate := filepath.Join(cleanHome, sub)
+		if pathEqualIgnoreCase(resolved, candidate) {
+			return true, fmt.Sprintf("recursive deletion of %s is refused (resolved from %q; case-insensitive filesystem match — this is the class of bug that wipes a user's project tree)", candidate, target)
+		}
+	}
+	return false, ""
+}
+
+// extractDeletionTargets returns every path argument passed to an
+// `rm` invocation that carries a recursive flag (-r / -R, in any
+// combination with other flags). Splits on shell command separators
+// before analysing so chained commands are covered.
+func extractDeletionTargets(cmd string) []string {
+	var targets []string
+	for _, seg := range splitShellSegments(cmd) {
+		seg = strings.TrimSpace(seg)
+		if seg == "" || !rmCommandRegex.MatchString(seg) {
+			continue
+		}
+		tokens := tokenizeShellArgs(seg)
+		seenRm := false
+		hasRecursive := false
+		var nonFlagArgs []string
+		for _, t := range tokens {
+			if !seenRm {
+				base := strings.ToLower(t)
+				if base == "rm" || strings.HasSuffix(base, "/rm") {
+					seenRm = true
+				}
+				continue
+			}
+			if strings.HasPrefix(t, "--") {
+				// GNU long flags (`--force`, `--recursive`, `--`) —
+				// `--recursive` is the only one that implies -r.
+				if strings.EqualFold(t, "--recursive") {
+					hasRecursive = true
+				}
+				continue
+			}
+			if strings.HasPrefix(t, "-") {
+				if strings.ContainsAny(t, "rR") {
+					hasRecursive = true
+				}
+				continue
+			}
+			nonFlagArgs = append(nonFlagArgs, t)
+		}
+		if hasRecursive {
+			targets = append(targets, nonFlagArgs...)
+		}
+	}
+	return targets
+}
+
+// splitShellSegments breaks a command line on the common shell
+// separators (`;`, `&&`, `||`, `|`) so each segment can be analysed
+// independently. Not a full shell parser — quoted separators leak
+// through, but the worst case is an extra segment that fails
+// downstream extraction cleanly.
+func splitShellSegments(cmd string) []string {
+	parts := []string{cmd}
+	for _, sep := range []string{"&&", "||", ";", "|"} {
+		var next []string
+		for _, p := range parts {
+			for _, piece := range strings.Split(p, sep) {
+				piece = strings.TrimSpace(piece)
+				if piece != "" {
+					next = append(next, piece)
+				}
+			}
+		}
+		parts = next
+	}
+	return parts
+}
+
+// tokenizeShellArgs splits a single command segment on whitespace,
+// respecting balanced single and double quotes. Backslash escapes
+// are not interpreted — they pass through as literal characters.
+func tokenizeShellArgs(s string) []string {
+	var out []string
+	var buf strings.Builder
+	var quote byte
+	flush := func() {
+		if buf.Len() > 0 {
+			out = append(out, buf.String())
+			buf.Reset()
+		}
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case quote != 0:
+			if c == quote {
+				quote = 0
+				continue
+			}
+			buf.WriteByte(c)
+		case c == '\'' || c == '"':
+			quote = c
+		case c == ' ' || c == '\t' || c == '\n':
+			flush()
+		default:
+			buf.WriteByte(c)
+		}
+	}
+	flush()
+	return out
+}
+
 // ValidateCommand checks a command string against the sandbox rules.
 // Returns nil if the command is allowed, or an error describing why it was blocked.
 func ValidateCommand(cmd string, cfg SandboxConfig) error {
@@ -115,6 +399,18 @@ func ValidateCommand(cmd string, cfg SandboxConfig) error {
 	for _, blocked := range cfg.BlockedCommands {
 		if strings.Contains(normalized, blocked) {
 			return fmt.Errorf("sandbox: blocked by custom rule — command contains '%s'", blocked)
+		}
+	}
+
+	// Resolve and case-fold every recursive-rm target against the
+	// deny-list. This runs before the legacy regex patterns because
+	// its error messages name the exact resolved path, which is
+	// more useful than "recursive removal of home directory" when
+	// the offending token was `/Users/kivanc/workspace` rather than
+	// a literal `~`.
+	for _, target := range extractDeletionTargets(normalized) {
+		if blocked, reason := isDangerousDeletionTarget(target); blocked {
+			return fmt.Errorf("sandbox: %s", reason)
 		}
 	}
 

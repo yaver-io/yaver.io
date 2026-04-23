@@ -43,6 +43,61 @@ const (
 	containerStopGrace = 5 * time.Second
 )
 
+// forbiddenMountSources are host paths that must never be bind-mounted
+// into a sandbox container, because doing so re-exposes the user's
+// home, credentials, or system configuration and defeats the whole
+// point of running the task in a container. Matched case-insensitively
+// (macOS / Windows FS are case-insensitive by default, so
+// `/users:/host` and `/Users:/host` have the same effect).
+var forbiddenMountSources = []string{
+	"/",
+	"/Users",
+	"/home",
+	"/root",
+	"/etc",
+	"/var",
+	"/usr",
+	"/boot",
+	"/lib",
+	"/sys",
+	"/proc",
+	"/System",
+	"/Library",
+}
+
+// validateContainerMount parses a docker-style `-v source:dest[:opts]`
+// spec and refuses mounts whose source would re-expose a dangerous
+// host path to the container. The agent silently accepted anything
+// the user (or a compromised config writer) put into container_mounts
+// before this check existed; a sandbox that mounts `/Users:/host` is
+// no sandbox at all.
+func validateContainerMount(spec string) error {
+	if spec == "" {
+		return fmt.Errorf("empty container mount spec")
+	}
+	parts := strings.SplitN(spec, ":", 3)
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return fmt.Errorf("invalid container mount spec %q (expected source:destination[:options])", spec)
+	}
+	src := filepath.Clean(parts[0])
+	for _, forbidden := range forbiddenMountSources {
+		if strings.EqualFold(src, forbidden) {
+			return fmt.Errorf("container mount %q is refused: source %s would re-expose the host filesystem to the sandbox", spec, forbidden)
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if strings.EqualFold(src, filepath.Clean(home)) {
+			return fmt.Errorf("container mount %q is refused: source %s is $HOME — mounting it into the sandbox defeats isolation", spec, home)
+		}
+	}
+	// Reject attempts to mount the Docker socket: anything with
+	// access to docker.sock can trivially escape the container.
+	if strings.EqualFold(src, "/var/run/docker.sock") || strings.HasSuffix(strings.ToLower(src), "/docker.sock") {
+		return fmt.Errorf("container mount %q is refused: the Docker socket grants container-escape capabilities", spec)
+	}
+	return nil
+}
+
 // ContainerRunner executes tasks inside Docker containers for isolation.
 // Used for both guest (security) and host (optional clean builds) tasks.
 type ContainerRunner struct {
@@ -193,8 +248,15 @@ func (cr *ContainerRunner) RunTask(ctx context.Context, opts ContainerTaskOpts) 
 	}
 	args = append(args, "--network", networkMode)
 
-	// Extra volume mounts (e.g. project-specific tools)
+	// Extra volume mounts (e.g. project-specific tools). Every entry
+	// must pass validateContainerMount — a misconfigured
+	// container_mounts (or a shared-storage mount pointed at
+	// somewhere sensitive) must not silently re-expose $HOME / /etc
+	// / the Docker socket and defeat the container sandbox.
 	for _, mount := range opts.ExtraMounts {
+		if err := validateContainerMount(mount); err != nil {
+			return nil, nil, nil, fmt.Errorf("sandbox: %w", err)
+		}
 		args = append(args, "-v", mount)
 	}
 
