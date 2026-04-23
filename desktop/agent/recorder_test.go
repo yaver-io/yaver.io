@@ -305,6 +305,17 @@ func TestClipNoAuth(t *testing.T) {
 	}
 }
 
+func TestClipPrivateDetailRequiresAuth(t *testing.T) {
+	tm := NewTaskManager(t.TempDir(), nil, defaultRunner)
+	baseURL, cancel := startTestServer(t, "test-token", tm)
+	defer cancel()
+
+	status, _ := doRequest(t, "GET", baseURL+"/clips/private/fake-id", "", "")
+	if status != 401 {
+		t.Fatalf("/clips/private/<id> without auth: expected 401, got %d", status)
+	}
+}
+
 // findFFmpeg checks if ffmpeg is available.
 func findFFmpeg() (string, error) {
 	return exec.LookPath("ffmpeg")

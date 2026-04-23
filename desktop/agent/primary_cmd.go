@@ -67,13 +67,15 @@ Single-device users auto-connect regardless of this setting.
 }
 
 type primaryDevice struct {
-	DeviceID      string `json:"deviceId"`
-	Name          string `json:"name"`
-	Platform      string `json:"platform"`
-	QuicHost      string `json:"quicHost"`
-	IsOnline      bool   `json:"isOnline"`
-	IsGuest       bool   `json:"isGuest"`
-	LastHeartbeat int64  `json:"lastHeartbeat"`
+	DeviceID        string   `json:"deviceId"`
+	Name            string   `json:"name"`
+	Platform        string   `json:"platform"`
+	QuicHost        string   `json:"quicHost"`
+	LocalIps        []string `json:"localIps,omitempty"`
+	PublicEndpoints []string `json:"publicEndpoints,omitempty"`
+	IsOnline        bool     `json:"isOnline"`
+	IsGuest         bool     `json:"isGuest"`
+	LastHeartbeat   int64    `json:"lastHeartbeat"`
 }
 
 func primaryListDevices(ctx context.Context, token, convexURL string) ([]primaryDevice, error) {

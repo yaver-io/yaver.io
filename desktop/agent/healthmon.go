@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,21 +15,32 @@ import (
 )
 
 const (
-	healthMonConfigFile   = "healthmon.json"
-	healthMonMaxHistory   = 50
+	healthMonConfigFile      = "healthmon.json"
+	healthMonMaxHistory      = 50
 	healthMonDefaultInterval = 60
 	healthMonDefaultTimeout  = 5000
 )
+
+var defaultHealthTargets = []HealthTarget{
+	{
+		URL:          "https://talos.kivanccakmak.workers.dev",
+		Label:        "Talos Cloudflare Worker",
+		Method:       "GET",
+		Interval:     healthMonDefaultInterval,
+		TimeoutMs:    healthMonDefaultTimeout,
+		ExpectStatus: 200,
+	},
+}
 
 // HealthTarget represents a URL to monitor.
 type HealthTarget struct {
 	ID              string `json:"id"`
 	URL             string `json:"url"`
 	Label           string `json:"label,omitempty"`
-	Method          string `json:"method,omitempty"`       // GET (default) or HEAD
-	Interval        int    `json:"interval"`                // seconds, default 60
-	TimeoutMs       int    `json:"timeoutMs"`               // default 5000
-	ExpectStatus    int    `json:"expectStatus,omitempty"`  // default 200
+	Method          string `json:"method,omitempty"`          // GET (default) or HEAD
+	Interval        int    `json:"interval"`                  // seconds, default 60
+	TimeoutMs       int    `json:"timeoutMs"`                 // default 5000
+	ExpectStatus    int    `json:"expectStatus,omitempty"`    // default 200
 	WarnThresholdMs int    `json:"warnThresholdMs,omitempty"` // response time above this = warning (default: half of timeoutMs)
 	NotifyOnFailure bool   `json:"notifyOnFailure,omitempty"`
 	NotifyOnWarning bool   `json:"notifyOnWarning,omitempty"`
@@ -100,12 +112,47 @@ func NewHealthMonitor() (*HealthMonitor, error) {
 		}
 	}
 
+	hm.ensureDefaultTargets()
+
 	// Start monitoring all targets
 	for _, t := range hm.targets {
 		hm.startMonitor(t)
 	}
 
 	return hm, nil
+}
+
+func (hm *HealthMonitor) ensureDefaultTargets() {
+	hm.mu.Lock()
+	changed := false
+	for _, def := range defaultHealthTargets {
+		if hm.hasTargetURLLocked(def.URL) {
+			continue
+		}
+		target := def
+		target.ID = uuid.New().String()[:8]
+		hm.targets[target.ID] = &target
+		hm.statuses[target.ID] = &HealthStatus{
+			TargetID: target.ID,
+			URL:      target.URL,
+			Label:    target.Label,
+		}
+		changed = true
+	}
+	hm.mu.Unlock()
+
+	if changed {
+		hm.persist()
+	}
+}
+
+func (hm *HealthMonitor) hasTargetURLLocked(rawURL string) bool {
+	for _, target := range hm.targets {
+		if strings.EqualFold(strings.TrimSpace(target.URL), strings.TrimSpace(rawURL)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (hm *HealthMonitor) persist() {

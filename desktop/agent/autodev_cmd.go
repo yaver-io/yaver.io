@@ -1122,7 +1122,7 @@ func resolveAutodevDeployTargets(spec string) []string {
 		return nil
 	case "both":
 		return []string{"testflight", "playstore"}
-	case "testflight", "playstore", "convex", "vercel":
+	case "testflight", "playstore", "convex", "vercel", "cloudflare":
 		return []string{spec}
 	case "auto":
 		var out []string
@@ -1136,8 +1136,11 @@ func resolveAutodevDeployTargets(spec string) []string {
 		if fileExists("convex") || pkgJSONHasDep("convex") {
 			out = append(out, "convex")
 		}
-		// Vercel: vercel.json, .vercel dir, or a Next.js project
-		if fileExists("vercel.json") || fileExists(".vercel") || fileExists("next.config.js") || fileExists("next.config.mjs") || fileExists("next.config.ts") {
+		if fileExists("wrangler.toml") || fileExists("wrangler.jsonc") {
+			out = append(out, "cloudflare")
+		}
+		// Vercel: explicit config only. Generic Next.js projects may deploy elsewhere.
+		if fileExists("vercel.json") || fileExists(".vercel") {
 			out = append(out, "vercel")
 		}
 		return out

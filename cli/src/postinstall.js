@@ -12,6 +12,12 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
+const CODING_RUNNER_BOOTSTRAP = [
+  { command: "claude", pkg: "@anthropic-ai/claude-code", label: "Claude Code" },
+  { command: "codex", pkg: "@openai/codex", label: "OpenAI Codex" },
+  { command: "opencode", pkg: "opencode-ai", label: "OpenCode" },
+];
+
 function envEnabled(name) {
   const raw = String(process.env[name] || "").trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
@@ -26,6 +32,36 @@ function isGlobalInstall() {
 
 function log(message) {
   console.error(`[yaver postinstall] ${message}`);
+}
+
+function commandExists(name) {
+  try {
+    execSync(`command -v ${name}`, { stdio: ["ignore", "pipe", "ignore"] });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function installMissingCodingRunners() {
+  const missing = CODING_RUNNER_BOOTSTRAP.filter((entry) => !commandExists(entry.command));
+  if (missing.length === 0) {
+    log("Claude Code, Codex, and OpenCode already exist on PATH.");
+    return;
+  }
+
+  const npmCmd = (process.env.npm_execpath || "npm").trim() || "npm";
+  const packages = missing.map((entry) => entry.pkg);
+  const labels = missing.map((entry) => entry.label).join(", ");
+  try {
+    execSync(
+      `"${npmCmd}" install -g --no-fund --no-audit ${packages.join(" ")}`,
+      { stdio: "inherit" },
+    );
+    log(`Installed missing coding runners: ${labels}.`);
+  } catch (error) {
+    log(`Skipping coding runner bootstrap: ${error.message}`);
+  }
 }
 
 // Make sure `yaver` resolves on PATH for the next shell session. npm's
@@ -101,6 +137,9 @@ async function main() {
     return;
   }
   if (envEnabled("YAVER_SKIP_POSTINSTALL_MOBILE")) {
+    if (!envEnabled("YAVER_SKIP_POSTINSTALL_RUNNERS")) {
+      installMissingCodingRunners();
+    }
     return;
   }
 
@@ -109,6 +148,10 @@ async function main() {
     log("Provisioned Hermes reload stack for Yaver mobile.");
   } catch (error) {
     log(`Skipping mobile bootstrap: ${error.message}`);
+  }
+
+  if (!envEnabled("YAVER_SKIP_POSTINSTALL_RUNNERS")) {
+    installMissingCodingRunners();
   }
 }
 

@@ -58,17 +58,11 @@ func runAgentMeshSmoke(args []string) {
 	}
 	fmt.Printf("target: %s (%s)\n", target.Name, target.DeviceID)
 
-	base, token, err := remoteAgentBaseAndToken(target.DeviceID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "mesh smoke: resolve target: %v\n", err)
-		os.Exit(1)
-	}
-
 	var capResp struct {
 		OK      bool        `json:"ok"`
 		Machine MachineInfo `json:"machine"`
 	}
-	if err := remoteAgentJSON(timeoutContext(*timeout), base, token, "GET", "/agent/capabilities", nil, &capResp); err != nil {
+	if err := remoteAgentJSONForDevice(timeoutContext(*timeout), target.DeviceID, "GET", "/agent/capabilities", nil, &capResp); err != nil {
 		fmt.Fprintf(os.Stderr, "mesh smoke: remote capabilities: %v\n", err)
 		os.Exit(1)
 	}
@@ -78,7 +72,7 @@ func runAgentMeshSmoke(args []string) {
 		OK     bool   `json:"ok"`
 		TaskID string `json:"taskId"`
 	}
-	if err := remoteAgentJSON(timeoutContext(*timeout), base, token, "POST", "/tasks", map[string]interface{}{
+	if err := remoteAgentJSONForDevice(timeoutContext(*timeout), target.DeviceID, "POST", "/tasks", map[string]interface{}{
 		"title":         "mesh smoke",
 		"description":   "verify remote task execution over mesh",
 		"customCommand": *command,
@@ -95,7 +89,7 @@ func runAgentMeshSmoke(args []string) {
 			OK   bool     `json:"ok"`
 			Task TaskInfo `json:"task"`
 		}
-		if err := remoteAgentJSON(timeoutContext(15*time.Second), base, token, "GET", "/tasks/"+createResp.TaskID, nil, &taskResp); err != nil {
+		if err := remoteAgentJSONForDevice(timeoutContext(15*time.Second), target.DeviceID, "GET", "/tasks/"+createResp.TaskID, nil, &taskResp); err != nil {
 			fmt.Fprintf(os.Stderr, "mesh smoke: poll task: %v\n", err)
 			os.Exit(1)
 		}
@@ -115,7 +109,7 @@ func runAgentMeshSmoke(args []string) {
 		time.Sleep(1500 * time.Millisecond)
 	}
 
-	_ = remoteAgentJSON(timeoutContext(10*time.Second), base, token, "POST", "/tasks/"+createResp.TaskID+"/stop", map[string]interface{}{}, nil)
+	_ = remoteAgentJSONForDevice(timeoutContext(10*time.Second), target.DeviceID, "POST", "/tasks/"+createResp.TaskID+"/stop", map[string]interface{}{}, nil)
 	fmt.Fprintln(os.Stderr, "mesh smoke: timed out waiting for remote task")
 	os.Exit(1)
 }

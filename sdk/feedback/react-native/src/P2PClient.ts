@@ -449,6 +449,39 @@ export class P2PClient {
     return response.json();
   }
 
+  async getVibingEligibility(
+    opts?: { projectName?: string; bundleId?: string; projectPath?: string },
+  ): Promise<{
+    canVibe: boolean;
+    reason?: string;
+    guidance?: string;
+    projectName?: string;
+    projectPath?: string;
+    provider?: string;
+    repoFullName?: string;
+  }> {
+    const identity = resolveAppIdentity(opts);
+    const params = new URLSearchParams();
+    if (identity.projectName ?? opts?.projectName) {
+      params.set('projectName', identity.projectName ?? opts?.projectName ?? '');
+    }
+    if (identity.bundleId ?? opts?.bundleId) {
+      params.set('bundleId', identity.bundleId ?? opts?.bundleId ?? '');
+    }
+    if (identity.projectPath ?? opts?.projectPath) {
+      params.set('projectPath', identity.projectPath ?? opts?.projectPath ?? '');
+    }
+    const response = await fetch(`${this.baseUrl}/vibing/eligibility?${params.toString()}`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`[P2PClient] Vibing eligibility failed (${response.status}): ${text}`);
+    }
+    return response.json();
+  }
+
   /**
    * After uploading a feedback bundle with `uploadFeedback`, call this
    * with the returned report id to create a fix task on the agent. The

@@ -46,6 +46,13 @@
          border: 1px solid rgba(239, 68, 68, .3); border-radius: 6px; margin: 8px 0; }
   .tip { color: #737373; font-size: 11px; margin: 8px 0; }
   .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .terminal-wrap { display: grid; gap: 10px; }
+  .terminal-screen { background: #05070a; border: 1px solid #1f2937; border-radius: 8px; padding: 12px;
+    min-height: 320px; max-height: 60vh; overflow: auto; white-space: pre-wrap; font-size: 12px; line-height: 1.45; }
+  .terminal-bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .terminal-status { font-size: 11px; color: #737373; }
+  .terminal-input-row { display: flex; gap: 8px; }
+  .terminal-input-row input { margin-bottom: 0; }
 </style>
 </head>
 <body>
@@ -69,6 +76,7 @@
   <button data-tab="schema">Schema</button>
   <button data-tab="storage">Storage</button>
   <button data-tab="logs">Logs</button>
+  <button data-tab="terminal">Terminal</button>
 </nav>
 
 <main id="view"></main>
@@ -96,6 +104,11 @@ const view = document.getElementById("view");
 const tabs = document.getElementById("tabs");
 const statusDot = document.getElementById("statusDot");
 const hostLabel = document.getElementById("hostLabel");
+let terminalWS = null;
+let terminalSessionId = sessionStorage.getItem("yaver_terminal_session_id") || "";
+let terminalReconnectTimer = null;
+let terminalShouldReconnect = false;
+let terminalOutput = "";
 
 let currentTab = "overview";
 tabs.addEventListener("click", (e) => {
@@ -136,8 +149,116 @@ async function render() {
       case "schema": return renderSchema();
       case "storage": return renderStorage();
       case "logs": return renderLogs();
+      case "terminal": return renderTerminal();
     }
   } catch (e) { view.innerHTML = `<div class="err">${e.message}</div>`; }
+}
+
+function terminalStatusText(text) {
+  const el = document.getElementById("terminalStatus");
+  if (el) el.textContent = text;
+}
+
+function appendTerminalOutput(chunk) {
+  terminalOutput += chunk;
+  if (terminalOutput.length > 256000) terminalOutput = terminalOutput.slice(terminalOutput.length - 256000);
+  const el = document.getElementById("terminalScreen");
+  if (el) {
+    el.textContent = terminalOutput || "(connected, waiting for output)";
+    el.scrollTop = el.scrollHeight;
+  }
+}
+
+function closeTerminalWS() {
+  if (terminalWS) {
+    try { terminalWS.close(); } catch {}
+    terminalWS = null;
+  }
+}
+
+function scheduleTerminalReconnect() {
+  if (!terminalShouldReconnect || terminalReconnectTimer || !TOKEN) return;
+  terminalStatusText("Reconnecting…");
+  terminalReconnectTimer = setTimeout(() => {
+    terminalReconnectTimer = null;
+    connectTerminal(true);
+  }, 1200);
+}
+
+function connectTerminal(isReconnect) {
+  if (!TOKEN) {
+    alert("A token is required for the embedded terminal.");
+    return;
+  }
+  if (terminalWS && terminalWS.readyState <= WebSocket.OPEN) return;
+  if (terminalReconnectTimer) {
+    clearTimeout(terminalReconnectTimer);
+    terminalReconnectTimer = null;
+  }
+  terminalShouldReconnect = true;
+  terminalStatusText(isReconnect ? "Reconnecting…" : "Connecting…");
+  const params = new URLSearchParams({ token: TOKEN });
+  if (terminalSessionId) params.set("session_id", terminalSessionId);
+  const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/terminal?" + params.toString());
+  terminalWS = ws;
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => {
+    terminalStatusText(terminalSessionId ? "Connected (resumed)" : "Connected");
+  };
+  ws.onmessage = async (event) => {
+    if (typeof event.data === "string") {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "terminal_session" && msg.sessionId) {
+          terminalSessionId = msg.sessionId;
+          sessionStorage.setItem("yaver_terminal_session_id", terminalSessionId);
+          terminalStatusText(msg.resumed ? "Connected (resumed)" : "Connected");
+          const sidEl = document.getElementById("terminalSession");
+          if (sidEl) sidEl.textContent = terminalSessionId.slice(0, 12);
+          return;
+        }
+        if (msg.type === "sudo_prompt") {
+          appendTerminalOutput("\n[sudo] " + (msg.prompt || "Password required") + "\n");
+          return;
+        }
+      } catch {
+        appendTerminalOutput(event.data);
+      }
+      return;
+    }
+    if (event.data instanceof Blob) {
+      appendTerminalOutput(await event.data.text());
+      return;
+    }
+    if (event.data instanceof ArrayBuffer) {
+      appendTerminalOutput(new TextDecoder().decode(event.data));
+    }
+  };
+  ws.onerror = () => terminalStatusText("Connection error");
+  ws.onclose = () => {
+    if (terminalWS === ws) terminalWS = null;
+    if (terminalShouldReconnect) scheduleTerminalReconnect();
+    else terminalStatusText("Disconnected");
+  };
+}
+
+function disconnectTerminal() {
+  terminalShouldReconnect = false;
+  if (terminalReconnectTimer) {
+    clearTimeout(terminalReconnectTimer);
+    terminalReconnectTimer = null;
+  }
+  closeTerminalWS();
+  terminalStatusText("Disconnected");
+}
+
+function sendTerminalInput() {
+  const input = document.getElementById("terminalInput");
+  if (!input || !terminalWS || terminalWS.readyState !== WebSocket.OPEN) return;
+  const value = (input.value || "").trim();
+  if (!value) return;
+  terminalWS.send(value + "\n");
+  input.value = "";
 }
 
 function fmtBytes(n) {
@@ -265,6 +386,48 @@ async function renderLogs() {
     <button class="act primary" onclick="doSearch()">Search</button>
     <pre id="logOut"></pre>`;
 }
+
+async function renderTerminal() {
+  view.innerHTML = `
+    <div class="terminal-wrap">
+      <div class="terminal-bar">
+        <div class="terminal-status">
+          <span id="terminalStatus">Disconnected</span>
+          <span style="margin-left:8px;color:#52525b">session:</span>
+          <code id="terminalSession">${terminalSessionId ? terminalSessionId.slice(0, 12) : "new"}</code>
+        </div>
+        <div class="actions">
+          <button class="act" onclick="clearTerminal()">Clear</button>
+          <button class="act" onclick="toggleTerminalConnection()">${terminalWS && terminalWS.readyState === WebSocket.OPEN ? "Disconnect" : "Connect"}</button>
+        </div>
+      </div>
+      <pre class="terminal-screen" id="terminalScreen">${terminalOutput || "(connecting terminal…)"}</pre>
+      <div class="terminal-input-row">
+        <input id="terminalInput" placeholder="git status" autocomplete="off">
+        <button class="act primary" onclick="sendTerminalInput()">Send</button>
+      </div>
+      <p class="tip">The terminal keeps a resumable session id in this browser tab. If the websocket drops, the console reconnects and resumes automatically.</p>
+    </div>`;
+  const input = document.getElementById("terminalInput");
+  if (input) {
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") sendTerminalInput();
+    });
+  }
+  if (!terminalWS || terminalWS.readyState > WebSocket.OPEN) connectTerminal(Boolean(terminalSessionId));
+  else terminalStatusText(terminalSessionId ? "Connected (resumed)" : "Connected");
+}
+window.sendTerminalInput = sendTerminalInput;
+window.toggleTerminalConnection = () => {
+  if (terminalWS && terminalWS.readyState === WebSocket.OPEN) disconnectTerminal();
+  else connectTerminal(Boolean(terminalSessionId));
+  if (currentTab === "terminal") renderTerminal();
+};
+window.clearTerminal = () => {
+  terminalOutput = "";
+  const el = document.getElementById("terminalScreen");
+  if (el) el.textContent = "(connected, waiting for output)";
+};
 window.doSearch = async () => {
   const q = document.getElementById("q").value || "*";
   const r = await api("/logs/search?q=" + encodeURIComponent(q) + "&limit=200");

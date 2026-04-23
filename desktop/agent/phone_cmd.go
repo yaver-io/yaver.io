@@ -147,7 +147,7 @@ func runPhonePush(args []string) {
 	skipSeed := fs.Bool("skip-seed", false, "push schema+auth but no seed rows")
 	includeData := fs.Bool("include-data", false, "bundle local.db so runtime rows survive promotion")
 	containerize := fs.Bool("containerize", false, "include Docker/compose scaffold on the target project")
-	tokenFlag := fs.String("token", "", "override auth token (also: YAVER_AUTH_TOKEN env). Useful for pushing to a managed cloud tenant whose CLOUD_OWNER_TOKEN differs from your local OAuth session")
+	tokenFlag := fs.String("token", "", "override auth token (also: YAVER_AUTH_TOKEN env). Useful for custom targets or managed cloud tenants that require an explicit bearer override")
 	_ = fs.Parse(args)
 	if fs.NArg() < 1 || *to == "" {
 		fmt.Fprintln(os.Stderr, "Usage: yaver phone push <slug> --to <base-url> [--token TOKEN] [--as-slug NAME] [--conflict reject|rename|overwrite] [--include-data] [--containerize]")

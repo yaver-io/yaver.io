@@ -65,6 +65,7 @@ func TestResolveAutodevDeployTargets(t *testing.T) {
 		{"testflight", []string{"testflight"}},
 		{"convex", []string{"convex"}},
 		{"vercel", []string{"vercel"}},
+		{"cloudflare", []string{"cloudflare"}},
 		// "auto" depends on cwd contents — we don't drive that here;
 		// the resolver path through "auto" is exercised by an
 		// integration test elsewhere.

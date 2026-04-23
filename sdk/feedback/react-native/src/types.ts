@@ -206,6 +206,13 @@ export interface FeedbackConfig {
    * Default: false (preserve historical behavior).
    */
   strictNativeAuth?: boolean;
+  /**
+   * Optional host invite code to prefill into the in-SDK guest onboarding
+   * flow. Useful when your app receives the code from a deep link, QR flow,
+   * or an out-of-band host handoff and you want the user to redeem it
+   * without typing.
+   */
+  guestInviteCode?: string;
 }
 
 export interface FeedbackBundle {

@@ -54,6 +54,78 @@ type projectPackageManifest struct {
 	ReactNative      map[string]interface{} `json:"reactNative"`
 }
 
+func (s *HTTPServer) guestAllowedDevWorkDir(guestUID, workDir string) bool {
+	if guestUID == "" || s.guestConfigMgr == nil {
+		return true
+	}
+	workDir = strings.TrimSpace(workDir)
+	if workDir == "" {
+		return s.guestConfigMgr.GuestCanAccessProject(guestUID, "")
+	}
+	if s.guestConfigMgr.GuestCanAccessProject(guestUID, filepath.Base(workDir)) {
+		return true
+	}
+	if mp := findMobileProjectByPath(workDir); mp != nil && s.guestConfigMgr.GuestCanAccessProject(guestUID, mp.Name) {
+		return true
+	}
+	return false
+}
+
+func (s *HTTPServer) guestResolveDevWorkDir(r *http.Request, projectName, fallbackWorkDir string) (string, error) {
+	guestUID := strings.TrimSpace(r.Header.Get("X-Yaver-GuestUserID"))
+	if guestUID == "" {
+		return fallbackWorkDir, nil
+	}
+	projectName = strings.TrimSpace(projectName)
+	if projectName != "" {
+		if !s.guestConfigMgr.GuestCanAccessProject(guestUID, projectName) {
+			return "", fmt.Errorf("project %q is not in the allowed project list %v", projectName, s.guestConfigMgr.AllowedProjects(guestUID))
+		}
+		return resolveGuestTaskProjectPath(projectName)
+	}
+	if allowed := s.guestConfigMgr.AllowedProjects(guestUID); len(allowed) > 0 {
+		return "", fmt.Errorf("this guest is scoped to projects %v; projectName is required", allowed)
+	}
+	if strings.TrimSpace(fallbackWorkDir) != "" {
+		return fallbackWorkDir, nil
+	}
+	if s.taskMgr != nil {
+		return s.taskMgr.workDir, nil
+	}
+	return "", nil
+}
+
+func (s *HTTPServer) requireGuestAccessToActiveDevServer(w http.ResponseWriter, r *http.Request) bool {
+	guestUID := strings.TrimSpace(r.Header.Get("X-Yaver-GuestUserID"))
+	if guestUID == "" || s.devServerMgr == nil {
+		return true
+	}
+	status := s.devServerMgr.Status()
+	if status == nil || strings.TrimSpace(status.WorkDir) == "" {
+		return true
+	}
+	if s.guestAllowedDevWorkDir(guestUID, status.WorkDir) {
+		return true
+	}
+	jsonReply(w, http.StatusForbidden, map[string]string{"error": "guest cannot access the active dev server project"})
+	return false
+}
+
+func (s *HTTPServer) isolatedGuestDevMutationBlocked(w http.ResponseWriter, r *http.Request, capability string) bool {
+	guestUID := strings.TrimSpace(r.Header.Get("X-Yaver-GuestUserID"))
+	if guestUID == "" || s.guestConfigMgr == nil {
+		return false
+	}
+	cfg := s.guestConfigMgr.GetConfig(guestUID)
+	if !guestRequireIsolation(cfg) {
+		return false
+	}
+	jsonReply(w, http.StatusForbidden, map[string]string{
+		"error": fmt.Sprintf("guest is configured to require isolation; %s must go through a brokered host action", capability),
+	})
+	return true
+}
+
 func nativeBuildStatusPath(workDir string) string {
 	return filepath.Join(workDir, ".yaver-build", "status.json")
 }
@@ -567,6 +639,9 @@ func (s *HTTPServer) handleDevServerStatus(w http.ResponseWriter, r *http.Reques
 		})
 		return
 	}
+	if !s.requireGuestAccessToActiveDevServer(w, r) {
+		return
+	}
 
 	status.IOSInstallMethod = resolvedIOSMethod
 	status.IOSInstallReason = resolvedIOSReason
@@ -584,6 +659,9 @@ func (s *HTTPServer) handleDevServerTarget(w http.ResponseWriter, r *http.Reques
 
 	switch r.Method {
 	case http.MethodGet:
+		if !s.requireGuestAccessToActiveDevServer(w, r) {
+			return
+		}
 		target := s.devServerMgr.PreferredTarget()
 		jsonReply(w, http.StatusOK, map[string]interface{}{
 			"targetDeviceId":    target.DeviceID,
@@ -591,6 +669,12 @@ func (s *HTTPServer) handleDevServerTarget(w http.ResponseWriter, r *http.Reques
 			"targetDeviceClass": target.DeviceClass,
 		})
 	case http.MethodPost:
+		if s.isolatedGuestDevMutationBlocked(w, r, "dev target changes") {
+			return
+		}
+		if !s.requireGuestAccessToActiveDevServer(w, r) {
+			return
+		}
 		var req struct {
 			TargetDeviceID    string `json:"targetDeviceId"`
 			TargetDeviceName  string `json:"targetDeviceName"`
@@ -630,10 +714,14 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	if s.isolatedGuestDevMutationBlocked(w, r, "dev server start") {
+		return
+	}
 
 	var req struct {
 		Framework         string `json:"framework"` // "expo", "flutter", "vite", "nextjs", "" (auto-detect)
 		WorkDir           string `json:"workDir"`
+		ProjectName       string `json:"projectName,omitempty"`
 		Platform          string `json:"platform"` // "ios", "android", "web"
 		Port              int    `json:"port"`
 		Rebuild           bool   `json:"rebuild"` // force rebuild (clear build marker)
@@ -646,11 +734,12 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if req.WorkDir == "" {
-		if s.taskMgr != nil {
-			req.WorkDir = s.taskMgr.workDir
-		}
+	resolvedWorkDir, err := s.guestResolveDevWorkDir(r, req.ProjectName, req.WorkDir)
+	if err != nil {
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
 	}
+	req.WorkDir = resolvedWorkDir
 
 	if req.TargetDeviceID != "" || req.TargetDeviceName != "" || req.TargetDeviceClass != "" {
 		s.devServerMgr.SetPreferredTarget(DevServerTarget{
@@ -729,6 +818,12 @@ func (s *HTTPServer) handleDevServerStop(w http.ResponseWriter, r *http.Request)
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
 		return
 	}
+	if s.isolatedGuestDevMutationBlocked(w, r, "dev server stop") {
+		return
+	}
+	if !s.requireGuestAccessToActiveDevServer(w, r) {
+		return
+	}
 
 	if err := s.devServerMgr.Stop(); err != nil {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -751,6 +846,9 @@ func (s *HTTPServer) handleDevServerStop(w http.ResponseWriter, r *http.Request)
 func (s *HTTPServer) handleDevServerReload(w http.ResponseWriter, r *http.Request) {
 	if s.devServerMgr == nil {
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
+		return
+	}
+	if !s.requireGuestAccessToActiveDevServer(w, r) {
 		return
 	}
 
@@ -831,6 +929,9 @@ func (s *HTTPServer) handleNativeFingerprintGet(w http.ResponseWriter, r *http.R
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
 		return
 	}
+	if !s.requireGuestAccessToActiveDevServer(w, r) {
+		return
+	}
 	st := s.devServerMgr.Status()
 	if st == nil || st.WorkDir == "" {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "no active dev server"})
@@ -861,6 +962,9 @@ func (s *HTTPServer) handleNativeFingerprintGet(w http.ResponseWriter, r *http.R
 func (s *HTTPServer) handleNativeFingerprintRefresh(w http.ResponseWriter, r *http.Request) {
 	if s.devServerMgr == nil {
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
+		return
+	}
+	if !s.requireGuestAccessToActiveDevServer(w, r) {
 		return
 	}
 	st := s.devServerMgr.Status()
@@ -907,9 +1011,15 @@ func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
 	if req.Mode == "" {
 		req.Mode = "dev"
 	}
+	if req.Mode != "dev" && s.isolatedGuestDevMutationBlocked(w, r, "native reload/bundle build") {
+		return
+	}
 
 	if s.blackboxMgr == nil {
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "no SDK devices connected"})
+		return
+	}
+	if !s.requireGuestAccessToActiveDevServer(w, r) {
 		return
 	}
 
@@ -1024,6 +1134,9 @@ func (s *HTTPServer) sendPreviewWorkerReloadCommand() bool {
 func (s *HTTPServer) handleDevServerEvents(w http.ResponseWriter, r *http.Request) {
 	if s.devServerMgr == nil {
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
+		return
+	}
+	if !s.requireGuestAccessToActiveDevServer(w, r) {
 		return
 	}
 
@@ -1180,6 +1293,9 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
 		return
 	}
+	if s.isolatedGuestDevMutationBlocked(w, r, "native bundle build") {
+		return
+	}
 
 	var req struct {
 		Platform string `json:"platform"`
@@ -1206,7 +1322,15 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	//   2. projectName looked up in mobile-projects scan
 	//   3. devServerMgr's currently-active project (legacy path)
 	var workDir string
-	if req.ProjectPath != "" {
+	guestUID := strings.TrimSpace(r.Header.Get("X-Yaver-GuestUserID"))
+	if guestUID != "" {
+		resolved, err := s.guestResolveDevWorkDir(r, req.ProjectName, "")
+		if err != nil {
+			jsonReply(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+			return
+		}
+		workDir = resolved
+	} else if req.ProjectPath != "" {
 		workDir = req.ProjectPath
 	} else if req.ProjectName != "" {
 		if mp := findMobileProjectByName(req.ProjectName); mp != nil {
@@ -1681,6 +1805,7 @@ func (s *HTTPServer) handleDevServerCompatibility(w http.ResponseWriter, r *http
 	var req struct {
 		AvailableModules []string `json:"availableModules"`
 		WorkDir          string   `json:"workDir"`
+		ProjectName      string   `json:"projectName,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -1688,6 +1813,14 @@ func (s *HTTPServer) handleDevServerCompatibility(w http.ResponseWriter, r *http
 	}
 
 	workDir := strings.TrimSpace(req.WorkDir)
+	if guestUID := strings.TrimSpace(r.Header.Get("X-Yaver-GuestUserID")); guestUID != "" {
+		resolved, err := s.guestResolveDevWorkDir(r, req.ProjectName, "")
+		if err != nil {
+			jsonReply(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+			return
+		}
+		workDir = resolved
+	}
 	// Fall back to the current dev-server/task context for older callers.
 	if workDir == "" {
 		if s.devServerMgr != nil {

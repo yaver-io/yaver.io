@@ -110,6 +110,35 @@ func TestBuildHandoffPrompt_AutodevMode(t *testing.T) {
 	}
 }
 
+func TestNormalizeSessionCompleteSpec_DefaultsAndPrompt(t *testing.T) {
+	spec := normalizeSessionCompleteSpec(HandoffSpec{})
+
+	if spec.Engine != "claude" {
+		t.Fatalf("Engine default = %q, want claude", spec.Engine)
+	}
+	if spec.Load != "lite" {
+		t.Fatalf("Load default = %q, want lite", spec.Load)
+	}
+	if spec.Hours != "infinite" {
+		t.Fatalf("Hours default = %q, want infinite", spec.Hours)
+	}
+	if spec.MaxKicks != 200 {
+		t.Fatalf("MaxKicks default = %d, want 200", spec.MaxKicks)
+	}
+	if spec.AutoIdeas != -1 {
+		t.Fatalf("AutoIdeas default = %d, want -1", spec.AutoIdeas)
+	}
+	for _, want := range []string{
+		"SESSION COMPLETE MODE",
+		"Run the relevant tests",
+		"Do NOT pivot into market research",
+	} {
+		if !strings.Contains(spec.ExtraPrompt, want) {
+			t.Errorf("session-complete prompt missing %q\n---\n%s", want, spec.ExtraPrompt)
+		}
+	}
+}
+
 // TestRunHandoff_LocalSmoke is the end-to-end test: no source bundle,
 // pure ad-hoc handoff. Verifies (a) a develop-mode loop is persisted with
 // the right runner wired through, (b) a TaskManager task was imported,

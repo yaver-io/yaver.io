@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -42,19 +44,19 @@ func TestNormalizeAgentNodesAcceptsSafeIDs(t *testing.T) {
 
 func TestIsSafeGraphNodeID(t *testing.T) {
 	cases := map[string]bool{
-		"":                    false,
-		".":                   false,
-		"..":                  false,
-		"../etc":              false,
-		"a/b":                 false,
-		"a\\b":                false,
-		"a b":                 false,
-		"a\nb":                false,
-		"plan":                true,
-		"plan-1":              true,
-		"plan_1":              true,
-		"plan.1":              true,
-		"A":                   true,
+		"":                      false,
+		".":                     false,
+		"..":                    false,
+		"../etc":                false,
+		"a/b":                   false,
+		"a\\b":                  false,
+		"a b":                   false,
+		"a\nb":                  false,
+		"plan":                  true,
+		"plan-1":                true,
+		"plan_1":                true,
+		"plan.1":                true,
+		"A":                     true,
 		strings.Repeat("x", 64): true,
 		strings.Repeat("x", 65): false,
 	}
@@ -112,6 +114,105 @@ func TestCreateTaskStripsGuestSliceContractAndWorkDir(t *testing.T) {
 	}
 	if task.SliceContract != nil {
 		t.Errorf("guest SliceContract leaked: %+v", task.SliceContract)
+	}
+}
+
+func TestCreateTaskResolvesGuestProjectNameToPinnedWorkDir(t *testing.T) {
+	dir := t.TempDir()
+	projectDir := filepath.Join(dir, "talos")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	cfgDir := t.TempDir()
+	t.Setenv("HOME", cfgDir)
+	projectsPath, err := projectsFilePath()
+	if err != nil {
+		t.Fatalf("projects file path: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(projectsPath), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.WriteFile(projectsPath, []byte("### "+projectDir+"\n"), 0o644); err != nil {
+		t.Fatalf("write PROJECTS.md: %v", err)
+	}
+	taskMgr := NewTaskManager(dir, nil, defaultTestRunner())
+	taskMgr.DummyMode = true
+	defer taskMgr.Shutdown()
+
+	server := &HTTPServer{
+		taskMgr:        taskMgr,
+		guestConfigMgr: NewGuestConfigManager(t.TempDir()),
+	}
+	server.guestConfigMgr.UpdateConfigs([]GuestConfig{{
+		GuestUserID:     "guest-1",
+		Scope:           GuestScopeFull,
+		AllowedProjects: []string{"talos"},
+	}})
+
+	body := map[string]interface{}{
+		"title":       "fix it",
+		"runner":      "claude",
+		"source":      "mobile",
+		"projectName": "talos",
+	}
+	payload, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/tasks", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Yaver-GuestUserID", "guest-1")
+	req.Header.Set("X-Yaver-Guest", "true")
+
+	rec := httptest.NewRecorder()
+	server.createTask(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("unexpected status %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		TaskID string `json:"taskId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	task, ok := taskMgr.GetTask(resp.TaskID)
+	if !ok {
+		t.Fatalf("task %s not found", resp.TaskID)
+	}
+	if task.WorkDir != projectDir {
+		t.Fatalf("guest task workDir = %q, want %q", task.WorkDir, projectDir)
+	}
+}
+
+func TestCreateTaskRequiresProjectNameForRestrictedGuest(t *testing.T) {
+	dir := t.TempDir()
+	taskMgr := NewTaskManager(dir, nil, defaultTestRunner())
+	taskMgr.DummyMode = true
+	defer taskMgr.Shutdown()
+
+	server := &HTTPServer{
+		taskMgr:        taskMgr,
+		guestConfigMgr: NewGuestConfigManager(t.TempDir()),
+	}
+	server.guestConfigMgr.UpdateConfigs([]GuestConfig{{
+		GuestUserID:     "guest-1",
+		Scope:           GuestScopeFull,
+		AllowedProjects: []string{"talos"},
+	}})
+
+	body := map[string]interface{}{
+		"title":  "fix it",
+		"runner": "claude",
+		"source": "mobile",
+	}
+	payload, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/tasks", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Yaver-GuestUserID", "guest-1")
+	req.Header.Set("X-Yaver-Guest", "true")
+
+	rec := httptest.NewRecorder()
+	server.createTask(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

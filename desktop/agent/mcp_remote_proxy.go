@@ -19,12 +19,10 @@ package main
 // braces check.
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -111,7 +109,7 @@ func proxyToDevice(ctx context.Context, toolName, deviceID, method, path string,
 		return 0, nil, errProxyLocal
 	}
 
-	base, token, err := remoteAgentBaseAndToken(deviceID)
+	candidates, token, err := resolveRemoteAgentCandidates(deviceID)
 	if err != nil {
 		return 0, nil, fmt.Errorf("resolve device: %w", err)
 	}
@@ -119,46 +117,17 @@ func proxyToDevice(ctx context.Context, toolName, deviceID, method, path string,
 	if method == "" {
 		method = http.MethodPost
 	}
-	var reader io.Reader
-	if len(bodyJSON) > 0 {
-		reader = bytes.NewReader(bodyJSON)
+	for i := range candidates {
+		if candidates[i].Headers == nil {
+			candidates[i].Headers = map[string]string{}
+		}
+		candidates[i].Headers["X-Yaver-Proxied-Tool"] = toolName
 	}
-
-	url := strings.TrimRight(base, "/") + path
-	req, err := http.NewRequestWithContext(ctx, method, url, reader)
+	_, status, raw, err := doRemoteAgentRequest(ctx, candidates, token, method, path, bodyJSON, 120*time.Second)
 	if err != nil {
 		return 0, nil, err
 	}
-	if strings.TrimSpace(token) != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	pw, err := relayPasswordForBase(base)
-	if err != nil {
-		return 0, nil, err
-	}
-	if pw != "" {
-		req.Header.Set("X-Relay-Password", pw)
-	}
-	if len(bodyJSON) > 0 {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	// Audit trail: the target's activity log should record which machine
-	// initiated this proxied call, not just the original user.
-	req.Header.Set("X-Yaver-Proxied-By", localDeviceID())
-	req.Header.Set("X-Yaver-Proxied-Tool", toolName)
-
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, nil, err
-	}
-	defer resp.Body.Close()
-
-	raw, readErr := io.ReadAll(resp.Body)
-	if readErr != nil {
-		return resp.StatusCode, nil, readErr
-	}
-	return resp.StatusCode, raw, nil
+	return status, raw, nil
 }
 
 // proxyToDeviceJSON is a convenience helper for MCP handlers that want the

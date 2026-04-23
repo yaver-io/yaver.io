@@ -1,13 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -16,17 +16,17 @@ import (
 // optional; sensible defaults take over when they are omitted, which
 // keeps the user-facing invocation as short as:
 //
-//   yaver handoff
+//	yaver handoff
 //
 // Anything richer is opt-in:
 //
-//   yaver handoff --from <taskId|sessionFile>
-//   yaver handoff --to <deviceId>
-//   yaver handoff --engine hybrid
-//   yaver handoff --engine runner --runner aider
-//   yaver handoff --engine runner --runner ollama:qwen2.5-coder:14b
-//   yaver handoff --max-kicks 50 --deadline 3600
-//   yaver handoff --message "focus on the failing tests first"
+//	yaver handoff --from <taskId|sessionFile>
+//	yaver handoff --to <deviceId>
+//	yaver handoff --engine hybrid
+//	yaver handoff --engine runner --runner aider
+//	yaver handoff --engine runner --runner ollama:qwen2.5-coder:14b
+//	yaver handoff --max-kicks 50 --deadline 3600
+//	yaver handoff --message "focus on the failing tests first"
 //
 // Local handoff hits the local daemon's /session/handoff endpoint.
 // Remote handoff exports locally, then POSTs the bundle to the target.
@@ -34,6 +34,10 @@ func runHandoff(args []string) {
 	// `yaver handoff status` — quick "did Yaver actually take over?" probe.
 	if len(args) > 0 && args[0] == "status" {
 		runHandoffStatus(args[1:])
+		return
+	}
+	if len(args) > 0 && args[0] == "complete" {
+		runSessionComplete(args[1:])
 		return
 	}
 
@@ -145,28 +149,45 @@ func runHandoff(args []string) {
 func runRemoteHandoff(body map[string]interface{}, deviceHint string) {
 	cfg := mustLoadAuthConfig()
 
-	// Step 1: export source on the local daemon (if the caller named one).
-	var bundle interface{}
-	if id, _ := body["sourceTaskId"].(string); id != "" {
-		exp, err := localAgentRequest("POST", "/session/export", map[string]interface{}{
-			"taskId":           id,
-			"includeWorkspace": true,
-			"workspaceMode":    "git",
-		})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "remote handoff: export failed: %v\n", err)
-			os.Exit(1)
-		}
-		bundle = exp["bundle"]
-		body["sourceBundle"] = bundle
-		body["sourceTaskId"] = "" // cleared — bundle is authoritative on the target
+	spec := HandoffSpec{
+		WorkDir:     strMap(body, "workDir"),
+		Engine:      strMap(body, "engine"),
+		Runner:      strMap(body, "runner"),
+		Target:      strMap(body, "target"),
+		Hours:       strMap(body, "hours"),
+		Load:        strMap(body, "load"),
+		Deploy:      strMap(body, "deploy"),
+		Prompt:      strMap(body, "prompt"),
+		Harden:      strMap(body, "harden"),
+		Model:       strMap(body, "model"),
+		Planner:     strMap(body, "planner"),
+		Implementer: strMap(body, "implementer"),
 	}
+	if id, _ := body["sourceTaskId"].(string); id != "" {
+		spec.SourceTaskID = id
+	}
+	if file, _ := body["sourceSessionFile"].(string); file != "" {
+		spec.SourceSessionFile = file
+	}
+	runnerID, err := resolveHandoffRunner(spec.Engine, spec.Runner)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "remote handoff: %v\n", err)
+		os.Exit(1)
+	}
+	bundle, err := exportHandoffBundle(spec, runnerID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "remote handoff: export failed: %v\n", err)
+		os.Exit(1)
+	}
+	body["sourceBundle"] = bundle
+	delete(body, "sourceTaskId")
+	delete(body, "sourceSessionFile")
 
 	body["target"] = "" // target side runs locally relative to itself
 	targetURL := resolveDeviceURL(cfg, deviceHint, true)
 
 	payload, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", targetURL+"/session/handoff", strings.NewReader(string(payload)))
+	req, _ := http.NewRequest("POST", targetURL+"/session/handoff", bytes.NewReader(payload))
 	req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -186,6 +207,195 @@ func runRemoteHandoff(body map[string]interface{}, deviceHint string) {
 	}
 	out["remoteDevice"] = deviceHint
 	printHandoffResult(out)
+}
+
+func runSessionComplete(args []string) {
+	fs := flag.NewFlagSet("handoff complete", flag.ExitOnError)
+	from := fs.String("from", "", "Source task id or path to session file (defaults to most recent local task)")
+	to := fs.String("to", "", "Target device id/hostname for remote completion (default: local)")
+	engine := fs.String("engine", "claude", "Engine: claude | hybrid | runner")
+	runner := fs.String("runner", "", "Runner id when --engine=runner")
+	workDir := fs.String("workdir", "", "Working directory for the resumed loop (default: cwd)")
+	maxKicks := fs.Int("max-kicks", 0, "Max kicks before giving up (default 200)")
+	deadlineSec := fs.Int("deadline", 0, "Wall-clock cap in seconds (0 = none)")
+	message := fs.String("message", "", "Additional context appended after Yaver's built-in completion directive")
+	stopSource := fs.Bool("stop-source", true, "Stop the source Yaver task before kicking the new loop")
+	hours := fs.String("hours", "", "Wall-clock cap, e.g. '8' or 'inf' (default inf)")
+	load := fs.String("load", "", "lite (default) | burst")
+	lite := fs.Bool("lite", false, "Shortcut for --load lite")
+	heavy := fs.Bool("heavy", false, "Shortcut for --load burst")
+	callerPID := fs.Int("caller-pid", 0, "PID of the calling AI agent")
+	prompt := fs.String("prompt", "", "Explicit focus prompt override")
+	loopTarget := fs.String("target", "", "Loop target: web|ios-sim|android-emu (default: auto-detect from workdir)")
+	branch := fs.String("branch", "", "Git branch the loop ships to (default: main)")
+	autoBranch := fs.Bool("auto-branch", false, "Use a dedicated autodev/<loop>-<YYYYMMDD> branch")
+	deploy := fs.String("deploy", "", "Deploy on done: default all/both, disable with none/false")
+	notify := fs.Bool("notify", false, "Mobile notification when the loop ends")
+	noAutotest := fs.Bool("no-autotest", false, "Skip the interleaved autotest regression pass")
+	remained := fs.String("remained", "", "Path to a remained.md checklist file the loop pulls items from")
+	harden := fs.String("harden", "", "Hardening focus: security|memory|perf|quality|all")
+	model := fs.String("model", "", "Model alias or full id")
+	planner := fs.String("planner", "", "Hybrid planner agent[:model]")
+	implementer := fs.String("implementer", "", "Hybrid implementer agent[:model]")
+	fs.Parse(args)
+	if *heavy {
+		*load = "burst"
+	} else if *lite {
+		*load = "lite"
+	}
+
+	wd := *workDir
+	if wd == "" {
+		wd, _ = os.Getwd()
+	}
+
+	body := map[string]interface{}{
+		"engine":       *engine,
+		"runner":       *runner,
+		"workDir":      wd,
+		"maxKicks":     *maxKicks,
+		"deadlineSec":  *deadlineSec,
+		"extraPrompt":  *message,
+		"stopSource":   *stopSource,
+		"hours":        *hours,
+		"load":         *load,
+		"callerPid":    *callerPID,
+		"prompt":       *prompt,
+		"loopTarget":   *loopTarget,
+		"branch":       *branch,
+		"autoBranch":   *autoBranch,
+		"deploy":       *deploy,
+		"notify":       *notify,
+		"noAutotest":   *noAutotest,
+		"remainedFile": *remained,
+		"harden":       *harden,
+		"model":        *model,
+		"planner":      *planner,
+		"implementer":  *implementer,
+	}
+	if *from != "" {
+		if _, err := os.Stat(*from); err == nil {
+			body["sourceSessionFile"] = *from
+		} else {
+			body["sourceTaskId"] = *from
+		}
+	}
+
+	if *to != "" {
+		runRemoteSessionComplete(body, *to)
+		return
+	}
+
+	resp, err := localAgentRequest("POST", "/session/complete", body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "session complete failed: %v\n", err)
+		os.Exit(1)
+	}
+	if ok, _ := resp["ok"].(bool); !ok {
+		fmt.Fprintf(os.Stderr, "session complete failed: %v\n", resp["error"])
+		os.Exit(1)
+	}
+	printHandoffResult(resp)
+}
+
+func runRemoteSessionComplete(body map[string]interface{}, deviceHint string) {
+	cfg := mustLoadAuthConfig()
+	spec := HandoffSpec{
+		WorkDir:      strMap(body, "workDir"),
+		Engine:       strMap(body, "engine"),
+		Runner:       strMap(body, "runner"),
+		Hours:        strMap(body, "hours"),
+		Load:         strMap(body, "load"),
+		Prompt:       strMap(body, "prompt"),
+		LoopTarget:   strMap(body, "loopTarget"),
+		Branch:       strMap(body, "branch"),
+		Deploy:       strMap(body, "deploy"),
+		RemainedFile: strMap(body, "remainedFile"),
+		Harden:       strMap(body, "harden"),
+		Model:        strMap(body, "model"),
+		Planner:      strMap(body, "planner"),
+		Implementer:  strMap(body, "implementer"),
+	}
+	if id, _ := body["sourceTaskId"].(string); id != "" {
+		spec.SourceTaskID = id
+	}
+	if file, _ := body["sourceSessionFile"].(string); file != "" {
+		spec.SourceSessionFile = file
+	}
+	runnerID, err := resolveHandoffRunner(spec.Engine, spec.Runner)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "remote session complete: %v\n", err)
+		os.Exit(1)
+	}
+	bundle, err := exportHandoffBundle(spec, runnerID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "remote session complete export failed: %v\n", err)
+		os.Exit(1)
+	}
+	body["sourceBundle"] = bundle
+	delete(body, "sourceTaskId")
+	delete(body, "sourceSessionFile")
+	body["target"] = ""
+	targetURL := resolveDeviceURL(cfg, deviceHint, true)
+
+	payload, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", targetURL+"/session/complete", bytes.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "remote session complete: %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+
+	var out map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&out)
+	if ok, _ := out["ok"].(bool); !ok {
+		fmt.Fprintf(os.Stderr, "remote session complete failed: %v\n", out["error"])
+		os.Exit(1)
+	}
+	out["remoteDevice"] = deviceHint
+	printHandoffResult(out)
+}
+
+func strMap(body map[string]interface{}, key string) string {
+	v, _ := body[key].(string)
+	return v
+}
+
+func exportHandoffBundle(spec HandoffSpec, _ string) (*TransferBundle, error) {
+	switch {
+	case spec.SourceBundle != nil:
+		return spec.SourceBundle, nil
+	case spec.SourceTaskID != "":
+		resp, err := localAgentRequest("POST", "/session/export", map[string]interface{}{
+			"taskId":           spec.SourceTaskID,
+			"includeWorkspace": false,
+			"workspaceMode":    "none",
+		})
+		if err != nil {
+			return nil, err
+		}
+		if ok, _ := resp["ok"].(bool); !ok {
+			return nil, fmt.Errorf("%v", resp["error"])
+		}
+		data, err := json.Marshal(resp["bundle"])
+		if err != nil {
+			return nil, err
+		}
+		var bundle TransferBundle
+		if err := json.Unmarshal(data, &bundle); err != nil {
+			return nil, err
+		}
+		return &bundle, nil
+	case spec.SourceSessionFile != "":
+		return ResolveHandoffBundle(nil, spec, "")
+	default:
+		return ResolveHandoffBundle(nil, spec, "")
+	}
 }
 
 // runHandoffStatus prints the most recent handoff sentinel + the

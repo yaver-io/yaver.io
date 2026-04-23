@@ -67,7 +67,7 @@ func runGuestsInvite(args []string) {
 			opts.ProposedDeviceIDs = splitComma(strings.TrimPrefix(a, "--devices="))
 		case a == "--scope":
 			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "--scope requires a value (full|feedback-only)")
+				fmt.Fprintln(os.Stderr, "--scope requires a value (full|feedback-only|sdk-project)")
 				os.Exit(1)
 			}
 			opts.Scope = args[i+1]
@@ -100,10 +100,10 @@ func runGuestsInvite(args []string) {
 
 	if opts.Scope != "" {
 		switch opts.Scope {
-		case GuestScopeFull, GuestScopeFeedbackOnly:
+		case GuestScopeFull, GuestScopeFeedbackOnly, GuestScopeSDKProject:
 			// ok
 		default:
-			fmt.Fprintf(os.Stderr, "Invalid --scope %q. Must be 'full' or 'feedback-only'.\n", opts.Scope)
+			fmt.Fprintf(os.Stderr, "Invalid --scope %q. Must be 'full', 'feedback-only', or 'sdk-project'.\n", opts.Scope)
 			os.Exit(1)
 		}
 	}
@@ -157,8 +157,10 @@ func runGuestsInvite(args []string) {
 		scopeShown = GuestScopeFeedbackOnly // server default for new invites
 	}
 	if scopeShown == GuestScopeFeedbackOnly {
-		fmt.Printf("Scope: %s  (feedback / blackbox / voice — no tasks, no vibing, no dev-server, /info redacted, tasks force-containerized)\n", scopeShown)
+		fmt.Printf("Scope: %s  (Feedback SDK / end-user tier — feedback, blackbox, voice only; no tasks, no vibing, no dev-server, /info redacted, tasks force-containerized)\n", scopeShown)
 		fmt.Println("  For a teammate who should get full access, re-invite with: --scope=full")
+	} else if scopeShown == GuestScopeSDKProject {
+		fmt.Printf("Scope: %s  (project-scoped SDK tier — intended for Feedback SDK style repo/project access)\n", scopeShown)
 	} else {
 		fmt.Printf("Scope: %s  (classic teammate — tasks, vibing, dev server, builds, projects, plus feedback/voice)\n", scopeShown)
 	}
@@ -601,6 +603,8 @@ func runGuestsConfig(args []string) {
 			os.Exit(1)
 		}
 		switch parts[0] {
+		case "scope":
+			payload["scope"] = parts[1]
 		case "limit":
 			var v int
 			fmt.Sscanf(parts[1], "%d", &v)
@@ -650,8 +654,10 @@ func runGuestsConfig(args []string) {
 				payload["shareAllMachines"] = false
 				payload["machineIds"] = splitComma(parts[1])
 			}
+		case "projects":
+			payload["allowedProjects"] = cleanProjectList(splitComma(parts[1]))
 		default:
-			fmt.Fprintf(os.Stderr, "Unknown config key: %s (use: limit, mode, runners, preset, hostkeys, guestkeys, desktop, browser, tunnels, isolation, cpu, rammb, priority, devices, machines)\n", parts[0])
+			fmt.Fprintf(os.Stderr, "Unknown config key: %s (use: scope, limit, mode, runners, preset, hostkeys, guestkeys, desktop, browser, tunnels, isolation, cpu, rammb, priority, devices, machines, projects)\n", parts[0])
 			os.Exit(1)
 		}
 	}
@@ -730,7 +736,8 @@ vault, sessions, or terminals.
 Commands:
   invite <email>                          Invite by email (host side, default scope=feedback-only)
   invite <email> --scope=full             Invite a teammate with classic full scope (tasks, vibing, dev, builds, projects)
-  invite <email> --scope=feedback-only    Hardened end-user scope: feedback / blackbox / voice only, /info redacted, fix-tasks force-containerized
+  invite <email> --scope=feedback-only    Feedback SDK / end-user scope only: feedback / blackbox / voice, /info redacted, fix-tasks force-containerized
+  invite <email> --scope=sdk-project      Project-scoped SDK tier for Feedback SDK style integrations
   invite --user-id <id> [--machines ids]  Invite by public user id
   invite <email|id> --machines <id1,id2>  Propose a limited machine scope
   accept <code> [--machines id1,id2]      Accept a pending invite (guest side)
@@ -744,6 +751,7 @@ Commands:
   usage [date]      Show guest usage (today or specific date)
 
 Config keys:
+  scope=<full|feedback-only|sdk-project> Access tier for this guest
   limit=<seconds>          Daily task-seconds limit (0 = unlimited)
   mode=<always|idle-only|scheduled>   When guests can use the machine
   runners=<r1,r2,...>      Allowed runners (empty = all)
@@ -755,6 +763,7 @@ Config keys:
   priority=<mode>          same-priority | spare-capacity | background
   devices=<all|id1,id2>    Shared device scope
   machines=<all|id1,id2>   Shared cloud machine scope
+  projects=<p1,p2>         Limit guest access to specific project slugs
 
 Examples:
   yaver guests invite cousin@gmail.com

@@ -883,10 +883,6 @@ func (gm *AgentGraphManager) executeLoopNode(ctx context.Context, runID string, 
 }
 
 func (gm *AgentGraphManager) executeRemoteChatNode(ctx context.Context, runID string, node *AgentGraphNodeState) (string, error) {
-	base, token, err := remoteAgentBaseAndToken(node.Placement.DeviceID)
-	if err != nil {
-		return "", err
-	}
 	workDir, contract, err := prepareGraphNodeSlice(ctx, runID, node.Spec, node.Placement)
 	if err != nil {
 		return "", err
@@ -899,7 +895,7 @@ func (gm *AgentGraphManager) executeRemoteChatNode(ctx context.Context, runID st
 		OK     bool   `json:"ok"`
 		TaskID string `json:"taskId"`
 	}
-	err = remoteAgentJSON(ctx, base, token, http.MethodPost, "/tasks", map[string]interface{}{
+	err = remoteAgentJSONForDevice(ctx, node.Placement.DeviceID, http.MethodPost, "/tasks", map[string]interface{}{
 		"title":         title,
 		"description":   firstGraphNonEmpty(strings.TrimSpace(node.Spec.Prompt), node.Spec.Title),
 		"model":         firstGraphNonEmpty(node.Placement.Model, node.Spec.Model),
@@ -917,14 +913,14 @@ func (gm *AgentGraphManager) executeRemoteChatNode(ctx context.Context, runID st
 	for {
 		select {
 		case <-ctx.Done():
-			_ = remoteAgentJSON(context.Background(), base, token, http.MethodPost, "/tasks/"+createResp.TaskID+"/stop", map[string]interface{}{}, nil)
+			_ = remoteAgentJSONForDevice(context.Background(), node.Placement.DeviceID, http.MethodPost, "/tasks/"+createResp.TaskID+"/stop", map[string]interface{}{}, nil)
 			return "", ctx.Err()
 		case <-ticker.C:
 			var statusResp struct {
 				OK   bool     `json:"ok"`
 				Task TaskInfo `json:"task"`
 			}
-			if err := remoteAgentJSON(ctx, base, token, http.MethodGet, "/tasks/"+createResp.TaskID, nil, &statusResp); err != nil {
+			if err := remoteAgentJSONForDevice(ctx, node.Placement.DeviceID, http.MethodGet, "/tasks/"+createResp.TaskID, nil, &statusResp); err != nil {
 				return "", err
 			}
 			switch statusResp.Task.Status {
@@ -950,16 +946,12 @@ func (gm *AgentGraphManager) executeRemoteChatNode(ctx context.Context, runID st
 }
 
 func (gm *AgentGraphManager) executeRemoteLoopNode(ctx context.Context, runID string, node *AgentGraphNodeState) (string, error) {
-	base, token, err := remoteAgentBaseAndToken(node.Placement.DeviceID)
-	if err != nil {
-		return "", err
-	}
 	workDir, contract, err := prepareGraphNodeSlice(ctx, runID, node.Spec, node.Placement)
 	if err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(workDir) == "" {
-		workDir = firstNonEmpty(resolveRemoteCurrentWorkDir(ctx, base, token), ".")
+		workDir = firstNonEmpty(resolveRemoteCurrentWorkDir(ctx, node.Placement.DeviceID), ".")
 	}
 	kind := "autodev"
 	path := "/autodev/start"
@@ -1000,7 +992,7 @@ func (gm *AgentGraphManager) executeRemoteLoopNode(ctx context.Context, runID st
 		Output   string `json:"output"`
 		WorkDir  string `json:"work_dir"`
 	}
-	if err := remoteAgentJSON(ctx, base, token, http.MethodPost, path, body, &createResp); err != nil {
+	if err := remoteAgentJSONForDevice(ctx, node.Placement.DeviceID, http.MethodPost, path, body, &createResp); err != nil {
 		return "", err
 	}
 	loopName := createResp.LoopName
@@ -1008,21 +1000,21 @@ func (gm *AgentGraphManager) executeRemoteLoopNode(ctx context.Context, runID st
 		loopName = graphRemoteProjectName(runID, node.Spec) + "-" + kind
 	}
 	if node.Spec.Kind == AgentNodeAutoIdeas {
-		return waitForRemoteAutoIdeas(ctx, base, token, firstGraphNonEmpty(createResp.WorkDir, workDir), createResp.Output)
+		return waitForRemoteAutoIdeasForDevice(ctx, node.Placement.DeviceID, firstGraphNonEmpty(createResp.WorkDir, workDir), createResp.Output)
 	}
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			_ = remoteAgentJSON(context.Background(), base, token, http.MethodPost, "/autodev/loops/"+loopName+"/stop", map[string]interface{}{}, nil)
+			_ = remoteAgentJSONForDevice(context.Background(), node.Placement.DeviceID, http.MethodPost, "/autodev/loops/"+loopName+"/stop", map[string]interface{}{}, nil)
 			return "", ctx.Err()
 		case <-ticker.C:
 			var loopsResp struct {
 				OK    bool             `json:"ok"`
 				Loops []autodevLoopRow `json:"loops"`
 			}
-			if err := remoteAgentJSON(ctx, base, token, http.MethodGet, "/autodev/loops", nil, &loopsResp); err != nil {
+			if err := remoteAgentJSONForDevice(ctx, node.Placement.DeviceID, http.MethodGet, "/autodev/loops", nil, &loopsResp); err != nil {
 				return "", err
 			}
 			for _, loop := range loopsResp.Loops {
@@ -1047,6 +1039,39 @@ func (gm *AgentGraphManager) executeRemoteLoopNode(ctx context.Context, runID st
 				}
 			}
 		waitNext:
+		}
+	}
+}
+
+func waitForRemoteAutoIdeasForDevice(ctx context.Context, deviceID, workDir, outputName string) (string, error) {
+	outputName = strings.TrimSpace(outputName)
+	if outputName == "" {
+		outputName = "ideas.md"
+	}
+	fileTicker := time.NewTicker(3 * time.Second)
+	defer fileTicker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-fileTicker.C:
+			var ideasResp struct {
+				OK    bool `json:"ok"`
+				Items []struct {
+					Title string `json:"title"`
+				} `json:"items"`
+				Raw string `json:"raw"`
+			}
+			queryPath := fmt.Sprintf("/autoideas/file?work_dir=%s&output=%s", url.QueryEscape(workDir), url.QueryEscape(outputName))
+			if err := remoteAgentJSONForDevice(ctx, deviceID, http.MethodGet, queryPath, nil, &ideasResp); err != nil {
+				continue
+			}
+			if len(ideasResp.Items) > 0 {
+				return strings.TrimSpace(ideasResp.Items[0].Title), nil
+			}
+			if strings.TrimSpace(ideasResp.Raw) != "" {
+				return "ideas generated", nil
+			}
 		}
 	}
 }
@@ -1084,12 +1109,12 @@ func waitForRemoteAutoIdeas(ctx context.Context, base, token, workDir, outputNam
 	}
 }
 
-func resolveRemoteCurrentWorkDir(ctx context.Context, base, token string) string {
+func resolveRemoteCurrentWorkDir(ctx context.Context, deviceID string) string {
 	var resp struct {
 		OK       bool          `json:"ok"`
 		Machines []MachineInfo `json:"machines"`
 	}
-	if err := remoteAgentJSON(ctx, base, token, http.MethodGet, "/console/machines", nil, &resp); err != nil {
+	if err := remoteAgentJSONForDevice(ctx, deviceID, http.MethodGet, "/console/machines", nil, &resp); err != nil {
 		return ""
 	}
 	for _, machine := range resp.Machines {

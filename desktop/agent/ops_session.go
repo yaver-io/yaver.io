@@ -1,8 +1,9 @@
 package main
 
 // ops_session.go — verb "session": list / export / import / transfer /
-// handoff AI coding sessions. Thin proxy over the existing
-// session_export / session_import / session_transfer / session_handoff
+// handoff / complete AI coding sessions. Thin proxy over the existing
+// session_export / session_import / session_transfer / session_handoff /
+// session_complete
 // MCP handlers so agents can drive the full lifecycle with one verb.
 //
 // The heavy lifting (moving chat history, agent-specific state files,
@@ -15,7 +16,7 @@ import (
 )
 
 type opsSessionPayload struct {
-	// Op: "list" | "export" | "import" | "transfer" | "handoff"
+	// Op: "list" | "export" | "import" | "transfer" | "handoff" | "complete"
 	Op string `json:"op"`
 	// For export:
 	ID      string `json:"id,omitempty"`
@@ -35,12 +36,12 @@ type opsSessionPayload struct {
 func init() {
 	registerOpsVerb(opsVerbSpec{
 		Name:        "session",
-		Description: "List / export / import / transfer / handoff AI coding sessions. op-discriminated: list (all live), export {id}, import {bundle}, transfer {id, toDevice}, handoff {runner, workDir, ...}.",
+		Description: "List / export / import / transfer / handoff / complete AI coding sessions. op=complete means 'take over this session and finish the current objective fully, then stop'.",
 		Schema: map[string]interface{}{
 			"type":     "object",
 			"required": []string{"op"},
 			"properties": map[string]interface{}{
-				"op":          map[string]interface{}{"type": "string", "enum": []string{"list", "export", "import", "transfer", "handoff"}},
+				"op":          map[string]interface{}{"type": "string", "enum": []string{"list", "export", "import", "transfer", "handoff", "complete"}},
 				"id":          map[string]interface{}{"type": "string"},
 				"runner":      map[string]interface{}{"type": "string"},
 				"workDir":     map[string]interface{}{"type": "string"},
@@ -140,6 +141,18 @@ func opsSessionHandler(c OpsContext, payload json.RawMessage) OpsResult {
 			"deadline":  p.DeadlineSec,
 			"stopSrc":   p.StopSource,
 			"message":   p.Message,
+		}}
+
+	case "complete":
+		return OpsResult{OK: true, Initial: map[string]interface{}{
+			"hint":      "POST /session/complete to take over the current session and finish its existing objective without branching into suggestions",
+			"mcpTool":   "session_complete",
+			"workDir":   p.WorkDir,
+			"maxKicks":  p.MaxKicks,
+			"deadline":  p.DeadlineSec,
+			"stopSrc":   p.StopSource,
+			"message":   p.Message,
+			"mode":      "session-complete",
 		}}
 	default:
 		return OpsResult{OK: false, Code: "bad_payload", Error: "unknown op: " + p.Op}

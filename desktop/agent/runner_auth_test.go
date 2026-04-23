@@ -110,3 +110,51 @@ func TestDetectRunnerRuntimeStatusOpenCodeBlocksAnthropicOAuth(t *testing.T) {
 		t.Fatalf("expected direct-claude guidance, got %q", status.Error)
 	}
 }
+
+func TestDetectRunnerRuntimeStatusOpenCodeGLMEnvKey(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("GLM_API_KEY", "glm-test")
+	t.Setenv("ZAI_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	status := DetectRunnerRuntimeStatus(GetRunnerConfig("opencode"), t.TempDir())
+	if !status.Ready {
+		t.Fatalf("expected opencode GLM env key to be allowed, got error: %s", status.Error)
+	}
+	if !status.AuthConfigured {
+		t.Fatalf("expected opencode GLM auth to be detected")
+	}
+	if status.AuthSource != "GLM_API_KEY" {
+		t.Fatalf("expected GLM_API_KEY auth source, got %q", status.AuthSource)
+	}
+}
+
+func TestDetectRunnerRuntimeStatusOpenCodeZAIVaultKey(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("GLM_API_KEY", "")
+	t.Setenv("ZAI_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	vs, err := NewVaultStore("test-passphrase")
+	if err != nil {
+		t.Fatalf("NewVaultStore: %v", err)
+	}
+	if err := vs.Set(VaultEntry{Name: "ZAI_API_KEY", Category: "api-key", Value: "vault-zai-key"}); err != nil {
+		t.Fatalf("vault set: %v", err)
+	}
+	setRuntimeVaultStore(vs)
+	defer setRuntimeVaultStore(nil)
+
+	status := DetectRunnerRuntimeStatus(GetRunnerConfig("opencode"), t.TempDir())
+	if !status.Ready {
+		t.Fatalf("expected opencode ZAI vault auth to be allowed, got error: %s", status.Error)
+	}
+	if !status.AuthConfigured {
+		t.Fatalf("expected opencode ZAI vault auth to be detected")
+	}
+	if status.AuthSource != "vault:ZAI_API_KEY" {
+		t.Fatalf("expected vault:ZAI_API_KEY auth source, got %q", status.AuthSource)
+	}
+}

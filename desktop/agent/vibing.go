@@ -72,6 +72,8 @@ func generateQuickActions(projectPath, projectName, framework string) []VibingSu
 	}
 	if framework == "nextjs" || framework == "vite" {
 		actions = append([]VibingSuggestion{
+			{ID: "cloudflare", Icon: "\U0001F680", Label: "Deploy to Cloudflare", Desc: "Build and deploy to Cloudflare Workers", Category: "deploy",
+				Prompt: fmt.Sprintf("Build %s and deploy to Cloudflare Workers. Report the production URL.", projectName), Priority: 1},
 			{ID: "vercel", Icon: "\U0001F680", Label: "Deploy to Vercel", Desc: "Build and deploy to production", Category: "deploy",
 				Prompt: fmt.Sprintf("Build %s and deploy to Vercel. Report the deploy URL.", projectName), Priority: 1},
 		}, actions...)
@@ -670,6 +672,163 @@ func (s *HTTPServer) handleVibing(w http.ResponseWriter, r *http.Request) {
 	jsonReply(w, http.StatusOK, state)
 }
 
+func resolveVibingProject(projectPath, projectName, bundleID string) (string, string) {
+	if strings.TrimSpace(projectPath) == "" {
+		if strings.TrimSpace(bundleID) != "" {
+			if proj := findMobileProjectByBundleID(bundleID); proj != nil {
+				projectPath = proj.Path
+				if projectName == "" {
+					projectName = proj.Name
+				}
+			}
+		}
+		if strings.TrimSpace(projectPath) == "" && strings.TrimSpace(projectName) != "" {
+			if proj := findMobileProjectByName(projectName); proj != nil {
+				projectPath = proj.Path
+				projectName = proj.Name
+			}
+		}
+	}
+	if strings.TrimSpace(projectName) == "" && strings.TrimSpace(projectPath) != "" {
+		if proj := findMobileProjectByPath(projectPath); proj != nil {
+			projectName = proj.Name
+		}
+	}
+	return strings.TrimSpace(projectPath), strings.TrimSpace(projectName)
+}
+
+func (s *HTTPServer) handleVibingEligibility(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonError(w, http.StatusMethodNotAllowed, "use GET")
+		return
+	}
+
+	projectPath, projectName := resolveVibingProject(
+		r.URL.Query().Get("projectPath"),
+		r.URL.Query().Get("projectName"),
+		r.URL.Query().Get("bundleId"),
+	)
+	if projectPath == "" {
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"ok":       true,
+			"canVibe":  false,
+			"reason":   "This app is not linked to a detected project on the selected machine.",
+			"guidance": "Open the repo on a machine running `yaver serve`, then try again.",
+		})
+		return
+	}
+
+	if guestUID := strings.TrimSpace(r.Header.Get("X-Yaver-GuestUserID")); guestUID != "" {
+		if s.guestConfigMgr != nil && !s.guestConfigMgr.GuestCanAccessProject(guestUID, projectName) {
+			jsonReply(w, http.StatusOK, map[string]interface{}{
+				"ok":          true,
+				"canVibe":     false,
+				"projectName": projectName,
+				"reason":      "Your guest access is not allowed for this project.",
+				"guidance":    "Ask the host to add this repo to your Feedback SDK guest grant.",
+			})
+			return
+		}
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"ok":          true,
+			"canVibe":     true,
+			"projectName": projectName,
+			"projectPath": projectPath,
+			"guidance":    "Using host-granted Feedback SDK access for this repo.",
+		})
+		return
+	}
+
+	providerKind, repoFullName := detectRepoFromGit(projectPath)
+	if providerKind == "" || strings.TrimSpace(repoFullName) == "" {
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"ok":          true,
+			"canVibe":     false,
+			"projectName": projectName,
+			"projectPath": projectPath,
+			"reason":      "This project is not connected to GitHub or GitLab.",
+			"guidance":    "Connect git for this repo first. If the project is not in your GitHub/GitLab account, vibe coding stays disabled.",
+		})
+		return
+	}
+
+	host := "github.com"
+	switch providerKind {
+	case CIGitLab:
+		host = "gitlab.com"
+	}
+	provider := findProvider(host)
+	if provider == nil || strings.TrimSpace(provider.Token) == "" {
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"ok":           true,
+			"canVibe":      false,
+			"projectName":  projectName,
+			"projectPath":  projectPath,
+			"provider":     providerKind,
+			"repoFullName": repoFullName,
+			"reason":       fmt.Sprintf("Connect your %s account in Yaver before vibe coding.", strings.Title(string(providerKind))),
+			"guidance":     "This project must be visible in your connected git account.",
+		})
+		return
+	}
+
+	var (
+		repos []RemoteRepo
+		err   error
+	)
+	switch providerKind {
+	case CIGitHub:
+		repos, err = listGitHubReposPaged(provider.Token, 100, 10)
+	case CIGitLab:
+		repos, err = listGitLabReposPaged(host, provider.Token, 100, 10)
+	default:
+		err = fmt.Errorf("unsupported provider")
+	}
+	if err != nil {
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"ok":           true,
+			"canVibe":      false,
+			"projectName":  projectName,
+			"projectPath":  projectPath,
+			"provider":     providerKind,
+			"repoFullName": repoFullName,
+			"reason":       "Could not verify your repository access right now.",
+			"guidance":     "Reconnect your git account in Yaver and try again.",
+		})
+		return
+	}
+
+	visible := false
+	for _, repo := range repos {
+		if strings.EqualFold(strings.TrimSpace(repo.FullName), strings.TrimSpace(repoFullName)) {
+			visible = true
+			break
+		}
+	}
+	if !visible {
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"ok":           true,
+			"canVibe":      false,
+			"projectName":  projectName,
+			"projectPath":  projectPath,
+			"provider":     providerKind,
+			"repoFullName": repoFullName,
+			"reason":       "This project is not in your connected git account, so vibe coding is disabled.",
+			"guidance":     fmt.Sprintf("You need GitHub/GitLab access to %s before Yaver can vibe code on it.", repoFullName),
+		})
+		return
+	}
+
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":           true,
+		"canVibe":      true,
+		"projectName":  projectName,
+		"projectPath":  projectPath,
+		"provider":     providerKind,
+		"repoFullName": repoFullName,
+	})
+}
+
 // handleVibingSurprise runs iterative deep analysis and streams suggestions via SSE.
 // Each step produces ideas that appear one-by-one in the mobile UI.
 func (s *HTTPServer) handleVibingSurprise(w http.ResponseWriter, r *http.Request) {
@@ -944,18 +1103,7 @@ func (s *HTTPServer) handleVibingExecute(w http.ResponseWriter, r *http.Request)
 	// If all three come up empty we leave taskMgr.workDir unchanged
 	// and the taskMgr's own auto-detect runs (with the sloppy
 	// substring matcher that burned us on "in" → mprint).
-	if req.ProjectPath == "" {
-		if req.BundleID != "" {
-			if proj := findMobileProjectByBundleID(req.BundleID); proj != nil {
-				req.ProjectPath = proj.Path
-			}
-		}
-		if req.ProjectPath == "" && req.ProjectName != "" {
-			if proj := findMobileProjectByName(req.ProjectName); proj != nil {
-				req.ProjectPath = proj.Path
-			}
-		}
-	}
+	req.ProjectPath, req.ProjectName = resolveVibingProject(req.ProjectPath, req.ProjectName, req.BundleID)
 
 	if req.ProjectPath != "" {
 		s.taskMgr.mu.Lock()

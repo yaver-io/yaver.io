@@ -410,8 +410,10 @@ export interface RemoteDevice {
   runnerDown: boolean;
   lastHeartbeat: number;
   isGuest: boolean;
+  hostUserId?: string;
   hostName?: string;
   hostEmail?: string;
+  hostUserIdString?: string;
   accessScope: 'owner' | 'shared-scoped' | 'shared-legacy';
   quicHost: string;
   quicPort: number;
@@ -431,6 +433,54 @@ export interface RemoteDevice {
 export interface DeviceList {
   owned: RemoteDevice[];
   shared: RemoteDevice[];
+}
+
+export interface DeviceReachability {
+  reachable: boolean;
+  url?: string;
+}
+
+export interface GuestInvitation {
+  hostUserId: string;
+  hostName: string;
+  hostEmail: string;
+  hostUserIdString?: string;
+  createdAt: number;
+  expiresAt: number;
+  inviteCode?: string;
+}
+
+export interface ActiveGuestHost {
+  hostUserId: string;
+  hostName: string;
+  hostEmail: string;
+  grantedAt: number;
+}
+
+export interface GuestHostsResponse {
+  pending: GuestInvitation[];
+  active: ActiveGuestHost[];
+}
+
+export interface InvitationHostDevice {
+  deviceId: string;
+  name: string;
+  platform: string;
+  lastHeartbeat?: number;
+  proposed: boolean;
+}
+
+export interface InvitationPreview {
+  inviteCode: string;
+  hostUserId: string;
+  hostName: string;
+  hostEmail: string;
+  hostUserIdString?: string;
+  proposedDeviceIds?: string[];
+  hostDevices: InvitationHostDevice[];
+  invitedByUserId?: boolean;
+  expiresAt: number;
+  createdAt: number;
 }
 
 /**
@@ -463,8 +513,10 @@ export async function listReachableDevices(
       runnerDown: !!d.runnerDown,
       lastHeartbeat: d.lastHeartbeat ?? 0,
       isGuest: !!d.isGuest,
+      hostUserId: d.hostUserId,
       hostName: d.hostName,
       hostEmail: d.hostEmail,
+      hostUserIdString: d.hostUserIdString,
       accessScope: d.accessScope ?? 'owner',
       quicHost: d.quicHost ?? d.host ?? '',
       quicPort: d.quicPort ?? 0,
@@ -486,5 +538,136 @@ export async function listReachableDevices(
     };
   } catch {
     return { owned: [], shared: [] };
+  }
+}
+
+export function buildDeviceCandidateUrls(device: RemoteDevice): string[] {
+  const port = device.httpPort ?? device.quicPort ?? 18080;
+  const hosts = new Set<string>();
+  if (device.quicHost) hosts.add(device.quicHost);
+  for (const ip of device.localIps ?? []) {
+    if (ip) hosts.add(ip);
+  }
+  return Array.from(hosts).map((host) => `http://${host}:${port}`);
+}
+
+export async function probeDeviceReachability(
+  device: RemoteDevice,
+  timeoutMs = 2500,
+): Promise<DeviceReachability> {
+  const candidates = buildDeviceCandidateUrls(device);
+  if (candidates.length === 0) return { reachable: false };
+
+  const probeOne = async (baseUrl: string): Promise<string> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(`${baseUrl}/health`, {
+        method: 'GET',
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`health ${response.status}`);
+      return baseUrl;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const settled = await Promise.allSettled(candidates.map((url) => probeOne(url)));
+  for (const result of settled) {
+    if (result.status === 'fulfilled') {
+      return { reachable: true, url: result.value };
+    }
+  }
+  return { reachable: false };
+}
+
+export async function mintGuestSdkToken(
+  token: string,
+  hostUserId: string,
+  targetDeviceId: string,
+): Promise<{ token: string; expiresAt: number; allowedProjects?: string[] }> {
+  const res = await fetch(`${convexSiteUrl}/guests/sdk-token`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ hostUserId, targetDeviceId }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to mint delegated SDK token');
+  }
+  return res.json();
+}
+
+export async function fetchGuestHosts(token: string): Promise<GuestHostsResponse> {
+  const res = await fetch(`${convexSiteUrl}/guests/hosts`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to fetch guest hosts');
+  }
+  return res.json();
+}
+
+export async function findInviteByCode(
+  token: string,
+  code: string,
+): Promise<InvitationPreview | null> {
+  const cleaned = code.toUpperCase().trim();
+  const res = await fetch(
+    `${convexSiteUrl}/guests/find-by-code?code=${encodeURIComponent(cleaned)}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to load invite');
+  }
+  return res.json();
+}
+
+export async function acceptGuestByCode(
+  token: string,
+  code: string,
+  approvedDeviceIds?: string[],
+): Promise<{ hostName: string; hostEmail: string }> {
+  const res = await fetch(`${convexSiteUrl}/guests/accept-code`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      code: code.toUpperCase().trim(),
+      approvedDeviceIds,
+    }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Invalid invite code');
+  }
+  return res.json();
+}
+
+export async function acceptGuestInvitation(
+  token: string,
+  hostUserId: string,
+  approvedDeviceIds?: string[],
+): Promise<void> {
+  const res = await fetch(`${convexSiteUrl}/guests/accept`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ hostUserId, approvedDeviceIds }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to accept invitation');
   }
 }

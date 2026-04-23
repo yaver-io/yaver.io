@@ -226,7 +226,16 @@ func runAIGeneratorOpenCode(ctx context.Context, spec AIGeneratorSpec) (string, 
 	}
 	// Current opencode uses `opencode run <message>` for non-interactive
 	// runs. The old `--message` flag was removed in sst/opencode.
-	cmd := osexec.CommandContext(ctx, "opencode", "run", "--dangerously-skip-permissions", spec.Prompt)
+	args := []string{"run", "--dangerously-skip-permissions"}
+	model := strings.TrimSpace(envOr("YAVER_OPENCODE_MODEL", ""))
+	if _, runnerModel := splitAgentSpec(spec.Runner); runnerModel != "" {
+		model = runnerModel
+	}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	args = append(args, spec.Prompt)
+	cmd := osexec.CommandContext(ctx, "opencode", args...)
 	cmd.Dir = spec.WorkDir
 	cmd.Stderr = os.Stderr
 	var buf bytes.Buffer

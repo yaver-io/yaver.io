@@ -11,8 +11,10 @@ import {
 } from 'react-native';
 import {
   DeviceList,
+  DeviceReachability,
   RemoteDevice,
   listReachableDevices,
+  probeDeviceReachability,
   saveSelectedDeviceId,
 } from './auth';
 import { PairDeviceModal } from './PairDeviceModal';
@@ -45,6 +47,7 @@ export const YaverMachinePickerScreen: React.FC<YaverMachinePickerProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [list, setList] = useState<DeviceList>({ owned: [], shared: [] });
   const [pairingDevice, setPairingDevice] = useState<RemoteDevice | null>(null);
+  const [reachability, setReachability] = useState<Record<string, DeviceReachability | undefined>>({});
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -52,8 +55,29 @@ export const YaverMachinePickerScreen: React.FC<YaverMachinePickerProps> = ({
     try {
       const result = await listReachableDevices(token);
       setList(result);
+      setReachability({});
+      void (async () => {
+        const devices = [...result.owned, ...result.shared];
+        const settled = await Promise.allSettled(
+          devices.map(async (device) => ({
+            deviceId: device.deviceId,
+            result: await probeDeviceReachability(device),
+          })),
+        );
+        setReachability((prev) => {
+          const next = { ...prev };
+          for (const entry of settled) {
+            if (entry.status === 'fulfilled') {
+              next[entry.value.deviceId] = entry.value.result;
+            }
+          }
+          return next;
+        });
+      })();
       if (result.owned.length === 0 && result.shared.length === 0) {
-        setError('Hiç makine bulunamadı — önce bir makinede `yaver auth` + `yaver serve` çalıştır.');
+        setError(
+          'No machines found yet. If you do not have your own computer, redeem a host invite code first. Otherwise run `yaver auth` + `yaver serve` on your machine.',
+        );
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -77,12 +101,19 @@ export const YaverMachinePickerScreen: React.FC<YaverMachinePickerProps> = ({
       setPairingDevice(device);
       return;
     }
+    const direct = await probeDeviceReachability(device);
+    if (!direct.reachable && !device.needsAuth) {
+      setError('Selected machine is not responding. Start `yaver serve` on it and try again.');
+      setReachability((prev) => ({ ...prev, [device.deviceId]: direct }));
+      return;
+    }
     await saveSelectedDeviceId(device.deviceId);
     onPick(device);
   };
 
   const renderDevice = (device: RemoteDevice) => {
     const selected = device.deviceId === currentDeviceId;
+    const probe = reachability[device.deviceId];
     // Trust Convex's `isOnline` — the backend already gates it on a
     // fresh 90 s heartbeat (see backend/convex/devices.ts
     // deriveIsOnline). Re-checking on the client produced false
@@ -93,18 +124,28 @@ export const YaverMachinePickerScreen: React.FC<YaverMachinePickerProps> = ({
     // healthy — a separate concern from "can I reach this machine?"
     // Mobile app surfaces runner issues via a separate badge, not
     // this dot. Picker's job is reachability, nothing more.
-    const healthColor = !device.isOnline
-      ? '#ef4444'
-      : device.needsAuth
-        ? '#f59e0b'
-        : '#22c55e';
+    const effectivelyReachable = probe?.reachable === true;
+    const explicitlyOffline = probe?.reachable === false;
+    const healthColor = device.needsAuth
+      ? '#f59e0b'
+      : effectivelyReachable
+        ? '#22c55e'
+        : explicitlyOffline || !device.isOnline
+          ? '#ef4444'
+          : '#22c55e';
     // Derive a single short status phrase the user can act on.
     let statusLine = device.platform;
-    if (!device.isOnline) {
+    if (probe === undefined) {
+      statusLine = 'Checking connection…';
+    } else if (!device.isOnline && effectivelyReachable) {
+      statusLine = 'Reachable now — waiting for cloud status to refresh';
+    } else if (!device.isOnline) {
       statusLine = 'Offline — start `yaver serve` on the Mac';
     } else if (device.needsAuth) {
       statusLine =
         'Needs pairing — open the Yaver app to adopt this machine';
+    } else if (explicitlyOffline) {
+      statusLine = 'Agent not responding on this machine';
     } else if (device.runnerDown) {
       statusLine = 'Runner down — restart the coding agent on the Mac';
     } else {

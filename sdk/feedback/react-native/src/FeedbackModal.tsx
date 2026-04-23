@@ -82,6 +82,7 @@ export const FeedbackModal: React.FC = () => {
   const [lastVibeTaskId, setLastVibeTaskId] = useState<string | null>(null);
   const [quickIconColorPreset, setQuickIconColorPreset] =
     useState<QuickIconColorPreset | null>(null);
+  const [keyboardInset, setKeyboardInset] = useState(0);
   const [machineCard, setMachineCard] = useState<MachineCardState>({
     device: null,
     reachable: null,
@@ -255,6 +256,26 @@ export const FeedbackModal: React.FC = () => {
     }, 5000);
     return () => clearInterval(interval);
   }, [loadSelectedMachine, visible]);
+
+  useEffect(() => {
+    if (!visible) {
+      setKeyboardInset(0);
+      return;
+    }
+
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardInset(event.endCoordinates?.height ?? 0);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardInset(0);
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, [visible]);
 
   const closeSoon = useCallback((delayMs = 1200) => {
     setTimeout(() => {
@@ -480,8 +501,29 @@ export const FeedbackModal: React.FC = () => {
   // user types what they want, hits Send, sees the task id back. If
   // left blank, we default to "pick the next small improvement"
   // so a one-tap workflow still works for lazy days.
-  const handleVibingButton = useCallback(() => {
+  const handleVibingButton = useCallback(async () => {
     if (!showVibeInput) {
+      const client = YaverFeedback.getP2PClient();
+      if (!client) {
+        setError('Not connected to the agent yet.');
+        return;
+      }
+      setError(null);
+      try {
+        const eligibility = await client.getVibingEligibility();
+        if (!eligibility.canVibe) {
+          const message =
+            eligibility.guidance && eligibility.guidance.trim()
+              ? `${eligibility.reason ?? 'Vibe coding is unavailable.'} ${eligibility.guidance}`
+              : eligibility.reason ?? 'Vibe coding is unavailable.';
+          setError(message);
+          setToast('Vibe coding unavailable for this project.');
+          return;
+        }
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : String(err));
+        return;
+      }
       setShowVibeInput(true);
       return;
     }
@@ -548,6 +590,7 @@ export const FeedbackModal: React.FC = () => {
           <Pressable style={styles.overlay} onPress={handleClose}>
             <KeyboardAvoidingView
               behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
               style={styles.kbAvoider}
               pointerEvents="box-none"
             >
@@ -560,8 +603,14 @@ export const FeedbackModal: React.FC = () => {
             >
               <ScrollView
                 style={styles.scroll}
-                contentContainerStyle={styles.scrollContent}
+                contentContainerStyle={[
+                  styles.scrollContent,
+                  showVibeInput && keyboardInset > 0
+                    ? { paddingBottom: 8 + keyboardInset }
+                    : null,
+                ]}
                 keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
               >
               <View style={styles.header}>
                 <Text style={styles.title}>Send Feedback</Text>

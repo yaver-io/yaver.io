@@ -323,15 +323,11 @@ func enrichMachinesWithCapabilities(ctx context.Context, machines []MachineInfo)
 }
 
 func fetchRemoteMachineCapabilities(ctx context.Context, m MachineInfo) (*MachineInfo, error) {
-	base, token, err := remoteAgentBaseAndToken(m.DeviceID)
-	if err != nil {
-		return nil, err
-	}
 	var out struct {
 		OK      bool        `json:"ok"`
 		Machine MachineInfo `json:"machine"`
 	}
-	if err := remoteAgentJSON(ctx, base, token, http.MethodGet, "/agent/capabilities", nil, &out); err != nil {
+	if err := remoteAgentJSONForDevice(ctx, m.DeviceID, http.MethodGet, "/agent/capabilities", nil, &out); err != nil {
 		return nil, err
 	}
 	return &out.Machine, nil

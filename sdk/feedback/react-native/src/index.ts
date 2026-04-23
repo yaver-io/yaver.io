@@ -40,6 +40,8 @@ export { YaverLoginScreen } from './LoginScreen';
 export type { YaverLoginScreenProps } from './LoginScreen';
 export { YaverMachinePickerScreen } from './MachinePickerScreen';
 export type { YaverMachinePickerProps } from './MachinePickerScreen';
+export { YaverGuestOnboardingScreen } from './GuestOnboardingScreen';
+export type { YaverGuestOnboardingScreenProps } from './GuestOnboardingScreen';
 export { PairDeviceModal } from './PairDeviceModal';
 export type { PairDeviceModalProps } from './PairDeviceModal';
 export { AuthOverlay } from './AuthOverlay';
@@ -72,6 +74,10 @@ export {
   signupWithEmail,
   loginWithEmail,
   listReachableDevices,
+  fetchGuestHosts,
+  findInviteByCode,
+  acceptGuestByCode,
+  acceptGuestInvitation,
   DEFAULT_CONVEX_SITE_URL,
   DEFAULT_WEB_BASE_URL,
   DEFAULT_OAUTH_REDIRECT,
@@ -81,6 +87,11 @@ export type {
   User,
   RemoteDevice,
   DeviceList,
+  GuestInvitation,
+  ActiveGuestHost,
+  GuestHostsResponse,
+  InvitationHostDevice,
+  InvitationPreview,
 } from './auth';
 export {
   captureScreenshot,

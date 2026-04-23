@@ -36,6 +36,7 @@ import (
 const (
 	GuestScopeFull          = "full"
 	GuestScopeFeedbackOnly  = "feedback-only"
+	GuestScopeSDKProject    = "sdk-project"
 	guestScopeDefaultLegacy = GuestScopeFull
 )
 
@@ -53,6 +54,7 @@ var guestFullAllowedPrefixes = []string{
 	"/agent/status",
 	"/agent/runners",
 	"/projects",
+	"/repos/",
 	"/todolist",
 	"/builds",
 	"/health",
@@ -86,6 +88,8 @@ func guestScopeOrDefault(s string) string {
 	switch strings.TrimSpace(s) {
 	case GuestScopeFeedbackOnly:
 		return GuestScopeFeedbackOnly
+	case GuestScopeSDKProject:
+		return GuestScopeSDKProject
 	case GuestScopeFull:
 		return GuestScopeFull
 	default:
@@ -97,7 +101,8 @@ func guestScopeOrDefault(s string) string {
 // for the given scope. Unknown scopes collapse to "full" (legacy default).
 func isGuestAllowedPathForScope(path, scope string) bool {
 	list := guestFullAllowedPrefixes
-	if guestScopeOrDefault(scope) == GuestScopeFeedbackOnly {
+	switch guestScopeOrDefault(scope) {
+	case GuestScopeFeedbackOnly, GuestScopeSDKProject:
 		list = guestFeedbackOnlyAllowedPrefixes
 	}
 	for _, prefix := range list {

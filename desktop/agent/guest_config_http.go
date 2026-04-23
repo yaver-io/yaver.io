@@ -36,6 +36,7 @@ func (s *HTTPServer) handleGuestConfigGet(w http.ResponseWriter, r *http.Request
 		GuestUserID               string      `json:"guestUserId"`
 		GuestEmail                string      `json:"guestEmail"`
 		GuestName                 string      `json:"guestName"`
+		Scope                     string      `json:"scope,omitempty"`
 		DailyTokenLimit           *int        `json:"dailyTokenLimit,omitempty"`
 		AllowedRunners            []string    `json:"allowedRunners,omitempty"`
 		UsageMode                 string      `json:"usageMode,omitempty"`
@@ -67,6 +68,7 @@ func (s *HTTPServer) handleGuestConfigGet(w http.ResponseWriter, r *http.Request
 			GuestUserID:               c.GuestUserID,
 			GuestEmail:                c.GuestEmail,
 			GuestName:                 c.GuestName,
+			Scope:                     guestScopeOrDefault(c.Scope),
 			DailyTokenLimit:           c.DailyTokenLimit,
 			AllowedRunners:            c.AllowedRunners,
 			UsageMode:                 c.UsageMode,
@@ -104,6 +106,7 @@ func (s *HTTPServer) handleGuestConfigPost(w http.ResponseWriter, r *http.Reques
 
 	var body struct {
 		Email                     string   `json:"email"`
+		Scope                     string   `json:"scope,omitempty"`
 		DailyTokenLimit           *int     `json:"dailyTokenLimit,omitempty"`
 		AllowedRunners            []string `json:"allowedRunners,omitempty"`
 		UsageMode                 string   `json:"usageMode,omitempty"`
@@ -134,9 +137,16 @@ func (s *HTTPServer) handleGuestConfigPost(w http.ResponseWriter, r *http.Reques
 		jsonError(w, http.StatusBadRequest, "email is required")
 		return
 	}
+	if body.Scope != "" && body.Scope != GuestScopeFull && body.Scope != GuestScopeFeedbackOnly && body.Scope != GuestScopeSDKProject {
+		jsonError(w, http.StatusBadRequest, "scope must be 'full', 'feedback-only', or 'sdk-project'")
+		return
+	}
 
 	// Update Convex-side config (token limit, runners, usage mode, schedule)
 	cfgPayload := map[string]interface{}{"email": body.Email}
+	if body.Scope != "" {
+		cfgPayload["scope"] = body.Scope
+	}
 	if body.DailyTokenLimit != nil {
 		cfgPayload["dailyTokenLimit"] = *body.DailyTokenLimit
 	}
@@ -194,7 +204,7 @@ func (s *HTTPServer) handleGuestConfigPost(w http.ResponseWriter, r *http.Reques
 
 	// Only call Convex if there are Convex-side fields to update
 	hasConvexFields := body.DailyTokenLimit != nil || body.AllowedRunners != nil ||
-		body.UsageMode != "" || body.Schedule != nil ||
+		body.Scope != "" || body.UsageMode != "" || body.Schedule != nil ||
 		body.ShareAllDevices != nil || body.DeviceIDs != nil ||
 		body.ShareAllMachines != nil || body.MachineIDs != nil ||
 		body.ResourcePreset != "" ||

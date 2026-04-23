@@ -26,7 +26,7 @@ func (s *HTTPServer) handleChainCreate(w http.ResponseWriter, r *http.Request) {
 		Model     string             `json:"model,omitempty"`
 		Runner    string             `json:"runner,omitempty"`
 		Source    string             `json:"source,omitempty"`
-		AutoRetry bool              `json:"autoRetry,omitempty"`
+		AutoRetry bool               `json:"autoRetry,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
@@ -204,13 +204,13 @@ func detectDeployTargets(workDir string) []DeployTarget {
 	var targets []DeployTarget
 
 	// Web: Cloudflare Workers / Vercel
-	if fileExists(filepath.Join(workDir, "wrangler.toml")) || fileExists(filepath.Join(workDir, "wrangler.jsonc")) {
+	if dirHasCloudflareDeployConfig(workDir) {
 		targets = append(targets, DeployTarget{
 			ID:      "cloudflare",
 			Name:    "Cloudflare Workers",
 			Command: "npm run deploy",
 		})
-	} else if fileExists(filepath.Join(workDir, "vercel.json")) || fileExists(filepath.Join(workDir, ".vercel")) {
+	} else if dirHasVercelDeployConfig(workDir) {
 		targets = append(targets, DeployTarget{
 			ID:      "vercel",
 			Name:    "Vercel",

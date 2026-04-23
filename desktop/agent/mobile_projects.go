@@ -15,14 +15,14 @@ import (
 
 // MobileProject represents a discovered mobile project on the dev machine.
 type MobileProject struct {
-	Name       string `json:"name"`
-	Path       string `json:"path"`
-	Framework  string `json:"framework"`            // "flutter", "expo", "react-native"
-	SDKVersion string `json:"sdkVersion,omitempty"`  // e.g. "52.0.0", "55.0.6"
-	HasDevBuild bool  `json:"hasDevBuild"`           // true if ios/ or android/ prebuild exists
-	Branch     string `json:"branch,omitempty"`
-	Remote     string `json:"remote,omitempty"`
-	SizeHuman  string `json:"size,omitempty"`
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	Framework   string `json:"framework"`            // "flutter", "expo", "react-native"
+	SDKVersion  string `json:"sdkVersion,omitempty"` // e.g. "52.0.0", "55.0.6"
+	HasDevBuild bool   `json:"hasDevBuild"`          // true if ios/ or android/ prebuild exists
+	Branch      string `json:"branch,omitempty"`
+	Remote      string `json:"remote,omitempty"`
+	SizeHuman   string `json:"size,omitempty"`
 }
 
 // Known Expo SDK versions and their compatibility
@@ -293,6 +293,21 @@ func findMobileProjectByName(name string) *MobileProject {
 	defer mobileProjectCache.mu.RUnlock()
 	for i := range mobileProjectCache.projects {
 		if strings.EqualFold(strings.TrimSpace(mobileProjectCache.projects[i].Name), target) {
+			return &mobileProjectCache.projects[i]
+		}
+	}
+	return nil
+}
+
+func findMobileProjectByPath(path string) *MobileProject {
+	target := strings.TrimSpace(path)
+	if target == "" {
+		return nil
+	}
+	mobileProjectCache.mu.RLock()
+	defer mobileProjectCache.mu.RUnlock()
+	for i := range mobileProjectCache.projects {
+		if strings.TrimSpace(mobileProjectCache.projects[i].Path) == target {
 			return &mobileProjectCache.projects[i]
 		}
 	}

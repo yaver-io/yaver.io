@@ -9,14 +9,14 @@ import (
 // ProjectAction represents a deployable/runnable target within a project.
 type ProjectAction struct {
 	Label     string `json:"label"`               // "Hot Reload", "Deploy Web", "Build CLI"
-	Target    string `json:"target"`               // subdirectory: "mobile/", "web/", "."
-	Type      string `json:"type"`                 // "dev-server", "deploy", "build", "test"
-	Framework string `json:"framework,omitempty"`  // "expo", "nextjs", "vite", "go", "flutter"
-	Platform  string `json:"platform,omitempty"`   // "vercel", "convex", "supabase", "docker", "testflight", "playstore"
-	Command   string `json:"command,omitempty"`    // direct command if known
-	Icon      string `json:"icon,omitempty"`       // emoji for mobile UI
-	Supported bool   `json:"supported"`            // false = shown but disabled ("not supported yet")
-	Reason    string `json:"reason,omitempty"`     // why it's not supported
+	Target    string `json:"target"`              // subdirectory: "mobile/", "web/", "."
+	Type      string `json:"type"`                // "dev-server", "deploy", "build", "test"
+	Framework string `json:"framework,omitempty"` // "expo", "nextjs", "vite", "go", "flutter"
+	Platform  string `json:"platform,omitempty"`  // "vercel", "convex", "supabase", "docker", "testflight", "playstore"
+	Command   string `json:"command,omitempty"`   // direct command if known
+	Icon      string `json:"icon,omitempty"`      // emoji for mobile UI
+	Supported bool   `json:"supported"`           // false = shown but disabled ("not supported yet")
+	Reason    string `json:"reason,omitempty"`    // why it's not supported
 }
 
 // DetectProjectActions scans a project directory and returns all available actions.
@@ -148,29 +148,37 @@ func detectActionsInDir(dir, rel string) []ProjectAction {
 	}
 
 	// Next.js
-	if hasFile(dir, "next.config.ts") || hasFile(dir, "next.config.js") || hasFile(dir, "next.config.mjs") {
+	if hasNextConfig(dir) {
+		platform, command := detectWebDeployPlatform(dir)
 		actions = append(actions, ProjectAction{
 			Label: "Dev Server", Target: rel, Type: "dev-server",
 			Framework: "nextjs", Icon: "\u25B2",
 			Command: "/dev/start", Supported: true,
 		})
-		actions = append(actions, ProjectAction{
-			Label: "Deploy", Target: rel, Type: "deploy",
-			Framework: "nextjs", Platform: "vercel", Icon: "\U0001F680", Supported: true,
-		})
+		if platform != "" {
+			actions = append(actions, ProjectAction{
+				Label: "Deploy", Target: rel, Type: "deploy",
+				Framework: "nextjs", Platform: platform, Icon: "\U0001F680", Supported: true,
+				Command: command,
+			})
+		}
 	}
 
 	// Vite
 	if hasFile(dir, "vite.config.ts") || hasFile(dir, "vite.config.js") {
+		platform, command := detectWebDeployPlatform(dir)
 		actions = append(actions, ProjectAction{
 			Label: "Dev Server", Target: rel, Type: "dev-server",
 			Framework: "vite", Icon: "\u26A1",
 			Command: "/dev/start", Supported: true,
 		})
-		actions = append(actions, ProjectAction{
-			Label: "Deploy", Target: rel, Type: "deploy",
-			Framework: "vite", Platform: "vercel", Icon: "\U0001F680", Supported: true,
-		})
+		if platform != "" {
+			actions = append(actions, ProjectAction{
+				Label: "Deploy", Target: rel, Type: "deploy",
+				Framework: "vite", Platform: platform, Icon: "\U0001F680", Supported: true,
+				Command: command,
+			})
+		}
 	}
 
 	// Vercel (static site or any project with vercel.json)

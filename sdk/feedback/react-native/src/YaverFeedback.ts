@@ -10,6 +10,7 @@ import {
   getToken,
   getSelectedDeviceId,
   listReachableDevices,
+  mintGuestSdkToken,
   clearToken,
   clearSelectedDeviceId,
   DEFAULT_CONVEX_SITE_URL,
@@ -49,6 +50,7 @@ let config: FeedbackConfig | null = null;
 let enabled = false;
 let p2pClient: P2PClient | null = null;
 let shakeDetector: ShakeDetector | null = null;
+let p2pAuthToken: string | null = null;
 
 /** Ring buffer of captured errors. */
 let errorBuffer: CapturedError[] = [];
@@ -77,6 +79,44 @@ const flagCache: Map<string, { value: unknown; at: number }> = new Map();
  * Call `YaverFeedback.init()` once at app startup.
  */
 export class YaverFeedback {
+  private static async resolveP2PAuthToken(): Promise<string | null> {
+    if (!config?.authToken) return null;
+    if (!config.preferredDeviceId) return config.authToken;
+    const devices = await listReachableDevices(config.authToken);
+    const all = [...devices.owned, ...devices.shared];
+    const selected = all.find((device) => device.deviceId === config?.preferredDeviceId);
+    if (!selected || !selected.isGuest || selected.accessScope !== 'shared-scoped') {
+      return config.authToken;
+    }
+    if (!selected.hostUserId) {
+      return config.authToken;
+    }
+    const delegated = await mintGuestSdkToken(
+      config.authToken,
+      selected.hostUserId,
+      selected.deviceId,
+    );
+    return delegated.token;
+  }
+
+  private static async rebuildP2PClient(agentUrl?: string): Promise<void> {
+    if (!config) return;
+    const effectiveUrl = agentUrl ?? config.agentUrl;
+    if (!effectiveUrl) {
+      p2pClient = null;
+      p2pAuthToken = null;
+      return;
+    }
+    const token = await YaverFeedback.resolveP2PAuthToken();
+    if (!token) {
+      p2pClient = null;
+      p2pAuthToken = null;
+      return;
+    }
+    p2pAuthToken = token;
+    p2pClient = new P2PClient(effectiveUrl, token);
+  }
+
   /**
    * Initialize the feedback SDK with the given configuration.
    * Typically called in your app's root component or entry file.
@@ -130,7 +170,11 @@ export class YaverFeedback {
 
     // Create P2P client if we have a URL
     if (config.agentUrl) {
+      p2pAuthToken = config.authToken ?? null;
       p2pClient = new P2PClient(config.agentUrl, config.authToken ?? '');
+      if (config.authToken) {
+        void YaverFeedback.rebuildP2PClient(config.agentUrl);
+      }
     } else {
       p2pClient = null;
       // Auto-discover agent in the background when convexUrl or LAN is available
@@ -251,7 +295,7 @@ export class YaverFeedback {
       });
       if (result && config) {
         config.agentUrl = result.url;
-        p2pClient = new P2PClient(result.url, config.authToken ?? '');
+        await YaverFeedback.rebuildP2PClient(result.url);
       }
     } catch {
       // Discovery failed — FloatingButton will show disconnected, user can retry
@@ -278,7 +322,7 @@ export class YaverFeedback {
       });
       if (!result) return false;
       config.agentUrl = result.url;
-      p2pClient = new P2PClient(result.url, config.authToken ?? '');
+      await YaverFeedback.rebuildP2PClient(result.url);
       return true;
     } catch {
       return false;
@@ -322,7 +366,7 @@ export class YaverFeedback {
     if (!config) return;
     config.authToken = token;
     if (config.agentUrl) {
-      p2pClient = new P2PClient(config.agentUrl, token);
+      await YaverFeedback.rebuildP2PClient(config.agentUrl);
     } else {
       await YaverFeedback.discoverAgent();
     }
@@ -363,6 +407,7 @@ export class YaverFeedback {
     config.preferredDeviceId = deviceId;
     config.agentUrl = undefined;
     p2pClient = null;
+    p2pAuthToken = null;
     await YaverFeedback.discoverAgent();
   }
 
@@ -388,6 +433,7 @@ export class YaverFeedback {
       config.agentUrl = undefined;
     }
     p2pClient = null;
+    p2pAuthToken = null;
   }
 
   /**
@@ -427,7 +473,7 @@ export class YaverFeedback {
         });
         if (result) {
           config.agentUrl = result.url;
-          p2pClient = new P2PClient(result.url, config.authToken ?? '');
+          await YaverFeedback.rebuildP2PClient(result.url);
         } else if (config.autoLogin !== false && !config.preferredDeviceId) {
           // No agent discovered and no device picked yet — prompt the user
           // to pick one of their machines (handles the non-LAN case where

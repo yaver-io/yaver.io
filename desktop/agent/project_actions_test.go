@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -49,8 +50,8 @@ func TestDetectProjectActions_YaverRepo(t *testing.T) {
 	if !types["expo/"] {
 		t.Error("expected expo action")
 	}
-	if !types["nextjs/vercel"] {
-		t.Error("expected nextjs/vercel action")
+	if !types["nextjs/cloudflare"] {
+		t.Error("expected nextjs/cloudflare action")
 	}
 	if !types["/convex"] {
 		t.Error("expected convex action")
@@ -76,5 +77,36 @@ func TestDetectProjectActions_AcmeStore(t *testing.T) {
 	}
 	if !hasHotReload {
 		t.Error("expected expo hot reload action")
+	}
+}
+
+func TestDetectProjectActions_ViteWithWranglerUsesCloudflare(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "vite.config.ts"), []byte("export default {};\n"), 0o644); err != nil {
+		t.Fatalf("write vite config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "wrangler.toml"), []byte("name = \"demo\"\n"), 0o644); err != nil {
+		t.Fatalf("write wrangler config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo"}`), 0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	actions := DetectProjectActions(dir)
+	hasCloudflareDeploy := false
+	hasVercelDeploy := false
+	for _, a := range actions {
+		if a.Type == "deploy" && a.Framework == "vite" && a.Platform == "cloudflare" {
+			hasCloudflareDeploy = true
+		}
+		if a.Type == "deploy" && strings.EqualFold(a.Platform, "vercel") {
+			hasVercelDeploy = true
+		}
+	}
+	if !hasCloudflareDeploy {
+		t.Fatal("expected vite/cloudflare deploy action")
+	}
+	if hasVercelDeploy {
+		t.Fatal("did not expect vercel deploy action when wrangler.toml exists")
 	}
 }

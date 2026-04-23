@@ -187,6 +187,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/agent/graphs", s.auth(s.handleAgentGraphs))
 	mux.HandleFunc("/agent/graphs/", s.auth(s.handleAgentGraphByID))
 	mux.HandleFunc("/agent/runners", s.auth(s.handleRunners))
+	mux.HandleFunc("/runner-auth/status", s.auth(s.handleRunnerAuthStatus))
+	mux.HandleFunc("/runner-auth/set", s.auth(s.handleRunnerAuthSet))
+	mux.HandleFunc("/runner-auth/setup", s.auth(s.handleRunnerAuthSetup))
+	mux.HandleFunc("/machine/onboarding/status", s.auth(s.handleMachineOnboardingStatus))
+	mux.HandleFunc("/machine/onboarding/apply", s.auth(s.handleMachineOnboardingApply))
 	mux.HandleFunc("/agent/env-profile", s.auth(s.handleEnvironmentProfile))
 	mux.HandleFunc("/agent/env-profile/apply", s.auth(s.handleEnvironmentProfileApply))
 	mux.HandleFunc("/agent/toolchain-sync/profile", s.auth(s.handleEnvironmentProfile))
@@ -470,6 +475,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/session/export", s.auth(s.handleSessionExport))
 	mux.HandleFunc("/session/import", s.auth(s.handleSessionImport))
 	mux.HandleFunc("/session/handoff", s.auth(s.handleSessionHandoff))
+	mux.HandleFunc("/session/complete", s.auth(s.handleSessionComplete))
 	mux.HandleFunc("/tmux/sessions", s.auth(s.handleTmuxSessions))
 	mux.HandleFunc("/tmux/adopt", s.auth(s.handleTmuxAdopt))
 	mux.HandleFunc("/tmux/detach", s.auth(s.handleTmuxDetach))
@@ -569,9 +575,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/publish/run", s.auth(s.handlePublishRun))
 	mux.HandleFunc("/publish/runs", s.auth(s.handlePublishRuns))
 	mux.HandleFunc("/publish/runs/", s.auth(s.handlePublishRunByID))
-	mux.HandleFunc("/vibing", s.auth(s.handleVibing))
-	mux.HandleFunc("/vibing/execute", s.auth(s.handleVibingExecute))
-	mux.HandleFunc("/vibing/surprise", s.auth(s.handleVibingSurprise))
+	mux.HandleFunc("/vibing", s.authSDKOrGuest(s.handleVibing))
+	mux.HandleFunc("/vibing/eligibility", s.authSDKOrGuest(s.handleVibingEligibility))
+	mux.HandleFunc("/vibing/execute", s.authSDKOrGuest(s.handleVibingExecute))
+	mux.HandleFunc("/vibing/surprise", s.authSDKOrGuest(s.handleVibingSurprise))
 
 	// Recovery: central catalog of fix prompts routed to the wrapped AI agent.
 	mux.HandleFunc("/recover", s.auth(s.handleRecover))
@@ -960,11 +967,16 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 // ---------------------------------------------------------------------------
 
 type cachedTokenInfo struct {
-	userID       string
-	isSdk        bool
-	scopes       []string
-	allowedCIDRs []string
-	hostShare    *HostShareAccessInfo
+	userID               string
+	isSdk                bool
+	scopes               []string
+	allowedCIDRs         []string
+	delegatedGuestUserID string
+	delegatedGuestScope  string
+	sourceSurface        string
+	targetDeviceID       string
+	allowedProjects      []string
+	hostShare            *HostShareAccessInfo
 	// storedAt records when the cache entry was minted. The auth() middleware
 	// uses this to force a Convex re-validation of any non-owner, non-SDK,
 	// non-paired token (i.e. guest tokens) older than guestTokenCacheTTL —
@@ -998,13 +1010,15 @@ var hostShareAllowedPrefixes = []string{
 
 // Scope-to-path mapping: which URL paths each scope grants access to.
 var scopePathPrefixes = map[string][]string{
-	"feedback": {"/feedback"},
-	"blackbox": {"/blackbox/"},
-	"voice":    {"/voice/"},
-	"builds":   {"/builds"},
-	"testapp":  {"/test-app/"},
-	"health":   {"/health"},
-	"todolist": {"/todolist"},
+	"feedback":     {"/feedback"},
+	"blackbox":     {"/blackbox/"},
+	"voice":        {"/voice/"},
+	"builds":       {"/builds"},
+	"testapp":      {"/test-app/"},
+	"health":       {"/health"},
+	"todolist":     {"/todolist"},
+	"guest-reload": {"/dev/reload", "/dev/reload-app", "/dev/status", "/dev/target", "/dev/events", "/dev/compatibility"},
+	"guest-vibing": {"/vibing"},
 }
 
 func pathAllowedByScopes(path string, scopes []string) bool {
@@ -1020,6 +1034,28 @@ func pathAllowedByScopes(path string, scopes []string) bool {
 		}
 	}
 	return false
+}
+
+func (s *HTTPServer) applyDelegatedGuestSDKHeaders(w http.ResponseWriter, r *http.Request, info *cachedTokenInfo) bool {
+	if info == nil || strings.TrimSpace(info.delegatedGuestUserID) == "" {
+		return true
+	}
+	if info.targetDeviceID != "" && strings.TrimSpace(info.targetDeviceID) != strings.TrimSpace(s.deviceID) {
+		jsonError(w, http.StatusForbidden, "SDK token is not valid for this device")
+		return false
+	}
+	r.Header.Set("X-Yaver-Guest", "true")
+	r.Header.Set("X-Yaver-GuestUserID", info.delegatedGuestUserID)
+	if info.delegatedGuestScope != "" {
+		r.Header.Set("X-Yaver-GuestScope", info.delegatedGuestScope)
+	}
+	if info.sourceSurface != "" {
+		r.Header.Set("X-Yaver-SourceSurface", info.sourceSurface)
+	}
+	if len(info.allowedProjects) > 0 {
+		r.Header.Set("X-Yaver-GuestAllowedProjects", strings.Join(info.allowedProjects, ","))
+	}
+	return true
 }
 
 func isHostShareAllowedPath(path string, access *HostShareAccessInfo) bool {
@@ -1536,6 +1572,9 @@ func (s *HTTPServer) authSDK(next http.HandlerFunc) http.HandlerFunc {
 				}
 				// Track new device IPs
 				s.trackNewIP(token, r)
+				if !s.applyDelegatedGuestSDKHeaders(w, r, info) {
+					return
+				}
 			}
 			next(w, r)
 			return
@@ -1562,10 +1601,15 @@ func (s *HTTPServer) authSDK(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		info := &cachedTokenInfo{
-			userID:       sdkInfo.UserID,
-			isSdk:        true,
-			scopes:       sdkInfo.Scopes,
-			allowedCIDRs: sdkInfo.AllowedCIDRs,
+			userID:               sdkInfo.UserID,
+			isSdk:                true,
+			scopes:               sdkInfo.Scopes,
+			allowedCIDRs:         sdkInfo.AllowedCIDRs,
+			delegatedGuestUserID: sdkInfo.DelegatedGuestUserID,
+			delegatedGuestScope:  sdkInfo.DelegatedGuestScope,
+			sourceSurface:        sdkInfo.SourceSurface,
+			targetDeviceID:       sdkInfo.TargetDeviceID,
+			allowedProjects:      sdkInfo.AllowedProjects,
 		}
 		s.tokenCache.Store(token, info)
 
@@ -1591,6 +1635,9 @@ func (s *HTTPServer) authSDK(next http.HandlerFunc) http.HandlerFunc {
 
 		// Track new device IPs
 		s.trackNewIP(token, r)
+		if !s.applyDelegatedGuestSDKHeaders(w, r, info) {
+			return
+		}
 
 		next(w, r)
 	}
@@ -1639,6 +1686,9 @@ func (s *HTTPServer) authSDKOrGuest(next http.HandlerFunc) http.HandlerFunc {
 					}
 				}
 				s.trackNewIP(token, r)
+				if !s.applyDelegatedGuestSDKHeaders(w, r, info) {
+					return
+				}
 				next(w, r)
 				return
 			}
@@ -1675,10 +1725,15 @@ func (s *HTTPServer) authSDKOrGuest(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		info := &cachedTokenInfo{
-			userID:       sdkInfo.UserID,
-			isSdk:        true,
-			scopes:       sdkInfo.Scopes,
-			allowedCIDRs: sdkInfo.AllowedCIDRs,
+			userID:               sdkInfo.UserID,
+			isSdk:                true,
+			scopes:               sdkInfo.Scopes,
+			allowedCIDRs:         sdkInfo.AllowedCIDRs,
+			delegatedGuestUserID: sdkInfo.DelegatedGuestUserID,
+			delegatedGuestScope:  sdkInfo.DelegatedGuestScope,
+			sourceSurface:        sdkInfo.SourceSurface,
+			targetDeviceID:       sdkInfo.TargetDeviceID,
+			allowedProjects:      sdkInfo.AllowedProjects,
 		}
 		s.tokenCache.Store(token, info)
 
@@ -1698,6 +1753,9 @@ func (s *HTTPServer) authSDKOrGuest(next http.HandlerFunc) http.HandlerFunc {
 			}
 		}
 		s.trackNewIP(token, r)
+		if !s.applyDelegatedGuestSDKHeaders(w, r, info) {
+			return
+		}
 		next(w, r)
 	}
 }
@@ -2191,6 +2249,7 @@ func (s *HTTPServer) handleRunners(w http.ResponseWriter, r *http.Request) {
 		Name           string      `json:"name"`
 		Command        string      `json:"command"`
 		Installed      bool        `json:"installed"`
+		Ready          bool        `json:"ready"`
 		AuthConfigured bool        `json:"authConfigured,omitempty"`
 		AuthSource     string      `json:"authSource,omitempty"`
 		Warning        string      `json:"warning,omitempty"`
@@ -2240,6 +2299,7 @@ func (s *HTTPServer) handleRunners(w http.ResponseWriter, r *http.Request) {
 			Name:           r.Name,
 			Command:        r.Command,
 			Installed:      err == nil,
+			Ready:          status.Ready,
 			AuthConfigured: status.AuthConfigured,
 			AuthSource:     status.AuthSource,
 			Warning:        status.Warning,
@@ -2272,6 +2332,7 @@ func (s *HTTPServer) handleRunners(w http.ResponseWriter, r *http.Request) {
 			Name:      s.taskMgr.runner.Name,
 			Command:   s.taskMgr.runner.Command,
 			Installed: true,
+			Ready:     true,
 			IsDefault: true,
 			Models:    nil, // custom runners have no predefined models
 		})
@@ -3021,7 +3082,7 @@ func (s *HTTPServer) handleDoctor(w http.ResponseWriter, r *http.Request) {
 		{"ollama", "Ollama", "ollama", "brew install ollama"},
 		{"goose", "Goose", "goose", "pip install goose-ai"},
 		{"amp", "Amp", "amp", "npm install -g @anthropic/amp"},
-		{"opencode", "OpenCode", "opencode", "go install github.com/mbreithecker/opencode@latest"},
+		{"opencode", "OpenCode", "opencode", "npm install -g opencode-ai"},
 	}
 	for _, runner := range runners {
 		p, err := osexec.LookPath(runner.cmd)
@@ -3044,6 +3105,19 @@ func (s *HTTPServer) handleDoctor(w http.ResponseWriter, r *http.Request) {
 			addCheck("runners", runner.name, "pass", fmt.Sprintf("%s (%s)", p, ver))
 		} else {
 			addCheck("runners", runner.name, "pass", p)
+		}
+	}
+
+	onboarding := collectMachineOnboardingStatus()
+	for _, provider := range onboarding.Providers {
+		status := machineOnboardingDoctorLevel(provider)
+		switch status {
+		case "pass":
+			addCheck("onboarding", provider.Name, "pass", machineOnboardingDoctorDetail(provider))
+		case "warn":
+			addCheck("onboarding", provider.Name, "warn", machineOnboardingDoctorDetail(provider))
+		default:
+			addCheck("onboarding", provider.Name, "fail", machineOnboardingDoctorDetail(provider))
 		}
 	}
 
@@ -3139,7 +3213,7 @@ func (s *HTTPServer) handleTools(w http.ResponseWriter, r *http.Request) {
 		{"ollama", "Ollama", "ollama", "brew install ollama"},
 		{"goose", "Goose", "goose", "pip install goose-ai"},
 		{"amp", "Amp", "amp", "npm install -g @anthropic/amp"},
-		{"opencode", "OpenCode", "opencode", "go install github.com/mbreithecker/opencode@latest"},
+		{"opencode", "OpenCode", "opencode", "npm install -g opencode-ai"},
 		{"qwen", "Qwen", "qwen", "pip install qwen-agent"},
 		{"cursor", "Cursor", "cursor", "https://cursor.com"},
 	}
@@ -3402,6 +3476,36 @@ func (s *HTTPServer) handleSessionHandoff(w http.ResponseWriter, r *http.Request
 	}
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"ok":           res.OK,
+		"localTaskId":  res.LocalTaskID,
+		"loopName":     res.LoopName,
+		"engine":       res.Engine,
+		"runner":       res.Runner,
+		"sentinelFile": res.SentinelFile,
+		"warnings":     res.Warnings,
+		"message":      res.Message,
+		"exitNow":      res.ExitNow,
+	})
+}
+
+func (s *HTTPServer) handleSessionComplete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+	var spec HandoffSpec
+	if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	spec = normalizeSessionCompleteSpec(spec)
+	res, err := RunHandoff(s, spec)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":           res.OK,
+		"mode":         "session-complete",
 		"localTaskId":  res.LocalTaskID,
 		"loopName":     res.LoopName,
 		"engine":       res.Engine,
@@ -3971,9 +4075,20 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			if cfg == nil || cfg.AuthToken == "" {
 				return mcpToolError("remote handoff: agent not authenticated — run `yaver auth`")
 			}
+			runnerID, err := resolveHandoffRunner(args.Engine, args.Runner)
+			if err != nil {
+				return mcpToolError(err.Error())
+			}
+			bundle, err := ResolveHandoffBundle(s.taskMgr, HandoffSpec{
+				SourceTaskID:      args.SourceTaskID,
+				SourceSessionFile: args.SourceSessionFile,
+				WorkDir:           args.WorkDir,
+			}, runnerID)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("remote handoff export failed: %v", err))
+			}
 			body := map[string]interface{}{
-				"sourceTaskId":      args.SourceTaskID,
-				"sourceSessionFile": args.SourceSessionFile,
+				"sourceBundle":      bundle,
 				"engine":            args.Engine,
 				"runner":            args.Runner,
 				"workDir":           args.WorkDir,
@@ -4053,6 +4168,139 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		text := fmt.Sprintf("%s\n\nLoop: %s\nTask: %s\nEngine: %s\nRunner: %s\nSentinel: %s\nexitNow: true — please terminate this session; Yaver is taking over.",
 			res.Message, res.LoopName, res.LocalTaskID, res.Engine, res.Runner, res.SentinelFile)
 		return mcpToolResult(text)
+
+	case "session_complete":
+		var args struct {
+			SourceTaskID      string `json:"source_task_id"`
+			SourceSessionFile string `json:"source_session_file"`
+			Target            string `json:"target"`
+			Engine            string `json:"engine"`
+			Runner            string `json:"runner"`
+			WorkDir           string `json:"workdir"`
+			MaxKicks          int    `json:"max_kicks"`
+			DeadlineSec       int    `json:"deadline_sec"`
+			Message           string `json:"message"`
+			StopSource        *bool  `json:"stop_source"`
+			CallerPID         int    `json:"caller_pid"`
+			Hours             string `json:"hours"`
+			Load              string `json:"load"`
+			Prompt            string `json:"prompt"`
+			LoopTarget        string `json:"loop_target"`
+			Branch            string `json:"branch"`
+			AutoBranch        bool   `json:"auto_branch"`
+			Deploy            string `json:"deploy"`
+			Notify            bool   `json:"notify"`
+			NoAutotest        bool   `json:"no_autotest"`
+			RemainedFile      string `json:"remained_file"`
+			Harden            string `json:"harden"`
+			Model             string `json:"model"`
+			Planner           string `json:"planner"`
+			Implementer       string `json:"implementer"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		stopSource := true
+		if args.StopSource != nil {
+			stopSource = *args.StopSource
+		}
+		spec := normalizeSessionCompleteSpec(HandoffSpec{
+			SourceTaskID:      args.SourceTaskID,
+			SourceSessionFile: args.SourceSessionFile,
+			Target:            args.Target,
+			Engine:            args.Engine,
+			Runner:            args.Runner,
+			WorkDir:           args.WorkDir,
+			MaxKicks:          args.MaxKicks,
+			DeadlineSec:       args.DeadlineSec,
+			ExtraPrompt:       args.Message,
+			StopSource:        stopSource,
+			Hours:             args.Hours,
+			Load:              args.Load,
+			CallerPID:         resolveCallerPID(args.CallerPID, clientAddr),
+			Prompt:            args.Prompt,
+			LoopTarget:        args.LoopTarget,
+			Branch:            args.Branch,
+			AutoBranch:        args.AutoBranch,
+			Deploy:            args.Deploy,
+			Notify:            args.Notify,
+			NoAutotest:        args.NoAutotest,
+			RemainedFile:      args.RemainedFile,
+			Harden:            args.Harden,
+			Model:             args.Model,
+			Planner:           args.Planner,
+			Implementer:       args.Implementer,
+		})
+		if spec.Target != "" {
+			cfg, _ := LoadConfig()
+			if cfg == nil || cfg.AuthToken == "" {
+				return mcpToolError("remote session_complete: agent not authenticated — run `yaver auth`")
+			}
+			runnerID, err := resolveHandoffRunner(spec.Engine, spec.Runner)
+			if err != nil {
+				return mcpToolError(err.Error())
+			}
+			bundle, err := ResolveHandoffBundle(s.taskMgr, spec, runnerID)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("remote session_complete export failed: %v", err))
+			}
+			body := map[string]interface{}{
+				"sourceBundle":      bundle,
+				"engine":            spec.Engine,
+				"runner":            spec.Runner,
+				"workDir":           spec.WorkDir,
+				"maxKicks":          spec.MaxKicks,
+				"deadlineSec":       spec.DeadlineSec,
+				"extraPrompt":       spec.ExtraPrompt,
+				"stopSource":        spec.StopSource,
+				"hours":             spec.Hours,
+				"load":              spec.Load,
+				"prompt":            spec.Prompt,
+				"loopTarget":        spec.LoopTarget,
+				"branch":            spec.Branch,
+				"autoBranch":        spec.AutoBranch,
+				"deploy":            spec.Deploy,
+				"notify":            spec.Notify,
+				"noAutotest":        spec.NoAutotest,
+				"autoIdeas":         spec.AutoIdeas,
+				"remainedFile":      spec.RemainedFile,
+				"harden":            spec.Harden,
+				"model":             spec.Model,
+				"planner":           spec.Planner,
+				"implementer":       spec.Implementer,
+			}
+			target := resolveDeviceURL(cfg, spec.Target, true)
+			payload, _ := json.Marshal(body)
+			req, _ := http.NewRequest("POST", target+"/session/complete", bytes.NewReader(payload))
+			req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
+			req.Header.Set("Content-Type", "application/json")
+			httpc := &http.Client{Timeout: 60 * time.Second}
+			resp, err := httpc.Do(req)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("remote session_complete: %v", err))
+			}
+			defer resp.Body.Close()
+			var out map[string]interface{}
+			json.NewDecoder(resp.Body).Decode(&out)
+			if ok, _ := out["ok"].(bool); !ok {
+				return mcpToolError(fmt.Sprintf("remote session_complete failed: %v", out["error"]))
+			}
+			return mcpToolJSON(out)
+		}
+		res, err := RunHandoff(s, spec)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("session_complete failed: %v", err))
+		}
+		return mcpToolJSON(map[string]interface{}{
+			"ok":           res.OK,
+			"mode":         "session-complete",
+			"localTaskId":  res.LocalTaskID,
+			"loopName":     res.LoopName,
+			"engine":       res.Engine,
+			"runner":       res.Runner,
+			"sentinelFile": res.SentinelFile,
+			"warnings":     res.Warnings,
+			"message":      res.Message,
+			"exitNow":      res.ExitNow,
+		})
 
 	// --- Runner Management ---
 	case "list_runners":
@@ -7950,6 +8198,92 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolError(err.Error())
 		}
 		return mcpToolJSON(result)
+	case "runner_auth_status":
+		var a struct {
+			DeviceID string `json:"device_id"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpRunnerAuthStatus(a.DeviceID))
+	case "runner_auth_set":
+		var a struct {
+			DeviceID             string `json:"device_id"`
+			Runner               string `json:"runner"`
+			OpenAIAPIKey         string `json:"openai_api_key"`
+			AnthropicAPIKey      string `json:"anthropic_api_key"`
+			AnthropicAuthToken   string `json:"anthropic_auth_token"`
+			ClaudeCodeOAuthToken string `json:"claude_code_oauth_token"`
+			GLMAPIKey            string `json:"glm_api_key"`
+			ZAIAPIKey            string `json:"zai_api_key"`
+			Notes                string `json:"notes"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpRunnerAuthSet(
+			a.DeviceID,
+			a.Runner,
+			a.OpenAIAPIKey,
+			a.AnthropicAPIKey,
+			a.AnthropicAuthToken,
+			a.ClaudeCodeOAuthToken,
+			a.GLMAPIKey,
+			a.ZAIAPIKey,
+			a.Notes,
+		))
+	case "runner_auth_setup":
+		var a struct {
+			DeviceID             string `json:"device_id"`
+			Runner               string `json:"runner"`
+			OpenAIAPIKey         string `json:"openai_api_key"`
+			AnthropicAPIKey      string `json:"anthropic_api_key"`
+			AnthropicAuthToken   string `json:"anthropic_auth_token"`
+			ClaudeCodeOAuthToken string `json:"claude_code_oauth_token"`
+			GLMAPIKey            string `json:"glm_api_key"`
+			ZAIAPIKey            string `json:"zai_api_key"`
+			Notes                string `json:"notes"`
+			InstallIfMissing     *bool  `json:"install_if_missing"`
+			CodexLogin           *bool  `json:"codex_login"`
+			SetupMCP             *bool  `json:"setup_mcp"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpRunnerAuthSetup(a.DeviceID, runnerAuthSetupRequest{
+			Runner:               a.Runner,
+			OpenAIAPIKey:         a.OpenAIAPIKey,
+			AnthropicAPIKey:      a.AnthropicAPIKey,
+			AnthropicAuthToken:   a.AnthropicAuthToken,
+			ClaudeCodeOAuthToken: a.ClaudeCodeOAuthToken,
+			GLMAPIKey:            a.GLMAPIKey,
+			ZAIAPIKey:            a.ZAIAPIKey,
+			Notes:                a.Notes,
+			InstallIfMissing:     a.InstallIfMissing,
+			CodexLogin:           a.CodexLogin,
+			SetupMCP:             a.SetupMCP,
+		}))
+	case "machine_onboarding_status":
+		var a struct {
+			DeviceID string `json:"device_id"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpMachineOnboardingStatus(a.DeviceID))
+	case "machine_onboarding_apply":
+		var a struct {
+			DeviceID     string `json:"device_id"`
+			OpenAIAPIKey string `json:"openai_api_key"`
+			GitHubToken  string `json:"github_token"`
+			GitLabToken  string `json:"gitlab_token"`
+			GitLabHost   string `json:"gitlab_host"`
+			ApplyClone   *bool  `json:"apply_clone"`
+			ApplyCIToken *bool  `json:"apply_ci_token"`
+			Notes        string `json:"notes"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpMachineOnboardingApply(a.DeviceID, machineOnboardingApplyRequest{
+			OpenAIAPIKey: a.OpenAIAPIKey,
+			GitHubToken:  a.GitHubToken,
+			GitLabToken:  a.GitLabToken,
+			GitLabHost:   a.GitLabHost,
+			ApplyClone:   a.ApplyClone,
+			ApplyCIToken: a.ApplyCIToken,
+			Notes:        a.Notes,
+		}))
 	case "yaver_auth_unlink":
 		var a struct {
 			Provider string `json:"provider"`
@@ -12415,8 +12749,23 @@ func (s *HTTPServer) mcpDoctor() interface{} {
 		if err != nil {
 			check(r.name, "warn", "Not installed")
 		} else {
-			check(r.name, "ok", path)
+			runnerCfg := GetRunnerConfig(r.id)
+			out, verr := osexec.Command(r.cmd, "--version").CombinedOutput()
+			ver := ""
+			if verr == nil {
+				ver = strings.TrimSpace(strings.Split(string(out), "\n")[0])
+				if len(ver) > 60 {
+					ver = ver[:60]
+				}
+			}
+			level, detail := runnerDoctorDetail(runnerCfg, s.taskMgr.workDir, path, ver)
+			check(r.name, level, detail)
 		}
+	}
+
+	sb.WriteString("\n── Machine Onboarding ──\n")
+	for _, provider := range collectMachineOnboardingStatus().Providers {
+		check(provider.Name, machineOnboardingDoctorLevel(provider), machineOnboardingDoctorDetail(provider))
 	}
 
 	// Relay
@@ -12895,7 +13244,7 @@ Built-in runners:
 - ollama: Ollama — brew install ollama
 - goose: Goose — pip install goose-ai
 - amp: Amp — npm i -g @anthropic/amp
-- opencode: OpenCode — go install github.com/mbreithecker/opencode@latest
+- opencode: OpenCode — npm i -g opencode-ai
 
 Custom runners:
   yaver set-runner custom "my-tool --auto {prompt}"

@@ -146,16 +146,16 @@ type HandoffSpec struct {
 
 // HandoffResult is what the orchestrator returns to the caller (CLI/MCP/HTTP).
 type HandoffResult struct {
-	OK            bool     `json:"ok"`
-	LocalTaskID   string   `json:"localTaskId,omitempty"`
-	LoopName      string   `json:"loopName,omitempty"`
-	Engine        string   `json:"engine"`
-	Runner        string   `json:"runner"`
-	SentinelFile  string   `json:"sentinelFile"`
-	RemoteDevice  string   `json:"remoteDevice,omitempty"`
-	Warnings      []string `json:"warnings,omitempty"`
-	Message       string   `json:"message"`
-	ExitNow       bool     `json:"exitNow"` // signal to source agent to terminate
+	OK           bool     `json:"ok"`
+	LocalTaskID  string   `json:"localTaskId,omitempty"`
+	LoopName     string   `json:"loopName,omitempty"`
+	Engine       string   `json:"engine"`
+	Runner       string   `json:"runner"`
+	SentinelFile string   `json:"sentinelFile"`
+	RemoteDevice string   `json:"remoteDevice,omitempty"`
+	Warnings     []string `json:"warnings,omitempty"`
+	Message      string   `json:"message"`
+	ExitNow      bool     `json:"exitNow"` // signal to source agent to terminate
 }
 
 // HandoffSentinel is written to ~/.yaver/handoff/<loopName>.json so the
@@ -213,54 +213,9 @@ func RunHandoff(s *HTTPServer, spec HandoffSpec) (*HandoffResult, error) {
 	}
 
 	// 1. Source → bundle ------------------------------------------------------
-	var bundle *TransferBundle
-	switch {
-	case spec.SourceBundle != nil:
-		bundle = spec.SourceBundle
-	case spec.SourceTaskID != "":
-		b, err := ExportSession(tm, spec.SourceTaskID, ExportOptions{IncludeWorkspace: false})
-		if err != nil {
-			return nil, fmt.Errorf("export source task: %w", err)
-		}
-		bundle = b
-	case spec.SourceSessionFile != "":
-		data, err := os.ReadFile(spec.SourceSessionFile)
-		if err != nil {
-			return nil, fmt.Errorf("read source session file: %w", err)
-		}
-		// Two accepted formats: a full TransferBundle JSON, or a raw Claude
-		// session.jsonl which we wrap into a minimal bundle.
-		var b TransferBundle
-		if err := json.Unmarshal(data, &b); err != nil || b.Version == 0 {
-			b = TransferBundle{
-				Version:    1,
-				ExportedAt: time.Now().UTC().Format(time.RFC3339),
-				AgentType:  "claude",
-				Task: TransferTask{
-					Title:    "Handoff: " + filepath.Base(spec.SourceSessionFile),
-					RunnerID: "claude",
-					WorkDir:  spec.WorkDir,
-				},
-				AgentFiles: map[string]string{
-					"claude/session.jsonl": encodeBase64(data),
-				},
-			}
-		}
-		bundle = &b
-	default:
-		// No source: still allow handoff (just spin up an autodev loop in
-		// the workdir using an empty resume prompt). Caller usually wants
-		// this when "resume" semantics aren't important.
-		bundle = &TransferBundle{
-			Version:    1,
-			ExportedAt: time.Now().UTC().Format(time.RFC3339),
-			AgentType:  "unknown",
-			Task: TransferTask{
-				Title:    "Handoff: ad-hoc",
-				RunnerID: runnerID,
-				WorkDir:  spec.WorkDir,
-			},
-		}
+	bundle, err := ResolveHandoffBundle(tm, spec, runnerID)
+	if err != nil {
+		return nil, err
 	}
 
 	// 2. Import ---------------------------------------------------------------
@@ -453,6 +408,54 @@ func RunHandoff(s *HTTPServer, spec HandoffSpec) (*HandoffResult, error) {
 	}, nil
 }
 
+// ResolveHandoffBundle turns the caller's source pointers into a concrete
+// portable session bundle. Shared by local RunHandoff and remote proxy paths.
+func ResolveHandoffBundle(tm *TaskManager, spec HandoffSpec, fallbackRunnerID string) (*TransferBundle, error) {
+	switch {
+	case spec.SourceBundle != nil:
+		return spec.SourceBundle, nil
+	case spec.SourceTaskID != "":
+		b, err := ExportSession(tm, spec.SourceTaskID, ExportOptions{IncludeWorkspace: false})
+		if err != nil {
+			return nil, fmt.Errorf("export source task: %w", err)
+		}
+		return b, nil
+	case spec.SourceSessionFile != "":
+		data, err := os.ReadFile(spec.SourceSessionFile)
+		if err != nil {
+			return nil, fmt.Errorf("read source session file: %w", err)
+		}
+		var b TransferBundle
+		if err := json.Unmarshal(data, &b); err != nil || b.Version == 0 {
+			b = TransferBundle{
+				Version:    1,
+				ExportedAt: time.Now().UTC().Format(time.RFC3339),
+				AgentType:  "claude",
+				Task: TransferTask{
+					Title:    "Handoff: " + filepath.Base(spec.SourceSessionFile),
+					RunnerID: "claude",
+					WorkDir:  spec.WorkDir,
+				},
+				AgentFiles: map[string]string{
+					"claude/session.jsonl": encodeBase64(data),
+				},
+			}
+		}
+		return &b, nil
+	default:
+		return &TransferBundle{
+			Version:    1,
+			ExportedAt: time.Now().UTC().Format(time.RFC3339),
+			AgentType:  "unknown",
+			Task: TransferTask{
+				Title:    "Handoff: ad-hoc",
+				RunnerID: fallbackRunnerID,
+				WorkDir:  spec.WorkDir,
+			},
+		}, nil
+	}
+}
+
 // buildHandoffPrompt synthesises the resume prompt fed into the new loop.
 // Sources of "what's left":
 //   - The TransferBundle's last assistant turn (if any) — for context
@@ -541,6 +544,52 @@ AUTODEV MODE — be proactive, not just reactive:
    invent unrelated work.
 
 `
+}
+
+func sessionCompletePromptBlock() string {
+	return `
+SESSION COMPLETE MODE — finish the current objective, then stop:
+
+1. Treat the imported session's current objective as the whole scope.
+2. Go as far as necessary to finish the in-progress work cleanly.
+3. Use the imported conversation, todos, current diffs, and any explicit
+   remained checklist as the authoritative definition of "what's left".
+4. When the current objective changes behavior or fixes a bug, add or
+   update tests that cover that work.
+5. Run the relevant tests, checks, or validation steps before considering
+   the objective complete whenever that is feasible in the current environment.
+6. Do NOT pivot into market research, recommendations, "next steps", or
+   speculative follow-up improvements once the current objective is done.
+7. Do NOT stop early just to ask what to do next if the current objective
+   can still be completed autonomously.
+8. When the current objective and explicit unfinished items are genuinely
+   complete, stop.
+
+`
+}
+
+func normalizeSessionCompleteSpec(spec HandoffSpec) HandoffSpec {
+	if strings.TrimSpace(spec.Engine) == "" {
+		spec.Engine = "claude"
+	}
+	if strings.TrimSpace(spec.Load) == "" {
+		spec.Load = "lite"
+	}
+	if strings.TrimSpace(spec.Hours) == "" {
+		spec.Hours = "infinite"
+	}
+	if spec.MaxKicks <= 0 {
+		spec.MaxKicks = 200
+	}
+	if spec.AutoIdeas == 0 {
+		spec.AutoIdeas = -1
+	}
+	if strings.TrimSpace(spec.ExtraPrompt) == "" {
+		spec.ExtraPrompt = strings.TrimSpace(sessionCompletePromptBlock())
+	} else {
+		spec.ExtraPrompt = strings.TrimSpace(spec.ExtraPrompt) + "\n\n" + strings.TrimSpace(sessionCompletePromptBlock())
+	}
+	return spec
 }
 
 // operatingDirectives renders the autodev-style flags (notify,

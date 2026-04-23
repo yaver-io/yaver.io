@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRelayPasswordForBaseUsesConfiguredRelayPassword(t *testing.T) {
@@ -104,5 +106,287 @@ func TestRelayPasswordForBaseRejectsInsecureRemoteRelay(t *testing.T) {
 	_, err := relayPasswordForBase("http://relay.example.com/d/device-123")
 	if err == nil || !strings.Contains(err.Error(), "refusing insecure relay url") {
 		t.Fatalf("relayPasswordForBase() error = %v, want insecure relay rejection", err)
+	}
+}
+
+func TestBuildRemoteAgentCandidatesPrefersLastGoodDirectPath(t *testing.T) {
+	cfg := &Config{
+		RelayServers: []RelayServerConfig{
+			{ID: "relay-1", HttpURL: "https://relay.example.com", Password: "relay-secret", Priority: 1},
+		},
+	}
+	target := &DeviceInfo{
+		DeviceID: "dev-1",
+		Name:     "mac-mini",
+		QuicHost: "100.64.1.2",
+		QuicPort: 18080,
+		IsOnline: true,
+	}
+	remoteAgentLastGood.Store(target.DeviceID, "https://relay.example.com/d/dev-1")
+	t.Cleanup(func() { remoteAgentLastGood.Delete(target.DeviceID) })
+
+	candidates, err := buildRemoteAgentCandidates(cfg, target)
+	if err != nil {
+		t.Fatalf("buildRemoteAgentCandidates() error = %v", err)
+	}
+	if len(candidates) < 2 {
+		t.Fatalf("expected at least 2 candidates, got %d", len(candidates))
+	}
+	if candidates[0].BaseURL != "https://relay.example.com/d/dev-1" {
+		t.Fatalf("first candidate = %q, want last-good relay first", candidates[0].BaseURL)
+	}
+	if candidates[1].Kind != "tailscale" {
+		t.Fatalf("second candidate kind = %q, want tailscale", candidates[1].Kind)
+	}
+}
+
+func TestDoRemoteAgentRequestFallsBackToSecondCandidate(t *testing.T) {
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer token-123" {
+			t.Fatalf("Authorization header = %q", got)
+		}
+		if got := r.URL.Path; got != "/info" {
+			t.Fatalf("request path = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer second.Close()
+
+	candidates := []RemoteAgentCandidate{
+		{DeviceID: "dev-1", BaseURL: "http://127.0.0.1:1", Kind: "same-lan"},
+		{DeviceID: "dev-1", BaseURL: second.URL, Kind: "relay"},
+	}
+	chosen, status, raw, err := doRemoteAgentRequest(context.Background(), candidates, "token-123", http.MethodGet, "/info", nil, 5*time.Second)
+	if err != nil {
+		t.Fatalf("doRemoteAgentRequest() error = %v", err)
+	}
+	if chosen.BaseURL != second.URL {
+		t.Fatalf("chosen candidate = %q, want %q", chosen.BaseURL, second.URL)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if !strings.Contains(string(raw), `"ok":true`) {
+		t.Fatalf("raw body = %q", string(raw))
+	}
+	if last, _ := remoteAgentLastGood.Load("dev-1"); last != second.URL {
+		t.Fatalf("last-good cache = %v, want %q", last, second.URL)
+	}
+}
+
+func TestTransportHeadersForBaseIncludesCloudflareAccessHeaders(t *testing.T) {
+	cfg := &Config{
+		CloudflareTunnels: []CloudflareTunnelConfig{
+			{
+				URL:                  "https://edge.example.com",
+				CFAccessClientId:     "cf-id",
+				CFAccessClientSecret: "cf-secret",
+			},
+		},
+	}
+	headers, err := transportHeadersForBase(cfg, "https://edge.example.com")
+	if err != nil {
+		t.Fatalf("transportHeadersForBase() error = %v", err)
+	}
+	if headers["CF-Access-Client-Id"] != "cf-id" {
+		t.Fatalf("CF-Access-Client-Id = %q", headers["CF-Access-Client-Id"])
+	}
+	if headers["CF-Access-Client-Secret"] != "cf-secret" {
+		t.Fatalf("CF-Access-Client-Secret = %q", headers["CF-Access-Client-Secret"])
+	}
+}
+
+func TestPublicAgentBaseCandidatesIncludesAdvertisedPublicEndpoints(t *testing.T) {
+	target := &DeviceInfo{
+		DeviceID:        "dev-public-1",
+		PublicEndpoints: []string{"https://edge.example.com/", "https://edge.example.com", "https://fallback.example.com"},
+	}
+	got := publicAgentBaseCandidates(target)
+	want := []string{"https://edge.example.com", "https://fallback.example.com"}
+	if len(got) != len(want) {
+		t.Fatalf("candidate count = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("candidate[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestBuildRemoteAgentCandidatesIncludesPublicCloudflareEndpoint(t *testing.T) {
+	cfg := &Config{
+		CloudflareTunnels: []CloudflareTunnelConfig{
+			{
+				URL:                  "https://edge.example.com",
+				CFAccessClientId:     "cf-id",
+				CFAccessClientSecret: "cf-secret",
+			},
+		},
+	}
+	target := &DeviceInfo{
+		DeviceID:        "dev-public-2",
+		Name:            "mac-mini",
+		QuicHost:        "100.64.1.2",
+		QuicPort:        18080,
+		IsOnline:        true,
+		PublicEndpoints: []string{"https://edge.example.com"},
+	}
+	candidates, err := buildRemoteAgentCandidates(cfg, target)
+	if err != nil {
+		t.Fatalf("buildRemoteAgentCandidates() error = %v", err)
+	}
+	found := false
+	for _, candidate := range candidates {
+		if candidate.BaseURL != "https://edge.example.com" {
+			continue
+		}
+		found = true
+		if candidate.Label != "public" {
+			t.Fatalf("public candidate label = %q, want public", candidate.Label)
+		}
+		if candidate.Headers["CF-Access-Client-Id"] != "cf-id" {
+			t.Fatalf("CF-Access-Client-Id = %q", candidate.Headers["CF-Access-Client-Id"])
+		}
+		if candidate.Headers["CF-Access-Client-Secret"] != "cf-secret" {
+			t.Fatalf("CF-Access-Client-Secret = %q", candidate.Headers["CF-Access-Client-Secret"])
+		}
+	}
+	if !found {
+		t.Fatalf("expected Cloudflare public endpoint candidate, got %v", candidates)
+	}
+}
+
+func TestDoRemoteAgentRequestReturnsJoinedErrorsWhenAllCandidatesFail(t *testing.T) {
+	candidates := []RemoteAgentCandidate{
+		{DeviceID: "dev-2", BaseURL: "http://127.0.0.1:1", Kind: "same-lan"},
+		{DeviceID: "dev-2", BaseURL: "http://127.0.0.1:2", Kind: "relay"},
+	}
+	_, _, _, err := doRemoteAgentRequest(context.Background(), candidates, "token-123", http.MethodGet, "/info", nil, 2*time.Second)
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "candidate") {
+		t.Fatalf("error = %v, want joined candidate failure", err)
+	}
+}
+
+func TestDirectAgentBaseCandidatesIncludesLocalIPs(t *testing.T) {
+	target := &DeviceInfo{
+		DeviceID: "dev-3",
+		QuicHost: "192.168.1.20",
+		LocalIps: []string{"100.64.2.5", "10.0.0.8", "192.168.1.20"},
+		QuicPort: 18080,
+	}
+	got := directAgentBaseCandidates(target)
+	want := []string{
+		"http://192.168.1.20:18080",
+		"http://100.64.2.5:18080",
+		"http://10.0.0.8:18080",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("candidate count = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("candidate[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestOrderRemoteAgentCandidatesDemotesRecentFailures(t *testing.T) {
+	deviceID := "dev-health-1"
+	failing := "http://10.0.0.1:18080"
+	healthy := "http://100.64.1.4:18080"
+	remoteAgentHealth.Store(remoteAgentHealthKey(deviceID, failing), &remoteAgentHealthState{
+		LastFailure: time.Now(),
+		Failures:    3,
+	})
+	t.Cleanup(func() {
+		remoteAgentHealth.Delete(remoteAgentHealthKey(deviceID, failing))
+		remoteAgentHealth.Delete(remoteAgentHealthKey(deviceID, healthy))
+		remoteAgentLastGood.Delete(deviceID)
+	})
+	candidates := []RemoteAgentCandidate{
+		{DeviceID: deviceID, BaseURL: failing, Kind: "same-lan"},
+		{DeviceID: deviceID, BaseURL: healthy, Kind: "tailscale"},
+	}
+	orderRemoteAgentCandidates(candidates)
+	if candidates[0].BaseURL != healthy {
+		t.Fatalf("first candidate = %q, want healthy candidate first", candidates[0].BaseURL)
+	}
+}
+
+func TestOrderRemoteAgentCandidatesPrefersRecentSuccessWithinKind(t *testing.T) {
+	deviceID := "dev-health-2"
+	first := "http://192.168.1.21:18080"
+	second := "http://192.168.1.22:18080"
+	remoteAgentHealth.Store(remoteAgentHealthKey(deviceID, second), &remoteAgentHealthState{
+		LastSuccess: time.Now(),
+		Successes:   2,
+	})
+	t.Cleanup(func() {
+		remoteAgentHealth.Delete(remoteAgentHealthKey(deviceID, first))
+		remoteAgentHealth.Delete(remoteAgentHealthKey(deviceID, second))
+		remoteAgentLastGood.Delete(deviceID)
+	})
+	candidates := []RemoteAgentCandidate{
+		{DeviceID: deviceID, BaseURL: first, Kind: "same-lan"},
+		{DeviceID: deviceID, BaseURL: second, Kind: "same-lan"},
+	}
+	orderRemoteAgentCandidates(candidates)
+	if candidates[0].BaseURL != second {
+		t.Fatalf("first candidate = %q, want recent-success candidate first", candidates[0].BaseURL)
+	}
+}
+
+func TestOrderRemoteAgentCandidatesPrefersHealthyProbe(t *testing.T) {
+	deviceID := "dev-probe-1"
+	first := "http://10.0.0.10:18080"
+	second := "http://10.0.0.11:18080"
+	remoteAgentProbe.Store(remoteAgentHealthKey(deviceID, second), &remoteAgentProbeState{
+		CheckedAt: time.Now(),
+		Healthy:   true,
+		Latency:   20 * time.Millisecond,
+	})
+	t.Cleanup(func() {
+		remoteAgentProbe.Delete(remoteAgentHealthKey(deviceID, first))
+		remoteAgentProbe.Delete(remoteAgentHealthKey(deviceID, second))
+		remoteAgentHealth.Delete(remoteAgentHealthKey(deviceID, first))
+		remoteAgentHealth.Delete(remoteAgentHealthKey(deviceID, second))
+		remoteAgentLastGood.Delete(deviceID)
+	})
+	candidates := []RemoteAgentCandidate{
+		{DeviceID: deviceID, BaseURL: first, Kind: "same-lan"},
+		{DeviceID: deviceID, BaseURL: second, Kind: "same-lan"},
+	}
+	orderRemoteAgentCandidates(candidates)
+	if candidates[0].BaseURL != second {
+		t.Fatalf("first candidate = %q, want healthy probed candidate first", candidates[0].BaseURL)
+	}
+}
+
+func TestOrderRemoteAgentCandidatesDemotesUnhealthyProbe(t *testing.T) {
+	deviceID := "dev-probe-2"
+	first := "http://10.0.0.20:18080"
+	second := "http://10.0.0.21:18080"
+	remoteAgentProbe.Store(remoteAgentHealthKey(deviceID, first), &remoteAgentProbeState{
+		CheckedAt: time.Now(),
+		Healthy:   false,
+	})
+	t.Cleanup(func() {
+		remoteAgentProbe.Delete(remoteAgentHealthKey(deviceID, first))
+		remoteAgentProbe.Delete(remoteAgentHealthKey(deviceID, second))
+		remoteAgentHealth.Delete(remoteAgentHealthKey(deviceID, first))
+		remoteAgentHealth.Delete(remoteAgentHealthKey(deviceID, second))
+		remoteAgentLastGood.Delete(deviceID)
+	})
+	candidates := []RemoteAgentCandidate{
+		{DeviceID: deviceID, BaseURL: first, Kind: "same-lan"},
+		{DeviceID: deviceID, BaseURL: second, Kind: "same-lan"},
+	}
+	orderRemoteAgentCandidates(candidates)
+	if candidates[0].BaseURL != second {
+		t.Fatalf("first candidate = %q, want non-failing candidate first", candidates[0].BaseURL)
 	}
 }

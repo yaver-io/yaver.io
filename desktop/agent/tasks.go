@@ -1532,7 +1532,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 
 	// Determine working directory
 	taskDir := tm.workDir
-	if task.WorkDir != "" && task.GuestUserID == "" {
+	if task.WorkDir != "" {
 		taskDir = task.WorkDir
 	}
 	if err := CheckRunnerReady(runner, taskDir); err != nil {

@@ -66,11 +66,11 @@ func PhoneDeployCostHints() []PhoneDeployCostHint {
 		},
 		{
 			TargetKind: "cloudflare-workers",
-			Label:      "Cloudflare Workers (future)",
-			Free:       "free tier: 100k req/day, 1 MB worker, 500 MB D1",
+			Label:      "Cloudflare Workers",
+			Free:       "paid plan from $5/mo; free tier has tighter script/storage limits",
 			Overage:    "paid: $5/mo includes 10M req, then $0.30/M",
-			Budget:     "Workers script ≤ 1 MB free / 10 MB paid; D1 ≤ 500 MB free",
-			Advice:     "Bundled schema + seed is well under the free-tier caps. The runtime port is a Codex follow-up.",
+			Budget:     "Workers script ≤ 10 MB on paid plan; D1/R2 billed by Cloudflare",
+			Advice:     "Good fit for small web deploys. Check script size and storage before shipping large assets or data.",
 		},
 		{
 			TargetKind: "custom",

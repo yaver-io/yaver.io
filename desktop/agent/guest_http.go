@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 func rejectGuestManagementCall(w http.ResponseWriter, r *http.Request) bool {
@@ -35,7 +36,7 @@ func (s *HTTPServer) handleGuestList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleGuestInvite invites a guest by email (POST /guests/invite).
+// handleGuestInvite invites a guest by email or public user id (POST /guests/invite).
 func (s *HTTPServer) handleGuestInvite(w http.ResponseWriter, r *http.Request) {
 	if rejectGuestManagementCall(w, r) {
 		return
@@ -46,14 +47,32 @@ func (s *HTTPServer) handleGuestInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Email string `json:"email"`
+		Email           string   `json:"email"`
+		UserID          string   `json:"userId"`
+		DeviceIDs       []string `json:"deviceIds"`
+		Scope           string   `json:"scope"`
+		AllowedProjects []string `json:"allowedProjects"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Email == "" {
-		jsonError(w, http.StatusBadRequest, "email is required")
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if strings.TrimSpace(body.Email) == "" && strings.TrimSpace(body.UserID) == "" {
+		jsonError(w, http.StatusBadRequest, "email or userId is required")
+		return
+	}
+	if body.Scope != "" && body.Scope != GuestScopeFull && body.Scope != GuestScopeFeedbackOnly && body.Scope != GuestScopeSDKProject {
+		jsonError(w, http.StatusBadRequest, "scope must be 'full', 'feedback-only', or 'sdk-project'")
 		return
 	}
 
-	result, err := InviteGuest(s.convexURL, s.token, body.Email)
+	result, err := InviteGuestWith(s.convexURL, s.token, InviteGuestOpts{
+		Email:             strings.TrimSpace(body.Email),
+		UserID:            strings.TrimSpace(body.UserID),
+		ProposedDeviceIDs: body.DeviceIDs,
+		Scope:             strings.TrimSpace(body.Scope),
+		AllowedProjects:   cleanProjectList(body.AllowedProjects),
+	})
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
@@ -68,9 +87,10 @@ func (s *HTTPServer) handleGuestInvite(w http.ResponseWriter, r *http.Request) {
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"ok":              true,
-		"message":         "Invitation sent to " + body.Email,
+		"message":         "Invitation sent",
 		"inviteCode":      result.InviteCode,
 		"guestRegistered": result.GuestRegistered,
+		"scope":           result.Scope,
 	})
 }
 

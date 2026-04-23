@@ -337,10 +337,63 @@ func mcpEASSubmit(dir, platform string) interface{} {
 
 func mcpFlutterDoctor() interface{} {
 	out, err := runCmd("flutter", "doctor", "-v")
-	if err != nil {
-		return map[string]interface{}{"error": err.Error(), "output": out}
+	wd, _ := os.Getwd()
+	runnerChecks := []map[string]interface{}{}
+	for _, r := range []struct {
+		ID   string
+		Name string
+		Cmd  string
+	}{
+		{ID: "claude", Name: "Claude Code", Cmd: "claude"},
+		{ID: "codex", Name: "OpenAI Codex", Cmd: "codex"},
+		{ID: "opencode", Name: "OpenCode", Cmd: "opencode"},
+	} {
+		path, lookErr := osexec.LookPath(r.Cmd)
+		entry := map[string]interface{}{
+			"id":        r.ID,
+			"name":      r.Name,
+			"installed": lookErr == nil,
+		}
+		if lookErr != nil {
+			entry["status"] = "missing"
+			entry["detail"] = "Not installed"
+			runnerChecks = append(runnerChecks, entry)
+			continue
+		}
+		cfg := GetRunnerConfig(r.ID)
+		version := ""
+		if verOut, verErr := osexec.Command(r.Cmd, "--version").CombinedOutput(); verErr == nil {
+			version = strings.TrimSpace(strings.Split(string(verOut), "\n")[0])
+			if len(version) > 60 {
+				version = version[:60]
+			}
+		}
+		level, detail := runnerDoctorDetail(cfg, wd, path, version)
+		entry["status"] = level
+		entry["detail"] = detail
+		entry["path"] = path
+		status := DetectRunnerRuntimeStatus(cfg, wd)
+		entry["ready"] = status.Ready
+		entry["authConfigured"] = status.AuthConfigured
+		if status.AuthSource != "" {
+			entry["authSource"] = status.AuthSource
+		}
+		if status.Warning != "" {
+			entry["warning"] = status.Warning
+		}
+		if status.Error != "" {
+			entry["error"] = status.Error
+		}
+		runnerChecks = append(runnerChecks, entry)
 	}
-	return map[string]interface{}{"output": out}
+	result := map[string]interface{}{
+		"output":        out,
+		"runner_status": runnerChecks,
+	}
+	if err != nil {
+		result["error"] = err.Error()
+	}
+	return result
 }
 
 func mcpFlutterBuild(dir, platform string) interface{} {

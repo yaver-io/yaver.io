@@ -113,9 +113,11 @@ const iconStyles = StyleSheet.create({
 
 export interface YaverLoginScreenProps {
   /** Invoked once a session token is issued and the user is loaded. */
-  onLoggedIn: (token: string) => void;
+  onLoggedIn: (token: string, opts?: { inviteCode?: string }) => void;
   /** Optional cancel button shown in header. */
   onCancel?: () => void;
+  /** Optional prefilled guest invite code from config / deep link. */
+  initialInviteCode?: string;
 }
 
 /**
@@ -126,6 +128,7 @@ export interface YaverLoginScreenProps {
 export const YaverLoginScreen: React.FC<YaverLoginScreenProps> = ({
   onLoggedIn,
   onCancel,
+  initialInviteCode,
 }) => {
   const [busyProvider, setBusyProvider] = useState<OAuthProvider | 'apple' | null>(null);
   const [showEmailForm, setShowEmailForm] = useState(false);
@@ -134,6 +137,7 @@ export const YaverLoginScreen: React.FC<YaverLoginScreenProps> = ({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [inviteCode, setInviteCode] = useState((initialInviteCode ?? '').toUpperCase());
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailError, setEmailError] = useState('');
 
@@ -141,7 +145,8 @@ export const YaverLoginScreen: React.FC<YaverLoginScreenProps> = ({
     const user = await validateToken(token);
     await saveToken(token);
     if (user) await saveUser(user);
-    onLoggedIn(token);
+    const cleanedInviteCode = inviteCode.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+    onLoggedIn(token, cleanedInviteCode ? { inviteCode: cleanedInviteCode } : undefined);
   };
 
   const handleApple = async () => {
@@ -231,14 +236,18 @@ export const YaverLoginScreen: React.FC<YaverLoginScreenProps> = ({
           contentContainerStyle={styles.scrollContainer}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.header}>
-            <Text style={styles.logo}>Yaver</Text>
-            <Text style={styles.subtitle}>Sign in to send feedback</Text>
+          <View style={styles.topBar}>
+            <View style={styles.topBarSpacer} />
             {onCancel && (
               <Pressable onPress={onCancel} style={styles.cancel}>
                 <Text style={styles.cancelText}>Cancel</Text>
               </Pressable>
             )}
+          </View>
+
+          <View style={styles.header}>
+            <Text style={styles.logo}>Yaver</Text>
+            <Text style={styles.subtitle}>Sign in to send feedback</Text>
           </View>
 
           <View style={styles.buttons}>
@@ -321,6 +330,20 @@ export const YaverLoginScreen: React.FC<YaverLoginScreenProps> = ({
                     secureTextEntry
                   />
                 )}
+                {isSignUp && (
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Invite Code (optional)"
+                    placeholderTextColor="#666"
+                    value={inviteCode}
+                    onChangeText={(value) =>
+                      setInviteCode(value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6))
+                    }
+                    autoCapitalize="characters"
+                    autoCorrect={false}
+                    maxLength={6}
+                  />
+                )}
 
                 {emailError ? (
                   <Text style={styles.errorText}>{emailError}</Text>
@@ -372,11 +395,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     justifyContent: 'center',
   },
+  topBar: {
+    minHeight: 32,
+    marginBottom: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  topBarSpacer: {
+    width: 56,
+  },
   header: { alignItems: 'center', marginBottom: 40 },
   logo: { fontSize: 44, fontWeight: '800', color: '#e0e0e0', letterSpacing: -1 },
   subtitle: { fontSize: 15, color: '#9ca3af', marginTop: 6 },
-  cancel: { position: 'absolute', right: 0, top: 0, padding: 8 },
-  cancelText: { color: '#9ca3af', fontSize: 14 },
+  cancel: { minWidth: 56, alignItems: 'flex-end', paddingVertical: 8 },
+  cancelText: { color: '#9ca3af', fontSize: 14, fontWeight: '500' },
   buttons: { gap: 12 },
   button: {
     backgroundColor: 'rgba(255,255,255,0.06)',
