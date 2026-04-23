@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	urlpkg "net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -216,9 +217,14 @@ func ValidateTokenUser(baseURL, token string) (string, error) {
 
 // SdkTokenInfo contains validation results for an SDK token.
 type SdkTokenInfo struct {
-	UserID       string   `json:"userId"`
-	Scopes       []string `json:"scopes"`
-	AllowedCIDRs []string `json:"allowedCIDRs"`
+	UserID               string   `json:"userId"`
+	Scopes               []string `json:"scopes"`
+	AllowedCIDRs         []string `json:"allowedCIDRs"`
+	DelegatedGuestUserID string   `json:"delegatedGuestUserId,omitempty"`
+	DelegatedGuestScope  string   `json:"delegatedGuestScope,omitempty"`
+	SourceSurface        string   `json:"sourceSurface,omitempty"`
+	TargetDeviceID       string   `json:"targetDeviceId,omitempty"`
+	AllowedProjects      []string `json:"allowedProjects,omitempty"`
 }
 
 // ValidateSdkTokenFull checks an SDK token against Convex and returns full info.
@@ -240,18 +246,28 @@ func ValidateSdkTokenFull(baseURL, token string) (*SdkTokenInfo, error) {
 
 	var result struct {
 		User struct {
-			UserID       string   `json:"userId"`
-			Scopes       []string `json:"scopes"`
-			AllowedCIDRs []string `json:"allowedCIDRs"`
+			UserID               string   `json:"userId"`
+			Scopes               []string `json:"scopes"`
+			AllowedCIDRs         []string `json:"allowedCIDRs"`
+			DelegatedGuestUserID string   `json:"delegatedGuestUserId"`
+			DelegatedGuestScope  string   `json:"delegatedGuestScope"`
+			SourceSurface        string   `json:"sourceSurface"`
+			TargetDeviceID       string   `json:"targetDeviceId"`
+			AllowedProjects      []string `json:"allowedProjects"`
 		} `json:"user"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode sdk token validate response: %w", err)
 	}
 	return &SdkTokenInfo{
-		UserID:       result.User.UserID,
-		Scopes:       result.User.Scopes,
-		AllowedCIDRs: result.User.AllowedCIDRs,
+		UserID:               result.User.UserID,
+		Scopes:               result.User.Scopes,
+		AllowedCIDRs:         result.User.AllowedCIDRs,
+		DelegatedGuestUserID: result.User.DelegatedGuestUserID,
+		DelegatedGuestScope:  result.User.DelegatedGuestScope,
+		SourceSurface:        result.User.SourceSurface,
+		TargetDeviceID:       result.User.TargetDeviceID,
+		AllowedProjects:      result.User.AllowedProjects,
 	}, nil
 }
 
@@ -824,6 +840,427 @@ func FetchGuestUsage(baseURL, token, date string) ([]GuestUsageInfo, error) {
 	return result.Usage, nil
 }
 
+type HostShareCreateOpts struct {
+	GuestEmail         string
+	GuestUserID        string
+	Label              string
+	HostDeviceID       string
+	InviteTTLMinutes   int
+	SessionTTLMinutes  int
+	IdleTimeoutMinutes int
+	ToolingPreset      string
+	ResourcePreset     string
+	AllowInfra         *bool
+	AllowTerminal      *bool
+	AllowTunnel        *bool
+	UseHostAgentTools  *bool
+	UseHostInfra       *bool
+	AllowedRunners     []string
+	AllowedProjects    []string
+}
+
+type HostSharePolicy struct {
+	ToolingPreset      string   `json:"toolingPreset,omitempty"`
+	ResourcePreset     string   `json:"resourcePreset,omitempty"`
+	AllowInfra         bool     `json:"allowInfra"`
+	AllowTerminal      bool     `json:"allowTerminal"`
+	AllowTunnel        bool     `json:"allowTunnel"`
+	UseHostAgentTools  bool     `json:"useHostAgentTools"`
+	UseHostInfra       bool     `json:"useHostInfra"`
+	AllowedRunners     []string `json:"allowedRunners,omitempty"`
+	AllowedProjects    []string `json:"allowedProjects,omitempty"`
+	SessionTTLMinutes  int      `json:"sessionTtlMinutes,omitempty"`
+	IdleTimeoutMinutes int      `json:"idleTimeoutMinutes,omitempty"`
+}
+
+type HostShareCreateResult struct {
+	OK              bool            `json:"ok"`
+	InviteID        string          `json:"inviteId"`
+	InviteCode      string          `json:"inviteCode"`
+	InviteExpiresAt int64           `json:"inviteExpiresAt"`
+	HostName        string          `json:"hostName"`
+	HostEmail       string          `json:"hostEmail"`
+	GuestRegistered bool            `json:"guestRegistered"`
+	GuestEmail      string          `json:"guestEmail,omitempty"`
+	GuestUserID     string          `json:"guestUserId,omitempty"`
+	Policy          HostSharePolicy `json:"policy"`
+}
+
+type HostShareInvitePreview struct {
+	InviteCode         string   `json:"inviteCode"`
+	Status             string   `json:"status"`
+	Label              string   `json:"label,omitempty"`
+	HostUserID         string   `json:"hostUserId"`
+	HostUserIDString   string   `json:"hostUserIdString"`
+	HostName           string   `json:"hostName"`
+	HostEmail          string   `json:"hostEmail"`
+	GuestEmail         string   `json:"guestEmail,omitempty"`
+	GuestUserID        string   `json:"guestUserId,omitempty"`
+	HostDeviceID       string   `json:"hostDeviceId,omitempty"`
+	InviteExpiresAt    int64    `json:"inviteExpiresAt"`
+	SessionTTLMinutes  int      `json:"sessionTtlMinutes"`
+	IdleTimeoutMinutes int      `json:"idleTimeoutMinutes"`
+	ToolingPreset      string   `json:"toolingPreset,omitempty"`
+	ResourcePreset     string   `json:"resourcePreset,omitempty"`
+	AllowInfra         bool     `json:"allowInfra"`
+	AllowTerminal      bool     `json:"allowTerminal"`
+	AllowTunnel        bool     `json:"allowTunnel"`
+	UseHostAgentTools  bool     `json:"useHostAgentTools"`
+	UseHostInfra       bool     `json:"useHostInfra"`
+	AllowedRunners     []string `json:"allowedRunners,omitempty"`
+	AllowedProjects    []string `json:"allowedProjects,omitempty"`
+	Targeted           bool     `json:"targeted"`
+	CreatedAt          int64    `json:"createdAt"`
+}
+
+type HostShareJoinResult struct {
+	OK        bool            `json:"ok"`
+	SessionID string          `json:"sessionId"`
+	HostName  string          `json:"hostName"`
+	HostEmail string          `json:"hostEmail"`
+	ExpiresAt int64           `json:"expiresAt"`
+	Policy    HostSharePolicy `json:"policy"`
+}
+
+type HostShareInviteInfo struct {
+	InviteCode         string `json:"inviteCode"`
+	Status             string `json:"status"`
+	Label              string `json:"label,omitempty"`
+	GuestEmail         string `json:"guestEmail,omitempty"`
+	GuestUserID        string `json:"guestUserId,omitempty"`
+	GuestName          string `json:"guestName,omitempty"`
+	HostName           string `json:"hostName,omitempty"`
+	HostEmail          string `json:"hostEmail,omitempty"`
+	HostDeviceID       string `json:"hostDeviceId,omitempty"`
+	GuestDeviceID      string `json:"guestDeviceId,omitempty"`
+	InviteExpiresAt    int64  `json:"inviteExpiresAt"`
+	SessionTTLMinutes  int    `json:"sessionTtlMinutes"`
+	IdleTimeoutMinutes int    `json:"idleTimeoutMinutes"`
+	ToolingPreset      string `json:"toolingPreset,omitempty"`
+	ResourcePreset     string `json:"resourcePreset,omitempty"`
+	CreatedAt          int64  `json:"createdAt,omitempty"`
+	AcceptedAt         int64  `json:"acceptedAt,omitempty"`
+	RevokedAt          int64  `json:"revokedAt,omitempty"`
+}
+
+type HostShareSessionInfo struct {
+	SessionID          string          `json:"sessionId"`
+	InviteID           string          `json:"inviteId"`
+	Status             string          `json:"status"`
+	Label              string          `json:"label,omitempty"`
+	HostName           string          `json:"hostName"`
+	HostEmail          string          `json:"hostEmail"`
+	GuestName          string          `json:"guestName"`
+	GuestEmail         string          `json:"guestEmail"`
+	HostDeviceID       string          `json:"hostDeviceId,omitempty"`
+	GuestDeviceID      string          `json:"guestDeviceId,omitempty"`
+	Policy             HostSharePolicy `json:"policy"`
+	StartedAt          int64           `json:"startedAt"`
+	ExpiresAt          int64           `json:"expiresAt"`
+	IdleTimeoutMinutes int             `json:"idleTimeoutMinutes"`
+	LastActivityAt     int64           `json:"lastActivityAt"`
+}
+
+type HostShareAccessInfo struct {
+	SessionID          string          `json:"sessionId"`
+	InviteID           string          `json:"inviteId"`
+	Label              string          `json:"label,omitempty"`
+	HostDeviceID       string          `json:"hostDeviceId,omitempty"`
+	GuestDeviceID      string          `json:"guestDeviceId,omitempty"`
+	GuestUserID        string          `json:"guestUserId"`
+	GuestEmail         string          `json:"guestEmail"`
+	GuestName          string          `json:"guestName"`
+	Policy             HostSharePolicy `json:"policy"`
+	ExpiresAt          int64           `json:"expiresAt"`
+	IdleTimeoutMinutes int             `json:"idleTimeoutMinutes"`
+	LastActivityAt     int64           `json:"lastActivityAt"`
+}
+
+func CreateHostShareInvite(baseURL, token string, opts HostShareCreateOpts) (*HostShareCreateResult, error) {
+	payload := map[string]interface{}{}
+	if v := strings.TrimSpace(opts.GuestEmail); v != "" {
+		payload["guestEmail"] = v
+	}
+	if v := strings.TrimSpace(opts.GuestUserID); v != "" {
+		payload["guestUserId"] = v
+	}
+	if v := strings.TrimSpace(opts.Label); v != "" {
+		payload["label"] = v
+	}
+	if v := strings.TrimSpace(opts.HostDeviceID); v != "" {
+		payload["hostDeviceId"] = v
+	}
+	if opts.InviteTTLMinutes > 0 {
+		payload["inviteTtlMinutes"] = opts.InviteTTLMinutes
+	}
+	if opts.SessionTTLMinutes > 0 {
+		payload["sessionTtlMinutes"] = opts.SessionTTLMinutes
+	}
+	if opts.IdleTimeoutMinutes > 0 {
+		payload["idleTimeoutMinutes"] = opts.IdleTimeoutMinutes
+	}
+	if v := strings.TrimSpace(opts.ToolingPreset); v != "" {
+		payload["toolingPreset"] = v
+	}
+	if v := strings.TrimSpace(opts.ResourcePreset); v != "" {
+		payload["resourcePreset"] = v
+	}
+	if opts.AllowInfra != nil {
+		payload["allowInfra"] = *opts.AllowInfra
+	}
+	if opts.AllowTerminal != nil {
+		payload["allowTerminal"] = *opts.AllowTerminal
+	}
+	if opts.AllowTunnel != nil {
+		payload["allowTunnel"] = *opts.AllowTunnel
+	}
+	if opts.UseHostAgentTools != nil {
+		payload["useHostAgentTools"] = *opts.UseHostAgentTools
+	}
+	if opts.UseHostInfra != nil {
+		payload["useHostInfra"] = *opts.UseHostInfra
+	}
+	if v := cleanProjectList(opts.AllowedProjects); len(v) > 0 {
+		payload["allowedProjects"] = v
+	}
+	if len(opts.AllowedRunners) > 0 {
+		payload["allowedRunners"] = opts.AllowedRunners
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal host-share invite: %w", err)
+	}
+	req, err := newBearerRequest("POST", baseURL+"/host-share/create", token, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create host-share request: %w", err)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("host-share create request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("%s", string(respBody))
+	}
+	var result HostShareCreateResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode host-share create response: %w", err)
+	}
+	return &result, nil
+}
+
+func FindHostShareInvite(baseURL, token, code string) (*HostShareInvitePreview, error) {
+	url := baseURL + "/host-share/invite?code=" + urlpkg.QueryEscape(strings.ToUpper(strings.TrimSpace(code)))
+	req, err := newBearerRequest("GET", url, token, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create host-share preview request: %w", err)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("host-share preview request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("%s", string(respBody))
+	}
+	var result HostShareInvitePreview
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode host-share preview response: %w", err)
+	}
+	return &result, nil
+}
+
+func JoinHostShareByCode(baseURL, token, code string) (*HostShareJoinResult, error) {
+	cfg, _ := LoadConfig()
+	bodyMap := map[string]string{"code": strings.ToUpper(strings.TrimSpace(code))}
+	if cfg != nil && strings.TrimSpace(cfg.DeviceID) != "" {
+		bodyMap["guestDeviceId"] = strings.TrimSpace(cfg.DeviceID)
+	}
+	body, _ := json.Marshal(bodyMap)
+	req, err := newBearerRequest("POST", baseURL+"/host-share/join", token, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create host-share join request: %w", err)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("host-share join request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("%s", string(respBody))
+	}
+	var result HostShareJoinResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode host-share join response: %w", err)
+	}
+	return &result, nil
+}
+
+func RevokeHostShareInvite(baseURL, token, code string) error {
+	body, _ := json.Marshal(map[string]string{"code": strings.ToUpper(strings.TrimSpace(code))})
+	req, err := newBearerRequest("POST", baseURL+"/host-share/revoke", token, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create host-share revoke request: %w", err)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("host-share revoke request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("%s", string(respBody))
+	}
+	return nil
+}
+
+func FetchHostShareInvites(baseURL, token, role string) ([]HostShareInviteInfo, error) {
+	url := baseURL + "/host-share/list"
+	if strings.TrimSpace(role) != "" {
+		url += "?role=" + urlpkg.QueryEscape(role)
+	}
+	req, err := newBearerRequest("GET", url, token, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create host-share list request: %w", err)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("host-share list request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("%s", string(respBody))
+	}
+	var result struct {
+		Invites []HostShareInviteInfo `json:"invites"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode host-share list response: %w", err)
+	}
+	return result.Invites, nil
+}
+
+func FetchHostShareSessions(baseURL, token, role string) ([]HostShareSessionInfo, error) {
+	url := baseURL + "/host-share/sessions"
+	if strings.TrimSpace(role) != "" {
+		url += "?role=" + urlpkg.QueryEscape(role)
+	}
+	req, err := newBearerRequest("GET", url, token, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create host-share sessions request: %w", err)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("host-share sessions request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("%s", string(respBody))
+	}
+	var result struct {
+		Sessions []HostShareSessionInfo `json:"sessions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode host-share sessions response: %w", err)
+	}
+	return result.Sessions, nil
+}
+
+func FetchHostShareAccess(baseURL, token, guestUserID, deviceID string) (*HostShareAccessInfo, error) {
+	url := baseURL + "/host-share/access?guestUserId=" + urlpkg.QueryEscape(strings.TrimSpace(guestUserID))
+	if strings.TrimSpace(deviceID) != "" {
+		url += "&deviceId=" + urlpkg.QueryEscape(strings.TrimSpace(deviceID))
+	}
+	req, err := newBearerRequest("GET", url, token, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create host-share access request: %w", err)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("host-share access request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("%s", string(respBody))
+	}
+	var result struct {
+		Access *HostShareAccessInfo `json:"access"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode host-share access response: %w", err)
+	}
+	return result.Access, nil
+}
+
+func TouchHostShareSession(baseURL, token, sessionID string) error {
+	body, _ := json.Marshal(map[string]string{"sessionId": strings.TrimSpace(sessionID)})
+	req, err := newBearerRequest("POST", baseURL+"/host-share/touch", token, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create host-share touch request: %w", err)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("host-share touch request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("%s", string(respBody))
+	}
+	return nil
+}
+
+func EndHostShareSession(baseURL, token, sessionID string) error {
+	body, _ := json.Marshal(map[string]string{"sessionId": strings.TrimSpace(sessionID)})
+	req, err := newBearerRequest("POST", baseURL+"/host-share/end", token, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create host-share end request: %w", err)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("host-share end request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("%s", string(respBody))
+	}
+	return nil
+}
+
+func FetchHostSharePeerAccess(baseURL, token, hostUserID, deviceID string) (*HostShareAccessInfo, error) {
+	url := baseURL + "/host-share/peer-access?hostUserId=" + urlpkg.QueryEscape(strings.TrimSpace(hostUserID))
+	if strings.TrimSpace(deviceID) != "" {
+		url += "&deviceId=" + urlpkg.QueryEscape(strings.TrimSpace(deviceID))
+	}
+	req, err := newBearerRequest("GET", url, token, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create host-share peer access request: %w", err)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("host-share peer access request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("%s", string(respBody))
+	}
+	var result struct {
+		Access *HostShareAccessInfo `json:"access"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode host-share peer access response: %w", err)
+	}
+	return result.Access, nil
+}
+
 // RequestPasswordReset sends a forgot-password email via Convex.
 // Does not require auth — works with just the email address.
 func RequestPasswordReset(baseURL, email string) error {
@@ -873,14 +1310,15 @@ func ChangePassword(baseURL, token, currentPassword, newPassword string) error {
 
 // RegisterDeviceRequest contains the fields sent when registering a device.
 type RegisterDeviceRequest struct {
-	Token      string `json:"-"`
-	DeviceID   string `json:"deviceId"`
-	Name       string `json:"name"`
-	Platform   string `json:"platform"`
-	PublicKey  string `json:"publicKey"`
-	QuicHost   string `json:"quicHost"`
-	QuicPort   int    `json:"quicPort"`
-	HardwareID string `json:"hardwareId,omitempty"`
+	Token           string   `json:"-"`
+	DeviceID        string   `json:"deviceId"`
+	Name            string   `json:"name"`
+	Platform        string   `json:"platform"`
+	PublicKey       string   `json:"publicKey"`
+	QuicHost        string   `json:"quicHost"`
+	QuicPort        int      `json:"quicPort"`
+	PublicEndpoints []string `json:"publicEndpoints,omitempty"`
+	HardwareID      string   `json:"hardwareId,omitempty"`
 }
 
 // RelayServerInfo describes a relay server from platform config.
@@ -890,6 +1328,43 @@ type RelayServerInfo struct {
 	HttpURL  string `json:"httpUrl"`  // e.g. "https://connect.yaver.io"
 	Region   string `json:"region"`
 	Priority int    `json:"priority"`
+}
+
+func configuredPublicEndpoints(cfg *Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	type tunnelWithPriority struct {
+		url      string
+		priority int
+	}
+	var items []tunnelWithPriority
+	seen := make(map[string]bool)
+	for _, tunnel := range cfg.CloudflareTunnels {
+		raw := strings.TrimRight(strings.TrimSpace(tunnel.URL), "/")
+		if raw == "" || seen[raw] {
+			continue
+		}
+		seen[raw] = true
+		items = append(items, tunnelWithPriority{url: raw, priority: tunnel.Priority})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].priority != items[j].priority {
+			if items[i].priority == 0 {
+				return false
+			}
+			if items[j].priority == 0 {
+				return true
+			}
+			return items[i].priority < items[j].priority
+		}
+		return items[i].url < items[j].url
+	})
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.url)
+	}
+	return out
 }
 
 // PlatformConfig holds all platform-level config fetched from Convex /config.
@@ -981,7 +1456,7 @@ var ErrAuthExpired = fmt.Errorf("auth token expired (401)")
 // (quicHost), and every reachable LAN/Tailscale/Ethernet address the agent
 // has (localIps) so mobile clients can race them in parallel during connect.
 // Returns ErrAuthExpired if the server returns 401.
-func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, quicHost string, localIps []string) error {
+func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, quicHost string, localIps []string, publicEndpoints []string) error {
 	payload := map[string]interface{}{
 		"deviceId":   deviceID,
 		"runners":    runners,
@@ -992,6 +1467,9 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, quicHo
 	}
 	if len(localIps) > 0 {
 		payload["localIps"] = localIps
+	}
+	if len(publicEndpoints) > 0 {
+		payload["publicEndpoints"] = publicEndpoints
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

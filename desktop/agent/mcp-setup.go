@@ -14,6 +14,7 @@ func runMCPSetup(args []string) {
 		fmt.Print(`Yaver MCP Setup — configure AI editors to use Yaver as an MCP server
 
 Usage:
+  yaver mcp setup codex        Add to Codex CLI MCP config
   yaver mcp setup claude       Add to Claude Desktop config
   yaver mcp setup claude-code  Add to Claude Code user MCP config
   yaver mcp setup cursor       Add to Cursor MCP config
@@ -31,6 +32,8 @@ Yaver exposes 48 tools: task management, file search, git, exec, screenshots, an
 	yaverPath := findYaverBinary()
 
 	switch args[0] {
+	case "codex":
+		setupCodex(yaverPath, false)
 	case "claude":
 		setupMCPEditor("Claude Desktop", claudeDesktopConfigPath(), yaverPath)
 	case "claude-code":
@@ -52,33 +55,75 @@ Yaver exposes 48 tools: task management, file search, git, exec, screenshots, an
 }
 
 func setupClaudeCode(yaverPath string, quiet bool) {
-	if _, err := exec.LookPath("claude"); err != nil {
+	changed, err := ensureClaudeCodeMCPConfig(yaverPath)
+	if err != nil {
 		if !quiet {
-			fmt.Println("Claude Code CLI not found on PATH; skipping Claude Code MCP setup.")
+			fmt.Fprintf(os.Stderr, "Claude Code MCP setup failed: %v\n", err)
 		}
 		return
+	}
+	if quiet {
+		return
+	}
+	if changed {
+		fmt.Println("  MCP: Added Yaver to Claude Code user MCP config")
+		return
+	}
+	fmt.Println("Yaver is already configured in Claude Code.")
+}
+
+func ensureClaudeCodeMCPConfig(yaverPath string) (bool, error) {
+	if _, err := exec.LookPath("claude"); err != nil {
+		return false, fmt.Errorf("claude not found on PATH")
 	}
 
 	getCmd := exec.Command("claude", "mcp", "get", "yaver")
 	if err := getCmd.Run(); err == nil {
-		if !quiet {
-			fmt.Println("Yaver is already configured in Claude Code.")
-		}
-		return
+		return false, nil
 	}
 
 	addCmd := exec.Command("claude", "mcp", "add", "--scope", "user", "yaver", "--", yaverPath, "mcp")
 	out, err := addCmd.CombinedOutput()
 	if err != nil {
+		return false, fmt.Errorf("%v: %s", err, string(out))
+	}
+	return true, nil
+}
+
+func setupCodex(yaverPath string, quiet bool) {
+	changed, err := ensureCodexMCPConfig(yaverPath)
+	if err != nil {
 		if !quiet {
-			fmt.Fprintf(os.Stderr, "Claude Code MCP setup failed: %v\n%s\n", err, string(out))
+			fmt.Fprintf(os.Stderr, "Codex MCP setup failed: %v\n", err)
 		}
 		return
 	}
-
-	if !quiet {
-		fmt.Println("  MCP: Added Yaver to Claude Code user MCP config")
+	if quiet {
+		return
 	}
+	if changed {
+		fmt.Println("  MCP: Added Yaver to Codex CLI MCP config")
+		return
+	}
+	fmt.Println("Yaver is already configured in Codex.")
+}
+
+func ensureCodexMCPConfig(yaverPath string) (bool, error) {
+	if _, err := exec.LookPath("codex"); err != nil {
+		return false, fmt.Errorf("codex not found on PATH")
+	}
+
+	getCmd := exec.Command("codex", "mcp", "get", "yaver")
+	if err := getCmd.Run(); err == nil {
+		return false, nil
+	}
+
+	addCmd := exec.Command("codex", "mcp", "add", "yaver", "--", yaverPath, "mcp")
+	out, err := addCmd.CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("%v: %s", err, string(out))
+	}
+	return true, nil
 }
 
 func findYaverBinary() string {
@@ -244,6 +289,7 @@ func setupZed(yaverPath string) {
 func autoSetupMCP() {
 	yaverPath := findYaverBinary()
 	setupClaudeCode(yaverPath, true)
+	setupCodex(yaverPath, true)
 
 	type editor struct {
 		name       string

@@ -41,9 +41,9 @@ type RepoInfo struct {
 // Lightweight detection: only checks for marker files, never reads file contents.
 type RepoStack struct {
 	Type       string   `json:"type"`                 // "mobile", "web", "backend", "monorepo", "library", "cli"
-	Frameworks []string `json:"frameworks,omitempty"`  // e.g. ["expo", "react-native", "next.js"]
-	Services   []string `json:"services,omitempty"`    // e.g. ["convex", "supabase", "firebase"]
-	Actions    []string `json:"actions,omitempty"`     // e.g. ["hot-reload", "convex-deploy", "vercel-deploy"]
+	Frameworks []string `json:"frameworks,omitempty"` // e.g. ["expo", "react-native", "next.js"]
+	Services   []string `json:"services,omitempty"`   // e.g. ["convex", "supabase", "firebase"]
+	Actions    []string `json:"actions,omitempty"`    // e.g. ["hot-reload", "convex-deploy", "cloudflare-deploy"]
 }
 
 // ---------------------------------------------------------------------------
@@ -167,6 +167,67 @@ func injectCredentials(cloneURL string) string {
 	return parsed.String()
 }
 
+func allowedRepoRootsForTask(taskWorkDir string) []string {
+	home, _ := os.UserHomeDir()
+	roots := []string{
+		filepath.Join(home, "Projects"),
+		filepath.Join(home, "Workspace"),
+		filepath.Join(home, "repos"),
+		filepath.Join(home, "code"),
+		filepath.Join(home, "src"),
+		filepath.Join(home, "dev"),
+	}
+	if strings.TrimSpace(taskWorkDir) != "" {
+		roots = append(roots, taskWorkDir)
+	}
+	return roots
+}
+
+func isPathWithinRoot(path, root string) bool {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+func repoInfoForPath(repoPath string) (RepoInfo, error) {
+	info, err := os.Stat(repoPath)
+	if err != nil {
+		return RepoInfo{}, err
+	}
+	if !info.IsDir() {
+		return RepoInfo{}, fmt.Errorf("path is not a directory")
+	}
+	if _, err := os.Stat(filepath.Join(repoPath, ".git")); err != nil {
+		return RepoInfo{}, fmt.Errorf("path is not a git repository root")
+	}
+	return getRepoInfo(repoPath, filepath.Base(repoPath)), nil
+}
+
+func guestCanAccessRepoPath(s *HTTPServer, guestUID, repoPath string) bool {
+	if strings.TrimSpace(guestUID) == "" || s.guestConfigMgr == nil {
+		return true
+	}
+	repo, err := repoInfoForPath(repoPath)
+	if err != nil {
+		return false
+	}
+	if s.guestConfigMgr.GuestCanAccessProject(guestUID, repo.Name) {
+		return true
+	}
+	base := filepath.Base(repo.Path)
+	return s.guestConfigMgr.GuestCanAccessProject(guestUID, base)
+}
+
 // scanDirForRepos finds git repositories one level deep in dir.
 func scanDirForRepos(dir string) []RepoInfo {
 	entries, err := os.ReadDir(dir)
@@ -259,6 +320,9 @@ func detectStack(dir string) RepoStack {
 	if has("firebase.json") || has(".firebaserc") {
 		s.Services = append(s.Services, "firebase")
 	}
+	if has("wrangler.toml") || has("wrangler.jsonc") {
+		s.Services = append(s.Services, "cloudflare")
+	}
 	if has("vercel.json") || has(".vercel/") {
 		s.Services = append(s.Services, "vercel")
 	}
@@ -310,6 +374,9 @@ func detectStack(dir string) RepoStack {
 	if containsAny(s.Services, "firebase") {
 		s.Actions = append(s.Actions, "firebase-deploy")
 	}
+	if containsAny(s.Services, "cloudflare") {
+		s.Actions = append(s.Actions, "cloudflare-deploy")
+	}
 	if containsAny(s.Services, "vercel") {
 		s.Actions = append(s.Actions, "vercel-deploy")
 	}
@@ -360,6 +427,14 @@ func (s *HTTPServer) handleRepoClone(w http.ResponseWriter, r *http.Request) {
 	if req.URL == "" {
 		jsonError(w, http.StatusBadRequest, "url is required")
 		return
+	}
+	guestUID := r.Header.Get("X-Yaver-GuestUserID")
+	if guestUID != "" && s.guestConfigMgr != nil {
+		repoName := repoNameFromURL(req.URL)
+		if !s.guestConfigMgr.GuestCanAccessProject(guestUID, repoName) {
+			jsonError(w, http.StatusForbidden, fmt.Sprintf("repo %q is not accessible for this guest", repoName))
+			return
+		}
 	}
 
 	// Default directory: ~/Projects/{repoName}
@@ -435,6 +510,11 @@ func (s *HTTPServer) handleRepoPull(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "workDir is required")
 		return
 	}
+	guestUID := r.Header.Get("X-Yaver-GuestUserID")
+	if guestUID != "" && !guestCanAccessRepoPath(s, guestUID, workDir) {
+		jsonError(w, http.StatusForbidden, "repo not accessible for this guest")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -464,6 +544,67 @@ func (s *HTTPServer) handleRepoPull(w http.ResponseWriter, r *http.Request) {
 		"output": output,
 		"branch": branch,
 	})
+}
+
+// handleRepoDelete handles POST /repos/delete and deletes the checked-out
+// source tree from this machine. This is actual remote source deletion, not
+// a metadata detach.
+func (s *HTTPServer) handleRepoDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(req.Path) == "" {
+		jsonError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+
+	repoPath, err := filepath.Abs(req.Path)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid path: "+err.Error())
+		return
+	}
+	if _, err := repoInfoForPath(repoPath); err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	taskWorkDir := ""
+	if s.taskMgr != nil {
+		taskWorkDir = s.taskMgr.workDir
+	}
+	allowed := false
+	for _, root := range allowedRepoRootsForTask(taskWorkDir) {
+		if root != "" && isPathWithinRoot(repoPath, root) {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		jsonError(w, http.StatusForbidden, "refusing to delete repo outside allowed roots")
+		return
+	}
+
+	guestUID := r.Header.Get("X-Yaver-GuestUserID")
+	if guestUID != "" && !guestCanAccessRepoPath(s, guestUID, repoPath) {
+		jsonError(w, http.StatusForbidden, "repo not accessible for this guest")
+		return
+	}
+
+	if err := os.RemoveAll(repoPath); err != nil {
+		jsonError(w, http.StatusInternalServerError, "delete repo: "+err.Error())
+		return
+	}
+	invalidateProjectCaches()
+	jsonReply(w, http.StatusOK, map[string]interface{}{"ok": true, "path": repoPath})
 }
 
 // Repo list cache — avoid re-scanning directories every request.
@@ -575,6 +716,17 @@ func (s *HTTPServer) handleRepoList(w http.ResponseWriter, r *http.Request) {
 
 	if repos == nil {
 		repos = []RepoInfo{}
+	}
+	guestUID := r.Header.Get("X-Yaver-GuestUserID")
+	if guestUID != "" && s.guestConfigMgr != nil {
+		filtered := make([]RepoInfo, 0, len(repos))
+		for _, repo := range repos {
+			if s.guestConfigMgr.GuestCanAccessProject(guestUID, repo.Name) ||
+				s.guestConfigMgr.GuestCanAccessProject(guestUID, filepath.Base(repo.Path)) {
+				filtered = append(filtered, repo)
+			}
+		}
+		repos = filtered
 	}
 
 	// Update cache

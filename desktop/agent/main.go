@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.15"
+const version = "1.99.16"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -280,6 +280,8 @@ func main() {
 		runHandoff(os.Args[2:])
 	case "vault":
 		runVault(os.Args[2:])
+	case "runner-auth":
+		runRunnerAuth(os.Args[2:])
 	case "build":
 		runBuild(os.Args[2:])
 	case "publish":
@@ -342,6 +344,8 @@ func main() {
 		runCloud(os.Args[2:])
 	case "guests":
 		runGuests(os.Args[2:])
+	case "host-share":
+		runHostShare(os.Args[2:])
 	case "primary":
 		runPrimary(os.Args[2:])
 	case "ops":
@@ -446,7 +450,7 @@ Usage:
   yaver tmux adopt <session>  Adopt an existing tmux session as a Yaver task
   yaver tmux detach <task-id>  Stop monitoring an adopted session (session keeps running)
   yaver mcp         Start MCP server (local stdio or network HTTP)
-  yaver mcp setup <editor>  Auto-configure MCP for Claude/Cursor/VS Code/Windsurf/Zed
+  yaver mcp setup <editor>  Auto-configure MCP for Codex/Claude/Cursor/VS Code/Windsurf/Zed
   yaver email       Email connector setup and management (Office 365 / Gmail)
   yaver acl         Agent Communication Layer — connect to other MCP servers
   yaver status      Show auth, relay, and connection status
@@ -485,6 +489,8 @@ Usage:
   yaver test ios [--dir <path>]  Run iOS tests on simulator
   yaver test e2e [--dir <path>]  Run E2E tests (Playwright/Cypress/Maestro)
   yaver repo list      List discovered projects
+  yaver repo auth status   Show Git provider / credential / vault status
+  yaver repo auth setup <github|gitlab> [--token <pat>]  Save clone + CI auth together
   yaver repo switch <name>  Switch working directory to a project
   yaver repo refresh   Re-run project discovery
   yaver pipeline --test --deploy <target>  Build → test → deploy in one command
@@ -514,6 +520,22 @@ Usage:
   yaver guests invite <email>  Invite someone to use your machine (max 5 guests)
   yaver guests list            List your guests and their status
   yaver guests remove <email>  Revoke guest access
+  yaver host-share prepare     Audit this machine for future host-backed guest coding
+  yaver host-share create      Create a host-backed coding invite code/link
+  yaver host-share join <code> Join a host-backed coding lease
+  yaver host-share list        List host-share invites or sessions
+  yaver host-share workspace-status --session <id>   Show local borrowed workspace
+  yaver host-share workspace-bootstrap --session <id> --source-dir <path>  Seed workspace
+  yaver host-share attach-repo --session <id> [--path <repo>]  Attach a guest repo to a borrowed workspace
+  yaver host-share sync-repo --session <id> --to-host|--from-host  Sync an attached repo
+  yaver host-share guest-roots --device <id>         List guest repo roots via host-share bus
+  yaver host-share guest-read --device <id> --root <id> --path <file>  Read guest file
+  yaver host-share guest-write --device <id> --root <id> --path <file> --content <txt>  Write guest file
+  yaver host-share guest-pull --session <id> --device <id> [--root <id>]  Mirror guest repo into workspace
+  yaver host-share guest-push --session <id> [--device <id>] [--root <id>]  Push workspace back to guest repo
+  yaver host-share end <id>    End an active host-share session immediately
+  yaver host-share revoke <code>  Revoke a host-share invite
+  yaver host-share status      Show the saved host-share capability manifest
   yaver 2fa status             Show whether two-factor auth is enabled
   yaver 2fa enable             Enroll a TOTP authenticator app (optional)
   yaver 2fa disable            Remove two-factor auth from your account
@@ -563,6 +585,9 @@ Examples:
   yaver set-runner aider            Use Aider
   yaver set-runner custom "my-ai --auto {prompt}"   Use a custom command
   yaver set-runner                  List available runners
+  yaver runner-auth status [--target <deviceId>]   Show runner auth readiness
+  yaver runner-auth set <runner> [flags]           Save runner/provider auth into the Yaver vault
+  yaver runner-auth setup <runner> [flags]         Install + auth + MCP-wire Codex/Claude on this machine or a remote Yaver device
   (Agent is also selectable per task from the mobile app)
   yaver config set auto-start true  Start Yaver on login
   yaver config set auto-update true Check for updates on startup
@@ -1310,6 +1335,7 @@ func finalizeAuthConfig(cfg *Config, convexURL, token string, printSuccess, prin
 	maybeRegisterAutoStartAfterAuth()
 	startServeIfStopped()
 	autoSetupMCP()
+	maybeRunHostSharePrepareOnboarding("auth")
 	if printHeadlessSteps {
 		printHeadlessNextSteps()
 	}
@@ -1632,6 +1658,7 @@ func runServe(args []string) {
 	}
 
 	maybeRunMacOSPermissionOnboarding("serve")
+	maybeRunHostSharePrepareOnboarding("serve")
 	maybeRunWSL2NetworkTuning()
 
 	cfgForReuse, _ := LoadConfig()
@@ -1873,16 +1900,18 @@ func runServe(args []string) {
 	}
 
 	if !offlineMode {
+		publicEndpoints := configuredPublicEndpoints(cfg)
 		log.Printf("Registering device %s (%s) at %s:%d...", hostname, cfg.DeviceID, localIP, *httpPort)
 		if rotatedToken, err := RegisterDevice(cfg.ConvexSiteURL, RegisterDeviceRequest{
-			Token:      cfg.AuthToken,
-			DeviceID:   cfg.DeviceID,
-			Name:       hostname,
-			Platform:   platform,
-			PublicKey:  devicePubKey,
-			QuicHost:   localIP,
-			QuicPort:   *httpPort,
-			HardwareID: HardwareID(),
+			Token:           cfg.AuthToken,
+			DeviceID:        cfg.DeviceID,
+			Name:            hostname,
+			Platform:        platform,
+			PublicKey:       devicePubKey,
+			QuicHost:        localIP,
+			QuicPort:        *httpPort,
+			PublicEndpoints: publicEndpoints,
+			HardwareID:      HardwareID(),
 		}); err != nil {
 			if strings.Contains(err.Error(), "belongs to another user") {
 				log.Printf("Device ID conflict — generating new device ID")
@@ -1891,14 +1920,15 @@ func runServe(args []string) {
 					log.Fatalf("save config after device ID reset: %v", saveErr)
 				}
 				if rotatedToken2, err2 := RegisterDevice(cfg.ConvexSiteURL, RegisterDeviceRequest{
-					Token:      cfg.AuthToken,
-					DeviceID:   cfg.DeviceID,
-					Name:       hostname,
-					Platform:   platform,
-					PublicKey:  devicePubKey,
-					QuicHost:   localIP,
-					QuicPort:   *httpPort,
-					HardwareID: HardwareID(),
+					Token:           cfg.AuthToken,
+					DeviceID:        cfg.DeviceID,
+					Name:            hostname,
+					Platform:        platform,
+					PublicKey:       devicePubKey,
+					QuicHost:        localIP,
+					QuicPort:        *httpPort,
+					PublicEndpoints: publicEndpoints,
+					HardwareID:      HardwareID(),
 				}); err2 != nil {
 					log.Printf("Warning: device registration failed: %v", err2)
 					offlineMode = true
@@ -3865,10 +3895,11 @@ func checkAutoUpdate(cfg *Config) {
 // isUnderLaunchd reports whether the current process was spawned by
 // launchd (so KeepAlive=true will respawn us on clean exit). We
 // check three cheap signals in order of reliability:
-//   1. XPC_SERVICE_NAME — set by launchd for anything it launches.
-//   2. LaunchDaemons set LAUNCHD_SOCKET / LAUNCH_DAEMON_SOCKET_NAME.
-//   3. getppid() == 1 — classic launchd-owned parent; works for
-//      user LaunchAgents that were re-parented to launchd.
+//  1. XPC_SERVICE_NAME — set by launchd for anything it launches.
+//  2. LaunchDaemons set LAUNCHD_SOCKET / LAUNCH_DAEMON_SOCKET_NAME.
+//  3. getppid() == 1 — classic launchd-owned parent; works for
+//     user LaunchAgents that were re-parented to launchd.
+//
 // Any one of these being true is enough.
 func isUnderLaunchd() bool {
 	if runtime.GOOS != "darwin" {
@@ -5155,7 +5186,7 @@ func runDoctor() {
 		{"ollama", "Ollama", "ollama", "brew install ollama (or https://ollama.com)"},
 		{"goose", "Goose", "goose", "pip install goose-ai"},
 		{"amp", "Amp", "amp", "npm install -g @anthropic/amp"},
-		{"opencode", "OpenCode", "opencode", "go install github.com/mbreithecker/opencode@latest"},
+		{"opencode", "OpenCode", "opencode", "npm install -g opencode-ai"},
 	}
 
 	for _, r := range runners {
@@ -5165,16 +5196,40 @@ func runDoctor() {
 			warning(fmt.Sprintf("Not installed — %s", r.install))
 		} else {
 			// Try to get version
+			runnerCfg := GetRunnerConfig(r.id)
 			out, verr := osexec.Command(r.cmd, "--version").CombinedOutput()
 			if verr == nil {
 				ver := strings.TrimSpace(strings.Split(string(out), "\n")[0])
 				if len(ver) > 60 {
 					ver = ver[:60]
 				}
-				pass(fmt.Sprintf("%s (%s)", path, ver))
+				level, detail := runnerDoctorDetail(runnerCfg, ".", path, ver)
+				if level == "warn" {
+					warning(detail)
+				} else {
+					pass(detail)
+				}
 			} else {
-				pass(path)
+				level, detail := runnerDoctorDetail(runnerCfg, ".", path, "")
+				if level == "warn" {
+					warning(detail)
+				} else {
+					pass(detail)
+				}
 			}
+		}
+	}
+
+	fmt.Println("\n── Machine Onboarding ──")
+	for _, provider := range collectMachineOnboardingStatus().Providers {
+		check(provider.Name)
+		switch machineOnboardingDoctorLevel(provider) {
+		case "pass":
+			pass(machineOnboardingDoctorDetail(provider))
+		case "warn":
+			warning(machineOnboardingDoctorDetail(provider))
+		default:
+			failed(machineOnboardingDoctorDetail(provider))
 		}
 	}
 
@@ -5648,8 +5703,16 @@ func runDevices(args []string) {
 		return
 	}
 
-	fmt.Printf("%-10s  %-20s  %-8s  %-8s  %-22s  %-14s  %s\n",
-		"ID", "NAME", "PLATFORM", "STATUS", "ACCESS", "SESSION", "ADDRESS")
+	runnerByDevice := map[string]string{}
+	for _, d := range devices {
+		if !d.IsOnline {
+			continue
+		}
+		runnerByDevice[d.DeviceID] = summarizeDeviceRunners(cfg, d)
+	}
+
+	fmt.Printf("%-10s  %-20s  %-8s  %-8s  %-22s  %-14s  %-36s  %s\n",
+		"ID", "NAME", "PLATFORM", "STATUS", "ACCESS", "SESSION", "RUNNERS", "ADDRESS")
 	for _, d := range devices {
 		status := "offline"
 		if d.IsOnline {
@@ -5679,8 +5742,74 @@ func runDevices(args []string) {
 		if len(id) > 8 {
 			id = id[:8] + "..."
 		}
-		fmt.Printf("%-10s  %-20s  %-8s  %-8s  %-22s  %-14s  %s:%d\n",
-			id, d.Name, d.Platform, status, access, sessionBinding, d.QuicHost, d.QuicPort)
+		runners := runnerByDevice[d.DeviceID]
+		if strings.TrimSpace(runners) == "" {
+			runners = "-"
+		}
+		if len(runners) > 36 {
+			runners = runners[:35] + "…"
+		}
+		fmt.Printf("%-10s  %-20s  %-8s  %-8s  %-22s  %-14s  %-36s  %s:%d\n",
+			id, d.Name, d.Platform, status, access, sessionBinding, runners, d.QuicHost, d.QuicPort)
+	}
+}
+
+func summarizeDeviceRunners(cfg *Config, device DeviceInfo) string {
+	deviceID := strings.TrimSpace(device.DeviceID)
+	if deviceID == "" {
+		return ""
+	}
+
+	var (
+		rows []runnerAuthStatusRow
+		err  error
+	)
+	if cfg.DeviceID != "" && deviceID == cfg.DeviceID {
+		rows, err = collectRunnerAuthStatusRows()
+	} else {
+		rows, err = fetchRunnerAuthStatusRowsRemote(deviceID)
+	}
+	if err != nil {
+		return "unreachable"
+	}
+	if len(rows) == 0 {
+		return "-"
+	}
+
+	var parts []string
+	for _, row := range rows {
+		if !row.Installed {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s(%s)", normalizeRunnerID(row.ID), summarizeRunnerAuthState(row)))
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, ", ")
+}
+
+func summarizeRunnerAuthState(row runnerAuthStatusRow) string {
+	if !row.AuthConfigured {
+		return "non-auth"
+	}
+	source := strings.ToLower(strings.TrimSpace(row.AuthSource))
+	switch {
+	case strings.Contains(source, "glm") || strings.Contains(source, "zai"):
+		return "glm"
+	case strings.Contains(source, "anthropic"):
+		return "anthropic"
+	case strings.Contains(source, "openai"):
+		return "openai"
+	case strings.Contains(source, "local provider"):
+		return "local"
+	case strings.Contains(source, "auth.json"),
+		strings.Contains(source, "login"),
+		strings.Contains(source, "oauth"),
+		strings.Contains(source, "keychain"):
+		return "auth"
+	default:
+		return "auth"
 	}
 }
 
@@ -5931,20 +6060,22 @@ func mustLoadAuthConfig() *Config {
 }
 
 type DeviceInfo struct {
-	DeviceID                  string `json:"deviceId"`
-	Name                      string `json:"name"`
-	Platform                  string `json:"platform"`
-	QuicHost                  string `json:"quicHost"`
-	QuicPort                  int    `json:"quicPort"`
-	IsOnline                  bool   `json:"isOnline"`
-	IsGuest                   bool   `json:"isGuest,omitempty"`
-	HostName                  string `json:"hostName,omitempty"`
-	HostEmail                 string `json:"hostEmail,omitempty"`
-	AccessScope               string `json:"accessScope,omitempty"`
-	PriorityMode              string `json:"priorityMode,omitempty"`
-	UseHostAPIKeys            bool   `json:"useHostApiKeys,omitempty"`
-	AllowGuestProvidedAPIKeys bool   `json:"allowGuestProvidedApiKeys,omitempty"`
-	SessionBinding            string `json:"sessionBinding,omitempty"`
+	DeviceID                  string   `json:"deviceId"`
+	Name                      string   `json:"name"`
+	Platform                  string   `json:"platform"`
+	QuicHost                  string   `json:"quicHost"`
+	LocalIps                  []string `json:"localIps,omitempty"`
+	PublicEndpoints           []string `json:"publicEndpoints,omitempty"`
+	QuicPort                  int      `json:"quicPort"`
+	IsOnline                  bool     `json:"isOnline"`
+	IsGuest                   bool     `json:"isGuest,omitempty"`
+	HostName                  string   `json:"hostName,omitempty"`
+	HostEmail                 string   `json:"hostEmail,omitempty"`
+	AccessScope               string   `json:"accessScope,omitempty"`
+	PriorityMode              string   `json:"priorityMode,omitempty"`
+	UseHostAPIKeys            bool     `json:"useHostApiKeys,omitempty"`
+	AllowGuestProvidedAPIKeys bool     `json:"allowGuestProvidedApiKeys,omitempty"`
+	SessionBinding            string   `json:"sessionBinding,omitempty"`
 }
 
 func listDevices(baseURL, token string) ([]DeviceInfo, error) {
@@ -6269,6 +6400,12 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 				if perr := persistRotatedAuthToken(cfg, newToken); perr != nil {
 					log.Printf("[auth] (warn) %s — rotated but could not persist: %v", label, perr)
 				} else {
+					if taskMgr != nil {
+						taskMgr.AuthToken = newToken
+					}
+					if httpServer != nil {
+						httpServer.token = newToken
+					}
 					log.Printf("[auth] %s refreshed + rotated (extended 1 year).", label)
 				}
 			}
@@ -6285,11 +6422,13 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 
 	lastIP := getLocalIP()
 	lastIPs := getLocalIPs()
+	cfgAtStart, _ := LoadConfig()
+	lastPublicEndpoints := configuredPublicEndpoints(cfgAtStart)
 	authExpiredLogged := false
 
 	// Send first heartbeat immediately (don't wait 2 min for ticker)
 	runners := taskMgr.GetRunnerInfos()
-	if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, lastIP, lastIPs); err != nil {
+	if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, lastIP, lastIPs, lastPublicEndpoints); err != nil {
 		if errors.Is(err, ErrAuthExpired) {
 			log.Println("[auth] WARNING: Auth token expired! Run 'yaver auth' to re-authenticate.")
 			authExpiredLogged = true
@@ -6317,6 +6456,8 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 		case <-ticker.C:
 			currentIP := getLocalIP()
 			currentIPs := getLocalIPs()
+			cfgNow, _ := LoadConfig()
+			currentPublicEndpoints := configuredPublicEndpoints(cfgNow)
 			runners := taskMgr.GetRunnerInfos()
 
 			if currentIP != lastIP {
@@ -6327,8 +6468,12 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 				log.Printf("[heartbeat] LAN/Tailscale set changed: %v → %v", lastIPs, currentIPs)
 				lastIPs = currentIPs
 			}
+			if !sameStringSet(currentPublicEndpoints, lastPublicEndpoints) {
+				log.Printf("[heartbeat] Public endpoints changed: %v → %v", lastPublicEndpoints, currentPublicEndpoints)
+				lastPublicEndpoints = currentPublicEndpoints
+			}
 
-			if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP, currentIPs); err != nil {
+			if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP, currentIPs, currentPublicEndpoints); err != nil {
 				if errors.Is(err, ErrAuthExpired) {
 					// Try to refresh token first — backend may rotate.
 					if !refreshAndPersist("on-401") {
@@ -6348,7 +6493,7 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 							httpServer.authExpired.Store(false)
 						}
 						// Retry heartbeat
-						if retryErr := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP, currentIPs); retryErr != nil {
+						if retryErr := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP, currentIPs, currentPublicEndpoints); retryErr != nil {
 							log.Printf("heartbeat retry failed: %v", retryErr)
 						}
 					}
@@ -6372,6 +6517,13 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 func metricsLoop(ctx context.Context, baseURL, token, deviceID string) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
+
+	currentToken := func() string {
+		if cfg, err := LoadConfig(); err == nil && cfg != nil && strings.TrimSpace(cfg.AuthToken) != "" {
+			return cfg.AuthToken
+		}
+		return token
+	}
 
 	for {
 		select {
@@ -6398,7 +6550,7 @@ func metricsLoop(ctx context.Context, baseURL, token, deviceID string) {
 
 			log.Printf("[metrics] CPU=%.1f%% RAM=%dMB/%dMB", cpuPct, memUsed, memTotal)
 
-			if err := ReportMetrics(baseURL, token, deviceID, cpuPct, float64(memUsed), float64(memTotal)); err != nil {
+			if err := ReportMetrics(baseURL, currentToken(), deviceID, cpuPct, float64(memUsed), float64(memTotal)); err != nil {
 				log.Printf("[metrics] Report failed: %v", err)
 			}
 		}

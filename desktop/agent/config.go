@@ -28,6 +28,7 @@ type Config struct {
 	CachedRelayServers            []RelayServerConfig      `json:"cached_relay_servers,omitempty"`
 	CloudflareTunnels             []CloudflareTunnelConfig `json:"cloudflare_tunnels,omitempty"`
 	MacOSPermissionOnboardingDone bool                     `json:"macos_permission_onboarding_done,omitempty"`
+	HostShare                     *HostShareConfig         `json:"host_share,omitempty"`
 	Sandbox                       *SandboxConfig           `json:"sandbox,omitempty"`
 	Exec                          *ExecConfig              `json:"exec,omitempty"`
 	Email                         *EmailConfig             `json:"email,omitempty"`
@@ -224,11 +225,11 @@ func LoadConfig() (*Config, error) {
 //
 // Write-tmp-rename-fsync pattern survives power loss and SIGKILL:
 //
-//   1. Marshal to memory.
-//   2. Write to <path>.tmp with 0600.
-//   3. fsync the tmp file (bytes hit the platter).
-//   4. Atomic rename over <path>.
-//   5. fsync the parent directory so the rename is durable.
+//  1. Marshal to memory.
+//  2. Write to <path>.tmp with 0600.
+//  3. fsync the tmp file (bytes hit the platter).
+//  4. Atomic rename over <path>.
+//  5. fsync the parent directory so the rename is durable.
 //
 // If anything below step 4 fails, the original file is untouched;
 // if step 4 succeeds, the new file is on disk. Either way, the

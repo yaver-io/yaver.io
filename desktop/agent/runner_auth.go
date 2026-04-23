@@ -48,6 +48,36 @@ func DetectRunnerRuntimeStatus(runner RunnerConfig, workDir string) RunnerRuntim
 	}
 }
 
+func runnerDoctorDetail(runner RunnerConfig, workDir, binaryPath, version string) (string, string) {
+	status := DetectRunnerRuntimeStatus(runner, workDir)
+	detail := strings.TrimSpace(binaryPath)
+	if strings.TrimSpace(version) != "" {
+		detail = strings.TrimSpace(detail + " (" + strings.TrimSpace(version) + ")")
+	}
+	switch {
+	case strings.TrimSpace(status.Error) != "":
+		if detail == "" {
+			return "warn", status.Error
+		}
+		return "warn", detail + " — " + status.Error
+	case status.AuthConfigured && strings.TrimSpace(status.AuthSource) != "":
+		if detail == "" {
+			return "ok", "authenticated via " + status.AuthSource
+		}
+		return "ok", detail + " — authenticated via " + status.AuthSource
+	case strings.TrimSpace(status.Warning) != "":
+		if detail == "" {
+			return "warn", status.Warning
+		}
+		return "warn", detail + " — " + status.Warning
+	default:
+		if detail == "" {
+			return "ok", "installed"
+		}
+		return "ok", detail
+	}
+}
+
 func normalizeRunnerID(id string) string {
 	switch strings.ToLower(strings.TrimSpace(id)) {
 	case "claude-code":
@@ -153,11 +183,18 @@ func detectOpenCodeStatus(workDir string) RunnerRuntimeStatus {
 	authLower := strings.ToLower(authText)
 	cfgLower := strings.ToLower(cfgText)
 	openAIValue, _ := hostSecretValue("OPENAI_API_KEY")
+	glmValue, glmSource := hostSecretValue("GLM_API_KEY")
 	anthropicValue, _ := hostSecretValue("ANTHROPIC_API_KEY")
 
 	hasOpenAIOAuth := strings.Contains(authLower, "openai")
 	hasAnthropicOAuth := strings.Contains(authLower, "anthropic")
 	hasOpenAIAPI := openAIValue != "" || strings.Contains(cfgLower, "openai_api_key")
+	hasGLMAPI := glmValue != "" ||
+		strings.Contains(cfgLower, "glm_api_key") ||
+		strings.Contains(cfgLower, "zai_api_key") ||
+		strings.Contains(cfgLower, "\"glm\"") ||
+		strings.Contains(cfgLower, "\"z-ai\"") ||
+		strings.Contains(cfgLower, "\"zai\"")
 	hasAnthropicAPI := anthropicValue != "" || strings.Contains(cfgLower, "anthropic_api_key")
 	hasLocalProvider := strings.Contains(cfgLower, "ollama") ||
 		strings.Contains(cfgLower, "lmstudio") ||
@@ -185,6 +222,13 @@ func detectOpenCodeStatus(workDir string) RunnerRuntimeStatus {
 	case hasOpenAIAPI:
 		status.AuthConfigured = true
 		status.AuthSource = "OpenAI API key"
+	case hasGLMAPI:
+		status.AuthConfigured = true
+		if glmSource != "" {
+			status.AuthSource = glmSource
+		} else {
+			status.AuthSource = "GLM API key"
+		}
 	case hasAnthropicAPI:
 		status.AuthConfigured = true
 		status.AuthSource = "Anthropic API key"

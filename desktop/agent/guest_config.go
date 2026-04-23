@@ -131,8 +131,9 @@ func (m *GuestConfigManager) CheckRunner(guestUserID, runnerID string) *AccessDe
 		return nil // no restriction
 	}
 
+	runnerID = normalizeRunnerID(runnerID)
 	for _, r := range cfg.AllowedRunners {
-		if r == runnerID {
+		if normalizeRunnerID(r) == runnerID {
 			return nil
 		}
 	}
@@ -141,6 +142,17 @@ func (m *GuestConfigManager) CheckRunner(guestUserID, runnerID string) *AccessDe
 		Denied: true,
 		Reason: fmt.Sprintf("runner %q not allowed for this guest", runnerID),
 	}
+}
+
+// CheckRequestedRunner verifies the effective runner after default resolution.
+// If the guest omitted runnerID, the host's default runner still has to be
+// inside the guest's allowlist.
+func (m *GuestConfigManager) CheckRequestedRunner(guestUserID, requestedRunnerID, defaultRunnerID string) *AccessDeniedReason {
+	effectiveRunnerID := normalizeRunnerID(requestedRunnerID)
+	if effectiveRunnerID == "" {
+		effectiveRunnerID = normalizeRunnerID(defaultRunnerID)
+	}
+	return m.CheckRunner(guestUserID, effectiveRunnerID)
 }
 
 // CheckProject verifies whether a guest can access a specific project path.

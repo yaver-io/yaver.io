@@ -17,6 +17,8 @@ package main
 // accepts; owner sees everything.
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -60,6 +62,9 @@ func (s *HTTPServer) listFileRoots(r *http.Request) []FileRoot {
 				continue
 			}
 		}
+		if r.Header.Get("X-Yaver-HostShare") == "true" && !hostShareCanAccessProject(r, p.Path) {
+			continue
+		}
 		out = append(out, FileRoot{
 			ID:   projectFSID(p.Path),
 			Name: filepath.Base(p.Path),
@@ -86,8 +91,9 @@ func (s *HTTPServer) handleFilesList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rootID := r.URL.Query().Get("root")
+	rootPath := r.URL.Query().Get("rootPath")
 	sub := strings.TrimPrefix(r.URL.Query().Get("path"), "/")
-	root := s.resolveFileRoot(r, rootID)
+	root := s.resolveHostShareRoot(r, rootID, rootPath)
 	if root == nil {
 		jsonError(w, http.StatusNotFound, "root not found or not permitted")
 		return
@@ -134,12 +140,13 @@ func (s *HTTPServer) handleFilesRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rootID := r.URL.Query().Get("root")
+	rootPath := r.URL.Query().Get("rootPath")
 	sub := strings.TrimPrefix(r.URL.Query().Get("path"), "/")
 	if sub == "" {
 		jsonError(w, http.StatusBadRequest, "path required")
 		return
 	}
-	root := s.resolveFileRoot(r, rootID)
+	root := s.resolveHostShareRoot(r, rootID, rootPath)
 	if root == nil {
 		jsonError(w, http.StatusNotFound, "root not found or not permitted")
 		return
@@ -198,12 +205,13 @@ func (s *HTTPServer) handleFilesRaw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rootID := r.URL.Query().Get("root")
+	rootPath := r.URL.Query().Get("rootPath")
 	sub := strings.TrimPrefix(r.URL.Query().Get("path"), "/")
 	if sub == "" {
 		jsonError(w, http.StatusBadRequest, "path required")
 		return
 	}
-	root := s.resolveFileRoot(r, rootID)
+	root := s.resolveHostShareRoot(r, rootID, rootPath)
 	if root == nil {
 		jsonError(w, http.StatusNotFound, "root not found")
 		return
@@ -245,6 +253,154 @@ func (s *HTTPServer) handleFilesRaw(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Cache-Control", "private, max-age=300")
 	http.ServeFile(w, r, abs)
+}
+
+func (s *HTTPServer) handleHostShareFSWrite(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Yaver-HostShare") != "true" {
+		jsonError(w, http.StatusForbidden, "host-share session required")
+		return
+	}
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+	var body struct {
+		Root          string `json:"root"`
+		RootPath      string `json:"rootPath"`
+		Path          string `json:"path"`
+		Content       string `json:"content"`
+		ContentBase64 string `json:"contentBase64"`
+		Mode          int    `json:"mode,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(body.Path) == "" {
+		jsonError(w, http.StatusBadRequest, "path required")
+		return
+	}
+	root := s.resolveHostShareRoot(r, body.Root, body.RootPath)
+	if root == nil {
+		jsonError(w, http.StatusNotFound, "root not found or not permitted")
+		return
+	}
+	abs, ok := safeJoin(root.Path, strings.TrimPrefix(body.Path, "/"))
+	if !ok {
+		jsonError(w, http.StatusBadRequest, "path escapes root")
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(abs), 0700); err != nil {
+		jsonError(w, http.StatusInternalServerError, "mkdir parent: "+err.Error())
+		return
+	}
+	content := []byte(body.Content)
+	if strings.TrimSpace(body.ContentBase64) != "" {
+		raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(body.ContentBase64))
+		if err != nil {
+			jsonError(w, http.StatusBadRequest, "invalid base64 content")
+			return
+		}
+		content = raw
+	}
+	mode := os.FileMode(0644)
+	if body.Mode > 0 {
+		mode = os.FileMode(body.Mode) & os.ModePerm
+		if mode == 0 {
+			mode = 0644
+		}
+	}
+	if err := os.WriteFile(abs, content, mode); err != nil {
+		jsonError(w, http.StatusInternalServerError, "write file: "+err.Error())
+		return
+	}
+	jsonReply(w, http.StatusOK, map[string]interface{}{"ok": true, "path": body.Path})
+}
+
+func (s *HTTPServer) handleHostShareFSMkdir(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Yaver-HostShare") != "true" {
+		jsonError(w, http.StatusForbidden, "host-share session required")
+		return
+	}
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+	var body struct {
+		Root     string `json:"root"`
+		RootPath string `json:"rootPath"`
+		Path     string `json:"path"`
+		Mode     int    `json:"mode,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(body.Path) == "" {
+		jsonError(w, http.StatusBadRequest, "path required")
+		return
+	}
+	root := s.resolveHostShareRoot(r, body.Root, body.RootPath)
+	if root == nil {
+		jsonError(w, http.StatusNotFound, "root not found or not permitted")
+		return
+	}
+	abs, ok := safeJoin(root.Path, strings.TrimPrefix(body.Path, "/"))
+	if !ok {
+		jsonError(w, http.StatusBadRequest, "path escapes root")
+		return
+	}
+	mode := os.FileMode(0755)
+	if body.Mode > 0 {
+		mode = os.FileMode(body.Mode) & os.ModePerm
+		if mode == 0 {
+			mode = 0755
+		}
+	}
+	if err := os.MkdirAll(abs, mode); err != nil {
+		jsonError(w, http.StatusInternalServerError, "mkdir: "+err.Error())
+		return
+	}
+	jsonReply(w, http.StatusOK, map[string]interface{}{"ok": true, "path": body.Path})
+}
+
+func (s *HTTPServer) handleHostShareFSDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Yaver-HostShare") != "true" {
+		jsonError(w, http.StatusForbidden, "host-share session required")
+		return
+	}
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+	var body struct {
+		Root     string `json:"root"`
+		RootPath string `json:"rootPath"`
+		Path     string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(body.Path) == "" {
+		jsonError(w, http.StatusBadRequest, "path required")
+		return
+	}
+	root := s.resolveHostShareRoot(r, body.Root, body.RootPath)
+	if root == nil {
+		jsonError(w, http.StatusNotFound, "root not found or not permitted")
+		return
+	}
+	abs, ok := safeJoin(root.Path, strings.TrimPrefix(body.Path, "/"))
+	if !ok {
+		jsonError(w, http.StatusBadRequest, "path escapes root")
+		return
+	}
+	if err := os.RemoveAll(abs); err != nil {
+		jsonError(w, http.StatusInternalServerError, "delete path: "+err.Error())
+		return
+	}
+	jsonReply(w, http.StatusOK, map[string]interface{}{"ok": true, "path": body.Path})
 }
 
 // safeJoin resolves sub against root and verifies the resulting
@@ -289,6 +445,36 @@ func (s *HTTPServer) resolveFileRoot(r *http.Request, id string) *FileRoot {
 		}
 	}
 	return nil
+}
+
+func (s *HTTPServer) resolveHostShareRoot(r *http.Request, id, rootPath string) *FileRoot {
+	if root := s.resolveFileRoot(r, id); root != nil {
+		return root
+	}
+	if r.Header.Get("X-Yaver-HostShare") != "true" {
+		return nil
+	}
+	raw := strings.TrimSpace(rootPath)
+	if raw == "" {
+		return nil
+	}
+	if !filepath.IsAbs(raw) {
+		return nil
+	}
+	abs, err := filepath.Abs(raw)
+	if err != nil {
+		return nil
+	}
+	info, err := os.Stat(abs)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	root := FileRoot{
+		ID:   projectFSID(abs),
+		Name: filepath.Base(abs),
+		Path: abs,
+	}
+	return &root
 }
 
 // projectFSID is a stable 8-hex ID derived from the project

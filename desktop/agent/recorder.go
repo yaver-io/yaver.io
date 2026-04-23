@@ -348,6 +348,64 @@ func (s *HTTPServer) handleClipList(w http.ResponseWriter, r *http.Request) {
 	jsonReply(w, http.StatusOK, map[string]interface{}{"ok": true, "sessions": sessions})
 }
 
+func preferredClipVideo(sess *ClipSession) string {
+	if sess == nil {
+		return "agent-screen.mp4"
+	}
+	for _, st := range sess.Streams {
+		if st.Kind == "merged" && st.Uploaded {
+			return "merged.mp4"
+		}
+	}
+	for _, st := range sess.Streams {
+		if st.Kind == "agent-screen" && st.Uploaded {
+			return st.File
+		}
+	}
+	for _, st := range sess.Streams {
+		if st.Uploaded && st.Kind != "mic" {
+			return st.File
+		}
+	}
+	return "agent-screen.mp4"
+}
+
+// handleClipPrivateDetail is the authenticated playback surface for
+// first-party Yaver clients. Public sharing stays on /clips/, but the
+// mobile app should use this route so replay stays on the normal
+// owner-auth path.
+func (s *HTTPServer) handleClipPrivateDetail(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/clips/private/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		jsonError(w, http.StatusNotFound, "session id required")
+		return
+	}
+	id := parts[0]
+	sess, err := loadClipSession(id)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	if len(parts) == 1 {
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"ok":         true,
+			"session":    sess,
+			"videoFile":  preferredClipVideo(sess),
+			"privateUrl": "/clips/private/" + sess.ID,
+			"shareUrl":   "/clips/" + sess.ID,
+		})
+		return
+	}
+	dir, _ := sessionDir(id)
+	full := filepath.Join(dir, parts[1])
+	if _, err := os.Stat(full); err != nil {
+		jsonError(w, http.StatusNotFound, "file not found")
+		return
+	}
+	http.ServeFile(w, r, full)
+}
+
 // handleClipDetail is the public playback endpoint — returns
 // metadata when called at /clips/:id and streams the file when
 // called at /clips/:id/<filename>. Auth-free so share links work
@@ -368,13 +426,7 @@ func (s *HTTPServer) handleClipDetail(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 1 {
 		// Metadata view. Show merged video if available, otherwise agent-screen.
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		videoSrc := "agent-screen.mp4"
-		for _, st := range sess.Streams {
-			if st.Kind == "merged" && st.Uploaded {
-				videoSrc = "merged.mp4"
-				break
-			}
-		}
+		videoSrc := preferredClipVideo(sess)
 		// Build stream badges.
 		var badges string
 		for _, st := range sess.Streams {
