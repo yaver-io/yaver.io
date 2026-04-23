@@ -199,10 +199,18 @@ try {
 
 ## Development Only
 
-The SDK auto-disables in production (`process.env.NODE_ENV !== 'development'`). You can also control it manually:
+The SDK auto-disables in production. When `enabled` is not passed, the default is:
+
+- if `process.env.NODE_ENV` is set, enable only when it is `development`
+- otherwise (normal browser build) enable only when `window.location.hostname` is a development host — `localhost`, `*.localhost`, `*.local` (mDNS), `0.0.0.0`, an IPv4 literal (e.g. `192.168.1.50`), or a bracketed IPv6 literal
+
+Any other hostname — including production domains that happen not to contain the substring `"prod"` — is treated as production and the SDK stays dark.
+
+Override manually at compile time or runtime if you want different behavior:
 
 ```typescript
 YaverFeedback.init({ enabled: false }); // explicitly disable
+YaverFeedback.init({ enabled: true });  // force enable (e.g. staging)
 ```
 
 ## Requirements

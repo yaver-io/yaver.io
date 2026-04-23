@@ -246,7 +246,7 @@ describe('YaverDiscovery', () => {
       expect(result!.url).toBe('http://192.168.1.30:18080');
       expect(mockFetch).toHaveBeenNthCalledWith(
         1,
-        'https://shocking-echidna-394.eu-west-1.convex.site/devices/list',
+        'https://perceptive-minnow-557.eu-west-1.convex.site/devices/list',
         expect.objectContaining({
           headers: expect.objectContaining({
             Authorization: 'Bearer tok',

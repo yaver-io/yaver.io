@@ -25,7 +25,7 @@ const USER_KEY = 'yaver_feedback_user';
 const DEVICE_KEY = 'yaver_feedback_selected_device';
 
 export const DEFAULT_CONVEX_SITE_URL =
-  'https://shocking-echidna-394.eu-west-1.convex.site';
+  'https://perceptive-minnow-557.eu-west-1.convex.site';
 export const DEFAULT_WEB_BASE_URL = 'https://yaver.io';
 
 let convexSiteUrl = DEFAULT_CONVEX_SITE_URL;

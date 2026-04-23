@@ -305,6 +305,7 @@ export function openLoginModal(opts: LoginModalOptions = {}): Promise<string> {
 
       if (opts.cancellable !== false) {
         const cancel = document.createElement('button');
+        cancel.type = 'button';
         cancel.className = 'yvr-fb-login-cancel';
         cancel.textContent = 'Cancel';
         cancel.onclick = () => {
@@ -320,6 +321,7 @@ export function openLoginModal(opts: LoginModalOptions = {}): Promise<string> {
 
       for (const p of PROVIDERS) {
         const btn = document.createElement('button');
+        btn.type = 'button';
         btn.className = 'yvr-fb-login-btn';
         btn.dataset.label = p.id;
         btn.textContent = p.label;
@@ -329,6 +331,7 @@ export function openLoginModal(opts: LoginModalOptions = {}): Promise<string> {
 
       if (!showEmail) {
         const emailBtn = document.createElement('button');
+        emailBtn.type = 'button';
         emailBtn.className = 'yvr-fb-login-btn';
         emailBtn.textContent = 'Continue with Email';
         emailBtn.onclick = () => {
@@ -342,13 +345,18 @@ export function openLoginModal(opts: LoginModalOptions = {}): Promise<string> {
         divider.textContent = 'email';
         buttons.appendChild(divider);
 
+        // Wrap inputs + submit in a <form> so Enter submits natively.
+        const form = document.createElement('form');
+        form.className = 'yvr-fb-login-form';
+        form.noValidate = true;
+
         let nameInput: HTMLInputElement | null = null;
         if (isSignUp) {
           nameInput = document.createElement('input');
           nameInput.className = 'yvr-fb-login-input';
           nameInput.placeholder = 'Full Name';
           nameInput.autocomplete = 'name';
-          buttons.appendChild(nameInput);
+          form.appendChild(nameInput);
         }
 
         const emailInput = document.createElement('input');
@@ -356,14 +364,14 @@ export function openLoginModal(opts: LoginModalOptions = {}): Promise<string> {
         emailInput.placeholder = 'Email';
         emailInput.type = 'email';
         emailInput.autocomplete = 'email';
-        buttons.appendChild(emailInput);
+        form.appendChild(emailInput);
 
         const passInput = document.createElement('input');
         passInput.className = 'yvr-fb-login-input';
         passInput.placeholder = 'Password';
         passInput.type = 'password';
         passInput.autocomplete = isSignUp ? 'new-password' : 'current-password';
-        buttons.appendChild(passInput);
+        form.appendChild(passInput);
 
         let confirmInput: HTMLInputElement | null = null;
         if (isSignUp) {
@@ -372,28 +380,35 @@ export function openLoginModal(opts: LoginModalOptions = {}): Promise<string> {
           confirmInput.placeholder = 'Confirm Password';
           confirmInput.type = 'password';
           confirmInput.autocomplete = 'new-password';
-          buttons.appendChild(confirmInput);
+          form.appendChild(confirmInput);
         }
 
         const errorEl = document.createElement('p');
         errorEl.className = 'yvr-fb-login-error';
         errorEl.textContent = '';
-        buttons.appendChild(errorEl);
+        form.appendChild(errorEl);
 
         const submit = document.createElement('button');
+        submit.type = 'submit';
         submit.className = 'yvr-fb-login-btn yvr-fb-login-btn-primary';
         submit.dataset.label = 'email-submit';
         submit.textContent = isSignUp ? 'Create Account' : 'Sign In';
-        submit.onclick = () =>
+        form.appendChild(submit);
+
+        form.onsubmit = (e) => {
+          e.preventDefault();
           handleEmailSubmit(
             nameInput?.value ?? '',
             emailInput.value,
             passInput.value,
             confirmInput?.value ?? '',
           );
-        buttons.appendChild(submit);
+        };
+
+        buttons.appendChild(form);
 
         const toggle = document.createElement('button');
+        toggle.type = 'button';
         toggle.className = 'yvr-fb-login-toggle';
         toggle.textContent = isSignUp
           ? 'Already have an account? Sign in'
@@ -409,6 +424,14 @@ export function openLoginModal(opts: LoginModalOptions = {}): Promise<string> {
     };
 
     render();
+    if (opts.cancellable !== false) {
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay && !busy) {
+          close();
+          reject(new Error('cancelled'));
+        }
+      });
+    }
     document.body.appendChild(overlay);
   });
 }

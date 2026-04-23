@@ -119,6 +119,59 @@ describe('YaverFeedback', () => {
     });
   });
 
+  describe('default enabled detection', () => {
+    const originalEnv = process.env.NODE_ENV;
+    const originalProcess = (global as any).process;
+
+    afterEach(() => {
+      (global as any).process = originalProcess;
+      if (originalEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = originalEnv;
+      }
+    });
+
+    const setHostname = (host: string) => {
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        value: { ...window.location, hostname: host },
+      });
+    };
+
+    it('disables on a production hostname that does not contain "prod"', async () => {
+      (global as any).process = undefined;
+      setHostname('carrotbytes.xyz');
+
+      await YaverFeedback.init({});
+      expect(YaverFeedback.isInitialized).toBe(false);
+    });
+
+    it('enables on localhost', async () => {
+      (global as any).process = undefined;
+      setHostname('localhost');
+
+      await YaverFeedback.init({ trigger: 'manual', agentUrl: 'http://localhost:18080' });
+      expect(YaverFeedback.isInitialized).toBe(true);
+    });
+
+    it('enables on a LAN IPv4 address', async () => {
+      (global as any).process = undefined;
+      setHostname('192.168.1.50');
+
+      await YaverFeedback.init({ trigger: 'manual', agentUrl: 'http://192.168.1.50:18080' });
+      expect(YaverFeedback.isInitialized).toBe(true);
+    });
+
+    it('respects NODE_ENV=production when process is present', async () => {
+      process.env.NODE_ENV = 'production';
+      setHostname('localhost');
+
+      await YaverFeedback.init({});
+      expect(YaverFeedback.isInitialized).toBe(false);
+    });
+  });
+
   describe('isInitialized', () => {
     it('returns false when init was called with enabled=false', async () => {
       await YaverFeedback.init({ enabled: false });

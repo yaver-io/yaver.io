@@ -59,9 +59,7 @@ export class YaverFeedback {
   static async init(config: FeedbackConfig = {}): Promise<void> {
     // Default to enabled in development
     if (config.enabled === undefined) {
-      config.enabled = typeof process !== 'undefined'
-        ? process.env?.NODE_ENV === 'development'
-        : !window.location.hostname.includes('prod');
+      config.enabled = YaverFeedback.detectDevEnvironment();
     }
 
     if (!config.enabled) {
@@ -133,6 +131,28 @@ export class YaverFeedback {
   /** Check if SDK is initialized and enabled. */
   static get isInitialized(): boolean {
     return YaverFeedback.config !== null && YaverFeedback.config.enabled !== false;
+  }
+
+  /**
+   * Heuristic for "is this a development environment?" used when the host app
+   * doesn't pass `enabled` explicitly. The SDK should light up for local work
+   * (localhost, loopback, LAN IPs, `.local` mDNS) and stay dark on real
+   * production hostnames, regardless of whether the string contains "prod".
+   */
+  private static detectDevEnvironment(): boolean {
+    if (typeof process !== 'undefined' && process.env?.NODE_ENV) {
+      return process.env.NODE_ENV === 'development';
+    }
+    if (typeof window === 'undefined' || !window.location) return false;
+    const host = window.location.hostname;
+    if (!host) return false;
+    if (host === 'localhost' || host === '0.0.0.0') return true;
+    if (host.endsWith('.localhost') || host.endsWith('.local')) return true;
+    // IPv4 literal (any dotted-quad — covers loopback, RFC1918, link-local).
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return true;
+    // IPv6 literal in URL form (browsers bracket these).
+    if (host.startsWith('[') && host.endsWith(']')) return true;
+    return false;
   }
 
   /** Start recording screen + microphone. */
@@ -439,10 +459,19 @@ export class YaverFeedback {
     const authed = await YaverFeedback.ensureAuthToken();
     if (!authed) return false;
 
-    const deviceReady = await YaverFeedback.ensurePreferredDevice({
-      forcePicker: opts.forceMachinePicker === true,
-    });
-    if (!deviceReady) return false;
+    // Skip the device picker if we already know which agent to talk to —
+    // either init() auto-discovered one (local `yaver serve` flow) or the
+    // host passed `agentUrl` / `preferredDeviceId` directly. Picker is
+    // still shown on explicit "Change machine" (forceMachinePicker).
+    const needsPicker =
+      opts.forceMachinePicker === true ||
+      (!YaverFeedback.config.agentUrl && !YaverFeedback.config.preferredDeviceId);
+    if (needsPicker) {
+      const deviceReady = await YaverFeedback.ensurePreferredDevice({
+        forcePicker: opts.forceMachinePicker === true,
+      });
+      if (!deviceReady) return false;
+    }
 
     if (!YaverFeedback.config.agentUrl && YaverFeedback.config.preferredDeviceId) {
       await YaverFeedback.tryDiscoverSelectedMachine();
