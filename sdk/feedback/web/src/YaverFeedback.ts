@@ -14,6 +14,7 @@ import {
   DEFAULT_CONVEX_SITE_URL,
   getSelectedDeviceId,
   getToken as getCachedToken,
+  listReachableDevices,
 } from './auth';
 import { openLoginModal } from './LoginModal';
 import { openDevicePickerModal } from './DevicePickerModal';
@@ -41,6 +42,7 @@ export class YaverFeedback {
   private static audioRecorder: MediaRecorder | null = null;
   private static chunks: Blob[] = [];
   private static audioChunks: Blob[] = [];
+  private static screenshots: Blob[] = [];
   private static timeline: TimelineEvent[] = [];
   private static startTime = 0;
   private static recording = false;
@@ -171,6 +173,7 @@ export class YaverFeedback {
 
       YaverFeedback.recording = true;
       YaverFeedback.startTime = Date.now();
+      YaverFeedback.screenshots = [];
       YaverFeedback.timeline = [];
       YaverFeedback.consoleErrors = [];
     } catch (err) {
@@ -288,7 +291,7 @@ export class YaverFeedback {
       },
       video: video.size > 0 ? video : undefined,
       audio: audio.size > 0 ? audio : undefined,
-      screenshots: [],
+      screenshots: [...YaverFeedback.screenshots],
     };
 
     return YaverFeedback.upload(bundle);
@@ -420,7 +423,70 @@ export class YaverFeedback {
 
   /** Manually trigger the feedback report UI. */
   static startReport(): void {
+    void YaverFeedback.launchInteractiveReport();
+  }
+
+  private static async launchInteractiveReport(): Promise<void> {
+    const ready = await YaverFeedback.prepareInteractiveFlow();
+    if (!ready) return;
+    YaverFeedback.openReportOverlay();
+  }
+
+  private static async prepareInteractiveFlow(opts: {
+    forceMachinePicker?: boolean;
+  } = {}): Promise<boolean> {
+    if (!YaverFeedback.config) return false;
+    const authed = await YaverFeedback.ensureAuthToken();
+    if (!authed) return false;
+
+    const deviceReady = await YaverFeedback.ensurePreferredDevice({
+      forcePicker: opts.forceMachinePicker === true,
+    });
+    if (!deviceReady) return false;
+
+    if (!YaverFeedback.config.agentUrl && YaverFeedback.config.preferredDeviceId) {
+      await YaverFeedback.tryDiscoverSelectedMachine();
+    } else {
+      YaverFeedback.syncClient();
+      YaverFeedback.connectCommandStream();
+    }
+    return true;
+  }
+
+  private static async ensurePreferredDevice(opts: {
+    forcePicker?: boolean;
+  } = {}): Promise<boolean> {
+    if (!YaverFeedback.config?.authToken) return false;
+    if (opts.forcePicker !== true && YaverFeedback.config.preferredDeviceId) {
+      return true;
+    }
+    try {
+      const device = await openDevicePickerModal(YaverFeedback.config.authToken);
+      YaverFeedback.config.preferredDeviceId = device.deviceId;
+      YaverFeedback.config.agentUrl = undefined;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private static async tryDiscoverSelectedMachine(): Promise<boolean> {
+    if (!YaverFeedback.config?.preferredDeviceId) return false;
+    const discovered = await YaverDiscovery.discover({
+      convexUrl: YaverFeedback.config.convexUrl,
+      authToken: YaverFeedback.config.authToken,
+      preferredDeviceId: YaverFeedback.config.preferredDeviceId,
+    });
+    if (!discovered) return false;
+    YaverFeedback.config.agentUrl = discovered.url;
+    YaverFeedback.syncClient();
+    YaverFeedback.connectCommandStream();
+    return true;
+  }
+
+  private static openReportOverlay(): void {
     YaverFeedback.injectReportStyles();
+    document.getElementById('yaver-feedback-overlay')?.remove();
     const overlay = document.createElement('div');
     overlay.id = 'yaver-feedback-overlay';
     overlay.innerHTML = `
@@ -513,19 +579,52 @@ export class YaverFeedback {
     };
     const refreshMachineCard = async () => {
       machineName.textContent = 'Checking connection…';
-      machineMeta.textContent = 'Sign in and pick a machine to unlock reload and vibing.';
+      machineMeta.textContent = 'Sign in and pick a machine to unlock vibing, reload, and screenshots.';
       try {
-        const ready = await YaverFeedback.ensureAgentConnection();
-        if (!ready || !YaverFeedback.config?.agentUrl) {
-          machineName.textContent = YaverFeedback.config?.authToken ? 'No machine selected' : 'Sign in required';
-          machineMeta.textContent = YaverFeedback.config?.authToken
-            ? 'Pick one of your reachable Yaver machines.'
-            : 'Use your Yaver account to connect this browser to a dev machine.';
+        if (!YaverFeedback.config?.authToken) {
+          machineName.textContent = 'Sign in required';
+          machineMeta.textContent =
+            'Use your Yaver account to connect this browser to one of your machines.';
           return;
         }
-        const client = await YaverFeedback.getClient();
-        const info = await client.info();
-        machineName.textContent = info?.hostname || YaverFeedback.config.agentUrl;
+        const devices = await YaverFeedback.listAvailableDevices();
+        const selected =
+          devices.find(
+            (device) => device.deviceId === YaverFeedback.config?.preferredDeviceId,
+          ) ?? null;
+
+        if (!selected) {
+          machineName.textContent = 'No machine selected';
+          machineMeta.textContent =
+            'Pick one of your reachable Yaver machines before sending feedback.';
+          return;
+        }
+
+        machineName.textContent = selected.name || selected.deviceId;
+        if (!selected.isOnline) {
+          machineMeta.textContent = 'Offline. Start `yaver serve` on the selected machine.';
+          return;
+        }
+        if (selected.needsAuth) {
+          machineMeta.textContent =
+            'Needs auth. Re-auth or re-pair this machine before using feedback actions.';
+          return;
+        }
+        if (selected.runnerDown) {
+          machineMeta.textContent =
+            'Machine online, but the coding runner is down.';
+          return;
+        }
+
+        const discovered = await YaverFeedback.tryDiscoverSelectedMachine();
+        if (!discovered || !YaverFeedback.config?.agentUrl) {
+          machineMeta.textContent =
+            'Machine selected, but the agent URL could not be resolved right now.';
+          return;
+        }
+
+        const client = YaverFeedback.client;
+        const info = client ? await client.info() : null;
         machineMeta.textContent = info
           ? `${info.platform} • ${info.version} • ${YaverFeedback.config.agentUrl}`
           : YaverFeedback.config.agentUrl;
@@ -552,10 +651,25 @@ export class YaverFeedback {
       setBusy(false);
     };
 
-    screenshotBtn.onclick = () => {
+    screenshotBtn.onclick = async () => {
       const note = prompt('Describe this bug (optional):') || '';
-      YaverFeedback.captureScreenshot(note);
-      setStatus(`Screenshot captured${note ? `: ${note}` : ''}`);
+      setBusy(true);
+      setStatus('Capturing screenshot…');
+      try {
+        const captured = await YaverFeedback.captureScreenshotBlob({
+          overlay,
+          annotation: note,
+        });
+        if (!captured) {
+          setStatus('Screenshot capture failed in this browser.');
+          return;
+        }
+        setStatus(`Screenshot captured${note ? `: ${note}` : ''}`);
+      } catch (err) {
+        setStatus(err instanceof Error ? err.message : 'Screenshot capture failed.');
+      } finally {
+        setBusy(false);
+      }
     };
 
     reloadBtn.onclick = async () => {
@@ -621,17 +735,13 @@ export class YaverFeedback {
 
     machineBtn.onclick = async () => {
       setBusy(true);
-      setStatus('Refreshing machine connection…');
+      setStatus('Opening machine picker…');
       try {
-        if (YaverFeedback.config?.authToken || (await YaverFeedback.ensureAuthToken())) {
-          YaverFeedback.config!.agentUrl = undefined;
-          YaverFeedback.config!.preferredDeviceId = undefined;
-          const ready = await YaverFeedback.ensureAgentConnection();
-          if (ready) {
-            setStatus('Connected to selected machine.');
-          } else {
-            setStatus('Machine selection cancelled.');
-          }
+        const ready = await YaverFeedback.prepareInteractiveFlow({ forceMachinePicker: true });
+        if (ready) {
+          setStatus('Connected to selected machine.');
+        } else {
+          setStatus('Machine selection cancelled.');
         }
       } catch (err) {
         setStatus(err instanceof Error ? err.message : 'Unable to change machine.');
@@ -725,24 +835,96 @@ export class YaverFeedback {
       YaverFeedback.connectCommandStream();
       return true;
     }
-    if (!YaverFeedback.config.preferredDeviceId && YaverFeedback.config.autoLogin !== false) {
-      try {
-        const device = await openDevicePickerModal(YaverFeedback.config.authToken!);
-        YaverFeedback.config.preferredDeviceId = device.deviceId;
-      } catch {
-        return false;
-      }
+    const picked = await YaverFeedback.ensurePreferredDevice();
+    if (!picked) {
+      return false;
     }
-    const discovered = await YaverDiscovery.discover({
-      convexUrl: YaverFeedback.config.convexUrl,
-      authToken: YaverFeedback.config.authToken,
-      preferredDeviceId: YaverFeedback.config.preferredDeviceId,
-    });
+    const discovered = await YaverFeedback.tryDiscoverSelectedMachine();
     if (!discovered) return false;
-    YaverFeedback.config.agentUrl = discovered.url;
-    YaverFeedback.syncClient();
-    YaverFeedback.connectCommandStream();
     return true;
+  }
+
+  private static async listAvailableDevices() {
+    if (!YaverFeedback.config?.authToken) return [];
+    const devices = await listReachableDevices(YaverFeedback.config.authToken);
+    return [...devices.owned, ...devices.shared];
+  }
+
+  private static async captureScreenshotBlob(opts: {
+    overlay: HTMLElement;
+    annotation?: string;
+  }): Promise<boolean> {
+    const overlay = opts.overlay;
+    const previousVisibility = overlay.style.visibility;
+    overlay.style.visibility = 'hidden';
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+    try {
+      const blob = await YaverFeedback.renderDocumentToBlob();
+      if (!blob) return false;
+      YaverFeedback.screenshots.push(blob);
+      const elapsed = (Date.now() - YaverFeedback.startTime) / 1000;
+      YaverFeedback.timeline.push({
+        time: elapsed,
+        type: 'screenshot',
+        text: opts.annotation || `Screenshot at ${elapsed.toFixed(1)}s`,
+      });
+      if (opts.annotation) {
+        YaverFeedback.timeline.push({
+          time: elapsed,
+          type: 'annotation',
+          text: opts.annotation,
+        });
+      }
+      return true;
+    } finally {
+      overlay.style.visibility = previousVisibility;
+    }
+  }
+
+  private static async renderDocumentToBlob(): Promise<Blob | null> {
+    const docEl = document.documentElement;
+    const width = Math.max(
+      docEl.scrollWidth,
+      document.body?.scrollWidth ?? 0,
+      window.innerWidth,
+    );
+    const height = Math.max(
+      docEl.scrollHeight,
+      document.body?.scrollHeight ?? 0,
+      window.innerHeight,
+    );
+    const clone = docEl.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll('#yaver-feedback-overlay, #yaver-feedback-btn').forEach((node) =>
+      node.remove(),
+    );
+    clone.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+    const serialized = new XMLSerializer().serializeToString(clone);
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+        <foreignObject width="100%" height="100%">${serialized}</foreignObject>
+      </svg>
+    `;
+    const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+    const svgUrl = URL.createObjectURL(svgBlob);
+    try {
+      const img = new Image();
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('Unable to render page screenshot.'));
+        img.src = svgUrl;
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(img, 0, 0);
+      return await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob((blob) => resolve(blob), 'image/png'),
+      );
+    } finally {
+      URL.revokeObjectURL(svgUrl);
+    }
   }
 
   private static syncClient(): void {

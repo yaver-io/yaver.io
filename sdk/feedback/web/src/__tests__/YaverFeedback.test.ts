@@ -183,9 +183,13 @@ describe('YaverFeedback', () => {
         enabled: true,
         agentUrl: 'http://localhost:18080',
         trigger: 'manual',
+        authToken: 'test-token',
+        autoLogin: false,
+        preferredDeviceId: 'device-1',
       });
 
       YaverFeedback.startReport();
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       const overlay = document.getElementById('yaver-feedback-overlay');
       expect(overlay).not.toBeNull();
@@ -196,9 +200,13 @@ describe('YaverFeedback', () => {
         enabled: true,
         agentUrl: 'http://localhost:18080',
         trigger: 'manual',
+        authToken: 'test-token',
+        autoLogin: false,
+        preferredDeviceId: 'device-1',
       });
 
       YaverFeedback.startReport();
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(document.getElementById('yaver-fb-record')).not.toBeNull();
       expect(document.getElementById('yaver-fb-screenshot')).not.toBeNull();
