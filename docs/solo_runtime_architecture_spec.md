@@ -428,6 +428,34 @@ Input:
 Output:
 
 - chosen machine
+
+## Repo-Owned Argv Contract
+
+For project-specific remote launch/test/deploy flows, the preferred integration is a repo-owned command surface that Yaver calls on the already-selected machine.
+
+Example shape:
+
+```bash
+./scripts/yaver_project_entry.sh --project my-app --machine primary --build web
+./scripts/yaver_project_entry.sh --project my-app --machine primary --build test-selenium
+./scripts/yaver_project_entry.sh --project my-app --machine primary --build deploy-all
+```
+
+The contract should:
+
+- accept `--project`
+- accept `--machine`
+- accept a narrow `--build` enum
+- print a user-openable app URL for preview launches
+- persist machine-readable status for UI/MCP consumers
+
+Why this shape works:
+
+- the selected machine still comes from Yaver placement / ACL logic
+- the repo stays responsible for its own startup, test, and deploy details
+- mobile, web, CLI, and MCP all call the same repo-native entrypoint
+
+Public examples should use aliases like `primary` or `selected-machine`, never real infra hostnames or private device labels.
 - why it was chosen
 - fallback reasoning
 
