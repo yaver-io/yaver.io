@@ -268,8 +268,44 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusForbidden, "device-code recovery requires verified host authentication")
 		return
 	}
+	if body.Mode == "direct" && !authedAsHost {
+		// `direct` hands the caller's Bearer straight to the agent as its
+		// new token. That's only safe when the caller is already
+		// authenticated as the host — the bootstrap-secret path runs off a
+		// low-entropy shared secret and can't bootstrap a full session.
+		reportRecoveryEventFn(s, "direct_rejected", map[string]interface{}{"ip": ip, "authMethod": authMethod})
+		jsonError(w, http.StatusForbidden, "direct recovery requires verified host authentication")
+		return
+	}
 
 	switch body.Mode {
+	case "direct":
+		// The caller already proved ownership via verifyHostToken above,
+		// and they're also already authenticated against Convex as the
+		// host. Just persist their bearer as our new token — no pair
+		// dance, no device-code OAuth round-trip. Used by the web
+		// dashboard, where the user is logged into yaver.io and just
+		// wants to hand their existing session down to a headless box
+		// that lost its own.
+		cfg, _ := LoadConfig()
+		convexURL := ""
+		if cfg != nil {
+			convexURL = cfg.ConvexSiteURL
+		}
+		if convexURL == "" {
+			convexURL = defaultConvexSiteURL
+		}
+		bearer := extractBearerToken(r)
+		applyRecoveredAuthToken(bearer, convexURL, s)
+		reportRecoveryEventFn(s, "direct_applied", map[string]interface{}{
+			"ip":         ip,
+			"authMethod": authMethod,
+		})
+		jsonReply(w, http.StatusOK, RecoveryResponse{
+			OK:   true,
+			Mode: "direct",
+		})
+
 	case "pair":
 		session := activePairingSnapshot()
 		reused := session != nil && strings.TrimSpace(session.ReceivedToken) == ""
@@ -331,7 +367,7 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 
 	default:
 		reportRecoveryEventFn(s, "invalid_mode", map[string]interface{}{"ip": ip, "mode": body.Mode, "authMethod": authMethod})
-		jsonError(w, http.StatusBadRequest, "mode must be 'pair' or 'device-code'")
+		jsonError(w, http.StatusBadRequest, "mode must be 'direct', 'pair', or 'device-code'")
 	}
 }
 

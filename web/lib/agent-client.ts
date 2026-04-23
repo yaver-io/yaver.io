@@ -1680,6 +1680,62 @@ class AgentClient {
     return this._lastConnectDiagnostics.slice();
   }
 
+  /**
+   * Web-side re-auth of an agent whose own Convex session has expired.
+   * POSTs /auth/recover {mode:"direct"} with the user's current Convex
+   * session token as Bearer. The agent verifies ownership via
+   * /devices/owner-by-hardware and, if the caller is the registered
+   * owner, persists the bearer as its new auth token. No pair dance,
+   * no device-code OAuth round trip.
+   *
+   * Must be called BEFORE a successful connect (obviously — the
+   * connection failed). Iterates the same relay list attemptConnect
+   * uses, stops on first 2xx.
+   */
+  async reauthDirect(opts: {
+    deviceId: string;
+    hostSessionToken: string;
+  }): Promise<{ ok: true } | { ok: false; status?: number; error: string }> {
+    if (!this.relayServers.length) {
+      return { ok: false, error: "no relay servers configured" };
+    }
+    let lastStatus: number | undefined;
+    let lastError = "all relay paths failed";
+    for (const relay of this.relayServers) {
+      const url = `${relay.httpUrl}/d/${opts.deviceId}/auth/recover`;
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${opts.hostSessionToken}`,
+        "Content-Type": "application/json",
+      };
+      if (relay.password) headers["X-Relay-Password"] = relay.password;
+      try {
+        const res = await this.fetchWithTimeout(
+          url,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ mode: "direct" }),
+          },
+          10_000,
+        );
+        lastStatus = res.status;
+        if (res.ok) return { ok: true };
+        // Surface the agent's specific error body if it sent one.
+        try {
+          const body = await res.clone().json();
+          if (body && typeof body === "object" && typeof body.error === "string") {
+            lastError = body.error;
+          }
+        } catch {
+          lastError = `HTTP ${res.status}`;
+        }
+      } catch (e: any) {
+        lastError = e?.message || "network error";
+      }
+    }
+    return { ok: false, status: lastStatus, error: lastError };
+  }
+
   private async probeHealth(
     url: string,
     headers: Record<string, string>,

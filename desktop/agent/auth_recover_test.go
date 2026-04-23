@@ -110,6 +110,58 @@ func TestAuthRecoverPairWorksWithBootstrapSecret(t *testing.T) {
 	}
 }
 
+func TestAuthRecoverDirectRejectsBootstrapSecret(t *testing.T) {
+	recoveryLimiter.reset()
+	if err := SetBootstrapSecret("secret-nope"); err != nil {
+		t.Fatalf("SetBootstrapSecret: %v", err)
+	}
+	defer func() { _ = SetBootstrapSecret("") }()
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/recover", strings.NewReader(`{"secret":"secret-nope","mode":"direct"}`))
+	req.RemoteAddr = "192.168.1.40:40000"
+	rec := httptest.NewRecorder()
+
+	(&HTTPServer{}).handleAuthRecover(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAuthRecoverDirectAppliesHostTokenImmediately(t *testing.T) {
+	recoveryLimiter.reset()
+	oldVerify := verifyHostTokenFn
+	oldReport := reportRecoveryEventFn
+	verifyHostTokenFn = func(bearer string) (bool, error) {
+		return bearer == "owner-token", nil
+	}
+	reportRecoveryEventFn = func(*HTTPServer, string, map[string]interface{}) {}
+	defer func() {
+		verifyHostTokenFn = oldVerify
+		reportRecoveryEventFn = oldReport
+	}()
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/recover", strings.NewReader(`{"mode":"direct"}`))
+	req.RemoteAddr = "192.168.1.41:40000"
+	req.Header.Set("Authorization", "Bearer owner-token")
+	rec := httptest.NewRecorder()
+
+	srv := &HTTPServer{}
+	srv.authExpired.Store(true)
+	srv.handleAuthRecover(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"mode":"direct"`) {
+		t.Fatalf("expected direct response, got %s", rec.Body.String())
+	}
+	if srv.token != "owner-token" {
+		t.Fatalf("expected srv.token to be updated to new bearer, got %q", srv.token)
+	}
+	if srv.authExpired.Load() {
+		t.Fatalf("expected authExpired cleared after direct recovery")
+	}
+}
+
 func TestAuthRecoverPairReusesExistingWindow(t *testing.T) {
 	recoveryLimiter.reset()
 	if err := SetBootstrapSecret("secret-reuse"); err != nil {

@@ -34,11 +34,281 @@ import SchedulesView from "@/components/dashboard/SchedulesView";
 import PhoneProjectsView from "@/components/dashboard/PhoneProjectsView";
 import ExecView from "@/components/dashboard/ExecView";
 import DomainsView from "@/components/dashboard/DomainsView";
+import VibeCodingView from "@/components/dashboard/VibeCodingView";
 
 function statusColor(s: string) {
   if (s === "running") return "text-amber-400";
   if (s === "completed") return "text-emerald-400";
   return "text-surface-400";
+}
+
+function DeviceIcon({ platform }: { platform: string }) {
+  const normalized = String(platform || "").trim().toLowerCase();
+  const isMobile = normalized === "ios" || normalized === "android";
+  if (isMobile) {
+    return (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25A2.25 2.25 0 015.25 3h13.5A2.25 2.25 0 0121 5.25z" />
+    </svg>
+  );
+}
+
+function isLikelyWSLDevice(device: Pick<Device, "name" | "platform" | "host">): boolean {
+  const platform = String(device.platform || "").trim().toLowerCase();
+  if (platform !== "linux") return false;
+  const name = String(device.name || "").trim().toUpperCase();
+  const host = String(device.host || "").trim();
+  return (
+    name.startsWith("DESKTOP-") ||
+    name.startsWith("LAPTOP-") ||
+    name.startsWith("WIN-") ||
+    /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(host)
+  );
+}
+
+function devicePlatformLabel(device: Pick<Device, "name" | "platform" | "host">): string {
+  const platform = String(device.platform || "").trim().toLowerCase();
+  if (isLikelyWSLDevice(device)) return "Linux (likely WSL)";
+  switch (platform) {
+    case "darwin":
+    case "macos":
+      return "macOS";
+    case "linux":
+      return "Linux";
+    case "windows":
+      return "Windows";
+    case "android":
+      return "Android";
+    case "ios":
+      return "iOS";
+    default:
+      return device.platform || "Unknown";
+  }
+}
+
+function formatHeartbeatAge(lastSeen?: string): string {
+  if (!lastSeen) return "never";
+  const ts = Date.parse(lastSeen);
+  if (Number.isNaN(ts)) return "unknown";
+  const seconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (seconds < 10) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
+  return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function formatRunnerChipLabel(runner: string): string {
+  const cleaned = String(runner || "").trim();
+  if (!cleaned) return cleaned;
+  if (cleaned === "claude-code") return "claude";
+  return cleaned;
+}
+
+function deviceAccessSummary(device: Pick<Device, "isGuest" | "sharedWithGuests" | "sharesAllProjects" | "sharedProjects" | "sharesAllRunners" | "sharedRunners">) {
+  const hasSharedState = device.isGuest || device.sharedWithGuests;
+  if (!hasSharedState) return null;
+  const sharedProjects = Array.isArray(device.sharedProjects) ? device.sharedProjects.filter(Boolean) : [];
+  const sharedRunners = Array.isArray(device.sharedRunners) ? device.sharedRunners.filter(Boolean) : [];
+  return {
+    projectLabel: device.sharesAllProjects ? "All Resources" : "Project Only",
+    projectChips: device.sharesAllProjects ? [] : sharedProjects,
+    runnerLabel: device.sharesAllRunners ? "All Agents" : "Some Agents",
+    runnerChips: device.sharesAllRunners ? [] : sharedRunners.map(formatRunnerChipLabel),
+  };
+}
+
+function accessScopeTone(device: Pick<Device, "accessScope" | "isGuest">) {
+  if (device.accessScope === "shared-scoped") return "border-amber-500/40 bg-amber-500/10 text-amber-200";
+  if (device.accessScope === "shared-legacy") return "border-violet-500/40 bg-violet-500/10 text-violet-200";
+  if (device.isGuest) return "border-sky-500/40 bg-sky-500/10 text-sky-200";
+  return "border-emerald-500/40 bg-emerald-500/10 text-emerald-200";
+}
+
+function accessScopeLabel(device: Pick<Device, "accessScope" | "isGuest">) {
+  if (device.accessScope === "shared-scoped") return "Scoped Access";
+  if (device.accessScope === "shared-legacy") return "Legacy Shared";
+  if (device.isGuest) return "Shared Device";
+  return "Owner";
+}
+
+function lanIpsForDevice(device: Pick<Device, "host" | "localIps">): string[] {
+  const ips = new Set<string>();
+  if (device.host && /^\d{1,3}(?:\.\d{1,3}){3}$/.test(device.host)) ips.add(device.host);
+  for (const ip of device.localIps || []) {
+    if (ip) ips.add(ip);
+  }
+  return [...ips].slice(0, 3);
+}
+
+function DeviceConnectCard({
+  device,
+  isPrimary,
+  isSelected,
+  isConnecting,
+  connectionError,
+  onConnect,
+  onTogglePrimary,
+  canTogglePrimary,
+  compact = false,
+}: {
+  device: Device;
+  isPrimary: boolean;
+  isSelected: boolean;
+  isConnecting: boolean;
+  connectionError?: string | null;
+  onConnect: () => void;
+  onTogglePrimary?: () => void;
+  canTogglePrimary?: boolean;
+  compact?: boolean;
+}) {
+  const shareSummary = deviceAccessSummary(device);
+  const heartbeatAge = formatHeartbeatAge(device.lastSeen);
+  const lanIps = lanIpsForDevice(device);
+  const isOffline = !device.online;
+
+  return (
+    <div
+      className={[
+        "rounded-2xl border bg-surface-900/80 transition-colors",
+        compact ? "p-3" : "p-4",
+        isSelected
+          ? connectionError
+            ? "border-red-500/30 bg-red-500/[0.04]"
+            : isConnecting
+              ? "border-amber-500/30 bg-amber-500/[0.04]"
+              : "border-emerald-500/30 bg-emerald-500/[0.05]"
+          : "border-surface-800 hover:border-surface-700",
+      ].join(" ")}
+    >
+      <div className="flex items-start gap-3">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-surface-800 bg-surface-950 text-surface-400">
+          <DeviceIcon platform={device.platform} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="truncate text-sm font-semibold text-surface-100">{device.name}</h3>
+            <span
+              className={`inline-flex h-2.5 w-2.5 rounded-full ${
+                connectionError ? "bg-red-400" : isOffline ? "bg-surface-600" : isConnecting ? "bg-amber-400" : "bg-emerald-400"
+              }`}
+            />
+            <span className="text-xs text-surface-400">
+              {connectionError ? "failed" : isOffline ? "offline" : isConnecting ? "connecting" : "online"} · {heartbeatAge}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-surface-500">
+            {devicePlatformLabel(device)}
+            {device.host ? ` · ${device.host}:${device.port}` : ""}
+            {device.isGuest && device.hostName ? ` · from ${device.hostName}` : ""}
+          </p>
+          {connectionError ? (
+            <p className="mt-1 text-xs text-red-300/80">{connectionError}</p>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${accessScopeTone(device)}`}>
+          {accessScopeLabel(device)}
+        </span>
+        {device.deviceClass ? (
+          <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-200">
+            {device.deviceClass === "edge-mobile" ? "Edge Worker" : device.deviceClass}
+          </span>
+        ) : null}
+        {device.sessionBinding ? (
+          <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${
+            device.sessionBinding === "dedicated"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+              : "border-amber-500/30 bg-amber-500/10 text-amber-200"
+          }`}>
+            {device.sessionBinding === "dedicated" ? "Dedicated Session" : "Legacy Session"}
+          </span>
+        ) : null}
+        {isPrimary ? (
+          <span className="rounded-full border border-indigo-500/40 bg-indigo-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-indigo-200">
+            Primary
+          </span>
+        ) : null}
+        {device.priorityMode === "spare-capacity" ? (
+          <span className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-violet-200">
+            Spare Capacity
+          </span>
+        ) : null}
+        {lanIps.map((ip) => (
+          <span key={`${device.id}:${ip}`} className="rounded-full border border-surface-700 bg-surface-950 px-2 py-1 font-mono text-[10px] text-surface-300">
+            LAN {ip}
+          </span>
+        ))}
+      </div>
+
+      {shareSummary ? (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${
+            shareSummary.projectLabel === "All Resources"
+              ? "border-sky-500/40 bg-sky-500/10 text-sky-200"
+              : "border-amber-500/40 bg-amber-500/10 text-amber-200"
+          }`}>
+            {shareSummary.projectLabel}
+          </span>
+          {shareSummary.projectChips.map((project) => (
+            <span key={`${device.id}:project:${project}`} className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] font-medium text-amber-100">
+              {project}
+            </span>
+          ))}
+          <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${
+            shareSummary.runnerLabel === "All Agents"
+              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+              : "border-violet-500/40 bg-violet-500/10 text-violet-200"
+          }`}>
+            {shareSummary.runnerLabel}
+          </span>
+          {shareSummary.runnerChips.map((runner) => (
+            <span key={`${device.id}:runner:${runner}`} className="rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-1 text-[10px] font-medium text-violet-100">
+              {runner}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      {device.edgeProfile ? (
+        <p className="mt-3 text-[11px] text-surface-500">
+          {device.edgeProfile.supportsLocalInference ? "Local inference" : "Remote inference only"} · max {device.edgeProfile.maxModelClass} model
+          {device.edgeProfile.preferredTasks.length > 0 ? ` · ${device.edgeProfile.preferredTasks.slice(0, 3).join(", ")}` : ""}
+        </p>
+      ) : null}
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          onClick={onConnect}
+          disabled={isConnecting}
+          className={`rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${
+            isConnecting
+              ? "cursor-wait border border-amber-500/20 bg-amber-500/10 text-amber-200"
+              : "border border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/15"
+          }`}
+        >
+          {isConnecting ? "Connecting…" : "Open Workspace"}
+        </button>
+        {canTogglePrimary && onTogglePrimary ? (
+          <button
+            onClick={onTogglePrimary}
+            className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-500/15"
+          >
+            {isPrimary ? "Unset Primary" : "Make Primary"}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 export default function DashboardPage() {
@@ -57,11 +327,13 @@ export default function DashboardPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [guestCode, setGuestCode] = useState("");
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "tools" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "domains">("home");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "tools" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "domains">("home");
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [connectDiagnostics, setConnectDiagnostics] = useState<ConnectAttemptDiagnostic[]>([]);
   const [copiedReauth, setCopiedReauth] = useState(false);
+  const [reauthing, setReauthing] = useState(false);
+  const [reauthMessage, setReauthMessage] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [relayReady, setRelayReady] = useState(false);
   const [previewTargetId, setPreviewTargetId] = useState<string | null>(null);
   // Primary-device preference — the device auto-connect prefers when the
@@ -218,11 +490,13 @@ export default function DashboardPage() {
 
   const runningTask = tasks.find(t => t.status === "running");
   const mobileWorkers = devices.filter((d) => d.deviceClass === "edge-mobile");
+  const onlineDevices = devices.filter((d) => d.online);
   const selectedPreviewTarget = mobileWorkers.find((d) => d.id === previewTargetId) || null;
   const tabs: { id: typeof activeTab; label: string; icon: string; badge?: number }[] = [
     { id: "home", label: "Home", icon: "\uD83C\uDFE0" },
     { id: "chat", label: "Chat", icon: "\uD83D\uDCAC" },
     { id: "projects", label: "Projects", icon: "\uD83D\uDCC1" },
+    { id: "vibe", label: "Vibe", icon: "\u2328\uFE0F" },
     { id: "todos", label: "Todos", icon: "\u2611\uFE0F", badge: todoCount },
     { id: "builds", label: "Builds", icon: "\uD83D\uDE80" },
     { id: "preview", label: "Preview", icon: "\uD83C\uDFA8" },
@@ -282,55 +556,115 @@ export default function DashboardPage() {
 
           {/* Devices */}
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-surface-500 mb-1">Device</p>
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-surface-500">Devices</p>
             {isConnected && connectedDevice ? (
-              <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
-                <div className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /><span className="text-xs font-medium text-surface-200 truncate">{connectedDevice.name}</span></div>
-                {agentInfo && <p className="text-[10px] text-surface-500 mt-0.5">v{agentInfo.version}</p>}
-                <button onClick={disconnect} className="text-[10px] text-red-400 hover:text-red-300 mt-1">Disconnect</button>
+              <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/[0.05] p-3">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-emerald-500/20 bg-surface-950 text-emerald-200">
+                    <DeviceIcon platform={connectedDevice.platform} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+                      <span className="truncate text-sm font-semibold text-surface-100">{connectedDevice.name}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-surface-500">
+                      {devicePlatformLabel(connectedDevice)} · heartbeat {formatHeartbeatAge(connectedDevice.lastSeen)}
+                    </p>
+                    {agentInfo ? <p className="mt-1 text-[11px] text-surface-500">Agent v{agentInfo.version}</p> : null}
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <button onClick={disconnect} className="text-xs font-medium text-red-300 hover:text-red-200">Disconnect</button>
+                </div>
               </div>
             ) : connState === "connecting" && connectedDevice ? (
-              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
-                <div className="flex items-center gap-1.5">
-                  <span className="h-3 w-3 animate-spin rounded-full border border-amber-400 border-t-transparent" />
-                  <span className="text-xs font-medium text-surface-300 truncate">{connectedDevice.name}</span>
-                </div>
-                <p className="text-[10px] text-amber-400/70 mt-1">Connecting via relay...</p>
-                <button onClick={disconnect} className="text-[10px] text-surface-500 hover:text-surface-300 mt-1">Cancel</button>
-              </div>
+              <DeviceConnectCard
+                device={connectedDevice}
+                isPrimary={primaryDeviceId === connectedDevice.id}
+                isSelected
+                isConnecting
+                onConnect={() => connectToDevice(connectedDevice)}
+                onTogglePrimary={!connectedDevice.isGuest && token ? async () => {
+                  const nextId = primaryDeviceId === connectedDevice.id ? null : connectedDevice.id;
+                  const prev = primaryDeviceId;
+                  setPrimaryDeviceId(nextId);
+                  try {
+                    const res = await fetch(`${CONVEX_URL}/settings`, {
+                      method: "POST",
+                      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                      body: JSON.stringify({ primaryDeviceId: nextId }),
+                    });
+                    if (!res.ok) throw new Error(`status ${res.status}`);
+                  } catch (e: any) {
+                    setPrimaryDeviceId(prev);
+                    alert(`Could not update primary: ${e?.message ?? e}`);
+                  }
+                } : undefined}
+                canTogglePrimary={!connectedDevice.isGuest && !!token}
+                compact
+              />
             ) : connState === "error" && connectedDevice ? (
-              <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2">
-                <div className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-red-400" /><span className="text-xs font-medium text-surface-300 truncate">{connectedDevice.name}</span></div>
-                <p className="text-[10px] text-red-400/70 mt-1">{connectError || "Connection failed"}</p>
-                <div className="flex gap-2 mt-1">
-                  <button onClick={() => connectToDevice(connectedDevice)} className="text-[10px] text-amber-400 hover:text-amber-300">Retry</button>
-                  <button onClick={disconnect} className="text-[10px] text-surface-500 hover:text-surface-300">Cancel</button>
-                </div>
+              <div className="space-y-2">
+                <DeviceConnectCard
+                  device={connectedDevice}
+                  isPrimary={primaryDeviceId === connectedDevice.id}
+                  isSelected
+                  isConnecting={false}
+                  connectionError={connectError || "Connection failed"}
+                  onConnect={() => connectToDevice(connectedDevice)}
+                  onTogglePrimary={!connectedDevice.isGuest && token ? async () => {
+                    const nextId = primaryDeviceId === connectedDevice.id ? null : connectedDevice.id;
+                    const prev = primaryDeviceId;
+                    setPrimaryDeviceId(nextId);
+                    try {
+                      const res = await fetch(`${CONVEX_URL}/settings`, {
+                        method: "POST",
+                        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                        body: JSON.stringify({ primaryDeviceId: nextId }),
+                      });
+                      if (!res.ok) throw new Error(`status ${res.status}`);
+                    } catch (e: any) {
+                      setPrimaryDeviceId(prev);
+                      alert(`Could not update primary: ${e?.message ?? e}`);
+                    }
+                  } : undefined}
+                  canTogglePrimary={!connectedDevice.isGuest && !!token}
+                  compact
+                />
+                <button onClick={disconnect} className="text-xs text-surface-500 hover:text-surface-300">Clear selection</button>
               </div>
             ) : (
               <div className="space-y-1">
-                {devices.filter(d => d.online).map(d => (
-                  <button
+                {onlineDevices.map((d) => (
+                  <DeviceConnectCard
                     key={d.id}
-                    onClick={() => connectToDevice(d)}
-                    className="w-full flex items-center gap-2 rounded-md border border-surface-800 px-2 py-1.5 text-left hover:border-emerald-500/30 text-xs text-surface-300"
-                    title={d.isGuest && d.hostName ? `shared from ${d.hostName}${d.priorityMode ? ` · ${d.priorityMode}` : ""}` : undefined}
-                  >
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                    <span className="truncate">{d.name}</span>
-                    {d.isGuest ? (
-                      <span className="ml-auto rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-[1px] text-[9px] font-semibold uppercase tracking-wider text-sky-300">
-                        shared
-                      </span>
-                    ) : null}
-                    {d.isGuest && d.priorityMode === "spare-capacity" ? (
-                      <span className="rounded border border-violet-500/40 bg-violet-500/10 px-1.5 py-[1px] text-[9px] font-semibold uppercase tracking-wider text-violet-300">
-                        spare
-                      </span>
-                    ) : null}
-                  </button>
+                    device={d}
+                    isPrimary={primaryDeviceId === d.id}
+                    isSelected={false}
+                    isConnecting={false}
+                    onConnect={() => connectToDevice(d)}
+                    onTogglePrimary={!d.isGuest && token ? async () => {
+                      const nextId = primaryDeviceId === d.id ? null : d.id;
+                      const prev = primaryDeviceId;
+                      setPrimaryDeviceId(nextId);
+                      try {
+                        const res = await fetch(`${CONVEX_URL}/settings`, {
+                          method: "POST",
+                          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                          body: JSON.stringify({ primaryDeviceId: nextId }),
+                        });
+                        if (!res.ok) throw new Error(`status ${res.status}`);
+                      } catch (e: any) {
+                        setPrimaryDeviceId(prev);
+                        alert(`Could not update primary: ${e?.message ?? e}`);
+                      }
+                    } : undefined}
+                    canTogglePrimary={!d.isGuest && !!token}
+                    compact
+                  />
                 ))}
-                {devices.filter(d => d.online).length === 0 && <p className="text-[10px] text-surface-600">No devices online</p>}
+                {onlineDevices.length === 0 && <p className="text-[11px] text-surface-600">No devices online</p>}
               </div>
             )}
           </div>
@@ -447,24 +781,59 @@ export default function DashboardPage() {
                           {authExpired ? (
                             <div className="mt-3 rounded border border-amber-500/20 bg-amber-500/5 p-2 text-left">
                               <p className="text-[11px] text-amber-300">
-                                The agent can&apos;t validate its session with Convex anymore. SSH to the remote box and re-run:
+                                The agent can&apos;t validate its session with Convex anymore. You&apos;re already signed in here &mdash; hand your session down to the box:
                               </p>
                               <div className="mt-2 flex items-center gap-2">
-                                <code className="flex-1 rounded bg-surface-900 px-2 py-1 text-[11px] text-surface-300 font-mono">{reauthCmd}</code>
                                 <button
-                                  onClick={() => {
-                                    navigator.clipboard?.writeText(reauthCmd);
-                                    setCopiedReauth(true);
-                                    setTimeout(() => setCopiedReauth(false), 1500);
+                                  disabled={reauthing || !connectedDevice || !token}
+                                  onClick={async () => {
+                                    if (!connectedDevice || !token) return;
+                                    setReauthing(true);
+                                    setReauthMessage(null);
+                                    try {
+                                      const result = await agentClient.reauthDirect({
+                                        deviceId: connectedDevice.id,
+                                        hostSessionToken: token,
+                                      });
+                                      if (result.ok) {
+                                        setReauthMessage({ kind: "ok", text: "Agent accepted new token — reconnecting…" });
+                                        setTimeout(() => {
+                                          connectToDevice(connectedDevice);
+                                        }, 400);
+                                      } else {
+                                        setReauthMessage({ kind: "err", text: result.error || "Re-auth failed" });
+                                      }
+                                    } catch (e: any) {
+                                      setReauthMessage({ kind: "err", text: e?.message || "Re-auth failed" });
+                                    }
+                                    setReauthing(false);
                                   }}
-                                  className="rounded border border-amber-500/30 px-2 py-1 text-[10px] text-amber-300 hover:bg-amber-500/10"
+                                  className="flex-1 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-[11px] font-medium text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
                                 >
-                                  {copiedReauth ? "copied" : "copy"}
+                                  {reauthing ? "Re-authing…" : "Re-auth this device from web"}
                                 </button>
                               </div>
-                              <p className="mt-2 text-[10px] text-surface-600">
-                                Web-side re-auth (without shell access) lands once the agent ships <code>/reauth/start</code>.
-                              </p>
+                              {reauthMessage ? (
+                                <p className={`mt-2 text-[10px] ${reauthMessage.kind === "ok" ? "text-emerald-300" : "text-red-300"}`}>
+                                  {reauthMessage.text}
+                                </p>
+                              ) : null}
+                              <div className="mt-3 border-t border-amber-500/20 pt-2">
+                                <p className="text-[10px] text-surface-500">Or, from a shell on the remote box:</p>
+                                <div className="mt-1 flex items-center gap-2">
+                                  <code className="flex-1 rounded bg-surface-900 px-2 py-1 text-[11px] text-surface-300 font-mono">{reauthCmd}</code>
+                                  <button
+                                    onClick={() => {
+                                      navigator.clipboard?.writeText(reauthCmd);
+                                      setCopiedReauth(true);
+                                      setTimeout(() => setCopiedReauth(false), 1500);
+                                    }}
+                                    className="rounded border border-surface-700 px-2 py-1 text-[10px] text-surface-400 hover:text-surface-200"
+                                  >
+                                    {copiedReauth ? "copied" : "copy"}
+                                  </button>
+                                </div>
+                              </div>
                             </div>
                           ) : !anyReached ? (
                             <p className="mt-3 text-xs text-surface-600">
@@ -482,60 +851,43 @@ export default function DashboardPage() {
                 ) : (
                   <>
                     <p className="mb-6 text-sm text-surface-500">Connect to a device running <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-300">yaver serve</code></p>
-                    <div className="space-y-2">
-                      {devices.filter(d => d.online).map(d => (
-                        <div key={d.id} className="mx-auto flex items-center gap-2">
-                          <button
-                            onClick={() => connectToDevice(d)}
-                            className="flex items-center gap-3 rounded-lg border border-surface-700 bg-surface-900 px-5 py-3 hover:border-emerald-500/30 transition-colors"
-                            title={d.isGuest && d.hostName ? `shared from ${d.hostName}${d.priorityMode ? ` · ${d.priorityMode}` : ""}` : undefined}
-                          >
-                            <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                            <span className="text-sm font-medium text-surface-200">{d.name}</span>
-                            {primaryDeviceId === d.id ? (
-                              <span className="rounded border border-indigo-500/40 bg-indigo-500/10 px-2 py-[2px] text-[10px] font-semibold uppercase tracking-wider text-indigo-300">
-                                primary ★
-                              </span>
-                            ) : null}
-                            {d.isGuest ? (
-                              <span className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-[2px] text-[10px] font-semibold uppercase tracking-wider text-sky-300">
-                                shared{d.hostName ? ` · ${d.hostName}` : ""}
-                              </span>
-                            ) : null}
-                            {d.isGuest && d.priorityMode === "spare-capacity" ? (
-                              <span className="rounded border border-violet-500/40 bg-violet-500/10 px-2 py-[2px] text-[10px] font-semibold uppercase tracking-wider text-violet-300">
-                                spare
-                              </span>
-                            ) : null}
-                          </button>
-                          {!d.isGuest && token ? (
-                            <button
-                              onClick={async () => {
-                                const nextId = primaryDeviceId === d.id ? null : d.id;
-                                const prev = primaryDeviceId;
-                                setPrimaryDeviceId(nextId);
-                                try {
-                                  const res = await fetch(`${CONVEX_URL}/settings`, {
-                                    method: "POST",
-                                    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-                                    body: JSON.stringify({ primaryDeviceId: nextId }),
-                                  });
-                                  if (!res.ok) throw new Error(`status ${res.status}`);
-                                } catch (e: any) {
-                                  setPrimaryDeviceId(prev);
-                                  alert(`Could not update primary: ${e?.message ?? e}`);
-                                }
-                              }}
-                              className="text-xs text-indigo-400 hover:text-indigo-300"
-                              title={primaryDeviceId === d.id ? "Unset primary" : "Mark as primary (auto-connect when multiple devices)"}
-                            >
-                              {primaryDeviceId === d.id ? "unset ★" : "make ★"}
-                            </button>
-                          ) : null}
-                        </div>
+                    <div className="space-y-3 text-left">
+                      {onlineDevices.map((d) => (
+                        <DeviceConnectCard
+                          key={d.id}
+                          device={d}
+                          isPrimary={primaryDeviceId === d.id}
+                          isSelected={false}
+                          isConnecting={false}
+                          onConnect={() => connectToDevice(d)}
+                          onTogglePrimary={!d.isGuest && token ? async () => {
+                            const nextId = primaryDeviceId === d.id ? null : d.id;
+                            const prev = primaryDeviceId;
+                            setPrimaryDeviceId(nextId);
+                            try {
+                              const res = await fetch(`${CONVEX_URL}/settings`, {
+                                method: "POST",
+                                headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                                body: JSON.stringify({ primaryDeviceId: nextId }),
+                              });
+                              if (!res.ok) throw new Error(`status ${res.status}`);
+                            } catch (e: any) {
+                              setPrimaryDeviceId(prev);
+                              alert(`Could not update primary: ${e?.message ?? e}`);
+                            }
+                          } : undefined}
+                          canTogglePrimary={!d.isGuest && !!token}
+                        />
                       ))}
                     </div>
-                    {devices.filter(d => d.online).length === 0 && <p className="text-sm text-surface-600 mt-4">No devices online</p>}
+                    {onlineDevices.length === 0 && (
+                      <div className="mt-4 rounded-2xl border border-surface-800 bg-surface-900/70 p-5 text-left">
+                        <p className="text-sm font-medium text-surface-200">No devices online</p>
+                        <p className="mt-2 text-xs leading-5 text-surface-500">
+                          Start <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-300">yaver serve</code> on a machine signed into this account. If browser OAuth succeeded on that machine but it still does not show up here, run <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-300">yaver auth factory-reset</code> and re-auth.
+                        </p>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -544,6 +896,15 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><OverviewView user={user ?? undefined} /></div>
           ) : activeTab === "projects" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><ProjectsView onTaskCreated={onTaskCreated} mobileWorkers={mobileWorkers} selectedPreviewTarget={selectedPreviewTarget} onSelectPreviewTarget={handleSelectPreviewTarget} /></div>
+          ) : activeTab === "vibe" ? (
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <VibeCodingView
+                devices={devices}
+                connectedDevice={connectedDevice}
+                connState={connState}
+                onSelectDevice={connectToDevice}
+              />
+            </div>
           ) : activeTab === "todos" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><TodosView onTaskCreated={onTaskCreated} /></div>
           ) : activeTab === "builds" ? (
