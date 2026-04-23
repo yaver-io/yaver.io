@@ -47,6 +47,11 @@ function CallbackHandler() {
         })
         .then((data) => {
           if (!data) return;
+          const raw = data.user ?? data;
+          if (!returnTo && !(raw?.surveyCompleted ?? false)) {
+            router.push("/survey");
+            return;
+          }
           router.push(returnTo || "/dashboard");
         })
         .catch(() => {

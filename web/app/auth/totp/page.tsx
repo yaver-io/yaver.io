@@ -81,7 +81,29 @@ function TotpContent() {
         return;
       }
 
-      window.location.href = returnTo || "/dashboard";
+      if (returnTo) {
+        window.location.href = returnTo;
+        return;
+      }
+
+      try {
+        const validateRes = await fetch(`${CONVEX_URL}/auth/validate`, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (validateRes.ok) {
+          const validateData = await validateRes.json();
+          const raw = validateData.user ?? validateData;
+          if (!(raw?.surveyCompleted ?? false)) {
+            window.location.href = "/survey";
+            return;
+          }
+        }
+      } catch {
+        // Fall through to dashboard.
+      }
+
+      window.location.href = "/dashboard";
     } catch {
       setErrorMsg("Network error. Please try again.");
       setStatus("error");

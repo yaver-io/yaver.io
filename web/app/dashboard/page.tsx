@@ -5,6 +5,7 @@ import { useDevices, type Device } from "@/lib/use-devices";
 import { agentClient, type Task, type ConnectionState, type Runner, type AgentInfo, type ConnectAttemptDiagnostic } from "@/lib/agent-client";
 import { CONVEX_URL } from "@/lib/constants";
 import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { useTheme } from "@/components/ThemeProvider";
 import ProjectsView from "@/components/dashboard/ProjectsView";
 import TodosView from "@/components/dashboard/TodosView";
@@ -316,6 +317,7 @@ export default function DashboardPage() {
   const { user, token, isLoading, isAuthenticated, logout } = useAuth();
   const { devices, refreshDevices } = useDevices(token);
   const { theme, toggle: toggleTheme } = useTheme();
+  const router = useRouter();
 
   const [connState, setConnState] = useState<ConnectionState>("disconnected");
   const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
@@ -346,6 +348,14 @@ export default function DashboardPage() {
   const relayReadyPromiseRef = useRef<Promise<void> | null>(null);
 
   const isConnected = connState === "connected";
+
+  useEffect(() => {
+    if (isLoading) return;
+    if (!isAuthenticated) return;
+    if (user?.surveyCompleted === false && devices.length === 0) {
+      router.replace("/survey");
+    }
+  }, [devices.length, isAuthenticated, isLoading, router, user?.surveyCompleted]);
 
   useEffect(() => {
     let cancelled = false;

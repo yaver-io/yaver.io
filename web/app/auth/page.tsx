@@ -4,13 +4,14 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { CONVEX_URL } from "@/lib/constants";
+import { sanitizeReturnTo } from "@/lib/oauth";
 
 function AuthContent() {
   const params = useSearchParams();
   const error = params.get("error");
   const client = params.get("client") || "web";
   const isSdkPopup = client === "sdk";
-  const returnUrl = params.get("return");
+  const returnUrl = sanitizeReturnTo(params.get("return"));
   const isDeviceAuth = !!returnUrl && returnUrl.startsWith("/auth/device");
   const pendingDeviceCode = isDeviceAuth ? new URLSearchParams(returnUrl.split("?")[1] || "").get("code") : null;
 
@@ -21,6 +22,37 @@ function AuthContent() {
   const [rePassword, setRePassword] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const redirectAfterAuth = async (token: string) => {
+    if (client === "desktop") {
+      window.location.href = `http://127.0.0.1:19836/callback?token=${token}`;
+      return;
+    }
+
+    if (returnUrl) {
+      window.location.href = returnUrl;
+      return;
+    }
+
+    try {
+      const res = await fetch(`${CONVEX_URL}/auth/validate`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const raw = data.user ?? data;
+        if (!(raw?.surveyCompleted ?? false)) {
+          window.location.href = "/survey";
+          return;
+        }
+      }
+    } catch {
+      // Best-effort check. Fall back to dashboard when validation fails.
+    }
+
+    window.location.href = "/dashboard";
+  };
 
   const handleOAuth = (provider: "google" | "microsoft" | "apple" | "github" | "gitlab") => {
     const qs = new URLSearchParams({ client });
@@ -89,19 +121,7 @@ function AuthContent() {
       localStorage.setItem("yaver_auth_token", token);
       document.cookie = `yaver_auth_token=${token}; path=/; max-age=${60 * 60 * 24 * 30}; secure; samesite=lax`;
 
-      // Check if desktop client - redirect to localhost callback
-      if (client === "desktop") {
-        window.location.href = `http://127.0.0.1:19836/callback?token=${token}`;
-        return;
-      }
-
-      // Return to original page if specified (e.g. device code page)
-      if (returnUrl) {
-        window.location.href = returnUrl;
-        return;
-      }
-
-      window.location.href = "/dashboard";
+      await redirectAfterAuth(token);
     } catch {
       setFormError("Network error. Please try again.");
       setLoading(false);
