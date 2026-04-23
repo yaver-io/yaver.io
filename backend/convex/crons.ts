@@ -1,12 +1,15 @@
 import { cronJobs } from "convex/server";
-import { internal } from "./_generated/api";
 
+// All cron schedules moved to Hetzner (ubuntu-4gb-hel1-1, 37.27.184.85).
+// Systemd timers POST to /crons/run with a bearer token (CRON_TRIGGER_SECRET).
+// See convex/http.ts for the trigger endpoint and convex/cronSecret.ts for
+// the shared auth helper.
+//
+// The underlying functions remain available for manual invocation:
+//   - internal.cleanup.pruneAuthLogs           (Hetzner: daily 03:00 UTC)
+//   - internal.cleanup.pruneMobileStreamLogs   (Hetzner: daily 03:05 UTC)
+//   - internal.cleanup.pruneDeveloperLogs      (Hetzner: daily 03:10 UTC)
+//   - internal.cleanup.pruneDeviceEvents       (Hetzner: daily 03:15 UTC)
 const crons = cronJobs();
-
-// Clean up log tables daily at 03:00 UTC — delete entries older than 7 days
-crons.daily("cleanup:authLogs", { hourUTC: 3, minuteUTC: 0 }, internal.cleanup.pruneAuthLogs);
-crons.daily("cleanup:mobileStreamLogs", { hourUTC: 3, minuteUTC: 5 }, internal.cleanup.pruneMobileStreamLogs);
-crons.daily("cleanup:developerLogs", { hourUTC: 3, minuteUTC: 10 }, internal.cleanup.pruneDeveloperLogs);
-crons.daily("cleanup:deviceEvents", { hourUTC: 3, minuteUTC: 15 }, internal.cleanup.pruneDeviceEvents);
 
 export default crons;

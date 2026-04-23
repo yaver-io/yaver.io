@@ -17,6 +17,7 @@ import type * as auth from "../auth.js";
 import type * as authLogs from "../authLogs.js";
 import type * as cleanup from "../cleanup.js";
 import type * as cloudMachines from "../cloudMachines.js";
+import type * as cronSecret from "../cronSecret.js";
 import type * as crons from "../crons.js";
 import type * as developerLogs from "../developerLogs.js";
 import type * as deviceCode from "../deviceCode.js";
@@ -60,6 +61,7 @@ declare const fullApi: ApiFromModules<{
   authLogs: typeof authLogs;
   cleanup: typeof cleanup;
   cloudMachines: typeof cloudMachines;
+  cronSecret: typeof cronSecret;
   crons: typeof crons;
   developerLogs: typeof developerLogs;
   deviceCode: typeof deviceCode;
