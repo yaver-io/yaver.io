@@ -20,6 +20,65 @@ import { quicClient } from "../../src/lib/quic";
 import { beaconListener, type DiscoveredDevice } from "../../src/lib/beacon";
 import { submitPair, fetchPairInfo } from "../../src/lib/pairDevice";
 
+type GitProviderSummary = {
+  github: boolean;
+  gitlab: boolean;
+};
+
+type DeviceProjectSummary = {
+  names: string[];
+  total: number;
+};
+
+type MachineSummary = {
+  gitProviders: GitProviderSummary | null;
+  projectSummary: DeviceProjectSummary | null;
+  fetchedAt: number;
+};
+
+const MACHINE_SUMMARY_TTL_MS = 30_000;
+const machineSummaryCache = new Map<string, MachineSummary>();
+
+function isLikelyWSLDevice(device: Pick<Device, "name" | "os" | "host">): boolean {
+  const os = String(device.os || "").trim().toLowerCase();
+  if (os !== "linux") return false;
+  const name = String(device.name || "").trim().toUpperCase();
+  const host = String(device.host || "").trim();
+  const windowsHostLike =
+    name.startsWith("DESKTOP-") ||
+    name.startsWith("LAPTOP-") ||
+    name.startsWith("WIN-");
+  const wslNatLike = /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(host);
+  return windowsHostLike || wslNatLike;
+}
+
+function formatDevicePlatform(device: Pick<Device, "name" | "os" | "host">, exactRuntime?: string | null): string {
+  const os = String(device.os || "").trim();
+  if (exactRuntime) return exactRuntime;
+  if (isLikelyWSLDevice(device)) return "Linux (likely WSL)";
+  return os;
+}
+
+function formatRunnerChipLabel(runner: string): string {
+  const cleaned = String(runner || "").trim();
+  if (!cleaned) return cleaned;
+  if (cleaned === "claude-code") return "claude";
+  return cleaned;
+}
+
+function accessSummary(device: Pick<Device, "isGuest" | "sharedWithGuests" | "sharesAllProjects" | "sharedProjects" | "sharesAllRunners" | "sharedRunners">) {
+  const hasSharedState = device.isGuest || device.sharedWithGuests;
+  if (!hasSharedState) return null;
+  const sharedProjects = Array.isArray(device.sharedProjects) ? device.sharedProjects.filter(Boolean) : [];
+  const sharedRunners = Array.isArray(device.sharedRunners) ? device.sharedRunners.filter(Boolean) : [];
+  return {
+    projectLabel: device.sharesAllProjects ? "ALL RESOURCES" : "PROJECT ONLY",
+    projectChips: device.sharesAllProjects ? [] : sharedProjects,
+    runnerLabel: device.sharesAllRunners ? "ALL AGENTS" : "SOME AGENTS",
+    runnerChips: device.sharesAllRunners ? [] : sharedRunners.map(formatRunnerChipLabel),
+  };
+}
+
 function ConnectionBadge({ status }: { status: string }) {
   const c = useColors();
   const color =
@@ -35,10 +94,90 @@ function ConnectionBadge({ status }: { status: string }) {
   );
 }
 
+function ScopeChip({
+  label,
+  color,
+}: {
+  label: string;
+  color: string;
+}) {
+  return (
+    <View style={[styles.scopeChip, { backgroundColor: color + "18", borderColor: color + "55" }]}>
+      <Text style={[styles.scopeChipText, { color }]}>{label}</Text>
+    </View>
+  );
+}
+
 function buildDeviceUrl(device: Device, token: string | null): string | null {
   const relays = quicClient.getRelayServers();
   if (relays.length > 0) return `${relays[0].httpUrl}/d/${device.id}`;
   return `http://${device.host}:${device.port}`;
+}
+
+function inferGitProvidersFromProjects(
+  projects: Array<{ gitRemote?: string | null }>,
+): GitProviderSummary {
+  let github = false;
+  let gitlab = false;
+  for (const project of projects) {
+    const remote = String(project?.gitRemote || "").toLowerCase();
+    if (remote.includes("github.com")) github = true;
+    if (remote.includes("gitlab.com")) gitlab = true;
+  }
+  return { github, gitlab };
+}
+
+async function fetchMachineSummary(baseUrl: string, token: string): Promise<MachineSummary> {
+  const cacheKey = `${baseUrl}|${token}`;
+  const cached = machineSummaryCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < MACHINE_SUMMARY_TTL_MS) {
+    return cached;
+  }
+
+  const headers = { Authorization: `Bearer ${token}` };
+  const [projectsRes, providersRes] = await Promise.allSettled([
+    fetch(`${baseUrl}/projects`, { headers, signal: AbortSignal.timeout(5000) }),
+    fetch(`${baseUrl}/git/provider/status`, { headers, signal: AbortSignal.timeout(5000) }),
+  ]);
+
+  let projectSummary: DeviceProjectSummary | null = null;
+  let inferredProviders: GitProviderSummary | null = null;
+
+  if (projectsRes.status === "fulfilled" && projectsRes.value.ok) {
+    const projectsJson = await projectsRes.value.json();
+    const projects = Array.isArray(projectsJson?.projects) ? projectsJson.projects : [];
+    const names = projects
+      .map((project: any) => String(project?.name || "").trim())
+      .filter(Boolean);
+    inferredProviders = inferGitProvidersFromProjects(projects);
+    projectSummary = {
+      names: names.slice(0, 4),
+      total: names.length,
+    };
+  }
+
+  let gitProviders = inferredProviders;
+  if (providersRes.status === "fulfilled" && providersRes.value.ok) {
+    const providersJson = await providersRes.value.json();
+    const providers = Array.isArray(providersJson?.providers) ? providersJson.providers : [];
+    const configured = new Set(
+      providers
+        .map((provider: any) => String(provider?.provider || "").trim().toLowerCase())
+        .filter(Boolean),
+    );
+    gitProviders = {
+      github: configured.has("github"),
+      gitlab: configured.has("gitlab"),
+    };
+  }
+
+  const summary: MachineSummary = {
+    gitProviders,
+    projectSummary,
+    fetchedAt: Date.now(),
+  };
+  machineSummaryCache.set(cacheKey, summary);
+  return summary;
 }
 
 function DeviceCard({
@@ -69,6 +208,9 @@ function DeviceCard({
   const [pingState, setPingState] = useState<{ pinging: boolean; rttMs?: number; ok?: boolean }>({ pinging: false });
   const [killing, setKilling] = useState<string | null>(null);
   const [recovering, setRecovering] = useState(false);
+  const [runtimeLabel, setRuntimeLabel] = useState<string | null>(null);
+  const [gitProviders, setGitProviders] = useState<GitProviderSummary | null>(null);
+  const [projectSummary, setProjectSummary] = useState<DeviceProjectSummary | null>(null);
   // Seed needsAuth from Convex device record so the badge shows immediately
   // (without waiting for the /info poll to complete).
   const [needsAuth, setNeedsAuth] = useState<boolean>(device.needsAuth === true);
@@ -83,6 +225,50 @@ function DeviceCard({
   useEffect(() => {
     setNeedsAuth(device.needsAuth === true);
   }, [device.needsAuth]);
+
+  useEffect(() => {
+    setRuntimeLabel(null);
+  }, [device.id]);
+
+  useEffect(() => {
+    const baseUrl = buildDeviceUrl(device, token);
+    if (!baseUrl || !token) {
+      setGitProviders(null);
+      setProjectSummary(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadMachineSummary = async () => {
+      try {
+        const cached = machineSummaryCache.get(`${baseUrl}|${token}`);
+        if (cached && !cancelled) {
+          setGitProviders(cached.gitProviders);
+          setProjectSummary(cached.projectSummary);
+        }
+
+        if (!device.online && cached) return;
+
+        const summary = await fetchMachineSummary(baseUrl, token);
+        if (!cancelled) {
+          setGitProviders(summary.gitProviders);
+          setProjectSummary(summary.projectSummary);
+        }
+      } catch {
+        const cached = machineSummaryCache.get(`${baseUrl}|${token}`);
+        if (!cancelled) {
+          setGitProviders(cached?.gitProviders ?? null);
+          setProjectSummary(cached?.projectSummary ?? null);
+        }
+      }
+    };
+
+    void loadMachineSummary();
+    return () => {
+      cancelled = true;
+    };
+  }, [device.id, device.host, device.port, device.online, token]);
 
   // Poll /info for bootstrap/auth state — shows a "needs auth" badge
   // on the card AND auto-pairs when the remote agent is in bootstrap.
@@ -106,6 +292,10 @@ function DeviceCard({
         if (cancelled) return;
         const info = await res.json();
         const inBootstrap = info.needsAuth === true || info.mode === "bootstrap";
+        const autoStartType = String(info?.autoStart?.type || "").trim().toLowerCase();
+        if (autoStartType.startsWith("wsl-") && !cancelled) {
+          setRuntimeLabel("WSL");
+        }
         console.log(`[auto-pair] ${device.name}: needsAuth=${info.needsAuth} mode=${info.mode} → inBootstrap=${inBootstrap}`);
         if (cancelled) return;
         setNeedsAuth(inBootstrap);
@@ -150,6 +340,7 @@ function DeviceCard({
   }, [device.host, device.port, device.publicKey, token]);
   const runners = device.runners || [];
   const activeRunners = runners.filter((r) => r.status === "running");
+  const shareSummary = accessSummary(device);
   const workerLabel =
     device.deviceClass === "edge-mobile"
       ? "MOBILE WORKER"
@@ -348,7 +539,7 @@ function DeviceCard({
             ) : null}
           </View>
           <Text style={[styles.deviceMeta, { color: c.textMuted }]}>
-            {device.os} &middot; {device.host}:{device.port}
+            {formatDevicePlatform(device, runtimeLabel)} &middot; {device.host}:{device.port}
             {device.isGuest && device.hostName ? ` · shared from ${device.hostName}` : ""}
           </Text>
           {authExpired ? (
@@ -364,6 +555,58 @@ function DeviceCard({
               {typeof device.edgeProfile.batteryPct === "number" ? ` · ${device.edgeProfile.batteryPct}% battery` : ""}
               {device.edgeProfile.isCharging ? " · charging" : ""}
             </Text>
+          ) : null}
+          {shareSummary ? (
+            <View style={styles.scopeSection}>
+              <View style={styles.scopeRow}>
+                <ScopeChip
+                  label={shareSummary.projectLabel}
+                  color={shareSummary.projectLabel === "ALL RESOURCES" ? "#38bdf8" : "#f59e0b"}
+                />
+                {shareSummary.projectChips.map((project) => (
+                  <ScopeChip key={`project:${project}`} label={project} color="#f59e0b" />
+                ))}
+              </View>
+              <View style={styles.scopeRow}>
+                <ScopeChip
+                  label={shareSummary.runnerLabel}
+                  color={shareSummary.runnerLabel === "ALL AGENTS" ? "#22c55e" : "#a78bfa"}
+                />
+                {shareSummary.runnerChips.map((runner) => (
+                  <ScopeChip key={`runner:${runner}`} label={runner} color="#a78bfa" />
+                ))}
+              </View>
+            </View>
+          ) : null}
+          {gitProviders ? (
+            <View style={styles.machineSummarySection}>
+              <View style={styles.scopeRow}>
+                <ScopeChip
+                  label={gitProviders.github ? "GITHUB LINKED" : "GITHUB OFF"}
+                  color={gitProviders.github ? "#22c55e" : c.textMuted}
+                />
+                <ScopeChip
+                  label={gitProviders.gitlab ? "GITLAB LINKED" : "GITLAB OFF"}
+                  color={gitProviders.gitlab ? "#f97316" : c.textMuted}
+                />
+              </View>
+            </View>
+          ) : null}
+          {projectSummary && projectSummary.total > 0 ? (
+            <View style={styles.machineSummarySection}>
+              <View style={styles.scopeRow}>
+                <ScopeChip label={`PROJECTS ${projectSummary.total}`} color="#38bdf8" />
+                {projectSummary.names.map((project) => (
+                  <ScopeChip key={`machine-project:${device.id}:${project}`} label={project} color="#38bdf8" />
+                ))}
+                {projectSummary.total > projectSummary.names.length ? (
+                  <ScopeChip
+                    label={`+${projectSummary.total - projectSummary.names.length}`}
+                    color="#38bdf8"
+                  />
+                ) : null}
+              </View>
+            </View>
           ) : null}
         </View>
         <View style={styles.cardRight}>
@@ -470,89 +713,93 @@ function DeviceCard({
                 </Text>
               </Pressable>
             )}
-            <Pressable style={[styles.menuActionBtn, { backgroundColor: c.error + "12" }]} onPress={shutdownAgent}>
-              <Text style={[styles.menuActionText, { color: c.error }]}>Shutdown Agent</Text>
-            </Pressable>
+            {!device.isGuest ? (
+              <Pressable style={[styles.menuActionBtn, { backgroundColor: c.error + "12" }]} onPress={shutdownAgent}>
+                <Text style={[styles.menuActionText, { color: c.error }]}>Shutdown Agent</Text>
+              </Pressable>
+            ) : null}
           </View>
         </View>
       )}
 
       <View style={styles.cardBottom}>
-        {isActive && (
+        {isActive ? (
           <View style={[styles.activeLabel, { backgroundColor: c.accent + "22" }]}>
             <Text style={[styles.activeLabelText, { color: c.accent }]}>Active</Text>
           </View>
-        )}
-        <Pressable
-          style={[styles.pingBtn, { backgroundColor: c.bgCardElevated || c.bg }]}
-          onPress={() => handlePing()}
-          disabled={pingState.pinging}
-        >
-          <Text style={[styles.pingBtnText, {
-            color: pingState.pinging ? c.textMuted
-              : pingState.ok === true ? c.success
-              : pingState.ok === false ? c.error
-              : c.textSecondary,
-          }]}>
-            {pingState.pinging ? "..." :
-              pingState.ok === true ? `${pingState.rttMs}ms` :
-              pingState.ok === false ? "unreachable" : "ping"}
-          </Text>
-        </Pressable>
-        {/* Stale state — Convex says live but we just failed to
-            reach it. Most actionable: try again. The user almost
-            never wants Wake here (the machine is "live" per
-            Convex), so we hide those entries to keep the action
-            row honest. */}
-        {isStale && (
+        ) : null}
+        <View style={styles.cardActions}>
           <Pressable
-            style={[styles.pingBtn, { backgroundColor: "#eab30822", borderWidth: 1, borderColor: "#eab30866" }]}
-            onPress={onSelect}
+            style={[styles.pingBtn, { backgroundColor: c.bgCardElevated || c.bg }]}
+            onPress={() => handlePing()}
+            disabled={pingState.pinging}
           >
-            <Text style={[styles.pingBtnText, { color: "#eab308", fontWeight: "700" }]}>Try to connect</Text>
+            <Text style={[styles.pingBtnText, {
+              color: pingState.pinging ? c.textMuted
+                : pingState.ok === true ? c.success
+                : pingState.ok === false ? c.error
+                : c.textSecondary,
+            }]}>
+              {pingState.pinging ? "..." :
+                pingState.ok === true ? `${pingState.rttMs}ms` :
+                pingState.ok === false ? "unreachable" : "ping"}
+            </Text>
           </Pressable>
-        )}
-        {/* Offline state — Convex agrees the machine isn't reachable.
-            Useful actions: WoL the box, or get docs to make it
-            always-on so it doesn't disappear next time. */}
-        {isOffline && (
-          <>
+          {(isStale || isOffline) && (
             <Pressable
-              style={[styles.pingBtn, { backgroundColor: c.accent + "22", borderWidth: 1, borderColor: c.accent + "55" }]}
+              style={[
+                styles.pingBtn,
+                {
+                  backgroundColor: isStale ? "#eab30822" : c.accent + "22",
+                  borderWidth: 1,
+                  borderColor: isStale ? "#eab30866" : c.accent + "55",
+                },
+              ]}
               onPress={onSelect}
             >
-              <Text style={[styles.pingBtnText, { color: c.accent, fontWeight: "700" }]}>Try to connect</Text>
+              <Text
+                style={[
+                  styles.pingBtnText,
+                  { color: isStale ? "#eab308" : c.accent, fontWeight: "700" },
+                ]}
+              >
+                Connect
+              </Text>
             </Pressable>
-            <Pressable
-              style={[styles.pingBtn, { backgroundColor: "#f59e0b18" }]}
-              onPress={() => Alert.alert(
-                "Wake Machine",
-                "Send a Wake-on-LAN magic packet to power on this machine.\n\n" +
-                "Requirements:\n" +
-                "• WoL enabled in BIOS\n" +
-                "• Wired ethernet (most WiFi cards don't support WoL)\n" +
-                "• Same network or Tailscale\n\n" +
-                "For always-on setup: yaver.io/manuals/auto-boot",
-                [{ text: "OK" }]
-              )}
-            >
-              <Text style={[styles.pingBtnText, { color: "#f59e0b" }]}>Wake</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.pingBtn, { backgroundColor: "#6366f118" }]}
-              onPress={() => Alert.alert(
-                "Always-on Setup",
-                "1. Enable auto-boot in BIOS\n" +
-                "2. Run: yaver serve --install-systemd\n" +
-                "3. Run: sudo loginctl enable-linger $USER\n\n" +
-                "Full guide: yaver.io/manuals/auto-boot",
-                [{ text: "OK" }]
-              )}
-            >
-              <Text style={[styles.pingBtnText, { color: c.accent }]}>Setup</Text>
-            </Pressable>
-          </>
-        )}
+          )}
+          {isOffline && (
+            <>
+              <Pressable
+                style={[styles.pingBtn, { backgroundColor: "#f59e0b18" }]}
+                onPress={() => Alert.alert(
+                  "Wake Machine",
+                  "Send a Wake-on-LAN magic packet to power on this machine.\n\n" +
+                  "Requirements:\n" +
+                  "• WoL enabled in BIOS\n" +
+                  "• Wired ethernet (most WiFi cards don't support WoL)\n" +
+                  "• Same network or Tailscale\n\n" +
+                  "For always-on setup: yaver.io/manuals/auto-boot",
+                  [{ text: "OK" }]
+                )}
+              >
+                <Text style={[styles.pingBtnText, { color: "#f59e0b" }]}>Wake</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.pingBtn, { backgroundColor: "#6366f118" }]}
+                onPress={() => Alert.alert(
+                  "Always-on Setup",
+                  "1. Enable auto-boot in BIOS\n" +
+                  "2. Run: yaver serve --install-systemd\n" +
+                  "3. Run: sudo loginctl enable-linger $USER\n\n" +
+                  "Full guide: yaver.io/manuals/auto-boot",
+                  [{ text: "OK" }]
+                )}
+              >
+                <Text style={[styles.pingBtnText, { color: c.accent }]}>Setup</Text>
+              </Pressable>
+            </>
+          )}
+        </View>
       </View>
     </Pressable>
   );
@@ -1085,14 +1332,31 @@ const styles = StyleSheet.create({
   cardInfo: { flex: 1, marginRight: 12 },
   deviceName: { fontSize: 16, fontWeight: "600" },
   deviceMeta: { fontSize: 13, marginTop: 4 },
+  scopeSection: { marginTop: 8, gap: 6 },
+  machineSummarySection: { marginTop: 10 },
+  scopeRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  scopeChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  scopeChipText: { fontSize: 10, fontWeight: "700" },
   cardRight: { alignItems: "flex-end" },
   onlineDot: { width: 8, height: 8, borderRadius: 4, marginBottom: 4 },
   lastSeen: { fontSize: 11 },
   cardBottom: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+    flexDirection: "column",
+    alignItems: "flex-start",
     marginTop: 10,
+    gap: 8,
+  },
+  cardActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "flex-start",
+    gap: 8,
+    width: "100%",
   },
   activeLabel: {
     alignSelf: "flex-start",
@@ -1105,7 +1369,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 6,
-    marginLeft: "auto",
+    maxWidth: "100%",
   },
   pingBtnText: { fontSize: 12, fontWeight: "600" },
   runnerBadges: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
@@ -1118,7 +1382,7 @@ const styles = StyleSheet.create({
   killBtn: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, marginLeft: 8 },
   killAllBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, alignSelf: "flex-start", marginTop: 4 },
   killBtnText: { fontSize: 12, fontWeight: "600" },
-  menuActions: { marginTop: 8, paddingTop: 8, borderTopWidth: 1 },
+  menuActions: { marginTop: 8, paddingTop: 8, borderTopWidth: 1, flexDirection: "row", flexWrap: "wrap", gap: 8 },
   menuActionBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, alignSelf: "flex-start" },
   menuActionText: { fontSize: 12, fontWeight: "600" },
 });
