@@ -112,7 +112,6 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
   const [todoCount, setTodoCount] = useState(0);
   const [todoItems, setTodoItems] = useState<TodoItemSummary[]>([]);
   const [showTodoList, setShowTodoList] = useState(false);
-  const [projectName, setProjectName] = useState<string>(config?.projectName || '');
   const [todoDone, setTodoDone] = useState(0);
   const [todoTotal, setTodoTotal] = useState(0);
   const [hasDevServer, setHasDevServer] = useState(false);
@@ -123,6 +122,7 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
   const config = YaverFeedback.getConfig();
   const agentUrl = agentUrlProp || config?.agentUrl;
   const authToken = authTokenProp || config?.authToken;
+  const [projectName, setProjectName] = useState<string>(config?.projectName || '');
 
   const addOutput = useCallback((line: string) => {
     setOutput((prev) => [...prev.slice(-20), line]);

@@ -16,8 +16,8 @@ export default function ProfileScreen() {
     <SafeAreaView style={s.container}>
       <View style={s.header}>
         <View style={s.avatar}><Text style={s.avatarText}>{user?.name?.[0] ?? 'J'}</Text></View>
-        <Text style={s.name}>{user?.name ?? 'Jane Developer'}</Text>
-        <Text style={s.email}>{user?.email ?? 'jane@acme.dev'}</Text>
+        <Text style={s.name}>{user?.name ?? 'Bento Chef'}</Text>
+        <Text style={s.email}>{user?.email ?? 'chef@bento.app'}</Text>
       </View>
       {['Orders', 'Wishlist', 'Addresses', 'Settings'].map((item) => (
         <TouchableOpacity key={item} style={s.row}>

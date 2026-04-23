@@ -5,7 +5,7 @@ interface LoginResult {
 }
 
 class AuthService {
-  private baseUrl = 'https://api.acme-store.dev';
+  private baseUrl = 'https://api.bento.dev';
 
   async login(email: string, password: string): Promise<LoginResult> {
     try {

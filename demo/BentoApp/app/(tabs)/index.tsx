@@ -7,7 +7,7 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={s.container}>
       <View style={s.header}>
-        <Text style={s.title}>Acme Store</Text>
+        <Text style={s.title}>Bento</Text>
         <View style={s.avatar} />
       </View>
 

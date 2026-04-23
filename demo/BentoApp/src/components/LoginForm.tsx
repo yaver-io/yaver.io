@@ -12,6 +12,22 @@ interface LoginFormProps {
   onLogin: (email: string, password: string) => Promise<void>;
 }
 
+function validateCredentials(email: string, password: string): string | null {
+  const trimmedEmail = email.trim();
+
+  if (!trimmedEmail) {
+    return 'Email is required';
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+    return 'Enter a valid email address';
+  }
+  if (!password) {
+    return 'Password is required';
+  }
+
+  return null;
+}
+
 export function LoginForm({ onLogin }: LoginFormProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -19,12 +35,16 @@ export function LoginForm({ onLogin }: LoginFormProps) {
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async () => {
+    const validationError = validateCredentials(email, password);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
     setError(null);
     setLoading(true);
-
-    // TODO: add input validation — email format, empty fields
     try {
-      await onLogin(email, password);
+      await onLogin(email.trim(), password);
     } catch (err: any) {
       setError(err.message || 'Login failed');
     } finally {
@@ -47,7 +67,10 @@ export function LoginForm({ onLogin }: LoginFormProps) {
       <TextInput
         style={styles.input}
         value={email}
-        onChangeText={setEmail}
+        onChangeText={(value) => {
+          setEmail(value);
+          if (error) setError(null);
+        }}
         placeholder="you@example.com"
         placeholderTextColor="#bbb"
         keyboardType="email-address"
@@ -59,7 +82,10 @@ export function LoginForm({ onLogin }: LoginFormProps) {
       <TextInput
         style={styles.input}
         value={password}
-        onChangeText={setPassword}
+        onChangeText={(value) => {
+          setPassword(value);
+          if (error) setError(null);
+        }}
         placeholder="Enter your password"
         placeholderTextColor="#bbb"
         secureTextEntry
