@@ -21,7 +21,7 @@
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.18.6</string>
+	<string>1.18.7</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>CFBundleURLTypes</key>
@@ -34,7 +34,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>224</string>
+	<string>229</string>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>airmail</string>
@@ -83,13 +83,13 @@
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Allow $(PRODUCT_NAME) to access your calendars</string>
 	<key>NSCalendarsUsageDescription</key>
-	<string>Apps running inside Yaver may request calendar access for scheduling and event management features.</string>
+	<string>Allow $(PRODUCT_NAME) to access your calendars</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Yaver needs camera access to take photos for tasks.</string>
 	<key>NSContactsUsageDescription</key>
-	<string>Apps running inside Yaver may request contacts access to look up or manage contact information.</string>
+	<string>Allow $(PRODUCT_NAME) to access your contacts</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>Allow $(PRODUCT_NAME) to access your Face ID biometric data.</string>
+	<string>Allow $(PRODUCT_NAME) to use Face ID</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Yaver discovers your Mac on the same Wi-Fi so your phone can connect directly for lowest-latency, end-to-end encrypted control of your AI coding sessions.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
