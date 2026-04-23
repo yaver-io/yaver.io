@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
@@ -170,7 +171,7 @@ func runDeviceCodeAuth(convexURL string) (string, error) {
 	}
 	ensurePendingAuthBackgroundWaiter(convexURL)
 
-	authURL := "https://yaver.io/auth/device?code=" + dcResp.UserCode
+	authURL := deviceCodeAuthURL(dcResp.UserCode, convexURL)
 	meta := buildDeviceCodeRequest()
 	machineLabel := strings.TrimSpace(meta.MachineName)
 	if machineLabel == "" {
@@ -275,12 +276,22 @@ func obtainOrResumeDeviceCode(convexURL string) (*deviceCodeResponse, bool, erro
 	_ = savePendingAuth(&pendingAuth{
 		DeviceCode: dcResp.DeviceCode,
 		UserCode:   dcResp.UserCode,
-		URL:        "https://yaver.io/auth/device?code=" + dcResp.UserCode,
+		URL:        deviceCodeAuthURL(dcResp.UserCode, convexURL),
 		ConvexURL:  convexURL,
 		ExpiresAt:  dcResp.ExpiresAt,
 		CreatedAt:  time.Now().UnixMilli(),
 	})
 	return &dcResp, false, nil
+}
+
+func deviceCodeAuthURL(userCode, convexURL string) string {
+	q := url.Values{}
+	q.Set("code", userCode)
+	convexURL = strings.TrimSpace(convexURL)
+	if convexURL != "" {
+		q.Set("convex", convexURL)
+	}
+	return "https://yaver.io/auth/device?" + q.Encode()
 }
 
 // pollUntilAuthorized blocks on a device code, respecting both the

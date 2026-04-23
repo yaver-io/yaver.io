@@ -26,12 +26,15 @@ const authorizeTimeoutMessage = "Authorization timed out. If the terminal has st
 export default function DeviceCodeClient({
   initialCode = "",
   initialDeviceInfo = null,
+  initialConvexUrl = CONVEX_URL,
 }: {
   initialCode?: string;
   initialDeviceInfo?: DeviceCodeInfo;
+  initialConvexUrl?: string;
 }) {
   const params = useSearchParams();
   const prefillCode = params.get("code") || initialCode;
+  const convexUrl = params.get("convex") || initialConvexUrl;
   const alreadyAuthorized = params.get("authorized") === "1";
   const providerHint = (params.get("provider") || "").toLowerCase();
   const [deviceInfo, setDeviceInfo] = useState<DeviceCodeInfo>(initialDeviceInfo);
@@ -53,7 +56,7 @@ export default function DeviceCodeClient({
   useEffect(() => {
     const stored = localStorage.getItem("yaver_auth_token");
     if (stored) {
-      fetch(`${CONVEX_URL}/auth/validate`, {
+      fetch(`${convexUrl}/auth/validate`, {
         headers: { Authorization: `Bearer ${stored}` },
       })
         .then((res) => {
@@ -64,7 +67,7 @@ export default function DeviceCodeClient({
     } else {
       setChecking(false);
     }
-  }, []);
+  }, [convexUrl]);
 
   useEffect(() => {
     if (!prefillCode) return;
@@ -73,7 +76,7 @@ export default function DeviceCodeClient({
     let cancelled = false;
     const poll = async () => {
       try {
-        const res = await fetch(`${CONVEX_URL}/auth/device-code/info?user_code=${encodeURIComponent(prefillCode)}`, {
+        const res = await fetch(`${convexUrl}/auth/device-code/info?user_code=${encodeURIComponent(prefillCode)}`, {
           cache: "no-store",
         });
         if (!res.ok) {
@@ -104,7 +107,7 @@ export default function DeviceCodeClient({
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [prefillCode, status]);
+  }, [convexUrl, prefillCode, status]);
 
   useEffect(() => {
     const hintedProvider = providerHint || deviceInfo?.preferredProvider || "";
@@ -141,6 +144,7 @@ export default function DeviceCodeClient({
     const qs = new URLSearchParams({ client: "web" });
     const returnParams = new URLSearchParams();
     if (prefillCode) returnParams.set("code", prefillCode);
+    if (convexUrl) returnParams.set("convex", convexUrl);
     if (providerHint) returnParams.set("provider", providerHint);
     const returnQuery = returnParams.toString();
     const returnUrl = `/auth/device${returnQuery ? `?${returnQuery}` : ""}`;
@@ -260,7 +264,7 @@ export default function DeviceCodeClient({
           Authorization: `Bearer ${authToken}`,
         },
         signal: controller.signal,
-        body: JSON.stringify({ userCode: formatted }),
+        body: JSON.stringify({ userCode: formatted, convexUrl }),
       });
       window.clearTimeout(timeout);
 

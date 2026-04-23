@@ -1,15 +1,16 @@
 import DeviceCodeClient, { type DeviceCodeInfo } from "./DeviceCodeClient";
+import { CONVEX_URL } from "@/lib/constants";
 
 export const dynamic = "force-dynamic";
 
-function getConvexUrl(): string {
-  return process.env.NEXT_PUBLIC_CONVEX_SITE_URL || "https://perceptive-minnow-557.eu-west-1.convex.site";
+function getConvexUrl(searchParam?: string): string {
+  return searchParam || CONVEX_URL;
 }
 
-async function getInitialDeviceInfo(code: string): Promise<DeviceCodeInfo> {
+async function getInitialDeviceInfo(code: string, convexUrl: string): Promise<DeviceCodeInfo> {
   if (!code) return null;
   try {
-    const res = await fetch(`${getConvexUrl()}/auth/device-code/info?user_code=${encodeURIComponent(code)}`, {
+    const res = await fetch(`${convexUrl}/auth/device-code/info?user_code=${encodeURIComponent(code)}`, {
       cache: "no-store",
     });
     if (!res.ok) {
@@ -38,10 +39,11 @@ async function getInitialDeviceInfo(code: string): Promise<DeviceCodeInfo> {
 export default async function DeviceCodePage({
   searchParams,
 }: {
-  searchParams: Promise<{ code?: string }>;
+  searchParams: Promise<{ code?: string; convex?: string }>;
 }) {
   const params = await searchParams;
   const initialCode = params.code || "";
-  const initialDeviceInfo = await getInitialDeviceInfo(initialCode);
-  return <DeviceCodeClient initialCode={initialCode} initialDeviceInfo={initialDeviceInfo} />;
+  const convexUrl = getConvexUrl(params.convex);
+  const initialDeviceInfo = await getInitialDeviceInfo(initialCode, convexUrl);
+  return <DeviceCodeClient initialCode={initialCode} initialDeviceInfo={initialDeviceInfo} initialConvexUrl={convexUrl} />;
 }
