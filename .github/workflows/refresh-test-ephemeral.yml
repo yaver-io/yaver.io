@@ -21,13 +21,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Hetzner preflight (persistent)
-        env:
-          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
-          HCLOUD_SSH_PRIVATE_KEY: ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
-          HETZNER_TEST_SERVER_ID: ${{ secrets.HETZNER_TEST_SERVER_ID }}
-          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
-        run: ./ci/hcloud/preflight.sh persistent
+      # Skip ci/hcloud/preflight.sh on purpose — it calls the Hetzner
+      # API which needs a valid HCLOUD_TOKEN, and the token occasionally
+      # expires out from under the CI secret. For refresh we only care
+      # that SSH works; if the box is down, the SSH step fails loudly
+      # with "connection refused" which is the right signal anyway.
 
       # Download the latest yaver .deb from the repo's GitHub releases and
       # install it. Idempotent — dpkg -i on an already-current version is
