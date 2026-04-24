@@ -386,7 +386,7 @@ export default function DashboardPage() {
   const [invitesBusy, setInvitesBusy] = useState<string | null>(null);
   const [reauthBusy, setReauthBusy] = useState<string | null>(null);
   const [reauthMsg, setReauthMsg] = useState<{ deviceId: string; ok: boolean; text: string } | null>(null);
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "tools" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "domains">("home");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "tools" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "domains">("devices");
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [connectDiagnostics, setConnectDiagnostics] = useState<ConnectAttemptDiagnostic[]>([]);
@@ -666,7 +666,7 @@ export default function DashboardPage() {
   const visibleDevices = devices;
   const selectedPreviewTarget = mobileWorkers.find((d) => d.id === previewTargetId) || null;
   const tabs: { id: typeof activeTab; label: string; icon: string; badge?: number }[] = [
-    { id: "home", label: "Home", icon: "\uD83C\uDFE0" },
+    { id: "devices", label: "Devices", icon: "\uD83D\uDCBB" },
     { id: "chat", label: "Chat", icon: "\uD83D\uDCAC" },
     { id: "projects", label: "Projects", icon: "\uD83D\uDCC1" },
     { id: "vibe", label: "Vibe", icon: "\u2328\uFE0F" },
@@ -731,11 +731,10 @@ export default function DashboardPage() {
           {/* Nav */}
           <nav className="flex flex-col gap-[2px]">
             {([
-              { id: "home",     label: "Home",     icon: "⌂" },
+              { id: "devices",  label: "Devices",  icon: "💻" },
               { id: "chat",     label: "Chat",     icon: "💬" },
               { id: "vibe",     label: "Vibe",     icon: "⌨️" },
               { id: "projects", label: "Projects", icon: "📁" },
-              { id: "devices",  label: "Devices",  icon: "💻" },
               { id: "git",      label: "Git",      icon: "⎇" },
               { id: "builds",   label: "Builds",   icon: "🛠️" },
               { id: "preview",  label: "Hot Reload", icon: "📱" },
@@ -1256,6 +1255,7 @@ export default function DashboardPage() {
                 signedInEmail={user?.email}
                 signedInProvider={undefined}
                 token={token}
+                onOpen={connectToDevice}
               />
             </div>
           ) : activeTab === "git" ? (

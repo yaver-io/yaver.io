@@ -61,6 +61,22 @@ function devicePlatformLabel(device: Pick<Device, "name" | "platform" | "host">)
   return base;
 }
 
+function formatLastSeen(value: string | undefined): string {
+  if (!value) return "unknown";
+  const ts = Date.parse(value);
+  if (Number.isNaN(ts)) return value;
+  const diff = Math.max(0, Date.now() - ts);
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return sec <= 5 ? "just now" : `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day}d ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
 function formatRunnerChipLabel(runner: string): string {
   const cleaned = String(runner || "").trim();
   if (!cleaned) return cleaned;
@@ -108,6 +124,14 @@ interface DevicesViewProps {
   signedInEmail?: string;
   signedInProvider?: string;
   token?: string | null;
+  /**
+   * Connect/open this device as the active workspace. Wired through to the
+   * dashboard's `connectToDevice` so the prominent "Open Workspace" CTA on
+   * each card flips the dashboard into the chat/vibe surface for that
+   * machine in one click — instead of users hunting for the small dot in
+   * the sidebar.
+   */
+  onOpen?: (device: Device) => void;
 }
 
 /**
@@ -163,7 +187,7 @@ function usePrimaryDeviceId(token: string | null | undefined): {
   return { primaryDeviceId, setPrimaryDevice };
 }
 
-export default function DevicesView({ devices, onRefresh, signedInEmail, signedInProvider, token }: DevicesViewProps) {
+export default function DevicesView({ devices, onRefresh, signedInEmail, signedInProvider, token, onOpen }: DevicesViewProps) {
   const { primaryDeviceId, setPrimaryDevice } = usePrimaryDeviceId(token);
   return (
     <div className="mb-6">
@@ -254,7 +278,7 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                   </span>
                 </div>
                 <p className="text-sm text-surface-500">
-                  {devicePlatformLabel(device)} -- Last seen {device.lastSeen}
+                  {devicePlatformLabel(device)} · Last seen {formatLastSeen(device.lastSeen)}
                 </p>
                 {device.edgeProfile ? (
                   <p className="text-xs text-surface-500">
@@ -298,9 +322,6 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                 ) : null}
                 {shareSummary && shareSummary.runnerChips.length > 0 ? (
                   <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                    <span className="rounded border border-violet-500/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-violet-200">
-                      Agents
-                    </span>
                     {shareSummary.runnerChips.map((runner) => (
                       <span key={`${device.id}:runner:${runner}`} className="rounded border border-violet-500/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-violet-200">
                         {runner}
@@ -311,20 +332,32 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                 <p className="text-xs text-surface-600 font-mono">
                   {device.id.substring(0, 8)}...
                 </p>
-                {!device.isGuest && token ? (
-                  <button
-                    onClick={async () => {
-                      try {
-                        await setPrimaryDevice(primaryDeviceId === device.id ? null : device.id);
-                      } catch (e: any) {
-                        alert(`Failed to update primary: ${e?.message ?? e}`);
-                      }
-                    }}
-                    className="mt-1 text-xs text-indigo-400 hover:text-indigo-300"
-                  >
-                    {primaryDeviceId === device.id ? "Unset primary" : "Set as primary"}
-                  </button>
-                ) : null}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {onOpen && device.online ? (
+                    <button
+                      onClick={() => onOpen(device)}
+                      className="inline-flex items-center gap-1.5 rounded-md bg-indigo-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-400"
+                      title="Connect to this machine and start working on it"
+                    >
+                      <span aria-hidden>⌨️</span>
+                      Open Workspace
+                    </button>
+                  ) : null}
+                  {!device.isGuest && token ? (
+                    <button
+                      onClick={async () => {
+                        try {
+                          await setPrimaryDevice(primaryDeviceId === device.id ? null : device.id);
+                        } catch (e: any) {
+                          alert(`Failed to update primary: ${e?.message ?? e}`);
+                        }
+                      }}
+                      className="text-xs text-indigo-400 hover:text-indigo-300"
+                    >
+                      {primaryDeviceId === device.id ? "Unset primary" : "Set as primary"}
+                    </button>
+                  ) : null}
+                </div>
               </div>
             </div>
             );
