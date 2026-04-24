@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
   agentClient,
@@ -45,11 +46,11 @@ export default function GitView() {
 
   const changedFiles = useMemo(() => {
     const next = [
-      ...(gitStatus?.staged?.map((item) => item.path) || []),
-      ...(gitStatus?.modified?.map((item) => item.path) || []),
-      ...(gitStatus?.untracked?.map((item) => item.path) || []),
+      ...(gitStatus?.staged?.map((item) => ({ path: item.path, kind: "staged" as const })) || []),
+      ...(gitStatus?.modified?.map((item) => ({ path: item.path, kind: "modified" as const })) || []),
+      ...(gitStatus?.untracked?.map((item) => ({ path: item.path, kind: "untracked" as const })) || []),
     ];
-    return [...new Set(next)];
+    return next.filter((item, index) => next.findIndex((candidate) => candidate.path === item.path) === index);
   }, [gitStatus]);
 
   const filteredProviderRepos = useMemo(() => {
@@ -266,162 +267,28 @@ export default function GitView() {
 
   return (
     <div className="space-y-5">
-      <header className="rounded-3xl border border-surface-800 bg-surface-900/60 p-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h2 className="text-xl font-semibold text-surface-100">Git Control</h2>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-surface-400">
-              Traverse repos, clone onto the remote machine, and operate project Git state from the control plane. Provider tokens stay in the Yaver vault on that machine, not in Convex.
-            </p>
-          </div>
-          <button
-            onClick={() => void autoDetectProviders()}
-            className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-500/15"
-          >
-            Detect from Dev Machine
-          </button>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-surface-800 bg-surface-900/60 p-5">
+        <div>
+          <h2 className="text-xl font-semibold text-surface-100">Git</h2>
+          <p className="mt-1 text-sm text-surface-400">
+            See which repos live on this machine, clone more from remotes, and keep them in sync.
+          </p>
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <div className="rounded-2xl border border-surface-800 bg-surface-950/70 p-3">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Vault</div>
-            <div className="mt-2 text-sm text-surface-300">GitHub and GitLab tokens are stored only on the remote machine.</div>
-          </div>
-          <div className="rounded-2xl border border-surface-800 bg-surface-950/70 p-3">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Clone</div>
-            <div className="mt-2 text-sm text-surface-300">Browsing and cloning run on the remote machine, so project roots appear immediately in Yaver.</div>
-          </div>
-          <div className="rounded-2xl border border-surface-800 bg-surface-950/70 p-3">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Project Scope</div>
-            <div className="mt-2 text-sm text-surface-300">Every branch, diff, commit, push, and checkout action is tied to the selected project path.</div>
-          </div>
-        </div>
-      </header>
+        <button
+          onClick={() => void autoDetectProviders()}
+          className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-500/15"
+        >
+          Detect Providers
+        </button>
+      </div>
 
-      <div className="grid gap-5 xl:grid-cols-[360px,minmax(0,1fr)]">
+      <div className="grid gap-5 xl:grid-cols-[320px,minmax(0,1fr)]">
         <aside className="space-y-5">
           <section className="rounded-3xl border border-surface-800 bg-surface-900/50 p-4">
-            <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Providers</div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => setManualProvider("github")}
-                className="rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600"
-              >
-                GitHub Token
-              </button>
-              <button
-                onClick={() => setManualProvider("gitlab")}
-                className="rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600"
-              >
-                GitLab Token
-              </button>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Repos On This Machine</div>
+              <span className="text-xs text-surface-500">{projects.length}</span>
             </div>
-            {manualProvider ? (
-              <div className="mt-3 space-y-2">
-                <div className="text-[11px] leading-5 text-surface-500">
-                  {manualProvider === "github"
-                    ? "Use a GitHub token with repo access for private repositories."
-                    : "Use a GitLab token with api scope for repo traversal and clone."}
-                </div>
-                <div className="flex gap-2">
-                  <input
-                    type="password"
-                    value={providerToken}
-                    onChange={(event) => setProviderToken(event.target.value)}
-                    placeholder={`${manualProvider} token`}
-                    className="flex-1 rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-sm text-surface-100 outline-none focus:border-surface-500"
-                  />
-                  <button
-                    onClick={() => void saveProviderToken()}
-                    disabled={!providerToken.trim()}
-                    className="rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600 disabled:opacity-40"
-                  >
-                    Save
-                  </button>
-                </div>
-              </div>
-            ) : null}
-            <div className="mt-4 space-y-3">
-              {providers.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-surface-800 bg-surface-950/70 p-4 text-sm text-surface-400">
-                  No git provider linked yet. Auto-detect uses remote `gh` / `glab` auth, or you can add a token manually and keep it in the machine vault.
-                </div>
-              ) : providers.map((provider) => (
-                <div key={provider.host} className="rounded-2xl border border-surface-800 bg-surface-950/70 p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-semibold text-surface-100">{provider.username}</div>
-                      <div className="mt-1 text-[11px] text-surface-500">
-                        {provider.provider} · {provider.host}{provider.hasSsh ? " · SSH" : " · HTTPS"}
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => void toggleProviderRepos(provider.host)}
-                        className="rounded-lg border border-surface-700 px-2.5 py-1.5 text-[11px] text-surface-300 hover:border-surface-600"
-                      >
-                        {repoBrowserHost === provider.host ? "Hide" : "Repos"}
-                      </button>
-                      <button
-                        onClick={() => {
-                          setProviderToken("");
-                          setManualProvider(provider.provider as "github" | "gitlab");
-                        }}
-                        className="rounded-lg border border-surface-700 px-2.5 py-1.5 text-[11px] text-surface-300 hover:border-surface-600"
-                      >
-                        Update
-                      </button>
-                      <button
-                        onClick={() => void removeProvider(provider.host)}
-                        className="rounded-lg border border-red-500/30 px-2.5 py-1.5 text-[11px] text-red-300 hover:bg-red-500/10"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  </div>
-                  {repoBrowserHost === provider.host ? (
-                    <div className="mt-3 border-t border-surface-800 pt-3">
-                      <input
-                        value={providerSearch}
-                        onChange={(event) => setProviderSearch(event.target.value)}
-                        placeholder="search repos"
-                        className="w-full rounded-xl border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-100 outline-none focus:border-surface-500"
-                      />
-                      <div className="mt-3 max-h-96 space-y-2 overflow-auto">
-                        {filteredProviderRepos.map((repo) => (
-                          <div key={repo.fullName} className="rounded-xl border border-surface-800 bg-surface-900/60 p-3">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <div className="truncate text-sm font-semibold text-surface-100">{repo.fullName}</div>
-                                <div className="mt-1 flex flex-wrap gap-1.5">
-                                  {repo.private ? <MiniPill>private</MiniPill> : null}
-                                  {repo.language ? <MiniPill>{repo.language}</MiniPill> : null}
-                                </div>
-                                {repo.description ? <div className="mt-2 text-[11px] leading-5 text-surface-500">{repo.description}</div> : null}
-                              </div>
-                              <button
-                                onClick={() => void cloneRemoteRepo(repo)}
-                                className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-100 hover:bg-emerald-500/15"
-                              >
-                                Clone
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                        {filteredProviderRepos.length === 0 ? (
-                          <div className="rounded-xl border border-surface-800 bg-surface-900/60 p-3 text-sm text-surface-500">
-                            No repos found for this provider.
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="rounded-3xl border border-surface-800 bg-surface-900/50 p-4">
-            <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Projects on Remote Machine</div>
             <div className="space-y-2">
               {projects.map((project) => (
                 <button
@@ -448,6 +315,143 @@ export default function GitView() {
               ) : null}
             </div>
           </section>
+
+          <section className="rounded-3xl border border-surface-800 bg-surface-900/50 p-4">
+            <details open>
+              <summary className="cursor-pointer list-none">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Clone From Remotes</div>
+                    <div className="mt-1 text-xs text-surface-500">Link GitHub or GitLab when you want to browse remote repos and clone them onto this machine.</div>
+                  </div>
+                  <span className="rounded-full border border-surface-700 px-2 py-1 text-[10px] text-surface-400">
+                    {providers.length} linked
+                  </span>
+                </div>
+              </summary>
+
+              <div className="mt-4 space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => setManualProvider("github")}
+                    className="rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600"
+                  >
+                    Add GitHub Token
+                  </button>
+                  <button
+                    onClick={() => setManualProvider("gitlab")}
+                    className="rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600"
+                  >
+                    Add GitLab Token
+                  </button>
+                </div>
+
+                {manualProvider ? (
+                  <div className="space-y-2 rounded-2xl border border-surface-800 bg-surface-950/70 p-3">
+                    <div className="text-[11px] leading-5 text-surface-500">
+                      {manualProvider === "github"
+                        ? "Use a GitHub token with repo access for private repositories."
+                        : "Use a GitLab token with api scope for repo traversal and clone."}
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        value={providerToken}
+                        onChange={(event) => setProviderToken(event.target.value)}
+                        placeholder={`${manualProvider} token`}
+                        className="flex-1 rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-sm text-surface-100 outline-none focus:border-surface-500"
+                      />
+                      <button
+                        onClick={() => void saveProviderToken()}
+                        disabled={!providerToken.trim()}
+                        className="rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600 disabled:opacity-40"
+                      >
+                        Save
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {providers.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-surface-800 bg-surface-950/70 p-4 text-sm text-surface-400">
+                    No git provider linked yet. Auto-detect uses remote `gh` or `glab` auth.
+                  </div>
+                ) : providers.map((provider) => (
+                  <div key={provider.host} className="rounded-2xl border border-surface-800 bg-surface-950/70 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-surface-100">{provider.username}</div>
+                        <div className="mt-1 text-[11px] text-surface-500">
+                          {provider.provider} · {provider.host}{provider.hasSsh ? " · SSH" : " · HTTPS"}
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => void toggleProviderRepos(provider.host)}
+                          className="rounded-lg border border-surface-700 px-2.5 py-1.5 text-[11px] text-surface-300 hover:border-surface-600"
+                        >
+                          {repoBrowserHost === provider.host ? "Hide Repos" : "Browse"}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setProviderToken("");
+                            setManualProvider(provider.provider as "github" | "gitlab");
+                          }}
+                          className="rounded-lg border border-surface-700 px-2.5 py-1.5 text-[11px] text-surface-300 hover:border-surface-600"
+                        >
+                          Update
+                        </button>
+                        <button
+                          onClick={() => void removeProvider(provider.host)}
+                          className="rounded-lg border border-red-500/30 px-2.5 py-1.5 text-[11px] text-red-300 hover:bg-red-500/10"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+
+                    {repoBrowserHost === provider.host ? (
+                      <div className="mt-3 border-t border-surface-800 pt-3">
+                        <input
+                          value={providerSearch}
+                          onChange={(event) => setProviderSearch(event.target.value)}
+                          placeholder="Search repos"
+                          className="w-full rounded-xl border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-100 outline-none focus:border-surface-500"
+                        />
+                        <div className="mt-3 max-h-80 space-y-2 overflow-auto">
+                          {filteredProviderRepos.map((repo) => (
+                            <div key={repo.fullName} className="rounded-xl border border-surface-800 bg-surface-900/60 p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="truncate text-sm font-semibold text-surface-100">{repo.fullName}</div>
+                                  <div className="mt-1 flex flex-wrap gap-1.5">
+                                    {repo.private ? <MiniPill>private</MiniPill> : null}
+                                    {repo.language ? <MiniPill>{repo.language}</MiniPill> : null}
+                                  </div>
+                                  {repo.description ? <div className="mt-2 text-[11px] leading-5 text-surface-500">{repo.description}</div> : null}
+                                </div>
+                                <button
+                                  onClick={() => void cloneRemoteRepo(repo)}
+                                  className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-100 hover:bg-emerald-500/15"
+                                >
+                                  Clone
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                          {filteredProviderRepos.length === 0 ? (
+                            <div className="rounded-xl border border-surface-800 bg-surface-900/60 p-3 text-sm text-surface-500">
+                              No repos found for this provider.
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </details>
+          </section>
         </aside>
 
         <section className="space-y-5">
@@ -469,21 +473,18 @@ export default function GitView() {
 
             {selectedProject ? (
               <>
-                <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr),260px]">
-                  <div className="rounded-2xl border border-surface-800 bg-surface-950/70 p-3">
-                    <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Git Actions</div>
+                <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr),220px]">
+                  <div className="rounded-2xl border border-surface-800 bg-surface-950/70 p-4">
+                    <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Sync With Remote</div>
                     <div className="flex flex-wrap gap-2">
-                      <button onClick={() => void runGitAction("pull")} className="rounded-lg border border-surface-700 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600">Pull</button>
-                      <button onClick={() => void runGitAction("push")} className="rounded-lg border border-surface-700 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600">Push</button>
-                      <button onClick={() => void runGitAction("stash")} className="rounded-lg border border-surface-700 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600">Stash</button>
-                      <button onClick={() => void runGitAction("stash-pop")} className="rounded-lg border border-surface-700 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600">Pop Stash</button>
-                      <button onClick={() => void runGitAction("revert-head")} disabled={gitCommits.length === 0} className="rounded-lg border border-red-500/30 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/10 disabled:opacity-40">Revert Last</button>
+                      <PrimaryButton onClick={() => void runGitAction("pull")}>Pull</PrimaryButton>
+                      <PrimaryButton onClick={() => void runGitAction("push")}>Push</PrimaryButton>
                     </div>
                     <div className="mt-3 flex gap-2">
                       <input
                         value={gitCommitMessage}
                         onChange={(event) => setGitCommitMessage(event.target.value)}
-                        placeholder="commit message"
+                        placeholder="Commit message"
                         className="flex-1 rounded-xl border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-100 outline-none focus:border-surface-500"
                       />
                       <button
@@ -491,52 +492,54 @@ export default function GitView() {
                         disabled={!gitCommitMessage.trim()}
                         className="rounded-xl border border-surface-700 bg-surface-900 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600 disabled:opacity-40"
                       >
-                        Commit All
+                        Commit
                       </button>
                     </div>
                   </div>
 
-                  <div className="rounded-2xl border border-surface-800 bg-surface-950/70 p-3">
-                    <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Branches</div>
-                    <div className="space-y-2">
-                      {gitBranches.slice(0, 24).map((branch) => (
-                        <button
-                          key={branch.name}
-                          onClick={() => void checkoutBranch(branch.name)}
-                          className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left ${
-                            branch.current
-                              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
-                              : "border-surface-800 bg-surface-900/60 text-surface-300 hover:border-surface-700"
-                          }`}
-                        >
-                          <span className="truncate text-xs font-medium">{branch.name}</span>
-                          <span className="text-[10px] uppercase tracking-[0.16em]">{branch.current ? "current" : "checkout"}</span>
-                        </button>
-                      ))}
-                    </div>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+                    <StatCard label="Remote Sync" value={`${gitStatus?.ahead || 0}↑ ${gitStatus?.behind || 0}↓`} sub="ahead / behind on current branch" />
+                    <StatCard
+                      label="Local State"
+                      value={gitStatus?.clean ? "Clean" : String(changedFiles.length)}
+                      sub={gitStatus?.clean ? "no local changes" : "changed files on this machine"}
+                    />
                   </div>
                 </div>
 
-                <div className="mt-4 grid gap-3 xl:grid-cols-[320px,minmax(0,1fr)]">
-                  <div className="rounded-2xl border border-surface-800 bg-surface-950/70 p-3">
-                    <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Working Tree</div>
-                    <div className="grid grid-cols-3 gap-2 text-xs text-surface-400">
-                      <div>staged: {gitStatus?.staged?.length || 0}</div>
-                      <div>modified: {gitStatus?.modified?.length || 0}</div>
-                      <div>untracked: {gitStatus?.untracked?.length || 0}</div>
+                <details className="mt-4 rounded-2xl border border-surface-800 bg-surface-950/70 p-4">
+                  <summary className="cursor-pointer list-none">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Local Changes</div>
+                        <div className="mt-1 text-sm text-surface-500">Inspect changed files and their diffs only when you need them.</div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 text-xs text-surface-400">
+                        <div>staged: {gitStatus?.staged?.length || 0}</div>
+                        <div>modified: {gitStatus?.modified?.length || 0}</div>
+                        <div>untracked: {gitStatus?.untracked?.length || 0}</div>
+                      </div>
                     </div>
-                    <div className="mt-3 space-y-2">
+                  </summary>
+
+                  <div className="mt-4 grid gap-3 xl:grid-cols-[280px,minmax(0,1fr)]">
+                    <div className="space-y-2">
                       {changedFiles.map((file) => (
                         <button
-                          key={file}
-                          onClick={() => setSelectedDiffFile(file)}
+                          key={file.path}
+                          onClick={() => setSelectedDiffFile(file.path)}
                           className={`w-full rounded-xl border px-3 py-2 text-left text-xs ${
-                            selectedDiffFile === file
+                            selectedDiffFile === file.path
                               ? "border-indigo-500/40 bg-indigo-500/10 text-indigo-100"
                               : "border-surface-800 bg-surface-900/60 text-surface-300 hover:border-surface-700"
                           }`}
                         >
-                          <span className="block truncate">{file}</span>
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="block truncate">{file.path}</span>
+                            <span className="rounded-full border border-surface-700 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-surface-400">
+                              {file.kind}
+                            </span>
+                          </div>
                         </button>
                       ))}
                       {changedFiles.length === 0 ? (
@@ -545,43 +548,88 @@ export default function GitView() {
                         </div>
                       ) : null}
                     </div>
-                  </div>
 
-                  <div className="rounded-2xl border border-surface-800 bg-[#08111a] p-3">
-                    <div className="mb-2 flex items-center justify-between gap-3">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">
-                        Diff {selectedDiffFile ? `· ${selectedDiffFile}` : ""}
-                      </div>
-                    </div>
-                    <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-xl border border-surface-800 bg-surface-950/80 p-3 font-mono text-[12px] leading-6 text-surface-200">
-                      {gitDiff || "No diff to show."}
-                    </pre>
-                  </div>
-                </div>
-
-                <div className="mt-4 rounded-2xl border border-surface-800 bg-surface-950/70 p-3">
-                  <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Recent Commits</div>
-                  <div className="space-y-2">
-                    {gitCommits.map((commit) => (
-                      <div key={commit.hash} className="rounded-xl border border-surface-800 bg-surface-900/60 p-3">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <div className="text-sm font-semibold text-surface-100">{commit.message}</div>
-                            <div className="mt-1 text-[11px] text-surface-500">
-                              {commit.shortHash} · {commit.author} · {new Date(commit.date).toLocaleString()}
-                            </div>
-                          </div>
-                          <MiniPill>{commit.filesChanged} files</MiniPill>
+                    <div className="rounded-2xl border border-surface-800 bg-[#08111a] p-3">
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">
+                          Diff {selectedDiffFile ? `· ${selectedDiffFile}` : ""}
                         </div>
                       </div>
-                    ))}
-                    {gitCommits.length === 0 ? (
-                      <div className="rounded-xl border border-dashed border-surface-800 bg-surface-900/50 p-3 text-sm text-surface-500">
-                        No commit history available for this project.
-                      </div>
-                    ) : null}
+                      <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-xl border border-surface-800 bg-surface-950/80 p-3 font-mono text-[12px] leading-6 text-surface-200">
+                        {gitDiff || "No diff to show."}
+                      </pre>
+                    </div>
                   </div>
-                </div>
+                </details>
+
+                <details className="mt-4 rounded-2xl border border-surface-800 bg-surface-950/70 p-4">
+                  <summary className="cursor-pointer list-none">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Advanced</div>
+                        <div className="mt-1 text-sm text-surface-500">Branches, stash, revert, and recent commit history.</div>
+                      </div>
+                      <MiniPill>{gitBranches.length} branches</MiniPill>
+                    </div>
+                  </summary>
+
+                  <div className="mt-4 grid gap-4 xl:grid-cols-[280px,minmax(0,1fr)]">
+                    <div className="space-y-4">
+                      <div className="rounded-2xl border border-surface-800 bg-surface-900/50 p-3">
+                        <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">More Actions</div>
+                        <div className="flex flex-wrap gap-2">
+                          <button onClick={() => void runGitAction("stash")} className="rounded-lg border border-surface-700 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600">Stash</button>
+                          <button onClick={() => void runGitAction("stash-pop")} className="rounded-lg border border-surface-700 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600">Pop Stash</button>
+                          <button onClick={() => void runGitAction("revert-head")} disabled={gitCommits.length === 0} className="rounded-lg border border-red-500/30 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/10 disabled:opacity-40">Revert Last</button>
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-surface-800 bg-surface-900/50 p-3">
+                        <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Branches</div>
+                        <div className="space-y-2">
+                          {gitBranches.slice(0, 24).map((branch) => (
+                            <button
+                              key={branch.name}
+                              onClick={() => void checkoutBranch(branch.name)}
+                              className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left ${
+                                branch.current
+                                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
+                                  : "border-surface-800 bg-surface-900/60 text-surface-300 hover:border-surface-700"
+                              }`}
+                            >
+                              <span className="truncate text-xs font-medium">{branch.name}</span>
+                              <span className="text-[10px] uppercase tracking-[0.16em]">{branch.current ? "current" : "checkout"}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-surface-800 bg-surface-900/50 p-3">
+                      <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Recent Commits</div>
+                      <div className="space-y-2">
+                        {gitCommits.map((commit) => (
+                          <div key={commit.hash} className="rounded-xl border border-surface-800 bg-surface-900/60 p-3">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <div className="text-sm font-semibold text-surface-100">{commit.message}</div>
+                                <div className="mt-1 text-[11px] text-surface-500">
+                                  {commit.shortHash} · {commit.author} · {new Date(commit.date).toLocaleString()}
+                                </div>
+                              </div>
+                              <MiniPill>{commit.filesChanged} files</MiniPill>
+                            </div>
+                          </div>
+                        ))}
+                        {gitCommits.length === 0 ? (
+                          <div className="rounded-xl border border-dashed border-surface-800 bg-surface-900/50 p-3 text-sm text-surface-500">
+                            No commit history available for this project.
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                </details>
               </>
             ) : null}
           </div>
@@ -597,7 +645,28 @@ export default function GitView() {
   );
 }
 
-function MiniPill({ children }: { children: React.ReactNode }) {
+function StatCard({ label, value, sub }: { label: string; value: string; sub: string }) {
+  return (
+    <div className="rounded-2xl border border-surface-800 bg-surface-950/70 p-3">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">{label}</div>
+      <div className="mt-2 text-2xl font-semibold text-surface-100">{value}</div>
+      <div className="mt-1 text-xs text-surface-500">{sub}</div>
+    </div>
+  );
+}
+
+function PrimaryButton({ children, onClick }: { children: ReactNode; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="rounded-xl border border-surface-700 bg-surface-900 px-4 py-2 text-sm font-semibold text-surface-100 hover:border-surface-500"
+    >
+      {children}
+    </button>
+  );
+}
+
+function MiniPill({ children }: { children: ReactNode }) {
   return (
     <span className="rounded-full border border-surface-700 bg-surface-900 px-2 py-1 text-[10px] text-surface-300">
       {children}

@@ -212,14 +212,17 @@ function sharedGuestLabels(device: Pick<Device, "sharedGuests">): string[] {
     .filter(Boolean);
 }
 
-function deviceShareSummary(device: Pick<Device, "isGuest" | "sharedWithGuests" | "sharedGuests" | "sharesAllProjects" | "sharedProjects" | "sharedRunners" | "runners">) {
+function deviceShareSummary(device: Pick<Device, "isGuest" | "hostName" | "sharedWithGuests" | "sharedGuests" | "sharesAllProjects" | "sharedProjects" | "sharedRunners" | "runners">) {
   const hasSharedState = device.isGuest || device.sharedWithGuests;
   if (!hasSharedState) return null;
   const sharedProjects = Array.isArray(device.sharedProjects) ? device.sharedProjects.filter(Boolean) : [];
   const guests = sharedGuestLabels(device);
+  const viewerIsGuest = !!device.isGuest;
   return {
-    projectLabel: device.sharesAllProjects ? "All Resources" : sharedProjects.length > 0 ? "Projects" : null,
-    projectChips: device.sharesAllProjects ? [] : sharedProjects,
+    viewerIsGuest,
+    hostLabel: viewerIsGuest ? device.hostName || "host" : null,
+    projectLabel: viewerIsGuest ? (device.sharesAllProjects ? "All Resources" : sharedProjects.length > 0 ? "Projects" : null) : null,
+    projectChips: viewerIsGuest && !device.sharesAllProjects ? sharedProjects : [],
     runnerChips: runnerChipsForDevice(device),
     guestChips: guests.slice(0, 3),
     guestOverflow: Math.max(0, guests.length - 3),
@@ -404,52 +407,87 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                 <DeviceIcon platform={device.platform} />
               </div>
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <h3 className="font-semibold text-surface-50">
-                    {device.name}
-                  </h3>
-                  {device.isGuest ? (
-                    <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
-                      Shared Device
-                    </span>
-                  ) : device.sharedWithGuests ? (
-                    <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
-                      Shared
-                    </span>
-                  ) : null}
-                  {device.deviceClass ? (
-                    <span className="rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
-                      {device.deviceClass === "edge-mobile" ? "Edge Worker" : device.deviceClass}
-                    </span>
-                  ) : null}
-                  {!device.isGuest && device.sessionBinding ? (
-                    <span
-                      className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
-                        device.sessionBinding === "dedicated"
-                          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-                          : "border-amber-500/40 bg-amber-500/10 text-amber-300"
-                      }`}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="font-semibold text-surface-50">
+                        {device.name}
+                      </h3>
+                      {device.isGuest ? (
+                        <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
+                          Shared Device
+                        </span>
+                      ) : device.sharedWithGuests ? (
+                        <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
+                          Shared
+                        </span>
+                      ) : null}
+                      {device.deviceClass ? (
+                        <span className="rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
+                          {device.deviceClass === "edge-mobile" ? "Edge Worker" : device.deviceClass}
+                        </span>
+                      ) : null}
+                      {!device.isGuest && device.sessionBinding ? (
+                        <span
+                          className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                            device.sessionBinding === "dedicated"
+                              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                              : "border-amber-500/40 bg-amber-500/10 text-amber-300"
+                          }`}
+                        >
+                          {device.sessionBinding === "dedicated" ? "Dedicated Session" : "Legacy Shared Session"}
+                        </span>
+                      ) : null}
+                      <span
+                        className={`inline-flex h-2 w-2 rounded-full ${
+                          device.online ? "bg-green-400" : "bg-surface-600"
+                        }`}
+                      />
+                      <span className="text-xs text-surface-500">
+                        {device.online ? "Online" : "Offline"}
+                      </span>
+                    </div>
+                    <p className="text-sm text-surface-500">
+                      {devicePlatformLabel(device)} · Last seen {formatLastSeen(device.lastSeen)}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {!device.isGuest && token ? (
+                      <button
+                        onClick={async () => {
+                          try {
+                            await setPrimaryDevice(primaryDeviceId === device.id ? null : device.id);
+                          } catch (e: any) {
+                            alert(`Failed to update primary: ${e?.message ?? e}`);
+                          }
+                        }}
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${
+                          primaryDeviceId === device.id
+                            ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                            : "border-surface-700 bg-surface-900/40 text-surface-300 hover:border-amber-500/30 hover:text-amber-200"
+                        }`}
+                        title={primaryDeviceId === device.id ? "This is your primary device" : "Mark this device as your primary machine"}
+                      >
+                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                          <path d="m12 2.75 2.33 4.72 5.21.76-3.77 3.67.89 5.19L12 14.6l-4.66 2.49.89-5.19-3.77-3.67 5.21-.76L12 2.75Z" />
+                        </svg>
+                        {primaryDeviceId === device.id ? "Primary" : "Set as primary"}
+                      </button>
+                    ) : null}
+                    <button
+                      onClick={() => setExpandedId(expandedId === device.id ? null : device.id)}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-surface-800 bg-surface-900/40 px-2.5 py-1 text-[11px] font-medium text-surface-300 hover:border-surface-700 hover:bg-surface-800/60 hover:text-surface-100"
+                      aria-expanded={expandedId === device.id}
+                      title="Show runtime, hardware, network and sharing details"
                     >
-                      {device.sessionBinding === "dedicated" ? "Dedicated Session" : "Legacy Shared Session"}
-                    </span>
-                  ) : null}
-                  {primaryDeviceId === device.id ? (
-                    <span className="rounded border border-indigo-500/40 bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-indigo-300">
-                      Primary ★
-                    </span>
-                  ) : null}
-                  <span
-                    className={`inline-flex h-2 w-2 rounded-full ${
-                      device.online ? "bg-green-400" : "bg-surface-600"
-                    }`}
-                  />
-                  <span className="text-xs text-surface-500">
-                    {device.online ? "Online" : "Offline"}
-                  </span>
+                      <svg className={`h-3.5 w-3.5 transition-transform ${expandedId === device.id ? "rotate-90" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <path d="m9 6 6 6-6 6" />
+                      </svg>
+                      {expandedId === device.id ? "Hide" : "Details"}
+                    </button>
+                  </div>
                 </div>
-                <p className="text-sm text-surface-500">
-                  {devicePlatformLabel(device)} · Last seen {formatLastSeen(device.lastSeen)}
-                </p>
                 {device.edgeProfile ? (
                   <p className="text-xs text-surface-500">
                     {device.edgeProfile.supportsLocalInference ? "Local inference" : "No local inference"} · max {device.edgeProfile.maxModelClass} model · {device.edgeProfile.preferredTasks.slice(0, 3).join(", ")}
@@ -457,6 +495,11 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                 ) : null}
                 {shareSummary ? (
                   <div className="mt-2 flex flex-wrap gap-1.5">
+                    {shareSummary.viewerIsGuest && shareSummary.hostLabel ? (
+                      <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
+                        Shared from {shareSummary.hostLabel}
+                      </span>
+                    ) : null}
                     {shareSummary.projectLabel ? (
                       <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
                         shareSummary.projectLabel === "All Resources"
@@ -546,7 +589,7 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                     </div>
                   );
                 })()}
-                <div className="mt-3 flex flex-wrap items-center gap-2">
+                <div className="mt-5 flex flex-wrap items-center gap-2">
                   {onOpen && device.online ? (
                     <button
                       onClick={() => onOpen(device)}
@@ -557,32 +600,6 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                       Open Workspace
                     </button>
                   ) : null}
-                  {!device.isGuest && token ? (
-                    <button
-                      onClick={async () => {
-                        try {
-                          await setPrimaryDevice(primaryDeviceId === device.id ? null : device.id);
-                        } catch (e: any) {
-                          alert(`Failed to update primary: ${e?.message ?? e}`);
-                        }
-                      }}
-                      className="text-xs text-indigo-400 hover:text-indigo-300"
-                    >
-                      {primaryDeviceId === device.id ? "Unset primary" : "Set as primary"}
-                    </button>
-                  ) : null}
-                  <button
-                    onClick={() => setExpandedId(expandedId === device.id ? null : device.id)}
-                    className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-surface-800 bg-surface-900/40 px-2.5 py-1 text-[11px] font-medium text-surface-300 hover:border-surface-700 hover:bg-surface-800/60 hover:text-surface-100"
-                    aria-expanded={expandedId === device.id}
-                    title="Show runtime, hardware, network and sharing details"
-                  >
-                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                      <circle cx="12" cy="12" r="9" />
-                      <path d="M12 8h.01M11 12h1v4h1" />
-                    </svg>
-                    {expandedId === device.id ? "Hide details" : "Details"}
-                  </button>
                 </div>
                 {expandedId === device.id ? (
                   <DeviceDetailsPanel device={device} token={token ?? null} />
