@@ -1145,19 +1145,51 @@ export default function DashboardPage() {
               </button>
             </div>
             {isConnected && connectedDevice ? (
-              <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2 py-1.5">
-                <div className="flex items-center gap-2">
-                  <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
-                  <span className="truncate text-xs font-medium text-surface-100">{connectedDevice.name}</span>
-                </div>
-                <div className="mt-1 flex items-center justify-between">
-                  <span className="text-[10px] text-surface-500">
-                    {devicePlatformLabel(connectedDevice)}
-                    {agentInfo ? ` · v${agentInfo.version}` : ""}
-                  </span>
-                  <button onClick={disconnect} className="text-[10px] text-red-400 hover:text-red-300">disconnect</button>
-                </div>
-              </div>
+              (() => {
+                const connectedNeedsAuth = !!connectedDevice.needsAuth && !connectedDevice.isGuest;
+                const connectedIsReauthing = reauthBusy === connectedDevice.id;
+                const connectedReauthMsg =
+                  reauthMsg && reauthMsg.deviceId === connectedDevice.id ? reauthMsg : null;
+                const pillBorder = connectedNeedsAuth
+                  ? "border-amber-500/40 bg-amber-500/10"
+                  : "border-emerald-500/30 bg-emerald-500/5";
+                const dotColor = connectedNeedsAuth
+                  ? (connectedIsReauthing ? "bg-amber-400 animate-pulse" : "bg-amber-400")
+                  : "bg-emerald-400";
+                return (
+                  <div className={`rounded-md border ${pillBorder} px-2 py-1.5`}>
+                    <div className="flex items-center gap-2">
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${dotColor}`} />
+                      <span className="truncate text-xs font-medium text-surface-100">{connectedDevice.name}</span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between gap-2">
+                      <span className="truncate text-[10px] text-surface-500">
+                        {devicePlatformLabel(connectedDevice)}
+                        {agentInfo ? ` · v${agentInfo.version}` : ""}
+                        {connectedNeedsAuth ? " · needs auth" : ""}
+                      </span>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {connectedNeedsAuth ? (
+                          <button
+                            onClick={() => reauthDevice(connectedDevice)}
+                            disabled={connectedIsReauthing}
+                            title="Agent's session token expired — re-auth so /projects, runners, and tasks accept your bearer again"
+                            className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200 hover:bg-amber-500/30 disabled:opacity-40"
+                          >
+                            {connectedIsReauthing ? "…" : "Re-auth"}
+                          </button>
+                        ) : null}
+                        <button onClick={disconnect} className="text-[10px] text-red-400 hover:text-red-300">disconnect</button>
+                      </div>
+                    </div>
+                    {connectedReauthMsg ? (
+                      <div className={`mt-1 text-[10px] leading-tight ${connectedReauthMsg.ok ? "text-emerald-300" : "text-red-300"}`}>
+                        {connectedReauthMsg.text}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })()
             ) : visibleDevices.length === 0 ? (
               <p className="text-[11px] text-surface-600">No devices yet</p>
             ) : (
