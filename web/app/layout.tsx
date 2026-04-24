@@ -77,8 +77,26 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
+        {/*
+          Apply the saved theme before React hydrates so the page doesn't
+          flash the default palette first. Dark stays the factory default
+          for visitors who've never toggled; only explicit "light" opts
+          out. Mirrors ThemeProvider's localStorage contract.
+        */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              try {
+                var t = localStorage.getItem('theme');
+                if (t !== 'light') document.documentElement.classList.add('dark');
+              } catch (e) {
+                document.documentElement.classList.add('dark');
+              }
+            `,
+          }}
+        />
         <Script
           src="https://www.googletagmanager.com/gtag/js?id=G-K7JHRJKPQB"
           strategy="afterInteractive"
