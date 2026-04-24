@@ -229,6 +229,51 @@ export function WebReloadView({ connectedDevice, connState, onRepairRelay, onRec
   const previewUrl = agentClient.devPreviewUrl;
   const isRunning = !!devStatus?.running;
 
+  // Preflight: fetch the iframe URL from the parent page. If the relay
+  // returns 401 "invalid relay password", auto-repair once. Same shape
+  // as PreviewPane's preflight — the relay check happens against the
+  // __rp query-param password, which is cross-origin from the parent so
+  // the iframe silently fails unless we probe first.
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [autoRepairedOnce, setAutoRepairedOnce] = useState(false);
+  useEffect(() => {
+    if (!previewUrl || !isRunning) {
+      setPreviewError(null);
+      return;
+    }
+    let alive = true;
+    const ctrl = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(previewUrl, { method: "GET", signal: ctrl.signal, cache: "no-store", redirect: "manual" });
+        if (!alive) return;
+        if (res.status === 401 || res.status === 403) {
+          const text = await res.text().catch(() => "");
+          let msg = `HTTP ${res.status}`;
+          try {
+            const parsed = JSON.parse(text);
+            if (parsed?.error) msg = parsed.error;
+          } catch {
+            if (text) msg = text.slice(0, 200);
+          }
+          setPreviewError(msg);
+          // Auto-repair once when we see invalid-relay-password the first
+          // time we mount the iframe. Avoids loops by flipping a flag.
+          if (!autoRepairedOnce && /invalid relay password/i.test(msg) && onRepairRelay) {
+            setAutoRepairedOnce(true);
+            void repairRelayThenReconnect("auto");
+          }
+          return;
+        }
+        setPreviewError(null);
+      } catch (e: any) {
+        if (e?.name !== "AbortError") setPreviewError(null);
+      }
+    })();
+    return () => { alive = false; ctrl.abort(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewUrl, isRunning]);
+
   return (
     <div className="flex h-full flex-col gap-3 p-3 md:p-4">
       {/* Header — device, app selector trigger, global actions */}
@@ -291,6 +336,20 @@ export function WebReloadView({ connectedDevice, connState, onRepairRelay, onRec
       {startError && (
         <div className="rounded-md border border-red-500/40 bg-red-500/5 px-3 py-2 text-[11px] text-red-200">
           {startError}
+        </div>
+      )}
+
+      {previewError && (
+        <div className="flex items-center gap-2 rounded-md border border-red-500/40 bg-red-500/5 px-3 py-2 text-[11px] text-red-200">
+          <span className="flex-1 truncate">{previewError}</span>
+          {onRepairRelay && /invalid relay password/i.test(previewError) && (
+            <button
+              onClick={() => void repairRelayThenReconnect("manual")}
+              className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-200 hover:bg-amber-500/20"
+            >
+              Repair now
+            </button>
+          )}
         </div>
       )}
 

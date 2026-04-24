@@ -493,13 +493,25 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                     {device.edgeProfile.supportsLocalInference ? "Local inference" : "No local inference"} · max {device.edgeProfile.maxModelClass} model · {device.edgeProfile.preferredTasks.slice(0, 3).join(", ")}
                   </p>
                 ) : null}
-                {shareSummary ? (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {shareSummary.viewerIsGuest && shareSummary.hostLabel ? (
-                      <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
-                        Shared from {shareSummary.hostLabel}
+                {shareSummary?.viewerIsGuest && shareSummary?.hostLabel ? (
+                  <div className="mt-3">
+                    <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-surface-500">
+                      Shared from
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span
+                        className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/30 bg-sky-500/10 py-0.5 pl-0.5 pr-2.5 text-xs text-sky-100"
+                      >
+                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-sky-500/30 text-[10px] font-semibold uppercase text-sky-50">
+                          {shareSummary.hostLabel.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "·"}
+                        </span>
+                        <span className="truncate max-w-[12rem]">{shareSummary.hostLabel}</span>
                       </span>
-                    ) : null}
+                    </div>
+                  </div>
+                ) : null}
+                {shareSummary && (shareSummary.projectLabel || shareSummary.projectChips.length > 0) ? (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
                     {shareSummary.projectLabel ? (
                       <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
                         shareSummary.projectLabel === "All Resources"
