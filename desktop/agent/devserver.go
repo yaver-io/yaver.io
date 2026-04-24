@@ -1324,9 +1324,13 @@ func (v *ViteDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		v.port = 5173
 	}
 
+	// Vite's --host doesn't accept Expo's "lan" keyword — pass 0.0.0.0
+	// to bind on every interface (LAN + loopback) so the relay tunnel
+	// + LAN preview both reach it. The yaver agent fronts /dev/* so
+	// browser-side access is via the tunnelled endpoint either way.
 	args := []string{"vite",
 		"--port", fmt.Sprintf("%d", v.port),
-		"--host", "lan",
+		"--host", "0.0.0.0",
 	}
 
 	readyURL := fmt.Sprintf("http://127.0.0.1:%d/", v.port)
