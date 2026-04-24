@@ -93,36 +93,41 @@ jobs:
           fi
           sed -n '/^\[Service\]/,/^\[/p' "$UNIT" | head -20
 
-          echo "== reloading systemd + restarting agent"
-          systemctl daemon-reload || true
+          echo "== existing yaver serve processes BEFORE cleanup:"
+          pgrep -af "yaver serve" || echo "(none)"
 
-          # yaver.service here is a USER unit (under /home/yaver/.config/...).
-          # A root-level `systemctl restart yaver` silently no-ops against
-          # user units. Drive the user manager explicitly.
+          # Nuke every running yaver serve. There is a known footgun on
+          # this box: a root-owned detached agent with --work-dir=
+          # /home/yaver/.yaver keeps the TCP port 18080 while systemd's
+          # user unit can't bind. pkill + SIGKILL ensures we end up
+          # with exactly one agent owned by the user unit.
+          echo "== killing all yaver serve processes"
+          pkill -f "yaver serve" || true
+          sleep 1
+          pkill -9 -f "yaver serve" || true
+
+          # Free the port even if the process linger on close
+          fuser -k 18080/tcp 2>/dev/null || true
+          sleep 2
+
+          echo "== reloading user systemd + starting agent"
           if id yaver >/dev/null 2>&1; then
             YAVER_UID=$(id -u yaver)
-            # Ensure `systemctl --user` can reach the user bus. `loginctl
-            # enable-linger` keeps the user manager alive across root logins
-            # so our restart actually takes.
             loginctl enable-linger yaver 2>/dev/null || true
-
             runuser -u yaver -- env XDG_RUNTIME_DIR="/run/user/$YAVER_UID" \
               systemctl --user daemon-reload 2>/dev/null || true
-            if ! runuser -u yaver -- env XDG_RUNTIME_DIR="/run/user/$YAVER_UID" \
-                 systemctl --user restart yaver; then
-              echo "!! --user restart failed — falling back to pkill + let Restart=always respawn"
-              # pkill -f matches the full cmdline, so the old `--work-dir=X`
-              # process gets killed; systemd re-exec picks up the new unit
-              # file (with the updated --work-dir).
-              pkill -f "yaver serve" || true
-              sleep 2
-            fi
-
-            echo "== running yaver process cmdline:"
-            pgrep -af "yaver serve" || true
-          else
-            echo "!! user 'yaver' missing — cannot drive --user systemd scope"
+            runuser -u yaver -- env XDG_RUNTIME_DIR="/run/user/$YAVER_UID" \
+              systemctl --user start yaver 2>/dev/null \
+              || runuser -u yaver -- env XDG_RUNTIME_DIR="/run/user/$YAVER_UID" \
+                 systemctl --user restart yaver 2>/dev/null \
+              || true
           fi
+
+          sleep 3
+          echo "== yaver serve process AFTER restart:"
+          pgrep -af "yaver serve" || echo "(none)"
+          echo "== port 18080 holder:"
+          ss -ltnp 'sport = :18080' 2>/dev/null || true
 
           echo "== probing /info after restart"
           sleep 3
