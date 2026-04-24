@@ -1083,9 +1083,10 @@ export default function DashboardPage() {
   ];
 
   return (
-    <div className="relative flex min-h-[calc(100vh-4rem)] flex-col md:flex-row">
+    <div className="dashboard-shell relative flex min-h-[calc(100vh-4rem)] flex-col md:flex-row">
+      <div className="pointer-events-none absolute inset-y-0 left-0 hidden w-60 border-r border-white/5 md:block" />
       {/* Mobile top bar — visible only below md */}
-      <div className="md:hidden border-b border-surface-800 bg-surface-900/50">
+      <div className="dashboard-mobilebar md:hidden">
         <div className="flex items-center gap-2 px-3 py-2">
           <div className="flex h-6 w-6 items-center justify-center rounded-full bg-surface-800 text-[10px] font-bold text-surface-300">{user?.email?.charAt(0).toUpperCase()}</div>
           <span className="text-xs font-medium text-surface-200 flex-1 truncate">{connectedDevice?.name || "No device"}</span>
@@ -1111,7 +1112,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Sidebar — hidden on mobile */}
-      <aside className="hidden md:flex w-60 flex-col border-r border-surface-800 bg-surface-900/50 shrink-0 overflow-y-auto">
+      <aside className="dashboard-sidebar hidden w-60 shrink-0 overflow-y-auto md:flex md:flex-col">
         <div className="p-3 space-y-4">
           {/* Brand */}
           <div className="flex items-center gap-2 rounded-lg border border-surface-800/50 px-3 py-2">
@@ -1384,8 +1385,8 @@ export default function DashboardPage() {
       </aside>
 
       {/* Main */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="hidden md:flex sticky top-0 z-20 items-center justify-end gap-2 border-b border-surface-800 bg-surface-950/90 px-4 py-2 backdrop-blur">
+      <div className="dashboard-main flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="dashboard-topbar sticky top-0 z-20 hidden items-center justify-end gap-2 px-4 py-2 md:flex">
           <button onClick={toggleTheme} className="rounded-md p-1.5 text-surface-500 hover:bg-surface-800 hover:text-surface-300" title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
             {theme === "dark" ? (
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
@@ -1462,7 +1463,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <div className="relative z-[1] flex min-h-0 flex-1 flex-col overflow-y-auto">
           {!isConnected && activeTab === "chat" ? (
             <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
               <div className="mx-auto w-full max-w-[1680px]">
