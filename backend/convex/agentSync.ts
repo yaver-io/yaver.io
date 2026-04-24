@@ -174,6 +174,102 @@ export const recordActivity = mutation({
   },
 });
 
+// Batched state sync. One mutation carries every per-tick update in one
+// network round-trip — projects, services, and new activity entries —
+// instead of N mutations from the agent's convex_state_sync loop. The
+// agent also deduplicates unchanged payloads client-side, so a quiet
+// box (no new projects, no new audit events) makes zero Convex calls
+// on its 60-second tick.
+//
+// Cost rationale: each agent used to burn ~180 Convex calls/hour on
+// state sync alone (3 sub-calls × once per project × 60s). Batching
+// drops that to at most 1 call/tick = 60/hour — and typically zero
+// because dedup fires first.
+export const batchSync = mutation({
+  args: {
+    deviceId: v.string(),
+    projects: v.optional(v.array(v.object({
+      slug: v.string(),
+      name: v.string(),
+      stack: v.optional(v.string()),
+      backend: v.optional(v.string()),
+      auth: v.optional(v.string()),
+      activeEnv: v.optional(v.string()),
+      localPort: v.optional(v.number()),
+      tunnelUrl: v.optional(v.string()),
+      gitBranch: v.optional(v.string()),
+      lastCommit: v.optional(v.string()),
+      status: v.union(
+        v.literal("running"),
+        v.literal("stopped"),
+        v.literal("error"),
+        v.literal("creating"),
+      ),
+    }))),
+    services: v.optional(v.array(v.object({
+      name: v.string(),
+      image: v.optional(v.string()),
+      port: v.number(),
+      status: v.string(),
+      projectSlug: v.optional(v.string()),
+      cpuPercent: v.optional(v.number()),
+      ramMB: v.optional(v.number()),
+    }))),
+    activity: v.optional(v.array(v.object({
+      action: v.string(),
+      target: v.optional(v.string()),
+      outcome: v.string(),
+      error: v.optional(v.string()),
+      timestamp: v.number(),
+    }))),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUser(ctx);
+    const now = Date.now();
+
+    for (const p of args.projects ?? []) {
+      const existing = await ctx.db
+        .query("userProjects")
+        .withIndex("by_user_slug", (q) =>
+          q.eq("userId", userId).eq("slug", p.slug),
+        )
+        .first();
+      const patch = { ...p, deviceId: args.deviceId, userId, updatedAt: now };
+      if (existing) {
+        await ctx.db.patch(existing._id, patch);
+      } else {
+        await ctx.db.insert("userProjects", patch);
+      }
+    }
+
+    // Services: wipe-and-insert per device, matching upsertServices's
+    // behaviour. Whole block is cheap — it's O(N services for this
+    // device), same as the legacy path, just rolled into one mutation.
+    if (args.services !== undefined) {
+      const existing = await ctx.db
+        .query("userServices")
+        .withIndex("by_device", (q) => q.eq("deviceId", args.deviceId))
+        .collect();
+      for (const r of existing) await ctx.db.delete(r._id);
+      for (const s of args.services) {
+        await ctx.db.insert("userServices", {
+          ...s, userId, deviceId: args.deviceId, updatedAt: now,
+        });
+      }
+    }
+
+    for (const entry of args.activity ?? []) {
+      await ctx.db.insert("userActivity", {
+        deviceId: args.deviceId,
+        ...entry,
+        userId,
+      });
+    }
+
+    return { ok: true };
+  },
+});
+
 export const listMyActivity = query({
   args: {},
   handler: async (ctx) => {

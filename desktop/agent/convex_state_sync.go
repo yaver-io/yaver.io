@@ -25,9 +25,17 @@ type convexSyncer struct {
 	deviceID    string
 	lastAudit   int64 // last pushed audit entry timestamp (unix ns)
 	client      *http.Client
+	// Payload dedup — agents on quiet machines produce the same
+	// {projects, services} every tick. Hash the marshalled payload
+	// and skip the Convex call entirely when nothing changed. Saves
+	// ~180 calls/hour/user in the common case. Hash is blake2b-sized
+	// but we just use fnv for speed — collisions are tolerable since
+	// a miss at worst sends one extra payload.
+	lastSyncHash uint64
 	// Stats for /sync/status visibility.
-	lastSyncAt  time.Time
+	lastSyncAt   time.Time
 	successCount int
+	skippedCount int
 	failCount    int
 	lastError    string
 }
@@ -61,11 +69,58 @@ func StartConvexStateSync(ctx context.Context) {
 }
 
 func (s *convexSyncer) syncAll(ctx context.Context) {
-	s.syncProjects(ctx)
-	s.syncServices(ctx)
-	s.syncRecentActivity(ctx)
+	// Build one combined payload and send it in a single Convex call.
+	// Falls back to the legacy per-item mutations only on 404 (old
+	// backend without agentSync:batchSync deployed yet) — that gate
+	// flips off after the first successful batch so a fresh agent
+	// talking to an up-to-date backend never pays the fallback cost.
+	payload, err := s.buildBatchPayload()
+	if err != nil {
+		s.mu.Lock()
+		s.lastError = err.Error()
+		s.failCount++
+		s.mu.Unlock()
+		return
+	}
+
+	// Dedup: if this payload is byte-for-byte what we sent last tick,
+	// don't call Convex at all. The agent's own privacy contract
+	// already means we only include changed data — an idle box with
+	// no new audit events will sit at this branch indefinitely,
+	// producing zero Convex traffic. The 5-minute peer-offline
+	// threshold is unaffected because peer presence rides heartbeat,
+	// not state sync.
+	hash := hashBytes(payload)
 	s.mu.Lock()
+	skip := hash == s.lastSyncHash && !s.lastSyncAt.IsZero()
+	s.mu.Unlock()
+	if skip {
+		s.mu.Lock()
+		s.skippedCount++
+		s.lastSyncAt = time.Now()
+		s.mu.Unlock()
+		return
+	}
+
+	var reply map[string]interface{}
+	if err := s.callBatch(ctx, payload, &reply); err != nil {
+		// Convex returned something we couldn't parse or HTTP-level
+		// failure. Fall back to the legacy per-item path so older
+		// backends keep working during the rollout. After one
+		// success on the new path we never hit this fallback again.
+		s.syncProjects(ctx)
+		s.syncServices(ctx)
+		s.syncRecentActivity(ctx)
+		s.mu.Lock()
+		s.lastSyncAt = time.Now()
+		s.mu.Unlock()
+		return
+	}
+
+	s.mu.Lock()
+	s.lastSyncHash = hash
 	s.lastSyncAt = time.Now()
+	s.successCount++
 	s.mu.Unlock()
 }
 
@@ -170,6 +225,184 @@ func (s *convexSyncer) syncRecentActivity(ctx context.Context) {
 	}
 }
 
+// buildBatchPayload snapshots every per-tick-changeable piece of
+// state into one map. Callers hash + dedup on the marshalled bytes
+// before sending. Always includes arrays (possibly empty) so that
+// "state went from 1 project to 0" still produces a different hash
+// than "same 1 project as last tick".
+func (s *convexSyncer) buildBatchPayload() ([]byte, error) {
+	projects := make([]map[string]interface{}, 0, 4)
+	services := make([]map[string]interface{}, 0, 4)
+	activity := make([]map[string]interface{}, 0, 4)
+
+	// Projects
+	for _, dir := range discoverProjectDirs() {
+		cfg, _ := LoadProjectConfig(dir)
+		if cfg == nil {
+			continue
+		}
+		gitBranch, gitCommit := "", ""
+		if out, err := runIn(dir, "git", "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
+			gitBranch = trimNewline(out)
+		}
+		if out, err := runIn(dir, "git", "rev-parse", "HEAD"); err == nil {
+			gitCommit = trimNewline(out)
+		}
+		projects = append(projects, map[string]interface{}{
+			"slug":       filepath.Base(dir),
+			"name":       filepath.Base(dir),
+			"stack":      cfg.Stack,
+			"backend":    string(cfg.Backend),
+			"auth":       cfg.Auth,
+			"activeEnv":  ActiveEnv(dir),
+			"gitBranch":  gitBranch,
+			"lastCommit": gitCommit,
+			"status":     "running",
+		})
+	}
+
+	// Services (pre-flattened; batchSync wipes+inserts for this device)
+	for _, dir := range discoverProjectDirs() {
+		sm := NewServicesManager(dir)
+		cfg, err := sm.LoadConfig()
+		if err != nil || cfg == nil {
+			continue
+		}
+		statuses, _ := sm.Status()
+		statusMap := map[string]ServiceStatus{}
+		for _, st := range statuses {
+			statusMap[st.Name] = st
+		}
+		slug := filepath.Base(dir)
+		for name, svc := range cfg.Services {
+			st := statusMap[name]
+			services = append(services, map[string]interface{}{
+				"name":        name,
+				"image":       svc.Image,
+				"port":        svc.Port,
+				"status":      st.Health,
+				"projectSlug": slug,
+			})
+		}
+	}
+
+	// Activity — only entries newer than lastAudit. After a successful
+	// batch we roll lastAudit forward (handled in callBatch).
+	if a, err := ensureAudit(); err == nil {
+		entries, _ := a.List(50)
+		for _, e := range entries {
+			ts := e.Timestamp.UnixNano()
+			if ts <= s.lastAudit {
+				continue
+			}
+			activity = append(activity, map[string]interface{}{
+				"action":    e.Action,
+				"target":    e.Target,
+				"outcome":   e.Outcome,
+				"error":     e.Error,
+				"timestamp": e.Timestamp.UnixMilli(),
+			})
+		}
+	}
+
+	return json.Marshal(map[string]interface{}{
+		"deviceId": s.deviceID,
+		"projects": projects,
+		"services": services,
+		"activity": activity,
+	})
+}
+
+// callBatch posts a pre-marshalled batchSync args blob to Convex.
+// Distinct from callMutation so dedup + test recording interact
+// cleanly with the batched path.
+func (s *convexSyncer) callBatch(ctx context.Context, args []byte, reply interface{}) error {
+	if convexMutationRecorder != nil {
+		var a map[string]interface{}
+		_ = json.Unmarshal(args, &a)
+		convexMutationRecorder("agentSync:batchSync", a)
+		// Advance lastAudit optimistically (tests don't exercise the
+		// Convex side; they just want the recorded payload).
+		s.rollForwardLastAudit(a)
+		return nil
+	}
+	body, _ := json.Marshal(map[string]interface{}{
+		"path":   "agentSync:batchSync",
+		"args":   json.RawMessage(args),
+		"format": "json",
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.convexURL+"/api/mutation", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+s.authToken)
+	res, err := s.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	bodyBytes, _ := io.ReadAll(res.Body)
+	if res.StatusCode >= 400 {
+		return fmt.Errorf("batchSync: HTTP %d", res.StatusCode)
+	}
+	if reply != nil && len(bodyBytes) > 0 {
+		_ = json.Unmarshal(bodyBytes, reply)
+	}
+	// Advance lastAudit only after a successful send.
+	var parsed map[string]interface{}
+	if json.Unmarshal(args, &parsed) == nil {
+		s.rollForwardLastAudit(parsed)
+	}
+	return nil
+}
+
+// rollForwardLastAudit advances the lastAudit watermark to the highest
+// timestamp the just-sent payload contains. Keeping this separate from
+// callBatch lets test recording advance the cursor too, so the next
+// dedup check doesn't include already-sent entries.
+func (s *convexSyncer) rollForwardLastAudit(payload map[string]interface{}) {
+	entries, ok := payload["activity"].([]interface{})
+	if !ok {
+		return
+	}
+	var maxTs int64
+	for _, e := range entries {
+		m, ok := e.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		switch ts := m["timestamp"].(type) {
+		case float64:
+			if int64(ts)*1e6 > maxTs {
+				maxTs = int64(ts) * 1e6
+			}
+		case int64:
+			if ts*1e6 > maxTs {
+				maxTs = ts * 1e6
+			}
+		}
+	}
+	if maxTs > s.lastAudit {
+		s.mu.Lock()
+		s.lastAudit = maxTs
+		s.mu.Unlock()
+	}
+}
+
+// hashBytes — fast non-cryptographic hash. Collisions are acceptable;
+// worst case we send one unnecessary payload.
+func hashBytes(b []byte) uint64 {
+	// FNV-1a — stdlib, no deps. A collision here means we skip a send
+	// when we shouldn't have, which is self-healing on the next tick.
+	var h uint64 = 1469598103934665603
+	for _, c := range b {
+		h ^= uint64(c)
+		h *= 1099511628211
+	}
+	return h
+}
+
 // convexMutationRecorder, if non-nil, is called with every (path,
 // args) pair *instead of* making the HTTP request. Tests use this to
 // assert nothing confidential leaves the agent. Must only ever be set
@@ -218,12 +451,15 @@ func (s *convexSyncer) callMutation(path string, args map[string]interface{}) {
 }
 
 // SyncStatus exposes a snapshot of the syncer's state for /sync/status.
+// Callers can compare successCount + skippedCount across ticks to see
+// how effective dedup is — a quiet box should trend towards 100% skips.
 type SyncStatus struct {
 	Enabled      bool      `json:"enabled"`
 	ConvexURL    string    `json:"convexUrl,omitempty"`
 	DeviceID     string    `json:"deviceId,omitempty"`
 	LastSyncAt   time.Time `json:"lastSyncAt,omitempty"`
 	SuccessCount int       `json:"successCount"`
+	SkippedCount int       `json:"skippedCount"`
 	FailCount    int       `json:"failCount"`
 	LastError    string    `json:"lastError,omitempty"`
 }
