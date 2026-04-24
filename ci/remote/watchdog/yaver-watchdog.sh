@@ -44,6 +44,17 @@ BEACON_CANDIDATES=(
   "/var/lib/yaver/last-healthy"
   "${HOME:-/root}/.yaver/last-healthy"
 )
+# Also include any /home/<user>/.yaver/last-healthy the agent may be
+# running as. Systemd service units usually run as root, but the
+# agent's autostart hook often re-execs under a dedicated `yaver`
+# user with its own $HOME, so we can't assume the beacon lives under
+# /root. A shell glob keeps this lightweight + covers multi-user
+# boxes (one beacon per developer).
+for candidate_home in /home/*/.yaver/last-healthy; do
+  if [ -e "$candidate_home" ] || [ -d "$(dirname "$candidate_home")" ]; then
+    BEACON_CANDIDATES+=("$candidate_home")
+  fi
+done
 AGENT_PROBE_URL="${YAVER_AGENT_PROBE_URL:-http://127.0.0.1:18080/health}"
 RESTART_ON_FAILURE="${WATCHDOG_RESTART_ON_FAILURE:-0}"
 RESTART_UNIT="${WATCHDOG_RESTART_UNIT:-yaver-agent.service}"
