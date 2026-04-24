@@ -2450,6 +2450,18 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				"properties": map[string]interface{}{},
 			},
 		},
+		{
+			"name":        "diagnose",
+			"description": "Run the yaver self-check (binary paths, running procs, ports, auth state, workspace manifest, systemd unit, runtime deps). Returns the event list and final summary. Equivalent to `yaver diagnose`.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"only": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+					"skip": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+					"fix":  map[string]interface{}{"type": "boolean", "default": false},
+				},
+			},
+		},
 	}
 	tools = append(tools, monorepoWorkspaceTools...)
 

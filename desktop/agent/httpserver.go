@@ -10187,6 +10187,31 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		body, _ := json.MarshalIndent(r, "", "  ")
 		return mcpToolResult(string(body))
 
+	case "diagnose":
+		var args struct {
+			Only []string `json:"only,omitempty"`
+			Skip []string `json:"skip,omitempty"`
+			Fix  bool     `json:"fix,omitempty"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		events := make([]DiagEvent, 0, 64)
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		report := RunDiagnose(ctx, DiagnoseOptions{
+			Only:  args.Only,
+			Skip:  args.Skip,
+			Fix:   args.Fix,
+			Agent: s,
+		}, func(ev DiagEvent) {
+			events = append(events, ev)
+		})
+		body, _ := json.MarshalIndent(map[string]interface{}{
+			"ok":     report.Failures == 0,
+			"report": report,
+			"events": events,
+		}, "", "  ")
+		return mcpToolResult(string(body))
+
 	case "sourcemaps_resolve":
 		var args struct {
 			App     string `json:"app"`
