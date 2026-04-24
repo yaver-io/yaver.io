@@ -61,6 +61,8 @@ export interface Device {
     connectedAt?: number;
     durationSec?: number;
   };
+  peerState?: "online" | "stale" | "offline";
+  peerLastSeen?: string;
 }
 
 interface DevicesState {

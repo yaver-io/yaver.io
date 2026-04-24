@@ -98,9 +98,10 @@ function formatAgeShort(ms: number | null): string | null {
 }
 
 function hasRecentLiveSignal(
-  device: Pick<Device, "lastTunnelEvent">,
+  device: Pick<Device, "lastTunnelEvent" | "peerState">,
   maxAgeMs = 90_000,
 ): boolean {
+  if (device.peerState === "online") return true;
   return Boolean(
     device.lastTunnelEvent &&
     device.lastTunnelEvent.online &&
@@ -110,9 +111,11 @@ function hasRecentLiveSignal(
 }
 
 function deviceReachabilitySummary(
-  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "host" | "lastTunnelEvent">,
+  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "host" | "lastTunnelEvent" | "peerState">,
 ): string {
+  if (device.peerState === "online") return "Live bus signal";
   if (hasRecentLiveSignal(device)) return "Live relay signal";
+  if (device.peerState === "stale") return "Bus saw this machine recently, but no current transport is healthy";
   if (device.online) return "Fresh heartbeat";
   if (device.needsAuth) return "Agent session expired; relay recovery may still work";
   const age = formatAgeShort(lastSeenAgeMs(device.lastSeen));
@@ -127,10 +130,11 @@ function deviceReachabilitySummary(
 const DORMANT_DEVICE_HIDE_MS = 10 * 60 * 1000;
 
 function isDormantUnreachableDevice(
-  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "isGuest">,
+  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "isGuest" | "peerState">,
 ): boolean {
   if (device.isGuest) return false;
   if (device.online) return false;
+  if (device.peerState === "online") return false;
   if (device.needsAuth) return false;
   if (Boolean(device.tunnelUrl) || Boolean(device.publicEndpoints?.length)) return false;
   const age = lastSeenAgeMs(device.lastSeen);
@@ -533,11 +537,23 @@ export default function DevicesView({
                       ) : null}
                       <span
                         className={`inline-flex h-2 w-2 rounded-full ${
-                          device.online ? "bg-green-400" : "bg-surface-600"
+                          device.peerState === "online"
+                            ? "bg-cyan-400"
+                            : device.online
+                              ? "bg-green-400"
+                              : device.peerState === "stale"
+                                ? "bg-amber-400"
+                                : "bg-surface-600"
                         }`}
                       />
                       <span className="text-xs text-surface-500">
-                        {device.online ? "Online" : "Offline"}
+                        {device.peerState === "online"
+                          ? "Bus Live"
+                          : device.online
+                            ? "Online"
+                            : device.peerState === "stale"
+                              ? "Bus Stale"
+                              : "Offline"}
                       </span>
                     </div>
                     <p className="text-sm text-surface-500">

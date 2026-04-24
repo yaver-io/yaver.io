@@ -184,6 +184,8 @@ export interface Device {
     connectedAt?: number; // epoch ms
     durationSec?: number; // set on disconnect
   };
+  peerState?: "online" | "stale" | "offline";
+  peerLastSeen?: number;
   /** every reachable IPv4 the agent broadcast in heartbeat — Wi-Fi LAN,
    * Tailscale 100.x, Ethernet, etc. The connect path races them in
    * parallel so the session attaches via whichever has a route from

@@ -144,9 +144,10 @@ function formatAgeShort(ms: number | null): string | null {
 }
 
 function hasRecentLiveSignal(
-  device: Pick<Device, "lastTunnelEvent">,
+  device: Pick<Device, "lastTunnelEvent" | "peerState">,
   maxAgeMs = 90_000,
 ): boolean {
+  if (device.peerState === "online") return true;
   return Boolean(
     device.lastTunnelEvent &&
     device.lastTunnelEvent.online &&
@@ -156,9 +157,11 @@ function hasRecentLiveSignal(
 }
 
 function deviceReachabilitySummary(
-  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "host" | "lastTunnelEvent">,
+  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "host" | "lastTunnelEvent" | "peerState">,
 ): string {
+  if (device.peerState === "online") return "Live bus signal";
   if (hasRecentLiveSignal(device)) return "Live relay signal";
+  if (device.peerState === "stale") return "Bus saw this machine recently, but no current transport is healthy";
   if (device.online) return "Fresh heartbeat";
   if (device.needsAuth) return "Agent session expired; relay recovery may still work";
   const age = formatAgeShort(lastSeenAgeMs(device.lastSeen));
@@ -173,10 +176,11 @@ function deviceReachabilitySummary(
 const DORMANT_DEVICE_HIDE_MS = 10 * 60 * 1000;
 
 function isDormantUnreachableDevice(
-  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "isGuest">,
+  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "isGuest" | "peerState">,
 ): boolean {
   if (device.isGuest) return false;
   if (device.online) return false;
+  if (device.peerState === "online") return false;
   if (device.needsAuth) return false;
   if (Boolean(device.tunnelUrl) || Boolean(device.publicEndpoints?.length)) return false;
   const age = lastSeenAgeMs(device.lastSeen);
@@ -478,6 +482,7 @@ export default function DashboardPage() {
   const [reauthMessage, setReauthMessage] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [relayReady, setRelayReady] = useState(false);
   const [previewTargetId, setPreviewTargetId] = useState<string | null>(null);
+  const [peerStates, setPeerStates] = useState<Record<string, { state: "online" | "stale" | "offline"; lastSeen?: string }>>({});
   // Primary-device preference — the device auto-connect prefers when the
   // user has more than one online. Also mirrored onto mobile and CLI via
   // the /settings endpoint so every surface picks the same default.
@@ -552,6 +557,34 @@ export default function DashboardPage() {
       } catch {}
     })();
     return () => { cancelled = true; };
+  }, [isConnected, connectedDevice?.id]);
+
+  useEffect(() => {
+    if (!isConnected) {
+      setPeerStates({});
+      return;
+    }
+    let cancelled = false;
+    const refreshPeerStates = async () => {
+      try {
+        const peers = await agentClient.machinePeers();
+        if (cancelled) return;
+        const next: Record<string, { state: "online" | "stale" | "offline"; lastSeen?: string }> = {};
+        for (const peer of peers) {
+          if (!peer?.deviceId) continue;
+          next[peer.deviceId] = { state: peer.state, lastSeen: peer.lastSeen };
+        }
+        setPeerStates(next);
+      } catch {
+        if (!cancelled) setPeerStates({});
+      }
+    };
+    void refreshPeerStates();
+    const interval = setInterval(refreshPeerStates, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [isConnected, connectedDevice?.id]);
 
   useEffect(() => { const u = agentClient.on("connectionState", setConnState); return u; }, []);
@@ -823,10 +856,24 @@ export default function DashboardPage() {
     </div>
   );
 
+  const displayDevices = devices.map((device) => {
+    const peer = peerStates[device.id];
+    if (!peer) return device;
+    return {
+      ...device,
+      peerState: peer.state,
+      peerLastSeen: peer.lastSeen,
+      online: peer.state === "online" ? true : device.online,
+      lastSeen:
+        peer.lastSeen && ((Date.parse(peer.lastSeen) || 0) > (Date.parse(device.lastSeen) || 0))
+          ? peer.lastSeen
+          : device.lastSeen,
+    };
+  });
   const runningTask = tasks.find(t => t.status === "running");
-  const mobileWorkers = devices.filter((d) => d.deviceClass === "edge-mobile");
-  const dormantDevices = devices.filter((d) => isDormantUnreachableDevice(d));
-  const visibleDevices = devices.filter((d) => !isDormantUnreachableDevice(d));
+  const mobileWorkers = displayDevices.filter((d) => d.deviceClass === "edge-mobile");
+  const dormantDevices = displayDevices.filter((d) => isDormantUnreachableDevice(d));
+  const visibleDevices = displayDevices.filter((d) => !isDormantUnreachableDevice(d));
   const selectedPreviewTarget = mobileWorkers.find((d) => d.id === previewTargetId) || null;
   const tabs: { id: typeof activeTab; label: string; icon: string; badge?: number }[] = [
     { id: "devices", label: "Devices", icon: "\uD83D\uDCBB" },
@@ -1520,7 +1567,7 @@ export default function DashboardPage() {
           ) : activeTab === "devices" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full">
               <DevicesView
-                devices={devices}
+                devices={displayDevices}
                 onRefresh={refreshDevices}
                 signedInEmail={user?.email}
                 signedInProvider={undefined}

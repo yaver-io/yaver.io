@@ -230,8 +230,10 @@ function DeviceCard({
   // case which flickered between two wrong answers.
   const authRecoverable = needsAuth || authExpired;
   const hasLiveSignal = hasRecentLiveSignal(device);
-  const isOnline = device.online && !isStale && !authRecoverable;
-  const isOffline = !device.online;
+  const hasBusLiveSignal = device.peerState === "online";
+  const hasBusStaleSignal = device.peerState === "stale";
+  const isOnline = (device.online || hasBusLiveSignal) && !(isStale && !hasBusLiveSignal) && !authRecoverable;
+  const isOffline = !device.online && !hasBusLiveSignal;
 
   // Keep state in sync when Convex list refreshes
   useEffect(() => {
@@ -473,6 +475,14 @@ function DeviceCard({
                 <Text style={{ color: "#818cf8", fontSize: 10, fontWeight: "700" }}>PRIMARY ★</Text>
               </View>
             ) : null}
+            {hasBusLiveSignal ? (
+              <View style={{
+                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+                backgroundColor: "#06b6d422", borderWidth: 1, borderColor: "#06b6d466",
+              }}>
+                <Text style={{ color: "#22d3ee", fontSize: 10, fontWeight: "700" }}>BUS LIVE</Text>
+              </View>
+            ) : null}
             {hasLiveSignal ? (
               <View style={{
                 paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
@@ -556,6 +566,15 @@ function DeviceCard({
             {formatDevicePlatform(device, runtimeLabel)} &middot; {device.host}:{device.port}
             {device.isGuest && device.hostName ? ` · shared from ${device.hostName}` : ""}
           </Text>
+          {hasBusLiveSignal ? (
+            <Text style={[styles.deviceMeta, { color: "#22d3ee", marginTop: 4 }]}>
+              Agent bus reports this machine live {timeSince(device.peerLastSeen || device.lastSeen || 0)}
+            </Text>
+          ) : hasBusStaleSignal ? (
+            <Text style={[styles.deviceMeta, { color: "#fbbf24", marginTop: 4 }]}>
+              Agent bus saw this machine recently, but the current transport looks stale.
+            </Text>
+          ) : null}
           {hasLiveSignal ? (
             <Text style={[styles.deviceMeta, { color: "#22d3ee", marginTop: 4 }]}>
               Relay live signal {timeSince(device.lastTunnelEvent?.at || 0)}
@@ -638,13 +657,15 @@ function DeviceCard({
               {
                 backgroundColor: authRecoverable
                   ? "#f59e0b"
+                  : hasBusLiveSignal
+                  ? "#06b6d4"
                   : hasLiveSignal
                   ? "#22d3ee"
                   : isOnline
                   ? c.success
                   : directReachable
                   ? "#38bdf8"
-                  : isStale
+                  : hasBusStaleSignal || isStale
                   ? "#eab308" // yellow — Convex says live, we can't reach
                   : c.textMuted, // gray — Convex says offline / wiped
               },
@@ -654,12 +675,12 @@ function DeviceCard({
             style={[
               styles.lastSeen,
               {
-                color: authRecoverable ? "#f59e0b" : hasLiveSignal ? "#22d3ee" : isOnline ? c.success : directReachable ? "#38bdf8" : isStale ? "#eab308" : c.textMuted,
+                color: authRecoverable ? "#f59e0b" : hasBusLiveSignal ? "#06b6d4" : hasLiveSignal ? "#22d3ee" : isOnline ? c.success : directReachable ? "#38bdf8" : (hasBusStaleSignal || isStale) ? "#eab308" : c.textMuted,
                 fontWeight: "600",
               },
             ]}
           >
-            {authRecoverable ? "needs auth" : hasLiveSignal ? "relay live" : isOnline ? "online" : directReachable ? "reachable" : isStale ? "stale" : "offline"}
+            {authRecoverable ? "needs auth" : hasBusLiveSignal ? "bus live" : hasLiveSignal ? "relay live" : isOnline ? "online" : directReachable ? "reachable" : (hasBusStaleSignal || isStale) ? "stale" : "offline"}
           </Text>
           {device.lastSeen > 0 && (
             <Text style={[styles.lastSeen, { color: c.textMuted, marginTop: 2 }]}>
@@ -974,6 +995,7 @@ export default function DevicesScreen() {
 
   const [guestCode, setGuestCode] = useState("");
   const [guestLoading, setGuestLoading] = useState(false);
+  const [peerStates, setPeerStates] = useState<Record<string, { state: "online" | "stale" | "offline"; lastSeen?: number }>>({});
 
   // Bootstrap devices — fresh yaver boxes on the LAN that are
   // running `yaver serve` in unauthenticated mode. Tapping one
@@ -988,6 +1010,50 @@ export default function DevicesScreen() {
     const iv = setInterval(refresh, 2000);
     return () => clearInterval(iv);
   }, []);
+
+  useEffect(() => {
+    if (connectionStatus !== "connected") {
+      setPeerStates({});
+      return;
+    }
+    let cancelled = false;
+    const refreshPeerStates = async () => {
+      try {
+        const peers = await quicClient.machinePeers();
+        if (cancelled) return;
+        const next: Record<string, { state: "online" | "stale" | "offline"; lastSeen?: number }> = {};
+        for (const peer of peers) {
+          if (!peer?.deviceId) continue;
+          const peerLastSeen = Date.parse(peer.lastSeen);
+          next[peer.deviceId] = {
+            state: peer.state,
+            lastSeen: Number.isNaN(peerLastSeen) ? undefined : peerLastSeen,
+          };
+        }
+        setPeerStates(next);
+      } catch {
+        if (!cancelled) setPeerStates({});
+      }
+    };
+    void refreshPeerStates();
+    const interval = setInterval(refreshPeerStates, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [connectionStatus, activeDevice?.id]);
+
+  const displayDevices = devices.map((device) => {
+    const peer = peerStates[device.id];
+    if (!peer) return device;
+    return {
+      ...device,
+      peerState: peer.state,
+      peerLastSeen: peer.lastSeen,
+      online: peer.state === "online" ? true : device.online,
+      lastSeen: peer.lastSeen && peer.lastSeen > device.lastSeen ? peer.lastSeen : device.lastSeen,
+    };
+  });
 
   const handleAdoptBootstrap = useCallback(
     async (dev: DiscoveredDevice) => {
@@ -1135,7 +1201,7 @@ export default function DevicesScreen() {
         )}
 
         <FlatList
-          data={devices}
+          data={displayDevices}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
           refreshing={isLoadingDevices}
