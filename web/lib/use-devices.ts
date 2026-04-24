@@ -54,6 +54,13 @@ export interface Device {
     status?: string;
   }>;
   sessionBinding?: "dedicated" | "legacy-shared";
+  lastTunnelEvent?: {
+    online: boolean;
+    at: number;
+    peerAddr?: string;
+    connectedAt?: number;
+    durationSec?: number;
+  };
 }
 
 interface DevicesState {
@@ -62,6 +69,59 @@ interface DevicesState {
 }
 
 const HEARTBEAT_STALE_MS = 90_000;
+let relayPresenceUrlPromise: Promise<string | null> | null = null;
+
+async function getPrimaryRelayPresenceUrl(): Promise<string | null> {
+  if (!relayPresenceUrlPromise) {
+    relayPresenceUrlPromise = (async () => {
+      try {
+        const res = await fetch(`${CONVEX_URL}/config`);
+        if (!res.ok) return null;
+        const data = await res.json().catch(() => ({}));
+        const relays = Array.isArray(data?.relayServers) ? data.relayServers : [];
+        const primary = relays
+          .filter((relay: any) => typeof relay?.httpUrl === "string" && relay.httpUrl.trim() !== "")
+          .sort((a: any, b: any) => Number(a?.priority ?? 9999) - Number(b?.priority ?? 9999))[0];
+        return primary?.httpUrl ? String(primary.httpUrl).replace(/\/+$/, "") : null;
+      } catch {
+        return null;
+      }
+    })();
+  }
+  return relayPresenceUrlPromise;
+}
+
+async function applyRelayPresence(devices: Device[]): Promise<Device[]> {
+  if (devices.length === 0) return devices;
+  const relayUrl = await getPrimaryRelayPresenceUrl();
+  if (!relayUrl) return devices;
+  try {
+    const ids = devices.map((device) => device.id).filter(Boolean).join(",");
+    if (!ids) return devices;
+    const res = await fetch(`${relayUrl}/presence?ids=${encodeURIComponent(ids)}`);
+    if (!res.ok) return devices;
+    const data = await res.json().catch(() => ({}));
+    const table = data?.devices && typeof data.devices === "object" ? data.devices : {};
+    return devices.map((device) => {
+      const entry = table[device.id];
+      if (entry?.online === true) {
+        return {
+          ...device,
+          online: true,
+          lastTunnelEvent: {
+            online: true,
+            at: Date.now(),
+            connectedAt: typeof entry.connectedAt === "number" ? entry.connectedAt : undefined,
+            durationSec: typeof entry.uptimeSec === "number" ? entry.uptimeSec : undefined,
+          },
+        };
+      }
+      return device;
+    });
+  } catch {
+    return devices;
+  }
+}
 
 function normalizedName(name: string | undefined): string {
   return String(name || "").trim().toLowerCase().replace(/\.local$/i, "");
@@ -121,6 +181,13 @@ function mergeDeviceEntries(existing: Device, incoming: Device): Device {
     online: base.online || other.online,
     publicKey: base.publicKey || other.publicKey,
     hardwareId: base.hardwareId || other.hardwareId,
+    lastTunnelEvent: (() => {
+      const baseAt = base.lastTunnelEvent?.at || 0;
+      const otherAt = other.lastTunnelEvent?.at || 0;
+      if (baseAt === 0) return other.lastTunnelEvent;
+      if (otherAt === 0) return base.lastTunnelEvent;
+      return baseAt >= otherAt ? base.lastTunnelEvent : other.lastTunnelEvent;
+    })(),
     localIps: mergeIpLists(base.localIps, other.localIps),
     publicEndpoints: (() => {
       const merged = new Set<string>();
@@ -294,9 +361,19 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
               ? Date.parse(String(rawHeartbeat))
               : 0;
         const online =
-          Boolean(d.isOnline ?? d.online ?? false) &&
-          heartbeatMs > 0 &&
-          Date.now() - heartbeatMs < HEARTBEAT_STALE_MS;
+          (() => {
+            const heartbeatFresh =
+              Boolean(d.isOnline ?? d.online ?? false) &&
+              heartbeatMs > 0 &&
+              Date.now() - heartbeatMs < HEARTBEAT_STALE_MS;
+            const tunnelEvent = d.lastTunnelEvent;
+            const relayLive =
+              tunnelEvent &&
+              tunnelEvent.online === true &&
+              typeof tunnelEvent.at === "number" &&
+              Date.now() - tunnelEvent.at < HEARTBEAT_STALE_MS;
+            return heartbeatFresh || relayLive;
+          })();
         return {
         id: deviceId,
         name: d.isGuest ? `${d.name || d.hostname || ""} (${d.hostName || "guest"})` : d.name || d.hostname || "",
@@ -328,16 +405,27 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
         sharedRunners: Array.isArray(d.sharedRunners) ? d.sharedRunners : undefined,
         runners: Array.isArray(d.runners) ? d.runners : undefined,
         sessionBinding: d.sessionBinding,
+        lastTunnelEvent:
+          d.lastTunnelEvent && typeof d.lastTunnelEvent === "object"
+            ? {
+                online: Boolean(d.lastTunnelEvent.online),
+                at: typeof d.lastTunnelEvent.at === "number" ? d.lastTunnelEvent.at : 0,
+                peerAddr: typeof d.lastTunnelEvent.peerAddr === "string" ? d.lastTunnelEvent.peerAddr : undefined,
+                connectedAt: typeof d.lastTunnelEvent.connectedAt === "number" ? d.lastTunnelEvent.connectedAt : undefined,
+                durationSec: typeof d.lastTunnelEvent.durationSec === "number" ? d.lastTunnelEvent.durationSec : undefined,
+              }
+            : undefined,
       }});
 
       const collapsed = collapseDevices(mapped);
+      const withRelayPresence = await applyRelayPresence(collapsed);
 
-      collapsed.sort((a, b) => {
+      withRelayPresence.sort((a, b) => {
         if (a.online !== b.online) return a.online ? -1 : 1;
         return b.lastSeen.localeCompare(a.lastSeen);
       });
 
-      setDevices(collapsed);
+      setDevices(withRelayPresence);
     } catch {
       // Silently fail
     }

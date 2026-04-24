@@ -45,6 +45,7 @@ type ListedDevice = {
   runnerDown: boolean;
   runners: Doc<"devices">["runners"];
   lastHeartbeat: number;
+  lastTunnelEvent?: Doc<"devices">["lastTunnelEvent"];
   isGuest: boolean;
   hostUserId?: string;
   hostName?: string;
@@ -130,6 +131,14 @@ function mergeListedDevices(a: ListedDevice, b: ListedDevice): ListedDevice {
     publicKey: base.publicKey || other.publicKey,
     hardwareId: base.hardwareId || other.hardwareId,
     lastHeartbeat: Math.max(a.lastHeartbeat || 0, b.lastHeartbeat || 0),
+    lastTunnelEvent:
+      (() => {
+        const aAt = a.lastTunnelEvent?.at || 0;
+        const bAt = b.lastTunnelEvent?.at || 0;
+        if (aAt === 0) return b.lastTunnelEvent;
+        if (bAt === 0) return a.lastTunnelEvent;
+        return bAt > aAt ? b.lastTunnelEvent : a.lastTunnelEvent;
+      })(),
     localIps: [...new Set([...(a.localIps || []), ...(b.localIps || [])].filter(Boolean))],
     publicEndpoints: [...new Set([...(a.publicEndpoints || []), ...(b.publicEndpoints || [])].filter(Boolean))],
     runners: (base.runners && base.runners.length > 0) ? base.runners : other.runners,
@@ -662,6 +671,7 @@ export const listMyDevices = query({
       runnerDown: d.runnerDown ?? false,
       runners: d.runners ?? [],
       lastHeartbeat: d.lastHeartbeat,
+      lastTunnelEvent: d.lastTunnelEvent,
       isGuest: false as boolean,
       hostName: undefined as string | undefined,
       hostEmail: undefined as string | undefined,
@@ -725,6 +735,7 @@ export const listMyDevices = query({
           runnerDown: d.runnerDown ?? false,
           runners: d.runners ?? [],
           lastHeartbeat: d.lastHeartbeat,
+          lastTunnelEvent: d.lastTunnelEvent,
           isGuest: true,
           hostUserId: String(grant.hostUserId),
           hostName: host.fullName,
@@ -785,6 +796,7 @@ export const listMyDevices = query({
           runnerDown: d.runnerDown ?? false,
           runners: d.runners ?? [],
           lastHeartbeat: d.lastHeartbeat,
+          lastTunnelEvent: d.lastTunnelEvent,
           isGuest: true,
           hostUserId: String(access.hostUserId),
           hostName: host.fullName,
@@ -851,6 +863,7 @@ export const recommendTaskPlacement = query({
           runnerDown: device.runnerDown ?? false,
           runners: device.runners ?? [],
           lastHeartbeat: device.lastHeartbeat,
+          lastTunnelEvent: device.lastTunnelEvent,
           isGuest: false,
           accessScope: "owner",
           deviceClass: device.deviceClass,

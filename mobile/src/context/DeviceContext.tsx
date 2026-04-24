@@ -102,7 +102,17 @@ async function applyRelayPresence(list: Device[]): Promise<Device[]> {
     return list.map((d) => {
       const entry = table[d.id];
       if (entry && entry.online === true) {
-        return { ...d, online: true, lastSeen: Math.max(d.lastSeen || 0, Date.now()) };
+        return {
+          ...d,
+          online: true,
+          lastTunnelEvent: {
+            online: true,
+            at: Date.now(),
+            connectedAt: typeof entry.connectedAt === "number" ? entry.connectedAt : undefined,
+            durationSec: typeof entry.uptimeSec === "number" ? entry.uptimeSec : undefined,
+          },
+          lastSeen: Math.max(d.lastSeen || 0, Date.now()),
+        };
       }
       return d;
     });
@@ -662,6 +672,16 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           const deviceId = d.deviceId || d.id;
           // If we're actively connected to this device, trust our connection over stale heartbeat
           const isActivelyConnected = connectedDeviceId === deviceId;
+          const lastTunnelEvent =
+            d.lastTunnelEvent && typeof d.lastTunnelEvent === "object"
+              ? {
+                  online: Boolean(d.lastTunnelEvent.online),
+                  at: typeof d.lastTunnelEvent.at === "number" ? d.lastTunnelEvent.at : 0,
+                  peerAddr: typeof d.lastTunnelEvent.peerAddr === "string" ? d.lastTunnelEvent.peerAddr : undefined,
+                  connectedAt: typeof d.lastTunnelEvent.connectedAt === "number" ? d.lastTunnelEvent.connectedAt : undefined,
+                  durationSec: typeof d.lastTunnelEvent.durationSec === "number" ? d.lastTunnelEvent.durationSec : undefined,
+                }
+              : undefined;
           return {
             id: deviceId,
             name: d.isGuest ? `${d.name} (${d.hostName || "guest"})` : d.name,
@@ -670,7 +690,13 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             online: isActivelyConnected || (() => {
               const flag = d.isOnline ?? d.online ?? false;
               const lastSeen = d.lastHeartbeat || d.lastSeen || 0;
-              return flag && lastSeen > 0 && (Date.now() - lastSeen) < HEARTBEAT_STALE_MS;
+              const heartbeatFresh = flag && lastSeen > 0 && (Date.now() - lastSeen) < HEARTBEAT_STALE_MS;
+              const relayLive =
+                lastTunnelEvent &&
+                lastTunnelEvent.online === true &&
+                lastTunnelEvent.at > 0 &&
+                (Date.now() - lastTunnelEvent.at) < HEARTBEAT_STALE_MS;
+              return heartbeatFresh || relayLive;
             })(),
             lastSeen: isActivelyConnected ? Date.now() : (d.lastHeartbeat || d.lastSeen || 0),
             os: d.platform || d.os || "",
@@ -678,7 +704,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             publicKey: d.publicKey,
             hwid: d.hardwareId || d.hwid,
             lanIps: Array.isArray(d.localIps) ? d.localIps : undefined,
-            lastTunnelEvent: d.lastTunnelEvent ?? undefined,
+            lastTunnelEvent,
             needsAuth: d.needsAuth ?? false,
             isGuest: d.isGuest || false,
             hostName: d.hostName,

@@ -124,6 +124,65 @@ function formatHeartbeatAge(lastSeen?: string): string {
   return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+function lastSeenAgeMs(lastSeen?: string): number | null {
+  if (!lastSeen) return null;
+  const ts = Date.parse(lastSeen);
+  if (Number.isNaN(ts)) return null;
+  return Math.max(0, Date.now() - ts);
+}
+
+function formatAgeShort(ms: number | null): string | null {
+  if (ms == null) return null;
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h`;
+  const day = Math.floor(hr / 24);
+  return `${day}d`;
+}
+
+function hasRecentLiveSignal(
+  device: Pick<Device, "lastTunnelEvent">,
+  maxAgeMs = 90_000,
+): boolean {
+  return Boolean(
+    device.lastTunnelEvent &&
+    device.lastTunnelEvent.online &&
+    device.lastTunnelEvent.at > 0 &&
+    (Date.now() - device.lastTunnelEvent.at) < maxAgeMs,
+  );
+}
+
+function deviceReachabilitySummary(
+  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "host" | "lastTunnelEvent">,
+): string {
+  if (hasRecentLiveSignal(device)) return "Live relay signal";
+  if (device.online) return "Fresh heartbeat";
+  if (device.needsAuth) return "Agent session expired; relay recovery may still work";
+  const age = formatAgeShort(lastSeenAgeMs(device.lastSeen));
+  const hasPublicPath = Boolean(device.tunnelUrl) || Boolean(device.publicEndpoints?.length);
+  if (age && hasPublicPath) return `No fresh live signal for ${age}; relay or tunnel may still be worth probing`;
+  if (age) return `No fresh live signal for ${age}; no tunnel or public endpoint advertised`;
+  if (hasPublicPath) return "No recent live signal; relay or tunnel may still be worth probing";
+  if (device.host) return "No recent live signal; direct browser access usually needs relay";
+  return "No recent live signal";
+}
+
+const DORMANT_DEVICE_HIDE_MS = 10 * 60 * 1000;
+
+function isDormantUnreachableDevice(
+  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "isGuest">,
+): boolean {
+  if (device.isGuest) return false;
+  if (device.online) return false;
+  if (device.needsAuth) return false;
+  if (Boolean(device.tunnelUrl) || Boolean(device.publicEndpoints?.length)) return false;
+  const age = lastSeenAgeMs(device.lastSeen);
+  return age !== null && age >= DORMANT_DEVICE_HIDE_MS;
+}
+
 function formatRunnerChipLabel(runner: string): string {
   const cleaned = String(runner || "").trim();
   if (!cleaned) return cleaned;
@@ -211,6 +270,11 @@ function DeviceConnectCard({
 }) {
   const shareSummary = deviceAccessSummary(device);
   const heartbeatAge = formatHeartbeatAge(device.lastSeen);
+  const reachability = deviceReachabilitySummary(device);
+  const liveSignal = hasRecentLiveSignal(device);
+  const liveSignalAge = liveSignal && device.lastTunnelEvent?.at
+    ? formatHeartbeatAge(new Date(device.lastTunnelEvent.at).toISOString())
+    : heartbeatAge;
   const lanIps = lanIpsForDevice(device);
   const isOffline = !device.online;
 
@@ -241,7 +305,7 @@ function DeviceConnectCard({
               }`}
             />
             <span className="text-[11px] text-surface-400">
-              {connectionError ? "failed" : isOffline ? "offline" : isConnecting ? "connecting" : "online"} · {heartbeatAge}
+              {connectionError ? "failed" : isOffline ? "offline" : isConnecting ? "connecting" : liveSignal ? "relay live" : "online"} · {liveSignalAge}
             </span>
           </div>
           <p className="mt-1 text-[11px] leading-5 text-surface-500">
@@ -249,6 +313,9 @@ function DeviceConnectCard({
             {device.host ? ` · ${device.host}:${device.port}` : ""}
             {device.isGuest && device.hostName ? ` · from ${device.hostName}` : ""}
           </p>
+          {!connectionError && isOffline ? (
+            <p className="mt-1 text-[11px] leading-5 text-amber-300/80">{reachability}</p>
+          ) : null}
           {connectionError ? (
             <p className="mt-1 text-[11px] text-red-300/80">{connectionError}</p>
           ) : null}
@@ -758,7 +825,8 @@ export default function DashboardPage() {
 
   const runningTask = tasks.find(t => t.status === "running");
   const mobileWorkers = devices.filter((d) => d.deviceClass === "edge-mobile");
-  const visibleDevices = devices;
+  const dormantDevices = devices.filter((d) => isDormantUnreachableDevice(d));
+  const visibleDevices = devices.filter((d) => !isDormantUnreachableDevice(d));
   const selectedPreviewTarget = mobileWorkers.find((d) => d.id === previewTargetId) || null;
   const tabs: { id: typeof activeTab; label: string; icon: string; badge?: number }[] = [
     { id: "devices", label: "Devices", icon: "\uD83D\uDCBB" },
@@ -974,6 +1042,15 @@ export default function DashboardPage() {
                     className="w-full px-2 text-left text-[10px] text-surface-500 hover:text-surface-300"
                   >
                     +{visibleDevices.length - 5} more
+                  </button>
+                ) : null}
+                {dormantDevices.length > 0 ? (
+                  <button
+                    onClick={() => setActiveTab("devices")}
+                    className="w-full rounded-md border border-amber-500/20 bg-amber-500/5 px-2 py-1.5 text-left text-[10px] text-amber-200 hover:bg-amber-500/10"
+                    title="Open the Devices tab to reveal stale hidden devices"
+                  >
+                    {dormantDevices.length} stale device{dormantDevices.length === 1 ? "" : "s"} hidden
                   </button>
                 ) : null}
               </div>
@@ -1449,6 +1526,8 @@ export default function DashboardPage() {
                 signedInProvider={undefined}
                 token={token}
                 onOpen={connectToDevice}
+                onCloseWorkspace={disconnect}
+                activeWorkspaceDeviceId={connectedDevice?.id ?? null}
                 hiddenCount={hiddenIds.size}
               />
             </div>

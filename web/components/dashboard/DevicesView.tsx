@@ -78,6 +78,65 @@ function formatLastSeen(value: string | undefined): string {
   return new Date(ts).toLocaleDateString();
 }
 
+function lastSeenAgeMs(value: string | undefined): number | null {
+  if (!value) return null;
+  const ts = Date.parse(value);
+  if (Number.isNaN(ts)) return null;
+  return Math.max(0, Date.now() - ts);
+}
+
+function formatAgeShort(ms: number | null): string | null {
+  if (ms == null) return null;
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h`;
+  const day = Math.floor(hr / 24);
+  return `${day}d`;
+}
+
+function hasRecentLiveSignal(
+  device: Pick<Device, "lastTunnelEvent">,
+  maxAgeMs = 90_000,
+): boolean {
+  return Boolean(
+    device.lastTunnelEvent &&
+    device.lastTunnelEvent.online &&
+    device.lastTunnelEvent.at > 0 &&
+    (Date.now() - device.lastTunnelEvent.at) < maxAgeMs,
+  );
+}
+
+function deviceReachabilitySummary(
+  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "host" | "lastTunnelEvent">,
+): string {
+  if (hasRecentLiveSignal(device)) return "Live relay signal";
+  if (device.online) return "Fresh heartbeat";
+  if (device.needsAuth) return "Agent session expired; relay recovery may still work";
+  const age = formatAgeShort(lastSeenAgeMs(device.lastSeen));
+  const hasPublicPath = Boolean(device.tunnelUrl) || Boolean(device.publicEndpoints?.length);
+  if (age && hasPublicPath) return `No fresh live signal for ${age}; relay or tunnel may still be worth probing`;
+  if (age) return `No fresh live signal for ${age}; no tunnel or public endpoint advertised`;
+  if (hasPublicPath) return "No recent live signal; relay or tunnel may still be worth probing";
+  if (device.host) return "No recent live signal; direct browser access usually needs relay";
+  return "No recent live signal";
+}
+
+const DORMANT_DEVICE_HIDE_MS = 10 * 60 * 1000;
+
+function isDormantUnreachableDevice(
+  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "isGuest">,
+): boolean {
+  if (device.isGuest) return false;
+  if (device.online) return false;
+  if (device.needsAuth) return false;
+  if (Boolean(device.tunnelUrl) || Boolean(device.publicEndpoints?.length)) return false;
+  const age = lastSeenAgeMs(device.lastSeen);
+  return age !== null && age >= DORMANT_DEVICE_HIDE_MS;
+}
+
 function formatRunnerChipLabel(runner: string): string {
   const cleaned = String(runner || "").trim();
   if (!cleaned) return cleaned;
@@ -243,6 +302,10 @@ interface DevicesViewProps {
    * the sidebar.
    */
   onOpen?: (device: Device) => void;
+  /** Close the currently-open workspace session. */
+  onCloseWorkspace?: () => void;
+  /** Device id currently opened as the active workspace, if any. */
+  activeWorkspaceDeviceId?: string | null;
   /** Count of devices hidden via the Hide button — surfaced for the "show all" link. */
   hiddenCount?: number;
 }
@@ -347,25 +410,55 @@ function usePrimaryDeviceId(token: string | null | undefined): {
   return { primaryDeviceId, setPrimaryDevice };
 }
 
-export default function DevicesView({ devices, onRefresh, signedInEmail, signedInProvider, token, onOpen, hiddenCount = 0 }: DevicesViewProps) {
+export default function DevicesView({
+  devices,
+  onRefresh,
+  signedInEmail,
+  signedInProvider,
+  token,
+  onOpen,
+  onCloseWorkspace,
+  activeWorkspaceDeviceId = null,
+  hiddenCount = 0,
+}: DevicesViewProps) {
   const { primaryDeviceId, setPrimaryDevice } = usePrimaryDeviceId(token);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [authModal, setAuthModal] = useState<{ device: Device; runner: string } | null>(null);
+  const [showDormantDevices, setShowDormantDevices] = useState(false);
+  const actionableDevices = devices.filter((device) => !isDormantUnreachableDevice(device));
+  const dormantDevices = devices.filter((device) => isDormantUnreachableDevice(device));
+  const renderedDevices = showDormantDevices ? devices : actionableDevices;
   return (
     <div className="mb-6">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-surface-50">Devices</h2>
-        <button
-          onClick={() => onRefresh()}
-          className="btn-secondary px-3 py-1.5 text-xs"
-        >
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          {dormantDevices.length > 0 ? (
+            <button
+              onClick={() => setShowDormantDevices((value) => !value)}
+              className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-200 hover:bg-amber-500/15"
+              title="Reveal stale devices with no heartbeat and no usable public path"
+            >
+              {showDormantDevices ? "Hide stale devices" : `Show stale devices (${dormantDevices.length})`}
+            </button>
+          ) : null}
+          <button
+            onClick={() => onRefresh()}
+            className="btn-secondary px-3 py-1.5 text-xs"
+          >
+            Refresh
+          </button>
+        </div>
       </div>
 
-      {devices.length === 0 ? (
+      {renderedDevices.length === 0 ? (
         <div className="card p-8 text-center">
           <p className="mb-2 text-sm text-surface-400">No devices registered.</p>
+          {dormantDevices.length > 0 ? (
+            <p className="mb-3 text-xs text-amber-300">
+              {dormantDevices.length} stale device{dormantDevices.length === 1 ? "" : "s"} hidden by default because they have no recent heartbeat and no public path.
+            </p>
+          ) : null}
           {signedInEmail ? (
             <p className="mb-3 text-xs text-surface-500">
               Signed in as <span className="font-medium text-surface-300">{signedInEmail}</span>
@@ -376,18 +469,12 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
           <p className="mb-4 text-xs text-surface-500">
             Install the Yaver CLI on your machine and run <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-300">yaver auth</code> to register.
           </p>
-          <p className="mb-4 text-xs text-surface-500">
-            If browser OAuth already succeeded on the machine but Yaver still shows no devices, run <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-300">yaver auth factory-reset</code> there to clear stale auth state and re-sign in against the live backend.
-          </p>
           <Link href="/download" className="btn-secondary px-4 py-2 text-sm">
             Download Yaver
           </Link>
         </div>
       ) : (
         <div className="space-y-2">
-          <div className="rounded-xl border border-amber-500/20 bg-amber-500/8 px-4 py-3 text-xs text-amber-100">
-            If a machine finishes browser OAuth but still shows stale auth locally, run <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-100">yaver auth factory-reset</code> on that machine. MCP clients can call <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-100">yaver_auth_factory_reset</code>.
-          </div>
           {hiddenCount > 0 ? (
             <div className="flex items-center justify-between rounded-lg border border-surface-800 bg-surface-900/40 px-3 py-2 text-xs text-surface-400">
               <span>{hiddenCount} device{hiddenCount === 1 ? "" : "s"} hidden in this browser.</span>
@@ -399,8 +486,14 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
               </button>
             </div>
           ) : null}
-          {devices.map((device) => {
+          {!showDormantDevices && dormantDevices.length > 0 ? (
+            <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
+              {dormantDevices.length} stale device{dormantDevices.length === 1 ? "" : "s"} hidden because they have no recent heartbeat and no usable relay/tunnel path.
+            </div>
+          ) : null}
+          {renderedDevices.map((device) => {
             const shareSummary = deviceShareSummary(device);
+            const isActiveWorkspace = activeWorkspaceDeviceId === device.id;
             return (
             <div key={device.id} className="card flex items-start gap-4">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-surface-800 text-surface-400">
@@ -602,14 +695,29 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                   );
                 })()}
                 <div className="mt-5 flex flex-wrap items-center gap-2">
-                  {onOpen && device.online ? (
+                  {isActiveWorkspace && onCloseWorkspace ? (
+                    <button
+                      onClick={onCloseWorkspace}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-surface-700 bg-surface-900/60 px-3 py-1.5 text-xs font-semibold text-surface-100 shadow-sm hover:border-surface-600 hover:bg-surface-800"
+                      title="Disconnect from this machine and close the active workspace"
+                    >
+                      <span aria-hidden>×</span>
+                      Close Workspace
+                    </button>
+                  ) : onOpen ? (
                     <button
                       onClick={() => onOpen(device)}
-                      className="inline-flex items-center gap-1.5 rounded-md bg-indigo-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-400"
-                      title="Connect to this machine and start working on it"
+                      className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold shadow-sm ${
+                        device.online
+                          ? "bg-indigo-500 text-white hover:bg-indigo-400"
+                          : "border border-amber-500/30 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20"
+                      }`}
+                      title={device.online
+                        ? "Connect to this machine and start working on it"
+                        : "Probe this machine anyway and show relay/direct diagnostics"}
                     >
                       <span aria-hidden>⌨️</span>
-                      Open Workspace
+                      {device.online ? "Open Workspace" : "Try Connect"}
                     </button>
                   ) : null}
                 </div>
@@ -698,6 +806,8 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
         <div>
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-surface-500">Runtime</div>
           {row("Status", device.online ? "Online" : "Offline")}
+          {row("Live signal", device.lastTunnelEvent?.at ? `${device.lastTunnelEvent.online ? "relay-online" : "relay-offline"} (${formatLastSeen(new Date(device.lastTunnelEvent.at).toISOString())})` : null)}
+          {row("Reachability", deviceReachabilitySummary(device))}
           {row("Last heartbeat", device.lastSeen ? `${formatLastSeen(device.lastSeen)} (${device.lastSeen})` : null)}
           {row("Version", info?.version)}
           {row("Platform", info?.platform || device.platform)}

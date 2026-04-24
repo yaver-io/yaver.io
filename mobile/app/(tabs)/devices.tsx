@@ -79,6 +79,15 @@ function accessSummary(device: Pick<Device, "isGuest" | "sharedWithGuests" | "sh
   };
 }
 
+function hasRecentLiveSignal(device: Pick<Device, "lastTunnelEvent">, maxAgeMs = 90_000): boolean {
+  return Boolean(
+    device.lastTunnelEvent &&
+    device.lastTunnelEvent.online &&
+    device.lastTunnelEvent.at > 0 &&
+    (Date.now() - device.lastTunnelEvent.at) < maxAgeMs
+  );
+}
+
 function ConnectionBadge({ status }: { status: string }) {
   const c = useColors();
   const color =
@@ -220,6 +229,7 @@ function DeviceCard({
   // online|offline missed the "Convex thinks live, we can't reach"
   // case which flickered between two wrong answers.
   const authRecoverable = needsAuth || authExpired;
+  const hasLiveSignal = hasRecentLiveSignal(device);
   const isOnline = device.online && !isStale && !authRecoverable;
   const isOffline = !device.online;
 
@@ -463,12 +473,12 @@ function DeviceCard({
                 <Text style={{ color: "#818cf8", fontSize: 10, fontWeight: "700" }}>PRIMARY ★</Text>
               </View>
             ) : null}
-            {device.lastTunnelEvent && device.lastTunnelEvent.online && (Date.now() - device.lastTunnelEvent.at) < 60_000 ? (
+            {hasLiveSignal ? (
               <View style={{
                 paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
                 backgroundColor: "#22d3ee22", borderWidth: 1, borderColor: "#22d3ee66",
               }}>
-                <Text style={{ color: "#22d3ee", fontSize: 10, fontWeight: "700" }}>RELAY LIVE</Text>
+                <Text style={{ color: "#22d3ee", fontSize: 10, fontWeight: "700" }}>LIVE SIGNAL</Text>
               </View>
             ) : null}
             {device.isGuest && device.priorityMode === "spare-capacity" ? (
@@ -546,6 +556,11 @@ function DeviceCard({
             {formatDevicePlatform(device, runtimeLabel)} &middot; {device.host}:{device.port}
             {device.isGuest && device.hostName ? ` · shared from ${device.hostName}` : ""}
           </Text>
+          {hasLiveSignal ? (
+            <Text style={[styles.deviceMeta, { color: "#22d3ee", marginTop: 4 }]}>
+              Relay live signal {timeSince(device.lastTunnelEvent?.at || 0)}
+            </Text>
+          ) : null}
           {authExpired ? (
             <Text style={[styles.deviceMeta, { color: "#fbbf24", marginTop: 4 }]}>
               This machine is reachable, but its Yaver session expired. Recover it from the phone.
@@ -623,6 +638,8 @@ function DeviceCard({
               {
                 backgroundColor: authRecoverable
                   ? "#f59e0b"
+                  : hasLiveSignal
+                  ? "#22d3ee"
                   : isOnline
                   ? c.success
                   : directReachable
@@ -637,12 +654,12 @@ function DeviceCard({
             style={[
               styles.lastSeen,
               {
-                color: authRecoverable ? "#f59e0b" : isOnline ? c.success : directReachable ? "#38bdf8" : isStale ? "#eab308" : c.textMuted,
+                color: authRecoverable ? "#f59e0b" : hasLiveSignal ? "#22d3ee" : isOnline ? c.success : directReachable ? "#38bdf8" : isStale ? "#eab308" : c.textMuted,
                 fontWeight: "600",
               },
             ]}
           >
-            {authRecoverable ? "needs auth" : isOnline ? "online" : directReachable ? "reachable" : isStale ? "stale" : "offline"}
+            {authRecoverable ? "needs auth" : hasLiveSignal ? "relay live" : isOnline ? "online" : directReachable ? "reachable" : isStale ? "stale" : "offline"}
           </Text>
           {device.lastSeen > 0 && (
             <Text style={[styles.lastSeen, { color: c.textMuted, marginTop: 2 }]}>
