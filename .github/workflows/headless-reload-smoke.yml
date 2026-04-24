@@ -1,0 +1,138 @@
+# End-to-end smoke: drive the two headless CLIs against the live
+# yaver-test-ephemeral agent. Fills the gap verify-web-reload-on-
+# ephemeral.yml leaves — that one curls the agent directly, this
+# one goes through the same TypeScript client code paths the web
+# UI + mobile app rely on.
+#
+# Intentionally bypasses relay + Convex auth by pointing the
+# headless CLIs at --agent=http://127.0.0.1:18080 with the on-disk
+# auth token. That's enough to prove the CLI ⇄ agent contract; a
+# separate workflow owns user-credentialled relay-path smoke.
+
+name: Headless Reload Smoke on Ephemeral
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: headless-reload-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Rsync headless packages to the box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          for dir in web-headless mobile-headless; do
+            rsync -az --delete \
+              -e "ssh -i $HCLOUD_SSH_PRIVATE_KEY_PATH -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
+              --exclude node_modules --exclude dist \
+              "$dir/" "root@$HETZNER_TEST_SERVER_IP:/opt/yaver/$dir/"
+          done
+
+      - name: Run headless smoke against live agent
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          set -euo pipefail
+
+          command -v bun >/dev/null || {
+            echo "Installing bun…"
+            curl -fsSL https://bun.sh/install | bash
+            export PATH="$HOME/.bun/bin:$PATH"
+          }
+          command -v bun >/dev/null || export PATH="$HOME/.bun/bin:$PATH"
+
+          # Pull the agent's on-disk token. Works against the same
+          # agent the verify workflow exercised.
+          CONFIG=""
+          for c in /home/yaver/.yaver/config.json /root/.yaver/config.json; do
+            [ -f "$c" ] && CONFIG="$c" && break
+          done
+          [ -n "$CONFIG" ] || { echo "no agent config" >&2; exit 2; }
+          TOKEN=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['auth_token'])" "$CONFIG")
+          [ -n "$TOKEN" ] || { echo "agent auth_token empty" >&2; exit 2; }
+
+          AGENT="http://127.0.0.1:18080"
+          echo "== agent version ==" && curl -fsS -H "Authorization: Bearer $TOKEN" "$AGENT/info" | jq '{ok, version, hostname}'
+
+          # ── web-headless ────────────────────────────────────────────
+          cd /opt/yaver/web-headless
+          echo "== web-headless install ==" && bun install >/dev/null 2>&1
+
+          echo "== web-headless: workspace-apps (kind=web,hybrid) =="
+          bun run src/bin/cli.ts workspace-apps \
+            --device=ephemeral --token="$TOKEN" --agent="$AGENT" \
+            --kind=web,hybrid \
+            | jq 'map({name, kind, stack, exists})'
+
+          echo "== web-headless: dev-start app=carrotbet surface=web-reload =="
+          bun run src/bin/cli.ts dev-start \
+            --device=ephemeral --token="$TOKEN" --agent="$AGENT" \
+            --app=carrotbet --surface=web-reload
+
+          echo "== /dev/status after web-headless start =="
+          curl -fsS -H "Authorization: Bearer $TOKEN" "$AGENT/dev/status" \
+            | jq '{running, framework, kind, port, workDir}'
+
+          echo "== web-headless: webview-url =="
+          bun run src/bin/cli.ts webview-url \
+            --device=ephemeral --token="$TOKEN" --agent="$AGENT" \
+            | jq '{previewUrl, eventsUrl, mode}'
+
+          echo "== web-headless: dev-stop =="
+          bun run src/bin/cli.ts dev-stop \
+            --device=ephemeral --token="$TOKEN" --agent="$AGENT" >/dev/null
+
+          # ── mobile-headless ─────────────────────────────────────────
+          cd /opt/yaver/mobile-headless
+          echo "== mobile-headless install ==" && bun install >/dev/null 2>&1
+
+          # mobile-headless picks up the direct-agent override from
+          # YMH_AGENT_URL (see mobile-client.ts, opts.agentBaseUrl).
+          # We don't have a --surface CLI flag yet, so raw-post gets
+          # us the same round-trip.
+          export YMH_AGENT_URL="$AGENT"
+
+          echo "== mobile-headless: /dev/start app=sfmg surface=hot-reload (via raw-post) =="
+          bun run src/bin/cli.ts raw-post /dev/start \
+            --token="$TOKEN" \
+            --body='{"app":"sfmg","surface":"hot-reload"}'
+
+          echo "== /dev/status after mobile-headless start =="
+          curl -fsS -H "Authorization: Bearer $TOKEN" "$AGENT/dev/status" \
+            | jq '{running, framework, kind, port, workDir}'
+
+          echo "== mobile-headless: /dev/stop =="
+          bun run src/bin/cli.ts raw-post /dev/stop \
+            --token="$TOKEN" >/dev/null
+
+          # ── diagnose v2 ─────────────────────────────────────────────
+          echo "== diagnose summary =="
+          curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"skip":["runtime-deps","cloudflared","tailscale","vpn"]}' \
+            "$AGENT/diagnose" | jq '{ok, report}'
+
+          echo "== headless reload smoke complete =="
+          REMOTE
