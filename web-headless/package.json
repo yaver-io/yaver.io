@@ -1,6 +1,6 @@
 {
   "name": "yaver-web-headless",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Headless surrogate for the Yaver web dashboard — drive dev-server preview (Vite / Next / Expo / Flutter), webview reload, vibing, reconnect, repair-relay, and guest/OAuth auth over Convex + relay from Node/Bun scripts, CLI, or MCP.",
   "license": "FSL-1.1-Apache-2.0",
   "repository": {
@@ -24,6 +24,7 @@
     "cli": "bun run src/bin/cli.ts",
     "test": "bun test",
     "test:hermetic": "bun test test/hermetic.test.ts",
+    "test:integration": "bun test test/integration.test.ts",
     "typecheck": "tsc --noEmit",
     "build": "bun build src/bin/cli.ts --outdir dist --target node --minify && bun build src/web-client.ts --outdir dist --target node && node scripts/fix-shebang.mjs",
     "prepublishOnly": "bun run build"

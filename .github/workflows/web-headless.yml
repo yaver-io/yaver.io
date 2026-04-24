@@ -1,0 +1,84 @@
+name: web-headless
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web-headless/**"
+      - "web/lib/agent-client.ts"
+      - "desktop/agent/devserver*.go"
+      - "desktop/agent/workspace*.go"
+      - "desktop/agent/ops_web_preview.go"
+      - "desktop/agent/httpserver.go"
+      - "relay/tunnel.go"
+      - "relay/frame_headers*.go"
+      - ".github/workflows/web-headless.yml"
+  pull_request:
+    paths:
+      - "web-headless/**"
+      - "web/lib/agent-client.ts"
+      - "desktop/agent/devserver*.go"
+      - "desktop/agent/workspace*.go"
+      - "desktop/agent/ops_web_preview.go"
+      - "desktop/agent/httpserver.go"
+      - "relay/tunnel.go"
+      - "relay/frame_headers*.go"
+      - ".github/workflows/web-headless.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: web-headless-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  hermetic:
+    # Hermetic — no Go agent, no Convex. Runs under 10s on a cold runner.
+    # Guards the WebClient ⇄ web-dashboard contract against drift.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install deps
+        working-directory: web-headless
+        run: bun install
+      - name: Typecheck
+        working-directory: web-headless
+        run: bun run typecheck
+      - name: Hermetic tests
+        working-directory: web-headless
+        run: bun test test/hermetic.test.ts
+
+  integration:
+    # Integration — builds the Go agent, runs it locally, drives it
+    # through the real HTTP contract (workspace manifest + Web Reload
+    # surface gating). Covers the subset of endpoints web-headless
+    # actually exercises; a broken agent route shows up here, not in
+    # production.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: hermetic
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - name: Install deps
+        working-directory: web-headless
+        run: bun install
+      - name: Build Go agent
+        working-directory: desktop/agent
+        run: go build -o /tmp/yaver-agent .
+      - name: Run integration tests against real agent
+        working-directory: web-headless
+        env:
+          YAVER_AGENT_BIN: /tmp/yaver-agent
+        run: bun test test/integration.test.ts

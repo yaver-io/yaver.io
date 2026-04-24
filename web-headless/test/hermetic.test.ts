@@ -261,6 +261,212 @@ describe("WebClient — agent surface (dev server, tasks)", () => {
   });
 });
 
+describe("WebClient — Web Reload flow (workspace + surface)", () => {
+  // What we assert:
+  //   1. getWorkspaceApps forwards ?kind= to the agent verbatim.
+  //   2. startDevServer({app, surface}) sends both fields in the body.
+  //   3. DevServerStatus.kind is surfaced to callers.
+
+  type StartBody = {
+    app?: string;
+    surface?: string;
+    framework?: string;
+    workDir?: string;
+  };
+
+  let agent: { url: string; server: Server };
+  let lastWorkspaceQuery: string | null = null;
+  let lastStartBody: StartBody | null = null;
+  let agentDevStatus: {
+    running: boolean;
+    framework?: string;
+    kind?: string;
+    workDir?: string;
+  } = { running: false };
+
+  beforeAll(async () => {
+    agent = await startMock((req, res, body) => {
+      res.setHeader("Content-Type", "application/json");
+
+      if (req.url === "/health") {
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+
+      if (req.url?.startsWith("/workspace/apps")) {
+        const q = new URL(req.url, "http://x").searchParams;
+        lastWorkspaceQuery = q.get("kind");
+        const all = [
+          { name: "web", path: "./web", stack: "nextjs", kind: "web", exists: true },
+          { name: "marketing", path: "./marketing", stack: "vite", kind: "web", exists: true },
+          {
+            name: "mobile",
+            path: "./mobile",
+            stack: "react-native-expo",
+            kind: "hybrid",
+            exists: true,
+          },
+          {
+            name: "mobile-native",
+            path: "./mobile-native",
+            stack: "react-native",
+            kind: "mobile",
+            exists: true,
+          },
+          { name: "backend", path: "./backend", stack: "go", exists: true },
+        ];
+        const wanted = lastWorkspaceQuery
+          ? lastWorkspaceQuery.split(",").map((s) => s.trim())
+          : null;
+        const filtered = wanted
+          ? all.filter((a) => a.kind && wanted.includes(a.kind))
+          : all;
+        res.end(JSON.stringify({ ok: true, root: "/repo", path: "/repo/yaver.workspace.yaml", apps: filtered }));
+        return;
+      }
+
+      if (req.url === "/workspace") {
+        res.end(
+          JSON.stringify({
+            ok: true,
+            root: "/repo",
+            path: "/repo/yaver.workspace.yaml",
+            manifest: { version: 1, name: "test-repo", apps: [] },
+            apps: [],
+          }),
+        );
+        return;
+      }
+
+      if (req.url === "/dev/status") {
+        res.end(JSON.stringify(agentDevStatus));
+        return;
+      }
+
+      if (req.url === "/dev/start" && req.method === "POST") {
+        lastStartBody = JSON.parse(body) as StartBody;
+        // Emulate the agent's app-resolution: infer framework/kind
+        // from app name so the test doesn't need to duplicate the
+        // monorepo manifest.
+        const appKinds: Record<string, { framework: string; kind: string; workDir: string }> = {
+          web: { framework: "nextjs", kind: "web", workDir: "/repo/web" },
+          marketing: { framework: "vite", kind: "web", workDir: "/repo/marketing" },
+          mobile: { framework: "expo", kind: "hybrid", workDir: "/repo/mobile" },
+          "mobile-native": {
+            framework: "react-native",
+            kind: "mobile",
+            workDir: "/repo/mobile-native",
+          },
+        };
+        if (lastStartBody.app) {
+          const resolved = appKinds[lastStartBody.app];
+          if (!resolved) {
+            res.statusCode = 400;
+            res.end(JSON.stringify({ error: `unknown app ${lastStartBody.app}` }));
+            return;
+          }
+          if (lastStartBody.surface === "web-reload" && resolved.kind === "mobile") {
+            res.statusCode = 400;
+            res.end(
+              JSON.stringify({
+                error: `app ${lastStartBody.app} is mobile-only; not available in Web Reload`,
+              }),
+            );
+            return;
+          }
+          agentDevStatus = {
+            running: true,
+            framework: resolved.framework,
+            kind: resolved.kind,
+            workDir: resolved.workDir,
+          };
+        } else {
+          agentDevStatus = {
+            running: true,
+            framework: lastStartBody.framework || "vite",
+            kind: "web",
+            workDir: lastStartBody.workDir || "/tmp",
+          };
+        }
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+
+      if (req.url === "/dev/stop" && req.method === "POST") {
+        agentDevStatus = { running: false };
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end(JSON.stringify({ error: `no handler for ${req.url}` }));
+    });
+  });
+
+  afterAll(async () => {
+    await stopMock(agent.server);
+  });
+
+  test("getWorkspaceApps forwards kind filter to agent", async () => {
+    const c = new WebClient({ token: "abc", agentBaseUrl: agent.url });
+    await c.connect("d1");
+
+    lastWorkspaceQuery = null;
+    const webOnly = await c.getWorkspaceApps("web");
+    expect(lastWorkspaceQuery).toBe("web");
+    expect(webOnly.every((a) => a.kind === "web")).toBe(true);
+    expect(webOnly.map((a) => a.name).sort()).toEqual(["marketing", "web"]);
+
+    lastWorkspaceQuery = null;
+    const webAndHybrid = await c.getWorkspaceApps(["web", "hybrid"]);
+    expect(lastWorkspaceQuery).toBe("web,hybrid");
+    expect(webAndHybrid.map((a) => a.name).sort()).toEqual(["marketing", "mobile", "web"]);
+  });
+
+  test("startDevServer({app, surface}) sends both fields to the agent", async () => {
+    const c = new WebClient({ token: "abc", agentBaseUrl: agent.url });
+    await c.connect("d1");
+
+    lastStartBody = null;
+    await c.startDevServer({ app: "marketing", surface: "web-reload" });
+    expect(lastStartBody).toMatchObject({ app: "marketing", surface: "web-reload" });
+
+    const status = await c.getDevServerStatus();
+    expect(status?.running).toBe(true);
+    expect(status?.kind).toBe("web");
+    expect(status?.framework).toBe("vite");
+  });
+
+  test("surface gate: mobile-native from web-reload is rejected", async () => {
+    const c = new WebClient({ token: "abc", agentBaseUrl: agent.url });
+    await c.connect("d1");
+
+    await expect(
+      c.startDevServer({ app: "mobile-native", surface: "web-reload" }),
+    ).rejects.toThrow(/mobile-only/);
+  });
+
+  test("hybrid (expo) passes through web-reload gate", async () => {
+    const c = new WebClient({ token: "abc", agentBaseUrl: agent.url });
+    await c.connect("d1");
+
+    await c.startDevServer({ app: "mobile", surface: "web-reload" });
+    const status = await c.getDevServerStatus();
+    expect(status?.kind).toBe("hybrid");
+    expect(status?.framework).toBe("expo");
+    await c.stopDevServer();
+  });
+
+  test("getWorkspace returns manifest envelope", async () => {
+    const c = new WebClient({ token: "abc", agentBaseUrl: agent.url });
+    await c.connect("d1");
+    const ws = await c.getWorkspace();
+    expect(ws.ok).toBe(true);
+    expect(ws.root).toBe("/repo");
+    expect(ws.path).toBe("/repo/yaver.workspace.yaml");
+  });
+});
+
 describe("WebClient — reconnectAndFix orchestration", () => {
   test("succeeds when agent is healthy + dev server already stopped", async () => {
     const agent = await startMock((req, res) => {
