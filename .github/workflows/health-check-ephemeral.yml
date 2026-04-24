@@ -1,0 +1,106 @@
+# One-shot: dump every agent endpoint the web UI + mobile app
+# consume so when "everything looks broken" we know exactly which
+# layer is failing. Runs against yaver-test-ephemeral using the
+# agent's on-disk auth token (so the relay + user-session layers
+# are out of scope).
+#
+# What it checks, in the order the dashboard loads them:
+#   /health               — is the agent even up
+#   /info                 — version + authExpired signal (CRITICAL)
+#   /agent/runners        — Chat tab runner picker
+#   /projects             — Projects tab
+#   /mobile-projects/list — Hot Reload mobile-app picker
+#   /workspace/apps       — Web Reload app picker
+#   /vault/list           — Vault tab
+#   /git/repos            — Git tab
+#   /diagnose             — the new self-check endpoint
+#
+# If /info reports authExpired=true, the downstream endpoints that
+# need Convex-validated caller identity (/agent/runners, /projects,
+# /vault/*) return empty or 403 — that's the "everything's empty"
+# pattern the user hit.
+
+name: Health Check Ephemeral
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: health-check-ephemeral
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Probe every UI-consumed endpoint
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          set -euo pipefail
+
+          TOKEN=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['auth_token'])" /home/yaver/.yaver/config.json)
+          AGENT="http://127.0.0.1:18080"
+
+          h() {
+            local method="$1" path="$2"
+            printf '\n== %s %s ==\n' "$method" "$path"
+            if [ "$method" = POST ]; then
+              curl -sS -o /tmp/body -w 'HTTP %{http_code}\n' \
+                -X POST -H "Authorization: Bearer $TOKEN" \
+                -H "Content-Type: application/json" -d '{}' "$AGENT$path"
+            else
+              curl -sS -o /tmp/body -w 'HTTP %{http_code}\n' \
+                -H "Authorization: Bearer $TOKEN" "$AGENT$path"
+            fi
+            # Pretty-print body if JSON, otherwise first 200 chars.
+            if jq -e . /tmp/body >/dev/null 2>&1; then
+              jq -c . /tmp/body | head -c 800
+              echo
+            else
+              head -c 200 /tmp/body
+              echo
+            fi
+          }
+
+          echo "yaver --version: $(yaver --version)"
+          echo "agent exe: $(readlink /proc/$(pgrep -f 'yaver serve' | head -1)/exe || echo ?)"
+
+          h GET /health
+          h GET /info
+          h GET /agent/runners
+          h GET /agent/capabilities
+          h GET /projects
+          h GET /mobile-projects/list
+          h GET /workspace/apps?kind=web%2Chybrid
+          h GET /vault/list
+          h GET /git/repos
+          h POST /diagnose
+
+          # If authExpired is set, run the suggested reset + list again
+          if grep -q '"authExpired":true' <(curl -sS -H "Authorization: Bearer $TOKEN" "$AGENT/info"); then
+            echo ""
+            echo "!! /info reports authExpired=true — agent's Convex token is stale."
+            echo "   That's why /agent/runners, /projects, /mobile-projects/list and /vault/* come back empty/403."
+            echo ""
+            echo "Fix options (in order of friction):"
+            echo "  1. ssh to box, run: sudo -u yaver yaver auth --headless   (device-code OAuth in a browser)"
+            echo "  2. OR: sudo -u yaver yaver auth factory-reset             (clears cached token, triggers bootstrap-pair)"
+            echo "  3. OR: push a fresh token from your own machine:"
+            echo "     sudo -u yaver yaver auth --token=<paste-fresh-token>"
+          fi
+          REMOTE
