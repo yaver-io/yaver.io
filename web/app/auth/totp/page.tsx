@@ -11,6 +11,7 @@ function TotpContent() {
   const pendingToken = params.get("pendingToken") || "";
   const client = params.get("client") || "web";
   const returnTo = sanitizeReturnTo(params.get("return"));
+  const openerOrigin = params.get("openerOrigin") || "";
 
   const [code, setCode] = useState("");
   const [useRecovery, setUseRecovery] = useState(false);
@@ -78,7 +79,12 @@ function TotpContent() {
       }
 
       if (client === "sdk") {
-        window.location.href = `/auth/sdk-callback?token=${encodeURIComponent(token)}`;
+        const sdkCallbackUrl = new URL("/auth/sdk-callback", window.location.origin);
+        sdkCallbackUrl.searchParams.set("token", token);
+        if (openerOrigin) {
+          sdkCallbackUrl.searchParams.set("openerOrigin", openerOrigin);
+        }
+        window.location.href = sdkCallbackUrl.toString();
         return;
       }
 

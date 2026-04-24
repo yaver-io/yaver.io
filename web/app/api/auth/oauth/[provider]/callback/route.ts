@@ -199,6 +199,9 @@ async function handleCallback(
           if (state.returnTo) {
             totpUrl.searchParams.set("return", state.returnTo);
           }
+          if (state.openerOrigin) {
+            totpUrl.searchParams.set("openerOrigin", state.openerOrigin);
+          }
           return NextResponse.redirect(totpUrl.toString(), 303);
         }
       }
@@ -267,6 +270,9 @@ async function handleCallback(
   if (state.client === "sdk") {
     const sdkUrl = new URL("/auth/sdk-callback", baseUrl);
     sdkUrl.searchParams.set("token", token);
+    if (state.openerOrigin) {
+      sdkUrl.searchParams.set("openerOrigin", state.openerOrigin);
+    }
     await logToConvex(provider, "redirect", "info", "Redirecting to SDK popup callback");
     return NextResponse.redirect(sdkUrl.toString(), 303);
   }

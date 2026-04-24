@@ -15,16 +15,29 @@ function SdkCallbackHandler() {
   const searchParams = useSearchParams();
   const [error, setError] = useState<string | null>(null);
 
+  const getTargetOrigin = () => {
+    const raw = searchParams.get("openerOrigin");
+    if (!raw) return "*";
+    try {
+      const url = new URL(raw);
+      if (url.protocol !== "http:" && url.protocol !== "https:") return "*";
+      return url.origin;
+    } catch {
+      return "*";
+    }
+  };
+
   useEffect(() => {
     const token = searchParams.get("token");
     const errParam = searchParams.get("error");
+    const targetOrigin = getTargetOrigin();
 
     if (errParam) {
       setError(errParam);
       try {
         window.opener?.postMessage(
           { type: "yaver-feedback-auth", error: errParam },
-          window.location.origin,
+          targetOrigin,
         );
       } catch {
         // opener may be blocked
@@ -40,7 +53,7 @@ function SdkCallbackHandler() {
     try {
       window.opener?.postMessage(
         { type: "yaver-feedback-auth", token },
-        window.location.origin,
+        targetOrigin,
       );
       // Give the opener a tick to process the message before closing.
       setTimeout(() => {

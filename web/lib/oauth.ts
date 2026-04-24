@@ -100,6 +100,7 @@ type OAuthState = {
   returnTo?: string;
   intent?: "signin" | "link";
   linkToken?: string;
+  openerOrigin?: string;
 };
 
 export function sanitizeReturnTo(value?: string | null): string | undefined {
@@ -107,6 +108,18 @@ export function sanitizeReturnTo(value?: string | null): string | undefined {
   const trimmed = value.trim();
   if (!trimmed.startsWith("/") || trimmed.startsWith("//")) return undefined;
   return trimmed;
+}
+
+export function sanitizeOpenerOrigin(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    return url.origin;
+  } catch {
+    return undefined;
+  }
 }
 
 export function encodeOAuthState(state: OAuthState): string {

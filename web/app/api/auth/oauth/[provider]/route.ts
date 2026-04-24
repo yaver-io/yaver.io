@@ -3,6 +3,7 @@ import {
   type OAuthProvider,
   isProviderConfigured,
   encodeOAuthState,
+  sanitizeOpenerOrigin,
   buildAuthorizationUrl,
   sanitizeReturnTo,
 } from "@/lib/oauth";
@@ -36,10 +37,11 @@ export async function GET(
   const url = new URL(request.url);
   const client = url.searchParams.get("client") || "web";
   const returnTo = sanitizeReturnTo(url.searchParams.get("return"));
+  const openerOrigin = sanitizeOpenerOrigin(url.searchParams.get("origin"));
   const intent = url.searchParams.get("intent") === "link" ? "link" : "signin";
   const linkToken = url.searchParams.get("linkToken") || undefined;
 
-  const state = encodeOAuthState({ client, returnTo, intent, linkToken });
+  const state = encodeOAuthState({ client, returnTo, intent, linkToken, openerOrigin });
   const authUrl = buildAuthorizationUrl(provider, state);
 
   return NextResponse.redirect(authUrl);

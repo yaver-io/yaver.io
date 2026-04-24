@@ -144,7 +144,7 @@ export async function validateToken(token: string): Promise<User | null> {
 // ─── Popup OAuth (Google / GitHub / GitLab / Microsoft / Apple) ───────
 
 /**
- * Open `https://yaver.io/api/auth/oauth/<provider>?client=sdk` in a popup
+ * Open `https://yaver.io/api/auth/oauth/<provider>?client=sdk&origin=<host-origin>` in a popup
  * window. The web callback (`/auth/sdk-callback`) calls
  * `window.opener.postMessage({ type: 'yaver-feedback-auth', token })` and
  * closes the popup. Resolves with the session token.
@@ -165,7 +165,10 @@ export function signInWithOAuth(
   const left = window.screenX + (window.outerWidth - width) / 2;
   const top = window.screenY + (window.outerHeight - height) / 2;
 
-  const params = new URLSearchParams({ client: 'sdk' });
+  const params = new URLSearchParams({
+    client: 'sdk',
+    origin: window.location.origin,
+  });
   const authUrl = `${webBaseUrl}/api/auth/oauth/${provider}?${params.toString()}`;
 
   const popup = window.open(
@@ -189,6 +192,7 @@ export function signInWithOAuth(
 
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== expectedOrigin) return;
+      if (event.source !== popup) return;
       const data = event.data as { type?: string; token?: string; error?: string } | null;
       if (!data || data.type !== 'yaver-feedback-auth') return;
       settled = true;
