@@ -409,12 +409,6 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                       Open Workspace
                     </button>
                   ) : null}
-                  <button
-                    onClick={() => setExpandedId(expandedId === device.id ? null : device.id)}
-                    className="text-xs text-surface-400 hover:text-surface-200"
-                  >
-                    {expandedId === device.id ? "Hide details" : "Details"}
-                  </button>
                   {!device.isGuest && token ? (
                     <button
                       onClick={async () => {
@@ -430,11 +424,16 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                     </button>
                   ) : null}
                   <button
-                    onClick={() => hideDevice(device.id)}
-                    className="ml-auto text-xs text-surface-500 hover:text-red-300"
-                    title="Hide this device from the list (local to this browser — unaffected on other machines)"
+                    onClick={() => setExpandedId(expandedId === device.id ? null : device.id)}
+                    className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-surface-800 bg-surface-900/40 px-2.5 py-1 text-[11px] font-medium text-surface-300 hover:border-surface-700 hover:bg-surface-800/60 hover:text-surface-100"
+                    aria-expanded={expandedId === device.id}
+                    title="Show runtime, hardware, network and sharing details"
                   >
-                    Hide
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <circle cx="12" cy="12" r="9" />
+                      <path d="M12 8h.01M11 12h1v4h1" />
+                    </svg>
+                    {expandedId === device.id ? "Hide details" : "Details"}
                   </button>
                 </div>
                 {expandedId === device.id ? (
@@ -580,6 +579,15 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
           Runtime info unavailable over LAN ({error}). Reading Convex heartbeat fields only.
         </p>
       ) : null}
+      <div className="mt-3 flex justify-end border-t border-surface-800/60 pt-2">
+        <button
+          onClick={() => hideDevice(device.id)}
+          className="text-[11px] text-surface-500 hover:text-red-300"
+          title="Hide this device from the list — local to this browser"
+        >
+          Hide this device
+        </button>
+      </div>
     </div>
   );
 }
