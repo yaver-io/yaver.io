@@ -2266,7 +2266,13 @@ export class AgentClient {
 
   private startPolling(): void {
     if (this.pollInterval) return;
-    const lastOutputLen = new Map<string, number>();
+    // Track how much of each task's output we've already emitted as complete
+    // lines. We can't key on length alone because a poll can land mid-line —
+    // if we emit the partial head now, the rest of the line arrives on the
+    // next poll and gets emitted as its own "line", chopping words in half
+    // (classic "Workspace/carrotbet" → "Wor" + "kspace/carrotbet" bug).
+    // Instead, only emit up to the last '\n' and remember where we stopped.
+    const emittedUpTo = new Map<string, number>();
 
     this.pollInterval = setInterval(async () => {
       try {
@@ -2280,15 +2286,28 @@ export class AgentClient {
         for (const t of rawTasks) {
           if (t.status !== "running" && t.status !== "completed") continue;
           const output = typeof t.output === "string" ? t.output : "";
-          const prevLen = lastOutputLen.get(t.id) || 0;
-          if (output.length > prevLen) {
-            const newText = output.slice(prevLen);
-            const lines = newText.split("\n").filter((l: string) => l);
-            for (const line of lines) {
-              this.emit("output", t.id, line);
-            }
-            lastOutputLen.set(t.id, output.length);
+          const prev = emittedUpTo.get(t.id) || 0;
+          if (output.length <= prev) continue;
+          const tail = output.slice(prev);
+          // For a completed task we can safely flush everything (including any
+          // final line without a trailing newline). For a running task we only
+          // flush up to the last newline; the partial tail waits for more data.
+          let flush: string;
+          let advance: number;
+          if (t.status === "completed") {
+            flush = tail;
+            advance = output.length;
+          } else {
+            const lastNl = tail.lastIndexOf("\n");
+            if (lastNl < 0) continue;           // nothing complete yet
+            flush = tail.slice(0, lastNl);      // without the trailing \n
+            advance = prev + lastNl + 1;        // consume through the \n
           }
+          const lines = flush.split("\n").filter((l: string) => l);
+          for (const line of lines) {
+            this.emit("output", t.id, line);
+          }
+          emittedUpTo.set(t.id, advance);
         }
       } catch {
         this.setConnectionState("error");

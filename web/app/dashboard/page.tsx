@@ -697,6 +697,13 @@ export default function DashboardPage() {
       }
     } catch (err: any) {
       setConnectError(err?.message || "Failed to send");
+      // Restore the user's text so they don't have to retype it.
+      setInput(text);
+      // Peel the optimistic user+placeholder we just pushed.
+      setChatMsgs(prev => {
+        if (prev.length < 2) return prev;
+        return prev.slice(0, prev.length - 2);
+      });
     } finally {
       setSending(false);
     }
@@ -705,14 +712,20 @@ export default function DashboardPage() {
   const selectTask = (t: Task) => {
     setActiveTask(t);
     setOutputLines(t.output || []);
-    // Rebuild chat: show the original user ask first, then the accumulated agent
-    // output as one assistant bubble. Streaming lines will keep appending to it.
-    const msgs: ChatMsg[] = [];
-    const userText = displayTaskTitle(t.title || "");
-    if (userText) msgs.push({ role: "user", text: userText });
-    const out = (t.output || []).join("\n");
-    if (out) msgs.push({ role: "assistant", text: out });
-    else if (t.status === "running") msgs.push({ role: "assistant", text: "" });
+    // Prefer the task's recorded turns (every user continue + agent reply)
+    // so multi-turn history survives a sidebar navigation. Fall back to
+    // [initial prompt, flattened output] when the agent didn't expose turns.
+    let msgs: ChatMsg[];
+    if (t.turns && t.turns.length > 0) {
+      msgs = t.turns.map(tn => ({ role: tn.role, text: tn.content }));
+    } else {
+      msgs = [];
+      const userText = displayTaskTitle(t.title || "");
+      if (userText) msgs.push({ role: "user", text: userText });
+      const out = (t.output || []).join("\n");
+      if (out) msgs.push({ role: "assistant", text: out });
+      else if (t.status === "running") msgs.push({ role: "assistant", text: "" });
+    }
     setChatMsgs(msgs);
     setActiveTab("chat");
   };
@@ -1444,7 +1457,7 @@ export default function DashboardPage() {
                                             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-surface-400 [animation-delay:150ms]" />
                                             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-surface-400 [animation-delay:300ms]" />
                                           </span>)
-                                        : (<span className="text-surface-500">(no response)</span>)}
+                                        : (<span className="text-surface-500">({activeTask.status || "no response"})</span>)}
                                   </div>
                                 </div>
                               )
