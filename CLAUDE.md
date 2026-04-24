@@ -1311,6 +1311,11 @@ Shared-machine deploy flow — e.g. friend triggers TestFlight from his laptop a
 
 `desktop/agent/deploy_classify.go::ClassifyDeployOutput` matches narrow regexes against the captured output tail. First match wins; ordered specific → generic. Classes: `already_uploaded` (rewrites `ok` to true — TestFlight's "Redundant Binary Upload"), `vault_locked`, `preflight_failed`, `signing_error`, `auth_error`, `toolchain_missing`, `network_error`, `disk_full`, `timeout`, `build_failed`. Adding a class = appending a `classifyRule` entry.
 
+### Idempotent Play Store upload (resumable AAB)
+
+- Template-level change in `deploy_script_gen.go::deployTemplates["react-native-expo:playstore"]`. A sidecar fingerprint at `/tmp/yaver-deploy-<app>-playstore.fp` captures `vc=<versionCode> git=<HEAD sha>` at build time. On rerun the template checks the fingerprint + AAB mtime (< 6 h) and skips `gradle bundleRelease` + versionCode bump when everything matches. Upload success removes the fingerprint; upload failure (or rerun before upload retry) preserves it.
+- Avoids wasted versionCode increments on flaky Play uploads — the same (vc, commit) pair ships across retries. Gradle's incremental build is already cheap for the actual bundling; the real win is the versionCode behavior.
+
 ### Idempotent TestFlight upload (resumable archive)
 
 - Template-level change in `deploy_script_gen.go::deployTemplates["react-native-expo:testflight"]`. On rerun the shell checks for `/tmp/yaver-deploy-<app>-<target>.xcarchive`; if the embedded `ApplicationProperties:CFBundleVersion` matches the project's current `CFBundleVersion` and the archive is < 6 h old, the 15-20 min xcodebuild archive is skipped and we go straight to export + upload. On failure the archive is deliberately kept; on success it's cleaned up along with the derived-data dir, export dir, and ExportOptions.plist.

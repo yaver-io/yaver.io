@@ -568,6 +568,30 @@ yaver deploy logs <run-id>  [--machine <deviceId>]       # full log
 `GET /deploy/runs/{id}/output` and falls back to the in-memory tail
 when disk persistence wasn't active for that run.
 
+### Idempotent Play Store resume
+
+The Android template now has the same kept-on-failure behavior as
+TestFlight. A sidecar fingerprint file at
+`/tmp/yaver-deploy-<app>-playstore.fp` records
+`vc=<versionCode> git=<HEAD sha>` when the AAB is built. On a
+rerun, if the AAB exists + the fingerprint matches the current
+versionCode AND current git HEAD + the AAB is less than 6 h old,
+the template prints `⏭ Resuming: existing AAB is M min old and
+fingerprint matches ...` and skips `gradle bundleRelease` + the
+versionCode bump entirely. A failed upload therefore costs ~30
+seconds on retry instead of another Gradle pass + a wasted
+versionCode bump.
+
+Upload success removes the fingerprint so the next invocation
+builds fresh. Upload failure (or a rerun at the same commit)
+preserves it.
+
+Gradle's own incremental build already makes a rebuild cheap
+relative to xcodebuild, but preserving the versionCode + skipping
+the JNI/codegen setup still saves meaningful wall time, and —
+crucially — avoids wasted versionCode increments when the Play
+upload flakes.
+
 ### Idempotent TestFlight resume
 
 The iOS template is resumable across retries. If a previous run

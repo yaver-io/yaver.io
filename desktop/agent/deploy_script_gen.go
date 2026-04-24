@@ -146,7 +146,7 @@ echo "✓ TestFlight build $EFFECTIVE_BUILD uploaded."
 	"react-native-expo:playstore": {
 		Stack:       "react-native-expo",
 		Target:      "playstore",
-		Description: "Android Play Store (internal testing): Gradle bundleRelease + AAB upload.",
+		Description: "Android Play Store (internal testing): Gradle bundleRelease + AAB upload. Idempotent — a failed upload leaves the AAB + versionCode in place, and the next run resumes from upload without re-bumping or re-building.",
 		Body: `cd "{{.Path}}/android"
 
 : "${ANDROID_KEYSTORE_PASSWORD:?Missing ANDROID_KEYSTORE_PASSWORD (yaver vault add ANDROID_KEYSTORE_PASSWORD --project {{.App}})}"
@@ -157,31 +157,69 @@ if [ -x "./gradlew" ]; then GRADLE="./gradlew"; else GRADLE="gradle"; fi
 
 GRADLE_FILE="app/build.gradle"
 CURRENT=$(grep 'versionCode ' "$GRADLE_FILE" | head -1 | sed 's/[^0-9]//g')
-NEW=$((CURRENT + 1))
-sed -i.bak "s/versionCode $CURRENT/versionCode $NEW/" "$GRADLE_FILE" && rm -f "$GRADLE_FILE.bak"
-echo "versionCode $CURRENT → $NEW"
 
-# keystore.properties is gitignored; write it from vault values just for this build.
-cat > keystore.properties <<EOF
+# Fingerprint sidecar — keyed per (app, target) so other projects
+# don't collide on /tmp. Records the (versionCode, git HEAD) the AAB
+# was built from. If both match on a rerun and the AAB is fresh, we
+# skip bundleRelease + versionCode bump entirely.
+AAB="app/build/outputs/bundle/release/app-release.aab"
+FP=/tmp/yaver-deploy-{{.App}}-{{.Target}}.fp
+
+RESUME=0
+if [ -f "$AAB" ] && [ -f "$FP" ]; then
+  AAB_MTIME=$(stat -f %m "$AAB" 2>/dev/null || stat -c %Y "$AAB" 2>/dev/null || echo 0)
+  NOW=$(date +%s)
+  AGE=$(( NOW - AAB_MTIME ))
+  MAX_AGE=$(( 6 * 60 * 60 ))
+  if [ $AGE -lt $MAX_AGE ]; then
+    SAVED=$(cat "$FP" 2>/dev/null || echo "")
+    GIT_SHA=$(git -C "{{.Path}}" rev-parse HEAD 2>/dev/null || echo "nogit")
+    EXPECTED="vc=$CURRENT git=$GIT_SHA"
+    if [ "$SAVED" = "$EXPECTED" ]; then
+      echo "⏭  Resuming: existing AAB is $(( AGE / 60 )) min old and fingerprint matches (vc=$CURRENT git=${GIT_SHA:0:8}) — skipping bundleRelease."
+      RESUME=1
+      EFFECTIVE_VC=$CURRENT
+    fi
+  fi
+fi
+
+if [ $RESUME -eq 0 ]; then
+  NEW=$((CURRENT + 1))
+  sed -i.bak "s/versionCode $CURRENT/versionCode $NEW/" "$GRADLE_FILE" && rm -f "$GRADLE_FILE.bak"
+  echo "versionCode $CURRENT → $NEW"
+
+  # keystore.properties is gitignored; write it from vault values just for this build.
+  cat > keystore.properties <<EOF
 storeFile=../../../keys/yaver-upload.keystore
 storePassword=$ANDROID_KEYSTORE_PASSWORD
 keyAlias=$ANDROID_KEY_ALIAS
 keyPassword=$ANDROID_KEY_PASSWORD
 EOF
 
-echo "Building release AAB..."
-$GRADLE :react-native-worklets:prefabReleasePackage 2>/dev/null || true
-$GRADLE bundleRelease
+  echo "Building release AAB..."
+  $GRADLE :react-native-worklets:prefabReleasePackage 2>/dev/null || true
+  $GRADLE bundleRelease
 
-AAB="app/build/outputs/bundle/release/app-release.aab"
-[ -f "$AAB" ] || { echo "ERROR: AAB missing at $AAB"; exit 1; }
-echo "✓ AAB ready: $(pwd)/$AAB (versionCode $NEW)"
+  [ -f "$AAB" ] || { echo "ERROR: AAB missing at $AAB"; exit 1; }
+  GIT_SHA=$(git -C "{{.Path}}" rev-parse HEAD 2>/dev/null || echo "nogit")
+  echo "vc=$NEW git=$GIT_SHA" > "$FP"
+  EFFECTIVE_VC=$NEW
+fi
+
+echo "✓ AAB ready: $(pwd)/$AAB (versionCode $EFFECTIVE_VC)"
 
 if [ -n "${PLAY_STORE_KEY_FILE:-}" ] && [ -f "$PLAY_STORE_KEY_FILE" ]; then
   echo "Uploading to Play internal testing..."
-  python3 "$(dirname "$0")/upload-playstore.py" 2>&1 | tail -5 || {
+  if python3 "$(dirname "$0")/upload-playstore.py" 2>&1 | tail -5; then
+    # Upload succeeded — clear the fingerprint so the next invocation
+    # builds fresh. Deliberate: we don't delete the AAB (gradle will
+    # overwrite it; leaving it helps debug).
+    rm -f "$FP"
+  else
+    # Deliberately keep $FP + $AAB so the next run resumes. The
+    # script exits non-zero only when python3/script is absent.
     echo "(Upload helper not found — AAB is ready; upload manually.)"
-  }
+  fi
 fi
 `,
 	},

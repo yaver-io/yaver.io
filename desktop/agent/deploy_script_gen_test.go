@@ -73,6 +73,35 @@ func TestGenerateDeployScriptTestflight(t *testing.T) {
 	}
 }
 
+func TestGenerateDeployScriptPlaystore(t *testing.T) {
+	script, err := GenerateDeployScript(DeployScriptSpec{
+		App:    "mobile",
+		Stack:  "react-native-expo",
+		Target: "playstore",
+		Path:   "/tmp/mobile",
+	})
+	if err != nil {
+		t.Fatalf("GenerateDeployScript: %v", err)
+	}
+	for _, s := range []string{
+		"ANDROID_KEYSTORE_PASSWORD",
+		"bundleRelease",
+		"app-release.aab",
+		// Resumable-AAB guarantees:
+		"FP=/tmp/yaver-deploy-mobile-playstore.fp",
+		"Resuming: existing AAB",
+		// Fingerprint captures both versionCode + git HEAD.
+		"vc=$CURRENT git=$GIT_SHA",
+		"vc=$NEW git=$GIT_SHA",
+		// Upload success clears fingerprint; failure keeps it.
+		`rm -f "$FP"`,
+	} {
+		if !strings.Contains(script, s) {
+			t.Errorf("playstore script missing %q", s)
+		}
+	}
+}
+
 func TestGenerateDeployScriptUnknown(t *testing.T) {
 	_, err := GenerateDeployScript(DeployScriptSpec{
 		App:    "x",
