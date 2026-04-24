@@ -768,7 +768,7 @@ type EventName = keyof EventMap;
 
 // ── Client ───────────────────────────────────────────────────────────
 
-class AgentClient {
+export class AgentClient {
   private host: string | null = null;
   private port: number | null = null;
   private token: string | null = null;
@@ -4752,3 +4752,71 @@ function resolvePhonePushBase(target: PhonePushTarget): string {
 
 /** Singleton client instance. */
 export const agentClient = new AgentClient();
+
+/**
+ * AgentClientPool — one independent AgentClient per device.
+ *
+ * Background. The original `agentClient` singleton holds the active
+ * connection state (host, port, deviceId, relay URL, output listeners,
+ * polling timers, reconnect backoff). That works for "switch between
+ * machines" but breaks the moment we want N machines authed and
+ * streaming concurrently — switching between them tears down state we
+ * still want for the previous machine.
+ *
+ * Pool semantics:
+ * - `get(deviceId)` returns the AgentClient instance for that device,
+ *   creating it lazily. Each instance has its own listeners + connection
+ *   state, so subscribing to `output` on instance A never receives chunks
+ *   from instance B.
+ * - `disconnectAll()` is a clean teardown for sign-out / browser refresh.
+ * - The legacy `agentClient` singleton stays exported and untouched, so
+ *   existing pages keep working while new multi-tab UI gradually moves to
+ *   `agentClientPool.get(deviceId)`.
+ *
+ * Auth model. Auth is per-user, not per-device — every client in the pool
+ * uses the same Convex Bearer token, and the relay password is shared too.
+ * The pool just multiplexes per-device transport state; it doesn't try to
+ * juggle multiple identities.
+ */
+export class AgentClientPool {
+  private clients = new Map<string, AgentClient>();
+
+  /** Get-or-create the per-device client. */
+  get(deviceId: string): AgentClient {
+    let c = this.clients.get(deviceId);
+    if (!c) {
+      c = new AgentClient();
+      this.clients.set(deviceId, c);
+    }
+    return c;
+  }
+
+  /** True if a client already exists for this deviceId (i.e. it's been used). */
+  has(deviceId: string): boolean {
+    return this.clients.has(deviceId);
+  }
+
+  /** Currently-tracked device IDs (one per pool entry). */
+  keys(): string[] {
+    return [...this.clients.keys()];
+  }
+
+  /** Drop one device from the pool, disconnecting it cleanly. */
+  forget(deviceId: string): void {
+    const c = this.clients.get(deviceId);
+    if (!c) return;
+    try { c.disconnect(); } catch { /* tearing down anyway */ }
+    this.clients.delete(deviceId);
+  }
+
+  /** Disconnect every pool entry. Use on sign-out or before pool reset. */
+  disconnectAll(): void {
+    for (const c of this.clients.values()) {
+      try { c.disconnect(); } catch { /* ignore */ }
+    }
+    this.clients.clear();
+  }
+}
+
+/** Process-wide pool shared across the dashboard. */
+export const agentClientPool = new AgentClientPool();

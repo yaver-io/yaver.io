@@ -733,7 +733,6 @@ export default function DashboardPage() {
             {([
               { id: "devices",  label: "Devices",  icon: "💻" },
               { id: "chat",     label: "Chat",     icon: "💬" },
-              { id: "vibe",     label: "Vibe",     icon: "⌨️" },
               { id: "projects", label: "Projects", icon: "📁" },
               { id: "git",      label: "Git",      icon: "⎇" },
               { id: "builds",   label: "Builds",   icon: "🛠️" },
@@ -950,18 +949,7 @@ export default function DashboardPage() {
 
       {/* Main */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        {isConnected && (
-          <div className="flex items-center gap-1 border-b border-surface-800 px-3 py-1 bg-surface-900/30 overflow-x-auto">
-            {tabs.map(tab => (
-              <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`shrink-0 rounded-md px-2.5 py-1 text-xs font-medium flex items-center gap-1 ${activeTab === tab.id ? "bg-indigo-500/10 text-indigo-400" : "text-surface-500 hover:text-surface-300 hover:bg-surface-800"}`}>
-                <span>{tab.icon}</span><span className="hidden sm:inline">{tab.label}</span>
-                {tab.badge ? <span className="rounded-full bg-indigo-500/20 px-1 text-[9px] text-indigo-400">{tab.badge}</span> : null}
-              </button>
-            ))}
-            <div className="flex-1" />
-            {runningTask && <button onClick={() => agentClient.stopTask(runningTask.id)} className="shrink-0 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] text-red-300 hover:bg-red-500/20">Stop</button>}
-          </div>
-        )}
+        {/* No top nav bar — stop-task button moved into the chat composer where it belongs */}
 
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           {!isConnected && activeTab === "chat" ? (

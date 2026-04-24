@@ -97,6 +97,113 @@ function runnerChipsForDevice(device: Pick<Device, "sharedRunners" | "runners">)
   return [...chips];
 }
 
+/**
+ * Common coding-agent runner ids we always render on a device card so the
+ * user sees, at a glance, whether the agent they want is installed and
+ * authenticated. The agent's heartbeat surfaces only the runners it
+ * actually detected, so for everything else we render a "not installed"
+ * chip — better than the chip just being missing.
+ */
+const KNOWN_RUNNERS = [
+  "claude",
+  "codex",
+  "aider",
+  "aider-ollama",
+  "ollama",
+  "opencode",
+  "goose",
+] as const;
+
+type RunnerHealth = "ready" | "needs-auth" | "down" | "not-installed" | "unknown";
+
+interface RunnerChipState {
+  id: string;
+  label: string;
+  health: RunnerHealth;
+  hint?: string;
+}
+
+function deriveRunnerChipStates(
+  device: Pick<Device, "runners" | "sharedRunners">,
+): RunnerChipState[] {
+  const reported = new Map<string, { status?: string; raw?: any }>();
+  for (const r of device.runners || []) {
+    const id = formatRunnerChipLabel(String(r?.runnerId || ""));
+    if (!id) continue;
+    reported.set(id, { status: typeof r?.status === "string" ? r.status : undefined, raw: r });
+  }
+  // Guests inherit shared runners only — treat them as known-installed
+  // (the host wouldn't share a runner that wasn't actually there).
+  for (const r of device.sharedRunners || []) {
+    const id = formatRunnerChipLabel(String(r));
+    if (!id) continue;
+    if (!reported.has(id)) reported.set(id, {});
+  }
+
+  const seen = new Set<string>();
+  const out: RunnerChipState[] = [];
+
+  const classify = (id: string, status?: string): RunnerChipState => {
+    const s = (status || "").toLowerCase();
+    if (s.includes("needs-auth") || s.includes("needs_auth") || s.includes("unauth") || s.includes("login")) {
+      return { id, label: id, health: "needs-auth", hint: status };
+    }
+    if (s.includes("down") || s.includes("error") || s.includes("fail")) {
+      return { id, label: id, health: "down", hint: status };
+    }
+    if (!status) return { id, label: id, health: "ready" };
+    return { id, label: id, health: "ready", hint: status };
+  };
+
+  for (const id of KNOWN_RUNNERS) {
+    seen.add(id);
+    const r = reported.get(id);
+    if (r) out.push(classify(id, r.status));
+    else out.push({ id, label: id, health: "not-installed", hint: "Not detected on this machine" });
+  }
+  // Anything reported that isn't in the known set — append at the end.
+  for (const [id, r] of reported.entries()) {
+    if (seen.has(id)) continue;
+    out.push(classify(id, r.status));
+  }
+  return out;
+}
+
+function runnerChipClass(health: RunnerHealth): string {
+  switch (health) {
+    case "ready":
+      return "border-emerald-500/40 bg-emerald-500/10 text-emerald-200";
+    case "needs-auth":
+      return "border-amber-500/40 bg-amber-500/10 text-amber-200";
+    case "down":
+      return "border-red-500/40 bg-red-500/10 text-red-200";
+    case "not-installed":
+      return "border-surface-800 bg-surface-900/40 text-surface-500";
+    default:
+      return "border-surface-700 bg-surface-900/40 text-surface-400";
+  }
+}
+
+function runnerChipDotClass(health: RunnerHealth): string {
+  switch (health) {
+    case "ready": return "bg-emerald-400";
+    case "needs-auth": return "bg-amber-400";
+    case "down": return "bg-red-400";
+    case "not-installed": return "bg-surface-700";
+    default: return "bg-surface-600";
+  }
+}
+
+function runnerChipTitle(state: RunnerChipState): string {
+  switch (state.health) {
+    case "ready": return `${state.label}: installed and authenticated${state.hint ? ` (${state.hint})` : ""}`;
+    case "needs-auth": return `${state.label}: installed but needs auth — set ANTHROPIC_API_KEY / OPENAI_API_KEY / etc. on the host`;
+    case "down": return `${state.label}: detected but reporting an error: ${state.hint ?? "unknown"}`;
+    case "not-installed": return `${state.label}: not installed on this machine`;
+    default: return state.label;
+  }
+}
+
 function sharedGuestLabels(device: Pick<Device, "sharedGuests">): string[] {
   return (device.sharedGuests || [])
     .map((guest) => guest.name || guest.email || "")
@@ -389,15 +496,29 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                     </div>
                   </div>
                 ) : null}
-                {shareSummary && shareSummary.runnerChips.length > 0 ? (
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                    {shareSummary.runnerChips.map((runner) => (
-                      <span key={`${device.id}:runner:${runner}`} className="rounded border border-violet-500/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-violet-200">
-                        {runner}
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
+                {(() => {
+                  const states = deriveRunnerChipStates(device);
+                  if (states.length === 0) return null;
+                  return (
+                    <div className="mt-3">
+                      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-surface-500">
+                        Coding agents
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {states.map((state) => (
+                          <span
+                            key={`${device.id}:runner:${state.id}`}
+                            className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${runnerChipClass(state.health)}`}
+                            title={runnerChipTitle(state)}
+                          >
+                            <span className={`h-1.5 w-1.5 rounded-full ${runnerChipDotClass(state.health)}`} />
+                            {state.label}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   {onOpen && device.online ? (
                     <button
