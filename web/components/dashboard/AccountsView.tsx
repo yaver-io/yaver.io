@@ -30,6 +30,10 @@ export default function AccountsView() {
   const [fields, setFields] = useState<Record<string, string>>({});
   const [label, setLabel] = useState("");
   const [saving, setSaving] = useState(false);
+  const [connectedMachine, setConnectedMachine] = useState<string>("");
+  const [machineDeleteConfirm, setMachineDeleteConfirm] = useState("");
+  const [removingMachine, setRemovingMachine] = useState(false);
+  const [machineRemoveMessage, setMachineRemoveMessage] = useState<string | null>(null);
 
   useEffect(() => { refresh(); }, []);
 
@@ -39,6 +43,16 @@ export default function AccountsView() {
       setProviders(r.providers || []);
       setAccounts(r.accounts || []);
     } catch {}
+    if (agentClient.isConnected) {
+      try {
+        const info = await agentClient.getInfo();
+        setConnectedMachine(info.hostname || "");
+      } catch {
+        setConnectedMachine("");
+      }
+    } else {
+      setConnectedMachine("");
+    }
   }
 
   function openConnect(p: Provider) {
@@ -61,6 +75,27 @@ export default function AccountsView() {
     if (!confirm(`Disconnect ${id}?`)) return;
     await agentClient.accountDisconnect(id);
     refresh();
+  }
+
+  async function removeMachine() {
+    if (machineDeleteConfirm !== "delete my machine") return;
+    setRemovingMachine(true);
+    setMachineRemoveMessage(null);
+    try {
+      const res = await agentClient.machineRemove(machineDeleteConfirm);
+      if (!res?.ok) {
+        throw new Error(res?.error || "Failed to remove machine");
+      }
+      const manualSteps = Array.isArray(res?.manualSteps) ? ` Manual cleanup if needed: ${res.manualSteps.join(" | ")}` : "";
+      setMachineRemoveMessage(`Removal started for ${connectedMachine || "this machine"}.${manualSteps}`);
+      setMachineDeleteConfirm("");
+      agentClient.disconnect();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to remove machine";
+      setMachineRemoveMessage(message);
+    } finally {
+      setRemovingMachine(false);
+    }
   }
 
   const byProvider: Record<string, Account> = {};
@@ -98,6 +133,34 @@ export default function AccountsView() {
             </div>
           );
         })}
+      </div>
+
+      <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4">
+        <div className="text-xs font-medium uppercase tracking-wider text-red-300">Danger Zone</div>
+        <p className="mt-2 text-sm text-surface-400">
+          Permanently remove Yaver from the connected host machine. This unregisters the device, removes auto-start, wipes <code className="text-surface-300">~/.yaver</code>, and stops the agent. Your repositories are not deleted.
+        </p>
+        <p className="mt-3 text-xs text-surface-500">
+          Type <span className="font-mono text-surface-300">delete my machine</span> to confirm{connectedMachine ? ` on ${connectedMachine}` : ""}.
+        </p>
+        <input
+          type="text"
+          value={machineDeleteConfirm}
+          onChange={(e) => setMachineDeleteConfirm(e.target.value)}
+          placeholder="delete my machine"
+          disabled={removingMachine || !agentClient.isConnected}
+          className="mt-3 w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200 outline-none focus:border-red-500/50 disabled:opacity-50"
+        />
+        {machineRemoveMessage ? (
+          <p className="mt-3 text-xs text-surface-400">{machineRemoveMessage}</p>
+        ) : null}
+        <button
+          onClick={removeMachine}
+          disabled={machineDeleteConfirm !== "delete my machine" || removingMachine || !agentClient.isConnected}
+          className="mt-3 rounded-lg border border-red-500/30 px-4 py-2 text-sm font-medium text-red-300 transition-colors hover:bg-red-500/10 disabled:opacity-30"
+        >
+          {removingMachine ? "Removing..." : agentClient.isConnected ? "Remove Yaver From This Host" : "Connect a machine first"}
+        </button>
       </div>
 
       {active && (

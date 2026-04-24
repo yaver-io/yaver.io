@@ -346,6 +346,36 @@ func (s *HTTPServer) handleInfraPower(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *HTTPServer) handleMachineRemove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		Confirm bool   `json:"confirm"`
+		Phrase  string `json:"phrase"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if !req.Confirm {
+		jsonError(w, http.StatusBadRequest, "confirm=true required")
+		return
+	}
+	if !machineRemovalPhraseValid(req.Phrase) {
+		jsonError(w, http.StatusBadRequest, fmt.Sprintf("phrase must equal %q", machineRemovalPhrase))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"ok":          true,
+		"action":      "machine_remove",
+		"phase":       "scheduled",
+		"manualSteps": machineRemovalManualSteps(),
+	})
+	schedulePermanentMachineRemoval(s.onShutdown)
+}
+
 func infraHostReboot() (string, error) {
 	type candidate struct {
 		name string

@@ -766,6 +766,18 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				},
 			},
 		},
+		{
+			"name":        "machine_remove",
+			"description": "Permanently remove Yaver from this owned host machine: unregister the device, remove auto-start service, wipe ~/.yaver, then shut the agent down. Requires confirm=true and phrase='delete my machine'.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"confirm", "phrase"},
+				"properties": map[string]interface{}{
+					"confirm": map[string]interface{}{"type": "boolean", "description": "Must be true to confirm permanent machine removal"},
+					"phrase":  map[string]interface{}{"type": "string", "description": "Must equal 'delete my machine'"},
+				},
+			},
+		},
 	}
 	tools = append(tools, diagnosticTools...)
 

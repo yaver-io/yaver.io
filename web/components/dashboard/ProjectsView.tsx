@@ -63,16 +63,24 @@ export default function ProjectsView({
   mobileWorkers,
   selectedPreviewTarget,
   onSelectPreviewTarget,
+  onRepairRelay,
+  onReconnect,
 }: {
   onTaskCreated?: (taskId: string) => void;
   mobileWorkers: PreviewTarget[];
   selectedPreviewTarget: PreviewTarget | null;
   onSelectPreviewTarget: (deviceId: string | null) => void;
+  onRepairRelay?: () => Promise<{ repaired: boolean; reason: string }>;
+  onReconnect?: () => Promise<void>;
 }) {
   const [envProject, setEnvProject] = useState<string | null>(null);
   const [detailPath, setDetailPath] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [repairState, setRepairState] = useState<"idle" | "repairing" | "failed" | "repaired">("idle");
+  const [repairMessage, setRepairMessage] = useState<string | null>(null);
+  const [autoRepairedOnce, setAutoRepairedOnce] = useState(false);
   const [devStatus, setDevStatus] = useState<{
     running: boolean;
     framework?: string;
@@ -91,11 +99,47 @@ export default function ProjectsView({
 
   async function loadProjects() {
     setLoading(true);
+    setLoadError(null);
     try {
       const list = await agentClient.listProjects();
       setProjects(list);
-    } catch {}
+    } catch (error) {
+      setProjects([]);
+      const message = error instanceof Error ? error.message : "Failed to load projects";
+      setLoadError(message);
+      if (!autoRepairedOnce && /invalid relay password/i.test(message) && onRepairRelay) {
+        setAutoRepairedOnce(true);
+        void repairRelayAndReload("auto");
+      }
+    }
     setLoading(false);
+  }
+
+  async function repairRelayAndReload(mode: "auto" | "manual") {
+    if (!onRepairRelay) return;
+    setRepairState("repairing");
+    setRepairMessage(mode === "auto" ? "Detected invalid relay password — auto-repairing…" : "Repairing relay password…");
+    try {
+      const result = await onRepairRelay();
+      if (result.repaired) {
+        setRepairState("repaired");
+        setRepairMessage(result.reason || "Relay repaired.");
+        if (onReconnect) {
+          try {
+            await onReconnect();
+          } catch {
+            // next loadProjects still reports the real error if reconnect fails
+          }
+        }
+        await loadProjects();
+      } else {
+        setRepairState("failed");
+        setRepairMessage(result.reason || "Repair reported no change.");
+      }
+    } catch (error) {
+      setRepairState("failed");
+      setRepairMessage(error instanceof Error ? error.message : "Relay repair failed");
+    }
   }
 
   async function pollDevServer() {
@@ -251,7 +295,36 @@ export default function ProjectsView({
       </div>
 
       {projects.length === 0 ? (
-        <div className="text-center py-12 text-surface-500 text-sm">No projects found on remote machine</div>
+        <div className="rounded-lg border border-surface-800 bg-surface-900/40 px-4 py-10 text-center">
+          <div className="text-sm text-surface-400">
+            {loadError || "No projects found on remote machine"}
+          </div>
+          {repairMessage ? (
+            <div className={`mt-3 text-xs ${
+              repairState === "failed"
+                ? "text-red-300"
+                : repairState === "repaired"
+                  ? "text-emerald-300"
+                  : "text-amber-300"
+            }`}>
+              {repairMessage}
+            </div>
+          ) : null}
+          <button
+            onClick={loadProjects}
+            className="mt-3 rounded-md border border-surface-700 px-3 py-1.5 text-xs text-surface-300 hover:border-surface-600 hover:text-surface-100"
+          >
+            Retry
+          </button>
+          {onRepairRelay && loadError && /invalid relay password/i.test(loadError) ? (
+            <button
+              onClick={() => void repairRelayAndReload("manual")}
+              className="mt-3 ml-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-200 hover:bg-amber-500/20"
+            >
+              {repairState === "repairing" ? "Repairing…" : "Repair relay"}
+            </button>
+          ) : null}
+        </div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-8 text-surface-500 text-sm">No projects match filter</div>
       ) : (

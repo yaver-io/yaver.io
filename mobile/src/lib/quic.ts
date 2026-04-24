@@ -2437,6 +2437,16 @@ export class QuicClient {
     return res.json();
   }
 
+  async machineRemove(phrase: string): Promise<any> {
+    if (!this.isConnected && !this.hasConnectionInfo) throw new Error("Not connected");
+    const res = await fetch(`${this.baseUrl}/machine/remove`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: true, phrase }),
+    });
+    return res.json();
+  }
+
   /** Clean up old tasks, images, and logs on the desktop agent. */
   async cleanAgent(days: number = 30): Promise<{ tasksRemoved: number; imagesRemoved: number; bytesFreed: number }> {
     this.assertConnected();

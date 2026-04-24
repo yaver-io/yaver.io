@@ -251,6 +251,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/agent/runner/restart", s.auth(s.handleRunnerRestart))
 	mux.HandleFunc("/agent/runner/switch", s.auth(s.handleRunnerSwitch))
 	mux.HandleFunc("/agent/shutdown", s.auth(s.handleShutdown))
+	mux.HandleFunc("/machine/remove", s.auth(s.handleMachineRemove))
 	mux.HandleFunc("/infra/summary", s.auth(s.handleInfraSummary))
 	mux.HandleFunc("/infra/services/action", s.auth(s.handleInfraServiceAction))
 	mux.HandleFunc("/infra/power", s.auth(s.handleInfraPower))
@@ -5913,6 +5914,26 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		default:
 			return mcpToolError("unsupported power action")
 		}
+
+	case "machine_remove":
+		var args struct {
+			Confirm bool   `json:"confirm"`
+			Phrase  string `json:"phrase"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if !args.Confirm {
+			return mcpToolError("confirm must be true")
+		}
+		if !machineRemovalPhraseValid(args.Phrase) {
+			return mcpToolError(fmt.Sprintf("phrase must equal %q", machineRemovalPhrase))
+		}
+		schedulePermanentMachineRemoval(s.onShutdown)
+		return mcpToolJSON(map[string]interface{}{
+			"ok":          true,
+			"action":      "machine_remove",
+			"phase":       "scheduled",
+			"manualSteps": machineRemovalManualSteps(),
+		})
 
 	// --- Config Management ---
 	case "config_set":

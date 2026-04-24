@@ -100,7 +100,7 @@ function providerKeyStatusLabel(state?: ProviderKeyState): string {
 
 export default function SettingsScreen() {
   const { user, token, logout, refreshUser } = useAuth();
-  const { devices, activeDevice, connectionStatus, disconnect, selectDevice } = useDevice();
+  const { devices, activeDevice, connectionStatus, disconnect, selectDevice, refreshDevices } = useDevice();
   const { isDark, toggleTheme } = useTheme();
   const c = useColors();
   const insets = useSafeAreaInsets();
@@ -113,6 +113,8 @@ export default function SettingsScreen() {
   const [isCleaning, setIsCleaning] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const [machineDeleteConfirm, setMachineDeleteConfirm] = useState("");
+  const [removingMachine, setRemovingMachine] = useState(false);
   const [identities, setIdentities] = useState<AuthIdentity[]>([]);
   const [linkingProvider, setLinkingProvider] = useState<OAuthProvider | null>(null);
   const [unlinkingProvider, setUnlinkingProvider] = useState<AuthIdentity["provider"] | null>(null);
@@ -1226,6 +1228,41 @@ export default function SettingsScreen() {
     } else {
       Alert.alert("Error", "Failed to delete account. Please try again.");
       setDeletingAccount(false);
+    }
+  };
+
+  const handleRemoveMachine = async () => {
+    if (machineDeleteConfirm !== "delete my machine") return;
+    if (connectionStatus !== "connected" || !activeDevice) {
+      Alert.alert("Connect a machine", "Connect to your own machine first.");
+      return;
+    }
+    if (activeDevice.isGuest) {
+      Alert.alert("Owner only", "Guest/shared machines cannot be permanently removed from the host.");
+      return;
+    }
+    setRemovingMachine(true);
+    try {
+      const res = await quicClient.machineRemove(machineDeleteConfirm);
+      if (!res?.ok) {
+        throw new Error(res?.error || "Failed to remove machine");
+      }
+      disconnect();
+      setMachineDeleteConfirm("");
+      setTimeout(() => {
+        refreshDevices().catch(() => {});
+      }, 1500);
+      const manualSteps = Array.isArray(res?.manualSteps) ? res.manualSteps.join("\n") : "";
+      Alert.alert(
+        "Machine removal started",
+        manualSteps
+          ? `Yaver is being removed from ${activeDevice.name}.\n\nManual package cleanup if needed:\n${manualSteps}`
+          : `Yaver is being removed from ${activeDevice.name}.`,
+      );
+    } catch (error) {
+      Alert.alert("Error", error instanceof Error ? error.message : "Failed to remove machine.");
+    } finally {
+      setRemovingMachine(false);
     }
   };
 
@@ -4321,6 +4358,39 @@ export default function SettingsScreen() {
         {/* Delete account */}
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.error }]}>Danger Zone</Text>
+          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.error + "30", marginBottom: 12 }]}>
+            <Text style={[styles.dangerDescription, { color: c.textMuted }]}>
+              Permanently remove Yaver from the connected host machine. This unregisters the device, removes auto-start, wipes <Text style={{ color: c.textSecondary, fontFamily: "monospace" }}>~/.yaver</Text>, and stops the agent. Your source code repositories are not deleted.
+            </Text>
+            <Text style={[styles.dangerHint, { color: c.textMuted }]}>
+              Type <Text style={{ color: c.textSecondary, fontFamily: "monospace" }}>delete my machine</Text> to confirm:
+            </Text>
+            <TextInput
+              style={[styles.deleteInput, { backgroundColor: c.bgCardElevated, borderColor: machineDeleteConfirm === "delete my machine" ? c.error : c.border, color: c.textPrimary }]}
+              value={machineDeleteConfirm}
+              onChangeText={setMachineDeleteConfirm}
+              placeholder="delete my machine"
+              placeholderTextColor={c.textMuted}
+              autoCapitalize="none"
+              editable={!removingMachine}
+            />
+            <Pressable
+              style={({ pressed }) => [
+                styles.deleteAccountButton,
+                { borderColor: c.error + "30" },
+                machineDeleteConfirm === "delete my machine" && connectionStatus === "connected" && activeDevice && !activeDevice.isGuest
+                  ? { backgroundColor: c.error + "15" }
+                  : { opacity: 0.3 },
+                pressed && machineDeleteConfirm === "delete my machine" && { opacity: 0.7 },
+              ]}
+              onPress={handleRemoveMachine}
+              disabled={machineDeleteConfirm !== "delete my machine" || removingMachine || connectionStatus !== "connected" || !activeDevice || activeDevice.isGuest}
+            >
+              <Text style={[styles.deleteAccountText, { color: c.error }]}>
+                {removingMachine ? "Removing..." : activeDevice?.isGuest ? "Owner machine required" : "Remove Yaver From This Host"}
+              </Text>
+            </Pressable>
+          </View>
           <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.error + "30" }]}>
             <Text style={[styles.dangerDescription, { color: c.textMuted }]}>
               Permanently delete your account and all associated data. This action cannot be undone.
