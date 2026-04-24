@@ -1,0 +1,77 @@
+# One-shot: find whatever keeps spawning `yaver serve --port 18080
+# --work-dir /home/yaver/.yaver` on the ephemeral box. Probe reveals
+# the systemd user unit says --work-dir=/home/yaver/Workspace, but
+# the actually-running process uses /home/yaver/.yaver — a different
+# launcher is winning the race.
+
+name: Find Yaver Respawner
+
+on:
+  workflow_dispatch:
+
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Hunt
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          set +e
+
+          echo "== systemd units referencing yaver (system scope) =="
+          systemctl list-units --type=service --all | grep -i yaver || echo "(none)"
+          echo ""
+          echo "== user-scope units =="
+          runuser -u yaver -- env XDG_RUNTIME_DIR=/run/user/$(id -u yaver) \
+            systemctl --user list-units --type=service --all 2>&1 | grep -i yaver || echo "(none)"
+
+          echo ""
+          echo "== every yaver.service unit file on disk =="
+          find /etc/systemd /home/yaver/.config/systemd /home/*/.config/systemd /usr/lib/systemd -name 'yaver.service' 2>/dev/null | while read -r f; do
+            echo "--- $f ---"
+            grep -E '^(ExecStart|WorkingDirectory|Environment)' "$f" || true
+          done
+
+          echo ""
+          echo "== launchd or socket units referencing yaver =="
+          find /etc/systemd/system /etc/systemd/system.d /home/yaver/.config/systemd -name '*.socket' 2>/dev/null | xargs grep -l yaver 2>/dev/null || echo "(none)"
+
+          echo ""
+          echo "== yaver in crontabs =="
+          for u in root yaver; do
+            echo "--- user $u:"
+            crontab -u "$u" -l 2>/dev/null | grep -i yaver || echo "  (none)"
+          done
+          ls /etc/cron.*/{yaver,*.yaver*} 2>/dev/null || echo "(no cron.* entries)"
+
+          echo ""
+          echo "== current running yaver processes + parent PIDs =="
+          for pid in $(pgrep -f "yaver serve"); do
+            echo "--- pid=$pid"
+            cat /proc/$pid/cmdline | tr '\0' ' '; echo
+            echo "  PPid=$(awk '/^PPid:/{print $2}' /proc/$pid/status)"
+            PPID_VAL=$(awk '/^PPid:/{print $2}' /proc/$pid/status)
+            echo "  parent cmdline: $(cat /proc/$PPID_VAL/cmdline 2>/dev/null | tr '\0' ' '; echo)"
+            echo "  SessionID: $(awk '{print $6}' /proc/$pid/stat 2>/dev/null)"
+            echo "  UID: $(awk '/^Uid:/{print $2}' /proc/$pid/status)"
+          done
+
+          echo ""
+          echo "== launchd-style plists with yaver =="
+          grep -rli yaver /etc/systemd/system/ 2>/dev/null | head -5 || echo "(none)"
+          REMOTE
