@@ -86,7 +86,7 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: "Do I need a powerful machine?",
-    a: "Any modern Mac or Linux machine works. 16 GB RAM is comfortable for web development. For local AI models (Ollama), 24 GB+ is better. A $5/month Hetzner or DigitalOcean VPS works great as a headless dev machine you control from your phone.",
+    a: "Any modern Mac or Linux machine works. 8 GB RAM is enough; 16 GB is comfortable once you have a few projects open at once. Yaver compiles Hermes bytecode on the fly when you push an app to your phone, which needs Node.js, Go, and a C/C++ toolchain — all installed automatically on first use. A $5/month Hetzner or DigitalOcean VPS works fine as a headless dev box you drive from your phone; disk is the only thing to size up (20+ GB for node_modules, Xcode-style caches, and hermesc build output).",
   },
   {
     q: "Is my code safe?",
