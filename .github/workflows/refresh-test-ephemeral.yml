@@ -1,0 +1,75 @@
+# Force the persistent yaver-test-ephemeral Hetzner box to pull the
+# latest yaver CLI release from GitHub and restart the agent. Scoped
+# narrowly so it only touches the yaver package — other remote-verify
+# workflows handle the full bootstrap. Safe to run whenever a new
+# cli/v* tag has been released and we need the change live on the
+# shared test box now, not on the agent's 6-hour self-update cycle.
+name: Refresh Test Ephemeral
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: refresh-test-ephemeral
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Hetzner preflight (persistent)
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          HCLOUD_SSH_PRIVATE_KEY: ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          HETZNER_TEST_SERVER_ID: ${{ secrets.HETZNER_TEST_SERVER_ID }}
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: ./ci/hcloud/preflight.sh persistent
+
+      # Download the latest yaver .deb from the repo's GitHub releases and
+      # install it. Idempotent — dpkg -i on an already-current version is
+      # a no-op. Explicitly avoids `apt-get upgrade` which would pull
+      # unrelated system updates.
+      - name: Update yaver on persistent box
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          ip="${{ secrets.HETZNER_TEST_SERVER_IP }}"
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+              "root@$ip" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          before=$(yaver --version 2>/dev/null || echo unknown)
+          deb_url="$(curl -fsSL https://api.github.com/repos/kivanccakmak/yaver.io/releases/latest \
+            | jq -r '.assets[]? | select(.name|test("_arm64\\.deb$")) | .browser_download_url' \
+            | head -1)"
+          if [ -z "${deb_url:-}" ] || [ "$deb_url" = "null" ]; then
+            echo "No arm64 .deb asset on latest release" >&2
+            exit 1
+          fi
+          echo "Before: $before"
+          echo "Pulling $deb_url"
+          curl -fsSL "$deb_url" -o /tmp/yaver.deb
+          dpkg -i /tmp/yaver.deb
+          rm -f /tmp/yaver.deb
+          after=$(yaver --version 2>/dev/null || echo unknown)
+          echo "After:  $after"
+          # systemd unit name is just `yaver` per install_cmd.go setup.
+          # Restart regardless so the refreshed binary takes effect even
+          # when dpkg didn't trigger the post-install hook.
+          systemctl daemon-reload || true
+          if systemctl list-units --all --no-legend 'yaver.service' | grep -q yaver.service; then
+            systemctl restart yaver
+            systemctl --no-pager --lines=5 status yaver || true
+          else
+            echo "No yaver.service unit found — skipping restart; dpkg hook should have handled it"
+          fi
+          REMOTE
