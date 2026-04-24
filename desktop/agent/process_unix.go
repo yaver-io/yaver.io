@@ -20,6 +20,45 @@ const (
 	darwinLaunchDaemonPath = "/Library/LaunchDaemons/io.yaver.agent.plist"
 )
 
+func stableAutoStartExecutablePath(exePath string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(exePath) == "" {
+		return exePath
+	}
+
+	base := filepath.Join(home, ".yaver", "bin")
+	rel, err := filepath.Rel(base, exePath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return exePath
+	}
+
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	if len(parts) < 3 {
+		return exePath
+	}
+	platform := parts[1]
+	name := parts[len(parts)-1]
+	if platform == "" || name == "" {
+		return exePath
+	}
+	return filepath.Join(base, "current", platform, name)
+}
+
+func ensureStableAutoStartExecutable(exePath string) string {
+	stablePath := stableAutoStartExecutablePath(exePath)
+	if stablePath == exePath {
+		return exePath
+	}
+	if err := os.MkdirAll(filepath.Dir(stablePath), 0755); err != nil {
+		return exePath
+	}
+	_ = os.Remove(stablePath)
+	if err := os.Symlink(exePath, stablePath); err != nil {
+		return exePath
+	}
+	return stablePath
+}
+
 // detachProcess sets the child process to run in a new session (Unix: setsid).
 func detachProcess(cmd *osexec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -308,6 +347,7 @@ func installAutoStartLinux(exePath, workDir string) error {
 		_, err := installAutoStartWSL(exePath, workDir)
 		return err
 	}
+	exePath = ensureStableAutoStartExecutable(exePath)
 
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -401,6 +441,7 @@ func ensureAutoStart(exePath, workDir string) string {
 }
 
 func ensureAutoStartDarwin(exePath, workDir string) (string, error) {
+	exePath = ensureStableAutoStartExecutable(exePath)
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -437,6 +478,7 @@ func ensureAutoStartLinux(exePath, workDir string) (string, error) {
 		// here is what actually works across the WSL fleet.
 		return installAutoStartWSL(exePath, workDir)
 	}
+	exePath = ensureStableAutoStartExecutable(exePath)
 
 	home, err := os.UserHomeDir()
 	if err != nil {

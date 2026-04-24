@@ -10262,6 +10262,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		body, _ := json.MarshalIndent(r, "", "  ")
 		return mcpToolResult(string(body))
 
+	case "preview_stop_serving":
+		body, _ := json.MarshalIndent(s.stopServingPreviewResult(), "", "  ")
+		return mcpToolResult(string(body))
+
 	case "project_context":
 		var args struct {
 			WorkDir string `json:"workDir,omitempty"`

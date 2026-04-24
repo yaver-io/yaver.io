@@ -188,11 +188,9 @@ export default function PreviewPane({
     };
   }, []);
 
-  // Re-render the iframe when the agent transitions to "connected". The
-  // `devPreviewUrl` getter depends on `activeRelayPassword`, which is only
-  // populated after a successful relay probe — without this, an iframe
-  // that rendered during "connecting" would keep its broken (no-__rp) URL
-  // even after auth became available.
+  // Re-render the iframe when the agent transitions to "connected" so the
+  // preview picks up the latest connection target and clears any stale
+  // loading/error state from the previous transport attempt.
   useEffect(() => {
     const unsubscribe = agentClient.on("connectionState", (state) => {
       if (state === "connected") {
@@ -324,9 +322,9 @@ export default function PreviewPane({
     return Math.min(sx, sy, 1);
   }, [skin.plain, frame.width, frame.height, stageSize.w, stageSize.h]);
 
-  // Preflight: when the preview URL is set, fetch it once to surface
-  // relay-password / auth / DNS errors clearly instead of leaving the user
-  // staring at a bare "invalid relay password" JSON inside the iframe.
+  // Preflight: when the preview URL is set, fetch it once so auth/DNS/dev
+  // server failures surface clearly instead of leaving the user staring at
+  // a broken iframe.
   useEffect(() => {
     if (!previewFrameUrl || !devStatus?.running) {
       setPreviewError(null);
@@ -694,7 +692,7 @@ export default function PreviewPane({
             <button
               onClick={handleStop}
               className="text-red-400 hover:text-red-300 text-sm"
-              title="Stop"
+              title="Stop serving preview"
             >
               &#x25A0;
             </button>

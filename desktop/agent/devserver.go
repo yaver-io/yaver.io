@@ -68,21 +68,24 @@ type DevServerStatus struct {
 	Framework         string        `json:"framework"`
 	Kind              DevServerKind `json:"kind,omitempty"`
 	Running           bool          `json:"running"`
-	Building          bool   `json:"building,omitempty"` // true during native compilation (expo run:ios, etc.)
-	Port              int    `json:"port"`
-	BundleURL         string `json:"bundleUrl"`
-	DeepLink          string `json:"deepLink,omitempty"`
-	DevMode           string `json:"devMode,omitempty"` // "dev-client", "web", "expo-go", "" (for non-Expo)
-	StartedAt         string `json:"startedAt,omitempty"`
-	Error             string `json:"error,omitempty"`
-	PID               int    `json:"pid,omitempty"`
-	WorkDir           string `json:"workDir,omitempty"`
-	HotReload         bool   `json:"hotReload"`
-	TargetDeviceID    string `json:"targetDeviceId,omitempty"`
-	TargetDeviceName  string `json:"targetDeviceName,omitempty"`
-	TargetDeviceClass string `json:"targetDeviceClass,omitempty"`
-	IOSInstallMethod  string `json:"iosInstallMethod,omitempty"`
-	IOSInstallReason  string `json:"iosInstallReason,omitempty"`
+	Serving           bool          `json:"serving"`
+	ServingLabel      string        `json:"servingLabel,omitempty"`
+	StopActionLabel   string        `json:"stopActionLabel,omitempty"`
+	Building          bool          `json:"building,omitempty"` // true during native compilation (expo run:ios, etc.)
+	Port              int           `json:"port"`
+	BundleURL         string        `json:"bundleUrl"`
+	DeepLink          string        `json:"deepLink,omitempty"`
+	DevMode           string        `json:"devMode,omitempty"` // "dev-client", "web", "expo-go", "" (for non-Expo)
+	StartedAt         string        `json:"startedAt,omitempty"`
+	Error             string        `json:"error,omitempty"`
+	PID               int           `json:"pid,omitempty"`
+	WorkDir           string        `json:"workDir,omitempty"`
+	HotReload         bool          `json:"hotReload"`
+	TargetDeviceID    string        `json:"targetDeviceId,omitempty"`
+	TargetDeviceName  string        `json:"targetDeviceName,omitempty"`
+	TargetDeviceClass string        `json:"targetDeviceClass,omitempty"`
+	IOSInstallMethod  string        `json:"iosInstallMethod,omitempty"`
+	IOSInstallReason  string        `json:"iosInstallReason,omitempty"`
 }
 
 // DevServerEvent is pushed via SSE on /dev/events.
@@ -580,6 +583,7 @@ func (b *baseDevServer) Status() DevServerStatus {
 	s := DevServerStatus{
 		Framework: b.name,
 		Running:   b.running,
+		Serving:   b.running,
 		Port:      b.port,
 		HotReload: true,
 		WorkDir:   b.workDir,
@@ -587,6 +591,8 @@ func (b *baseDevServer) Status() DevServerStatus {
 	}
 	if b.running {
 		s.StartedAt = b.startedAt.UTC().Format(time.RFC3339)
+		s.ServingLabel = fmt.Sprintf("Serving %s preview", b.name)
+		s.StopActionLabel = "Stop Serving"
 	}
 	if b.cmd != nil && b.cmd.Process != nil {
 		s.PID = b.cmd.Process.Pid

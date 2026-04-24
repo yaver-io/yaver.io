@@ -4382,15 +4382,19 @@ export class QuicClient {
     return () => ctrl.abort();
   }
 
-  /** Stop the running dev server. */
-  async stopDevServer(): Promise<boolean> {
+  /** Stop serving the active preview/dev server. */
+  async stopDevServer(): Promise<{ ok?: boolean; stoppedServing?: boolean; previouslyServing?: boolean; message?: string; error?: string } | null> {
     try {
       const res = await fetch(`${this.baseUrl}/dev/stop`, {
         method: "POST",
         headers: this.authHeaders,
       });
-      return res.ok;
-    } catch { return false; }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, error: data.error || data.message || `HTTP ${res.status}` };
+      return data;
+    } catch {
+      return { ok: false, error: "network error" };
+    }
   }
 
   /**
@@ -6452,6 +6456,9 @@ export interface SandboxConfig {
 export interface DevServerStatus {
   framework: string;
   running: boolean;
+  serving?: boolean;
+  servingLabel?: string;
+  stopActionLabel?: string;
   building?: boolean;
   port: number;
   bundleUrl: string;

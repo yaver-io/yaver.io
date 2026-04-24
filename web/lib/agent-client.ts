@@ -2811,6 +2811,9 @@ export class AgentClient {
 
   async getDevServerStatus(): Promise<{
     running: boolean;
+    serving?: boolean;
+    servingLabel?: string;
+    stopActionLabel?: string;
     framework?: string;
     workDir?: string;
     port?: number;
@@ -2915,9 +2918,23 @@ export class AgentClient {
     return Array.isArray(data?.apps) ? data.apps : [];
   }
 
-  async stopDevServer(): Promise<void> {
+  async stopDevServer(): Promise<{
+    ok?: boolean;
+    stoppedServing?: boolean;
+    previouslyServing?: boolean;
+    framework?: string;
+    kind?: string;
+    workDir?: string;
+    message?: string;
+    error?: string;
+  }> {
     this.assertConnected();
-    await fetch(`${this.baseUrl}/dev/stop`, { method: "POST", headers: this.authHeaders });
+    const res = await fetch(`${this.baseUrl}/dev/stop`, { method: "POST", headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data?.message || data?.error || "Failed to stop serving preview");
+    }
+    return data;
   }
 
   async reloadDevServer(): Promise<{

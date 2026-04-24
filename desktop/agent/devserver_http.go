@@ -737,6 +737,9 @@ func (s *HTTPServer) handleDevServerStatus(w http.ResponseWriter, r *http.Reques
 	if status == nil {
 		jsonReply(w, http.StatusOK, map[string]interface{}{
 			"running":           false,
+			"serving":           false,
+			"servingLabel":      "Not serving a preview",
+			"stopActionLabel":   "Stop Serving",
 			"targetDeviceId":    target.DeviceID,
 			"targetDeviceName":  target.DeviceName,
 			"targetDeviceClass": target.DeviceClass,
@@ -752,6 +755,41 @@ func (s *HTTPServer) handleDevServerStatus(w http.ResponseWriter, r *http.Reques
 	status.IOSInstallMethod = resolvedIOSMethod
 	status.IOSInstallReason = resolvedIOSReason
 	jsonReply(w, http.StatusOK, status)
+}
+
+func (s *HTTPServer) stopServingPreviewResult() map[string]interface{} {
+	if s.devServerMgr == nil {
+		return map[string]interface{}{
+			"ok":                false,
+			"stoppedServing":    false,
+			"previouslyServing": false,
+			"message":           "Dev server manager not available.",
+		}
+	}
+	status := s.devServerMgr.Status()
+	if status == nil || !status.Running {
+		return map[string]interface{}{
+			"ok":                true,
+			"stoppedServing":    false,
+			"previouslyServing": false,
+			"message":           "Nothing is being served right now.",
+		}
+	}
+	result := map[string]interface{}{
+		"ok":                true,
+		"stoppedServing":    true,
+		"previouslyServing": true,
+		"framework":         status.Framework,
+		"kind":              status.Kind,
+		"workDir":           status.WorkDir,
+		"message":           "Stopped serving the active preview.",
+	}
+	if err := s.devServerMgr.Stop(); err != nil {
+		result["ok"] = false
+		result["stoppedServing"] = false
+		result["message"] = err.Error()
+	}
+	return result
 }
 
 // handleDevServerTarget gets or updates the preferred dev preview target.
@@ -989,12 +1027,12 @@ func (s *HTTPServer) handleDevServerStop(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := s.devServerMgr.Stop(); err != nil {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+	result := s.stopServingPreviewResult()
+	if ok, _ := result["ok"].(bool); !ok {
+		jsonReply(w, http.StatusBadRequest, result)
 		return
 	}
-
-	jsonReply(w, http.StatusOK, map[string]string{"ok": "true"})
+	jsonReply(w, http.StatusOK, result)
 }
 
 // handleDevServerReload triggers a hot reload on the active dev server.

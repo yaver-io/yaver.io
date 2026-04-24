@@ -60,11 +60,9 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
 
   const isConnected = connState === "connected" && !!connectedDevice;
 
-  // Load workspace apps on connect and whenever device changes.
-  // The fetch also doubles as our "is the relay password healthy?"
-  // probe — a 401 "invalid relay password" here surfaces exactly as
-  // the user would see on the iframe, and lets us auto-repair before
-  // they even click anything.
+  // Load workspace apps on connect and whenever device changes. This
+  // also serves as an early transport/auth probe so we can surface
+  // preview errors before the user starts a web app.
   useEffect(() => {
     let cancelled = false;
     if (!isConnected) {
@@ -298,11 +296,9 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
   const previewUrl = agentClient.devPreviewUrl;
   const isRunning = !!devStatus?.running;
 
-  // Preflight: fetch the iframe URL from the parent page. If the relay
-  // returns 401 "invalid relay password", auto-repair once. Same shape
-  // as PreviewPane's preflight — the relay check happens against the
-  // __rp query-param password, which is cross-origin from the parent so
-  // the iframe silently fails unless we probe first.
+  // Preflight: fetch the preview URL from the parent page once so
+  // transport/auth failures surface as a readable dashboard error
+  // instead of a broken iframe.
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [autoRepairedOnce, setAutoRepairedOnce] = useState(false);
   useEffect(() => {
@@ -374,8 +370,9 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
               <button
                 onClick={handleStop}
                 className="rounded border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-[11px] text-red-200 hover:bg-red-500/20"
+                title="Stop serving this preview"
               >
-                Stop
+                {devStatus?.stopActionLabel || "Stop Serving"}
               </button>
             </>
           ) : (

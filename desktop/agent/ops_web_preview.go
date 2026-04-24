@@ -84,10 +84,11 @@ func opsWebPreviewHandler(c OpsContext, payload json.RawMessage) OpsResult {
 		}}
 
 	case "stop":
-		if err := c.Server.devServerMgr.Stop(); err != nil {
-			return OpsResult{OK: false, Code: "stop_failed", Error: err.Error()}
+		initial := c.Server.stopServingPreviewResult()
+		if ok, _ := initial["ok"].(bool); !ok {
+			return OpsResult{OK: false, Code: "stop_failed", Error: fmt.Sprint(initial["message"]), Initial: initial}
 		}
-		return OpsResult{OK: true, Initial: map[string]interface{}{"running": false}}
+		return OpsResult{OK: true, Initial: initial}
 
 	case "start":
 		// Resolve app → workDir + framework via the workspace manifest.

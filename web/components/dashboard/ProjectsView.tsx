@@ -83,6 +83,9 @@ export default function ProjectsView({
   const [autoRepairedOnce, setAutoRepairedOnce] = useState(false);
   const [devStatus, setDevStatus] = useState<{
     running: boolean;
+    serving?: boolean;
+    servingLabel?: string;
+    stopActionLabel?: string;
     framework?: string;
     workDir?: string;
     targetDeviceName?: string;
@@ -221,7 +224,7 @@ export default function ProjectsView({
       {devStatus?.running && (
         <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 flex items-center justify-between">
           <div className="text-sm">
-            <span className="text-emerald-400 font-medium">Dev server running</span>
+            <span className="text-emerald-400 font-medium">{devStatus.servingLabel || "Serving preview"}</span>
             <span className="text-surface-400 ml-2">{devStatus.framework} &middot; {devStatus.workDir?.split("/").pop()}</span>
             {devStatus.targetDeviceName ? (
               <span className="text-sky-300 ml-2">→ {devStatus.targetDeviceName}</span>
@@ -229,7 +232,7 @@ export default function ProjectsView({
           </div>
           <div className="flex gap-2">
             <button onClick={() => void agentClient.reloadDevServer()} className="px-3 py-1 text-xs rounded-md bg-surface-800 text-surface-300 hover:bg-surface-700">Refresh Preview</button>
-            <button onClick={stopDev} className="px-3 py-1 text-xs rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20">Stop</button>
+            <button onClick={stopDev} className="px-3 py-1 text-xs rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20">{devStatus.stopActionLabel || "Stop Serving"}</button>
           </div>
         </div>
       )}

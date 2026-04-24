@@ -1693,10 +1693,19 @@ return (
         <div className="mx-auto max-w-5xl">
           <div className="flex flex-col items-center justify-between gap-6 sm:flex-row">
             <p className="text-xs text-surface-500">
-              &copy; 2026{" "}
-              <a href="https://simkab.com" target="_blank" rel="noopener noreferrer" className="hover:text-surface-300">SIMKAB ELEKTRIK</a>
-              {" "}&middot;{" "}
-              <a href="mailto:kivanc.cakmak@simkab.com" className="hover:text-surface-300">kivanc.cakmak@simkab.com</a>
+              Open Source &middot;{" "}
+              <Link href="/licensing" className="hover:text-surface-300">
+                FSL core + Apache-2.0 SDKs
+              </Link>{" "}
+              &middot; Local First &middot;{" "}
+              <a
+                href="https://github.com/kivanccakmak/yaver.io"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-surface-300"
+              >
+                Source Code
+              </a>
             </p>
             <div className="flex flex-wrap items-center gap-4 text-xs text-surface-500">
               <a href="#get-started" className="hover:text-surface-300">Get Started</a>
@@ -1709,19 +1718,10 @@ return (
             </div>
           </div>
           <p className="mt-6 text-center text-xs text-surface-600">
-            Open Source &middot;{" "}
-            <Link href="/licensing" className="hover:text-surface-300">
-              FSL core + Apache-2.0 SDKs
-            </Link>{" "}
-            &middot; Local First &middot;{" "}
-            <a
-              href="https://github.com/kivanccakmak/yaver.io"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-surface-300"
-            >
-              Source Code
-            </a>
+            &copy; 2026{" "}
+            <a href="https://simkab.com" target="_blank" rel="noopener noreferrer" className="hover:text-surface-300">SIMKAB ELEKTRIK</a>.
+            {" "}All rights reserved.{" "}&middot;{" "}
+            <a href="mailto:kivanc.cakmak@simkab.com" className="hover:text-surface-300">kivanc.cakmak@simkab.com</a>
           </p>
         </div>
       </footer>

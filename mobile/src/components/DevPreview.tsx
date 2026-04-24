@@ -232,10 +232,10 @@ export function DevPreview() {
   }, [mustUseNativePreview, showPreview, status?.running]);
 
   const handleStop = useCallback(async () => {
-    Alert.alert("Stop Dev Server", "This will stop the dev server and close the preview.", [
+    Alert.alert("Stop Serving Preview", "This will stop serving the current preview and close it on this device.", [
       { text: "Cancel", style: "cancel" },
       {
-        text: "Stop", style: "destructive", onPress: async () => {
+        text: "Stop Serving", style: "destructive", onPress: async () => {
           await quicClient.stopDevServer();
           setShowPreview(false);
           setStatus(null);
@@ -306,7 +306,7 @@ export function DevPreview() {
               hitSlop={8}
               style={({ pressed }) => [styles.bannerStopBtn, pressed && { opacity: 0.6 }]}
             >
-              <Text style={styles.bannerStopText}>Stop</Text>
+              <Text style={styles.bannerStopText}>{status.stopActionLabel || "Stop Serving"}</Text>
             </Pressable>
           )}
         </View>
@@ -333,7 +333,7 @@ export function DevPreview() {
                 <Text style={styles.headerBtnReload}>Reload</Text>
               </Pressable>
               <Pressable onPress={handleStop} style={styles.headerBtn}>
-                <Text style={styles.headerBtnStop}>Stop</Text>
+                <Text style={styles.headerBtnStop}>{status.stopActionLabel || "Stop Serving"}</Text>
               </Pressable>
             </View>
           </View>
@@ -450,7 +450,7 @@ export function DevPreview() {
                       <Text style={[styles.nativeBtnText, { color: "#22c55e" }]}>Reload</Text>
                     </Pressable>
                     <Pressable onPress={handleStop} style={[styles.nativeBtn, { backgroundColor: "#2e1a1a" }]}>
-                      <Text style={[styles.nativeBtnText, { color: "#ef4444" }]}>Stop Server</Text>
+                      <Text style={[styles.nativeBtnText, { color: "#ef4444" }]}>{status.stopActionLabel || "Stop Serving"}</Text>
                     </Pressable>
                   </View>
                 </>

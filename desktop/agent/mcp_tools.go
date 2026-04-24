@@ -2464,7 +2464,15 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 		{
 			"name":        "web_preview_stop",
-			"description": "Stop the active web dev server.",
+			"description": "Stop serving the active web preview.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "preview_stop_serving",
+			"description": "Stop serving the active preview/dev server, regardless of whether it is Expo Web, Vite, Next.js, Flutter Web, or another active preview surface.",
 			"inputSchema": map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{},
