@@ -203,7 +203,7 @@ function DeviceConnectCard({
     <div
       className={[
         "rounded-2xl border bg-surface-900/80 transition-colors",
-        compact ? "p-3" : "p-4",
+        compact ? "p-3" : "p-3.5",
         isSelected
           ? connectionError
             ? "border-red-500/30 bg-red-500/[0.04]"
@@ -213,51 +213,51 @@ function DeviceConnectCard({
           : "border-surface-800 hover:border-surface-700",
       ].join(" ")}
     >
-      <div className="flex items-start gap-3">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-surface-800 bg-surface-950 text-surface-400">
+      <div className="flex items-start gap-2.5">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-surface-800 bg-surface-950 text-surface-400">
           <DeviceIcon platform={device.platform} />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="truncate text-sm font-semibold text-surface-100">{device.name}</h3>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <h3 className="truncate text-[15px] font-semibold text-surface-100">{device.name}</h3>
             <span
-              className={`inline-flex h-2.5 w-2.5 rounded-full ${
+              className={`inline-flex h-2 w-2 rounded-full ${
                 connectionError ? "bg-red-400" : isOffline ? "bg-surface-600" : isConnecting ? "bg-amber-400" : "bg-emerald-400"
               }`}
             />
-            <span className="text-xs text-surface-400">
+            <span className="text-[11px] text-surface-400">
               {connectionError ? "failed" : isOffline ? "offline" : isConnecting ? "connecting" : "online"} · {heartbeatAge}
             </span>
           </div>
-          <p className="mt-1 text-xs text-surface-500">
+          <p className="mt-1 text-[11px] leading-5 text-surface-500">
             {devicePlatformLabel(device)}
             {device.host ? ` · ${device.host}:${device.port}` : ""}
             {device.isGuest && device.hostName ? ` · from ${device.hostName}` : ""}
           </p>
           {connectionError ? (
-            <p className="mt-1 text-xs text-red-300/80">{connectionError}</p>
+            <p className="mt-1 text-[11px] text-red-300/80">{connectionError}</p>
           ) : null}
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-1.5">
+      <div className="mt-2.5 flex flex-wrap gap-1.5">
         {accessScopeLabel(device) ? (
-          <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${accessScopeTone(device)}`}>
+          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] ${accessScopeTone(device)}`}>
             {accessScopeLabel(device)}
           </span>
         ) : null}
         {!device.isGuest && device.sharedWithGuests ? (
-          <span className="rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-200">
+          <span className="rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-200">
             Shared
           </span>
         ) : null}
         {device.deviceClass ? (
-          <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-200">
+          <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-200">
             {device.deviceClass === "edge-mobile" ? "Edge Worker" : device.deviceClass}
           </span>
         ) : null}
         {device.sessionBinding ? (
-          <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${
+          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] ${
             device.sessionBinding === "dedicated"
               ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
               : "border-amber-500/30 bg-amber-500/10 text-amber-200"
@@ -266,26 +266,26 @@ function DeviceConnectCard({
           </span>
         ) : null}
         {isPrimary ? (
-          <span className="rounded-full border border-indigo-500/40 bg-indigo-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-indigo-200">
+          <span className="rounded-full border border-indigo-500/40 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-indigo-200">
             Primary
           </span>
         ) : null}
         {device.priorityMode === "spare-capacity" ? (
-          <span className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-violet-200">
+          <span className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-200">
             Spare Capacity
           </span>
         ) : null}
         {lanIps.map((ip) => (
-          <span key={`${device.id}:${ip}`} className="rounded-full border border-surface-700 bg-surface-950 px-2 py-1 font-mono text-[10px] text-surface-300">
-            LAN {ip}
+          <span key={`${device.id}:${ip}`} className="rounded-full border border-surface-700 bg-surface-950 px-2 py-0.5 font-mono text-[10px] text-surface-300">
+            {ip}
           </span>
         ))}
       </div>
 
       {shareSummary ? (
-        <div className="mt-3 flex flex-wrap gap-1.5">
+        <div className="mt-2 flex flex-wrap gap-1.5">
           {shareSummary.projectLabel ? (
-            <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${
+            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] ${
               shareSummary.projectLabel === "All Resources"
                 ? "border-sky-500/40 bg-sky-500/10 text-sky-200"
                 : "border-amber-500/40 bg-amber-500/10 text-amber-200"
@@ -294,7 +294,7 @@ function DeviceConnectCard({
             </span>
           ) : null}
           {shareSummary.projectChips.map((project) => (
-            <span key={`${device.id}:project:${project}`} className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] font-medium text-amber-100">
+            <span key={`${device.id}:project:${project}`} className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-100">
               {project}
             </span>
           ))}
@@ -303,16 +303,16 @@ function DeviceConnectCard({
 
       {shareSummary && shareSummary.guestChips.length > 0 ? (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          <span className="rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-200">
+          <span className="rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-200">
             Shared With
           </span>
           {shareSummary.guestChips.map((guest) => (
-            <span key={`${device.id}:guest:${guest}`} className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-[10px] font-medium text-sky-100">
+            <span key={`${device.id}:guest:${guest}`} className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-100">
               {guest}
             </span>
           ))}
           {shareSummary.guestOverflow > 0 ? (
-            <span className="rounded-full border border-surface-700 bg-surface-950 px-2 py-1 text-[10px] font-medium text-surface-300">
+            <span className="rounded-full border border-surface-700 bg-surface-950 px-2 py-0.5 text-[10px] font-medium text-surface-300">
               +{shareSummary.guestOverflow} more
             </span>
           ) : null}
@@ -321,11 +321,11 @@ function DeviceConnectCard({
 
       {shareSummary && shareSummary.runnerChips.length > 0 ? (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          <span className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-violet-200">
+          <span className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-200">
             Agents
           </span>
           {shareSummary.runnerChips.map((runner) => (
-            <span key={`${device.id}:runner:${runner}`} className="rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-1 text-[10px] font-medium text-violet-100">
+            <span key={`${device.id}:runner:${runner}`} className="rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-100">
               {runner}
             </span>
           ))}
@@ -333,7 +333,7 @@ function DeviceConnectCard({
       ) : null}
 
       {device.edgeProfile ? (
-        <p className="mt-3 text-[11px] text-surface-500">
+        <p className="mt-2 text-[11px] text-surface-500">
           {device.edgeProfile.supportsLocalInference ? "Local inference" : "Remote inference only"} · max {device.edgeProfile.maxModelClass} model
           {device.edgeProfile.preferredTasks.length > 0 ? ` · ${device.edgeProfile.preferredTasks.slice(0, 3).join(", ")}` : ""}
         </p>
@@ -343,7 +343,7 @@ function DeviceConnectCard({
         <button
           onClick={onConnect}
           disabled={isConnecting}
-          className={`rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${
+          className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors ${
             isConnecting
               ? "cursor-wait border border-amber-500/20 bg-amber-500/10 text-amber-200"
               : "border border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/15"
@@ -354,7 +354,7 @@ function DeviceConnectCard({
         {canTogglePrimary && onTogglePrimary ? (
           <button
             onClick={onTogglePrimary}
-            className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-500/15"
+            className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-200 hover:bg-indigo-500/15"
           >
             {isPrimary ? "Unset Primary" : "Make Primary"}
           </button>
@@ -506,6 +506,29 @@ export default function DashboardPage() {
       try { setAgentInfo(await agentClient.getInfo()); } catch {}
       try { setRunners(await agentClient.getRunners()); } catch {}
     } catch (err: any) {
+      const firstDiagnostics = agentClient.lastConnectDiagnostics;
+      const canTryAutoReauth = Boolean(token && device.id && agentClient.configuredRelayServers.length > 0);
+
+      if (canTryAutoReauth) {
+        setConnectError("Connection failed. Trying automatic re-auth recovery…");
+        setConnectDiagnostics(firstDiagnostics);
+        try {
+          const recovered = await agentClient.reauthAgent({
+            deviceId: device.id,
+            hostSessionToken: token,
+            convexSiteUrl: CONVEX_URL,
+          });
+          if (recovered.ok) {
+            await agentClient.connect(device.host, device.port, token, device.id);
+            setConnectError(null);
+            setConnectDiagnostics(agentClient.lastConnectDiagnostics);
+            try { setAgentInfo(await agentClient.getInfo()); } catch {}
+            try { setRunners(await agentClient.getRunners()); } catch {}
+            return;
+          }
+        } catch {}
+      }
+
       setConnectError(err?.message || "Could not connect to device");
       setConnectDiagnostics(agentClient.lastConnectDiagnostics);
     }
@@ -589,7 +612,7 @@ export default function DashboardPage() {
   ];
 
   return (
-    <div className="flex flex-col md:flex-row h-screen overflow-hidden">
+    <div className="flex min-h-[calc(100vh-4rem)] flex-col md:flex-row">
       {/* Mobile top bar — visible only below md */}
       <div className="md:hidden border-b border-surface-800 bg-surface-900/50">
         <div className="flex items-center gap-2 px-3 py-2">
@@ -773,7 +796,7 @@ export default function DashboardPage() {
       </aside>
 
       {/* Main */}
-      <div className="flex flex-1 min-w-0 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {isConnected && (
           <div className="flex items-center gap-1 border-b border-surface-800 px-3 py-1 bg-surface-900/30 overflow-x-auto">
             {tabs.map(tab => (
@@ -787,11 +810,12 @@ export default function DashboardPage() {
           </div>
         )}
 
-        <div className="flex flex-1 min-h-0 flex-col">
-          {!isConnected ? (
-            <div className="flex flex-1 items-center justify-center p-8">
-              <div className="max-w-md text-center">
-                <h2 className="mb-2 text-lg font-semibold text-surface-100">Workspace</h2>
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          {!isConnected && activeTab === "chat" ? (
+            <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
+              <div className="mx-auto w-full max-w-[1680px]">
+                <div className="mb-6 text-center">
+                  <h2 className="mb-2 text-lg font-semibold text-surface-100">Workspace</h2>
                 {connState === "connecting" ? (
                   <div className="flex flex-col items-center gap-3">
                     <div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-600 border-t-amber-400" />
@@ -818,7 +842,7 @@ export default function DashboardPage() {
                           : "Could not reach agent";
                     const reauthCmd = "yaver auth";
                     return (
-                      <div className="flex flex-col items-center gap-3 w-full max-w-md">
+                      <div className="mx-auto flex w-full max-w-xl flex-col items-center gap-3">
                         <div className="w-full rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3 text-left">
                           <p className="text-sm text-red-400 font-medium mb-1">{headline}</p>
                           <p className="text-xs text-surface-500">{connectError || "Could not reach agent (direct or via relay)"}</p>
@@ -947,7 +971,7 @@ export default function DashboardPage() {
                 ) : (
                   <>
                     <p className="mb-6 text-sm text-surface-500">Connect to a device running <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-300">yaver serve</code></p>
-                    <div className="grid grid-cols-1 gap-3 text-left xl:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-4 text-left md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                       {visibleDevices.map((d) => (
                         <DeviceConnectCard
                           key={d.id}

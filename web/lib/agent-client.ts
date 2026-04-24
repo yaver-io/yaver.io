@@ -209,6 +209,14 @@ export interface DevTargetPreference {
  * Per-attempt diagnostic captured during connect(). Lets the dashboard show
  * WHY each relay / direct path failed instead of a single flat error line.
  */
+export interface ReauthAttemptDiagnostic {
+  path: string;
+  step: "direct" | "pair";
+  ok: boolean;
+  status?: number;
+  error?: string;
+}
+
 export interface ConnectAttemptDiagnostic {
   path: "relay" | "direct";
   relayId?: string;
@@ -325,6 +333,22 @@ export interface RunnerAuthStatusRow {
   detail?: string;
 }
 
+export interface RunnerBrowserAuthSession {
+  id: string;
+  runner: "claude" | "codex";
+  method: string;
+  status: "starting" | "awaiting_browser" | "completed" | "failed" | "cancelled";
+  openUrl?: string;
+  code?: string;
+  detail?: string;
+  authConfigured?: boolean;
+  authSource?: string;
+  error?: string;
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+}
+
 export interface GitProviderStatusRow {
   host: string;
   provider: string;
@@ -370,6 +394,11 @@ export interface GitActionResult {
   branch?: string;
   message?: string;
   error?: string;
+}
+
+export interface GitBranchRow {
+  name: string;
+  current: boolean;
 }
 
 export interface RunnerAuthSetParams {
@@ -781,6 +810,13 @@ class AgentClient {
   /** Set relay servers fetched from platform config. Sorted by priority. */
   setRelayServers(servers: RelayServer[]): void {
     this.relayServers = servers.sort((a, b) => a.priority - b.priority);
+  }
+
+  /** Read-only view of currently configured relay servers. The dashboard
+   *  renders the count in diagnostics so the user can tell when the
+   *  reason "web can't reach the agent" is "no relay wired up yet". */
+  get configuredRelayServers(): ReadonlyArray<RelayServer> {
+    return this.relayServers;
   }
 
   // ── Connection lifecycle ───────────────────────────────────────────
@@ -1259,6 +1295,52 @@ class AgentClient {
       saved: Array.isArray(data?.saved) ? data.saved : [],
       runners: Array.isArray(data?.runners) ? data.runners : [],
     };
+  }
+
+  async runnerBrowserAuthStart(
+    params: { runner: "claude" | "codex" },
+    target?: string,
+  ): Promise<{ ok: boolean; session?: RunnerBrowserAuthSession; error?: string }> {
+    this.assertConnected();
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/browser/start`
+      : `${this.baseUrl}/runner-auth/browser/start`;
+    const res = await fetch(base, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ runner: params.runner }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
+    return { ok: true, session: data?.session };
+  }
+
+  async runnerBrowserAuthStatus(
+    id: string,
+    target?: string,
+  ): Promise<{ ok: boolean; session?: RunnerBrowserAuthSession; error?: string }> {
+    this.assertConnected();
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/browser/status?id=${encodeURIComponent(id)}`
+      : `${this.baseUrl}/runner-auth/browser/status?id=${encodeURIComponent(id)}`;
+    const res = await fetch(base, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
+    return { ok: true, session: data?.session };
+  }
+
+  async runnerBrowserAuthCancel(
+    id: string,
+    target?: string,
+  ): Promise<{ ok: boolean; session?: RunnerBrowserAuthSession; error?: string }> {
+    this.assertConnected();
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/browser/cancel?id=${encodeURIComponent(id)}`
+      : `${this.baseUrl}/runner-auth/browser/cancel?id=${encodeURIComponent(id)}`;
+    const res = await fetch(base, { method: "POST", headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
+    return { ok: true, session: data?.session };
   }
 
   async machineOnboardingStatus(target?: string): Promise<MachineOnboardingProviderStatus[]> {
@@ -1799,59 +1881,163 @@ class AgentClient {
   }
 
   /**
-   * Web-side re-auth of an agent whose own Convex session has expired.
-   * POSTs /auth/recover {mode:"direct"} with the user's current Convex
-   * session token as Bearer. The agent verifies ownership via
-   * /devices/owner-by-hardware and, if the caller is the registered
-   * owner, persists the bearer as its new auth token. No pair dance,
-   * no device-code OAuth round trip.
+   * Web-side re-auth of a remote agent whose own Convex session has expired
+   * (or just can't be reached at the bearer level). Tries every configured
+   * relay in priority order and falls back through two agent contracts:
    *
-   * Must be called BEFORE a successful connect (obviously — the
-   * connection failed). Iterates the same relay list attemptConnect
-   * uses, stops on first 2xx.
+   *   1. POST /auth/recover {mode:"direct"} with Bearer=<user Convex token>.
+   *      New agents (0d44623a+) accept the bearer straight as their new
+   *      auth token after /devices/owner-by-hardware confirms ownership.
+   *
+   *   2. If the agent is older and returns 400 "mode must be 'pair' or
+   *      'device-code'", fall back to POST /auth/recover {mode:"pair"}
+   *      → take back pairCode → POST /auth/pair/submit?code=<...> with
+   *      {token, convexSiteUrl}. Same end result.
+   *
+   * Also tries the LAN direct path LAST so if the user is actually on the
+   * same network we still recover. Each attempt is captured in the returned
+   * `diagnostics` array for the UI to render row-by-row.
    */
-  async reauthDirect(opts: {
+  async reauthAgent(opts: {
     deviceId: string;
     hostSessionToken: string;
-  }): Promise<{ ok: true } | { ok: false; status?: number; error: string }> {
-    if (!this.relayServers.length) {
-      return { ok: false, error: "no relay servers configured" };
-    }
-    let lastStatus: number | undefined;
-    let lastError = "all relay paths failed";
-    for (const relay of this.relayServers) {
-      const url = `${relay.httpUrl}/d/${opts.deviceId}/auth/recover`;
+    convexSiteUrl?: string;
+  }): Promise<{
+    ok: boolean;
+    mode?: "direct" | "pair";
+    via?: string;
+    error?: string;
+    diagnostics: ReauthAttemptDiagnostic[];
+  }> {
+    const diagnostics: ReauthAttemptDiagnostic[] = [];
+    const tryOne = async (pathLabel: string, baseUrl: string, password?: string) => {
       const headers: Record<string, string> = {
         Authorization: `Bearer ${opts.hostSessionToken}`,
         "Content-Type": "application/json",
       };
-      if (relay.password) headers["X-Relay-Password"] = relay.password;
+      if (password) headers["X-Relay-Password"] = password;
+
+      // 1. Direct mode
+      const directDiag: ReauthAttemptDiagnostic = { path: pathLabel, step: "direct", ok: false };
       try {
         const res = await this.fetchWithTimeout(
-          url,
+          `${baseUrl}/auth/recover`,
+          { method: "POST", headers, body: JSON.stringify({ mode: "direct" }) },
+          10_000,
+        );
+        directDiag.status = res.status;
+        if (res.ok) {
+          directDiag.ok = true;
+          diagnostics.push(directDiag);
+          return { ok: true as const, mode: "direct" as const, via: pathLabel };
+        }
+        let body: any = null;
+        try { body = await res.clone().json(); } catch {}
+        directDiag.error = (body && body.error) || `HTTP ${res.status}`;
+        diagnostics.push(directDiag);
+        // Only fall through to pair mode for "mode not supported" errors from older agents.
+        const msg = String(directDiag.error || "").toLowerCase();
+        const modeUnsupported =
+          (res.status === 400 || res.status === 501) &&
+          (msg.includes("mode must") || msg.includes("direct") || msg.includes("invalid mode"));
+        if (!modeUnsupported) {
+          return null; // real failure, don't retry via pair
+        }
+      } catch (e: any) {
+        directDiag.error = e?.message || "network error";
+        diagnostics.push(directDiag);
+        // Transport-level failure, don't try pair on same baseUrl.
+        return null;
+      }
+
+      // 2. Pair-mode fallback.
+      const pairDiag: ReauthAttemptDiagnostic = { path: pathLabel, step: "pair", ok: false };
+      try {
+        const res = await this.fetchWithTimeout(
+          `${baseUrl}/auth/recover`,
+          { method: "POST", headers, body: JSON.stringify({ mode: "pair" }) },
+          10_000,
+        );
+        pairDiag.status = res.status;
+        if (!res.ok) {
+          let body: any = null;
+          try { body = await res.clone().json(); } catch {}
+          pairDiag.error = (body && body.error) || `HTTP ${res.status}`;
+          diagnostics.push(pairDiag);
+          return null;
+        }
+        const pairInfo = await res.json();
+        const pairCode = pairInfo?.pairCode;
+        if (!pairCode) {
+          pairDiag.error = "agent did not return pairCode";
+          diagnostics.push(pairDiag);
+          return null;
+        }
+
+        // Submit the caller's token to /auth/pair/submit?code=PAIRCODE.
+        const submitRes = await this.fetchWithTimeout(
+          `${baseUrl}/auth/pair/submit?code=${encodeURIComponent(pairCode)}`,
           {
             method: "POST",
-            headers,
-            body: JSON.stringify({ mode: "direct" }),
+            headers: { ...headers, Authorization: headers.Authorization },
+            body: JSON.stringify({
+              token: opts.hostSessionToken,
+              convexSiteUrl: opts.convexSiteUrl || "",
+            }),
           },
           10_000,
         );
-        lastStatus = res.status;
-        if (res.ok) return { ok: true };
-        // Surface the agent's specific error body if it sent one.
-        try {
-          const body = await res.clone().json();
-          if (body && typeof body === "object" && typeof body.error === "string") {
-            lastError = body.error;
-          }
-        } catch {
-          lastError = `HTTP ${res.status}`;
+        pairDiag.status = submitRes.status;
+        if (!submitRes.ok) {
+          let body: any = null;
+          try { body = await submitRes.clone().json(); } catch {}
+          pairDiag.error = (body && body.error) || `pair/submit HTTP ${submitRes.status}`;
+          diagnostics.push(pairDiag);
+          return null;
         }
+        pairDiag.ok = true;
+        diagnostics.push(pairDiag);
+        return { ok: true as const, mode: "pair" as const, via: pathLabel };
       } catch (e: any) {
-        lastError = e?.message || "network error";
+        pairDiag.error = e?.message || "network error";
+        diagnostics.push(pairDiag);
+        return null;
       }
+    };
+
+    // Relay paths first.
+    for (const relay of this.relayServers) {
+      const base = `${relay.httpUrl}/d/${opts.deviceId}`;
+      const result = await tryOne(`relay · ${relay.id}`, base, relay.password || undefined);
+      if (result?.ok) return { ok: true, mode: result.mode, via: result.via, diagnostics };
     }
-    return { ok: false, status: lastStatus, error: lastError };
+    // Direct LAN path last (usually blocked by HTTPS → HTTP on a web origin,
+    // but works for same-machine/Electron or if the user opens yaver://… over HTTP).
+    if (this.host && this.port) {
+      const base = `http://${this.host}:${this.port}`;
+      const result = await tryOne("direct", base);
+      if (result?.ok) return { ok: true, mode: result.mode, via: result.via, diagnostics };
+    }
+
+    return {
+      ok: false,
+      error:
+        diagnostics.length === 0
+          ? "no relays configured and no direct path"
+          : "all transports failed",
+      diagnostics,
+    };
+  }
+
+  /** @deprecated — kept as a thin shim; call reauthAgent instead. */
+  async reauthDirect(opts: {
+    deviceId: string;
+    hostSessionToken: string;
+    convexSiteUrl?: string;
+  }): Promise<{ ok: true } | { ok: false; status?: number; error: string }> {
+    const r = await this.reauthAgent(opts);
+    if (r.ok) return { ok: true };
+    return { ok: false, error: r.error || "reauth failed" };
   }
 
   private async probeHealth(
@@ -3741,6 +3927,16 @@ class AgentClient {
     return res.json();
   }
 
+  async gitCheckout(workDir: string, branch: string): Promise<GitActionResult> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/checkout?workDir=${encodeURIComponent(workDir)}`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ branch }),
+    });
+    return res.json();
+  }
+
   async gitStatus(workDir: string): Promise<GitStatusRow> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/git/status?workDir=${encodeURIComponent(workDir)}`, {
@@ -3748,6 +3944,24 @@ class AgentClient {
     });
     return res.json();
   }
+
+  async gitBranches(workDir: string): Promise<GitBranchRow[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/branches?workDir=${encodeURIComponent(workDir)}`, {
+      headers: this.authHeaders,
+    });
+    return res.json();
+  }
+
+  async gitDiff(workDir: string, file?: string): Promise<{ diff: string; error?: string }> {
+    this.assertConnected();
+    const q = file ? `&file=${encodeURIComponent(file)}` : "";
+    const res = await fetch(`${this.baseUrl}/git/diff?workDir=${encodeURIComponent(workDir)}${q}`, {
+      headers: this.authHeaders,
+    });
+    return res.json();
+  }
+
   async gitLog(workDir: string, limit = 10): Promise<GitCommitRow[]> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/git/log?workDir=${encodeURIComponent(workDir)}&limit=${encodeURIComponent(String(limit))}`, {
