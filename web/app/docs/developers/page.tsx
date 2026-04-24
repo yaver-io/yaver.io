@@ -1805,6 +1805,11 @@ CLI Agent ◄──QUIC──────────────── Relay (:
             code, no AI output, no logs are stored. Everything AI-related flows
             peer-to-peer between mobile and desktop agent.
           </Prose>
+          <Prose>
+            One narrow exception: guest-sharing config may store selected
+            project names for the allowlist UX. That is metadata only. It does
+            not include repo contents or project runtime data.
+          </Prose>
 
           <div className="space-y-4">
             <div className="card">
@@ -2651,6 +2656,13 @@ CLI Agent ◄──QUIC──────────────── Relay (:
             Config (limits, runners, usage mode) syncs via Convex. Project access
             is managed P2P on each agent. The agent checks guest limits on every
             request and tracks usage locally, flushing to Convex every 60 seconds.
+          </Prose>
+          <Prose>
+            For guest project slicing, the backend stores only the selected
+            project names attached to that guest grant/config so web, mobile,
+            and CLI can render the same allowlist. It does not store repo
+            contents, source files, prompts, task output, or logs for this
+            feature.
           </Prose>
           <Prose>
             <strong>API endpoints:</strong> <code>GET/POST /guests/config</code> (agent),{" "}

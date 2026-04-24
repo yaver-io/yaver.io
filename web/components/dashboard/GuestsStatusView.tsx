@@ -64,6 +64,42 @@ function ScopeButton({
   );
 }
 
+function formatPlatform(platform?: string) {
+  const value = String(platform || "").trim();
+  if (!value) return "Unknown OS";
+  return value;
+}
+
+function formatLastSeen(lastSeen?: string | number) {
+  if (!lastSeen) return null;
+  const ms =
+    typeof lastSeen === "number"
+      ? lastSeen
+      : Number.isNaN(Date.parse(lastSeen))
+        ? 0
+        : Date.parse(lastSeen);
+  if (!ms) return null;
+  return new Date(ms).toLocaleString();
+}
+
+function machineStatusLine(opts: {
+  platform?: string;
+  online?: boolean;
+  lastSeen?: string | number;
+  host?: string;
+  deviceClass?: string;
+}) {
+  const bits = [formatPlatform(opts.platform)];
+  if (opts.deviceClass) bits.push(opts.deviceClass);
+  if (opts.online) bits.push("online");
+  else {
+    const seen = formatLastSeen(opts.lastSeen);
+    if (seen) bits.push(`seen ${seen}`);
+  }
+  if (opts.host) bits.push(opts.host);
+  return bits.join(" · ");
+}
+
 export default function GuestsStatusView() {
   const { token, user } = useAuth();
   const { devices } = useDevices(token);
@@ -206,7 +242,6 @@ export default function GuestsStatusView() {
         userId: inviteKind === "user-id" ? inviteTarget.trim() : undefined,
         deviceIds: inviteDeviceIds,
         scope: inviteScope,
-        allowedProjects: inviteProjects,
       });
       setLastInvite({
         code: result.inviteCode,
@@ -360,9 +395,58 @@ export default function GuestsStatusView() {
             </div>
           </div>
 
+          {ownDevices.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-surface-500">Machine slice</div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {ownDevices.map((device) => (
+                  <button
+                    key={device.id}
+                    type="button"
+                    onClick={() => toggleInviteDevice(device.id)}
+                    className={`border px-3 py-2 text-left text-xs ${
+                      inviteDeviceIds.includes(device.id)
+                        ? "border-indigo-500 bg-indigo-500/15 text-surface-100"
+                        : "border-surface-700 bg-surface-950 text-surface-400"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-semibold text-surface-200">{device.name}</div>
+                      <span
+                        className={`inline-flex h-2.5 w-2.5 rounded-full ${
+                          device.online ? "bg-emerald-400" : "bg-surface-600"
+                        }`}
+                      />
+                    </div>
+                    <div className="mt-1 text-surface-400">
+                      {machineStatusLine({
+                        platform: device.platform,
+                        online: device.online,
+                        lastSeen: device.lastSeen,
+                        host: device.host,
+                        deviceClass: device.deviceClass,
+                      })}
+                    </div>
+                    <div className="mt-2 text-surface-500">
+                      {inviteProjects.length > 0
+                        ? `Planned runtime slice after connection: ${inviteProjects.join(", ")}`
+                        : "Project slice will be decided later on the connected machine"}
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <div className="text-xs text-surface-500">
+                Leave every machine unselected to propose all of your machines.
+              </div>
+            </div>
+          )}
+
           {projectChoices.length > 0 && (
             <div className="space-y-2">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-surface-500">Project slice</div>
+              <div className="text-xs text-surface-500">
+                This is applied later as host runtime policy over the connected machine/P2P path. It is not baked into the invite payload.
+              </div>
               <div className="flex flex-wrap gap-2">
                 {projectChoices.map((project) => (
                   <button
@@ -380,33 +464,7 @@ export default function GuestsStatusView() {
                 ))}
               </div>
               <div className="text-xs text-surface-500">
-                Leave this empty to keep the invite broad within the selected scope.
-              </div>
-            </div>
-          )}
-
-          {ownDevices.length > 0 && (
-            <div className="space-y-2">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-surface-500">Machine slice</div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {ownDevices.map((device) => (
-                  <button
-                    key={device.id}
-                    type="button"
-                    onClick={() => toggleInviteDevice(device.id)}
-                    className={`border px-3 py-2 text-left text-xs ${
-                      inviteDeviceIds.includes(device.id)
-                        ? "border-indigo-500 bg-indigo-500/15 text-surface-100"
-                        : "border-surface-700 bg-surface-950 text-surface-400"
-                    }`}
-                  >
-                    <div className="font-semibold text-surface-200">{device.name}</div>
-                    <div className="mt-1 font-mono">{device.id}</div>
-                  </button>
-                ))}
-              </div>
-              <div className="text-xs text-surface-500">
-                Leave every machine unselected to propose all of your machines.
+                Use this as your planned runtime slice after the guest connects to the selected machine.
               </div>
             </div>
           )}
@@ -508,8 +566,26 @@ export default function GuestsStatusView() {
                       : "border-surface-700 bg-surface-950 text-surface-400"
                   }`}
                 >
-                  <div className="font-semibold text-surface-200">{device.name}</div>
-                  <div className="mt-1 font-mono">{device.deviceId}</div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-semibold text-surface-200">{device.name}</div>
+                    <span
+                      className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                        device.proposed
+                          ? "border-indigo-500/40 bg-indigo-500/10 text-indigo-300"
+                          : "border-surface-700 bg-surface-900 text-surface-500"
+                      }`}
+                    >
+                      {device.proposed ? "proposed" : "optional"}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-surface-400">
+                    {formatPlatform(device.platform)}
+                  </div>
+                  {formatLastSeen(device.lastHeartbeat) ? (
+                    <div className="mt-1 text-surface-500">
+                      seen {formatLastSeen(device.lastHeartbeat)}
+                    </div>
+                  ) : null}
                 </button>
               ))}
             </div>
