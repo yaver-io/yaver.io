@@ -1,0 +1,80 @@
+# One-shot workflow to (a) install the system hermesc at
+# /usr/local/libexec/yaver/hermesc on the persistent Hetzner
+# yaver-test-ephemeral box and (b) enable the relay-password
+# smoke-check systemd timer on the same box. Safe to re-run — both
+# install scripts are idempotent.
+#
+# No HCLOUD API calls; only SSH. Runs against the persistent server
+# at secrets.HETZNER_TEST_SERVER_IP using secrets.HCLOUD_SSH_PRIVATE_KEY.
+name: Activate hermesc + smoke (test-ephemeral)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: activate-hermesc-smoke
+  cancel-in-progress: true
+
+jobs:
+  activate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Rsync ci/ to /opt/yaver on box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh_opts="-i $HCLOUD_SSH_PRIVATE_KEY_PATH -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+          rsync -az --delete -e "ssh $ssh_opts" \
+            ci/remote/ "root@$HETZNER_TEST_SERVER_IP:/opt/yaver/ci/remote/"
+
+      - name: Install system hermesc (linux-arm64)
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" \
+              "bash /opt/yaver/ci/remote/install-hermesc.sh"
+
+      - name: Install + enable relay-password smoke timer
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" \
+              "bash /opt/yaver/ci/remote/smoke/install.sh"
+
+      - name: Verify installs
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'EOF'
+          set -e
+          echo "--- hermesc ---"
+          /usr/local/libexec/yaver/hermesc --version | head -8
+          echo
+          echo "--- smoke timer ---"
+          systemctl list-timers yaver-smoke-relay-password.timer --no-pager || true
+          echo
+          echo "--- most recent smoke run ---"
+          journalctl -u yaver-smoke-relay-password.service --no-pager -n 40 || true
+          EOF
