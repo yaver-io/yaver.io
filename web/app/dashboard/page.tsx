@@ -1083,7 +1083,7 @@ export default function DashboardPage() {
   ];
 
   return (
-    <div className="dashboard-shell relative flex min-h-[calc(100vh-4rem)] flex-col md:flex-row">
+    <div className="dashboard-shell relative flex min-h-[calc(100vh-4rem)] flex-col md:h-[calc(100vh-4rem)] md:min-h-0 md:flex-row">
       <div className="pointer-events-none absolute inset-y-0 left-0 hidden w-60 border-r border-white/5 md:block" />
       {/* Mobile top bar — visible only below md */}
       <div className="dashboard-mobilebar md:hidden">
@@ -1112,8 +1112,10 @@ export default function DashboardPage() {
       </div>
 
       {/* Sidebar — hidden on mobile */}
-      <aside className="dashboard-sidebar hidden w-60 shrink-0 overflow-y-auto md:flex md:flex-col">
-        <div className="p-3 space-y-4">
+      <aside className="dashboard-sidebar hidden h-full w-60 shrink-0 overflow-hidden md:flex md:flex-col">
+        <div className="flex min-h-0 flex-1 flex-col">
+        <div className="min-h-0 flex-1 overflow-hidden p-3">
+        <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
           {/* Brand */}
           <div className="flex items-center gap-2 rounded-lg border border-surface-800/50 px-3 py-2">
             <div className="flex h-6 w-6 items-center justify-center rounded-md bg-indigo-500/15 text-[11px] font-bold text-indigo-300">Y</div>
@@ -1149,7 +1151,7 @@ export default function DashboardPage() {
           </nav>
 
           {/* Devices (lean) */}
-          <div>
+          <div className="shrink-0">
             <div className="mb-1 flex items-center justify-between">
               <p className="text-[10px] font-semibold uppercase tracking-widest text-surface-500">Devices</p>
               <button
@@ -1309,7 +1311,7 @@ export default function DashboardPage() {
 
           {/* Pending invites — auto-match by signed-in email, no code required */}
           {pendingInvites.length > 0 && (
-            <div>
+            <div className="shrink-0">
               <p className="text-[10px] font-semibold uppercase tracking-widest text-surface-500 mb-1">
                 Pending invites
               </p>
@@ -1343,7 +1345,7 @@ export default function DashboardPage() {
           )}
 
           {/* Guest code */}
-          <div>
+          <div className="shrink-0">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-surface-500 mb-1">Join as Guest</p>
             <div className="flex gap-1.5">
               <input value={guestCode} onChange={e => setGuestCode(e.target.value.toUpperCase())} maxLength={6}
@@ -1363,17 +1365,37 @@ export default function DashboardPage() {
 
           {/* Tasks */}
           {tasks.length > 0 && (
-            <div>
+            <div className="min-h-0 flex-1 overflow-hidden">
               <p className="text-[10px] font-semibold uppercase tracking-widest text-surface-500 mb-1">Tasks</p>
-              {tasks.slice(0, 12).map(t => (
-                <button key={t.id} onClick={() => selectTask(t)} className={`w-full text-left rounded-md px-2 py-1 text-[11px] truncate mb-0.5 ${activeTask?.id === t.id ? "bg-indigo-500/10 text-indigo-400" : "text-surface-400 hover:bg-surface-800"}`}>
-                  <span className={`inline-block h-1 w-1 rounded-full mr-1 ${t.status === "running" ? "bg-amber-400" : t.status === "completed" ? "bg-emerald-400" : "bg-surface-600"}`} />{displayTaskTitle(t.title)}
-                </button>
-              ))}
+              <div className="flex h-full min-h-0 flex-col gap-1 overflow-hidden">
+                {tasks.slice(0, 8).map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => selectTask(t)}
+                    className={`w-full rounded-lg border px-2.5 py-2 text-left transition-colors ${
+                      activeTask?.id === t.id
+                        ? "border-indigo-500/40 bg-indigo-500/10"
+                        : "border-surface-800 bg-surface-900/40 hover:border-surface-700 hover:bg-surface-800/80"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${t.status === "running" ? "bg-amber-400" : t.status === "completed" ? "bg-emerald-400" : "bg-surface-600"}`} />
+                      <span className={`min-w-0 flex-1 truncate text-[11px] font-medium ${activeTask?.id === t.id ? "text-indigo-200" : "text-surface-200"}`}>
+                        {displayTaskTitle(t.title)}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-[10px] uppercase tracking-wide text-surface-500">
+                      {t.status}
+                      {t.costUsd != null ? ` · $${t.costUsd.toFixed(3)}` : ""}
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>
-        <div className="mt-auto border-t border-surface-800 p-3 flex items-center justify-end gap-2">
+        </div>
+        <div className="border-t border-surface-800 p-3 flex items-center justify-end gap-2">
           <button onClick={toggleTheme} className="rounded-md p-1.5 text-surface-500 hover:text-surface-300 hover:bg-surface-800" title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
             {theme === "dark" ? (
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
@@ -1381,6 +1403,7 @@ export default function DashboardPage() {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
             )}
           </button>
+        </div>
         </div>
       </aside>
 
@@ -1821,30 +1844,68 @@ export default function DashboardPage() {
                             {activeTask.status === "running" ? "Working..." : "No messages yet"}
                           </div>
                         ) : (
-                          <div className="mx-auto flex max-w-3xl flex-col gap-3">
+                          <div className="mx-auto flex max-w-5xl flex-col gap-4">
+                            <div className="grid gap-4 xl:grid-cols-[minmax(0,320px),minmax(0,1fr)]">
+                              <section className="rounded-2xl border border-surface-800 bg-surface-900/40 p-4">
+                                <div className="flex items-center justify-between gap-3">
+                                  <div>
+                                    <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-surface-500">Task</p>
+                                    <h3 className="mt-1 text-sm font-semibold text-surface-100">{displayTaskTitle(activeTask.title)}</h3>
+                                  </div>
+                                  <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide ${activeTask.status === "running" ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : activeTask.status === "completed" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-surface-700 bg-surface-800 text-surface-300"}`}>
+                                    {activeTask.status}
+                                  </span>
+                                </div>
+                                <div className="mt-4 space-y-3 text-xs text-surface-400">
+                                  <div>
+                                    <div className="text-[10px] uppercase tracking-wide text-surface-500">Runner</div>
+                                    <div className="mt-1 text-surface-200">{runnerLabel(activeRunnerId || selectedRunner)}</div>
+                                  </div>
+                                  {activeTask.costUsd != null ? (
+                                    <div>
+                                      <div className="text-[10px] uppercase tracking-wide text-surface-500">Cost</div>
+                                      <div className="mt-1 text-surface-200">${activeTask.costUsd.toFixed(3)}</div>
+                                    </div>
+                                  ) : null}
+                                  <div>
+                                    <div className="text-[10px] uppercase tracking-wide text-surface-500">Updates</div>
+                                    <div className="mt-1 text-surface-200">{chatMsgs.length}</div>
+                                  </div>
+                                </div>
+                              </section>
+                              <section className="rounded-2xl border border-surface-800 bg-surface-900/30 p-4">
+                                <div className="mb-3 flex items-center justify-between gap-3">
+                                  <div>
+                                    <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-surface-500">Activity</p>
+                                    <h3 className="mt-1 text-sm font-semibold text-surface-100">Task run output</h3>
+                                  </div>
+                                  <div className="text-[10px] uppercase tracking-wide text-surface-500">{chatMsgs.length} entries</div>
+                                </div>
+                                <div className="space-y-3">
                             {chatMsgs.map((m, i) => (
-                              m.role === "user" ? (
-                                <div key={i} className="flex justify-end">
-                                  <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-indigo-500 px-3.5 py-2 text-[13px] text-white whitespace-pre-wrap break-words shadow-sm">
-                                    {m.text}
-                                  </div>
+                                  <div key={i} className={`rounded-xl border px-4 py-3 ${m.role === "user" ? "border-indigo-500/25 bg-indigo-500/10" : "border-surface-800 bg-surface-950/70"}`}>
+                                    <div className="mb-2 flex items-center justify-between gap-3">
+                                      <span className={`text-[10px] font-semibold uppercase tracking-[0.24em] ${m.role === "user" ? "text-indigo-300" : "text-surface-500"}`}>
+                                        {m.role === "user" ? "Task update" : "Worker output"}
+                                      </span>
+                                      <span className="text-[10px] text-surface-600">#{i + 1}</span>
+                                    </div>
+                                    <div className={`${m.role === "user" ? "text-[13px] leading-6 text-indigo-50" : "font-mono text-[12px] leading-5 text-surface-100"} whitespace-pre-wrap break-words`}>
+                                      {m.text
+                                        ? m.text
+                                        : activeTask.status === "running"
+                                          ? (<span className="inline-flex items-center gap-1 text-surface-400">
+                                              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-surface-400" />
+                                              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-surface-400 [animation-delay:150ms]" />
+                                              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-surface-400 [animation-delay:300ms]" />
+                                            </span>)
+                                          : (<span className="text-surface-500">({activeTask.status || "no response"})</span>)}
                                 </div>
-                              ) : (
-                                <div key={i} className="flex justify-start">
-                                  <div className="max-w-[90%] rounded-2xl rounded-bl-sm bg-surface-800 px-3.5 py-2 font-mono text-[12px] leading-5 text-surface-100 whitespace-pre-wrap break-words shadow-sm">
-                                    {m.text
-                                      ? m.text
-                                      : activeTask.status === "running"
-                                        ? (<span className="inline-flex items-center gap-1 text-surface-400">
-                                            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-surface-400" />
-                                            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-surface-400 [animation-delay:150ms]" />
-                                            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-surface-400 [animation-delay:300ms]" />
-                                          </span>)
-                                        : (<span className="text-surface-500">({activeTask.status || "no response"})</span>)}
                                   </div>
-                                </div>
-                              )
                             ))}
+                                </div>
+                              </section>
+                            </div>
                           </div>
                         )}
                       </div>
@@ -1917,12 +1978,12 @@ export default function DashboardPage() {
                   <form onSubmit={handleSend} className="grid gap-2 md:grid-cols-[minmax(0,1fr),auto] md:items-end">
                     <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)}
                       onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                      placeholder={activeRunnerAuthIssue ? `Sign in to ${runnerLabel(activeRunnerId)} to continue on ${connectedDevice?.name || "this machine"}...` : activeTask ? "Message..." : "Build me a todo app..."} rows={1}
+                      placeholder={activeRunnerAuthIssue ? `Sign in to ${runnerLabel(activeRunnerId)} to continue on ${connectedDevice?.name || "this machine"}...` : activeTask ? "Add a task update or refinement..." : "Describe the task you want this machine to run..."} rows={1}
                       disabled={Boolean(activeRunnerAuthIssue)}
                       className="max-h-32 w-full resize-none rounded-xl border border-surface-700 bg-surface-950 px-4 py-3 text-sm text-surface-100 placeholder-surface-600 outline-none focus:border-surface-500" style={{ minHeight: "48px" }} />
                     <button type="submit" disabled={!input.trim() || sending || runners.filter(r => r.installed).length === 0 || Boolean(activeRunnerAuthIssue)}
                       className="h-12 shrink-0 rounded-xl bg-surface-100 px-5 text-sm font-medium text-surface-900 hover:bg-surface-50 disabled:opacity-30">
-                      {sending ? "..." : activeTask ? "Send" : "Run"}
+                      {sending ? "..." : activeTask ? "Update task" : "Start task"}
                     </button>
                   </form>
                 </div>
