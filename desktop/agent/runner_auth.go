@@ -146,6 +146,13 @@ func claudeCredentialsPath() (string, bool) {
 
 func detectCodexStatus() RunnerRuntimeStatus {
 	status := RunnerRuntimeStatus{Ready: true}
+	if runtime.GOOS == "linux" {
+		if err := codexLinuxSandboxPrereqError(); err != "" {
+			status.Ready = false
+			status.Error = err
+			return status
+		}
+	}
 	switch {
 	case func() bool {
 		value, _ := hostSecretValue("OPENAI_API_KEY")
@@ -162,6 +169,31 @@ func detectCodexStatus() RunnerRuntimeStatus {
 		status.Error = "Codex is installed but not authenticated. Set `OPENAI_API_KEY` or run the Codex login flow first."
 	}
 	return status
+}
+
+func codexLinuxSandboxPrereqError() string {
+	issues := []string{}
+	if value, ok := readLinuxKernelParam("/proc/sys/kernel/unprivileged_userns_clone"); ok && value == "0" {
+		issues = append(issues, "kernel.unprivileged_userns_clone=0")
+	}
+	if value, ok := readLinuxKernelParam("/proc/sys/user/max_user_namespaces"); ok && (value == "0" || value == "") {
+		issues = append(issues, "user.max_user_namespaces=0")
+	}
+	if value, ok := readLinuxKernelParam("/proc/sys/kernel/apparmor_restrict_unprivileged_userns"); ok && value == "1" {
+		issues = append(issues, "kernel.apparmor_restrict_unprivileged_userns=1")
+	}
+	if len(issues) == 0 {
+		return ""
+	}
+	return "Codex is installed but this Linux host is blocking the sandbox it uses for `codex exec`. Fix host user-namespace support first (`kernel.unprivileged_userns_clone=1`, `user.max_user_namespaces=1048576`, and if present `kernel.apparmor_restrict_unprivileged_userns=0`). Current blockers: " + strings.Join(issues, ", ")
+}
+
+func readLinuxKernelParam(path string) (string, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(string(data)), true
 }
 
 func codexAuthPath() string {

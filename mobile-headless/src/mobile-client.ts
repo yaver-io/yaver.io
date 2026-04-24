@@ -28,6 +28,7 @@ type Device = {
   host?: string;
   port?: number;
   online?: boolean;
+  needsAuth?: boolean;
   deviceClass?: string;
   os?: string;
   /** Every reachable IPv4 the agent reported in heartbeat — Wi-Fi LAN,
@@ -35,6 +36,9 @@ type Device = {
    *  connect. Present only on agents >= the multi-IP rollout; older
    *  agents have it undefined. */
   lanIps?: string[];
+  publicUrl?: string;
+  tunnelUrl?: string;
+  publicKey?: string;
   /** Populated for shared/guest devices only. */
   isGuest?: boolean;
   hostName?: string;
@@ -139,6 +143,19 @@ export interface RemoteBootstrapRepoResult {
   ciRuns: Array<{ target: string; exec: ExecSession }>;
 }
 
+export interface HeadlessRecoveryResult {
+  ok: boolean;
+  mode?: "direct" | "pair" | "device-code";
+  pairCode?: string;
+  pairSubmitUrl?: string;
+  deviceCodeUrl?: string;
+  userCode?: string;
+  expiresAt?: string;
+  error?: string;
+  targetUrl?: string;
+  submitted?: boolean;
+}
+
 export class MobileClient {
   readonly opts: Required<Omit<MobileClientOptions, "agentBaseUrl">> & { agentBaseUrl?: string };
   private agentBaseUrl?: string;
@@ -191,14 +208,146 @@ export class MobileClient {
       host: d.quicHost || d.host,
       port: d.quicPort || d.port,
       online: d.isOnline ?? d.online ?? false,
+      needsAuth: d.needsAuth ?? false,
       deviceClass: d.deviceClass,
       os: d.platform || d.os,
       lanIps: Array.isArray(d.localIps) ? d.localIps : undefined,
+      publicUrl: typeof d.publicUrl === "string" ? d.publicUrl : undefined,
+      tunnelUrl: typeof d.tunnelUrl === "string" ? d.tunnelUrl : undefined,
+      publicKey: typeof d.publicKey === "string" ? d.publicKey : undefined,
       isGuest: d.isGuest ?? false,
       hostName: d.hostName,
       hostEmail: d.hostEmail,
       lastHeartbeat: d.lastHeartbeat,
     }));
+  }
+
+  async recoverDeviceAuth(
+    deviceId: string,
+    opts: {
+      bootstrapSecret?: string;
+      mode?: "auto" | "direct" | "pair" | "device-code";
+    } = {},
+  ): Promise<HeadlessRecoveryResult> {
+    if (!this.opts.authToken) {
+      throw new Error("recoverDeviceAuth requires a signed-in mobile-headless session");
+    }
+    const devices = await this.listDevices();
+    const device = devices.find((d) => d.id === deviceId);
+    if (!device) throw new Error(`device not found: ${deviceId}`);
+
+    const targets = await this.recoveryTargetsForDevice(device);
+    if (targets.length === 0) {
+      return { ok: false, error: "no reachable recovery targets for device" };
+    }
+
+    const requestedMode = opts.mode ?? "auto";
+    let lastError = "network error";
+
+    const tryRecover = async (
+      target: { baseUrl: string; headers: Record<string, string> },
+      mode: "direct" | "pair" | "device-code",
+      secret?: string,
+    ): Promise<HeadlessRecoveryResult | null> => {
+      const res = await fetch(`${target.baseUrl}/auth/recover`, {
+        method: "POST",
+        headers: { ...target.headers, "Content-Type": "application/json" },
+        body: JSON.stringify(secret ? { mode, secret } : { mode }),
+      });
+      const body = await safeJson(res);
+      if (!res.ok) {
+        const error = body?.error ?? `HTTP ${res.status}`;
+        lastError = String(error);
+        return {
+          ok: false,
+          mode,
+          error: String(error),
+          targetUrl: target.baseUrl,
+        };
+      }
+      return {
+        ok: true,
+        mode: body?.mode ?? mode,
+        pairCode: body?.pairCode,
+        pairSubmitUrl: body?.pairSubmitUrl,
+        deviceCodeUrl: body?.deviceCodeUrl,
+        userCode: body?.userCode,
+        expiresAt: body?.expiresAt,
+        targetUrl: target.baseUrl,
+      };
+    };
+
+    const submitPairToken = async (
+      targetUrl: string,
+      pairCode: string,
+    ): Promise<{ ok: boolean; error?: string }> => {
+      const res = await fetch(`${targetUrl}/auth/pair/submit?code=${encodeURIComponent(pairCode)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: this.opts.authToken,
+          convexSiteUrl: this.opts.convexUrl,
+          userId: "",
+        }),
+      });
+      if (!res.ok) {
+        const body = await safeJson(res);
+        return { ok: false, error: body?.error ?? `pair submit HTTP ${res.status}` };
+      }
+      return { ok: true };
+    };
+
+    for (const target of targets) {
+      if (requestedMode === "auto" || requestedMode === "direct") {
+        const direct = await tryRecover(target, "direct");
+        if (direct?.ok) {
+          return direct;
+        }
+        const msg = String(direct?.error ?? "").toLowerCase();
+        const modeUnsupported =
+          msg.includes("mode must") || msg.includes("invalid mode") || msg.includes("direct");
+        if (requestedMode === "direct") {
+          continue;
+        }
+        if (direct && !modeUnsupported) {
+          continue;
+        }
+      }
+
+      if (requestedMode === "auto" || requestedMode === "pair") {
+        const pair = await tryRecover(target, "pair");
+        if (pair?.ok && pair.pairCode) {
+          const submit = await submitPairToken(target.baseUrl, pair.pairCode);
+          if (submit.ok) {
+            return { ...pair, submitted: true };
+          }
+          lastError = submit.error ?? lastError;
+        }
+        if (requestedMode === "pair") {
+          continue;
+        }
+      }
+
+      if (requestedMode === "auto" && opts.bootstrapSecret) {
+        const secretPair = await tryRecover(target, "pair", opts.bootstrapSecret);
+        if (secretPair?.ok && secretPair.pairCode) {
+          const submit = await submitPairToken(target.baseUrl, secretPair.pairCode);
+          if (submit.ok) {
+            return { ...secretPair, submitted: true };
+          }
+          lastError = submit.error ?? lastError;
+        }
+      }
+
+      if (requestedMode === "auto" || requestedMode === "device-code") {
+        const deviceCode = await tryRecover(target, "device-code");
+        if (deviceCode?.ok) {
+          return deviceCode;
+        }
+      }
+    }
+
+    return { ok: false, error: lastError };
   }
 
   /** Bind the client to a specific device's agent HTTP endpoint.
@@ -698,6 +847,89 @@ export class MobileClient {
   private peerPath(target: string | undefined, p: string): string {
     if (!target) return p;
     return `/peer/${encodeURIComponent(target)}${p}`;
+  }
+
+  private async recoveryTargetsForDevice(
+    device: Device,
+  ): Promise<Array<{ baseUrl: string; headers: Record<string, string> }>> {
+    const out: Array<{ baseUrl: string; headers: Record<string, string> }> = [];
+    const seen = new Set<string>();
+    const push = (baseUrl: string | undefined, headers: Record<string, string>) => {
+      const normalized = (baseUrl ?? "").replace(/\/+$/, "");
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      out.push({ baseUrl: normalized, headers });
+    };
+
+    const authHeaders = this.authHeaders();
+    if (this.agentBaseUrl) {
+      push(this.agentBaseUrl, authHeaders);
+    }
+    if (device.host) {
+      push(`http://${device.host}:${device.port ?? 18080}`, authHeaders);
+    }
+    for (const ip of device.lanIps ?? []) {
+      push(`http://${ip}:${device.port ?? 18080}`, authHeaders);
+    }
+    if (device.publicUrl) push(device.publicUrl, authHeaders);
+    if (device.tunnelUrl) push(device.tunnelUrl, authHeaders);
+
+    const relayInfo = await this.fetchRelayInfo();
+    for (const relay of relayInfo.servers) {
+      if (!relay.httpUrl) continue;
+      const headers: Record<string, string> = { ...authHeaders };
+      const password = relay.password ?? relayInfo.userRelayPassword;
+      if (password) headers["X-Relay-Password"] = password;
+      push(`${relay.httpUrl.replace(/\/$/, "")}/d/${device.id}`, headers);
+    }
+    return out;
+  }
+
+  private async fetchRelayInfo(): Promise<{
+    servers: Array<{ httpUrl?: string; password?: string; priority?: number }>;
+    userRelayPassword?: string;
+  }> {
+    const base = this.opts.convexUrl.replace(/\/$/, "");
+    const servers: Array<{ httpUrl?: string; password?: string; priority?: number }> = [];
+    const [configRes, settingsRes] = await Promise.allSettled([
+      fetch(`${base}/config`),
+      fetch(`${base}/settings`, { headers: this.authHeaders() }),
+    ]);
+
+    if (configRes.status === "fulfilled" && configRes.value.ok) {
+      const data = await safeJson(configRes.value);
+      for (const relay of data?.relayServers ?? []) {
+        if (typeof relay?.httpUrl === "string" && relay.httpUrl) {
+          servers.push({
+            httpUrl: relay.httpUrl,
+            priority: typeof relay.priority === "number" ? relay.priority : 0,
+          });
+        }
+      }
+    }
+
+    let userRelayPassword: string | undefined;
+    if (settingsRes.status === "fulfilled" && settingsRes.value.ok) {
+      const data = await safeJson(settingsRes.value);
+      userRelayPassword =
+        (typeof data?.settings?.relayPassword === "string" && data.settings.relayPassword) ||
+        (typeof data?.relayPassword === "string" && data.relayPassword) ||
+        undefined;
+      const userRelayUrl =
+        (typeof data?.settings?.relayUrl === "string" && data.settings.relayUrl) ||
+        (typeof data?.relayUrl === "string" && data.relayUrl) ||
+        undefined;
+      if (userRelayUrl) {
+        servers.unshift({
+          httpUrl: userRelayUrl,
+          password: userRelayPassword,
+          priority: -1,
+        });
+      }
+    }
+
+    servers.sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+    return { servers, userRelayPassword };
   }
 }
 

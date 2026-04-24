@@ -488,7 +488,14 @@ export default function DashboardPage() {
     const installed = runners.filter(r => r.installed);
     if (installed.length === 0) { setSelectedRunner(""); return; }
     if (selectedRunner && installed.some(r => r.id === selectedRunner)) return;
-    const preferred = installed.find(r => r.isDefault || r.active) || installed[0];
+    const ready = installed.filter(r => r.ready !== false);
+    const preferred =
+      ready.find(r => r.isDefault || r.active) ||
+      ready.find(r => r.id === "claude") ||
+      ready.find(r => r.id === "opencode") ||
+      ready.find(r => r.id === "codex") ||
+      installed.find(r => r.isDefault || r.active) ||
+      installed[0];
     setSelectedRunner(preferred.id);
   }, [runners, selectedRunner]);
 
@@ -720,43 +727,35 @@ export default function DashboardPage() {
 
   return (
     <div className="relative flex min-h-[calc(100vh-4rem)] flex-col md:flex-row">
-      {/*
-        Floating Sign Out. Top-right is the industry-standard mental-model
-        slot for "get me out of here". Opaque surface + icon so the button
-        never blends into whatever preview / chat / graph is rendering
-        behind it — the old translucent pill disappeared against the dark
-        dashboard hero and the bright iframe previews equally, which is
-        the whole point of moving it up here.
-      */}
-      <button
-        onClick={logout}
-        className="absolute right-3 top-2 z-30 inline-flex items-center gap-1.5 rounded-md border border-red-500/40 bg-surface-950/95 px-2.5 py-1.5 text-[11px] font-semibold text-red-300 shadow-sm shadow-black/40 ring-1 ring-black/20 transition-colors hover:border-red-400/60 hover:bg-red-500/10 hover:text-red-200"
-        title="Sign out of Yaver"
-        aria-label="Sign out"
-      >
-        <svg
-          width="13"
-          height="13"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden
-        >
-          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-          <polyline points="16 17 21 12 16 7" />
-          <line x1="21" y1="12" x2="9" y2="12" />
-        </svg>
-        <span>Sign Out</span>
-      </button>
       {/* Mobile top bar — visible only below md */}
       <div className="md:hidden border-b border-surface-800 bg-surface-900/50">
         <div className="flex items-center gap-2 px-3 py-2">
           <div className="flex h-6 w-6 items-center justify-center rounded-full bg-surface-800 text-[10px] font-bold text-surface-300">{user?.email?.charAt(0).toUpperCase()}</div>
           <span className="text-xs font-medium text-surface-200 flex-1 truncate">{connectedDevice?.name || "No device"}</span>
           <span className={`h-1.5 w-1.5 rounded-full ${isConnected ? "bg-emerald-400" : "bg-surface-600"}`} />
+          <button
+            onClick={logout}
+            className="inline-flex items-center gap-1 rounded-md border border-red-500/30 px-2 py-1 text-[10px] font-semibold text-red-300 transition-colors hover:border-red-400/50 hover:bg-red-500/10 hover:text-red-200"
+            title="Sign out of Yaver"
+            aria-label="Sign out"
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+            <span>Out</span>
+          </button>
         </div>
         <div className="flex overflow-x-auto no-scrollbar border-t border-surface-800">
           {tabs.map((t) => (
@@ -985,7 +984,30 @@ export default function DashboardPage() {
             </div>
           )}
         </div>
-        <div className="mt-auto border-t border-surface-800 p-3 flex items-center justify-end">
+        <div className="mt-auto border-t border-surface-800 p-3 flex items-center justify-between gap-2">
+          <button
+            onClick={logout}
+            className="inline-flex items-center gap-1.5 rounded-md border border-red-500/30 px-2.5 py-1.5 text-[11px] font-semibold text-red-300 transition-colors hover:border-red-400/50 hover:bg-red-500/10 hover:text-red-200"
+            title="Sign out of Yaver"
+            aria-label="Sign out"
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+            <span>Sign Out</span>
+          </button>
           <button onClick={toggleTheme} className="rounded-md p-1.5 text-surface-500 hover:text-surface-300 hover:bg-surface-800" title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
             {theme === "dark" ? (
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
@@ -1224,7 +1246,38 @@ export default function DashboardPage() {
           ) : activeTab === "builds" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><BuildsView onTaskCreated={onTaskCreated} /></div>
           ) : activeTab === "preview" ? (
-            <div className="flex-1 min-h-0"><PreviewPane selectedPreviewTarget={selectedPreviewTarget} onSelectPreviewTarget={handleSelectPreviewTarget} mobileWorkers={mobileWorkers} /></div>
+            <div className="flex-1 min-h-0"><PreviewPane
+              selectedPreviewTarget={selectedPreviewTarget}
+              onSelectPreviewTarget={handleSelectPreviewTarget}
+              mobileWorkers={mobileWorkers}
+              onReconnect={connectedDevice ? async () => { await connectToDevice(connectedDevice); } : undefined}
+              onRepairRelay={token ? async () => {
+                const res = await fetch(`${CONVEX_URL}/settings/repair-relay`, {
+                  method: "POST",
+                  headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                });
+                if (!res.ok) {
+                  const body = await res.json().catch(() => ({}));
+                  throw new Error(body?.error || `repair HTTP ${res.status}`);
+                }
+                const body = await res.json();
+                // Re-fetch relay config so agentClient picks up the
+                // freshly-synced password before the next probe.
+                try {
+                  const r = await fetch(`${CONVEX_URL}/config`);
+                  let relays: any[] = [];
+                  if (r.ok) relays = (await r.json()).relayServers || [];
+                  const sr = await fetch(`${CONVEX_URL}/settings`, { headers: { Authorization: `Bearer ${token}` } });
+                  if (sr.ok) {
+                    const sd = await sr.json();
+                    const pw = sd.settings?.relayPassword || sd.relayPassword;
+                    if (pw) relays = relays.map((x: any) => ({ ...x, password: pw }));
+                  }
+                  if (relays.length > 0) agentClient.setRelayServers(relays);
+                } catch { /* non-fatal — next connect will re-read */ }
+                return { repaired: !!body.repaired, reason: body.reason || "" };
+              } : undefined}
+            /></div>
           ) : activeTab === "health" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><HealthView /></div>
           ) : activeTab === "quality" ? (

@@ -111,6 +111,9 @@ export class YaverFeedback {
       });
       if (agent) {
         config.agentUrl = agent.url;
+        if (agent.relayPassword) {
+          config.relayPassword = agent.relayPassword;
+        }
         console.log(`[yaver-feedback] Connected to ${agent.hostname} (${agent.url})`);
       } else {
         console.warn('[yaver-feedback] No Yaver agent found. Set agentUrl manually or run "yaver serve" on your dev machine.');
@@ -623,6 +626,9 @@ export class YaverFeedback {
     });
     if (!discovered) return false;
     YaverFeedback.config.agentUrl = discovered.url;
+    if (discovered.relayPassword) {
+      YaverFeedback.config.relayPassword = discovered.relayPassword;
+    }
     YaverFeedback.syncClient();
     YaverFeedback.connectCommandStream();
     return true;

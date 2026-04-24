@@ -180,6 +180,22 @@ export default function VibeCodingView({
     () => taskList.find((task) => task.id === activeTaskId) || taskList[0] || null,
     [taskList, activeTaskId],
   );
+  const selectedRunnerRow = useMemo(
+    () => runners.find((runner) => runner.id === selectedRunner) || null,
+    [runners, selectedRunner],
+  );
+  const conversationTurns = useMemo(
+    () => (activeTask?.turns || []).filter((turn) => String(turn.content || "").trim()),
+    [activeTask?.turns],
+  );
+  const liveOutput = streamedOutput.trim() || activeTask?.output?.join("\n").trim() || "";
+  const lastAssistantTurn = useMemo(() => {
+    for (let i = conversationTurns.length - 1; i >= 0; i -= 1) {
+      if (conversationTurns[i].role === "assistant") return conversationTurns[i].content.trim();
+    }
+    return "";
+  }, [conversationTurns]);
+  const showLiveOutput = !!liveOutput && liveOutput !== lastAssistantTurn;
 
   useEffect(() => {
     if (!connected) {
@@ -229,11 +245,18 @@ export default function VibeCodingView({
           setSelectedProjectPath(projectRows[0].path);
         }
         if (!selectedRunner) {
+          const installed = (runnerRows || []).filter((runner) => runner.installed);
+          const ready = installed.filter((runner) => runner.ready);
           const preferred =
-            runnerRows.find((runner) => runner.active) ||
-            runnerRows.find((runner) => runner.id === "codex") ||
-            runnerRows.find((runner) => runner.id === "claude") ||
-            runnerRows[0];
+            ready.find((runner) => runner.active) ||
+            ready.find((runner) => runner.id === "claude") ||
+            ready.find((runner) => runner.id === "opencode") ||
+            ready.find((runner) => runner.id === "codex") ||
+            installed.find((runner) => runner.active) ||
+            installed.find((runner) => runner.id === "claude") ||
+            installed.find((runner) => runner.id === "opencode") ||
+            installed.find((runner) => runner.id === "codex") ||
+            installed[0];
           if (preferred) setSelectedRunner(preferred.id);
         }
         if (!activeTaskId && tasks.length > 0) {
@@ -293,6 +316,10 @@ export default function VibeCodingView({
       setBusy("Pick a project and enter a prompt.");
       return;
     }
+    if (selectedRunnerRow && selectedRunnerRow.ready === false) {
+      setBusy(selectedRunnerRow.error || selectedRunnerRow.warning || `${selectedRunnerRow.name} is installed but not ready on this machine.`);
+      return;
+    }
     setBusy("Starting coding task…");
     const title = draftTitle.trim() || summarizeTitle(composer, selectedProject.name);
     const task = await agentClient.createTask({
@@ -304,6 +331,7 @@ export default function VibeCodingView({
         deployTargets,
         machine: connectedMachine,
       }),
+      userPrompt: composer.trim(),
       runner: selectedRunner || undefined,
       projectName: selectedProject.name,
       workDir: selectedProject.path,
@@ -317,6 +345,10 @@ export default function VibeCodingView({
 
   async function continueChatTask() {
     if (!activeTask || !composer.trim()) return;
+    if (selectedRunnerRow && selectedRunnerRow.ready === false) {
+      setBusy(selectedRunnerRow.error || selectedRunnerRow.warning || `${selectedRunnerRow.name} is installed but not ready on this machine.`);
+      return;
+    }
     setBusy(`Continuing ${activeTask.title}…`);
     await agentClient.continueTask(
       activeTask.id,
@@ -371,6 +403,7 @@ export default function VibeCodingView({
     const task = await agentClient.createTask({
       title: plan.title,
       description: plan.prompt,
+      userPrompt: plan.userPrompt,
       runner: selectedRunner || undefined,
       projectName: selectedProject.name,
       workDir: selectedProject.path,
@@ -717,13 +750,22 @@ export default function VibeCodingView({
                     className={`rounded-full border px-3 py-2 text-xs font-semibold ${
                       selectedRunner === runner.id
                         ? "border-sky-500/40 bg-sky-500/10 text-sky-100"
-                        : "border-surface-700 bg-surface-950 text-surface-300 hover:border-surface-600"
+                        : runner.ready === false
+                          ? "border-amber-500/20 bg-amber-500/5 text-amber-100 hover:border-amber-500/40"
+                          : "border-surface-700 bg-surface-950 text-surface-300 hover:border-surface-600"
                     }`}
+                    title={runner.error || runner.warning || runner.name}
                   >
                     {runner.name}
+                    {runner.ready === false ? " (blocked)" : ""}
                   </button>
                 ))}
               </div>
+              {selectedRunnerRow?.ready === false ? (
+                <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-[11px] leading-5 text-amber-100">
+                  {selectedRunnerRow.error || selectedRunnerRow.warning || `${selectedRunnerRow.name} is installed but not ready on this machine.`}
+                </div>
+              ) : null}
             </FoldableSection>
 
             <FoldableSection
@@ -1110,11 +1152,33 @@ export default function VibeCodingView({
               </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-auto px-4 py-4 font-mono text-[13px] leading-6 text-surface-200">
-              {streamedOutput.trim() ? (
-                <pre className="whitespace-pre-wrap">{streamedOutput}</pre>
-              ) : activeTask?.output?.length ? (
-                <pre className="whitespace-pre-wrap">{activeTask.output.join("\n")}</pre>
+            <div className="min-h-0 flex-1 overflow-auto px-4 py-4">
+              {conversationTurns.length > 0 || showLiveOutput ? (
+                <div className="space-y-4">
+                  {conversationTurns.map((turn, index) => (
+                    <div
+                      key={`${turn.role}:${turn.timestamp}:${index}`}
+                      className={`max-w-[88%] rounded-2xl border px-4 py-3 ${
+                        turn.role === "user"
+                          ? "ml-auto border-indigo-500/30 bg-indigo-500/10 text-surface-100"
+                          : "border-surface-800 bg-surface-900/70 text-surface-200"
+                      }`}
+                    >
+                      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-surface-500">
+                        {turn.role === "user" ? "You" : "Agent"}
+                      </div>
+                      <pre className="whitespace-pre-wrap font-mono text-[13px] leading-6">{turn.content}</pre>
+                    </div>
+                  ))}
+                  {showLiveOutput ? (
+                    <div className="max-w-[92%] rounded-2xl border border-amber-500/20 bg-[#14110a] px-4 py-3 text-surface-200">
+                      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-300">
+                        {activeTask?.status === "running" ? "Live output" : "Agent output"}
+                      </div>
+                      <pre className="whitespace-pre-wrap font-mono text-[13px] leading-6">{liveOutput}</pre>
+                    </div>
+                  ) : null}
+                </div>
               ) : (
                 <div className="flex h-full min-h-[240px] items-center justify-center text-sm text-surface-500">
                   Start a task on the left, or continue the selected session here.
@@ -1149,14 +1213,14 @@ export default function VibeCodingView({
                   </button>
                   <button
                     onClick={() => void continueChatTask()}
-                    disabled={!activeTask || !composer.trim()}
+                    disabled={!activeTask || !composer.trim() || selectedRunnerRow?.ready === false}
                     className="rounded-xl border border-surface-700 bg-surface-950 px-4 py-2 text-sm font-semibold text-surface-200 hover:border-surface-600 disabled:opacity-40"
                   >
                     Continue
                   </button>
                   <button
                     onClick={() => void startChatTask()}
-                    disabled={!selectedProject || !composer.trim()}
+                    disabled={!selectedProject || !composer.trim() || selectedRunnerRow?.ready === false}
                     className="rounded-xl bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400 disabled:opacity-40"
                   >
                     Start Task

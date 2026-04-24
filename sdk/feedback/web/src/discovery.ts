@@ -314,6 +314,11 @@ export class YaverDiscovery {
         hostname: typeof data.hostname === 'string' ? data.hostname : 'unknown',
         version: typeof data.version === 'string' ? data.version : 'unknown',
         latency: Date.now() - start,
+        relayPassword:
+          typeof candidate.headers?.['X-Relay-Password'] === 'string' &&
+          candidate.headers['X-Relay-Password'].length > 0
+            ? candidate.headers['X-Relay-Password']
+            : undefined,
       };
     } catch {
       return null;

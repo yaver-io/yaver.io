@@ -615,8 +615,9 @@ type TaskSliceContract struct {
 }
 
 type TaskCreateOptions struct {
-	WorkDir       string
-	SliceContract *TaskSliceContract
+	WorkDir           string
+	InitialUserPrompt string
+	SliceContract     *TaskSliceContract
 
 	// Guest policy fields are applied before startProcess runs so per-task
 	// guards (e.g. autoSwitchProject skip) can see GuestUserID atomically.
@@ -1115,6 +1116,13 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 	id := uuid.New().String()[:8]
 
 	now := time.Now()
+	initialTurnContent := strings.TrimSpace(opts.InitialUserPrompt)
+	if initialTurnContent == "" {
+		initialTurnContent = strings.TrimSpace(description)
+	}
+	if initialTurnContent == "" {
+		initialTurnContent = strings.TrimSpace(title)
+	}
 	task := &Task{
 		ID:                          id,
 		Title:                       title,
@@ -1137,7 +1145,7 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 		GuestRAMLimitMB:             opts.GuestRAMLimitMB,
 		GuestSharedStorageMounts:    append([]string{}, opts.GuestSharedStorageMounts...),
 		Turns: []ConversationTurn{
-			{Role: "user", Content: title, Timestamp: now},
+			{Role: "user", Content: initialTurnContent, Timestamp: now},
 		},
 	}
 	if len(speechCtx) > 0 && speechCtx[0] != nil {

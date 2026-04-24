@@ -332,7 +332,7 @@ for (const path of [
   "/auth/verify-totp", "/auth/providers", "/auth/oauth-link/start", "/auth/oauth-link/complete",
   "/auth/test/oauth-signin",
   "/auth/device-code/authorize",
-  "/devices/list", "/devices/owner-by-hardware", "/config", "/settings", "/packages",
+  "/devices/list", "/devices/owner-by-hardware", "/config", "/settings", "/settings/repair-relay", "/packages",
   "/billing/yaver-cloud/checkout",
   "/billing/yaver-cloud/dev-activate",
   "/guests/invite", "/guests/accept", "/guests/accept-code",
@@ -1725,6 +1725,23 @@ http.route({
       managed: body.managed,
     });
     return jsonResponse({ ok: true });
+  }),
+});
+
+/** POST /settings/repair-relay — Re-sync caller's relayPassword with the
+ *  current platform-managed value. Used by the web dashboard as a last-ditch
+ *  recovery step when the relay keeps returning 401 "invalid relay password".
+ *  Never generates new secrets — only re-copies what every synced user has. */
+http.route({
+  path: "/settings/repair-relay",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const result = await ctx.runMutation(api.userSettings.repairRelayPassword, { tokenHash });
+    if (!result.ok) return errorResponse(result.reason || "repair failed", 401);
+    return jsonResponse(result);
   }),
 });
 

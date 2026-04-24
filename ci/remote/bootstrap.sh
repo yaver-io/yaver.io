@@ -20,7 +20,17 @@ apt-get install -y --no-install-recommends \
   build-essential pkg-config \
   python3 python3-venv python3-pip pipx \
   software-properties-common lsb-release \
-  ufw iproute2 net-tools
+  ufw iproute2 net-tools bubblewrap uidmap
+
+log "codex/runner sandbox prerequisites"
+cat >/etc/sysctl.d/99-yaver-runner-sandbox.conf <<'EOF'
+kernel.unprivileged_userns_clone=1
+user.max_user_namespaces=1048576
+EOF
+if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+  echo "kernel.apparmor_restrict_unprivileged_userns=0" >> /etc/sysctl.d/99-yaver-runner-sandbox.conf
+fi
+sysctl --system >/dev/null 2>&1 || true
 
 log "docker"
 if ! command -v docker >/dev/null 2>&1; then
@@ -37,6 +47,9 @@ if ! command -v docker >/dev/null 2>&1; then
   apt-get install -y docker-ce docker-ce-cli containerd.io \
     docker-buildx-plugin docker-compose-plugin
   systemctl enable --now docker
+fi
+if id yaver >/dev/null 2>&1; then
+  usermod -aG docker yaver || true
 fi
 
 log "node 22 (nodesource)"
@@ -117,6 +130,18 @@ if ! command -v yaver >/dev/null 2>&1; then
   else
     echo "!! No arm64 yaver release asset found — install skipped."
   fi
+fi
+
+log "yaver smoke-check systemd units"
+# Lightweight periodic relay-password regression check. Entirely
+# local to this box — no Yaver /schedule budget, no cron. Reports
+# via journalctl; timer fires every 15 min.
+if [ -f /opt/yaver/ci/remote/smoke/install.sh ]; then
+  bash /opt/yaver/ci/remote/smoke/install.sh install || true
+elif [ -f "$(dirname "$0")/smoke/install.sh" ]; then
+  bash "$(dirname "$0")/smoke/install.sh" install || true
+else
+  echo "!! ci/remote/smoke/install.sh not found — skipping smoke-check install"
 fi
 
 log "done"

@@ -94,10 +94,14 @@ export default function PreviewPane({
   selectedPreviewTarget,
   onSelectPreviewTarget,
   mobileWorkers,
+  onReconnect,
+  onRepairRelay,
 }: {
   selectedPreviewTarget: PreviewTarget | null;
   onSelectPreviewTarget: (deviceId: string | null) => void;
   mobileWorkers: PreviewTarget[];
+  onReconnect?: () => Promise<void>;
+  onRepairRelay?: () => Promise<{ repaired: boolean; reason: string }>;
 }) {
   const [devStatus, setDevStatus] = useState<{
     running: boolean;
@@ -118,6 +122,12 @@ export default function PreviewPane({
   const [showLogs, setShowLogs] = useState(true);
   const [startingPath, setStartingPath] = useState<string | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [recovering, setRecovering] = useState(false);
+  const [recoveryLog, setRecoveryLog] = useState<string[]>([]);
+  const [composer, setComposer] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendStatus, setSendStatus] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
 
@@ -174,6 +184,22 @@ export default function PreviewPane({
       alive = false;
       clearInterval(interval);
     };
+  }, []);
+
+  // Re-render the iframe when the agent transitions to "connected". The
+  // `devPreviewUrl` getter depends on `activeRelayPassword`, which is only
+  // populated after a successful relay probe — without this, an iframe
+  // that rendered during "connecting" would keep its broken (no-__rp) URL
+  // even after auth became available.
+  useEffect(() => {
+    const unsubscribe = agentClient.on("connectionState", (state) => {
+      if (state === "connected") {
+        setIframeKey((k) => k + 1);
+        setReloadNonce((n) => n + 1);
+        setPreviewError(null);
+      }
+    });
+    return unsubscribe;
   }, []);
 
   // Fetch project list for the empty-state picker.
@@ -296,6 +322,188 @@ export default function PreviewPane({
     return Math.min(sx, sy, 1);
   }, [skin.plain, frame.width, frame.height, stageSize.w, stageSize.h]);
 
+  // Preflight: when the preview URL is set, fetch it once to surface
+  // relay-password / auth / DNS errors clearly instead of leaving the user
+  // staring at a bare "invalid relay password" JSON inside the iframe.
+  useEffect(() => {
+    if (!previewFrameUrl || !devStatus?.running) {
+      setPreviewError(null);
+      return;
+    }
+    let alive = true;
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(previewFrameUrl, {
+          method: "GET",
+          signal: controller.signal,
+          cache: "no-store",
+          redirect: "manual",
+        });
+        if (!alive) return;
+        if (res.status === 401 || res.status === 403) {
+          const text = await res.text().catch(() => "");
+          let msg = `HTTP ${res.status}`;
+          try {
+            const parsed = JSON.parse(text);
+            if (parsed?.error) msg = parsed.error;
+          } catch {
+            if (text) msg = text.slice(0, 200);
+          }
+          setPreviewError(msg);
+          return;
+        }
+        setPreviewError(null);
+      } catch (e: any) {
+        if (e?.name === "AbortError") return;
+        if (!alive) return;
+        // Network errors are often transient — don't over-report them.
+        setPreviewError(null);
+      }
+    })();
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [previewFrameUrl, devStatus?.running, reloadNonce]);
+
+  const appendRecovery = useCallback((line: string) => {
+    setRecoveryLog((prev) => {
+      const next = [...prev, line];
+      return next.length > 80 ? next.slice(-80) : next;
+    });
+  }, []);
+
+  const handleReconnect = useCallback(async () => {
+    if (recovering) return;
+    setRecovering(true);
+    setRecoveryLog([]);
+    const savedWorkDir = devStatus?.workDir;
+    const savedFramework = devStatus?.framework;
+    try {
+      appendRecovery("→ checking agent reachability…");
+      try {
+        const info = await agentClient.getInfo();
+        appendRecovery(`✓ agent ok (v${info?.version || "?"})`);
+      } catch (e: any) {
+        appendRecovery(`✗ agent not reachable: ${e?.message || e}`);
+        if (onReconnect) {
+          appendRecovery("→ reconnecting device…");
+          try {
+            await onReconnect();
+            appendRecovery("✓ device reconnect done");
+          } catch (err: any) {
+            appendRecovery(`✗ device reconnect failed: ${err?.message || err}`);
+          }
+        } else {
+          appendRecovery("  (no device reconnect handler — open Devices tab to reconnect manually)");
+        }
+      }
+
+      // If the preview was 401-ing with "invalid relay password", a broken
+      // userSettings.relayPassword row in Convex is the most likely cause
+      // (fresh-install race, or a prod password rotation the user missed).
+      // Ask Convex to re-sync with the platform default — this is a
+      // single-row patch to the CURRENT platform password, never a new
+      // secret, so it's idempotent and safe to call defensively.
+      if (previewError && /invalid relay password/i.test(previewError) && onRepairRelay) {
+        appendRecovery("→ repairing user relay password in Convex…");
+        try {
+          const r = await onRepairRelay();
+          appendRecovery(r.repaired ? `✓ repaired: ${r.reason}` : `· ${r.reason}`);
+          if (r.repaired) {
+            appendRecovery("→ reconnecting device to pick up new password…");
+            if (onReconnect) {
+              try {
+                await onReconnect();
+                appendRecovery("✓ reconnected");
+              } catch (err: any) {
+                appendRecovery(`✗ reconnect after repair failed: ${err?.message || err}`);
+              }
+            }
+          }
+        } catch (e: any) {
+          appendRecovery(`✗ repair failed: ${e?.message || e}`);
+        }
+      }
+
+      if (savedWorkDir) {
+        appendRecovery("→ stopping dev server…");
+        try {
+          await agentClient.stopDevServer();
+          appendRecovery("✓ stopped");
+        } catch (e: any) {
+          appendRecovery(`warn: stop failed: ${e?.message || e}`);
+        }
+
+        appendRecovery("→ clearing caches on remote (metro / .expo / node_modules/.cache)…");
+        try {
+          await agentClient.startExec({
+            command:
+              "rm -rf node_modules/.cache .expo/web/cache .metro-cache /tmp/metro-* 2>/dev/null || true; echo cache-cleared",
+            workDir: savedWorkDir,
+            timeout: 30,
+          });
+          appendRecovery("✓ caches cleared");
+        } catch (e: any) {
+          appendRecovery(`warn: cache clear failed: ${e?.message || e}`);
+        }
+
+        if (savedFramework) {
+          appendRecovery(`→ restarting dev server (${savedFramework})…`);
+          try {
+            await agentClient.startDevServer({
+              framework: savedFramework,
+              workDir: savedWorkDir,
+              targetDeviceId: selectedPreviewTarget?.id,
+              targetDeviceName: selectedPreviewTarget?.name,
+            });
+            appendRecovery("✓ dev server restarted");
+          } catch (e: any) {
+            appendRecovery(`✗ restart failed: ${e?.message || e}`);
+          }
+        }
+      } else {
+        appendRecovery("  (no dev server was running — skipping restart)");
+      }
+
+      appendRecovery("→ refreshing preview…");
+      setIframeKey((k) => k + 1);
+      setReloadNonce((n) => n + 1);
+      setPreviewError(null);
+      appendRecovery("✓ done");
+    } catch (e: any) {
+      appendRecovery(`✗ recovery failed: ${e?.message || e}`);
+    }
+    setRecovering(false);
+  }, [recovering, devStatus, onReconnect, selectedPreviewTarget, appendRecovery]);
+
+  const handleSendPrompt = useCallback(async () => {
+    const prompt = composer.trim();
+    if (!prompt || sending) return;
+    setSending(true);
+    setSendStatus(null);
+    try {
+      const projectName = (() => {
+        const wd = devStatus?.workDir;
+        if (!wd) return undefined;
+        const parts = wd.split("/").filter(Boolean);
+        return parts[parts.length - 1];
+      })();
+      const task = await agentClient.createTask({
+        title: prompt.slice(0, 80),
+        description: prompt,
+        projectName,
+        workDir: devStatus?.workDir,
+      });
+      setComposer("");
+      setSendStatus(`✓ kicked “${task.title}”`);
+    } catch (e: any) {
+      setSendStatus(`✗ ${e?.message || e}`);
+    }
+    setSending(false);
+  }, [composer, sending, devStatus?.workDir]);
+
   const handleReload = useCallback(async () => {
     const framework = (devStatus?.framework || "").toLowerCase();
     setIframeKey((k) => k + 1);
@@ -393,6 +601,25 @@ export default function PreviewPane({
       className="w-full h-full border-none bg-white"
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
     />
+  ) : devStatus?.running && !previewFrameUrl ? (
+    // Dev server is up but we don't have a usable preview URL yet — typically
+    // means the relay probe hasn't populated `activeRelayPassword` yet. Show
+    // a clear waiting state with a manual retry, instead of blanking out.
+    <div className="w-full h-full flex flex-col items-center justify-center bg-surface-950 text-surface-400 p-4 gap-3">
+      <div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-700 border-t-amber-400" />
+      <div className="text-xs font-medium text-surface-300">Waiting for relay auth…</div>
+      <div className="max-w-xs text-center text-[10px] text-surface-600">
+        Dev server is up, but the relay password isn&apos;t loaded yet. This
+        usually clears in a second.
+      </div>
+      <button
+        onClick={() => void handleReconnect()}
+        disabled={recovering}
+        className="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+      >
+        {recovering ? "Reconnecting…" : "Force reconnect"}
+      </button>
+    </div>
   ) : (
     <EmptyPhoneState
       projects={mobileProjects.length > 0 ? mobileProjects : webProjects}
@@ -440,6 +667,18 @@ export default function PreviewPane({
             Shot
           </button>
         ) : null}
+        <button
+          onClick={() => void handleReconnect()}
+          disabled={recovering}
+          className={`text-[10px] rounded border px-2 py-0.5 ${
+            recovering
+              ? "border-amber-500/40 bg-amber-500/10 text-amber-300 cursor-wait"
+              : "border-surface-700 text-surface-400 hover:border-emerald-500/40 hover:text-emerald-300"
+          }`}
+          title="Try to recover: ping agent, stop, clear caches, restart, refresh"
+        >
+          {recovering ? "Reconnecting…" : "Reconnect & Fix"}
+        </button>
         {devStatus?.running ? (
           <>
             <button
@@ -459,6 +698,20 @@ export default function PreviewPane({
           </>
         ) : null}
       </div>
+
+      {previewError ? (
+        <div className="flex items-start gap-2 border-b border-red-500/20 bg-red-500/5 px-3 py-1.5 text-[10px] text-red-300">
+          <span className="font-mono">preview error:</span>
+          <span className="flex-1 truncate">{previewError}</span>
+          <button
+            onClick={() => void handleReconnect()}
+            disabled={recovering}
+            className="shrink-0 rounded border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-red-200 hover:bg-red-500/20 disabled:opacity-50"
+          >
+            {recovering ? "…" : "Recover"}
+          </button>
+        </div>
+      ) : null}
 
       {/* Target picker (mobile workers) */}
       {mobileWorkers.length > 0 && (
@@ -659,6 +912,72 @@ export default function PreviewPane({
           ) : null}
         </div>
       ) : null}
+
+      {/* Recovery log — shows what Reconnect & Fix is doing */}
+      {(recovering || recoveryLog.length > 0) ? (
+        <div className="border-t border-surface-800 bg-surface-950/80 shrink-0">
+          <div className="flex items-center justify-between px-3 py-1 text-[10px] uppercase tracking-widest text-amber-400">
+            <span>Recovery {recovering ? "· running" : "· last run"}</span>
+            {!recovering && recoveryLog.length > 0 ? (
+              <button
+                onClick={() => setRecoveryLog([])}
+                className="text-surface-600 hover:text-surface-400"
+                title="Clear recovery log"
+              >
+                clear
+              </button>
+            ) : null}
+          </div>
+          <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-all border-t border-surface-800 bg-surface-950 px-3 py-1 font-mono text-[10px] text-amber-200/80">
+            {recoveryLog.length === 0 ? (
+              <span className="text-surface-600">(starting…)</span>
+            ) : (
+              recoveryLog.join("\n")
+            )}
+          </pre>
+        </div>
+      ) : null}
+
+      {/* Vibe composer — send prompts directly from Hot Reload */}
+      <div className="border-t border-surface-800 bg-surface-900/60 p-2 shrink-0">
+        <div className="flex items-end gap-2">
+          <textarea
+            value={composer}
+            onChange={(e) => setComposer(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void handleSendPrompt();
+              }
+            }}
+            placeholder={
+              devStatus?.running
+                ? `Vibe on ${devStatus.workDir?.split("/").slice(-1)[0] || "this project"} — Enter to send`
+                : "Vibe: describe a change and press Enter"
+            }
+            rows={1}
+            className="max-h-24 flex-1 resize-none rounded border border-surface-800 bg-surface-950 px-2 py-1.5 text-[12px] text-surface-100 placeholder-surface-600 outline-none focus:border-surface-600"
+            style={{ minHeight: "32px" }}
+          />
+          <button
+            type="button"
+            onClick={() => void handleSendPrompt()}
+            disabled={!composer.trim() || sending}
+            className="shrink-0 rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-30"
+          >
+            {sending ? "…" : "Send"}
+          </button>
+        </div>
+        {sendStatus ? (
+          <div
+            className={`mt-1 px-1 text-[10px] ${
+              sendStatus.startsWith("✓") ? "text-emerald-400" : "text-red-400"
+            }`}
+          >
+            {sendStatus}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

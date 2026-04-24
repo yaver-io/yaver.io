@@ -13,7 +13,7 @@ import { MobileClient } from "../mobile-client.js";
 
 async function main() {
   const argv = minimist(process.argv.slice(2), {
-    string: ["token", "email", "password", "device", "target", "platform", "data-dir", "tool", "preset", "parent-dir", "convex-url", "relay", "verb", "machine", "payload", "name", "template", "slug", "prompt", "base-url", "target-token", "on-conflict", "bundle-url", "module-name", "repo-url", "branch", "commit", "manifest-url", "workflow", "run-id", "provider", "out", "dir"],
+    string: ["token", "email", "password", "device", "target", "platform", "data-dir", "tool", "preset", "parent-dir", "convex-url", "relay", "verb", "machine", "payload", "name", "template", "slug", "prompt", "base-url", "target-token", "on-conflict", "bundle-url", "module-name", "repo-url", "branch", "commit", "manifest-url", "workflow", "run-id", "provider", "out", "dir", "bootstrap-secret", "mode"],
     alias: { t: "token", d: "device" },
   });
 
@@ -108,6 +108,15 @@ async function main() {
       if (!id) die("connect needs --device <id> or positional <id>");
       await mobile.connect(id);
       out({ ok: true, device: id });
+      break;
+    }
+    case "recover-auth": {
+      const id = argv.device || rest[0];
+      if (!id) die("recover-auth needs --device <id> or positional <id>");
+      out(await mobile.recoverDeviceAuth(String(id), {
+        bootstrapSecret: argv["bootstrap-secret"] ? String(argv["bootstrap-secret"]) : undefined,
+        mode: ((argv.mode as any) || "auto"),
+      }));
       break;
     }
     case "infra": {
@@ -333,6 +342,7 @@ Usage:
   yaver-mobile-headless sign-in --token=...         # or --email + --password
   yaver-mobile-headless devices                     # list paired devices (now includes lanIps[])
   yaver-mobile-headless connect <deviceId>
+  yaver-mobile-headless recover-auth <deviceId> [--mode=auto|direct|pair|device-code]
   yaver-mobile-headless primary                     # read primaryDeviceId
   yaver-mobile-headless primary-set <deviceId>      # mark auto-connect target
   yaver-mobile-headless primary-clear               # unset primary preference

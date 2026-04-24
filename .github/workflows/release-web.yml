@@ -21,12 +21,14 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      backend_version: ${{ steps.version.outputs.backend_version }}
     steps:
       - uses: actions/checkout@v4
       - name: Extract and validate version
         id: version
         run: |
           JSON_VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('versions.json','utf8')).web)")
+          BACKEND_VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('versions.json','utf8')).backend)")
           if [[ "$GITHUB_REF" == refs/tags/web/v* ]]; then
             TAG_VERSION="${GITHUB_REF#refs/tags/web/v}"
             if [ "$TAG_VERSION" != "$JSON_VERSION" ]; then
@@ -37,6 +39,7 @@ jobs:
             TAG_VERSION="$JSON_VERSION"
           fi
           echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "backend_version=$BACKEND_VERSION" >> "$GITHUB_OUTPUT"
 
   deploy:
     needs: validate
@@ -89,4 +92,6 @@ jobs:
         if: ${{ env.CONVEX_DEPLOY_KEY != '' }}
         run: |
           cd backend && npm ci
+          npx convex deploy --typecheck disable
+          ../scripts/update-convex-version.sh backend "${{ needs.validate.outputs.backend_version }}"
           ../scripts/update-convex-version.sh web "$VERSION"

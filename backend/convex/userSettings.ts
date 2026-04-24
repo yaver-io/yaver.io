@@ -281,6 +281,73 @@ export const seedDefaults = mutation({
 });
 
 /**
+ * Repair the caller's userSettings row so the relay password matches
+ * the current platform-managed value. Used by the web dashboard when
+ * the preview iframe keeps getting 401 "invalid relay password" from
+ * the managed relay — typically because the row's `relayPassword` was
+ * seeded before a rotation, or (fresh-install race) never got written
+ * at all.
+ *
+ * Safe by design: only rewrites with the CURRENT platform default (same
+ * value every other synced user has). Never generates a random secret.
+ * If the platform config has no password configured, this is a no-op
+ * and returns `repaired:false reason:"no platform default"`.
+ */
+export const repairRelayPassword = mutation({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) {
+      return { ok: false, repaired: false, reason: "unauthorized" };
+    }
+
+    let defaultRelayUrl: string | undefined;
+    let defaultRelayPassword: string | undefined;
+    const config = await ctx.db
+      .query("platformConfig")
+      .withIndex("by_key", (q) => q.eq("key", "relay_servers"))
+      .unique();
+    if (config?.value) {
+      try {
+        const relays = JSON.parse(config.value);
+        if (Array.isArray(relays) && relays.length > 0) {
+          defaultRelayUrl = relays[0].httpUrl || undefined;
+          defaultRelayPassword = relays[0].password || undefined;
+        }
+      } catch { /* ignore */ }
+    }
+    if (!defaultRelayPassword) {
+      return { ok: true, repaired: false, reason: "no platform default" };
+    }
+
+    const existing = await ctx.db
+      .query("userSettings")
+      .withIndex("by_userId", (q) => q.eq("userId", session.user._id))
+      .first();
+    if (!existing) {
+      await ctx.db.insert("userSettings", {
+        userId: session.user._id,
+        forceRelay: false,
+        relayUrl: defaultRelayUrl,
+        relayPassword: defaultRelayPassword,
+      });
+      return { ok: true, repaired: true, reason: "seeded missing settings" };
+    }
+
+    if (existing.relayPassword === defaultRelayPassword) {
+      return { ok: true, repaired: false, reason: "already in sync" };
+    }
+
+    const patch: Record<string, unknown> = { relayPassword: defaultRelayPassword };
+    if (defaultRelayUrl && existing.relayUrl !== defaultRelayUrl) {
+      patch.relayUrl = defaultRelayUrl;
+    }
+    await ctx.db.patch(existing._id, patch);
+    return { ok: true, repaired: true, reason: "synced to platform default" };
+  },
+});
+
+/**
  * Validate a relay password — checks if any user has this relayPassword.
  * Called by relay servers via POST /relay/validate to authenticate per-user passwords.
  */

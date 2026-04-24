@@ -123,11 +123,22 @@ if [[ "$UNINSTALL" == "yes" ]]; then
 fi
 
 echo "=> installing dependencies..."
-APT_PACKAGES="tmux curl ca-certificates"
+APT_PACKAGES="tmux curl ca-certificates git jq docker.io bubblewrap uidmap"
 if [[ "$INSTALL_CHROME" == "yes" ]]; then
   APT_PACKAGES="$APT_PACKAGES wget gnupg fonts-liberation libasound2t64 libnss3 libgbm1 libxshmfence1 xdg-utils"
 fi
 ssh_run "sudo apt-get update -y && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $APT_PACKAGES"
+ssh_run "sudo systemctl enable --now docker || true"
+ssh_run "set -e; \
+  sudo mkdir -p /etc/sysctl.d; \
+  sudo tee /etc/sysctl.d/99-yaver-runner-sandbox.conf >/dev/null <<'EOF'\n\
+kernel.unprivileged_userns_clone=1\n\
+user.max_user_namespaces=1048576\n\
+EOF\n\
+  if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then \
+    echo kernel.apparmor_restrict_unprivileged_userns=0 | sudo tee -a /etc/sysctl.d/99-yaver-runner-sandbox.conf >/dev/null; \
+  fi; \
+  sudo sysctl --system >/dev/null 2>&1 || true"
 
 if [[ "$INSTALL_CHROME" == "yes" ]]; then
   echo "=> installing google-chrome-stable..."
@@ -141,6 +152,8 @@ fi
 
 echo "=> creating yaver user..."
 ssh_run "id yaver >/dev/null 2>&1 || sudo useradd -r -m -d /home/yaver -s /bin/bash yaver"
+ssh_run "getent group docker >/dev/null 2>&1 || sudo groupadd docker || true"
+ssh_run "sudo usermod -aG docker yaver || true"
 
 echo "=> downloading latest yaver agent for linux/amd64..."
 LATEST_TAG="$(curl -fsSL 'https://api.github.com/repos/kivanccakmak/yaver.io/releases?per_page=100' | grep -o '\"tag_name\": *\"v[0-9][^\"]*\"' | head -n1 | sed 's/.*\"\(v[^\"]*\)\"/\1/')"

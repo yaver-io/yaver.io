@@ -53,6 +53,30 @@ Notes:
 - `--multi-user` enables per-user isolated sessions on the box.
 - `--containerize-guests` is the safer default for shared or CI-driven guest tasks.
 - `--allow-ips` is optional; use it only if your access paths are stable enough not to lock yourself out.
+- Do not treat `--containerize-guests` as a signal to containerize the whole Yaver control plane. The safe default is still host-native owner workflows plus isolated guest execution.
+
+## Default protection / usability rule
+
+For this kind of persistent Hetzner machine, the intended balance is:
+
+- keep the agent itself on the host
+- keep owner coding runners on the host
+- keep hot reload, build, and deploy flows host-native
+- use container isolation mainly for guest execution and feedback-only untrusted work
+
+That gives the box a real protection boundary for shared usage without breaking the
+main Yaver loop for the owner.
+
+Also note the root boundary:
+
+- using the box through Yaver normally does not require root
+- provisioning the box, installing Docker/packages, writing sysctls, and wiring the `yaver` service user are the parts that require root
+
+For remote-box safety:
+
+- the default command sandbox blocks broad destructive commands and common whole-workspace deletion targets
+- guest/containerized tasks get the stronger filesystem boundary
+- owner tasks are still trusted with the current project, so use git/snapshots if you want rollback protection for owner-driven coding sessions too
 
 ## 2. Authenticate the box as the owner
 

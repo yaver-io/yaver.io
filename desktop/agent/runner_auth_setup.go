@@ -148,6 +148,9 @@ func runnerStatusRowFor(rows []runnerAuthStatusRow, runner string) runnerAuthSta
 }
 
 func installNodeGlobalPackage(ctx context.Context, pkg string) error {
+	if runtime.GOOS == "linux" {
+		ensureLinuxRunnerSandboxSupport()
+	}
 	nodeBin, err := installNodeRuntime(ctx, nil)
 	if err != nil {
 		return err
@@ -164,6 +167,24 @@ func installNodeGlobalPackage(ctx context.Context, pkg string) error {
 	}
 	augmentAgentPATH()
 	return nil
+}
+
+func ensureLinuxRunnerSandboxSupport() {
+	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
+		return
+	}
+	const path = "/etc/sysctl.d/99-yaver-runner-sandbox.conf"
+	var b strings.Builder
+	b.WriteString("kernel.unprivileged_userns_clone=1\n")
+	b.WriteString("user.max_user_namespaces=1048576\n")
+	if _, err := os.Stat("/proc/sys/kernel/apparmor_restrict_unprivileged_userns"); err == nil {
+		b.WriteString("kernel.apparmor_restrict_unprivileged_userns=0\n")
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		return
+	}
+	cmd := exec.Command("sysctl", "--system")
+	_ = cmd.Run()
 }
 
 func ensureRunnerInstalled(ctx context.Context, runner string) error {

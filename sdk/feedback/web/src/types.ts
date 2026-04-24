@@ -147,6 +147,7 @@ export interface DiscoveryResult {
   hostname: string;
   version: string;
   latency: number; // ms
+  relayPassword?: string;
 }
 
 /**

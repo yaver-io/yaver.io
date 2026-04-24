@@ -96,8 +96,19 @@ packages:
   - python3-certbot-nginx
   - docker.io
   - docker-compose-v2
+  - bubblewrap
+  - uidmap
 runcmd:
   - systemctl enable docker && systemctl start docker
+  - |
+    cat > /etc/sysctl.d/99-yaver-runner-sandbox.conf <<'EOF'
+    kernel.unprivileged_userns_clone=1
+    user.max_user_namespaces=1048576
+    EOF
+    if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+      echo 'kernel.apparmor_restrict_unprivileged_userns=0' >> /etc/sysctl.d/99-yaver-runner-sandbox.conf
+    fi
+    sysctl --system >/dev/null 2>&1 || true
   # Node.js 22 LTS
   - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   - apt-get install -y nodejs

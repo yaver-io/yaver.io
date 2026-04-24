@@ -916,6 +916,7 @@ export class AgentClient {
   async createTask(params: {
     title: string;
     description: string;
+    userPrompt?: string;
     runner?: string;
     model?: string;
     customCommand?: string;
@@ -929,6 +930,7 @@ export class AgentClient {
       body: JSON.stringify({
         title: params.title,
         description: params.description,
+        userPrompt: params.userPrompt ?? "",
         runner: params.runner ?? "",
         model: params.model ?? "",
         customCommand: params.customCommand ?? "",
@@ -2626,11 +2628,15 @@ export class AgentClient {
 
   get devPreviewUrl(): string | null {
     if (!this.baseUrl) return null;
-    const url = `${this.baseUrl}/dev/`;
-    if (this.activeRelayUrl && this.activeRelayPassword) {
-      return `${url}?__rp=${encodeURIComponent(this.activeRelayPassword)}`;
+    // If we're routing via a relay, the preview URL MUST carry `__rp` or
+    // the relay will 401 with "invalid relay password". Signal "not ready
+    // yet" (null) instead of returning a URL guaranteed to fail — the UI
+    // then shows a recoverable state instead of the raw 401 JSON.
+    if (this.activeRelayUrl) {
+      if (!this.activeRelayPassword) return null;
+      return `${this.baseUrl}/dev/?__rp=${encodeURIComponent(this.activeRelayPassword)}`;
     }
-    return url;
+    return `${this.baseUrl}/dev/`;
   }
 
   /** Get the SSE events URL for dev server live reload. */

@@ -379,6 +379,7 @@ Headless reachability defaults:
   still needs sleep disabled for unattended remote use
 
 For a persistent Hetzner box that should stay installed as both your own owner-authenticated machine and a shared CI/guest host, see [docs/hetzner-shared-owner-runbook.md](/Users/kivanccakmak/Workspace/yaver.io/docs/hetzner-shared-owner-runbook.md:1).
+For the default security/functionality posture behind fresh installs, see [docs/default-install-protection.md](/Users/kivanccakmak/Workspace/yaver.io/docs/default-install-protection.md:1).
 
 ### All Installation Methods
 
@@ -401,6 +402,40 @@ For a persistent Hetzner box that should stay installed as both your own owner-a
 | **curl** | `curl -fsSL https://yaver.io/install.sh \| sh` |
 | **PowerShell** | `irm https://yaver.io/install.ps1 \| iex` |
 | **Binary** | Download from [releases](https://github.com/kivanccakmak/yaver.io/releases) |
+
+### Default Protection / Functionality Balance
+
+New installs should now be both usable and protected by default.
+
+- Yaver does not need root for normal daily use. `yaver auth`, `yaver serve`, hot reload, vibe coding, feedback, and most build/deploy flows are designed to run as a normal user.
+- Root is only needed for machine-level setup: installing OS packages, writing system services, changing Linux sysctls, enabling Docker for a service user, or provisioning a fresh remote box.
+- The Yaver agent stays host-native. That keeps hot reload, dev servers, Xcode, Gradle, Hermes, Expo/EAS, deploy flows, relay, and device bridging attached to the real machine.
+- Owner coding flows stay host-native too. Hosted coding CLIs like `claude`, `codex`, `opencode`, and `aider` are not blindly forced into Yaver's Docker sandbox for normal owner tasks, because that breaks real auth/toolchain access on many machines.
+- Guest and feedback-only tasks are the place where hard isolation matters most. Yaver keeps the guest restrictions there and can additionally containerize those tasks when Docker isolation is enabled.
+- On Linux, Yaver now prefers explicit blocked state over false readiness. If a runner is installed but the host still blocks its own sandbox prerequisites, the UI marks that runner as blocked instead of letting tasks hang and fail later.
+
+Install-path expectations:
+
+- `npm install -g yaver-cli` now does a best-effort Linux bootstrap for runner safety. When the install has root privileges on Debian/Ubuntu, it enables the required user-namespace sysctls and installs `bubblewrap` / `uidmap` when those packages are missing.
+- Managed cloud / Hetzner bootstrap paths now also ensure Docker is enabled, Linux user-namespace prerequisites are set, and the `yaver` service user is added to the `docker` group in service-user deployments.
+- If a lean install does not have enough privilege to harden the host, Yaver leaves the machine unchanged and surfaces blocked runners clearly instead of pretending they are healthy.
+
+That split is deliberate: protect untrusted guest execution without breaking the main Yaver loop of vibe coding, hot reload, build, and deploy.
+
+### Protecting A Remote Box From Destructive Agent Actions
+
+Yaver has multiple layers here, but the boundary matters:
+
+- The command sandbox is enabled by default and blocks known-destructive commands such as recursive deletion of critical system paths, privilege escalation, raw disk writes, piping remote content into a shell, and similar host-compromise patterns.
+- The sandbox also specifically refuses recursive deletion of common workspace/code roots like `/Users`, `/home`, `$HOME`, and common home subdirectories such as `~/Workspace`, `~/Projects`, `~/Code`, `.ssh`, `.aws`, and `.yaver`.
+- Guest and feedback-only tasks can run in a Docker container instead of on the host. In that mode the task only sees the mounted project directory, selected env vars, and optional extra mounts that pass Yaver's mount validation.
+- Container mounts are validated so the sandbox cannot silently re-expose `/`, `/home`, `/Users`, `/etc`, or the Docker socket back into the task container.
+
+What this does **not** mean:
+
+- Yaver does not try to stop an owner-authorized host task from editing the current project. That would break legitimate coding work.
+- If you want the strongest protection for a remote shared box, prefer `--containerize-guests` and run untrusted work as guest/feedback sessions rather than as the owner.
+- If you want protection against accidental repo loss even for owner tasks, use normal engineering safety nets too: git, remote origin, snapshots, or a dedicated throwaway worktree/clone.
 
 ### Desktop App (GUI)
 
@@ -501,6 +536,15 @@ Embed in your app during development. The SDK provides device discovery, connect
 
 ```bash
 npm install -g yaver-cli
+```
+
+On Linux, the global install now does a best-effort bootstrap for hosted coding
+agents too: if it has root, it enables the user-namespace sysctls Codex needs
+and installs `bubblewrap`/`uidmap` when they're missing. If it does not have
+enough privilege, Yaver leaves the machine unchanged and marks blocked runners
+as blocked instead of pretending they're ready.
+
+```bash
 
 # Then, inside the project you want to wire up:
 yaver feedback setup

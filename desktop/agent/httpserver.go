@@ -2672,6 +2672,7 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Title         string             `json:"title"`
 		Description   string             `json:"description"`
+		UserPrompt    string             `json:"userPrompt,omitempty"`
 		Model         string             `json:"model"`
 		Runner        string             `json:"runner"`        // runner ID: "claude", "codex", "aider" — empty uses default
 		CustomCommand string             `json:"customCommand"` // arbitrary command — runs via sh -c
@@ -2766,8 +2767,9 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	// and could otherwise override the guest prompt prefix that keeps the
 	// AI agent inside the host's workdir.
 	taskOpts := TaskCreateOptions{
-		WorkDir:       body.WorkDir,
-		SliceContract: body.SliceContract,
+		WorkDir:           body.WorkDir,
+		InitialUserPrompt: body.UserPrompt,
+		SliceContract:     body.SliceContract,
 	}
 	if guestUID != "" {
 		// Strip owner-only fields. If the host resolved a guest project,

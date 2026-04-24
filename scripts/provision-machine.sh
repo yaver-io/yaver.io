@@ -49,9 +49,22 @@ echo "=== Provisioning $MACHINE_TYPE machine at $SERVER_IP ==="
 # ── 1. Base system setup ────────────────────────────────────────
 echo ">>> Installing base packages..."
 $SSH "apt-get update -qq && apt-get install -y -qq \
-  curl git docker.io docker-compose tmux htop jq unzip \
+  curl git docker.io docker-compose tmux htop jq unzip bubblewrap uidmap \
   build-essential pkg-config libssl-dev \
   2>&1 | tail -5"
+$SSH "bash -s" <<'SANDBOX'
+set -e
+mkdir -p /etc/sysctl.d
+cat > /etc/sysctl.d/99-yaver-runner-sandbox.conf <<'EOF'
+kernel.unprivileged_userns_clone=1
+user.max_user_namespaces=1048576
+EOF
+if [[ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+  echo 'kernel.apparmor_restrict_unprivileged_userns=0' >> /etc/sysctl.d/99-yaver-runner-sandbox.conf
+fi
+sysctl --system >/dev/null 2>&1 || true
+systemctl enable --now docker || true
+SANDBOX
 
 # ── 2. Install dev tools ───────────────────────────────────────
 echo ">>> Installing dev tools..."

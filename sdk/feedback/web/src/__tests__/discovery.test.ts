@@ -340,6 +340,7 @@ describe('YaverDiscovery', () => {
 
       expect(result).not.toBeNull();
       expect(result!.url).toBe('https://relay.example/d/dev-1');
+      expect(result!.relayPassword).toBe('pw');
       expect(mockFetch).toHaveBeenCalledWith(
         'https://relay.example/d/dev-1/health',
         expect.objectContaining({

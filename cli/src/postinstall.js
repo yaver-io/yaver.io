@@ -69,6 +69,71 @@ function installMissingCodingRunners() {
   }
 }
 
+function ensureLinuxRunnerSandboxPackages() {
+  try {
+    if (process.platform !== "linux") return;
+    if (typeof process.geteuid !== "function" || process.geteuid() !== 0) return;
+    const missing = [];
+    if (!commandExists("bwrap")) missing.push("bubblewrap");
+    if (!commandExists("newuidmap")) missing.push("uidmap");
+    if (missing.length === 0) return;
+    if (!commandExists("apt-get")) {
+      log(`Runner sandbox packages missing (${missing.join(", ")}) and no apt-get is available for auto-install.`);
+      return;
+    }
+    execSync("apt-get update -y", { stdio: ["ignore", "ignore", "ignore"] });
+    execSync(`DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${missing.join(" ")}`, {
+      stdio: "inherit",
+    });
+    log(`Installed Linux runner sandbox packages: ${missing.join(", ")}.`);
+  } catch (error) {
+    log(`Skipping Linux runner sandbox package bootstrap: ${error.message}`);
+  }
+}
+
+function ensureLinuxRunnerSandboxSupport() {
+  try {
+    if (process.platform !== "linux") return;
+    if (typeof process.geteuid !== "function" || process.geteuid() !== 0) return;
+    const confPath = "/etc/sysctl.d/99-yaver-runner-sandbox.conf";
+    let body = "kernel.unprivileged_userns_clone=1\nuser.max_user_namespaces=1048576\n";
+    if (fs.existsSync("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")) {
+      body += "kernel.apparmor_restrict_unprivileged_userns=0\n";
+    }
+    fs.writeFileSync(confPath, body);
+    execSync("sysctl --system", { stdio: ["ignore", "ignore", "ignore"] });
+    log("Enabled Linux user-namespace prerequisites for Codex/runner sandboxes.");
+  } catch (error) {
+    log(`Skipping Linux runner sandbox bootstrap: ${error.message}`);
+  }
+}
+
+function reportLinuxRunnerSandboxStatus() {
+  try {
+    if (process.platform !== "linux") return;
+    const issues = [];
+    if (!commandExists("bwrap")) issues.push("bubblewrap");
+    if (!commandExists("newuidmap")) issues.push("uidmap");
+    try {
+      const userns = fs.readFileSync("/proc/sys/kernel/unprivileged_userns_clone", "utf8").trim();
+      if (userns === "0") issues.push("kernel.unprivileged_userns_clone=0");
+    } catch (_) {}
+    try {
+      const maxUserns = fs.readFileSync("/proc/sys/user/max_user_namespaces", "utf8").trim();
+      if (!maxUserns || maxUserns === "0") issues.push("user.max_user_namespaces=0");
+    } catch (_) {}
+    try {
+      const apparmor = fs.readFileSync("/proc/sys/kernel/apparmor_restrict_unprivileged_userns", "utf8").trim();
+      if (apparmor === "1") issues.push("kernel.apparmor_restrict_unprivileged_userns=1");
+    } catch (_) {}
+    if (issues.length > 0) {
+      log(`Linux runner sandbox still has blockers: ${issues.join(", ")}. Yaver will mark Codex blocked until the host allows it.`);
+    }
+  } catch (_) {
+    // Best-effort only.
+  }
+}
+
 function installMissingMobileTools() {
   const missing = MOBILE_TOOL_BOOTSTRAP.filter((entry) => !commandExists(entry.command));
   if (missing.length === 0) {
@@ -158,6 +223,9 @@ async function main() {
   }
 
   ensurePathOnUnix();
+  ensureLinuxRunnerSandboxPackages();
+  ensureLinuxRunnerSandboxSupport();
+  reportLinuxRunnerSandboxStatus();
 
   if (process.platform !== "linux" && process.platform !== "darwin") {
     return;
