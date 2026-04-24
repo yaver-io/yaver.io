@@ -952,6 +952,7 @@ export class YaverFeedback {
 
         <div class="yvr-fb-vibe-block">
           <label class="yvr-fb-vibe-label" for="yaver-fb-vibe-prompt">Vibing</label>
+          <div id="yaver-fb-vibe-gate" style="display:none;padding:10px 12px;border-radius:10px;border:1px solid rgba(245,158,11,0.3);background:rgba(245,158,11,0.08);color:#fbbf24;font-size:12px;line-height:1.45;margin-bottom:8px;"></div>
           <textarea id="yaver-fb-vibe-prompt" class="yvr-fb-vibe-input" placeholder="Describe what Yaver should work on next..."></textarea>
           <button id="yaver-fb-vibe" class="yvr-fb-action yvr-fb-action-vibe" type="button">Start Vibing Task</button>
         </div>
@@ -966,8 +967,19 @@ export class YaverFeedback {
       const machinePill = overlay.querySelector<HTMLButtonElement>('#yaver-fb-machine-pill')!;
       const signInCodex = overlay.querySelector<HTMLButtonElement>('#yaver-fb-signin-codex');
       const signInClaude = overlay.querySelector<HTMLButtonElement>('#yaver-fb-signin-claude');
-      if (signInCodex) signInCodex.onclick = () => { void YaverFeedback.signInRunner('codex'); };
-      if (signInClaude) signInClaude.onclick = () => { void YaverFeedback.signInRunner('claude'); };
+      // Refresh vibing gate + machine pill after a sign-in attempt
+      // completes (success or cancel) — if auth landed, the gate lifts
+      // automatically without making the user close & re-open the
+      // feedback widget.
+      const afterSignIn = async () => {
+        await Promise.all([refreshMachinePill(), refreshVibingGate()]);
+      };
+      if (signInCodex) signInCodex.onclick = () => {
+        YaverFeedback.signInRunner('codex').finally(() => { void afterSignIn(); });
+      };
+      if (signInClaude) signInClaude.onclick = () => {
+        YaverFeedback.signInRunner('claude').finally(() => { void afterSignIn(); });
+      };
 
       const setActionsBusy = (value: boolean) => {
         busy = value;
@@ -1073,6 +1085,61 @@ export class YaverFeedback {
       };
 
       void refreshMachinePill();
+      void refreshVibingGate();
+    };
+
+    /**
+     * Gate Vibing based on agent eligibility. /vibing/eligibility on the
+     * selected agent tells us whether the machine has an authenticated
+     * coding runner AND whether the caller has enough scope/access to
+     * kick a task. If not, we disable the prompt + button and show the
+     * reason so the user doesn't click a doomed CTA.
+     *
+     * We also re-check after every successful remote sign-in, so the gate
+     * unblocks automatically once codex/claude auth lands.
+     */
+    const refreshVibingGate = async () => {
+      const gate = overlay.querySelector<HTMLDivElement>('#yaver-fb-vibe-gate');
+      const vibePromptEl = overlay.querySelector<HTMLTextAreaElement>('#yaver-fb-vibe-prompt');
+      const vibeBtnEl = overlay.querySelector<HTMLButtonElement>('#yaver-fb-vibe');
+      if (!gate || !vibePromptEl || !vibeBtnEl) return;
+      const disable = (reason: string, guidance?: string) => {
+        gate.textContent = guidance && guidance.trim() ? `${reason} ${guidance}` : reason;
+        gate.style.display = 'block';
+        vibePromptEl.disabled = true;
+        vibePromptEl.style.opacity = '0.5';
+        vibeBtnEl.disabled = true;
+        vibeBtnEl.style.opacity = '0.5';
+        vibeBtnEl.style.cursor = 'not-allowed';
+      };
+      const enable = () => {
+        gate.textContent = '';
+        gate.style.display = 'none';
+        vibePromptEl.disabled = false;
+        vibePromptEl.style.opacity = '';
+        vibeBtnEl.disabled = false;
+        vibeBtnEl.style.opacity = '';
+        vibeBtnEl.style.cursor = '';
+      };
+      try {
+        const eligibility = await YaverFeedback.getVibingEligibility();
+        if (eligibility.canVibe) {
+          enable();
+        } else {
+          disable(
+            eligibility.reason ?? 'Vibing is not available on this machine.',
+            eligibility.guidance,
+          );
+        }
+      } catch (err) {
+        // Couldn't reach the machine at all — that's the "no access"
+        // case the user called out. Gate rather than offer a broken CTA.
+        const msg = err instanceof Error ? err.message : String(err);
+        disable(
+          'Vibing requires a reachable machine with an authenticated coding agent.',
+          `Sign in to Codex or Claude on this machine first. (${msg})`,
+        );
+      }
     };
 
     const platformDisplay = (platform: string | undefined): string => {
