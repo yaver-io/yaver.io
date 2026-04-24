@@ -751,6 +751,33 @@ Trigger AI tasks from CI/CD:
 
 See [MCP Integration Guide](https://yaver.io/docs/mcp) for full documentation.
 
+## Headless Clients (script the phone + dashboard from Node)
+
+Two npm packages that expose the exact same HTTP / Convex / relay surfaces Yaver's mobile app and web dashboard use — but without any native runtime. Drive them from bun / node scripts, CLI pipelines, or MCP tool calls. Good fit for CI smoke tests, AI-assisted QA bots, remote control from SSH-only boxes, and anything where "open the UI and click the button" isn't an option.
+
+| Package | What it drives | When to use |
+|---|---|---|
+| [`yaver-mobile-headless`](./mobile-headless/README.md) | The React Native mobile app's lib (beacon discovery, Apple/OAuth auth, phone-project scaffolder, Hermes bundle push, shake-to-reload gesture) | You're automating anything that would otherwise require the iPhone / Android app to be open — LAN beacon discovery, push-to-device flows, phone-project CRUD, QA runs that simulate a tester shaking the phone. |
+| [`yaver-web-headless`](./web-headless/README.md) | The web dashboard's agent-client (dev-server preview URL composition, webview reload, vibing task dispatch, Reconnect & Fix recovery, `/settings/repair-relay`) | You're automating the browser dashboard — starting / stopping Vite + Next + Expo + Flutter dev servers, tailing preview URLs, kicking coding tasks, or running the full recovery loop when the iframe 401s. |
+
+Common shape: `connect(deviceId)` → agent methods → JSON on stdout. Same ENV vars (`YAVER_TOKEN`, `YAVER_CONVEX_URL`). Mix them in the same script when a flow needs both (e.g. sign in once, tail dev-server logs via web-headless, then fire a shake gesture via mobile-headless).
+
+```bash
+# Install either or both globally
+npm install -g yaver-mobile-headless yaver-web-headless
+
+# Mobile: scaffold + push a phone project
+yaver-mobile-headless phone-project-create --name="Todo" --template=todos
+yaver-mobile-headless phone-project-push --slug=todo --base-url=https://your-box.example.com --target-token=$CLOUD_TOKEN
+
+# Web: start a Vite dev server on a remote box and print the iframe URL
+export YAVER_TOKEN=$(yaver-web-headless sign-in --email=... --password=... | jq -r .token)
+yaver-web-headless dev-start --device=$DEVICE_ID --framework=vite --work-dir=/workspace/myapp
+yaver-web-headless webview-url --device=$DEVICE_ID
+```
+
+Full reference and package-specific verbs: [`docs/headless-clients.md`](./docs/headless-clients.md).
+
 ## Web Search MCP Tool
 
 Yaver ships a built-in `web_search` MCP tool so any connected AI agent (Claude Code, Codex, Aider, ...) can ground its output in current information — competitor research, library docs, error messages, news — without each agent needing its own search integration.

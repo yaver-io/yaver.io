@@ -1,0 +1,43 @@
+{
+  "name": "yaver-web-headless",
+  "version": "0.1.0",
+  "description": "Headless surrogate for the Yaver web dashboard — drive dev-server preview (Vite / Next / Expo / Flutter), webview reload, vibing, reconnect, repair-relay, and guest/OAuth auth over Convex + relay from Node/Bun scripts, CLI, or MCP.",
+  "license": "FSL-1.1-Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kivanccakmak/yaver.io.git",
+    "directory": "web-headless"
+  },
+  "homepage": "https://github.com/kivanccakmak/yaver.io/tree/main/web-headless",
+  "bin": {
+    "yaver-web-headless": "dist/cli.js"
+  },
+  "main": "./dist/web-client.js",
+  "types": "./dist/web-client.d.ts",
+  "type": "module",
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "cli": "bun run src/bin/cli.ts",
+    "test": "bun test",
+    "test:hermetic": "bun test test/hermetic.test.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "bun build src/bin/cli.ts --outdir dist --target node --minify && bun build src/web-client.ts --outdir dist --target node && node scripts/fix-shebang.mjs",
+    "prepublishOnly": "bun run build"
+  },
+  "dependencies": {
+    "minimist": "^1.2.8"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0",
+    "@types/minimist": "^1.2.5",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
