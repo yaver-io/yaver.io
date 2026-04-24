@@ -126,6 +126,16 @@ jobs:
           sleep 3
           echo "== yaver serve process AFTER restart:"
           pgrep -af "yaver serve" || echo "(none)"
+          for pid in $(pgrep -f "yaver serve"); do
+            exe=$(readlink "/proc/$pid/exe" 2>/dev/null || echo unknown)
+            ver=$("$exe" --version 2>/dev/null | head -1 || echo unknown)
+            echo "   pid=$pid exe=$exe version=$ver"
+          done
+          echo "== all yaver binaries on disk:"
+          find /usr/bin /usr/local/bin /home/yaver/.yaver/bin /home/yaver/.local/bin -maxdepth 3 -name yaver -type f 2>/dev/null | while read -r bin; do
+            v=$("$bin" --version 2>/dev/null | head -1 || echo unreadable)
+            echo "   $bin — $v"
+          done
           echo "== port 18080 holder:"
           ss -ltnp 'sport = :18080' 2>/dev/null || true
 
