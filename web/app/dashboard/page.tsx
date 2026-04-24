@@ -514,6 +514,7 @@ export default function DashboardPage() {
   const outputRef = useRef<HTMLDivElement>(null);
   const relayReadyPromiseRef = useRef<Promise<void> | null>(null);
   const previousActiveTabRef = useRef<string | null>(null);
+  const probedForCurrentTabOpenRef = useRef(false);
 
   const isConnected = connState === "connected";
 
@@ -611,13 +612,20 @@ export default function DashboardPage() {
   }, [isConnected, connectedDevice?.id]);
 
   useEffect(() => {
-    const justOpenedDevicesTab =
-      activeTab === "devices" && previousActiveTabRef.current !== "devices";
-    previousActiveTabRef.current = activeTab;
-    if (!justOpenedDevicesTab) return;
-    if (!token || devices.length === 0) {
+    if (activeTab !== "devices") {
+      probedForCurrentTabOpenRef.current = false;
+      previousActiveTabRef.current = activeTab;
       return;
     }
+    previousActiveTabRef.current = activeTab;
+    if (probedForCurrentTabOpenRef.current) return;
+    // Wait until relay servers are loaded — without them probeDeviceStatus
+    // skips the relay branch and every cross-network device (Hetzner, etc.)
+    // gets falsely marked Unreachable. Re-runs when relayReady flips.
+    if (!token || devices.length === 0 || !relayReady) {
+      return;
+    }
+    probedForCurrentTabOpenRef.current = true;
     let cancelled = false;
     const refreshProbes = async () => {
       const nextEntries = await Promise.all(
@@ -657,7 +665,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, token, devices]);
+  }, [activeTab, token, devices, relayReady]);
 
   useEffect(() => { const u = agentClient.on("connectionState", setConnState); return u; }, []);
 

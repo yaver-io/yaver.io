@@ -332,33 +332,42 @@ interface DeviceRuntimeInfo {
   [k: string]: unknown;
 }
 
-function useDevicePing(device: Device) {
-  const [pingState, setPingState] = useState<{ pinging: boolean; rttMs?: number; ok?: boolean }>({ pinging: false });
+function useDevicePing(device: Device, token: string | null | undefined) {
+  const [pingState, setPingState] = useState<{ pinging: boolean; rttMs?: number; ok?: boolean; error?: string }>({ pinging: false });
 
   const ping = useCallback(async () => {
-    setPingState({ pinging: true });
-    const relayUrls = agentClient.configuredRelayServers.map((relay) => `${relay.httpUrl}/d/${device.id}`);
-    const directUrl = device.host ? `http://${device.host}:${device.port}` : "";
-    const urls = [...relayUrls, ...(directUrl ? [directUrl] : [])];
-
-    for (const url of urls) {
-      const started = Date.now();
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
-        const res = await fetch(`${url}/health`, { signal: controller.signal });
-        clearTimeout(timeout);
-        if (res.ok) {
-          setPingState({ pinging: false, ok: true, rttMs: Date.now() - started });
-          return;
-        }
-      } catch {
-        continue;
-      }
+    if (!token) {
+      setPingState({ pinging: false, ok: false, error: "not signed in" });
+      return;
     }
-
-    setPingState({ pinging: false, ok: false });
-  }, [device.host, device.id, device.port]);
+    setPingState({ pinging: true });
+    const started = Date.now();
+    try {
+      const probe = await agentClient.probeDeviceStatus({
+        host: device.host,
+        port: device.port,
+        token,
+        deviceId: device.id,
+        tunnelUrls: Array.from(
+          new Set(
+            [
+              ...(Array.isArray(device.publicEndpoints) ? device.publicEndpoints : []),
+              ...(device.tunnelUrl ? [device.tunnelUrl] : []),
+            ]
+              .map((u) => String(u || "").trim())
+              .filter(Boolean),
+          ),
+        ),
+      });
+      if (probe.ok) {
+        setPingState({ pinging: false, ok: true, rttMs: Date.now() - started });
+      } else {
+        setPingState({ pinging: false, ok: false, error: probe.error });
+      }
+    } catch (e: any) {
+      setPingState({ pinging: false, ok: false, error: e?.message || "probe failed" });
+    }
+  }, [device.host, device.id, device.port, device.tunnelUrl, device.publicEndpoints, token]);
 
   return { pingState, ping };
 }
@@ -763,7 +772,7 @@ export default function DevicesView({
                   );
                 })()}
                 <div className="mt-5 flex flex-wrap items-center gap-2">
-                  <InlinePingButton device={device} />
+                  <InlinePingButton device={device} token={token ?? null} />
                   {isActiveWorkspace && onCloseWorkspace ? (
                     <button
                       onClick={onCloseWorkspace}
@@ -814,8 +823,8 @@ export default function DevicesView({
   );
 }
 
-function InlinePingButton({ device }: { device: Device }) {
-  const { pingState, ping } = useDevicePing(device);
+function InlinePingButton({ device, token }: { device: Device; token: string | null | undefined }) {
+  const { pingState, ping } = useDevicePing(device, token);
   return (
     <button
       onClick={() => void ping()}
@@ -837,7 +846,7 @@ function InlinePingButton({ device }: { device: Device }) {
 function DeviceDetailsPanel({ device, token }: { device: Device; token: string | null }) {
   const { info, error, loading } = useDeviceRuntimeInfo(device, true, token);
   const effectiveInfo = (info || device.probeInfo || null) as DeviceRuntimeInfo | null;
-  const { pingState, ping } = useDevicePing(device);
+  const { pingState, ping } = useDevicePing(device, token);
   const allRunners = (device.runners || []).map((r) => r?.runnerId || "").filter(Boolean);
   const allSharedRunners = device.sharedRunners || [];
   const allGuests = (device.sharedGuests || []).map((g) => g.name || g.email || "").filter(Boolean);
