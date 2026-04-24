@@ -2352,6 +2352,12 @@ func runServe(args []string) {
 
 	httpServer.execMgr = NewExecManager(taskMgr.workDir, cfg.Sandbox)
 	httpServer.scheduler = NewScheduler(taskMgr)
+	// Wire the process-global TaskSupervisor to runServe's context so
+	// every SupervisedGo() ticker gets cancelled cleanly on shutdown.
+	// Must happen before any Start* call below so their Register hits
+	// the real supervisor, not the fallback background-context one.
+	initSupervisor(ctx)
+
 	httpServer.scheduler.Start(ctx)
 	httpServer.aclMgr = aclMgr
 	httpServer.emailMgr = emailMgr

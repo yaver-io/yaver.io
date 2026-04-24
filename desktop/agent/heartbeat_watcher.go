@@ -201,19 +201,14 @@ func nonEmpty(a, b string) string {
 // StartHeartbeatWatcher starts the background loop. Called
 // from runServe. Idempotent — duplicate calls are harmless.
 func StartHeartbeatWatcher(ctx context.Context) {
+	// Small delay so other boot goroutines don't race.
 	go func() {
-		// Small delay so other boot goroutines don't race.
 		time.Sleep(5 * time.Second)
-		ticker := time.NewTicker(time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
+		SupervisedGo("peer-heartbeat-watch", time.Minute, false,
+			func(ctx context.Context) error {
 				pollPeerHeartbeats()
-			}
-		}
+				return nil
+			})
 	}()
 }
 

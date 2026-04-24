@@ -67,13 +67,21 @@ func NewScheduler(taskMgr *TaskManager) *Scheduler {
 	return s
 }
 
-// Start begins the scheduler loop.
+// Start begins the scheduler loop, registered with the process-global
+// supervisor so panics, stalls, and slow-tick coalescing are tracked
+// alongside the agent's other in-process tickers.
 func (s *Scheduler) Start(ctx context.Context) {
 	ctx, s.cancel = context.WithCancel(ctx)
-	go s.loop(ctx)
+	SupervisedGo("scheduler", 30*time.Second, false,
+		func(ctx context.Context) error {
+			s.checkAndRun()
+			return nil
+		})
 }
 
-// Stop stops the scheduler.
+// Stop stops the scheduler. The supervisor is not stopped here — other
+// tickers keep running; only this specific task is cancelled on the
+// next tick boundary.
 func (s *Scheduler) Stop() {
 	if s.cancel != nil {
 		s.cancel()
@@ -81,6 +89,8 @@ func (s *Scheduler) Stop() {
 }
 
 func (s *Scheduler) loop(ctx context.Context) {
+	// Retained for tests that drive checkAndRun through the ticker
+	// path. Production code goes through SupervisedGo above.
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 

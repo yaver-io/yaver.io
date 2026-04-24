@@ -47,20 +47,16 @@ func StartConvexStateSync(ctx context.Context) {
 		deviceID:  cfg.DeviceID,
 		client:    &http.Client{Timeout: 10 * time.Second},
 	}
+	// Initial sync delay preserved — most downstream services need
+	// a few seconds to come up after `yaver serve` starts. Registering
+	// the task in a go() keeps Start fast and non-blocking.
 	go func() {
-		t := time.NewTicker(60 * time.Second)
-		defer t.Stop()
-		// Initial sync on startup (give services 5s to come up first).
 		time.Sleep(5 * time.Second)
-		globalConvexSync.syncAll(ctx)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
+		SupervisedGo("convex-state-sync", 60*time.Second, true,
+			func(ctx context.Context) error {
 				globalConvexSync.syncAll(ctx)
-			}
-		}
+				return nil
+			})
 	}()
 }
 

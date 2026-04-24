@@ -210,6 +210,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/deploy", s.auth(s.handleDeploy))
 	mux.HandleFunc("/summary", s.auth(s.handleSummary))
 	mux.HandleFunc("/info", s.auth(s.handleInfo))
+	mux.HandleFunc("/self-check", s.auth(s.handleSelfCheck))
 	mux.HandleFunc("/agent/status", s.auth(s.handleAgentStatus))
 	mux.HandleFunc("/agent/capabilities", s.auth(s.handleAgentCapabilities))
 	mux.HandleFunc("/agent/graphs", s.auth(s.handleAgentGraphs))
@@ -942,10 +943,16 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// of /vault/get is the most sensitive single response the agent
 	// can produce, so we make it prohibitively expensive to walk
 	// the namespace by hammering names.
-	// Build toolchain + deploy-script generator — owner-only.
+	// Build toolchain preflight + deploy-script generator. Owner full
+	// access; guests with scope=full or scope=deploy can hit the
+	// preflight and generator. /deploy/ship actually executes the
+	// generated script on the host and streams stdout/stderr; it is
+	// the shared-machine deploy surface, gated by allowedProjects in
+	// the handler itself.
 	mux.HandleFunc("/doctor/build", s.auth(s.handleDoctorBuild))
 	mux.HandleFunc("/deploy/templates", s.auth(s.handleDeployTemplates))
 	mux.HandleFunc("/deploy/generate", s.auth(s.handleDeployGenerate))
+	mux.HandleFunc("/deploy/ship", s.auth(s.handleDeployShip))
 
 	mux.HandleFunc("/vault/list", s.rateLimit(s.auth(s.handleVaultList)))
 	mux.HandleFunc("/vault/get", s.rateLimit(s.auth(s.handleVaultGet)))
@@ -1915,6 +1922,30 @@ func (s *HTTPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 		resp["authExpired"] = true
 	}
 	jsonReply(w, http.StatusOK, resp)
+}
+
+// handleSelfCheck exposes the TaskSupervisor registry: every in-process
+// ticker that registered with SupervisedGo, its last tick, last error,
+// health state, and any stalled-for-longer-than-threshold flags.
+//
+// Returns 200 even when unhealthy — the caller is expected to check
+// `unhealthy` / individual task states. A smoke script can `jq` the
+// payload and exit-code on findings.
+func (s *HTTPServer) handleSelfCheck(w http.ResponseWriter, r *http.Request) {
+	sup := supervisor()
+	snap := sup.Snapshot()
+	unhealthy := 0
+	for _, t := range snap {
+		if t.HealthState == "stalled" || t.HealthState == "error" {
+			unhealthy++
+		}
+	}
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":        true,
+		"tasks":     snap,
+		"unhealthy": unhealthy,
+		"count":     len(snap),
+	})
 }
 
 func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
