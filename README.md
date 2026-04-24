@@ -1182,7 +1182,9 @@ finished run POSTs `{id, app, target, exit_code, duration_ms, ok,
 error_class, is_guest, ...}` — fire-and-forget, one retry on
 non-2xx, then logged-and-forgotten. Especially useful for
 overnight guest-triggered deploys where nobody is watching the
-terminal.
+terminal. Add `deploy_webhook_secret` to get HMAC-signed POSTs
+(`X-Yaver-Timestamp` + `X-Yaver-Signature: sha256=<hex>` over
+`"{timestamp}.{body}"` — same shape as Slack / GitHub / Stripe).
 
 Full reference: [`docs/vault-and-deploy.md`](docs/vault-and-deploy.md).
 

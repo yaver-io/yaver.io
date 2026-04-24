@@ -46,6 +46,16 @@ type Config struct {
 	// DeployWebhookOn filters which events fire. Values: "success",
 	// "failure", "all" (default). Empty also means "all".
 	DeployWebhookOn string `json:"deploy_webhook_on,omitempty"`
+	// DeployWebhookSecret enables HMAC-SHA256 signing of the webhook
+	// body. When set, every POST carries:
+	//
+	//   X-Yaver-Timestamp: <unix-seconds>
+	//   X-Yaver-Signature: sha256=<hex HMAC of "{timestamp}.{body}">
+	//
+	// Downstream receivers reject a POST whose timestamp is outside
+	// their acceptable drift window + whose HMAC doesn't recompute.
+	// Empty = no signing (deploy_webhook_url still works).
+	DeployWebhookSecret string `json:"deploy_webhook_secret,omitempty"`
 	RateLimit                     *RateLimitConfig         `json:"rate_limit,omitempty"`
 
 	// Machine-level monitors (disk-health, peer heartbeat)

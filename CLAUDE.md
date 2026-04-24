@@ -1324,6 +1324,7 @@ Shared-machine deploy flow — e.g. friend triggers TestFlight from his laptop a
 - Payload: `{id, app, target, stack, requested_by, is_guest, started_at, duration_ms, exit_code, ok, error_class, timed_out, host}`. Omits empty fields (`host` is omitted on machines where `os.Hostname` errors).
 - Host-local by design — the URL is a host-machine behavior (like `webhook_secret` and `analytics_webhook_url` already are), not a user-identity setting. Convex Privacy Contract unchanged.
 - Test stub: `hostnameForWebhook` is a `var` so tests can swap it; `osHostname` is not re-exported.
+- **HMAC signing**: when `Config.DeployWebhookSecret` is set, every POST carries `X-Yaver-Timestamp` (unix seconds) + `X-Yaver-Signature: sha256=<hex>` where hex = `HMAC-SHA256(secret, "{timestamp}.{body}")`. Use `VerifyDeployWebhookSignature(secret, ts, sig, body, maxSkew)` at the receiver — constant-time compare + optional skew guard. Slack / GitHub / Stripe all use this same shape so downstream tooling is familiar. Retry reuses the same (ts, sig) pair; receivers that reject the retry on skew grounds are correct (the request was already delivered on attempt 1).
 
 ### Vault resilience (file lock + stale-tmp detect + sync conflicts)
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -41,12 +42,17 @@ func (c *capturedWebhook) count() int {
 // DeployWebhookURL at the test server. Returns the cleanup.
 func setWebhookInConfig(t *testing.T, url, filter string) {
 	t.Helper()
+	setWebhookInConfigWithSecret(t, url, filter, "")
+}
+
+func setWebhookInConfigWithSecret(t *testing.T, url, filter, secret string) {
+	t.Helper()
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	if err := os.MkdirAll(filepath.Join(tmp, ".yaver"), 0700); err != nil {
 		t.Fatalf("mkdir .yaver: %v", err)
 	}
-	cfg := &Config{DeployWebhookURL: url, DeployWebhookOn: filter}
+	cfg := &Config{DeployWebhookURL: url, DeployWebhookOn: filter, DeployWebhookSecret: secret}
 	if err := SaveConfig(cfg); err != nil {
 		t.Fatalf("SaveConfig: %v", err)
 	}
@@ -193,6 +199,131 @@ func TestDeployWebhookPayloadOmitsHostWhenEmpty(t *testing.T) {
 	}
 	if contains := string(captured); stringHas(contains, `"host":""`) {
 		t.Errorf("payload must omit empty host, got: %s", contains)
+	}
+}
+
+func TestSignDeployWebhookDeterministic(t *testing.T) {
+	// Stable inputs → stable signature. Matters because both retry
+	// attempts reuse the same (timestamp, signature) — if the
+	// computation drifted, the retry would silently ship a second
+	// signature valid for the same body, defeating replay guards.
+	sig1 := signDeployWebhook("s3cr3t", "1714065600", []byte(`{"x":1}`))
+	sig2 := signDeployWebhook("s3cr3t", "1714065600", []byte(`{"x":1}`))
+	if sig1 != sig2 {
+		t.Fatalf("signature not deterministic: %q vs %q", sig1, sig2)
+	}
+	if !stringHas(sig1, "sha256=") {
+		t.Errorf("signature missing sha256= prefix: %q", sig1)
+	}
+	// Different secret → different signature.
+	if signDeployWebhook("other", "1714065600", []byte(`{"x":1}`)) == sig1 {
+		t.Error("different secret must yield different signature")
+	}
+	// Different timestamp → different signature (replay guard).
+	if signDeployWebhook("s3cr3t", "1714065601", []byte(`{"x":1}`)) == sig1 {
+		t.Error("different timestamp must yield different signature")
+	}
+	// Different body → different signature.
+	if signDeployWebhook("s3cr3t", "1714065600", []byte(`{"x":2}`)) == sig1 {
+		t.Error("different body must yield different signature")
+	}
+}
+
+func TestFireDeployWebhookSignsWhenSecretSet(t *testing.T) {
+	var rawBody []byte
+	var sig, ts string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rawBody, _ = io.ReadAll(r.Body)
+		sig = r.Header.Get(WebhookSignatureHeader)
+		ts = r.Header.Get(WebhookTimestampHeader)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+	setWebhookInConfigWithSecret(t, srv.URL, "all", "super-secret")
+
+	FireDeployWebhook(DeployRun{ID: "signed", App: "mobile", Target: "testflight", OK: true})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && (sig == "" || len(rawBody) == 0) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if sig == "" || ts == "" {
+		t.Fatalf("expected signature + timestamp headers; sig=%q ts=%q", sig, ts)
+	}
+
+	// The signature must verify against the exact bytes the server saw.
+	if err := VerifyDeployWebhookSignature("super-secret", ts, sig, rawBody, 5*time.Minute); err != nil {
+		t.Errorf("verify failed: %v", err)
+	}
+	// Wrong secret must not verify.
+	if err := VerifyDeployWebhookSignature("wrong", ts, sig, rawBody, 5*time.Minute); err == nil {
+		t.Error("wrong secret must not verify")
+	}
+	// Tampered body must not verify.
+	tampered := append([]byte{}, rawBody...)
+	if len(tampered) > 5 {
+		tampered[5] ^= 0xff
+	}
+	if err := VerifyDeployWebhookSignature("super-secret", ts, sig, tampered, 5*time.Minute); err == nil {
+		t.Error("tampered body must not verify")
+	}
+}
+
+func TestFireDeployWebhookNoSignatureWhenSecretEmpty(t *testing.T) {
+	var sigSeen, tsSeen string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sigSeen = r.Header.Get(WebhookSignatureHeader)
+		tsSeen = r.Header.Get(WebhookTimestampHeader)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+	setWebhookInConfigWithSecret(t, srv.URL, "all", "")
+
+	FireDeployWebhook(DeployRun{ID: "unsigned", OK: true})
+
+	deadline := time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) && sigSeen == "" && tsSeen == "" {
+		time.Sleep(20 * time.Millisecond)
+	}
+	// Wait a little extra so we're sure the POST actually went.
+	time.Sleep(200 * time.Millisecond)
+	if sigSeen != "" {
+		t.Errorf("should not emit signature when secret is empty, got %q", sigSeen)
+	}
+	if tsSeen != "" {
+		t.Errorf("should not emit timestamp when secret is empty, got %q", tsSeen)
+	}
+}
+
+func TestVerifyDeployWebhookSignatureSkewRejects(t *testing.T) {
+	secret := "s"
+	body := []byte(`{}`)
+	// Timestamp in the distant past — skew guard should refuse.
+	staleTs := fmt.Sprintf("%d", time.Now().Add(-2*time.Hour).Unix())
+	sig := signDeployWebhook(secret, staleTs, body)
+	err := VerifyDeployWebhookSignature(secret, staleTs, sig, body, 5*time.Minute)
+	if err == nil {
+		t.Fatal("expected skew rejection")
+	}
+	if !stringHas(err.Error(), "skew") {
+		t.Errorf("wrong error: %v", err)
+	}
+	// maxSkew=0 disables the check — same stale signature verifies.
+	if err := VerifyDeployWebhookSignature(secret, staleTs, sig, body, 0); err != nil {
+		t.Errorf("maxSkew=0 should disable skew guard: %v", err)
+	}
+}
+
+func TestVerifyDeployWebhookSignatureMissingHeaders(t *testing.T) {
+	body := []byte(`{}`)
+	if err := VerifyDeployWebhookSignature("", "1", "sha256=x", body, time.Minute); err == nil {
+		t.Error("empty secret must error")
+	}
+	if err := VerifyDeployWebhookSignature("s", "", "sha256=x", body, time.Minute); err == nil {
+		t.Error("empty timestamp must error")
+	}
+	if err := VerifyDeployWebhookSignature("s", "1", "", body, time.Minute); err == nil {
+		t.Error("empty signature must error")
 	}
 }
 

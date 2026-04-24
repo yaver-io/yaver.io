@@ -16,7 +16,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -24,6 +28,68 @@ import (
 	"strings"
 	"time"
 )
+
+// WebhookSignatureHeader + WebhookTimestampHeader are the headers
+// receivers look for. Signature format is "sha256=<hex>".
+const (
+	WebhookSignatureHeader = "X-Yaver-Signature"
+	WebhookTimestampHeader = "X-Yaver-Timestamp"
+)
+
+// signDeployWebhook computes the HMAC-SHA256 over "{timestamp}.{body}"
+// with the shared secret and returns the "sha256=<hex>" string that
+// goes into X-Yaver-Signature. Exported for receivers that live in
+// the same binary (e.g. integration tests) to reuse the same rule.
+func signDeployWebhook(secret, timestamp string, body []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(timestamp))
+	mac.Write([]byte{'.'})
+	mac.Write(body)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+// VerifyDeployWebhookSignature is the companion downstream receivers
+// use. Returns nil on success, or an error describing the first
+// failed check. The comparison is constant-time; the timestamp
+// skew guard stops an attacker from replaying a valid signed body
+// indefinitely. Callers pass the headers from the inbound request
+// plus the raw body bytes they captured before parsing.
+func VerifyDeployWebhookSignature(secret, timestamp, signature string, body []byte, maxSkew time.Duration) error {
+	if secret == "" {
+		return fmt.Errorf("secret is empty")
+	}
+	if signature == "" || timestamp == "" {
+		return fmt.Errorf("missing %s or %s header", WebhookSignatureHeader, WebhookTimestampHeader)
+	}
+	// Replay guard.
+	ts, err := parseUnixTimestamp(timestamp)
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", WebhookTimestampHeader, err)
+	}
+	if maxSkew > 0 {
+		now := time.Now().Unix()
+		skew := now - ts
+		if skew < 0 {
+			skew = -skew
+		}
+		if time.Duration(skew)*time.Second > maxSkew {
+			return fmt.Errorf("%s outside allowed skew (|Δ|=%ds, max=%s)", WebhookTimestampHeader, skew, maxSkew)
+		}
+	}
+	expected := signDeployWebhook(secret, timestamp, body)
+	if !hmac.Equal([]byte(expected), []byte(signature)) {
+		return fmt.Errorf("%s mismatch", WebhookSignatureHeader)
+	}
+	return nil
+}
+
+func parseUnixTimestamp(s string) (int64, error) {
+	var n int64
+	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
 
 // DeployWebhookPayload is the JSON body delivered to
 // Config.DeployWebhookURL. Fields mirror DeployRun but are
@@ -92,7 +158,7 @@ func FireDeployWebhook(run DeployRun) {
 		TimedOut:    run.TimedOut,
 		Host:        hostnameForWebhook(),
 	}
-	go postDeployWebhookWithRetry(cfg.DeployWebhookURL, payload)
+	go postDeployWebhookWithRetry(cfg.DeployWebhookURL, cfg.DeployWebhookSecret, payload)
 }
 
 // hostnameForWebhook is split out so a test can stub it. Returns
@@ -109,11 +175,22 @@ var hostnameForWebhook = func() string {
 // postDeployWebhookWithRetry sends the payload once, and on a
 // transport-level error or non-2xx response waits 2 s and retries
 // exactly once. Failures are logged, not returned.
-func postDeployWebhookWithRetry(url string, payload DeployWebhookPayload) {
+//
+// If secret is non-empty, adds X-Yaver-Timestamp + X-Yaver-Signature
+// headers. Both attempts reuse the same timestamp so a receiver that
+// blocks the first retry on stale-timestamp grounds isn't going to
+// accept the second by accident — they're the same request, signed
+// once.
+func postDeployWebhookWithRetry(url string, secret string, payload DeployWebhookPayload) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("[deploy-webhook] marshal failed: %v", err)
 		return
+	}
+	var timestamp, signature string
+	if secret != "" {
+		timestamp = fmt.Sprintf("%d", time.Now().Unix())
+		signature = signDeployWebhook(secret, timestamp, body)
 	}
 	attempt := func() (int, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -124,6 +201,10 @@ func postDeployWebhookWithRetry(url string, payload DeployWebhookPayload) {
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", "yaver-agent/deploy-webhook")
+		if signature != "" {
+			req.Header.Set(WebhookTimestampHeader, timestamp)
+			req.Header.Set(WebhookSignatureHeader, signature)
+		}
 		resp, err := deployWebhookClient.Do(req)
 		if err != nil {
 			return 0, err

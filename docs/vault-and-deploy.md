@@ -629,11 +629,13 @@ Config:
 |---|---|---|
 | `deploy_webhook_url` | HTTPS URL | empty = disabled |
 | `deploy_webhook_on`  | `all` (default), `success`, `failure` | filter |
+| `deploy_webhook_secret` | arbitrary string | enables HMAC signing; empty = unsigned |
 
 ```bash
 # Set via direct edit of ~/.yaver/config.json, or:
 yaver config set deploy-webhook-url "https://hooks.slack.com/..."
 yaver config set deploy-webhook-on failure   # only fire for fails
+yaver config set deploy-webhook-secret "$(openssl rand -hex 32)"
 ```
 
 Rationale for host-local (not Convex) storage: the URL is a
@@ -642,6 +644,66 @@ host-machine behavior, not a user-identity setting. It lives in
 (`webhook_secret`, `analytics_webhook_url`). The Privacy Contract
 for Convex is unchanged.
 
+#### HMAC signing (X-Yaver-Signature)
+
+When `deploy_webhook_secret` is non-empty, every POST carries two
+extra headers:
+
+| Header | Value |
+|---|---|
+| `X-Yaver-Timestamp` | unix seconds at send time |
+| `X-Yaver-Signature` | `sha256=<hex>` where hex = HMAC-SHA256(secret, `{timestamp}.{body}`) |
+
+The timestamp is included in the signed data so an attacker can't
+replay a captured signed body indefinitely. A receiver should:
+
+1. Reject if headers are missing.
+2. Reject if `|now - timestamp|` exceeds an acceptable skew (Slack
+   uses 5 minutes; your call).
+3. Recompute `HMAC-SHA256(secret, "<timestamp>.<raw body bytes>")`
+   and constant-time compare.
+
+Both retry attempts reuse the same (timestamp, signature) so a
+receiver that accepts once and rejects the retry on skew grounds
+is doing the right thing — the request is already delivered.
+
+Verification reference (Go):
+
+```go
+// import "desktop/agent" for the constants + helper
+err := VerifyDeployWebhookSignature(
+    secret,
+    r.Header.Get(WebhookTimestampHeader),
+    r.Header.Get(WebhookSignatureHeader),
+    rawBodyBytes,
+    5 * time.Minute,
+)
+if err != nil {
+    http.Error(w, "signature: "+err.Error(), http.StatusUnauthorized)
+    return
+}
+```
+
+Other languages — same rule:
+
+```python
+import hmac, hashlib, time
+mac = hmac.new(secret.encode(), f"{ts}.".encode() + body, hashlib.sha256)
+expected = "sha256=" + mac.hexdigest()
+if not hmac.compare_digest(expected, header_sig):
+    reject()
+```
+
+```bash
+# Verify from a shell hook:
+ts="$1"
+sig="$2"
+body_file="$3"
+expected="sha256=$( { printf '%s.' "$ts"; cat "$body_file"; } \
+  | openssl dgst -sha256 -hmac "$SECRET" -hex | awk '{print $NF}' )"
+[ "$expected" = "$sig" ] || { echo "bad sig"; exit 1; }
+```
+
 ### Remaining follow-ups (smaller)
 
 - **Server-side composite endpoint**: today's composite is a
@@ -649,9 +711,6 @@ for Convex is unchanged.
   `POST /deploy/ship` accepting `targets: [...]` and multiplexing
   events into one SSE stream) would be cheaper for mobile clients
   that don't want N parallel connections open.
-- **Webhook signing**: the POST body is currently unsigned. Adding
-  an `X-Yaver-Signature` HMAC header keyed on a shared secret
-  would let downstream filters verify authenticity before acting.
 - **Per-target webhook filters**: today the filter is global
   (`all/success/failure`). A config like
   `{"testflight": "failure", "cloudflare": "all"}` would let the
