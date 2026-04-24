@@ -2451,6 +2451,16 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name":        "project_context",
+			"description": "Fetch the repo's agent-guidance files (CLAUDE.md, AGENTS.md, AI_ARCH.md, REMOTE_WORKER.md) plus the project's init.md. Every result is prefixed with a stale-docs warning. Use this at the start of a task for context, but remember: the docs may be out of date — always grep the code to verify claims before acting on them.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"workDir": map[string]interface{}{"type": "string", "description": "Project root (defaults to the agent's active work-dir)."},
+				},
+			},
+		},
+		{
 			"name":        "diagnose",
 			"description": "Run the yaver self-check (binary paths, running procs, ports, auth state, workspace manifest, systemd unit, runtime deps). Returns the event list and final summary. Equivalent to `yaver diagnose`.",
 			"inputSchema": map[string]interface{}{
