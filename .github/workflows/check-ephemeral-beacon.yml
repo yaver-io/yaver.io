@@ -63,4 +63,8 @@ jobs:
             || journalctl -u yaver.service --no-pager -n 40 2>/dev/null \
             || tail -40 /var/log/yaver.log 2>/dev/null \
             || echo "no agent journal"
+
+          echo
+          echo "--- watchdog last 4 runs ---"
+          journalctl -u yaver-watchdog.service --no-pager -n 16 2>/dev/null | head -40 || echo "no watchdog journal"
           REMOTE
