@@ -719,9 +719,7 @@ export class YaverFeedback {
 
           <p id="yaver-fb-devices-error" class="yvr-fb-devices-error"></p>
         </div>
-        <button id="yaver-fb-cancel" class="yvr-fb-cancel" type="button">Cancel</button>
       `;
-      overlay.querySelector<HTMLButtonElement>('#yaver-fb-cancel')!.onclick = close;
       overlay.querySelector<HTMLButtonElement>('#yaver-fb-refresh')!.onclick = () => {
         void loadDevices();
       };
@@ -852,20 +850,27 @@ export class YaverFeedback {
           <span class="yvr-fb-link">Change</span>
         </button>
 
-        <div class="yvr-fb-actions">
-          <button id="yaver-fb-record" class="yvr-fb-action yvr-fb-action-record" type="button">Start Recording</button>
-          <button id="yaver-fb-screenshot" class="yvr-fb-action yvr-fb-action-screenshot" type="button">Screenshot Note</button>
-          <button id="yaver-fb-reload" class="yvr-fb-action yvr-fb-action-reload" type="button">Hot Reload</button>
-          <button id="yaver-fb-send" class="yvr-fb-action yvr-fb-action-send" type="button" style="display:none;">Stop & Send Report</button>
+        <div class="yvr-fb-toolbar">
+          <button id="yaver-fb-record" class="yvr-fb-tool yvr-fb-tool-record" type="button" title="Start recording">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="6" fill="currentColor"/></svg>
+            <span>Record</span>
+          </button>
+          <button id="yaver-fb-screenshot" class="yvr-fb-tool yvr-fb-tool-screenshot" type="button" title="Screenshot + note">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+            <span>Screenshot</span>
+          </button>
+          <button id="yaver-fb-reload" class="yvr-fb-tool yvr-fb-tool-reload" type="button" title="Hot reload">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4v5h5"/><path d="M20 20v-5h-5"/><path d="M5.5 9A7.5 7.5 0 0 1 19 8.5"/><path d="M18.5 15A7.5 7.5 0 0 1 5 15.5"/></svg>
+            <span>Reload</span>
+          </button>
         </div>
+        <button id="yaver-fb-send" class="yvr-fb-action yvr-fb-action-send" type="button" style="display:none;">Stop &amp; Send Report</button>
 
         <div class="yvr-fb-vibe-block">
           <label class="yvr-fb-vibe-label" for="yaver-fb-vibe-prompt">Vibing</label>
           <textarea id="yaver-fb-vibe-prompt" class="yvr-fb-vibe-input" placeholder="Describe what Yaver should work on next..."></textarea>
           <button id="yaver-fb-vibe" class="yvr-fb-action yvr-fb-action-vibe" type="button">Start Vibing Task</button>
         </div>
-
-        <button id="yaver-fb-cancel" class="yvr-fb-cancel" type="button">Cancel</button>
       `;
 
       const recordBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-record')!;
@@ -874,7 +879,6 @@ export class YaverFeedback {
       const reloadBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-reload')!;
       const vibeBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-vibe')!;
       const vibePrompt = overlay.querySelector<HTMLTextAreaElement>('#yaver-fb-vibe-prompt')!;
-      const cancelBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-cancel')!;
       const machinePill = overlay.querySelector<HTMLButtonElement>('#yaver-fb-machine-pill')!;
 
       const setActionsBusy = (value: boolean) => {
@@ -979,8 +983,6 @@ export class YaverFeedback {
           setActionsBusy(false);
         }
       };
-
-      cancelBtn.onclick = close;
 
       void refreshMachinePill();
     };
@@ -1440,8 +1442,34 @@ export class YaverFeedback {
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
 
-      /* Action buttons + vibing */
-      .yvr-fb-actions, .yvr-fb-vibe-block { display: grid; gap: 8px; }
+      /* Compact 3-tool action row (Record / Screenshot / Reload) */
+      .yvr-fb-toolbar {
+        display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+      }
+      .yvr-fb-tool {
+        display: inline-flex; flex-direction: column; align-items: center;
+        justify-content: center; gap: 6px;
+        padding: 10px 6px; border-radius: 10px;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        color: #e2e8f0;
+        cursor: pointer; font: inherit; font-size: 12px; font-weight: 600;
+        transition: background 0.12s, border-color 0.12s, color 0.12s;
+      }
+      .yvr-fb-tool:hover:not(:disabled) {
+        background: rgba(255,255,255,0.08); border-color: rgba(148, 163, 184, 0.35);
+      }
+      .yvr-fb-tool:disabled { opacity: 0.55; cursor: not-allowed; }
+      .yvr-fb-tool > svg { flex-shrink: 0; }
+      .yvr-fb-tool-record { color: #f87171; }
+      .yvr-fb-tool-record:hover:not(:disabled) { color: #fca5a5; border-color: rgba(248,113,113,0.5); }
+      .yvr-fb-tool-screenshot { color: #60a5fa; }
+      .yvr-fb-tool-screenshot:hover:not(:disabled) { color: #93c5fd; border-color: rgba(96,165,250,0.5); }
+      .yvr-fb-tool-reload { color: #c4b5fd; }
+      .yvr-fb-tool-reload:hover:not(:disabled) { color: #ddd6fe; border-color: rgba(196,181,253,0.5); }
+
+      /* Vibing textarea + "Start Vibing Task" + the send-report full-width action */
+      .yvr-fb-vibe-block { display: grid; gap: 8px; }
       .yvr-fb-vibe-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #94a3b8; }
       .yvr-fb-vibe-input {
         min-height: 86px; resize: vertical;
@@ -1449,14 +1477,11 @@ export class YaverFeedback {
         background: rgba(15, 23, 42, 0.78); color: inherit;
         padding: 10px 12px; font: inherit; box-sizing: border-box;
       }
-      .yvr-fb-action, .yvr-fb-cancel {
+      .yvr-fb-action {
         border: none; border-radius: 10px; padding: 11px 12px; color: white;
         cursor: pointer; font: inherit; font-size: 13px; font-weight: 600;
       }
       .yvr-fb-action:disabled { opacity: 0.6; cursor: not-allowed; }
-      .yvr-fb-action-record { background: #dc2626; }
-      .yvr-fb-action-screenshot { background: #2563eb; }
-      .yvr-fb-action-reload { background: #7c3aed; }
       .yvr-fb-action-send { background: #16a34a; }
       .yvr-fb-action-vibe { background: #0891b2; }
 
@@ -1469,7 +1494,6 @@ export class YaverFeedback {
       }
       .yvr-fb-status, .yvr-fb-last-report { margin: 10px 0 0; font-size: 12px; line-height: 1.45; color: #cbd5e1; }
       .yvr-fb-last-report { color: #94a3b8; }
-      .yvr-fb-cancel { background: #334155; color: #e2e8f0; }
     `;
     document.head.appendChild(style);
     YaverFeedback.reportStyleInjected = true;

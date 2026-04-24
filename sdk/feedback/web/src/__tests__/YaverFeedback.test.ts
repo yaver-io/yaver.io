@@ -263,7 +263,9 @@ describe('YaverFeedback', () => {
 
       expect(document.getElementById('yaver-fb-record')).not.toBeNull();
       expect(document.getElementById('yaver-fb-screenshot')).not.toBeNull();
-      expect(document.getElementById('yaver-fb-cancel')).not.toBeNull();
+      // Cancel button was removed in 0.3.2 — the X in the header now
+      // closes the overlay. The close button is always present.
+      expect(document.getElementById('yaver-fb-close')).not.toBeNull();
     });
   });
 
