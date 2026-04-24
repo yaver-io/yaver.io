@@ -60,14 +60,52 @@ jobs:
           rm -f /tmp/yaver.deb
           after=$(yaver --version 2>/dev/null || echo unknown)
           echo "After:  $after"
-          # systemd unit name is just `yaver` per install_cmd.go setup.
-          # Restart regardless so the refreshed binary takes effect even
-          # when dpkg didn't trigger the post-install hook.
-          systemctl daemon-reload || true
-          if systemctl list-units --all --no-legend 'yaver.service' | grep -q yaver.service; then
-            systemctl restart yaver
-            systemctl --no-pager --lines=5 status yaver || true
-          else
-            echo "No yaver.service unit found — skipping restart; dpkg hook should have handled it"
+
+          # Normalise /usr/bin/yaver to point at the dpkg-installed
+          # binary. On this box the .deb lives at /usr/local/bin/yaver
+          # but history left a stale 1.99.25 at /usr/bin/yaver that
+          # systemd uses. Idempotent — if they already agree, no-op.
+          if [ -x /usr/local/bin/yaver ]; then
+            NEW_VER=$(/usr/local/bin/yaver --version 2>/dev/null | head -1)
+            OLD_VER=$(/usr/bin/yaver --version 2>/dev/null | head -1 || echo missing)
+            if [ "$NEW_VER" != "$OLD_VER" ]; then
+              echo "Symlinking /usr/bin/yaver -> /usr/local/bin/yaver ($NEW_VER)"
+              rm -f /usr/bin/yaver
+              ln -s /usr/local/bin/yaver /usr/bin/yaver
+            fi
           fi
+
+          # Kill any lingering yaver serve to force systemd to pick up
+          # the fresh binary (not just the on-disk file — the running
+          # process may still be executing an old mmaped image).
+          pkill -f "yaver serve" || true
+          sleep 1
+          pkill -9 -f "yaver serve" || true
+          fuser -k 18080/tcp 2>/dev/null || true
+          sleep 2
+
+          # systemd unit may be system-scope or yaver-user-scope. Drive
+          # both paths.
+          systemctl daemon-reload || true
+          if systemctl list-units --all --no-legend 'yaver.service' 2>/dev/null | grep -q yaver.service; then
+            systemctl restart yaver || true
+            systemctl --no-pager --lines=5 status yaver || true
+          fi
+          if id yaver >/dev/null 2>&1; then
+            YAVER_UID=$(id -u yaver)
+            loginctl enable-linger yaver 2>/dev/null || true
+            runuser -u yaver -- env XDG_RUNTIME_DIR="/run/user/$YAVER_UID" \
+              systemctl --user daemon-reload 2>/dev/null || true
+            runuser -u yaver -- env XDG_RUNTIME_DIR="/run/user/$YAVER_UID" \
+              systemctl --user restart yaver 2>/dev/null || true
+          fi
+
+          sleep 3
+          echo "Post-restart processes:"
+          pgrep -af "yaver serve" || echo "(none)"
+          for pid in $(pgrep -f "yaver serve"); do
+            exe=$(readlink "/proc/$pid/exe" 2>/dev/null || echo unknown)
+            ver=$("$exe" --version 2>/dev/null | head -1 || echo unknown)
+            echo "  pid=$pid exe=$exe version=$ver"
+          done
           REMOTE
