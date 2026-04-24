@@ -101,6 +101,11 @@ func RunDiagnose(ctx context.Context, opts DiagnoseOptions, emit DiagEmit) DiagR
 		{Name: "systemd-unit", Run: checkSystemdUnit},
 		{Name: "runtime-deps", Run: checkRuntimeDeps},
 	}
+	// v2 checks (cloudflared / tailscale / relay / vpn / convex / runners)
+	// live in diagnose_checks_v2.go and register themselves into
+	// extraDiagChecks at init time. Appended here so the v1 local-box
+	// smoke is unchanged and --skip can drop any of them.
+	all = append(all, extraDiagChecks...)
 
 	wanted := map[string]bool{}
 	for _, c := range all {
