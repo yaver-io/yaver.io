@@ -6078,13 +6078,35 @@ func resolveRunner(convexSiteURL, token string) RunnerConfig {
 		return defaultRunner
 	}
 
-	var settings struct {
+	// Convex returns { settings: { runnerId, customRunnerCommand, ... } }.
+	// Older code tried to parse the response as a flat object, so
+	// userSettings.runnerId was always ""; every agent fell back to the
+	// hard-coded "claude" default even after the user explicitly picked
+	// codex through the web UI.
+	var settingsEnv struct {
+		Settings struct {
+			RunnerID            string `json:"runnerId"`
+			CustomRunnerCommand string `json:"customRunnerCommand"`
+		} `json:"settings"`
+		// Tolerate future/legacy flat shapes too — populated only if the
+		// nested Settings.RunnerID is empty.
 		RunnerID            string `json:"runnerId"`
 		CustomRunnerCommand string `json:"customRunnerCommand"`
 	}
-	if err := json.Unmarshal(body, &settings); err != nil {
+	if err := json.Unmarshal(body, &settingsEnv); err != nil {
 		log.Printf("Runner: could not parse settings: %v — using default", err)
 		return defaultRunner
+	}
+	settings := struct {
+		RunnerID            string
+		CustomRunnerCommand string
+	}{
+		RunnerID:            settingsEnv.Settings.RunnerID,
+		CustomRunnerCommand: settingsEnv.Settings.CustomRunnerCommand,
+	}
+	if settings.RunnerID == "" && settingsEnv.RunnerID != "" {
+		settings.RunnerID = settingsEnv.RunnerID
+		settings.CustomRunnerCommand = settingsEnv.CustomRunnerCommand
 	}
 
 	// No runner configured — use default but mark as auto-detected
