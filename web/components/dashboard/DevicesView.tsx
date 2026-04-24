@@ -561,10 +561,6 @@ export default function DevicesView({
                         <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
                           Shared Device
                         </span>
-                      ) : device.sharedWithGuests ? (
-                        <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
-                          Shared
-                        </span>
                       ) : null}
                       {device.deviceClass ? (
                         <span className="rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
