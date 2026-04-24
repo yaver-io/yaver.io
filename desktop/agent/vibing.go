@@ -13,6 +13,18 @@ import (
 	"time"
 )
 
+const vibingRuntimeDeployPrefix = "__YAVER_RUNTIME_DEPLOY__:"
+
+type vibingRuntimeDeployAction struct {
+	Slug    string   `json:"slug"`
+	Targets []string `json:"targets,omitempty"`
+	DryRun  bool     `json:"dryRun,omitempty"`
+	Run     bool     `json:"run,omitempty"`
+	Prompt  string   `json:"prompt,omitempty"`
+	Project string   `json:"project,omitempty"`
+	Path    string   `json:"path,omitempty"`
+}
+
 // VibingSuggestion is a structured suggestion from the AI for the Vibing widget.
 type VibingSuggestion struct {
 	ID        string `json:"id"`
@@ -51,6 +63,72 @@ func generateQuickActions(projectPath, projectName, framework string) []VibingSu
 			Prompt: fmt.Sprintf("Add unit tests for %s. Create a test file for each major module. Use the project's testing framework.", projectName), Priority: 3},
 		{ID: "deps", Icon: "\U0001F4E6", Label: "Update Deps", Desc: "Check outdated packages", Category: "refactor",
 			Prompt: fmt.Sprintf("Check %s for outdated dependencies. Update safe ones (patch/minor). Don't update major versions without checking.", projectName), Priority: 3},
+	}
+
+	if slug := vibingPhoneProjectSlug(projectPath); slug != "" {
+		deployActions := []VibingSuggestion{
+			{
+				ID: "phone-convex-cloud", Icon: "\U0001F300", Label: "Sandbox → Convex", Desc: "Promote this phone sandbox to Convex Cloud", Category: "deploy",
+				Prompt: vibingRuntimeDeployPrompt(vibingRuntimeDeployAction{
+					Slug:    slug,
+					Targets: []string{"convex-cloud"},
+					Run:     true,
+					Project: projectName,
+					Path:    projectPath,
+				}),
+				Priority: 1,
+			},
+			{
+				ID: "phone-workers-cloud", Icon: "\U0001F7E7", Label: "Sandbox → Workers", Desc: "Promote this phone sandbox to Cloudflare Workers", Category: "deploy",
+				Prompt: vibingRuntimeDeployPrompt(vibingRuntimeDeployAction{
+					Slug:    slug,
+					Targets: []string{"cloudflare-workers"},
+					Run:     true,
+					Project: projectName,
+					Path:    projectPath,
+				}),
+				Priority: 1,
+			},
+			{
+				ID: "phone-cloud-dual", Icon: "\u2601\ufe0f", Label: "Machine + Cloud", Desc: "Push this sandbox to Yaver Cloud and your machine-ready runtime path", Category: "deploy",
+				Prompt: vibingRuntimeDeployPrompt(vibingRuntimeDeployAction{
+					Slug:    slug,
+					Targets: []string{"yaver-cloud"},
+					Run:     true,
+					Project: projectName,
+					Path:    projectPath,
+					Prompt:  "Push this phone sandbox to Yaver Cloud now. If I also have a selected dev machine flow available, use that too.",
+				}),
+				Priority: 1,
+			},
+		}
+		if selfHostedRuntimeBaseURL() != "" {
+			deployActions = append([]VibingSuggestion{
+				{
+					ID: "phone-self-hosted", Icon: "\U0001F5A5", Label: "Sandbox → Self-Hosted", Desc: "Push this phone sandbox to your configured self-hosted Yaver runtime", Category: "deploy",
+					Prompt: vibingRuntimeDeployPrompt(vibingRuntimeDeployAction{
+						Slug:    slug,
+						Targets: []string{"self-hosted"},
+						Run:     true,
+						Project: projectName,
+						Path:    projectPath,
+					}),
+					Priority: 1,
+				},
+				{
+					ID: "phone-self-hosted-cloud", Icon: "\u2601\ufe0f", Label: "Self-Hosted + Cloud", Desc: "Deploy this sandbox to self-hosted and managed cloud together", Category: "deploy",
+					Prompt: vibingRuntimeDeployPrompt(vibingRuntimeDeployAction{
+						Slug:    slug,
+						Targets: []string{"self-hosted", "yaver-cloud"},
+						Run:     true,
+						Project: projectName,
+						Path:    projectPath,
+					}),
+					Priority: 1,
+				},
+			}, deployActions...)
+		}
+		actions = append(deployActions, actions...)
 	}
 
 	// Add deploy actions based on framework
@@ -141,6 +219,7 @@ func getRecentGitActivity(projectPath string) (commits []string, activeFiles []s
 // Reads README, package.json, git log, TODOs to propose smart ideas.
 func generateAISuggestions(projectPath, projectName string) []VibingSuggestion {
 	var suggestions []VibingSuggestion
+	phoneSlug := vibingPhoneProjectSlug(projectPath)
 
 	// Read README for context
 	readmeContent := ""
@@ -216,6 +295,71 @@ func generateAISuggestions(projectPath, projectName string) []VibingSuggestion {
 			Category: "feature", Priority: 2,
 			Prompt: fmt.Sprintf("The hottest area in %s is %s (%d files changed recently: %s). Look at what's being built there and make it better — add error handling, improve the UX, or add a missing feature.", projectName, area, len(activeFiles), strings.Join(activeFiles[:min(5, len(activeFiles))], ", ")),
 		})
+	}
+
+	if phoneSlug != "" {
+		suggestions = append(suggestions,
+			VibingSuggestion{
+				ID:   "phone-runtime-convex-cloud",
+				Icon: "\U0001F300", Label: "Ship Sandbox Backend",
+				Desc:     "Promote the phone sandbox to Convex Cloud now",
+				Category: "deploy", Priority: 1,
+				Prompt: vibingRuntimeDeployPrompt(vibingRuntimeDeployAction{
+					Slug:    phoneSlug,
+					Targets: []string{"convex-cloud"},
+					Run:     true,
+					Project: projectName,
+					Path:    projectPath,
+				}),
+				Reasoning: "This project is still a phone-first sandbox, so the highest-signal deploy action is moving the backend into a real managed runtime. Convex is the shortest path to keep the schema portable while making the app feel production-capable.",
+			},
+			VibingSuggestion{
+				ID:   "phone-runtime-cloud",
+				Icon: "\u2601\ufe0f", Label: "Deploy To Cloud",
+				Desc:     "Push the same sandbox to Yaver Cloud immediately",
+				Category: "deploy", Priority: 1,
+				Prompt: vibingRuntimeDeployPrompt(vibingRuntimeDeployAction{
+					Slug:    phoneSlug,
+					Targets: []string{"yaver-cloud"},
+					Run:     true,
+					Project: projectName,
+					Path:    projectPath,
+				}),
+				Reasoning: "Yaver Cloud is the fastest always-on path for a solo developer who still wants the sandbox workflow. It preserves the current app loop while making the backend reachable outside the phone.",
+			},
+		)
+		if selfHostedRuntimeBaseURL() != "" {
+			suggestions = append(suggestions,
+				VibingSuggestion{
+					ID:   "phone-runtime-self-hosted",
+					Icon: "\U0001F5A5", Label: "Deploy Self-Hosted",
+					Desc:     "Push this sandbox to the configured self-hosted Yaver runtime",
+					Category: "deploy", Priority: 1,
+					Prompt: vibingRuntimeDeployPrompt(vibingRuntimeDeployAction{
+						Slug:    phoneSlug,
+						Targets: []string{"self-hosted"},
+						Run:     true,
+						Project: projectName,
+						Path:    projectPath,
+					}),
+					Reasoning: "A self-hosted Yaver runtime is the lowest-opex path when you already own the hardware or VPS. It keeps the sandbox portable while moving the backend onto infrastructure you control.",
+				},
+				VibingSuggestion{
+					ID:   "phone-runtime-self-hosted-cloud",
+					Icon: "\u2601\ufe0f", Label: "Deploy Both",
+					Desc:     "Ship the sandbox to self-hosted and managed cloud together",
+					Category: "deploy", Priority: 1,
+					Prompt: vibingRuntimeDeployPrompt(vibingRuntimeDeployAction{
+						Slug:    phoneSlug,
+						Targets: []string{"self-hosted", "yaver-cloud"},
+						Run:     true,
+						Project: projectName,
+						Path:    projectPath,
+					}),
+					Reasoning: "Dual deploy gives the solo developer an owned runtime plus a peace-of-mind managed fallback. That is the exact product posture Yaver is aiming for: self-host most of the time, keep cloud for confidence and reachability.",
+				},
+			)
+		}
 	}
 
 	return suggestions
@@ -602,6 +746,83 @@ func parseVibingSuggestions(output string) []VibingSuggestion {
 	}
 
 	return suggestions
+}
+
+func vibingPhoneProjectSlug(projectPath string) string {
+	if strings.TrimSpace(projectPath) == "" {
+		return ""
+	}
+	if manifest, err := LoadManifest(projectPath); err == nil && manifest != nil {
+		if slug := strings.TrimSpace(manifest.Env["YAVER_PHONE_PROJECT"]); slug != "" {
+			return slug
+		}
+	}
+	if cfg, err := LoadProjectConfig(projectPath); err == nil && cfg != nil {
+		if slug := strings.TrimSpace(cfg.Env["YAVER_PHONE_PROJECT"]); slug != "" {
+			return slug
+		}
+	}
+	return ""
+}
+
+func vibingRuntimeDeployPrompt(action vibingRuntimeDeployAction) string {
+	body, _ := json.Marshal(action)
+	return vibingRuntimeDeployPrefix + string(body)
+}
+
+func parseVibingRuntimeDeployPrompt(prompt string) (*vibingRuntimeDeployAction, bool) {
+	if !strings.HasPrefix(strings.TrimSpace(prompt), vibingRuntimeDeployPrefix) {
+		return nil, false
+	}
+	raw := strings.TrimPrefix(strings.TrimSpace(prompt), vibingRuntimeDeployPrefix)
+	var action vibingRuntimeDeployAction
+	if err := json.Unmarshal([]byte(raw), &action); err != nil {
+		return nil, false
+	}
+	action.Slug = strings.TrimSpace(action.Slug)
+	if action.Slug == "" {
+		return nil, false
+	}
+	if len(action.Targets) == 0 {
+		action.Targets = []string{"yaver-cloud"}
+	}
+	return &action, true
+}
+
+func executeVibingRuntimeDeploy(s *HTTPServer, action *vibingRuntimeDeployAction) (map[string]interface{}, error) {
+	targets := make([]string, 0, len(action.Targets))
+	seen := map[string]bool{}
+	for _, target := range action.Targets {
+		target = strings.ToLower(strings.TrimSpace(target))
+		if target == "" || seen[target] {
+			continue
+		}
+		seen[target] = true
+		targets = append(targets, target)
+	}
+	if len(targets) == 0 {
+		targets = []string{"yaver-cloud"}
+	}
+
+	args := map[string]interface{}{
+		"slug":    action.Slug,
+		"targets": targets,
+		"run":     action.Run,
+		"dry_run": action.DryRun,
+	}
+	handled, payload := dispatchPhoneMCP(s, "phone_project_runtime_deploy", mustJSONRawMessage(args))
+	if !handled {
+		return nil, fmt.Errorf("runtime deploy dispatch failed")
+	}
+	if out, ok := payload.(map[string]interface{}); ok {
+		return out, nil
+	}
+	return map[string]interface{}{"result": payload}, nil
+}
+
+func mustJSONRawMessage(v interface{}) json.RawMessage {
+	body, _ := json.Marshal(v)
+	return body
 }
 
 // handleVibing returns vibing state for a project — suggestions, quick actions, history.
@@ -1115,6 +1336,20 @@ func (s *HTTPServer) handleVibingExecute(w http.ResponseWriter, r *http.Request)
 	target := DevServerTarget{}
 	if s.devServerMgr != nil {
 		target = s.devServerMgr.PreferredTarget()
+	}
+	if action, ok := parseVibingRuntimeDeployPrompt(req.Prompt); ok {
+		result, err := executeVibingRuntimeDeploy(s, action)
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"ok":            true,
+			"taskId":        "",
+			"runtimeDeploy": result,
+			"message":       firstNonEmpty(action.Prompt, "Runtime deploy executed."),
+		})
+		return
 	}
 	prompt := req.Prompt
 	if ctx := vibingExecutionContext(req.ProjectPath, info.Framework, target, isDirectConnection(r)); ctx != "" {

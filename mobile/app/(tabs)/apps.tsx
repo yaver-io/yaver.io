@@ -81,6 +81,16 @@ function secondClassGuidance(framework?: string, isDirectConnection?: boolean): 
   }
 }
 
+function describeRuntimeDeployResult(result: any): string {
+  const pushes = Array.isArray(result?.runtimeDeploy?.pushes) ? result.runtimeDeploy.pushes.length : 0;
+  const runtime = result?.runtimeDeploy?.runtime;
+  const switches = Array.isArray(runtime?.phoneSwitches) ? runtime.phoneSwitches.length : 0;
+  if (pushes > 0 || switches > 0) {
+    return `Runtime deploy finished: ${switches} promotion${switches === 1 ? "" : "s"}, ${pushes} push${pushes === 1 ? "" : "es"}.`;
+  }
+  return result?.message || "Runtime deploy finished.";
+}
+
 function secondClassFlushLabel(framework?: string): string {
   return framework === "flutter" ? "Flush to App (LAN)" : "Flush Build to Phone (LAN)";
 }
@@ -1819,8 +1829,13 @@ export default function AppsScreen() {
                     onPress={async () => {
                       try {
                         const result = await quicClient.executeVibingSuggestion(sg.prompt, vibingState!.path);
-                        setVibingTaskId(result.taskId);
-                        setVibingTaskStatus(`Running: ${sg.label}`);
+                        if (result.taskId) {
+                          setVibingTaskId(result.taskId);
+                          setVibingTaskStatus(`Running: ${sg.label}`);
+                        } else if (result.runtimeDeploy) {
+                          setVibingTaskId(null);
+                          setVibingTaskStatus(describeRuntimeDeployResult(result));
+                        }
                       } catch {}
                     }}
                     onLongPress={() => {
@@ -1871,8 +1886,13 @@ export default function AppsScreen() {
                   onPress={async () => {
                     try {
                       const result = await quicClient.executeVibingSuggestion(qa.prompt, vibingState!.path);
-                      setVibingTaskId(result.taskId);
-                      setVibingTaskStatus(`Running: ${qa.label}`);
+                      if (result.taskId) {
+                        setVibingTaskId(result.taskId);
+                        setVibingTaskStatus(`Running: ${qa.label}`);
+                      } else if (result.runtimeDeploy) {
+                        setVibingTaskId(null);
+                        setVibingTaskStatus(describeRuntimeDeployResult(result));
+                      }
                     } catch {}
                   }}
                 >
@@ -1900,8 +1920,13 @@ export default function AppsScreen() {
                   if (!customTask.trim() || !vibingState) return;
                   try {
                     const result = await quicClient.executeVibingSuggestion(customTask, vibingState.path);
-                    setVibingTaskId(result.taskId);
-                    setVibingTaskStatus(`Running: ${customTask.slice(0, 40)}`);
+                    if (result.taskId) {
+                      setVibingTaskId(result.taskId);
+                      setVibingTaskStatus(`Running: ${customTask.slice(0, 40)}`);
+                    } else if (result.runtimeDeploy) {
+                      setVibingTaskId(null);
+                      setVibingTaskStatus(describeRuntimeDeployResult(result));
+                    }
                     setCustomTask("");
                   } catch {}
                 }}

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -149,8 +150,8 @@ func phoneProjectMCPTools() []map[string]interface{} {
 				"properties": map[string]interface{}{
 					"slug":              map[string]interface{}{"type": "string"},
 					"providers":         map[string]interface{}{"type": "array", "description": "Optional provider account writes. Each item: {provider,label,fields}"},
-					"targets":           map[string]interface{}{"type": "array", "description": "Any of: convex-cloud, cloudflare-workers, yaver-cloud, custom"},
-					"target_base_url":   map[string]interface{}{"type": "string", "description": "Required when targets includes custom"},
+					"targets":           map[string]interface{}{"type": "array", "description": "Any of: convex-cloud, cloudflare-workers, yaver-cloud, self-hosted, custom"},
+					"target_base_url":   map[string]interface{}{"type": "string", "description": "Required when targets includes custom unless YAVER_SELF_HOSTED_BASE_URL is configured"},
 					"target_auth_token": map[string]interface{}{"type": "string", "description": "Optional bearer token for yaver-cloud/custom push target"},
 					"include_data":      map[string]interface{}{"type": "boolean"},
 					"containerize":      map[string]interface{}{"type": "boolean"},
@@ -466,7 +467,7 @@ func dispatchPhoneMCP(s *HTTPServer, name string, arguments json.RawMessage) (bo
 					Run:    args.Run,
 					DryRun: args.DryRun,
 				})
-			case "yaver-cloud", "custom":
+			case "yaver-cloud", "self-hosted", "custom":
 				// handled below as explicit push targets
 			default:
 				return true, mcpToolError("unsupported target: " + target)
@@ -484,7 +485,7 @@ func dispatchPhoneMCP(s *HTTPServer, name string, arguments json.RawMessage) (bo
 
 		needsPush := false
 		for _, target := range targets {
-			if target == "yaver-cloud" || target == "custom" {
+			if target == "yaver-cloud" || target == "self-hosted" || target == "custom" {
 				needsPush = true
 				break
 			}
@@ -509,8 +510,13 @@ func dispatchPhoneMCP(s *HTTPServer, name string, arguments json.RawMessage) (bo
 				switch target {
 				case "yaver-cloud":
 					base = strings.TrimRight(cloudPreviewBaseURL(), "/")
+				case "self-hosted":
+					base = strings.TrimRight(selfHostedRuntimeBaseURL(), "/")
+					if base == "" {
+						return true, mcpToolError("self-hosted target requires YAVER_SELF_HOSTED_BASE_URL or target_base_url")
+					}
 				case "custom":
-					base = strings.TrimRight(args.TargetBaseURL, "/")
+					base = strings.TrimRight(firstNonEmpty(args.TargetBaseURL, selfHostedRuntimeBaseURL()), "/")
 					if base == "" {
 						return true, mcpToolError("target_base_url required for custom target")
 					}
@@ -533,4 +539,13 @@ func dispatchPhoneMCP(s *HTTPServer, name string, arguments json.RawMessage) (bo
 		return true, mcpToolJSON(out)
 	}
 	return false, nil
+}
+
+func selfHostedRuntimeBaseURL() string {
+	for _, key := range []string{"YAVER_SELF_HOSTED_BASE_URL", "YAVER_SELF_HOSTED_RUNTIME_BASE_URL"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return strings.TrimRight(value, "/")
+		}
+	}
+	return ""
 }

@@ -107,8 +107,10 @@ export default function PhoneProjectDetailScreen() {
     [devices, activeDevice?.id],
   );
   const [selectedDevMachineId, setSelectedDevMachineId] = useState<string | null>(null);
-  const [deploying, setDeploying] = useState<"dev-hw" | "yaver-cloud" | "both" | null>(null);
-  const [lastDeploy, setLastDeploy] = useState<{ kind: "dev-hw" | "yaver-cloud"; url: string; via?: string } | null>(null);
+  const [deploying, setDeploying] = useState<"dev-hw" | "yaver-cloud" | "custom" | "both" | null>(null);
+  const [selfHostedBaseUrl, setSelfHostedBaseUrl] = useState<string | null>(null);
+  const [selfHostedAuthToken, setSelfHostedAuthToken] = useState<string | null>(null);
+  const [lastDeploy, setLastDeploy] = useState<{ kind: "dev-hw" | "yaver-cloud" | "custom"; url: string; via?: string } | null>(null);
   const [showAdvancedPromote, setShowAdvancedPromote] = useState(false);
   const [escapeRoutes, setEscapeRoutes] = useState<EscapeRoute[]>([]);
   const [costHints, setCostHints] = useState<PhoneDeployCostHints | null>(null);
@@ -140,6 +142,21 @@ export default function PhoneProjectDetailScreen() {
       cancelled = true;
     };
   }, [token]);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const [base, authToken] = await Promise.all([
+        getLocalSecret(LOCAL_KEYS.selfHostedBaseUrl),
+        getLocalSecret(LOCAL_KEYS.selfHostedAuthToken),
+      ]);
+      if (cancelled) return;
+      setSelfHostedBaseUrl(base?.trim() || null);
+      setSelfHostedAuthToken(authToken?.trim() || null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Pull curated escape routes once the user opens the Advanced collapsible.
   // Phone projects are SQLite-backed, so we ask for "yaver"-origin routes
@@ -528,6 +545,83 @@ export default function PhoneProjectDetailScreen() {
           kind: "dev-hw",
           via: "Dev Machine + Yaver Cloud",
           url: local.result.browseUrl || deriveTargetUrl({ kind: "dev-hw", deviceId: target.id, relayHttpUrl }, local.result),
+        });
+      }
+    } catch (e: any) {
+      Alert.alert("Deploy failed", e?.message ?? "deploy failed");
+    } finally {
+      setDeploying(null);
+    }
+  }
+
+  async function deployToSelfHosted() {
+    if (!slugStr || !selfHostedBaseUrl) {
+      Alert.alert("Self-hosted target missing", "Save a self-hosted Yaver base URL on this device first.");
+      return;
+    }
+    setDeploying("custom");
+    try {
+      const result = await deployPhoneProjectRuntime({
+        slug: slugStr,
+        includeData: true,
+        exports: [
+          {
+            kind: "custom",
+            baseUrl: selfHostedBaseUrl,
+            authToken: selfHostedAuthToken ?? undefined,
+            onConflict: "overwrite",
+          },
+        ],
+      });
+      const deployed = result.pushes.find((push) => push.kind === "custom");
+      if (deployed) {
+        setLastDeploy({
+          kind: "custom",
+          via: "Self-Hosted",
+          url: deployed.result.browseUrl || deriveTargetUrl({ kind: "custom", baseUrl: selfHostedBaseUrl, authToken: selfHostedAuthToken ?? undefined }, deployed.result),
+        });
+      }
+    } catch (e: any) {
+      Alert.alert("Deploy failed", e?.message ?? "deploy failed");
+    } finally {
+      setDeploying(null);
+    }
+  }
+
+  async function deployToSelfHostedAndCloud() {
+    if (!slugStr || !selfHostedBaseUrl) {
+      Alert.alert("Self-hosted target missing", "Save a self-hosted Yaver base URL on this device first.");
+      return;
+    }
+    setDeploying("both");
+    try {
+      const cloudAuthToken = (await getLocalSecret(LOCAL_KEYS.yaverCloudToken)) ?? token ?? undefined;
+      const result = await deployPhoneProjectRuntime({
+        slug: slugStr,
+        includeData: true,
+        exports: [
+          {
+            kind: "custom",
+            baseUrl: selfHostedBaseUrl,
+            authToken: selfHostedAuthToken ?? undefined,
+            onConflict: "overwrite",
+          },
+          { kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken, onConflict: "overwrite" },
+        ],
+      });
+      const cloud = result.pushes.find((push) => push.kind === "yaver-cloud");
+      const selfHosted = result.pushes.find((push) => push.kind === "custom");
+      if (cloud) {
+        setLastDeploy({
+          kind: "yaver-cloud",
+          via: "Self-Hosted + Yaver Cloud",
+          url: cloud.result.browseUrl || deriveTargetUrl({ kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken }, cloud.result),
+        });
+      } else if (selfHosted) {
+        setLastDeploy({
+          kind: "custom",
+          via: "Self-Hosted + Yaver Cloud",
+          url: selfHosted.result.browseUrl || deriveTargetUrl({ kind: "custom", baseUrl: selfHostedBaseUrl, authToken: selfHostedAuthToken ?? undefined }, selfHosted.result),
         });
       }
     } catch (e: any) {
@@ -973,9 +1067,37 @@ export default function PhoneProjectDetailScreen() {
           </Pressable>
         ) : null}
 
+        {selfHostedBaseUrl ? (
+          <Pressable
+            onPress={deployToSelfHosted}
+            disabled={deploying !== null}
+            style={[
+              styles.deployCard,
+              {
+                backgroundColor: c.bgCard,
+                borderColor: c.border,
+                opacity: deploying !== null && deploying !== "custom" ? 0.5 : 1,
+                marginTop: 8,
+              },
+            ]}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.deployLabel, { color: c.textPrimary }]}>Self-Hosted Runtime</Text>
+              <Text style={[styles.deploySub, { color: c.textMuted }]}>
+                {selfHostedBaseUrl.replace(/^https?:\/\//, "")}
+              </Text>
+            </View>
+            {deploying === "custom" ? (
+              <ActivityIndicator color={c.accent} />
+            ) : (
+              <Text style={[styles.deployArrow, { color: c.accent }]}>→</Text>
+            )}
+          </Pressable>
+        ) : null}
+
         {canUseYaverCloud ? (
           <Pressable
-            onPress={deployToBoth}
+            onPress={selfHostedBaseUrl ? deployToSelfHostedAndCloud : deployToBoth}
             disabled={deploying !== null}
             style={[
               styles.deployCard,
@@ -988,9 +1110,11 @@ export default function PhoneProjectDetailScreen() {
             ]}
           >
             <View style={{ flex: 1 }}>
-              <Text style={[styles.deployLabel, { color: c.textPrimary }]}>Dev Machine + Cloud</Text>
+              <Text style={[styles.deployLabel, { color: c.textPrimary }]}>{selfHostedBaseUrl ? "Self-Hosted + Cloud" : "Dev Machine + Cloud"}</Text>
               <Text style={[styles.deploySub, { color: c.textMuted }]}>
-                Push the same sandbox to your own box and Yaver Cloud in one go
+                {selfHostedBaseUrl
+                  ? "Push the same sandbox to your self-hosted runtime and Yaver Cloud in one go"
+                  : "Push the same sandbox to your own box and Yaver Cloud in one go"}
               </Text>
             </View>
             {deploying === "both" ? (

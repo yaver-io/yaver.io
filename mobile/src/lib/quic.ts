@@ -1776,8 +1776,8 @@ export class QuicClient {
     return res.json();
   }
 
-  /** Execute a vibing suggestion as a task. */
-  async executeVibingSuggestion(prompt: string, projectPath: string): Promise<{ taskId: string }> {
+  /** Execute a vibing suggestion as a task or structured runtime action. */
+  async executeVibingSuggestion(prompt: string, projectPath: string): Promise<{ taskId?: string; runtimeDeploy?: any; message?: string }> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/vibing/execute`, {
       method: 'POST',

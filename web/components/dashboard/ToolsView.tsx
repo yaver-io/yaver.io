@@ -7,7 +7,7 @@
 // terminal. Progress streams live from /streams/install:<tool>.
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { agentClient, type InfraSummary, type MachineOnboardingProviderStatus, type RunnerAuthStatusRow } from "@/lib/agent-client";
+import { agentClient, type InfraSummary, type MachineOnboardingProviderStatus, type RunnerAuthStatusRow, type RunnerBrowserAuthSession } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
 
 type InstallEntry = { name: string; installed: boolean; description: string };
@@ -66,6 +66,7 @@ export default function ToolsView({ devices = [] }: Props) {
   const [onboardingResult, setOnboardingResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [browserAuthError, setBrowserAuthError] = useState<string | null>(null);
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
   const [codexOpenAIKey, setCodexOpenAIKey] = useState("");
   const [claudeAnthropicKey, setClaudeAnthropicKey] = useState("");
@@ -80,6 +81,8 @@ export default function ToolsView({ devices = [] }: Props) {
   const [machineGitLabToken, setMachineGitLabToken] = useState("");
   const [machineGitLabHost, setMachineGitLabHost] = useState("gitlab.com");
   const [savingOnboarding, setSavingOnboarding] = useState(false);
+  const [startingBrowserAuth, setStartingBrowserAuth] = useState<string | null>(null);
+  const [browserAuthSession, setBrowserAuthSession] = useState<RunnerBrowserAuthSession | null>(null);
   const cancelStreamRef = useRef<(() => void) | null>(null);
 
   const peers = useMemo(
@@ -139,6 +142,24 @@ export default function ToolsView({ devices = [] }: Props) {
     };
   }, [loadSummary, loadCatalogue, loadRunnerAuth, loadOnboarding]);
 
+  useEffect(() => {
+    if (!browserAuthSession) return;
+    if (browserAuthSession.status === "completed" || browserAuthSession.status === "failed" || browserAuthSession.status === "cancelled") {
+      void loadRunnerAuth();
+      return;
+    }
+    const id = window.setInterval(async () => {
+      const res = await agentClient.runnerBrowserAuthStatus(browserAuthSession.id, target);
+      if (res.ok && res.session) {
+        setBrowserAuthSession(res.session);
+        if (res.session.status === "completed" || res.session.status === "failed" || res.session.status === "cancelled") {
+          void loadRunnerAuth();
+        }
+      }
+    }, 2000);
+    return () => window.clearInterval(id);
+  }, [browserAuthSession, loadRunnerAuth, target]);
+
   async function runInstall(tool: string) {
     if (installing) return;
     setInstalling(tool);
@@ -191,6 +212,27 @@ export default function ToolsView({ devices = [] }: Props) {
     }
     setRunnerAuthRows(res.runners);
     setRunnerAuthResult(`${labelForRunner(runner)} auth saved`);
+  }
+
+  async function startBrowserAuth(runner: "claude" | "codex") {
+    if (startingBrowserAuth) return;
+    setStartingBrowserAuth(runner);
+    setBrowserAuthError(null);
+    const res = await agentClient.runnerBrowserAuthStart({ runner }, target);
+    setStartingBrowserAuth(null);
+    if (!res.ok || !res.session) {
+      setBrowserAuthError(res.error || "Could not start browser auth.");
+      return;
+    }
+    setBrowserAuthSession(res.session);
+  }
+
+  async function cancelBrowserAuth() {
+    if (!browserAuthSession) return;
+    const res = await agentClient.runnerBrowserAuthCancel(browserAuthSession.id, target);
+    if (res.ok && res.session) {
+      setBrowserAuthSession(res.session);
+    }
   }
 
   async function saveMachineOnboarding() {
@@ -418,8 +460,26 @@ export default function ToolsView({ devices = [] }: Props) {
             status={runnerAuthRows.find((row) => row.id === "codex")}
             busy={savingRunnerAuth === "codex"}
             onSave={() => void saveRunnerAuth("codex")}
+            secondaryAction={
+              <button
+                onClick={() => void startBrowserAuth("codex")}
+                disabled={startingBrowserAuth !== null}
+                className={`rounded-lg px-3 py-2 text-xs font-semibold ${
+                  startingBrowserAuth === "codex"
+                    ? "cursor-wait bg-surface-800 text-surface-400"
+                    : "border border-surface-700 text-surface-300 hover:border-surface-600"
+                }`}
+              >
+                {startingBrowserAuth === "codex" ? "Starting…" : "Browser sign-in"}
+              </button>
+            }
           >
-            <SecretInput label="OpenAI API key" value={codexOpenAIKey} onChange={setCodexOpenAIKey} placeholder="sk-..." />
+            <div className="space-y-3">
+              <p className="text-xs text-surface-500">
+                Headless-friendly path: the remote box generates a device-auth link and one-time code, and you complete login from this browser.
+              </p>
+              <SecretInput label="OpenAI API key" value={codexOpenAIKey} onChange={setCodexOpenAIKey} placeholder="sk-..." />
+            </div>
           </RunnerAuthCard>
 
           <RunnerAuthCard
@@ -427,11 +487,29 @@ export default function ToolsView({ devices = [] }: Props) {
             status={runnerAuthRows.find((row) => row.id === "claude")}
             busy={savingRunnerAuth === "claude"}
             onSave={() => void saveRunnerAuth("claude")}
+            secondaryAction={
+              <button
+                onClick={() => void startBrowserAuth("claude")}
+                disabled={startingBrowserAuth !== null}
+                className={`rounded-lg px-3 py-2 text-xs font-semibold ${
+                  startingBrowserAuth === "claude"
+                    ? "cursor-wait bg-surface-800 text-surface-400"
+                    : "border border-surface-700 text-surface-300 hover:border-surface-600"
+                }`}
+              >
+                {startingBrowserAuth === "claude" ? "Starting…" : "Browser sign-in"}
+              </button>
+            }
           >
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="space-y-3">
+              <p className="text-xs text-surface-500">
+                Uses Claude Code&apos;s native browser login flow on the remote box and surfaces the generated auth URL here.
+              </p>
+              <div className="grid gap-3 md:grid-cols-3">
               <SecretInput label="Anthropic API key" value={claudeAnthropicKey} onChange={setClaudeAnthropicKey} placeholder="sk-ant-..." />
               <SecretInput label="Anthropic auth token" value={claudeAuthToken} onChange={setClaudeAuthToken} placeholder="oauth/session token" />
               <SecretInput label="Claude Code OAuth token" value={claudeOAuthToken} onChange={setClaudeOAuthToken} placeholder="oauth token" />
+              </div>
             </div>
           </RunnerAuthCard>
 
@@ -449,16 +527,122 @@ export default function ToolsView({ devices = [] }: Props) {
             </div>
           </RunnerAuthCard>
         </div>
-        {(runnerAuthResult || authError) && (
+        {(runnerAuthResult || authError || browserAuthError) && (
           <div className={`mt-3 rounded-xl border px-4 py-3 text-sm ${
-            authError
+            authError || browserAuthError
               ? "border-red-500/30 bg-red-500/10 text-red-300"
               : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
           }`}>
-            {authError || runnerAuthResult}
+            {authError || browserAuthError || runnerAuthResult}
           </div>
         )}
       </section>
+
+      {browserAuthSession && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-2xl rounded-2xl border border-surface-700 bg-surface-950 p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold text-surface-50">
+                  {browserAuthSession.runner === "codex" ? "Codex" : "Claude Code"} browser sign-in
+                </h3>
+                <p className="mt-1 text-sm text-surface-400">
+                  The remote machine started a native auth flow. Open the generated link in a separate tab, finish login, and this dialog will update automatically.
+                </p>
+              </div>
+              <button
+                onClick={() => setBrowserAuthSession(null)}
+                className="rounded-lg border border-surface-700 px-3 py-2 text-xs font-semibold text-surface-300 hover:border-surface-600"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-4 grid gap-4">
+              <div className="rounded-xl border border-surface-800 bg-surface-900/60 p-4">
+                <div className="flex items-center gap-2">
+                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                    browserAuthSession.status === "completed"
+                      ? "bg-emerald-500/15 text-emerald-300"
+                      : browserAuthSession.status === "failed"
+                        ? "bg-red-500/15 text-red-300"
+                        : browserAuthSession.status === "cancelled"
+                          ? "bg-surface-800 text-surface-400"
+                          : "bg-amber-500/15 text-amber-300"
+                  }`}>
+                    {browserAuthSession.status.toUpperCase()}
+                  </span>
+                  <span className="text-xs text-surface-500">{browserAuthSession.method}</span>
+                </div>
+                <p className="mt-2 text-sm text-surface-300">{browserAuthSession.detail || "Waiting for the remote CLI to emit the auth link..."}</p>
+                {browserAuthSession.error ? (
+                  <p className="mt-2 text-sm text-red-300">{browserAuthSession.error}</p>
+                ) : null}
+                {browserAuthSession.authConfigured ? (
+                  <p className="mt-2 text-sm text-emerald-300">
+                    Remote auth detected{browserAuthSession.authSource ? ` via ${browserAuthSession.authSource}` : ""}.
+                  </p>
+                ) : null}
+              </div>
+
+              {browserAuthSession.openUrl ? (
+                <div className="rounded-xl border border-surface-800 bg-surface-900/60 p-4">
+                  <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Auth link</div>
+                  <div className="rounded-lg border border-surface-800 bg-surface-950 px-3 py-2 text-xs font-mono text-surface-200 break-all">
+                    {browserAuthSession.openUrl}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      onClick={() => window.open(browserAuthSession.openUrl, "_blank", "noopener,noreferrer")}
+                      className="rounded-lg bg-indigo-500 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-400"
+                    >
+                      Open auth tab
+                    </button>
+                    <button
+                      onClick={() => navigator.clipboard.writeText(browserAuthSession.openUrl || "")}
+                      className="rounded-lg border border-surface-700 px-3 py-2 text-xs font-semibold text-surface-300 hover:border-surface-600"
+                    >
+                      Copy link
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {browserAuthSession.code ? (
+                <div className="rounded-xl border border-surface-800 bg-surface-900/60 p-4">
+                  <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">One-time code</div>
+                  <div className="rounded-lg border border-surface-800 bg-surface-950 px-3 py-2 text-lg font-semibold tracking-[0.2em] text-surface-100">
+                    {browserAuthSession.code}
+                  </div>
+                  <button
+                    onClick={() => navigator.clipboard.writeText(browserAuthSession.code || "")}
+                    className="mt-3 rounded-lg border border-surface-700 px-3 py-2 text-xs font-semibold text-surface-300 hover:border-surface-600"
+                  >
+                    Copy code
+                  </button>
+                </div>
+              ) : null}
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => void loadRunnerAuth()}
+                  className="rounded-lg border border-surface-700 px-3 py-2 text-xs font-semibold text-surface-300 hover:border-surface-600"
+                >
+                  Refresh runner status
+                </button>
+                {browserAuthSession.status !== "completed" && browserAuthSession.status !== "failed" && browserAuthSession.status !== "cancelled" ? (
+                  <button
+                    onClick={() => void cancelBrowserAuth()}
+                    className="rounded-lg border border-red-500/30 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/10"
+                  >
+                    Cancel remote auth
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {(log.length > 0 || error) && (
         <section className="rounded-2xl border border-surface-800 bg-black p-4">
@@ -527,12 +711,14 @@ function RunnerAuthCard({
   status,
   busy,
   onSave,
+  secondaryAction,
   children,
 }: {
   title: string;
   status?: RunnerAuthStatusRow;
   busy: boolean;
   onSave: () => void;
+  secondaryAction?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -560,6 +746,7 @@ function RunnerAuthCard({
         >
           {busy ? "Saving…" : "Save auth"}
         </button>
+        {secondaryAction}
       </div>
       <div className="mt-4">{children}</div>
     </div>

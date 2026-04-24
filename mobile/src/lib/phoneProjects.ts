@@ -1415,12 +1415,13 @@ export interface PhoneRuntimeDeployRequest {
     | { kind: "cloudflare-workers"; run?: boolean; dryRun?: boolean }
     | { kind: "dev-hw"; deviceId: string; relayHttpUrl: string; onConflict?: "reject" | "rename" | "overwrite" }
     | { kind: "yaver-cloud"; cloudBaseUrl?: string; cloudAuthToken?: string; onConflict?: "reject" | "rename" | "overwrite" }
+    | { kind: "custom"; baseUrl: string; authToken?: string; onConflict?: "reject" | "rename" | "overwrite" }
   >;
 }
 
 export interface PhoneRuntimeDeployResult {
   runtime?: ProjectRuntimeApplyResponse | null;
-  pushes: Array<{ kind: "dev-hw" | "yaver-cloud"; result: PhonePushResult }>;
+  pushes: Array<{ kind: "dev-hw" | "yaver-cloud" | "custom"; result: PhonePushResult }>;
   promotes: Array<{ kind: "convex" | "cloudflare-workers"; result: PromoteResult | null }>;
 }
 
@@ -1466,6 +1467,17 @@ export async function deployPhoneProjectRuntime(req: PhoneRuntimeDeployRequest):
         onConflict: item.onConflict,
       });
       out.pushes.push({ kind: "yaver-cloud", result });
+    } else if (item.kind === "custom") {
+      const result = await pushPhoneProject(req.slug, {
+        kind: "custom",
+        baseUrl: item.baseUrl,
+        authToken: item.authToken,
+      }, {
+        includeData: req.includeData,
+        containerize: true,
+        onConflict: item.onConflict,
+      });
+      out.pushes.push({ kind: "custom", result });
     }
   }
   for (const item of exports) {

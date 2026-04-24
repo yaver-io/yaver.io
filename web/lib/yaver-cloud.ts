@@ -15,3 +15,11 @@ export function getYaverCloudHost(): string {
     return "cloud.yaver.io";
   }
 }
+
+export function getSelfHostedRuntimeBaseUrl(): string {
+  return (process.env.NEXT_PUBLIC_YAVER_SELF_HOSTED_BASE_URL || "").replace(/\/$/, "");
+}
+
+export function getSelfHostedRuntimeLabel(): string {
+  return process.env.NEXT_PUBLIC_YAVER_SELF_HOSTED_LABEL || "Self-Hosted Runtime";
+}

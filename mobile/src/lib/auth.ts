@@ -544,6 +544,8 @@ export const LOCAL_KEYS = {
   // Optional managed-cloud auth override for legacy/shared-tenant paths.
   // Kept in the device keychain — never synced.
   yaverCloudToken: `${LOCAL_KEY_PREFIX}yaver_cloud_token`,
+  selfHostedBaseUrl: `${LOCAL_KEY_PREFIX}self_hosted_base_url`,
+  selfHostedAuthToken: `${LOCAL_KEY_PREFIX}self_hosted_auth_token`,
 } as const;
 
 export async function getLocalSecret(key: string): Promise<string | null> {

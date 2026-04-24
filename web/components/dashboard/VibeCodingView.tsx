@@ -6,6 +6,50 @@ import { agentClient, type ConnectionState, type GitCommitRow, type GitProviderS
 import type { Device } from "@/lib/use-devices";
 import PreviewPane from "./PreviewPane";
 
+type SectionKey = "projects" | "runner" | "actions" | "repo" | "secrets" | "providers" | "sessions";
+
+type SectionState = { visible: boolean; open: boolean };
+
+const SECTION_ORDER: SectionKey[] = ["projects", "runner", "actions", "repo", "secrets", "providers", "sessions"];
+
+const SECTION_LABELS: Record<SectionKey, string> = {
+  projects: "Projects",
+  runner: "Coding Agent",
+  actions: "Actions",
+  repo: "Repo",
+  secrets: "Project Secrets",
+  providers: "Git Providers",
+  sessions: "Sessions",
+};
+
+const SECTION_DEFAULTS: Record<SectionKey, SectionState> = {
+  projects: { visible: true, open: true },
+  runner: { visible: true, open: true },
+  actions: { visible: true, open: true },
+  repo: { visible: true, open: false },
+  secrets: { visible: false, open: false },
+  providers: { visible: false, open: false },
+  sessions: { visible: true, open: true },
+};
+
+const SECTION_STORAGE_KEY = "yaver_vibe_sections_v1";
+
+function loadSectionState(): Record<SectionKey, SectionState> {
+  if (typeof window === "undefined") return { ...SECTION_DEFAULTS };
+  try {
+    const raw = window.localStorage.getItem(SECTION_STORAGE_KEY);
+    if (!raw) return { ...SECTION_DEFAULTS };
+    const parsed = JSON.parse(raw) as Partial<Record<SectionKey, SectionState>>;
+    const next = { ...SECTION_DEFAULTS };
+    for (const key of SECTION_ORDER) {
+      if (parsed[key]) next[key] = { ...next[key], ...parsed[key] };
+    }
+    return next;
+  } catch {
+    return { ...SECTION_DEFAULTS };
+  }
+}
+
 type Project = {
   name: string;
   path: string;
@@ -81,6 +125,23 @@ export default function VibeCodingView({
     targetDeviceName?: string;
   } | null>(null);
   const [streamedOutput, setStreamedOutput] = useState("");
+  const [sections, setSections] = useState<Record<SectionKey, SectionState>>(() => loadSectionState());
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(SECTION_STORAGE_KEY, JSON.stringify(sections));
+    } catch {}
+  }, [sections]);
+
+  const toggleSectionOpen = (key: SectionKey) =>
+    setSections((prev) => ({ ...prev, [key]: { ...prev[key], open: !prev[key].open } }));
+
+  const toggleSectionVisible = (key: SectionKey) =>
+    setSections((prev) => ({ ...prev, [key]: { ...prev[key], visible: !prev[key].visible } }));
+
+  const resetSections = () => setSections({ ...SECTION_DEFAULTS });
 
   const connected = connState === "connected" && !!connectedDevice;
   const visibleDevices = useMemo(() => devices, [devices]);
@@ -433,6 +494,42 @@ export default function VibeCodingView({
             {selectedProject ? <StatusPill>{selectedProject.name}</StatusPill> : null}
             {selectedRunner ? <StatusPill>{selectedRunner}</StatusPill> : null}
             {devStatus?.running ? <StatusPill>preview live</StatusPill> : null}
+            <div className="relative ml-auto">
+              <button
+                onClick={() => setCustomizeOpen((v) => !v)}
+                className="rounded-full border border-surface-700 bg-surface-950 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-surface-300 hover:border-surface-600"
+              >
+                Sections
+              </button>
+              {customizeOpen ? (
+                <div className="absolute right-0 top-full z-20 mt-2 w-56 rounded-xl border border-surface-700 bg-surface-900 p-2 shadow-xl">
+                  <div className="mb-1 px-1 text-[10px] uppercase tracking-[0.16em] text-surface-500">Show sections</div>
+                  {SECTION_ORDER.map((key) => (
+                    <label
+                      key={key}
+                      className="flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-[11px] text-surface-200 hover:bg-surface-950"
+                    >
+                      <span>{SECTION_LABELS[key]}</span>
+                      <input
+                        type="checkbox"
+                        checked={sections[key].visible}
+                        onChange={() => toggleSectionVisible(key)}
+                        className="accent-indigo-500"
+                      />
+                    </label>
+                  ))}
+                  <button
+                    onClick={() => {
+                      resetSections();
+                      setCustomizeOpen(false);
+                    }}
+                    className="mt-1 w-full rounded-lg border border-surface-700 px-2 py-1 text-[10px] text-surface-400 hover:border-surface-600"
+                  >
+                    Reset to defaults
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {visibleDevices.map((device) => (
@@ -452,9 +549,13 @@ export default function VibeCodingView({
         </div>
 
         <div className="grid min-h-0 flex-1 xl:grid-cols-[280px,minmax(0,1fr)]">
-          <aside className="flex min-h-0 flex-col gap-4 border-r border-surface-800 bg-surface-900/40 p-4">
-            <section>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Projects</div>
+          <aside className="flex min-h-0 flex-col gap-2 overflow-auto border-r border-surface-800 bg-surface-900/40 p-3">
+            <FoldableSection
+              sectionKey="projects"
+              label={SECTION_LABELS.projects}
+              sections={sections}
+              onToggle={toggleSectionOpen}
+            >
               <div className="flex min-h-0 flex-col gap-2 overflow-auto">
                 {projects.map((project) => (
                   <button
@@ -475,10 +576,14 @@ export default function VibeCodingView({
                   </button>
                 ))}
               </div>
-            </section>
+            </FoldableSection>
 
-            <section>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Coding Agent</div>
+            <FoldableSection
+              sectionKey="runner"
+              label={SECTION_LABELS.runner}
+              sections={sections}
+              onToggle={toggleSectionOpen}
+            >
               <div className="flex flex-wrap gap-2">
                 {runners.map((runner) => (
                   <button
@@ -494,10 +599,14 @@ export default function VibeCodingView({
                   </button>
                 ))}
               </div>
-            </section>
+            </FoldableSection>
 
-            <section>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Actions</div>
+            <FoldableSection
+              sectionKey="actions"
+              label={SECTION_LABELS.actions}
+              sections={sections}
+              onToggle={toggleSectionOpen}
+            >
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => void startPreview()}
