@@ -140,6 +140,14 @@ func applyRecoveredAuthToken(token, convexURL string, s *HTTPServer) {
 			s.tokenCache.Delete(k)
 			return true
 		})
+		// Nudge the heartbeat loop so Convex sees needsAuth=false within
+		// ~100 ms of recovery instead of waiting up to a full 30 s tick.
+		// Without this kick, the web dashboard's reauthDevice flow reads
+		// stale needsAuth=true on its 2.5 s post-success refresh and the
+		// "needs auth" pill stays up even after the agent has actually
+		// recovered — which is exactly the symptom we hit on
+		// yaver-test-ephemeral after `direct` recovery.
+		s.TriggerHeartbeat()
 	}
 }
 
