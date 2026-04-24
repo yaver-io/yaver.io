@@ -26,7 +26,7 @@ const DEVICES: DeviceSkin[] = [
   { id: "pixel-8", label: "Pixel 8", width: 412, height: 915, radius: 30, bezel: 9, punchHole: { size: 22, offsetTop: 16 } },
   { id: "pixel-8-pro", label: "Pixel 8 Pro", width: 448, height: 998, radius: 32, bezel: 9, punchHole: { size: 22, offsetTop: 16 } },
   { id: "tablet", label: "Tablet", width: 820, height: 1180, radius: 24, bezel: 14 },
-  { id: "desktop", label: "Desktop", width: 0, height: 0, radius: 0, bezel: 0, plain: true },
+  { id: "desktop", label: "Web", width: 0, height: 0, radius: 0, bezel: 0, plain: true },
 ];
 
 const SKIN_STORAGE_KEY = "yaver_preview_skin";
@@ -95,13 +95,28 @@ export default function PreviewPane({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
 
+  const [userPickedSkin, setUserPickedSkin] = useState(false);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const s = window.localStorage.getItem(SKIN_STORAGE_KEY);
-    if (s && DEVICES.some((d) => d.id === s)) setSkinId(s);
+    if (s && DEVICES.some((d) => d.id === s)) {
+      setSkinId(s);
+      setUserPickedSkin(true);
+    }
     const o = window.localStorage.getItem(ORIENTATION_STORAGE_KEY);
     if (o === "portrait" || o === "landscape") setOrientation(o);
   }, []);
+
+  useEffect(() => {
+    if (userPickedSkin) return;
+    const fw = (devStatus?.framework || "").toLowerCase();
+    if (!fw) return;
+    const isWeb = fw.includes("next") || fw.includes("vite") || fw === "react";
+    const isMobile = fw.includes("expo") || fw.includes("react-native") || fw.includes("flutter");
+    if (isWeb) setSkinId("desktop");
+    else if (isMobile) setSkinId("iphone-15");
+  }, [devStatus?.framework, userPickedSkin]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -432,7 +447,10 @@ export default function PreviewPane({
         {DEVICES.map((d) => (
           <button
             key={d.id}
-            onClick={() => setSkinId(d.id)}
+            onClick={() => {
+              setSkinId(d.id);
+              setUserPickedSkin(true);
+            }}
             className={`px-2 py-1 text-[10px] rounded border shrink-0 ${
               skinId === d.id
                 ? "border-sky-500/40 bg-sky-500/10 text-sky-300"

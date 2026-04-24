@@ -645,10 +645,14 @@ export default function VibeCodingView({
                   Last deploy: {deployPreviewSummary.lastDeploy.target || "target"} · {deployPreviewSummary.lastDeploy.status || "unknown"}
                 </div>
               ) : null}
-            </section>
+            </FoldableSection>
 
-            <section>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Repo</div>
+            <FoldableSection
+              sectionKey="repo"
+              label={SECTION_LABELS.repo}
+              sections={sections}
+              onToggle={toggleSectionOpen}
+            >
               <div className="rounded-2xl border border-surface-800 bg-surface-950/70 p-3 text-xs text-surface-300">
                 <div className="flex flex-wrap gap-2">
                   <MiniPill>{gitStatus?.branch || selectedProject?.branch || "no branch"}</MiniPill>
@@ -752,10 +756,14 @@ export default function VibeCodingView({
                   </div>
                 ) : null}
               </div>
-            </section>
+            </FoldableSection>
 
-            <section>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Project Secrets</div>
+            <FoldableSection
+              sectionKey="secrets"
+              label={SECTION_LABELS.secrets}
+              sections={sections}
+              onToggle={toggleSectionOpen}
+            >
               <div className="rounded-2xl border border-surface-800 bg-surface-950/70 p-3">
                 <div className="mb-3 text-[11px] leading-5 text-surface-500">
                   Stored in the selected machine vault, namespaced by project path. Nothing here goes to Convex.
@@ -790,10 +798,14 @@ export default function VibeCodingView({
                   </div>
                 ) : null}
               </div>
-            </section>
+            </FoldableSection>
 
-            <section className="min-h-0">
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Git Providers</div>
+            <FoldableSection
+              sectionKey="providers"
+              label={SECTION_LABELS.providers}
+              sections={sections}
+              onToggle={toggleSectionOpen}
+            >
               <div className="rounded-2xl border border-surface-800 bg-surface-950/70 p-3">
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -894,10 +906,14 @@ export default function VibeCodingView({
                   ))}
                 </div>
               </div>
-            </section>
+            </FoldableSection>
 
-            <section className="min-h-0 flex-1">
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Sessions</div>
+            <FoldableSection
+              sectionKey="sessions"
+              label={SECTION_LABELS.sessions}
+              sections={sections}
+              onToggle={toggleSectionOpen}
+            >
               <div className="flex min-h-0 flex-col gap-2 overflow-auto">
                 {taskList.map((task) => (
                   <button
@@ -916,7 +932,7 @@ export default function VibeCodingView({
                   </button>
                 ))}
               </div>
-            </section>
+            </FoldableSection>
           </aside>
 
           <div className="flex min-h-0 flex-col bg-[#08111a]">
@@ -1089,6 +1105,35 @@ function extractOutputText(chunk: string): string {
     if (parsed?.text) return String(parsed.text);
   } catch {}
   return chunk;
+}
+
+function FoldableSection({
+  sectionKey,
+  label,
+  sections,
+  onToggle,
+  children,
+}: {
+  sectionKey: SectionKey;
+  label: string;
+  sections: Record<SectionKey, SectionState>;
+  onToggle: (key: SectionKey) => void;
+  children: ReactNode;
+}) {
+  const state = sections[sectionKey];
+  if (!state.visible) return null;
+  return (
+    <section className="rounded-xl border border-surface-800 bg-surface-950/40">
+      <button
+        onClick={() => onToggle(sectionKey)}
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-400 hover:text-surface-200"
+      >
+        <span>{label}</span>
+        <span className="text-surface-500">{state.open ? "−" : "+"}</span>
+      </button>
+      {state.open ? <div className="border-t border-surface-800 px-3 py-3">{children}</div> : null}
+    </section>
+  );
 }
 
 function StatusPill({ children }: { children: ReactNode }) {
