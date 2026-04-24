@@ -721,16 +721,35 @@ export default function DashboardPage() {
   return (
     <div className="relative flex min-h-[calc(100vh-4rem)] flex-col md:flex-row">
       {/*
-        Floating Sign Out. Lives at the top-right of the dashboard rather than
-        buried at the bottom-left of the sidebar where it used to sit — sign-out
-        is the thing a confused user looks for when something's gone wrong, and
-        the corner is the industry-standard mental-model location for it.
+        Floating Sign Out. Top-right is the industry-standard mental-model
+        slot for "get me out of here". Opaque surface + icon so the button
+        never blends into whatever preview / chat / graph is rendering
+        behind it — the old translucent pill disappeared against the dark
+        dashboard hero and the bright iframe previews equally, which is
+        the whole point of moving it up here.
       */}
       <button
         onClick={logout}
-        className="absolute right-3 top-2 z-30 rounded-md border border-surface-800/60 bg-surface-900/70 px-2.5 py-1 text-[11px] font-medium text-red-400 backdrop-blur hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-300"
+        className="absolute right-3 top-2 z-30 inline-flex items-center gap-1.5 rounded-md border border-red-500/40 bg-surface-950/95 px-2.5 py-1.5 text-[11px] font-semibold text-red-300 shadow-sm shadow-black/40 ring-1 ring-black/20 transition-colors hover:border-red-400/60 hover:bg-red-500/10 hover:text-red-200"
+        title="Sign out of Yaver"
+        aria-label="Sign out"
       >
-        Sign Out
+        <svg
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+          <polyline points="16 17 21 12 16 7" />
+          <line x1="21" y1="12" x2="9" y2="12" />
+        </svg>
+        <span>Sign Out</span>
       </button>
       {/* Mobile top bar — visible only below md */}
       <div className="md:hidden border-b border-surface-800 bg-surface-900/50">
