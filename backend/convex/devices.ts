@@ -79,6 +79,8 @@ type ListedDevice = {
   deviceClass?: "desktop" | "edge-mobile" | "server";
   edgeProfile?: Doc<"devices">["edgeProfile"];
   recoveryPosture?: Doc<"devices">["recoveryPosture"];
+  agentVersion?: string;
+  agentVersionReportedAt?: number;
 };
 
 type ShareRule = {
@@ -327,6 +329,7 @@ export const registerDevice = mutation({
     publicEndpoints: v.optional(v.array(v.string())),
     hardwareId: v.optional(v.string()),
     recoveryPosture: v.optional(recoveryPostureValidator),
+    agentVersion: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -364,6 +367,11 @@ export const registerDevice = mutation({
         lastHeartbeat: Date.now(),
         ...(args.hardwareId ? { hardwareId: args.hardwareId } : {}),
         ...(args.recoveryPosture ? { recoveryPosture: args.recoveryPosture } : {}),
+        // register is always an authoritative refresh — stamp version
+        // if the agent reported one (older agents omit the field).
+        ...(args.agentVersion
+          ? { agentVersion: args.agentVersion, agentVersionReportedAt: Date.now() }
+          : {}),
       });
       return existing._id;
     }
@@ -407,6 +415,8 @@ export const registerDevice = mutation({
       createdAt: Date.now(),
       hardwareId: args.hardwareId,
       recoveryPosture: args.recoveryPosture,
+      agentVersion: args.agentVersion,
+      agentVersionReportedAt: args.agentVersion ? Date.now() : undefined,
     });
   },
 });
@@ -434,6 +444,48 @@ export const ownerByHardwareId = query({
       ownerUserId: device.userId,
       name: device.name,
     };
+  },
+});
+
+/**
+ * Report the agent version for a device the caller owns. Used by the
+ * dashboard to seed `agentVersion` on currently-running machines that
+ * haven't yet been upgraded to a build that sends the field in its own
+ * register/heartbeat payload. The browser probes `/info` on a device
+ * it can reach, then calls this with the observed version string.
+ *
+ * Uses the same 24h + change-detection gate as heartbeat so repeat calls
+ * are cheap.
+ */
+export const reportAgentVersion = mutation({
+  args: {
+    tokenHash: v.string(),
+    deviceId: v.string(),
+    agentVersion: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) throw new Error("Unauthorized");
+
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+    if (!device) throw new Error("Device not found");
+    if (device.userId !== session.user._id) throw new Error("Unauthorized");
+
+    const trimmed = args.agentVersion.trim();
+    if (!trimmed) return;
+    const changed = trimmed !== device.agentVersion;
+    const stale =
+      !device.agentVersionReportedAt ||
+      Date.now() - device.agentVersionReportedAt > 24 * 60 * 60 * 1000;
+    if (changed || stale) {
+      await ctx.db.patch(device._id, {
+        agentVersion: trimmed,
+        agentVersionReportedAt: Date.now(),
+      });
+    }
   },
 });
 
@@ -486,6 +538,7 @@ export const heartbeat = mutation({
       thermalState: v.optional(v.union(v.literal("nominal"), v.literal("warm"), v.literal("hot"))),
     })),
     recoveryPosture: v.optional(recoveryPostureValidator),
+    agentVersion: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -505,6 +558,20 @@ export const heartbeat = mutation({
       needsAuth: false, // valid session → not in bootstrap mode
       runners: args.runners ?? [],
     };
+    // Version write is gated to once per 24h OR on change. Agents may
+    // send it on every heartbeat (and they do for simplicity); the
+    // cadence lives here so we don't rewrite the row every 30s for
+    // a string that hasn't moved.
+    if (args.agentVersion) {
+      const changed = args.agentVersion !== device.agentVersion;
+      const stale =
+        !device.agentVersionReportedAt ||
+        Date.now() - device.agentVersionReportedAt > 24 * 60 * 60 * 1000;
+      if (changed || stale) {
+        patch.agentVersion = args.agentVersion;
+        patch.agentVersionReportedAt = Date.now();
+      }
+    }
     // Update stored IP if the agent reports a new one
     if (args.quicHost && args.quicHost !== device.quicHost) {
       patch.quicHost = args.quicHost;
@@ -690,6 +757,8 @@ export const listMyDevices = query({
       runners: d.runners ?? [],
       lastHeartbeat: d.lastHeartbeat,
       lastTunnelEvent: d.lastTunnelEvent,
+      agentVersion: d.agentVersion,
+      agentVersionReportedAt: d.agentVersionReportedAt,
       isGuest: false as boolean,
       hostName: undefined as string | undefined,
       hostEmail: undefined as string | undefined,

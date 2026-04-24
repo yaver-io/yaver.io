@@ -225,6 +225,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/agent/graphs", s.auth(s.handleAgentGraphs))
 	mux.HandleFunc("/agent/graphs/", s.auth(s.handleAgentGraphByID))
 	mux.HandleFunc("/agent/runners", s.auth(s.handleRunners))
+	mux.HandleFunc("/agent/runners/test", s.auth(s.handleRunnerTest))
 	mux.HandleFunc("/runner-auth/status", s.auth(s.handleRunnerAuthStatus))
 	mux.HandleFunc("/runner-auth/set", s.auth(s.handleRunnerAuthSet))
 	mux.HandleFunc("/runner-auth/setup", s.auth(s.handleRunnerAuthSetup))

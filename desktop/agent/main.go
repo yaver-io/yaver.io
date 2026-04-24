@@ -1942,6 +1942,7 @@ func runServe(args []string) {
 			PublicEndpoints: publicEndpoints,
 			HardwareID:      HardwareID(),
 			RecoveryPosture: &recoveryPosture,
+			AgentVersion:    version,
 		}); err != nil {
 			if strings.Contains(err.Error(), "belongs to another user") {
 				log.Printf("Device ID conflict — generating new device ID")
@@ -1960,6 +1961,7 @@ func runServe(args []string) {
 					PublicEndpoints: publicEndpoints,
 					HardwareID:      HardwareID(),
 					RecoveryPosture: &recoveryPosture,
+					AgentVersion:    version,
 				}); err2 != nil {
 					log.Printf("Warning: device registration failed: %v", err2)
 					offlineMode = true

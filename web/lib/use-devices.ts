@@ -79,6 +79,14 @@ export interface Device {
     runtime?: Record<string, unknown>;
     system?: Record<string, unknown>;
   } | null;
+  /**
+   * Go-agent binary version reported by the device on register + heartbeat.
+   * Absent when the device has never reported (older agent, or never registered
+   * since the field was introduced). Surfaces as "no version info" in the UI.
+   */
+  agentVersion?: string;
+  /** Epoch ms of the last server-side write of agentVersion. */
+  agentVersionReportedAt?: number;
 }
 
 interface DevicesState {
@@ -433,6 +441,9 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
                 durationSec: typeof d.lastTunnelEvent.durationSec === "number" ? d.lastTunnelEvent.durationSec : undefined,
               }
             : undefined,
+        agentVersion: typeof d.agentVersion === "string" ? d.agentVersion : undefined,
+        agentVersionReportedAt:
+          typeof d.agentVersionReportedAt === "number" ? d.agentVersionReportedAt : undefined,
       }});
 
       const collapsed = collapseDevices(mapped);

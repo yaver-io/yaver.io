@@ -1320,6 +1320,10 @@ type RegisterDeviceRequest struct {
 	PublicEndpoints []string                  `json:"publicEndpoints,omitempty"`
 	HardwareID      string                    `json:"hardwareId,omitempty"`
 	RecoveryPosture *RecoveryTransportPosture `json:"recoveryPosture,omitempty"`
+	// AgentVersion is the `const version` string from main.go. Reported
+	// so the dashboard can show which build each machine is running.
+	// Convex side gates the actual write to once per 24h + on change.
+	AgentVersion string `json:"agentVersion,omitempty"`
 }
 
 // RelayServerInfo describes a relay server from platform config.
@@ -1459,9 +1463,10 @@ var ErrAuthExpired = fmt.Errorf("auth token expired (401)")
 // Returns ErrAuthExpired if the server returns 401.
 func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, quicHost string, localIps []string, publicEndpoints []string, recoveryPosture *RecoveryTransportPosture) error {
 	payload := map[string]interface{}{
-		"deviceId":   deviceID,
-		"runners":    runners,
-		"hardwareId": HardwareID(),
+		"deviceId":     deviceID,
+		"runners":      runners,
+		"hardwareId":   HardwareID(),
+		"agentVersion": version,
 	}
 	if quicHost != "" {
 		payload["quicHost"] = quicHost

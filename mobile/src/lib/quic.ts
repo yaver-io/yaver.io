@@ -599,6 +599,24 @@ export interface RunnerInfo {
   models: ModelInfo[];
 }
 
+/**
+ * Wire shape for `POST /agent/runners/test`. Mirrors the Go agent's
+ * `runnerTestResult` (see desktop/agent/runner_test_http.go) and the
+ * web's RunnerTestResult so the mobile app sees identical data.
+ */
+export interface RunnerTestResult {
+  ok: boolean;
+  runner: string;
+  /** Which check fired: "binary" / "auth" / "subprocess" / "daemon". */
+  probe?: string;
+  needsAuth?: boolean;
+  supportsBrowserAuth?: boolean;
+  output?: string;
+  error?: string;
+  durationMs: number;
+  model?: string;
+}
+
 export interface RunnerAuthStatusRow {
   id: string;
   name: string;
@@ -2193,6 +2211,33 @@ export class QuicClient {
     } catch {
       return [];
     }
+  }
+
+  /**
+   * Run a tiny probe through the named runner's CLI on the connected
+   * agent. Mirrors the web's AgentClient.testRunner — see
+   * desktop/agent/runner_test_http.go for the wire contract. The mobile
+   * device card uses this for its per-LLM "Test" button; on a
+   * `needsAuth + supportsBrowserAuth` result it falls through to the
+   * existing /runner-auth/browser/start flow.
+   */
+  async testRunner(
+    runner: string,
+    opts?: { prompt?: string },
+  ): Promise<RunnerTestResult> {
+    if (!this.isConnected && !this.hasConnectionInfo) {
+      throw new Error("agent not reachable");
+    }
+    const res = await fetch(`${this.baseUrl}/agent/runners/test`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ runner, prompt: opts?.prompt }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`testRunner(${runner}) ${res.status}: ${body || res.statusText}`);
+    }
+    return (await res.json()) as RunnerTestResult;
   }
 
   async runnerAuthStatus(target?: string): Promise<RunnerAuthStatusRow[]> {

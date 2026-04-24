@@ -4,7 +4,7 @@ import Link from "next/link";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { type Device, hideDevice, unhideAll } from "@/lib/use-devices";
 import { CONVEX_URL } from "@/lib/constants";
-import { agentClient, AgentClient, type RunnerBrowserAuthSession } from "@/lib/agent-client";
+import { agentClient, AgentClient, type RunnerBrowserAuthSession, type RunnerTestResult } from "@/lib/agent-client";
 
 function DeviceIcon({ platform }: { platform: string }) {
   const isMobile = platform === "iOS" || platform === "Android";
@@ -275,6 +275,153 @@ function runnerChipTitle(state: RunnerChipState): string {
   }
 }
 
+/**
+ * RunnerChipWithTest renders one runner pill plus a "Test" CTA. The
+ * Test button calls the Go agent's /agent/runners/test endpoint via a
+ * per-card transient AgentClient (same pattern as RunnerAuthModal — we
+ * don't want to clobber the workspace singleton, and we need to reach
+ * the device whether the dashboard is currently connected to it or
+ * not). On a `needsAuth + supportsBrowserAuth` result we automatically
+ * trigger the existing headless sign-in modal so the user only ever
+ * clicks once. Local LLMs (ollama / aider-ollama) skip that branch and
+ * just render pass/fail — they have no browser-auth flow.
+ */
+function RunnerChipWithTest({
+  device,
+  state,
+  token,
+  onSignIn,
+}: {
+  device: Device;
+  state: RunnerChipState;
+  token: string | null;
+  onSignIn: (runnerId: string) => void;
+}) {
+  type LocalState =
+    | { kind: "idle" }
+    | { kind: "running" }
+    | { kind: "ok"; result: RunnerTestResult }
+    | { kind: "fail"; result: RunnerTestResult }
+    | { kind: "error"; message: string };
+
+  const [local, setLocal] = useState<LocalState>({ kind: "idle" });
+  const inFlight = useRef(false);
+
+  const supportsBrowserAuth = state.id === "claude" || state.id === "codex";
+  const isLocalLLM = state.id === "ollama" || state.id === "aider-ollama";
+  // Only owners can run a real generation against this machine — guests
+  // would otherwise spend the host's API credit. Cloud LLMs need an
+  // online device; local LLMs need the agent reachable too.
+  const canTest =
+    !!token &&
+    !device.isGuest &&
+    (device.online || device.workspaceLive) &&
+    state.health !== "not-installed";
+
+  const base = `inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${runnerChipClass(state.health)}`;
+
+  const runTest = useCallback(async () => {
+    if (!token || inFlight.current) return;
+    inFlight.current = true;
+    setLocal({ kind: "running" });
+    const client = new AgentClient();
+    client.setRelayServers(agentClient.configuredRelayServers.map((r) => ({ ...r })));
+    try {
+      const tunnelUrls = Array.from(
+        new Set(
+          [
+            ...(Array.isArray(device.publicEndpoints) ? device.publicEndpoints : []),
+            ...(device.tunnelUrl ? [device.tunnelUrl] : []),
+          ]
+            .map((u) => String(u || "").trim())
+            .filter(Boolean),
+        ),
+      );
+      await client.connect(device.host, device.port, token, device.id, { tunnelUrls });
+      const result = await client.testRunner(state.id);
+      if (result.ok) {
+        setLocal({ kind: "ok", result });
+      } else if (result.needsAuth && result.supportsBrowserAuth) {
+        // Auto fall-through: this is a cloud LLM that needs sign-in
+        // and we have a headless flow for it. Skip the red error and
+        // open the modal directly so one click = signed in.
+        setLocal({ kind: "idle" });
+        onSignIn(state.id);
+      } else {
+        setLocal({ kind: "fail", result });
+      }
+    } catch (err) {
+      setLocal({ kind: "error", message: err instanceof Error ? err.message : String(err) });
+    } finally {
+      inFlight.current = false;
+      try { client.disconnect(); } catch { /* nothing useful to do */ }
+    }
+  }, [token, device.host, device.port, device.id, device.publicEndpoints, device.tunnelUrl, state.id, onSignIn]);
+
+  // Sign-in button kept as the primary CTA when the readiness probe
+  // already says "needs auth" before we ever try a real generation.
+  if (canTest && supportsBrowserAuth && state.health === "needs-auth") {
+    return (
+      <button
+        onClick={() => onSignIn(state.id)}
+        className={`${base} cursor-pointer hover:brightness-110`}
+        title={`${runnerChipTitle(state)}\nClick to sign in from this browser.`}
+      >
+        <span className={`h-1.5 w-1.5 rounded-full ${runnerChipDotClass(state.health)}`} />
+        {state.label}
+        <span className="ml-0.5 text-[10px] opacity-80">· sign in</span>
+      </button>
+    );
+  }
+
+  // For everything else — ready, down, not-installed — show the chip
+  // with a separate Test button. (We deliberately don't show Test when
+  // the runner isn't installed at all; nothing to probe.)
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className={base} title={runnerChipTitle(state)}>
+        <span className={`h-1.5 w-1.5 rounded-full ${runnerChipDotClass(state.health)}`} />
+        {state.label}
+        {local.kind === "ok" ? (
+          <span
+            className="ml-1 text-[10px] text-emerald-300"
+            title={`Test passed in ${local.result.durationMs}ms${local.result.model ? ` (${local.result.model})` : ""}`}
+          >
+            ✓ {local.result.durationMs}ms
+          </span>
+        ) : null}
+        {local.kind === "fail" ? (
+          <span
+            className="ml-1 text-[10px] text-red-300"
+            title={local.result.error || "test failed"}
+          >
+            ✗ {local.result.probe || "failed"}
+          </span>
+        ) : null}
+        {local.kind === "error" ? (
+          <span className="ml-1 text-[10px] text-red-300" title={local.message}>
+            ✗ unreachable
+          </span>
+        ) : null}
+      </span>
+      {canTest ? (
+        <button
+          onClick={runTest}
+          disabled={local.kind === "running"}
+          className="rounded-md border border-surface-700 bg-surface-950/60 px-1.5 py-0.5 text-[10px] font-semibold text-surface-300 hover:border-surface-600 hover:text-surface-100 disabled:opacity-60"
+          title={
+            isLocalLLM
+              ? `Probe local ${state.label} daemon for pass/fail`
+              : `Run a quick prompt through ${state.label} on ${device.name || "this device"}`
+          }
+        >
+          {local.kind === "running" ? "…" : "Test"}
+        </button>
+      ) : null}
+    </span>
+  );
+}
+
 function sharedGuestLabels(device: Pick<Device, "sharedGuests">): string[] {
   return (device.sharedGuests || [])
     .map((guest) => guest.name || guest.email || "")
@@ -395,7 +542,75 @@ function useDeviceRuntimeInfo(device: Device, enabled: boolean, token: string | 
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        if (!cancelled) setInfo(data);
+        if (!cancelled) {
+          setInfo(data);
+          // Opportunistic seed: if we can reach the device and it
+          // reports a version string, push it to Convex so the
+          // dashboard has it cached for other surfaces (mobile, other
+          // browsers, the devices list for an offline-later view).
+          // The mutation itself is 24h-gated so this is cheap to spam.
+          const seen = typeof data?.version === "string" ? data.version.trim() : "";
+          if (seen && seen !== device.agentVersion && !device.isGuest && device.id) {
+            fetch(`${CONVEX_URL}/devices/report-version`, {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ deviceId: device.id, agentVersion: seen }),
+            }).catch(() => {});
+          }
+        }
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "fetch failed");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [enabled, token, device.id, device.host, device.port, device.online, device.workspaceLive, device.agentVersion, device.isGuest]);
+
+  return { info, error, loading };
+}
+
+interface DeviceProjectInfo {
+  name: string;
+  path?: string;
+  branch?: string;
+  framework?: string;
+  tags?: string[];
+}
+
+function useDeviceProjects(device: Device, enabled: boolean, token: string | null | undefined) {
+  const [projects, setProjects] = useState<DeviceProjectInfo[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!enabled || !token || (!device.online && !device.workspaceLive)) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    (async () => {
+      try {
+        const base = `http://${device.host}:${device.port}`;
+        const res = await fetch(`${base}/projects`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(4_000),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const arr = Array.isArray(data) ? data : Array.isArray(data?.projects) ? data.projects : [];
+        const mapped: DeviceProjectInfo[] = arr
+          .map((p: any) => ({
+            name: String(p?.name ?? p?.slug ?? "").trim(),
+            path: typeof p?.path === "string" ? p.path : undefined,
+            branch: typeof p?.branch === "string" ? p.branch : undefined,
+            framework: typeof p?.framework === "string" ? p.framework : undefined,
+            tags: Array.isArray(p?.tags) ? p.tags.map(String) : undefined,
+          }))
+          .filter((p: DeviceProjectInfo) => p.name.length > 0);
+        if (!cancelled) setProjects(mapped);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "fetch failed");
       } finally {
@@ -405,7 +620,7 @@ function useDeviceRuntimeInfo(device: Device, enabled: boolean, token: string | 
     return () => { cancelled = true; };
   }, [enabled, token, device.id, device.host, device.port, device.online, device.workspaceLive]);
 
-  return { info, error, loading };
+  return { projects, error, loading };
 }
 
 /**
@@ -728,41 +943,15 @@ export default function DevicesView({
                         Coding agents
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5">
-                        {states.map((state) => {
-                          const supportsRemoteAuth = state.id === "codex" || state.id === "claude";
-                          const needsAction = state.health !== "ready";
-                          const canAuth = device.online && !device.isGuest && supportsRemoteAuth && needsAction;
-                          const base = `inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${runnerChipClass(state.health)}`;
-                          if (!canAuth) {
-                            return (
-                              <span
-                                key={`${device.id}:runner:${state.id}`}
-                                className={base}
-                                title={runnerChipTitle(state)}
-                              >
-                                <span className={`h-1.5 w-1.5 rounded-full ${runnerChipDotClass(state.health)}`} />
-                                {state.label}
-                              </span>
-                            );
-                          }
-                          return (
-                            <button
-                              key={`${device.id}:runner:${state.id}`}
-                              onClick={() =>
-                                setAuthModal({
-                                  device,
-                                  runner: state.id,
-                                })
-                              }
-                              className={`${base} cursor-pointer hover:brightness-110`}
-                              title={`${runnerChipTitle(state)}\nClick to sign in from this browser.`}
-                            >
-                              <span className={`h-1.5 w-1.5 rounded-full ${runnerChipDotClass(state.health)}`} />
-                              {state.label}
-                              <span className="ml-0.5 text-[10px] opacity-80">· sign in</span>
-                            </button>
-                          );
-                        })}
+                        {states.map((state) => (
+                          <RunnerChipWithTest
+                            key={`${device.id}:runner:${state.id}`}
+                            device={device}
+                            state={state}
+                            token={token ?? null}
+                            onSignIn={(runnerId) => setAuthModal({ device, runner: runnerId })}
+                          />
+                        ))}
                       </div>
                     </div>
                   );
@@ -843,6 +1032,11 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
   const { info, error, loading } = useDeviceRuntimeInfo(device, true, token);
   const effectiveInfo = (info || device.probeInfo || null) as DeviceRuntimeInfo | null;
   const { pingState, ping } = useDevicePing(device, token);
+  // Guests list /projects under a host-shared-scope allowlist but we
+  // never want to display raw owner workdir paths to a guest — cap it
+  // to owner sessions for now.
+  const { projects: liveProjects, error: projectsError, loading: projectsLoading } =
+    useDeviceProjects(device, !device.isGuest, token);
   const allRunners = (device.runners || []).map((r) => r?.runnerId || "").filter(Boolean);
   const allSharedRunners = device.sharedRunners || [];
   const allGuests = (device.sharedGuests || []).map((g) => g.name || g.email || "").filter(Boolean);
@@ -925,7 +1119,12 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
           {row("Authenticated probe", device.probeState ? `${device.probeState}${device.probePath ? ` via ${device.probePath}` : ""}${device.probeCheckedAt ? ` (${formatLastSeen(device.probeCheckedAt)})` : ""}` : null)}
           {row("Reachability", deviceReachabilitySummary(device))}
           {row("Last agent signal", device.lastSeen ? `${formatLastSeen(device.lastSeen)} (${device.lastSeen})` : null)}
-          {row("Version", effectiveInfo?.version)}
+          {row(
+            "Version",
+            effectiveInfo?.version ||
+              device.agentVersion ||
+              <span className="text-surface-600">no version info</span>,
+          )}
           {row("Platform", effectiveInfo?.platform || device.platform)}
           {row("Architecture", arch)}
           {row("Kernel", kernel)}
@@ -963,6 +1162,41 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
               </span>
             ))}
           </div>
+        </div>
+      ) : null}
+      {!device.isGuest ? (
+        <div className="mt-3">
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-surface-500">
+            Available projects
+          </div>
+          {liveProjects && liveProjects.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {liveProjects.map((p) => (
+                <span
+                  key={`avp:${device.id}:${p.name}`}
+                  className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-emerald-200"
+                  title={[p.path, p.branch && `branch: ${p.branch}`, p.framework].filter(Boolean).join(" · ") || undefined}
+                >
+                  {p.name}
+                  {p.framework ? (
+                    <span className="text-[9px] font-normal normal-case text-emerald-300/70">
+                      {p.framework}
+                    </span>
+                  ) : null}
+                </span>
+              ))}
+            </div>
+          ) : projectsLoading ? (
+            <p className="text-[11px] text-surface-500">Loading project list from agent…</p>
+          ) : liveProjects && liveProjects.length === 0 ? (
+            <p className="text-[11px] text-surface-500">No projects detected on this machine.</p>
+          ) : (
+            <p className="text-[11px] text-surface-600">
+              {projectsError
+                ? `Project list unavailable — agent unreachable (${projectsError}).`
+                : "Project list unavailable — agent offline."}
+            </p>
+          )}
         </div>
       ) : null}
       {device.sharedProjects?.length || device.sharesAllProjects ? (

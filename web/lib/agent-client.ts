@@ -405,6 +405,25 @@ export interface RunnerBrowserAuthSession {
   completedAt?: number;
 }
 
+/**
+ * Wire shape for `POST /agent/runners/test`. Mirrors the Go agent's
+ * `runnerTestResult` (see desktop/agent/runner_test_http.go). `ok`
+ * answers "did this runner just work"; `needsAuth + supportsBrowserAuth`
+ * is what the UI uses to auto-pop the headless login flow.
+ */
+export interface RunnerTestResult {
+  ok: boolean;
+  runner: string;
+  /** Which check fired: "binary" / "auth" / "subprocess" / "daemon". */
+  probe?: string;
+  needsAuth?: boolean;
+  supportsBrowserAuth?: boolean;
+  output?: string;
+  error?: string;
+  durationMs: number;
+  model?: string;
+}
+
 export interface GitProviderStatusRow {
   host: string;
   provider: string;
@@ -1343,6 +1362,30 @@ export class AgentClient {
     const url = new URL(`${this.baseUrl}/runner-auth/browser/cancel`);
     url.searchParams.set("id", sessionId);
     await fetch(url.toString(), { method: "POST", headers: this.authHeaders }).catch(() => {});
+  }
+
+  /**
+   * Run a small probe through the named runner's CLI on the connected
+   * agent and return a structured pass/fail. Used by the device-card
+   * "Test" button to answer "is claude actually working on this
+   * machine right now" without leaving the dashboard.
+   *
+   * Return shape matches the Go agent's runnerTestResult — see
+   * desktop/agent/runner_test_http.go. `needsAuth + supportsBrowserAuth`
+   * are the signal callers use to auto-trigger the headless login flow.
+   */
+  async testRunner(runner: string, opts?: { prompt?: string }): Promise<RunnerTestResult> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/agent/runners/test`, {
+      method: "POST",
+      headers: this.authHeaders,
+      body: JSON.stringify({ runner, prompt: opts?.prompt }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`testRunner(${runner}) ${res.status}: ${body || res.statusText}`);
+    }
+    return (await res.json()) as RunnerTestResult;
   }
 
   async getToolchainSyncProfile(): Promise<EnvironmentProfile> {
@@ -2895,13 +2938,12 @@ export class AgentClient {
 
   get devPreviewUrl(): string | null {
     if (!this.baseUrl) return null;
-    // If we're routing via a relay, the preview URL MUST carry `__rp` or
-    // the relay will 401 with "invalid relay password". Signal "not ready
-    // yet" (null) instead of returning a URL guaranteed to fail — the UI
-    // then shows a recoverable state instead of the raw 401 JSON.
+    // In the browser, route relay-backed previews through our own
+    // same-origin proxy so the iframe does not depend on relay query-param
+    // auth. That proxy injects X-Relay-Password server-side.
     if (this.activeRelayUrl) {
-      if (!this.activeRelayPassword) return null;
-      return `${this.baseUrl}/dev/?__rp=${encodeURIComponent(this.activeRelayPassword)}`;
+      if (!this.deviceId) return null;
+      return `/d/${encodeURIComponent(this.deviceId)}/dev/`;
     }
     return `${this.baseUrl}/dev/`;
   }

@@ -219,6 +219,14 @@ export default defineSchema({
     // device by hardwareId to confirm they own it.
     hardwareId: v.optional(v.string()),
     recoveryPosture: v.optional(recoveryPosture),
+    // Version string of the Go agent binary currently running on this
+    // device (e.g. "1.99.36"). Reported on register and refreshed at
+    // most once every 24 hours via heartbeat — the mutation side is
+    // what enforces the cadence so older agents that send on every
+    // heartbeat still don't generate unnecessary writes. Missing =
+    // "no version info" in the dashboard.
+    agentVersion: v.optional(v.string()),
+    agentVersionReportedAt: v.optional(v.number()),
   })
     .index("by_userId", ["userId"])
     .index("by_deviceId", ["deviceId"])

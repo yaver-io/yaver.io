@@ -1129,6 +1129,7 @@ http.route({
       publicEndpoints: Array.isArray(body.publicEndpoints) ? body.publicEndpoints : undefined,
       hardwareId: body.hardwareId || undefined,
       recoveryPosture: body.recoveryPosture || undefined,
+      agentVersion: typeof body.agentVersion === "string" ? body.agentVersion : undefined,
     });
 
     const session = await ctx.runQuery(api.auth.validateSession, { tokenHash });
@@ -1252,8 +1253,48 @@ http.route({
       deviceClass: body.deviceClass || undefined,
       edgeProfile: body.edgeProfile || undefined,
       recoveryPosture: body.recoveryPosture || undefined,
+      agentVersion: typeof body.agentVersion === "string" ? body.agentVersion : undefined,
     });
 
+    return jsonResponse({ ok: true });
+  }),
+});
+
+/** POST /devices/report-version — Owner-side seed for agentVersion.
+ *
+ * The dashboard probes /info on a device it can reach, observes the
+ * `version` string, and pushes it here so Convex has the value even
+ * before the agent itself is upgraded to a build that sends it in
+ * register/heartbeat.
+ */
+http.route({
+  path: "/devices/report-version",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+    const body = await request.json().catch(() => null);
+    if (
+      !body ||
+      typeof body.deviceId !== "string" ||
+      typeof body.agentVersion !== "string" ||
+      !body.agentVersion.trim()
+    ) {
+      return errorResponse("deviceId + agentVersion required", 400);
+    }
+    try {
+      await ctx.runMutation(api.devices.reportAgentVersion, {
+        tokenHash,
+        deviceId: body.deviceId,
+        agentVersion: body.agentVersion,
+      });
+    } catch (e: any) {
+      return errorResponse(e?.message || "report failed", 400);
+    }
     return jsonResponse({ ok: true });
   }),
 });
