@@ -9,6 +9,14 @@ export const POSTS_PER_PAGE = 10;
 
 export const blogPosts: BlogPost[] = [
   {
+    slug: "remote-opencode-on-windows-ollama-via-yaver",
+    title:
+      "Driving a Windows Ollama Box Remotely with Yaver and opencode",
+    date: "2026-04-24",
+    description:
+      "A ground-truth, developer-docs walkthrough for setting up a Windows box with Ollama + Qwen, exposing it over Tailscale, wrapping it with opencode, and letting Yaver's Go agent manage providers, models, and API keys — all reachable from CLI, the Yaver mobile app, or your own product's settings page.",
+  },
+  {
     slug: "windows-ollama-box-antigravity-workflow",
     title: "A Clean Antigravity Workflow with a Windows Ollama Box",
     date: "2026-04-23",
