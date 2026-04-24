@@ -112,9 +112,11 @@ function hasRecentLiveSignal(
 }
 
 function deviceReachabilitySummary(
-  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "host" | "lastTunnelEvent" | "peerState" | "workspaceLive">,
+  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "host" | "lastTunnelEvent" | "peerState" | "workspaceLive" | "probeState" | "probePath" | "probeError">,
 ): string {
   if (device.workspaceLive) return "Active workspace connection";
+  if (device.probeState === "ok") return `Authenticated agent probe succeeded via ${device.probePath || "device path"}`;
+  if (device.probeState === "auth-expired") return "Agent reached, but its session is expired";
   if (device.peerState === "online") return "Live bus signal";
   if (hasRecentLiveSignal(device)) return "Live relay signal";
   if (device.peerState === "stale") return "Bus saw this machine recently, but no current transport is healthy";
@@ -125,6 +127,7 @@ function deviceReachabilitySummary(
   if (age && hasPublicPath) return `No recent agent signal for ${age}; relay or tunnel may still be worth probing`;
   if (age) return `No recent agent signal for ${age}; no tunnel or public endpoint advertised`;
   if (hasPublicPath) return "No recent agent signal; relay or tunnel may still be worth probing";
+  if (device.probeError) return device.probeError;
   if (device.host) return "No recent agent signal; direct browser access usually needs relay";
   return "No recent agent signal";
 }
@@ -132,11 +135,12 @@ function deviceReachabilitySummary(
 const DORMANT_DEVICE_HIDE_MS = 10 * 60 * 1000;
 
 function isDormantUnreachableDevice(
-  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "isGuest" | "peerState" | "workspaceLive">,
+  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "isGuest" | "peerState" | "workspaceLive" | "probeState">,
 ): boolean {
   if (device.isGuest) return false;
   if (device.online) return false;
   if (device.workspaceLive) return false;
+  if (device.probeState === "ok" || device.probeState === "auth-expired") return false;
   if (device.peerState === "online") return false;
   if (device.needsAuth) return false;
   if (Boolean(device.tunnelUrl) || Boolean(device.publicEndpoints?.length)) return false;
@@ -573,6 +577,10 @@ export default function DevicesView({
                         className={`inline-flex h-2 w-2 rounded-full ${
                           device.workspaceLive
                             ? "bg-emerald-300"
+                            : device.probeState === "ok"
+                              ? "bg-cyan-400"
+                              : device.probeState === "auth-expired"
+                                ? "bg-amber-400"
                             : device.peerState === "online"
                             ? "bg-cyan-400"
                             : device.online
@@ -585,6 +593,10 @@ export default function DevicesView({
                       <span className="text-xs text-surface-500">
                         {device.workspaceLive
                           ? "Workspace Live"
+                          : device.probeState === "ok"
+                            ? "Probed"
+                            : device.probeState === "auth-expired"
+                              ? "Needs Auth"
                           : device.peerState === "online"
                           ? "Bus Live"
                           : device.online
@@ -596,6 +608,8 @@ export default function DevicesView({
                     </div>
                     <p className="text-sm text-surface-500">
                       {devicePlatformLabel(device)} · Last agent signal {formatLastSeen(device.lastSeen)}
+                      {device.probeState === "ok" && device.probePath ? ` · probed via ${device.probePath}` : ""}
+                      {device.probeState === "auth-expired" ? " · auth expired" : ""}
                     </p>
                   </div>
 
@@ -822,6 +836,7 @@ function InlinePingButton({ device }: { device: Device }) {
 
 function DeviceDetailsPanel({ device, token }: { device: Device; token: string | null }) {
   const { info, error, loading } = useDeviceRuntimeInfo(device, true, token);
+  const effectiveInfo = (info || device.probeInfo || null) as DeviceRuntimeInfo | null;
   const { pingState, ping } = useDevicePing(device);
   const allRunners = (device.runners || []).map((r) => r?.runnerId || "").filter(Boolean);
   const allSharedRunners = device.sharedRunners || [];
@@ -830,15 +845,15 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
   // Runtime/system blobs come back from the agent's /info when LAN-reachable.
   // Accept loose keys since this shape differs between agent versions (cpu,
   // cpuPct, memory, memUsedPct, uptime, uptimeSec, arch, kernel, ...).
-  const runtime = (info?.runtime || {}) as Record<string, any>;
-  const system = (info?.system || {}) as Record<string, any>;
-  const cpu = system.cpu ?? runtime.cpu ?? info?.cpu;
-  const cpuPct = system.cpuPct ?? runtime.cpuPct ?? info?.cpuPct;
-  const memTotal = system.memTotal ?? runtime.memTotal ?? info?.memTotal;
-  const memUsed = system.memUsed ?? runtime.memUsed ?? info?.memUsed;
-  const arch = system.arch ?? runtime.arch ?? info?.arch;
-  const kernel = system.kernel ?? runtime.kernel ?? info?.kernel;
-  const uptimeSec = system.uptimeSec ?? runtime.uptimeSec ?? info?.uptimeSec;
+  const runtime = (effectiveInfo?.runtime || {}) as Record<string, any>;
+  const system = (effectiveInfo?.system || {}) as Record<string, any>;
+  const cpu = system.cpu ?? runtime.cpu ?? effectiveInfo?.cpu;
+  const cpuPct = system.cpuPct ?? runtime.cpuPct ?? effectiveInfo?.cpuPct;
+  const memTotal = system.memTotal ?? runtime.memTotal ?? effectiveInfo?.memTotal;
+  const memUsed = system.memUsed ?? runtime.memUsed ?? effectiveInfo?.memUsed;
+  const arch = system.arch ?? runtime.arch ?? effectiveInfo?.arch;
+  const kernel = system.kernel ?? runtime.kernel ?? effectiveInfo?.kernel;
+  const uptimeSec = system.uptimeSec ?? runtime.uptimeSec ?? effectiveInfo?.uptimeSec;
   const formatBytes = (n?: number) => {
     if (!n || n <= 0) return null;
     const gb = n / (1024 * 1024 * 1024);
@@ -897,23 +912,24 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
         </div>
         <div>
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-surface-500">Runtime</div>
-          {row("Status", device.workspaceLive ? "Workspace Live" : device.online ? "Online" : "Offline")}
-          {row("Auth", device.needsAuth ? "Needs auth" : info?.authExpired === true ? "Expired" : device.workspaceLive ? "Authenticated workspace" : "Authenticated")}
-          {row("Agent mode", typeof info?.mode === "string" ? info.mode : null)}
+          {row("Status", device.workspaceLive ? "Workspace Live" : device.probeState === "ok" ? "Reachable" : device.online ? "Online" : "Offline")}
+          {row("Auth", device.needsAuth ? "Needs auth" : effectiveInfo?.authExpired === true || device.probeState === "auth-expired" ? "Expired" : device.workspaceLive ? "Authenticated workspace" : "Authenticated")}
+          {row("Agent mode", typeof effectiveInfo?.mode === "string" ? effectiveInfo.mode : null)}
           {row("Live signal", device.lastTunnelEvent?.at ? `${device.lastTunnelEvent.online ? "relay-online" : "relay-offline"} (${formatLastSeen(new Date(device.lastTunnelEvent.at).toISOString())})` : null)}
           {row("Peer bus", device.peerState ? `${device.peerState}${device.peerLastSeen ? ` (${formatLastSeen(device.peerLastSeen)})` : ""}` : null)}
+          {row("Authenticated probe", device.probeState ? `${device.probeState}${device.probePath ? ` via ${device.probePath}` : ""}${device.probeCheckedAt ? ` (${formatLastSeen(device.probeCheckedAt)})` : ""}` : null)}
           {row("Reachability", deviceReachabilitySummary(device))}
           {row("Last agent signal", device.lastSeen ? `${formatLastSeen(device.lastSeen)} (${device.lastSeen})` : null)}
-          {row("Version", info?.version)}
-          {row("Platform", info?.platform || device.platform)}
+          {row("Version", effectiveInfo?.version)}
+          {row("Platform", effectiveInfo?.platform || device.platform)}
           {row("Architecture", arch)}
           {row("Kernel", kernel)}
           {row("CPU cores", cpu)}
           {row("CPU usage", cpuPct != null ? `${Number(cpuPct).toFixed(0)}%` : null)}
           {row("Memory used", memUsed ? `${formatBytes(memUsed)} / ${formatBytes(memTotal) ?? "—"}` : formatBytes(memTotal))}
           {row("Uptime", formatUptime(uptimeSec))}
-          {row("Work dir", info?.workDir)}
-          {row("Auto-start", info?.autoStart)}
+          {row("Work dir", effectiveInfo?.workDir)}
+          {row("Auto-start", effectiveInfo?.autoStart)}
         </div>
       </div>
       {(allRunners.length || allSharedRunners.length) ? (
@@ -969,7 +985,7 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
       ) : null}
       {error ? (
         <p className="mt-3 text-[11px] text-surface-600">
-          Runtime info unavailable from the agent transport ({error}). Showing cached registry fields only.
+          Runtime info unavailable from the agent transport ({error}). Showing {device.probeInfo ? "last authenticated probe + cached registry fields" : "cached registry fields only"}.
         </p>
       ) : null}
       <div className="mt-3 flex justify-end border-t border-surface-800/60 pt-2">

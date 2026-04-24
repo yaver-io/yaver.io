@@ -1639,6 +1639,7 @@ func runServe(args []string) {
 	maxUsers := fs.Int("max-users", 0, "Max concurrent users in multi-user mode (0 = unlimited)")
 	allowIPs := fs.String("allow-ips", "", "IP allowlist: comma-separated CIDRs (e.g. 192.168.1.0/24). Applies to every request, including anonymous probes.")
 	allowGuestIPs := fs.String("allow-guest-ips", "", "Extra CIDRs admitted only when the request carries a bearer token. Use when --allow-ips is LAN-scoped but guests arrive over relay/Tailscale/Cloudflare (e.g. --allow-guest-ips=0.0.0.0/0,::/0).")
+	recoveryPolicy := fs.String("recovery-policy", "", "Recovery ingress policy: open (default) or private. 'private' blocks /auth/recover on direct public HTTP and allows only LAN/loopback, Tailscale, private relay, or HTTPS Cloudflare Tunnel.")
 	tlsPort := fs.Int("tls-port", 18443, "HTTPS server port (0 to disable)")
 	noTLS := fs.Bool("no-tls", false, "Disable HTTPS server")
 	installSystemd := fs.Bool("install-systemd", false, "Install and enable systemd user service, then exit")
@@ -1731,6 +1732,15 @@ func runServe(args []string) {
 	}
 
 	cfg := mustLoadAuthConfig()
+	switch strings.ToLower(strings.TrimSpace(*recoveryPolicy)) {
+	case "":
+	case "open":
+		cfg.RequirePrivateRecoveryTransport = false
+	case "private":
+		cfg.RequirePrivateRecoveryTransport = true
+	default:
+		log.Fatalf("invalid --recovery-policy=%q (expected open or private)", *recoveryPolicy)
+	}
 
 	// Check for auto-update before forking
 	checkAutoUpdate(cfg)
@@ -1793,6 +1803,9 @@ func runServe(args []string) {
 		}
 		if *allowGuestIPs != "" {
 			childArgs = append(childArgs, fmt.Sprintf("--allow-guest-ips=%s", *allowGuestIPs))
+		}
+		if strings.TrimSpace(*recoveryPolicy) != "" {
+			childArgs = append(childArgs, fmt.Sprintf("--recovery-policy=%s", strings.TrimSpace(*recoveryPolicy)))
 		}
 		if *noTLS {
 			childArgs = append(childArgs, "--no-tls")
@@ -1916,6 +1929,7 @@ func runServe(args []string) {
 
 	if !offlineMode {
 		publicEndpoints := configuredPublicEndpoints(cfg)
+		recoveryPosture := computeRecoveryTransportPosture(cfg)
 		log.Printf("Registering device %s (%s) at %s:%d...", hostname, cfg.DeviceID, localIP, *httpPort)
 		if rotatedToken, err := RegisterDevice(cfg.ConvexSiteURL, RegisterDeviceRequest{
 			Token:           cfg.AuthToken,
@@ -1927,6 +1941,7 @@ func runServe(args []string) {
 			QuicPort:        *httpPort,
 			PublicEndpoints: publicEndpoints,
 			HardwareID:      HardwareID(),
+			RecoveryPosture: &recoveryPosture,
 		}); err != nil {
 			if strings.Contains(err.Error(), "belongs to another user") {
 				log.Printf("Device ID conflict — generating new device ID")
@@ -1944,6 +1959,7 @@ func runServe(args []string) {
 					QuicPort:        *httpPort,
 					PublicEndpoints: publicEndpoints,
 					HardwareID:      HardwareID(),
+					RecoveryPosture: &recoveryPosture,
 				}); err2 != nil {
 					log.Printf("Warning: device registration failed: %v", err2)
 					offlineMode = true
@@ -3022,6 +3038,7 @@ func runConfig(args []string) {
 	fmt.Printf("auto_start:      %v\n", cfg.AutoStart)
 	fmt.Printf("auto_update:     %v\n", cfg.AutoUpdate)
 	fmt.Printf("headless_keep_awake: %v\n", shouldEnableHeadlessKeepAwake(cfg))
+	fmt.Printf("require_private_recovery: %v\n", cfg.RequirePrivateRecoveryTransport)
 }
 
 func runConfigSet(key, value string) {
@@ -3094,9 +3111,23 @@ func runConfigSet(key, value string) {
 			fmt.Println("Headless keep-awake disabled.")
 		}
 
+	case "require-private-recovery":
+		enabled := value == "true" || value == "1" || value == "yes"
+		cfg.RequirePrivateRecoveryTransport = enabled
+		if err := SaveConfig(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
+			os.Exit(1)
+		}
+		if enabled {
+			fmt.Println("Private-only /auth/recover enabled.")
+			fmt.Println("Direct public HTTP recovery is now blocked; use LAN/Tailscale/private relay/HTTPS Cloudflare Tunnel.")
+		} else {
+			fmt.Println("Public /auth/recover restored (default open mode).")
+		}
+
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown config key: %s\n", key)
-		fmt.Fprintf(os.Stderr, "Supported keys: auto-start, auto-update, headless-keep-awake\n")
+		fmt.Fprintf(os.Stderr, "Supported keys: auto-start, auto-update, headless-keep-awake, require-private-recovery\n")
 		os.Exit(1)
 	}
 }
@@ -5751,6 +5782,21 @@ func runDoctor() {
 		warning("none configured")
 	}
 
+	recoveryPosture := computeRecoveryTransportPosture(cfg)
+	check("Remote recovery transport")
+	if recoveryPosture.HasPrivateTransport {
+		pass(recoveryPosture.Summary)
+	} else {
+		warning(recoveryPosture.Summary)
+	}
+
+	check("Public recovery exposure")
+	if recoveryPosture.PublicDirectRecoveryClosed {
+		pass("direct public HTTP recovery is disabled; mobile can use " + formatRecoveryTransports(recoveryPosture.MobileApprovedTransports) + ", web can use " + formatRecoveryTransports(recoveryPosture.WebApprovedTransports))
+	} else {
+		warning("direct public HTTP recovery is enabled (default). Set `yaver config set require-private-recovery true` or `yaver serve --recovery-policy=private` to restrict /auth/recover.")
+	}
+
 	check("Bootstrap secret (remote recovery)")
 	if cfg != nil && cfg.BootstrapSecretHash != "" {
 		pass("configured")
@@ -5759,8 +5805,12 @@ func runDoctor() {
 	}
 
 	check("Mobile auth recovery")
-	if cfg != nil && cfg.BootstrapSecretHash != "" {
-		pass("/auth/recover ready — phone can re-auth this machine if the session expires")
+	if cfg != nil && cfg.BootstrapSecretHash != "" && recoveryPosture.PublicDirectRecoveryClosed && recoveryPosture.HasPrivateTransport {
+		pass("/auth/recover ready over private paths only")
+	} else if cfg != nil && cfg.BootstrapSecretHash != "" && recoveryPosture.PublicDirectRecoveryClosed {
+		warning("/auth/recover is private-only, but no approved private recovery transport is present. Add Tailscale, a private relay, or an HTTPS Cloudflare Tunnel.")
+	} else if cfg != nil && cfg.BootstrapSecretHash != "" {
+		pass("/auth/recover ready on the main HTTP listener (default open mode)")
 	} else {
 		warning("bootstrap secret missing — mobile recovery will be limited. Guide: " + autoBootManualURL)
 	}
@@ -6718,7 +6768,8 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 
 	// Send first heartbeat immediately (don't wait 2 min for ticker)
 	runners := taskMgr.GetRunnerInfos()
-	if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, lastIP, lastIPs, lastPublicEndpoints); err != nil {
+	initialRecoveryPosture := computeRecoveryTransportPosture(cfgAtStart)
+	if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, lastIP, lastIPs, lastPublicEndpoints, &initialRecoveryPosture); err != nil {
 		if errors.Is(err, ErrAuthExpired) {
 			log.Println("[auth] WARNING: Auth token expired! Run 'yaver auth' to re-authenticate.")
 			authExpiredLogged = true
@@ -6757,7 +6808,8 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 			lastPublicEndpoints = currentPublicEndpoints
 		}
 
-		if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP, currentIPs, currentPublicEndpoints); err != nil {
+		currentRecoveryPosture := computeRecoveryTransportPosture(cfgNow)
+		if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP, currentIPs, currentPublicEndpoints, &currentRecoveryPosture); err != nil {
 			if errors.Is(err, ErrAuthExpired) {
 				// Try to refresh token first — backend may rotate.
 				if !refreshAndPersist("on-401") {
@@ -6779,7 +6831,8 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 					}
 					clearAuthExpiredNotify()
 					// Retry heartbeat
-					if retryErr := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP, currentIPs, currentPublicEndpoints); retryErr != nil {
+					retryRecoveryPosture := computeRecoveryTransportPosture(cfgNow)
+					if retryErr := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP, currentIPs, currentPublicEndpoints, &retryRecoveryPosture); retryErr != nil {
 						log.Printf("heartbeat retry failed: %v", retryErr)
 					}
 				}

@@ -143,6 +143,22 @@ func (s *BlackBoxSession) PushEvent(event BlackBoxEvent) {
 	// track / analytics events pass through unchanged.
 	if event.Type == "error" || event.IsFatal {
 		GlobalErrorStore().Record(s.DeviceID, event)
+		GlobalIncidentStore().Append(IncidentEvent{
+			Timestamp:      event.Timestamp,
+			Severity:       blackBoxIncidentSeverity(event),
+			Category:       "feedback",
+			Code:           blackBoxIncidentCode(event),
+			Source:         "blackbox",
+			Title:          "SDK error captured",
+			UserMessage:    event.Message,
+			TechnicalInfo:  strings.Join(event.Stack, "\n"),
+			DeviceID:       s.DeviceID,
+			LogsAvailable:  true,
+			LogRefs:        []string{"blackbox:device:" + s.DeviceID},
+			Recoverable:    !event.IsFatal,
+			CorrelationID:  s.DeviceID,
+			Metadata:       event.Metadata,
+		})
 	}
 
 	// Network events fan out to the APM aggregator for per-route
@@ -164,6 +180,22 @@ func (s *BlackBoxSession) PushEvent(event BlackBoxEvent) {
 			Route:     event.Route,
 			Timestamp: event.Timestamp,
 		})
+		if strings.EqualFold(event.Level, "error") {
+			GlobalIncidentStore().Append(IncidentEvent{
+				Timestamp:     event.Timestamp,
+				Severity:      IncidentSeverityError,
+				Category:      "sdk",
+				Code:          "sdk.log.error",
+				Source:        "blackbox",
+				Title:         "SDK error log",
+				UserMessage:   event.Message,
+				DeviceID:      s.DeviceID,
+				LogsAvailable: true,
+				LogRefs:       []string{"logs:device:" + s.DeviceID, "blackbox:device:" + s.DeviceID},
+				Recoverable:   true,
+				Metadata:      event.Metadata,
+			})
+		}
 	}
 
 	// Track events get appended to the analytics ledger for CSV
@@ -194,6 +226,26 @@ func (s *BlackBoxSession) PushEvent(event BlackBoxEvent) {
 		}
 	}
 	s.subMu.Unlock()
+}
+
+func blackBoxIncidentSeverity(event BlackBoxEvent) IncidentSeverity {
+	if event.IsFatal {
+		return IncidentSeverityFatal
+	}
+	if strings.EqualFold(event.Level, "warn") {
+		return IncidentSeverityWarn
+	}
+	return IncidentSeverityError
+}
+
+func blackBoxIncidentCode(event BlackBoxEvent) string {
+	if event.IsFatal {
+		return "feedback.blackbox.fatal"
+	}
+	if event.Type == "error" {
+		return "feedback.blackbox.error"
+	}
+	return "feedback.blackbox.event"
 }
 
 // Subscribe returns a channel that receives new events.

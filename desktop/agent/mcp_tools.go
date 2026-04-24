@@ -773,12 +773,12 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	configTools := []map[string]interface{}{
 		{
 			"name":        "config_set",
-			"description": "Set a Yaver configuration value. Keys: auto-start (true/false), auto-update (true/false).",
+			"description": "Set a Yaver configuration value. Keys: auto-start, auto-update, headless-keep-awake, require-private-recovery.",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
 				"required": []string{"key", "value"},
 				"properties": map[string]interface{}{
-					"key":   map[string]interface{}{"type": "string", "description": "Config key (auto-start, auto-update)"},
+					"key":   map[string]interface{}{"type": "string", "description": "Config key (auto-start, auto-update, headless-keep-awake, require-private-recovery)"},
 					"value": map[string]interface{}{"type": "string", "description": "Config value"},
 				},
 			},
@@ -2054,7 +2054,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			"name":        "guest_invite",
 			"description": "Invite a guest by email or Yaver user id to use your machine. Max 5 guests, invitation expires in 2 days. Default scope is 'feedback-only' — the hardened tier for end-users of your app (no /tasks, no /vibing, no dev-server proxy, no project enumeration; /info is redacted; any fix-triggered task runs inside Docker). Use scope='full' for teammate invites that need task / vibing / dev access, or scope='sdk-project' for Feedback SDK style project-scoped access.",
 			"inputSchema": map[string]interface{}{
-				"type":     "object",
+				"type": "object",
 				"properties": map[string]interface{}{
 					"email": map[string]interface{}{
 						"type":        "string",

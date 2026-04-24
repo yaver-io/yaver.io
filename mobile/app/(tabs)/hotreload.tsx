@@ -13,7 +13,13 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
-import { quicClient, type DevServerStatus, type MobileWorkerPreviewSession } from "../../src/lib/quic";
+import {
+  quicClient,
+  type DevServerStatus,
+  type IncidentEvent,
+  type MobileWorkerPreviewSession,
+  type OperationState,
+} from "../../src/lib/quic";
 import { loadApp } from "../../src/lib/bundleLoader";
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -64,6 +70,8 @@ export default function HotReloadScreen() {
   // so a chatty Metro bundle doesn't blow up state; the card shows
   // the last ~6. Cleared when a new dev server starts.
   const [devLog, setDevLog] = useState<string[]>([]);
+  const [reloadIncidents, setReloadIncidents] = useState<IncidentEvent[]>([]);
+  const [reloadOperations, setReloadOperations] = useState<OperationState[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const mobileWorkers = devices.filter((d) => d.deviceClass === "edge-mobile");
   const selectedTarget = mobileWorkers.find((d) => d.id === selectedTargetId) || null;
@@ -122,6 +130,23 @@ export default function HotReloadScreen() {
       } catch {
         if (mounted) setDevStatus(null);
         if (mounted) setWorkerSession(null);
+      }
+      try {
+        const [operations, incidents] = await Promise.all([
+          quicClient.operations({ limit: 12 }),
+          quicClient.incidents({ limit: 12 }),
+        ]);
+        if (!mounted) return;
+        setReloadOperations(
+          operations.filter((op) => op.kind === "reload" || op.kind === "reload_app" || op.kind === "build_native"),
+        );
+        setReloadIncidents(
+          incidents.filter((incident) => incident.category === "reload" || incident.category === "build"),
+        );
+      } catch {
+        if (!mounted) return;
+        setReloadOperations([]);
+        setReloadIncidents([]);
       }
     };
 
@@ -307,6 +332,8 @@ export default function HotReloadScreen() {
   }, [devStatus, handleOpen]);
 
   const [loadingStatus, setLoadingStatus] = useState("");
+  const currentOperation = reloadOperations[0] || null;
+  const currentIncident = reloadIncidents[0] || null;
   // Match running workDir to project list to get the real app name (not directory name)
   const runningProject = (() => {
     if (!devStatus?.workDir) return devStatus?.framework ?? "App";
@@ -432,6 +459,40 @@ export default function HotReloadScreen() {
             </View>
             {loadingStatus ? (
               <Text style={{ color: "#9ca3af", fontSize: 11, marginTop: 4 }}>{loadingStatus}</Text>
+            ) : null}
+            {currentOperation ? (
+              <View style={{ marginTop: 8, padding: 8, borderRadius: 6, backgroundColor: "#0b1220", borderWidth: 1, borderColor: "#1d4ed8" }}>
+                <Text style={{ color: "#93c5fd", fontSize: 12, fontWeight: "600", marginBottom: 4 }}>
+                  agent operation
+                </Text>
+                <Text style={{ color: "#dbeafe", fontSize: 11 }}>
+                  {currentOperation.kind} · {currentOperation.status}
+                  {currentOperation.phase ? ` · ${currentOperation.phase}` : ""}
+                </Text>
+                {currentOperation.message ? (
+                  <Text style={{ color: "#bfdbfe", fontSize: 11, marginTop: 4 }}>
+                    {currentOperation.message}
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
+            {currentIncident ? (
+              <View style={{ marginTop: 8, padding: 8, borderRadius: 6, backgroundColor: "#2a0a0a", borderWidth: 1, borderColor: "#ef444466" }}>
+                <Text style={{ color: "#fca5a5", fontSize: 12, fontWeight: "600", marginBottom: 4 }}>
+                  current blocker
+                </Text>
+                <Text style={{ color: "#fecaca", fontSize: 11, fontWeight: "600" }}>
+                  {currentIncident.title || currentIncident.code}
+                </Text>
+                <Text style={{ color: "#fecaca", fontSize: 11, marginTop: 4 }}>
+                  {currentIncident.userMessage}
+                </Text>
+                {currentIncident.suggestedAction ? (
+                  <Text style={{ color: "#fda4af", fontSize: 10, marginTop: 4 }}>
+                    Next: {currentIncident.suggestedAction}
+                  </Text>
+                ) : null}
+              </View>
             ) : null}
             {/* Failure banner: shows the server-captured reason (stderr tail, missing tool, etc.) */}
             {devStatus.error ? (

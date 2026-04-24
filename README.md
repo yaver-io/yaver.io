@@ -493,9 +493,19 @@ The bootstrap HTTP surface only mounts the four endpoints needed to receive a to
 | Path | When | How |
 |------|------|-----|
 | **LAN beacon** | Box and phone on the same Wi-Fi | Bootstrap mode broadcasts a UDP beacon every 3s. The mobile app's beacon listener picks it up automatically and shows it in **More → Pair device** with a one-tap "adopt this machine" button. |
-| **Remote re-auth (host-only)** | Box is on a remote network reachable via Tailscale, Cloudflare Tunnel, or the Yaver relay, AND your phone has previously paired with it before | The phone POSTs to `/auth/recover` with your Convex Bearer token. The agent calls `convex /devices/owner-by-hardware` with its hardware fingerprint. If Convex says you're the registered owner, the recovery flow proceeds. No pre-shared secret to remember — your Convex identity IS the host check. |
+| **Remote re-auth (host-only)** | Box is reachable remotely and your phone or web dashboard already knows it | The caller POSTs to `/auth/recover` with your Convex Bearer token. The agent calls `convex /devices/owner-by-hardware` with its hardware fingerprint. If Convex says you're the registered owner, the recovery flow proceeds. No pre-shared secret to remember — your Convex identity IS the host check. |
 
 The mobile app automatically picks the right path based on whether the device is in your device list. Guests can never trigger the recovery flow on a host machine, even if they know the relay URL — the host check happens server-side in Convex against the original `userId` that registered the hardware fingerprint.
+
+By default, `/auth/recover` stays reachable on the main HTTP listener. If you want the stricter posture, enable private-only recovery:
+
+```bash
+yaver config set require-private-recovery true
+# or one-off for this serve process
+yaver serve --recovery-policy=private
+```
+
+In private-only mode, direct public HTTP hits to `/auth/recover` are rejected. Mobile can still recover over LAN or Tailscale; the web dashboard needs a private relay or an HTTPS Cloudflare Tunnel.
 
 ### Survives Reboots
 

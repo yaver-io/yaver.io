@@ -412,6 +412,18 @@ Do not break these:
 3. A rebooted machine must have some reachability path before auth is repaired.
 4. Mobile recovery must not require SSH or local terminal access.
 5. Pair/recovery flows must be one-shot and time-bounded.
+6. Tailscale is a mobile recovery path, not a browser-dashboard path. Web recovery needs relay or HTTPS tunnel reachability.
+
+Current ingress policy for `/auth/recover`:
+
+- Default: open on the agent's main HTTP listener.
+- Optional hardening: `require_private_recovery_transport=true` in config, or `yaver serve --recovery-policy=private`.
+- In private-only mode, direct public HTTP ingress is rejected.
+- Allowed private-only paths are:
+  loopback / LAN
+  Tailscale for mobile callers
+  private relay
+  HTTPS Cloudflare Tunnel
 6. Device identity must remain tied to stable machine identity, not just the current token.
 7. Relay reachability must not assume the desktop’s Convex session is currently valid.
 

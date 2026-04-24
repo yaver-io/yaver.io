@@ -31,7 +31,7 @@ import { clearCache } from "../../src/lib/storage";
 import * as ExpoClipboard from "expo-clipboard";
 import * as ExpoLinking from "expo-linking";
 import { getLogEntries, clearLogEntries, onLogsChanged, LogEntry } from "../../src/lib/logger";
-import { quicClient, type AgentStatus, type EnvironmentProfileApplyResult, type MachineOnboardingProviderStatus, type RelayServer, type RunnerAuthStatusRow, type TunnelServer } from "../../src/lib/quic";
+import { quicClient, type AgentStatus, type CapabilitySnapshot, type EnvironmentProfileApplyResult, type IncidentEvent, type MachineOnboardingProviderStatus, type RelayServer, type RunnerAuthStatusRow, type TunnelServer } from "../../src/lib/quic";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -167,6 +167,8 @@ export default function SettingsScreen() {
   const [isSyncingAiVault, setIsSyncingAiVault] = useState(false);
   const [isSyncingRunnerAuth, setIsSyncingRunnerAuth] = useState(false);
   const [runnerAuthRows, setRunnerAuthRows] = useState<RunnerAuthStatusRow[]>([]);
+  const [runnerCapabilitySnapshot, setRunnerCapabilitySnapshot] = useState<CapabilitySnapshot | null>(null);
+  const [runnerIncidents, setRunnerIncidents] = useState<IncidentEvent[]>([]);
   const [machineOnboardingRows, setMachineOnboardingRows] = useState<MachineOnboardingProviderStatus[]>([]);
   const [githubToken, setGithubToken] = useState("");
   const [gitlabToken, setGitlabToken] = useState("");
@@ -863,14 +865,20 @@ export default function SettingsScreen() {
   const loadRunnerAuthStatus = async () => {
     if (connectionStatus !== "connected" || activeDevice?.isGuest) {
       setRunnerAuthRows([]);
+      setRunnerCapabilitySnapshot(null);
+      setRunnerIncidents([]);
       setMachineOnboardingRows([]);
       return;
     }
-    const [rows, onboarding] = await Promise.all([
+    const [rows, onboarding, snapshot, incidents] = await Promise.all([
       quicClient.runnerAuthStatus(),
       quicClient.machineOnboardingStatus(),
+      quicClient.capabilitySnapshot(),
+      quicClient.incidents({ category: "runner_auth", limit: 8 }),
     ]);
     setRunnerAuthRows(rows);
+    setRunnerCapabilitySnapshot(snapshot);
+    setRunnerIncidents(incidents);
     setMachineOnboardingRows(onboarding);
   };
 
@@ -3942,6 +3950,18 @@ export default function SettingsScreen() {
               </Pressable>
 
               <View style={{ marginTop: 12, gap: 6 }}>
+                {runnerIncidents.length > 0 && (
+                  <View style={{ borderWidth: 1, borderColor: "#ef444466", backgroundColor: "#2a0a0a", borderRadius: 10, padding: 10, marginBottom: 6 }}>
+                    <Text style={{ color: "#fca5a5", fontWeight: "700", fontSize: 12 }}>
+                      Runner blockers
+                    </Text>
+                    {runnerIncidents.slice(0, 3).map((incident) => (
+                      <Text key={incident.id} style={{ color: "#fecaca", fontSize: 11, marginTop: 4 }}>
+                        {incident.title}: {incident.userMessage}
+                      </Text>
+                    ))}
+                  </View>
+                )}
                 {runnerAuthRows.length === 0 ? (
                   <Text style={{ color: c.textMuted, fontSize: 11 }}>
                     {connectionStatus === "connected" && !activeDevice?.isGuest
@@ -3951,7 +3971,7 @@ export default function SettingsScreen() {
                 ) : (
                   runnerAuthRows.map((row) => (
                     <Text key={row.id} style={{ color: row.ready ? c.success : c.textMuted, fontSize: 11 }}>
-                      {row.name}: {row.detail || (row.ready ? "ready" : "needs auth")}
+                      {row.name}: {runnerCapabilitySnapshot?.targets?.[`runner-${row.id}`]?.reason || row.detail || (row.ready ? "ready" : "needs auth")}
                     </Text>
                   ))
                 )}

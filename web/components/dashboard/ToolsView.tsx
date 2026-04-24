@@ -7,7 +7,7 @@
 // terminal. Progress streams live from /streams/install:<tool>.
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { agentClient, type InfraSummary, type MachineOnboardingProviderStatus, type RunnerAuthStatusRow, type RunnerBrowserAuthSession } from "@/lib/agent-client";
+import { agentClient, type CapabilitySnapshot, type IncidentEvent, type InfraSummary, type MachineOnboardingProviderStatus, type RunnerAuthStatusRow, type RunnerBrowserAuthSession } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
 
 type InstallEntry = { name: string; installed: boolean; description: string };
@@ -56,6 +56,8 @@ export default function ToolsView({ devices = [] }: Props) {
   const [summary, setSummary] = useState<InfraSummary | null>(null);
   const [catalogue, setCatalogue] = useState<InstallEntry[]>([]);
   const [runnerAuthRows, setRunnerAuthRows] = useState<RunnerAuthStatusRow[]>([]);
+  const [runnerCapabilitySnapshot, setRunnerCapabilitySnapshot] = useState<CapabilitySnapshot | null>(null);
+  const [runnerIncidents, setRunnerIncidents] = useState<IncidentEvent[]>([]);
   const [onboardingRows, setOnboardingRows] = useState<MachineOnboardingProviderStatus[]>([]);
   const [target, setTarget] = useState<string | undefined>(undefined);
   const [installing, setInstalling] = useState<string | null>(null);
@@ -111,7 +113,14 @@ export default function ToolsView({ devices = [] }: Props) {
 
   const loadRunnerAuth = useCallback(async () => {
     try {
-      setRunnerAuthRows(await agentClient.runnerAuthStatus(target));
+      const [rows, snapshot, incidents] = await Promise.all([
+        agentClient.runnerAuthStatus(target),
+        agentClient.capabilitySnapshot(),
+        agentClient.incidents({ category: "runner_auth", limit: 8, device: target }),
+      ]);
+      setRunnerAuthRows(rows);
+      setRunnerCapabilitySnapshot(snapshot);
+      setRunnerIncidents(incidents);
     } catch {
       /* soft-fail */
     }
@@ -455,9 +464,22 @@ export default function ToolsView({ devices = [] }: Props) {
           </button>
         </div>
         <div className="grid gap-3">
+          {runnerIncidents.length > 0 && (
+            <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3">
+              <div className="text-sm font-semibold text-rose-200">Runner blockers</div>
+              <div className="mt-2 space-y-2">
+                {runnerIncidents.slice(0, 3).map((incident) => (
+                  <p key={incident.id} className="text-xs text-rose-100">
+                    <span className="font-semibold">{incident.title}.</span> {incident.userMessage}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
           <RunnerAuthCard
             title="Codex"
             status={runnerAuthRows.find((row) => row.id === "codex")}
+            capability={runnerCapabilitySnapshot?.targets?.["runner-codex"]}
             busy={savingRunnerAuth === "codex"}
             onSave={() => void saveRunnerAuth("codex")}
             secondaryAction={
@@ -485,6 +507,7 @@ export default function ToolsView({ devices = [] }: Props) {
           <RunnerAuthCard
             title="Claude Code"
             status={runnerAuthRows.find((row) => row.id === "claude")}
+            capability={runnerCapabilitySnapshot?.targets?.["runner-claude"]}
             busy={savingRunnerAuth === "claude"}
             onSave={() => void saveRunnerAuth("claude")}
             secondaryAction={
@@ -516,6 +539,7 @@ export default function ToolsView({ devices = [] }: Props) {
           <RunnerAuthCard
             title="OpenCode"
             status={runnerAuthRows.find((row) => row.id === "opencode")}
+            capability={runnerCapabilitySnapshot?.targets?.["runner-opencode"]}
             busy={savingRunnerAuth === "opencode"}
             onSave={() => void saveRunnerAuth("opencode")}
           >
@@ -709,6 +733,7 @@ function runnerStatusTone(status?: RunnerAuthStatusRow) {
 function RunnerAuthCard({
   title,
   status,
+  capability,
   busy,
   onSave,
   secondaryAction,
@@ -716,6 +741,7 @@ function RunnerAuthCard({
 }: {
   title: string;
   status?: RunnerAuthStatusRow;
+  capability?: CapabilitySnapshot["targets"][string];
   busy: boolean;
   onSave: () => void;
   secondaryAction?: ReactNode;
@@ -732,7 +758,7 @@ function RunnerAuthCard({
             </span>
           </div>
           <p className="mt-1 text-xs text-surface-400">
-            {status?.detail || "No status yet."}
+            {capability?.reason || status?.detail || "No status yet."}
           </p>
         </div>
         <button

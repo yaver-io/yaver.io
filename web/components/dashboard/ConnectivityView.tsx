@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { CONVEX_URL } from "@/lib/constants";
-import { agentClient, type ConnectionState, type ConnectAttemptDiagnostic, type InfraSummary, type TailscaleStatus } from "@/lib/agent-client";
+import { agentClient, type CapabilitySnapshot, type ConnectionState, type ConnectAttemptDiagnostic, type IncidentEvent, type InfraSummary, type TailscaleStatus } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
 
 type SettingsState = {
@@ -60,6 +60,8 @@ export default function ConnectivityView({
   const [message, setMessage] = useState<{ type: "ok" | "error"; text: string } | null>(null);
   const [infra, setInfra] = useState<InfraSummary | null>(null);
   const [tailscale, setTailscale] = useState<TailscaleStatus | null>(null);
+  const [capabilitySnapshot, setCapabilitySnapshot] = useState<CapabilitySnapshot | null>(null);
+  const [connectivityIncidents, setConnectivityIncidents] = useState<IncidentEvent[]>([]);
   const [testBusy, setTestBusy] = useState<"relay" | "tunnel" | null>(null);
   const [testResults, setTestResults] = useState<{ relay?: string; tunnel?: string }>({});
 
@@ -103,21 +105,29 @@ export default function ConnectivityView({
       if (connState !== "connected" || !connectedDevice) {
         setInfra(null);
         setTailscale(null);
+        setCapabilitySnapshot(null);
+        setConnectivityIncidents([]);
         return;
       }
       try {
-        const [summary, ts] = await Promise.all([
+        const [summary, ts, snapshot, incidents] = await Promise.all([
           agentClient.infraSummary(),
           agentClient.tailscaleStatus().catch(() => ({ running: false } as TailscaleStatus)),
+          agentClient.capabilitySnapshot().catch(() => null),
+          agentClient.incidents({ category: "connectivity", limit: 5 }).catch(() => []),
         ]);
         if (!cancelled) {
           setInfra(summary);
           setTailscale(ts);
+          setCapabilitySnapshot(snapshot);
+          setConnectivityIncidents(incidents);
         }
       } catch {
         if (!cancelled) {
           setInfra(null);
           setTailscale(null);
+          setCapabilitySnapshot(null);
+          setConnectivityIncidents([]);
         }
       }
     }
@@ -208,6 +218,35 @@ export default function ConnectivityView({
             </span>
           ))}
         </div>
+
+        {!capabilitySnapshot?.targets?.["web-preview"]?.enabled && capabilitySnapshot?.targets?.["web-preview"]?.reason ? (
+          <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+            <div className="font-medium">Preview blocked</div>
+            <div className="mt-1">{capabilitySnapshot.targets["web-preview"].reason}</div>
+            {capabilitySnapshot.targets["web-preview"].suggestedAction ? (
+              <div className="mt-1 text-xs text-amber-100/80">{capabilitySnapshot.targets["web-preview"].suggestedAction}</div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {connectivityIncidents.length > 0 ? (
+          <div className="mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 p-4">
+            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-red-200">Current connectivity blockers</div>
+            <div className="mt-3 space-y-3">
+              {connectivityIncidents.map((incident) => (
+                <div key={incident.id} className="rounded-xl border border-red-500/20 bg-surface-950/40 p-3">
+                  <div className="flex items-center gap-2 text-sm text-surface-100">
+                    <span className={`h-2 w-2 rounded-full ${incident.severity === "fatal" || incident.severity === "error" ? "bg-red-400" : "bg-amber-400"}`} />
+                    <span>{incident.title || incident.code}</span>
+                  </div>
+                  <div className="mt-2 text-sm text-surface-300">{incident.userMessage}</div>
+                  {incident.suggestedAction ? <div className="mt-1 text-xs text-surface-500">{incident.suggestedAction}</div> : null}
+                  {incident.logRefs?.length ? <div className="mt-1 text-[11px] text-surface-600">Logs: {incident.logRefs.join(", ")}</div> : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         {connectDiagnostics.length > 0 ? (
           <div className="mt-4 rounded-2xl border border-surface-800 bg-surface-950/60 p-4">

@@ -7,6 +7,29 @@ import (
 	"testing"
 )
 
+func setRequirePrivateRecoveryForTest(t *testing.T, enabled bool) {
+	t.Helper()
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	prev := cfg.RequirePrivateRecoveryTransport
+	cfg.RequirePrivateRecoveryTransport = enabled
+	if err := SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	t.Cleanup(func() {
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig cleanup: %v", err)
+		}
+		cfg.RequirePrivateRecoveryTransport = prev
+		if err := SaveConfig(cfg); err != nil {
+			t.Fatalf("SaveConfig cleanup: %v", err)
+		}
+	})
+}
+
 func TestAuthRecoverRequiresProof(t *testing.T) {
 	recoveryLimiter.reset()
 	req := httptest.NewRequest(http.MethodPost, "/auth/recover", strings.NewReader(`{"mode":"pair"}`))
@@ -218,6 +241,49 @@ func TestAuthRecoverPairAllowedWhenAuthExpired(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	srv.handleAuthRecover(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAuthRecoverRejectsDirectPublicIngress(t *testing.T) {
+	recoveryLimiter.reset()
+	setRequirePrivateRecoveryForTest(t, true)
+	if err := SetBootstrapSecret("public-secret"); err != nil {
+		t.Fatalf("SetBootstrapSecret: %v", err)
+	}
+	defer func() { _ = SetBootstrapSecret("") }()
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/recover", strings.NewReader(`{"secret":"public-secret","mode":"pair"}`))
+	req.RemoteAddr = "203.0.113.9:40000"
+	rec := httptest.NewRecorder()
+
+	(&HTTPServer{}).handleAuthRecover(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "direct public HTTP") {
+		t.Fatalf("expected direct-public-http message, got %s", rec.Body.String())
+	}
+}
+
+func TestAuthRecoverAllowsRelayIngress(t *testing.T) {
+	recoveryLimiter.reset()
+	setRequirePrivateRecoveryForTest(t, true)
+	if err := SetBootstrapSecret("relay-secret"); err != nil {
+		t.Fatalf("SetBootstrapSecret: %v", err)
+	}
+	defer func() {
+		_ = SetBootstrapSecret("")
+		EndPairingSession()
+	}()
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/recover", strings.NewReader(`{"secret":"relay-secret","mode":"pair"}`))
+	req.RemoteAddr = "203.0.113.9:40000"
+	req.Header.Set("X-Relay-Password", "relay-password")
+	rec := httptest.NewRecorder()
+
+	(&HTTPServer{}).handleAuthRecover(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}

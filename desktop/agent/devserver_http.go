@@ -54,6 +54,112 @@ type projectPackageManifest struct {
 	ReactNative      map[string]interface{} `json:"reactNative"`
 }
 
+func devOperationID(kind, projectPath, deviceID string) string {
+	projectPath = strings.TrimSpace(projectPath)
+	deviceID = strings.TrimSpace(deviceID)
+	if projectPath == "" {
+		projectPath = "unknown"
+	}
+	if deviceID == "" {
+		deviceID = "default"
+	}
+	projectPath = strings.ReplaceAll(projectPath, string(filepath.Separator), "_")
+	projectPath = strings.ReplaceAll(projectPath, " ", "_")
+	return fmt.Sprintf("%s:%s:%s", kind, projectPath, deviceID)
+}
+
+func (s *HTTPServer) upsertDevOperation(kind, status, phase, message, projectPath, deviceID string, progress float64, metadata map[string]interface{}, incidentIDs ...string) OperationState {
+	op := GlobalOperationStore().Upsert(OperationState{
+		ID:          devOperationID(kind, projectPath, deviceID),
+		Kind:        kind,
+		Status:      status,
+		Phase:       phase,
+		Message:     message,
+		Progress:    progress,
+		DeviceID:    strings.TrimSpace(deviceID),
+		ProjectPath: strings.TrimSpace(projectPath),
+		IncidentIDs: devCompactStrings(incidentIDs),
+		Metadata:    metadata,
+	})
+	return op
+}
+
+func (s *HTTPServer) appendDevIncident(kind, code, title, userMessage, technicalInfo, suggestedAction, projectPath, deviceID, target string, severity IncidentSeverity, recoverable bool, logsAvailable bool, logRefs []string, metadata map[string]interface{}, operationID string) IncidentEvent {
+	return GlobalIncidentStore().Append(IncidentEvent{
+		Timestamp:       time.Now().UnixMilli(),
+		Severity:        severity,
+		Category:        kind,
+		Code:            code,
+		Source:          "devserver",
+		Title:           title,
+		UserMessage:     userMessage,
+		TechnicalInfo:   technicalInfo,
+		SuggestedAction: suggestedAction,
+		OperationID:     operationID,
+		DeviceID:        strings.TrimSpace(deviceID),
+		ProjectPath:     strings.TrimSpace(projectPath),
+		Target:          strings.TrimSpace(target),
+		LogsAvailable:   logsAvailable,
+		LogRefs:         logRefs,
+		Recoverable:     recoverable,
+		Metadata:        metadata,
+	})
+}
+
+func devCompactStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func (s *HTTPServer) syncPreviewWorkerIncident(projectPath string, target DevServerTarget, delivered bool) {
+	if s.blackboxMgr == nil || strings.TrimSpace(target.DeviceID) == "" {
+		return
+	}
+	key := IncidentKey{
+		Category:    "reload",
+		Code:        ReasonReloadPreviewWorkerOffline,
+		DeviceID:    strings.TrimSpace(target.DeviceID),
+		ProjectPath: strings.TrimSpace(projectPath),
+		Target:      "preview-worker",
+	}
+	if delivered {
+		GlobalIncidentStore().ResolveOpenByKey(key, "Preview worker command delivery recovered.")
+		return
+	}
+	GlobalIncidentStore().UpsertOpen(key, IncidentEvent{
+		Timestamp:       time.Now().UnixMilli(),
+		Severity:        IncidentSeverityError,
+		Category:        "reload",
+		Code:            ReasonReloadPreviewWorkerOffline,
+		Source:          "devserver",
+		Title:           "Preview worker is offline",
+		UserMessage:     "The selected preview worker is not currently connected, so reload could not be delivered directly to that device.",
+		SuggestedAction: "Reconnect the selected preview worker or switch preview target before reloading again.",
+		DeviceID:        strings.TrimSpace(target.DeviceID),
+		ProjectPath:     strings.TrimSpace(projectPath),
+		Target:          "preview-worker",
+		LogsAvailable:   true,
+		LogRefs:         []string{"blackbox:device:" + strings.TrimSpace(target.DeviceID), "stream:dev-events"},
+		Recoverable:     true,
+		Metadata: map[string]interface{}{
+			"targetDeviceName":  strings.TrimSpace(target.DeviceName),
+			"targetDeviceClass": strings.TrimSpace(target.DeviceClass),
+		},
+	})
+}
+
 func (s *HTTPServer) guestAllowedDevWorkDir(guestUID, workDir string) bool {
 	if guestUID == "" || s.guestConfigMgr == nil {
 		return true
@@ -902,7 +1008,22 @@ func (s *HTTPServer) handleDevServerStop(w http.ResponseWriter, r *http.Request)
 // the reload worked. We still do the JS reload; the mobile UX decides what
 // to show the user.
 func (s *HTTPServer) handleDevServerReload(w http.ResponseWriter, r *http.Request) {
+	target := DevServerTarget{}
+	if s.devServerMgr != nil {
+		target = s.devServerMgr.PreferredTarget()
+	}
+	projectPath := ""
+	if s.devServerMgr != nil {
+		if st := s.devServerMgr.Status(); st != nil {
+			projectPath = strings.TrimSpace(st.WorkDir)
+		}
+	}
+	reloadOp := s.upsertDevOperation("reload", "running", "request", "Preparing reload…", projectPath, target.DeviceID, 0.05, map[string]interface{}{
+		"mode": "dev",
+	})
 	if s.devServerMgr == nil {
+		incident := s.appendDevIncident("reload", ReasonReloadDevServerUnavailable, "Dev server unavailable", "The agent cannot reload because no active dev server is available.", "dev server manager not available", "Start or reconnect the dev server before reloading.", projectPath, target.DeviceID, "dev-server", IncidentSeverityError, true, false, nil, nil, reloadOp.ID)
+		s.upsertDevOperation("reload", "failed", "error", incident.UserMessage, projectPath, target.DeviceID, 1, nil, incident.ID)
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
 		return
 	}
@@ -928,6 +1049,8 @@ func (s *HTTPServer) handleDevServerReload(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := s.devServerMgr.Reload(); err != nil {
+		incident := s.appendDevIncident("reload", ReasonReloadDevServerUnavailable, "Hot reload failed", "The agent could not trigger hot reload on the active dev server.", err.Error(), "Check whether the dev server is still running and reachable on the host machine.", projectPath, target.DeviceID, "dev-server", IncidentSeverityError, true, true, []string{"stream:dev-events"}, nil, reloadOp.ID)
+		s.upsertDevOperation("reload", "failed", "error", incident.UserMessage, projectPath, target.DeviceID, 1, nil, incident.ID)
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -956,18 +1079,74 @@ func (s *HTTPServer) handleDevServerReload(w http.ResponseWriter, r *http.Reques
 				},
 			}
 			if sent := s.sendCommandToPreviewTarget(cmd); sent {
+				s.syncPreviewWorkerIncident(projectPath, target, true)
 				log.Printf("[dev] reload: native change detected (%d files) — sent native_rebuild_required to preview worker", len(nativeChanges))
 			} else {
+				s.syncPreviewWorkerIncident(projectPath, target, strings.TrimSpace(target.DeviceID) == "")
 				s.blackboxMgr.BroadcastCommand(cmd)
 				log.Printf("[dev] reload: native change detected (%d files) — broadcast native_rebuild_required", len(nativeChanges))
 			}
 		} else if sent := s.sendPreviewWorkerReloadCommand(); sent {
+			s.syncPreviewWorkerIncident(projectPath, target, true)
 			log.Printf("[dev] Sent targeted preview reload command to preview worker")
 		} else {
+			s.syncPreviewWorkerIncident(projectPath, target, strings.TrimSpace(target.DeviceID) == "")
 			s.blackboxMgr.BroadcastCommand(BlackBoxCommand{Command: "reload"})
 			log.Printf("[dev] Broadcast reload command to connected SDK devices")
 		}
 	}
+
+	incidentIDs := []string{}
+	if len(nativeChanges) > 0 {
+		paths := make([]string, 0, len(nativeChanges))
+		reasons := make([]string, 0, len(nativeChanges))
+		for _, change := range nativeChanges {
+			paths = append(paths, change.Path)
+			reasons = append(reasons, change.Reason)
+		}
+		incident := GlobalIncidentStore().UpsertOpen(IncidentKey{
+			Category:    "reload",
+			Code:        ReasonReloadNativeRebuildRequired,
+			DeviceID:    strings.TrimSpace(target.DeviceID),
+			ProjectPath: strings.TrimSpace(projectPath),
+			Target:      "mobile-hermes",
+		}, IncidentEvent{
+			Timestamp:       time.Now().UnixMilli(),
+			Severity:        IncidentSeverityWarn,
+			Category:        "reload",
+			Code:            ReasonReloadNativeRebuildRequired,
+			Source:          "devserver",
+			Title:           "Native rebuild required",
+			UserMessage:     "Hot reload was accepted, but native files changed and a rebuild is required before the app can fully match the filesystem state.",
+			SuggestedAction: "Run a native rebuild or use bundle reload so Hermes picks up native-side changes.",
+			OperationID:     reloadOp.ID,
+			DeviceID:        strings.TrimSpace(target.DeviceID),
+			ProjectPath:     strings.TrimSpace(projectPath),
+			Target:          "mobile-hermes",
+			LogsAvailable:   true,
+			LogRefs:         []string{"stream:dev-events"},
+			Recoverable:     true,
+			Metadata: map[string]interface{}{
+				"changedPaths":   paths,
+				"changedReasons": reasons,
+				"changeClass":    changeClass,
+			},
+		})
+		incidentIDs = append(incidentIDs, incident.ID)
+	} else {
+		GlobalIncidentStore().ResolveOpenByKey(IncidentKey{
+			Category:    "reload",
+			Code:        ReasonReloadNativeRebuildRequired,
+			DeviceID:    strings.TrimSpace(target.DeviceID),
+			ProjectPath: strings.TrimSpace(projectPath),
+			Target:      "mobile-hermes",
+		}, "Reload no longer requires a native rebuild.")
+	}
+	s.upsertDevOperation("reload", "completed", changeClassOrDefault(changeClass), "Reload command dispatched.", projectPath, target.DeviceID, 1, map[string]interface{}{
+		"mode":                  "dev",
+		"nativeChangesDetected": len(nativeChanges) > 0,
+		"changeClass":           changeClass,
+	}, incidentIDs...)
 
 	resp := map[string]interface{}{
 		"ok":                    true,
@@ -1074,6 +1253,14 @@ func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.blackboxMgr == nil {
+		target := DevServerTarget{}
+		if s.devServerMgr != nil {
+			target = s.devServerMgr.PreferredTarget()
+		}
+		projectPath := strings.TrimSpace(req.ProjectPath)
+		reloadOp := s.upsertDevOperation("reload_app", "failed", "error", "No SDK devices are connected to receive reload commands.", projectPath, target.DeviceID, 1, map[string]interface{}{"mode": req.Mode})
+		incident := s.appendDevIncident("reload", ReasonReloadPreviewWorkerOffline, "No connected SDK devices", "The agent has no connected SDK device to receive the reload command.", "blackbox manager unavailable", "Connect the app or preview worker before trying remote reload.", projectPath, target.DeviceID, "preview-worker", IncidentSeverityError, true, false, nil, nil, reloadOp.ID)
+		s.upsertDevOperation("reload_app", "failed", "error", incident.UserMessage, projectPath, target.DeviceID, 1, map[string]interface{}{"mode": req.Mode}, incident.ID)
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "no SDK devices connected"})
 		return
 	}
@@ -1083,21 +1270,40 @@ func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Mode {
 	case "dev":
+		target := s.devServerMgr.PreferredTarget()
+		projectPath := strings.TrimSpace(req.ProjectPath)
+		if projectPath == "" {
+			if st := s.devServerMgr.Status(); st != nil {
+				projectPath = strings.TrimSpace(st.WorkDir)
+			}
+		}
+		s.upsertDevOperation("reload_app", "running", "dispatch", "Dispatching reload to connected app…", projectPath, target.DeviceID, 0.4, map[string]interface{}{"mode": "dev"})
 		// Hot reload: tell SDK devices to reload from dev server
 		if s.devServerMgr != nil {
 			s.devServerMgr.Reload()
 		}
 		if sent := s.sendPreviewWorkerReloadCommand(); sent {
+			s.syncPreviewWorkerIncident(projectPath, target, true)
 			log.Printf("[dev] Reload-app (dev mode): sent targeted preview reload to preview worker")
 		} else {
+			s.syncPreviewWorkerIncident(projectPath, target, strings.TrimSpace(target.DeviceID) == "")
 			s.blackboxMgr.BroadcastCommand(BlackBoxCommand{
 				Command: "reload",
 			})
 			log.Printf("[dev] Reload-app (dev mode): broadcast reload to SDK devices")
 		}
+		s.upsertDevOperation("reload_app", "completed", "done", "Reload command sent to app.", projectPath, target.DeviceID, 1, map[string]interface{}{"mode": "dev"})
 		jsonReply(w, http.StatusOK, map[string]string{"ok": "true", "mode": "dev"})
 
 	case "bundle":
+		target := s.devServerMgr.PreferredTarget()
+		projectPath := strings.TrimSpace(req.ProjectPath)
+		if projectPath == "" {
+			if st := s.devServerMgr.Status(); st != nil {
+				projectPath = strings.TrimSpace(st.WorkDir)
+			}
+		}
+		reloadOp := s.upsertDevOperation("reload_app", "running", "build", "Rebuilding Hermes bundle before reload…", projectPath, target.DeviceID, 0.1, map[string]interface{}{"mode": "bundle"})
 		// Native bundle: rebuild and tell SDK devices to fetch new bundle.
 		// Capture handleBuildNativeBundle's response so we can detect a
 		// failed build (no active dev server, dependency install failed,
@@ -1140,6 +1346,8 @@ func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
 				msg = fmt.Sprintf("build failed (status %d)", rec.Status())
 			}
 			s.emitBuildProgress(msg, "error")
+			incident := s.appendDevIncident("build", ReasonBuildNativeFailed, "Bundle rebuild failed", "The agent could not build a fresh bundle for reload.", msg, "Inspect the build logs and fix the host-side build issue before retrying.", projectPath, target.DeviceID, "mobile-hermes", IncidentSeverityError, true, true, []string{"stream:dev-events"}, map[string]interface{}{"mode": "bundle", "status": rec.Status()}, reloadOp.ID)
+			s.upsertDevOperation("reload_app", "failed", "error", incident.UserMessage, projectPath, target.DeviceID, 1, map[string]interface{}{"mode": "bundle"}, incident.ID)
 			log.Printf("[dev] Reload-app (bundle mode): build failed (%d), skipping reload_bundle broadcast", rec.Status())
 			return
 		}
@@ -1153,11 +1361,14 @@ func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
 			},
 		}
 		if sent := s.sendCommandToPreviewTarget(cmd); sent {
+			s.syncPreviewWorkerIncident(projectPath, target, true)
 			log.Printf("[dev] Reload-app (bundle mode): sent targeted reload_bundle to preview worker")
 		} else {
+			s.syncPreviewWorkerIncident(projectPath, target, strings.TrimSpace(target.DeviceID) == "")
 			s.blackboxMgr.BroadcastCommand(cmd)
 			log.Printf("[dev] Reload-app (bundle mode): broadcast reload_bundle to SDK devices")
 		}
+		s.upsertDevOperation("reload_app", "completed", "push", "Fresh bundle pushed to the app.", projectPath, target.DeviceID, 1, map[string]interface{}{"mode": "bundle"})
 		// Note: response already written by handleBuildNativeBundle
 
 	default:
@@ -1271,6 +1482,13 @@ func extractErrorMessage(body []byte) string {
 		return parsed.Error
 	}
 	return strings.TrimSpace(string(body))
+}
+
+func changeClassOrDefault(changeClass string) string {
+	if strings.TrimSpace(changeClass) == "" {
+		return "done"
+	}
+	return changeClass
 }
 
 // emitBuildProgress reports one step of a native-bundle build to every
@@ -1409,9 +1627,17 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	}
 	buildDir := filepath.Join(workDir, ".yaver-build")
 	bundlePath := filepath.Join(buildDir, "main.jsbundle")
+	target := DevServerTarget{}
+	if s.devServerMgr != nil {
+		target = s.devServerMgr.PreferredTarget()
+	}
+	buildOp := s.upsertDevOperation("build_native", "running", "build", "Preparing native bundle build…", workDir, target.DeviceID, 0.02, map[string]interface{}{
+		"platform": req.Platform,
+	})
 
 	log.Printf("[super-host] build-native called: platform=%s workDir=%s", req.Platform, workDir)
 	s.emitBuildProgress("Building native bundle...", "build")
+	s.upsertDevOperation("build_native", "running", "build", "Building native bundle…", workDir, target.DeviceID, phaseProgress("build"), map[string]interface{}{"platform": req.Platform})
 	writeNativeBuildStatus(workDir, nativeBuildStatus{
 		State:    "building",
 		Platform: req.Platform,
@@ -1421,6 +1647,8 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 
 	manifest, manifestErr := readProjectPackageManifest(workDir)
 	if manifestErr != nil {
+		incident := s.appendDevIncident("build", ReasonBuildNativeFailed, "package.json missing or invalid", "The agent cannot build a native bundle because the project manifest is missing or invalid.", manifestErr.Error(), "Restore a valid package.json and try the build again.", workDir, target.DeviceID, req.Platform, IncidentSeverityError, true, true, []string{"stream:dev-events"}, nil, buildOp.ID)
+		s.upsertDevOperation("build_native", "failed", "error", incident.UserMessage, workDir, target.DeviceID, 1, map[string]interface{}{"platform": req.Platform}, incident.ID)
 		writeNativeBuildStatus(workDir, nativeBuildStatus{
 			State:        "build_failed",
 			Platform:     req.Platform,
@@ -1433,6 +1661,8 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	prep := detectProjectPreparation(workDir, manifest)
 	if len(prep.MissingTools) > 0 {
 		errMsg := fmt.Sprintf("missing required tools on this machine: %s", strings.Join(prep.MissingTools, ", "))
+		incident := s.appendDevIncident("build", ReasonBuildNativeFailed, "Required build tools are missing", "The machine is missing required tools for native bundle build.", errMsg, "Install the missing tools on the host and retry the build.", workDir, target.DeviceID, req.Platform, IncidentSeverityError, true, true, []string{"stream:dev-events"}, map[string]interface{}{"missingTools": prep.MissingTools}, buildOp.ID)
+		s.upsertDevOperation("build_native", "failed", "error", incident.UserMessage, workDir, target.DeviceID, 1, map[string]interface{}{"platform": req.Platform}, incident.ID)
 		writeNativeBuildStatus(workDir, nativeBuildStatus{
 			State:        "build_failed",
 			Platform:     req.Platform,
@@ -1446,6 +1676,8 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	if prep.NeedsDependencyInstall {
 		if !prep.CanAutoInstallDependencies {
 			errMsg := fmt.Sprintf("dependencies are missing and cannot be auto-installed with %s on this machine", prep.PackageManager)
+			incident := s.appendDevIncident("build", ReasonBuildNativeFailed, "Dependencies are missing", "The machine is missing project dependencies and cannot auto-install them for this build.", errMsg, "Install the project dependencies on the host before retrying.", workDir, target.DeviceID, req.Platform, IncidentSeverityError, true, true, []string{"stream:dev-events"}, nil, buildOp.ID)
+			s.upsertDevOperation("build_native", "failed", "error", incident.UserMessage, workDir, target.DeviceID, 1, map[string]interface{}{"platform": req.Platform}, incident.ID)
 			writeNativeBuildStatus(workDir, nativeBuildStatus{
 				State:        "build_failed",
 				Platform:     req.Platform,
@@ -1456,8 +1688,11 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		s.emitBuildProgress(fmt.Sprintf("Installing dependencies with %s...", prep.PackageManager), "install")
+		s.upsertDevOperation("build_native", "running", "install", fmt.Sprintf("Installing dependencies with %s…", prep.PackageManager), workDir, target.DeviceID, phaseProgress("install"), map[string]interface{}{"platform": req.Platform})
 		if err := installProjectDependencies(workDir, prep); err != nil {
 			errMsg := fmt.Sprintf("dependency install failed: %v", err)
+			incident := s.appendDevIncident("build", ReasonBuildNativeFailed, "Dependency install failed", "The agent could not install the project dependencies required for bundle build.", errMsg, "Fix the dependency install failure on the host and retry.", workDir, target.DeviceID, req.Platform, IncidentSeverityError, true, true, []string{"stream:dev-events"}, nil, buildOp.ID)
+			s.upsertDevOperation("build_native", "failed", "error", incident.UserMessage, workDir, target.DeviceID, 1, map[string]interface{}{"platform": req.Platform}, incident.ID)
 			writeNativeBuildStatus(workDir, nativeBuildStatus{
 				State:        "build_failed",
 				Platform:     req.Platform,
@@ -1490,6 +1725,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	var cmd *exec.Cmd
 	if isExpo {
 		s.emitBuildProgress(fmt.Sprintf("Bundling with Expo for %s...", req.Platform), "bundle")
+		s.upsertDevOperation("build_native", "running", "bundle", fmt.Sprintf("Bundling with Expo for %s…", req.Platform), workDir, target.DeviceID, phaseProgress("bundle"), map[string]interface{}{"platform": req.Platform, "framework": "expo"})
 		cmd = bundleCommand(prep.PackageManager, "expo", req.Platform, "", bundlePath, assetsDir)
 	} else {
 		// Find entry file: package.json "main" → fallback candidates
@@ -1505,6 +1741,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 			}
 		}
 		s.emitBuildProgress(fmt.Sprintf("Bundling %s for %s...", entryFile, req.Platform), "bundle")
+		s.upsertDevOperation("build_native", "running", "bundle", fmt.Sprintf("Bundling %s for %s…", entryFile, req.Platform), workDir, target.DeviceID, phaseProgress("bundle"), map[string]interface{}{"platform": req.Platform, "framework": "react-native", "entryFile": entryFile})
 		cmd = bundleCommand(prep.PackageManager, "react-native", req.Platform, entryFile, bundlePath, assetsDir)
 	}
 
@@ -1523,6 +1760,8 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 
 	if err := cmd.Run(); err != nil {
 		s.devServerMgr.EmitLog(fmt.Sprintf("Bundle failed: %v", err))
+		incident := s.appendDevIncident("build", ReasonBuildNativeFailed, "JavaScript bundle build failed", "The agent failed while producing the JavaScript bundle used for Hermes compilation.", err.Error(), "Inspect the bundler output and fix the project build error before retrying.", workDir, target.DeviceID, req.Platform, IncidentSeverityError, true, true, []string{"stream:dev-events"}, nil, buildOp.ID)
+		s.upsertDevOperation("build_native", "failed", "error", incident.UserMessage, workDir, target.DeviceID, 1, map[string]interface{}{"platform": req.Platform}, incident.ID)
 		writeNativeBuildStatus(workDir, nativeBuildStatus{
 			State:        "build_failed",
 			Platform:     req.Platform,
@@ -1535,6 +1774,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 
 	// ── Hermes compile ──
 	s.emitBuildProgress("Compiling Hermes bytecode...", "hermes")
+	s.upsertDevOperation("build_native", "running", "hermes", "Compiling Hermes bytecode…", workDir, target.DeviceID, phaseProgress("hermes"), map[string]interface{}{"platform": req.Platform})
 
 	info := detectHermesRuntimeInfo(workDir)
 	hermescPath, hermescErr := resolveHermesc(workDir)
@@ -1545,6 +1785,8 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	if hermescPath == "" {
 		log.Printf("[super-host] hermesc not found — cannot produce Hermes bundle")
 		s.devServerMgr.EmitLog("hermesc not found — cannot produce Hermes bundle")
+		incident := s.appendDevIncident("build", ReasonBuildHermesFailed, "Hermes compiler not found", "The machine could not find `hermesc`, so it cannot produce the Hermes bytecode bundle expected by the app.", hermescErrString(hermescErr), "Install the Hermes compiler on the host or use a machine with a valid React Native toolchain.", workDir, target.DeviceID, req.Platform, IncidentSeverityError, true, true, []string{"stream:dev-events"}, nil, buildOp.ID)
+		s.upsertDevOperation("build_native", "failed", "error", incident.UserMessage, workDir, target.DeviceID, 1, map[string]interface{}{"platform": req.Platform}, incident.ID)
 	} else {
 		log.Printf("[super-host] using hermesc at: %s", hermescPath)
 		tmpPath := bundlePath + ".tmp"
@@ -1560,9 +1802,18 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 			os.Rename(tmpPath, bundlePath)
 			log.Printf("[super-host] hermesc failed: %v — using plain JS", err)
 			s.devServerMgr.EmitLog(fmt.Sprintf("hermesc failed, using plain JS: %v", err))
+			incident := s.appendDevIncident("build", ReasonBuildHermesFailed, "Hermes compilation failed", "Hermes bytecode compilation failed on the host.", err.Error(), "Inspect the Hermes compiler output and retry after fixing the host-side build issue.", workDir, target.DeviceID, req.Platform, IncidentSeverityWarn, true, true, []string{"stream:dev-events"}, nil, buildOp.ID)
+			s.upsertDevOperation("build_native", "running", "hermes", "Hermes compilation failed; falling back to plain JS bundle.", workDir, target.DeviceID, 0.8, map[string]interface{}{"platform": req.Platform}, incident.ID)
 		} else {
 			os.Remove(tmpPath)
 			log.Printf("[super-host] hermesc compile complete")
+			GlobalIncidentStore().ResolveOpenByKey(IncidentKey{
+				Category:    "build",
+				Code:        ReasonBuildHermesFailed,
+				DeviceID:    strings.TrimSpace(target.DeviceID),
+				ProjectPath: strings.TrimSpace(workDir),
+				Target:      strings.TrimSpace(req.Platform),
+			}, "Hermes compilation recovered.")
 		}
 	}
 
@@ -1582,6 +1833,8 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		errMsg := fmt.Sprintf("Bundle validation failed: %v", valErr)
 		log.Printf("[super-host] %s", errMsg)
 		s.devServerMgr.EmitLog(errMsg)
+		incident := s.appendDevIncident("build", ReasonBuildNativeFailed, "Bundle validation failed", "The bundle was built, but the final native bundle failed validation.", errMsg, "Inspect the generated bundle and rebuild after fixing the underlying build problem.", workDir, target.DeviceID, req.Platform, IncidentSeverityError, true, true, []string{"stream:dev-events"}, nil, buildOp.ID)
+		s.upsertDevOperation("build_native", "failed", "error", incident.UserMessage, workDir, target.DeviceID, 1, map[string]interface{}{"platform": req.Platform}, incident.ID)
 		writeNativeBuildStatus(workDir, nativeBuildStatus{
 			State:        "build_failed",
 			Platform:     req.Platform,
@@ -1618,6 +1871,18 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 
 	s.emitBuildProgress(fmt.Sprintf("Bundle ready: %d KB, BC%d, module: %s",
 		meta.Size/1024, meta.HermesBCVersion, moduleName), "ready")
+	s.upsertDevOperation("build_native", "completed", "ready", fmt.Sprintf("Bundle ready: %d KB, BC%d, module: %s", meta.Size/1024, meta.HermesBCVersion, moduleName), workDir, target.DeviceID, phaseProgress("done"), map[string]interface{}{
+		"platform":    req.Platform,
+		"moduleName":  moduleName,
+		"size":        meta.Size,
+		"bcVersion":   meta.HermesBCVersion,
+		"hasAssets":   hasAssets,
+		"builderOS":   runtime.GOOS,
+		"builderArch": runtime.GOARCH,
+		"reactNative": info.ReactNativeVersion,
+		"expoSDK":     info.ExpoSDKVersion,
+		"hermesRef":   info.HermesRef,
+	})
 	writeNativeBuildStatus(workDir, nativeBuildStatus{
 		State:         "ready",
 		Platform:      req.Platform,
@@ -1639,6 +1904,13 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		"moduleName": moduleName,
 		"hasAssets":  hasAssets,
 	})
+}
+
+func hermescErrString(err error) string {
+	if err == nil {
+		return "hermes compiler was not found"
+	}
+	return err.Error()
 }
 
 // handleServeNativeBundle serves the compiled native bundle file.

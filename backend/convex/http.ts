@@ -1128,6 +1128,7 @@ http.route({
       quicPort: body.quicPort,
       publicEndpoints: Array.isArray(body.publicEndpoints) ? body.publicEndpoints : undefined,
       hardwareId: body.hardwareId || undefined,
+      recoveryPosture: body.recoveryPosture || undefined,
     });
 
     const session = await ctx.runQuery(api.auth.validateSession, { tokenHash });
@@ -1250,6 +1251,7 @@ http.route({
       hardwareId: body.hardwareId || undefined,
       deviceClass: body.deviceClass || undefined,
       edgeProfile: body.edgeProfile || undefined,
+      recoveryPosture: body.recoveryPosture || undefined,
     });
 
     return jsonResponse({ ok: true });

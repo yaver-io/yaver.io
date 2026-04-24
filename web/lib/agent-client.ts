@@ -252,6 +252,29 @@ export interface ConnectAttemptDiagnostic {
   durationMs?: number;
 }
 
+export interface DeviceProbeInfo {
+  hostname?: string;
+  version?: string;
+  platform?: string;
+  workDir?: string;
+  mode?: string;
+  autoStart?: string;
+  authExpired?: boolean;
+  runtime?: Record<string, unknown>;
+  system?: Record<string, unknown>;
+}
+
+export interface DeviceStatusProbe {
+  ok: boolean;
+  authExpired?: boolean;
+  path?: "relay" | "tunnel" | "direct";
+  relayId?: string;
+  checkedAt: string;
+  error?: string;
+  diagnostics: ConnectAttemptDiagnostic[];
+  info?: DeviceProbeInfo | null;
+}
+
 export interface MobileWorkerPreviewSession {
   hasTarget: boolean;
   targetDeviceId?: string;
@@ -638,6 +661,77 @@ export interface TailscaleStatus {
     tags?: string[];
     addrs?: string[];
   };
+}
+
+export interface IncidentEvent {
+  id: string;
+  timestamp: number;
+  severity: "info" | "warn" | "error" | "fatal";
+  category: string;
+  code: string;
+  source: string;
+  title: string;
+  userMessage: string;
+  technicalInfo?: string;
+  suggestedAction?: string;
+  operationId?: string;
+  deviceId?: string;
+  projectPath?: string;
+  target?: string;
+  logsAvailable: boolean;
+  logRefs?: string[];
+  correlationId?: string;
+  recoverable: boolean;
+  metadata?: Record<string, unknown>;
+  resolved?: boolean;
+  resolvedAt?: number;
+  resolutionNote?: string;
+}
+
+export interface IncidentSummary {
+  total: number;
+  open: number;
+  resolved: number;
+  byCategory: Record<string, number>;
+  bySeverity: Record<string, number>;
+  topReasonCodes?: string[];
+  lastIncidentAt?: number;
+}
+
+export interface OperationState {
+  id: string;
+  kind: string;
+  status: string;
+  phase?: string;
+  message?: string;
+  progress?: number;
+  deviceId?: string;
+  projectPath?: string;
+  startedAt: number;
+  updatedAt: number;
+  incidentIds?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface CapabilityTargetReadiness {
+  enabled: boolean;
+  reasonCode?: string;
+  reason?: string;
+  suggestedAction?: string;
+  notes?: string[];
+}
+
+export interface CapabilitySnapshot {
+  generatedAt: string;
+  machine: MachineInfo;
+  infra: InfraSummary;
+  connectivity: {
+    directAvailable: boolean;
+    relayConfigured: boolean;
+    tunnelConfigured: boolean;
+    tailscaleAvailable: boolean;
+  };
+  targets: Record<string, CapabilityTargetReadiness>;
 }
 
 export interface SandboxStatus {
@@ -2177,6 +2271,102 @@ export class AgentClient {
     }
   }
 
+  private async probeInfoAt(
+    url: string,
+    headers: Record<string, string>,
+    timeoutMs: number,
+  ): Promise<DeviceProbeInfo | null> {
+    try {
+      const res = await this.fetchWithTimeout(`${url}/info`, { headers }, timeoutMs);
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => null);
+      if (!data || typeof data !== "object") return null;
+      return data as DeviceProbeInfo;
+    } catch {
+      return null;
+    }
+  }
+
+  async probeDeviceStatus(opts: {
+    host: string;
+    port: number;
+    token: string;
+    deviceId?: string;
+    tunnelUrls?: string[];
+  }): Promise<DeviceStatusProbe> {
+    const diagnostics: ConnectAttemptDiagnostic[] = [];
+    const checkedAt = new Date().toISOString();
+    const baseHeaders: Record<string, string> = { Authorization: `Bearer ${opts.token}` };
+
+    if (opts.deviceId && this.relayServers.length > 0) {
+      for (const relay of this.relayServers) {
+        const relayHeaders: Record<string, string> = { ...baseHeaders };
+        if (relay.password) relayHeaders["X-Relay-Password"] = relay.password;
+        const relayDeviceUrl = `${relay.httpUrl}/d/${opts.deviceId}`;
+        const diag = await this.probeHealth(relayDeviceUrl, relayHeaders, 8000, "relay", relay.id);
+        diagnostics.push(diag);
+        if (diag.ok) {
+          const info = await this.probeInfoAt(relayDeviceUrl, relayHeaders, 8000);
+          return {
+            ok: true,
+            path: "relay",
+            relayId: relay.id,
+            checkedAt,
+            diagnostics,
+            info,
+          };
+        }
+      }
+    }
+
+    for (const tunnelUrl of (opts.tunnelUrls || []).map((u) => String(u || "").trim()).filter(Boolean)) {
+      const normalized = tunnelUrl.replace(/\/+$/, "");
+      const diag = await this.probeHealth(normalized, baseHeaders, 8000, "tunnel");
+      diagnostics.push(diag);
+      if (diag.ok) {
+        const info = await this.probeInfoAt(normalized, baseHeaders, 8000);
+        return {
+          ok: true,
+          path: "tunnel",
+          checkedAt,
+          diagnostics,
+          info,
+        };
+      }
+    }
+
+    const directUrl = `http://${opts.host}:${opts.port}`;
+    const directDiag = await this.probeHealth(directUrl, baseHeaders, 5000, "direct");
+    diagnostics.push(directDiag);
+    if (directDiag.ok) {
+      const info = await this.probeInfoAt(directUrl, baseHeaders, 5000);
+      return {
+        ok: true,
+        path: "direct",
+        checkedAt,
+        diagnostics,
+        info,
+      };
+    }
+
+    if (diagnostics.some((d) => d.authExpired)) {
+      return {
+        ok: false,
+        authExpired: true,
+        checkedAt,
+        error: "Agent reached, but its session is expired",
+        diagnostics,
+      };
+    }
+
+    return {
+      ok: false,
+      checkedAt,
+      error: diagnostics.find((d) => d.error)?.error || "Could not reach agent",
+      diagnostics,
+    };
+  }
+
   private async attemptConnect(): Promise<void> {
     this.setConnectionState("connecting");
     this.activeRelayUrl = null;
@@ -3216,6 +3406,62 @@ export class AgentClient {
       : `${this.baseUrl}/infra/summary`;
     const res = await fetch(base, { headers: this.authHeaders });
     return res.json();
+  }
+
+  async capabilitySnapshot(): Promise<CapabilitySnapshot> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/capabilities/snapshot`, { headers: this.authHeaders });
+    const data = await res.json();
+    return data.snapshot as CapabilitySnapshot;
+  }
+
+  async incidents(opts: {
+    category?: string;
+    severity?: string;
+    code?: string;
+    device?: string;
+    projectPath?: string;
+    includeResolved?: boolean;
+    limit?: number;
+  } = {}): Promise<IncidentEvent[]> {
+    this.assertConnected();
+    const p = new URLSearchParams();
+    if (opts.category) p.set("category", opts.category);
+    if (opts.severity) p.set("severity", opts.severity);
+    if (opts.code) p.set("code", opts.code);
+    if (opts.device) p.set("device", opts.device);
+    if (opts.projectPath) p.set("projectPath", opts.projectPath);
+    if (opts.includeResolved) p.set("include_resolved", "1");
+    if (opts.limit) p.set("limit", String(opts.limit));
+    const res = await fetch(`${this.baseUrl}/incidents?${p.toString()}`, { headers: this.authHeaders });
+    const data = await res.json();
+    return (data.incidents ?? []) as IncidentEvent[];
+  }
+
+  async incidentSummary(): Promise<IncidentSummary> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/incidents/summary`, { headers: this.authHeaders });
+    const data = await res.json();
+    return data.summary as IncidentSummary;
+  }
+
+  async operations(opts: {
+    kind?: string;
+    status?: string;
+    device?: string;
+    projectPath?: string;
+    limit?: number;
+  } = {}): Promise<OperationState[]> {
+    this.assertConnected();
+    const p = new URLSearchParams();
+    if (opts.kind) p.set("kind", opts.kind);
+    if (opts.status) p.set("status", opts.status);
+    if (opts.device) p.set("device", opts.device);
+    if (opts.projectPath) p.set("projectPath", opts.projectPath);
+    if (opts.limit) p.set("limit", String(opts.limit));
+    const res = await fetch(`${this.baseUrl}/operations?${p.toString()}`, { headers: this.authHeaders });
+    const data = await res.json();
+    return (data.operations ?? []) as OperationState[];
   }
 
   async tailscaleStatus(): Promise<TailscaleStatus> {

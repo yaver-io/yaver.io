@@ -495,6 +495,77 @@ export interface InfraSummary {
   capabilities: InfraCapabilities;
 }
 
+export interface IncidentEvent {
+  id: string;
+  timestamp: number;
+  severity: "info" | "warn" | "error" | "fatal";
+  category: string;
+  code: string;
+  source: string;
+  title: string;
+  userMessage: string;
+  technicalInfo?: string;
+  suggestedAction?: string;
+  operationId?: string;
+  deviceId?: string;
+  projectPath?: string;
+  target?: string;
+  logsAvailable: boolean;
+  logRefs?: string[];
+  correlationId?: string;
+  recoverable: boolean;
+  metadata?: Record<string, unknown>;
+  resolved?: boolean;
+  resolvedAt?: number;
+  resolutionNote?: string;
+}
+
+export interface IncidentSummary {
+  total: number;
+  open: number;
+  resolved: number;
+  byCategory: Record<string, number>;
+  bySeverity: Record<string, number>;
+  topReasonCodes?: string[];
+  lastIncidentAt?: number;
+}
+
+export interface OperationState {
+  id: string;
+  kind: string;
+  status: string;
+  phase?: string;
+  message?: string;
+  progress?: number;
+  deviceId?: string;
+  projectPath?: string;
+  startedAt: number;
+  updatedAt: number;
+  incidentIds?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface CapabilityTargetReadiness {
+  enabled: boolean;
+  reasonCode?: string;
+  reason?: string;
+  suggestedAction?: string;
+  notes?: string[];
+}
+
+export interface CapabilitySnapshot {
+  generatedAt: string;
+  machine: MachineInfo;
+  infra: InfraSummary;
+  connectivity: {
+    directAvailable: boolean;
+    relayConfigured: boolean;
+    tunnelConfigured: boolean;
+    tailscaleAvailable: boolean;
+  };
+  targets: Record<string, CapabilityTargetReadiness>;
+}
+
 export interface TmuxSession {
   name: string;
   windows: number;
@@ -2332,6 +2403,18 @@ export class QuicClient {
     const res = await fetch(`${this.baseUrl}/infra/summary`, { headers: this.authHeaders });
     if (!res.ok) throw new Error(`Failed to fetch infra summary: ${res.status}`);
     return res.json();
+  }
+
+  async capabilitySnapshot(): Promise<CapabilitySnapshot | null> {
+    if (!this.isConnected && !this.hasConnectionInfo) return null;
+    try {
+      const res = await fetch(`${this.baseUrl}/capabilities/snapshot`, { headers: this.authHeaders });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return (data?.snapshot as CapabilitySnapshot) ?? null;
+    } catch {
+      return null;
+    }
   }
 
   async infraServiceAction(scope: "dev" | "system", name: string, action: "start" | "stop" | "restart" | "status"): Promise<any> {
@@ -4634,6 +4717,70 @@ export class QuicClient {
       return await res.json();
     } catch {
       return null;
+    }
+  }
+
+  async incidents(opts: {
+    category?: string;
+    severity?: string;
+    code?: string;
+    device?: string;
+    projectPath?: string;
+    includeResolved?: boolean;
+    limit?: number;
+  } = {}): Promise<IncidentEvent[]> {
+    if (!this.isConnected && !this.hasConnectionInfo) return [];
+    try {
+      const p = new URLSearchParams();
+      if (opts.category) p.set("category", opts.category);
+      if (opts.severity) p.set("severity", opts.severity);
+      if (opts.code) p.set("code", opts.code);
+      if (opts.device) p.set("device", opts.device);
+      if (opts.projectPath) p.set("projectPath", opts.projectPath);
+      if (opts.includeResolved) p.set("include_resolved", "1");
+      if (opts.limit) p.set("limit", String(opts.limit));
+      const res = await fetch(`${this.baseUrl}/incidents?${p.toString()}`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return (data?.incidents as IncidentEvent[]) ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  async incidentSummary(): Promise<IncidentSummary | null> {
+    if (!this.isConnected && !this.hasConnectionInfo) return null;
+    try {
+      const res = await fetch(`${this.baseUrl}/incidents/summary`, { headers: this.authHeaders });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return (data?.summary as IncidentSummary) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  async operations(opts: {
+    kind?: string;
+    status?: string;
+    device?: string;
+    projectPath?: string;
+    limit?: number;
+  } = {}): Promise<OperationState[]> {
+    if (!this.isConnected && !this.hasConnectionInfo) return [];
+    try {
+      const p = new URLSearchParams();
+      if (opts.kind) p.set("kind", opts.kind);
+      if (opts.status) p.set("status", opts.status);
+      if (opts.device) p.set("device", opts.device);
+      if (opts.projectPath) p.set("projectPath", opts.projectPath);
+      if (opts.limit) p.set("limit", String(opts.limit));
+      const res = await fetch(`${this.baseUrl}/operations?${p.toString()}`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return (data?.operations as OperationState[]) ?? [];
+    } catch {
+      return [];
     }
   }
 

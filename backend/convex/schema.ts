@@ -1,6 +1,16 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+const recoveryPosture = v.object({
+  status: v.string(),
+  mobileApprovedTransports: v.array(v.string()),
+  webApprovedTransports: v.array(v.string()),
+  hasPrivateTransport: v.boolean(),
+  hasBrowserTransport: v.boolean(),
+  publicDirectRecoveryClosed: v.boolean(),
+  summary: v.string(),
+});
+
 export default defineSchema({
   users: defineTable({
     userId: v.string(),
@@ -208,6 +218,7 @@ export default defineSchema({
     // /auth/recover with their Convex token and we look up the
     // device by hardwareId to confirm they own it.
     hardwareId: v.optional(v.string()),
+    recoveryPosture: v.optional(recoveryPosture),
   })
     .index("by_userId", ["userId"])
     .index("by_deviceId", ["deviceId"])

@@ -64,6 +64,21 @@ export interface Device {
   peerState?: "online" | "stale" | "offline";
   peerLastSeen?: string;
   workspaceLive?: boolean;
+  probeState?: "ok" | "auth-expired" | "unreachable";
+  probePath?: "relay" | "tunnel" | "direct";
+  probeCheckedAt?: string;
+  probeError?: string;
+  probeInfo?: {
+    hostname?: string;
+    version?: string;
+    platform?: string;
+    workDir?: string;
+    mode?: string;
+    autoStart?: string;
+    authExpired?: boolean;
+    runtime?: Record<string, unknown>;
+    system?: Record<string, unknown>;
+  } | null;
 }
 
 interface DevicesState {

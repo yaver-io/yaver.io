@@ -173,6 +173,65 @@ export interface RunnerBrowserAuthSession {
   completedAt?: number;
 }
 
+export interface IncidentEvent {
+  id: string;
+  timestamp: number;
+  severity: 'info' | 'warn' | 'error' | 'fatal';
+  category: string;
+  code: string;
+  source: string;
+  title: string;
+  userMessage: string;
+  technicalInfo?: string;
+  suggestedAction?: string;
+  operationId?: string;
+  deviceId?: string;
+  projectPath?: string;
+  target?: string;
+  logsAvailable: boolean;
+  logRefs?: string[];
+  correlationId?: string;
+  recoverable: boolean;
+  metadata?: Record<string, unknown>;
+  resolved?: boolean;
+}
+
+export interface OperationState {
+  id: string;
+  kind: string;
+  status: string;
+  phase?: string;
+  message?: string;
+  progress?: number;
+  deviceId?: string;
+  projectPath?: string;
+  startedAt: number;
+  updatedAt: number;
+  incidentIds?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface CapabilityTargetReadiness {
+  enabled: boolean;
+  reasonCode?: string;
+  reason?: string;
+  suggestedAction?: string;
+  notes?: string[];
+}
+
+export interface CapabilitySnapshot {
+  generatedAt: string;
+  machine?: Record<string, unknown>;
+  infra?: Record<string, unknown>;
+  connectivity?: {
+    directAvailable?: boolean;
+    relayConfigured?: boolean;
+    tunnelConfigured?: boolean;
+    tailscaleAvailable?: boolean;
+  };
+  targets: Record<string, CapabilityTargetReadiness>;
+}
+
 export interface FeedbackProjectRef {
   appName?: string;
   projectName?: string;

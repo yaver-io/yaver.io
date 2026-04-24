@@ -5,7 +5,7 @@ import { useRouter } from "expo-router";
 import { useAuth } from "../../src/context/AuthContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
-import { quicClient, type InfraSummary } from "../../src/lib/quic";
+import { quicClient, type CapabilitySnapshot, type IncidentEvent, type InfraSummary } from "../../src/lib/quic";
 import { listGuests, type GuestInfo } from "../../src/lib/guests";
 
 // Install catalogue metadata — kept tiny, emoji + tagline per tool so
@@ -58,6 +58,8 @@ export default function InfraScreen() {
   const { token } = useAuth();
   const { devices, activeDevice } = useDevice();
   const [summary, setSummary] = useState<InfraSummary | null>(null);
+  const [capabilitySnapshot, setCapabilitySnapshot] = useState<CapabilitySnapshot | null>(null);
+  const [connectivityIncidents, setConnectivityIncidents] = useState<IncidentEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [guests, setGuests] = useState<GuestInfo[]>([]);
@@ -175,7 +177,14 @@ export default function InfraScreen() {
 
   async function refresh() {
     try {
-      setSummary(await quicClient.infraSummary());
+      const [infra, snapshot, incidents] = await Promise.all([
+        quicClient.infraSummary(),
+        quicClient.capabilitySnapshot(),
+        quicClient.incidents({ category: "connectivity", limit: 5 }),
+      ]);
+      setSummary(infra);
+      setCapabilitySnapshot(snapshot);
+      setConnectivityIncidents(incidents);
     } catch (e: any) {
       Alert.alert("Infra unavailable", e?.message || "Failed to load infra summary");
     } finally {
@@ -275,6 +284,41 @@ export default function InfraScreen() {
         </View>
       ) : (
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32, gap: 12 }}>
+          {!capabilitySnapshot?.targets?.["web-preview"]?.enabled && capabilitySnapshot?.targets?.["web-preview"]?.reason ? (
+            <View style={[card(c), { gap: 6, borderColor: "#7f1d1d", backgroundColor: "#2b1212" }]}>
+              <Text style={{ color: "#fecaca", fontSize: 13, fontWeight: "700" }}>Remote preview blocked</Text>
+              <Text style={{ color: "#fca5a5", fontSize: 12 }}>
+                {capabilitySnapshot.targets["web-preview"].reason}
+              </Text>
+              {capabilitySnapshot.targets["web-preview"].suggestedAction ? (
+                <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                  {capabilitySnapshot.targets["web-preview"].suggestedAction}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+
+          {connectivityIncidents.length > 0 ? (
+            <View style={[card(c), { gap: 8, borderColor: "#7f1d1d", backgroundColor: "#2b1212" }]}>
+              <Text style={{ color: "#fecaca", fontSize: 13, fontWeight: "700" }}>Connectivity blockers</Text>
+              {connectivityIncidents.map((incident) => (
+                <View key={incident.id} style={{ gap: 2 }}>
+                  <Text style={{ color: "#fca5a5", fontSize: 12, fontWeight: "700" }}>
+                    {incident.title || incident.code}
+                  </Text>
+                  <Text style={{ color: c.textPrimary, fontSize: 12 }}>
+                    {incident.userMessage}
+                  </Text>
+                  {incident.suggestedAction ? (
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                      {incident.suggestedAction}
+                    </Text>
+                  ) : null}
+                </View>
+              ))}
+            </View>
+          ) : null}
+
           <View style={[card(c), { gap: 10 }]}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
               <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: summary.machine.isOnline ? "#22c55e" : "#ef4444" }} />

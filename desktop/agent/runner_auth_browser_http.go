@@ -181,6 +181,7 @@ func startRunnerBrowserAuthSession(runner string, onTerminal func()) (*runnerBro
 
 	go scanRunnerBrowserAuthOutput(sess, stdout)
 	go scanRunnerBrowserAuthOutput(sess, stderr)
+	recordRunnerBrowserAuthOperation(sess.snapshot())
 	go func() {
 		err := cmd.Wait()
 		sess.update(func(state *runnerBrowserAuthSession) {
@@ -201,6 +202,9 @@ func startRunnerBrowserAuthSession(runner string, onTerminal func()) (*runnerBro
 			}
 			refreshRunnerBrowserAuthSnapshot(state)
 		})
+		snap := sess.snapshot()
+		recordRunnerBrowserAuthOperation(snap)
+		recordRunnerBrowserAuthIncident(snap)
 		// Heartbeat-kick on terminal so the pill on yaver.io / mobile
 		// flips from "sign in" to "ready" within a second, instead of
 		// waiting up to 30 s for the next ticker.
@@ -211,6 +215,79 @@ func startRunnerBrowserAuthSession(runner string, onTerminal func()) (*runnerBro
 
 	runnerBrowserAuthSessions.Store(sess.ID, sess)
 	return sess, nil
+}
+
+func recordRunnerBrowserAuthOperation(sess runnerBrowserAuthSession) {
+	GlobalOperationStore().Upsert(OperationState{
+		ID:        sess.ID,
+		Kind:      "runner_browser_auth",
+		Status:    sess.Status,
+		Message:   sess.Detail,
+		StartedAt: sess.StartedAt,
+		DeviceID:  "local",
+		Metadata: map[string]interface{}{
+			"runner":         sess.Runner,
+			"method":         sess.Method,
+			"authConfigured": sess.AuthConfigured,
+			"authSource":     sess.AuthSource,
+			"openUrl":        sess.OpenURL,
+			"code":           sess.Code,
+			"error":          sess.Error,
+		},
+	})
+}
+
+func recordRunnerBrowserAuthIncident(sess runnerBrowserAuthSession) {
+	switch sess.Status {
+	case "failed":
+		GlobalIncidentStore().Append(IncidentEvent{
+			Timestamp:       sess.UpdatedAt,
+			Severity:        IncidentSeverityError,
+			Category:        "runner_auth",
+			Code:            "runner.browser_auth.failed",
+			Source:          "runner-auth/browser",
+			Title:           "Runner browser auth failed",
+			UserMessage:     firstNonEmptyBrowserAuth(sess.Detail, sess.Error, "Authentication failed on the remote machine."),
+			TechnicalInfo:   sess.Error,
+			OperationID:     sess.ID,
+			LogsAvailable:   false,
+			Recoverable:     true,
+			CorrelationID:   sess.ID,
+			SuggestedAction: "Retry the browser auth flow or configure the runner with credentials directly.",
+			Metadata: map[string]interface{}{
+				"runner": sess.Runner,
+				"method": sess.Method,
+			},
+		})
+	case "cancelled":
+		GlobalIncidentStore().Append(IncidentEvent{
+			Timestamp:       sess.UpdatedAt,
+			Severity:        IncidentSeverityWarn,
+			Category:        "runner_auth",
+			Code:            "runner.browser_auth.cancelled",
+			Source:          "runner-auth/browser",
+			Title:           "Runner browser auth cancelled",
+			UserMessage:     firstNonEmptyBrowserAuth(sess.Detail, "Authentication flow cancelled."),
+			OperationID:     sess.ID,
+			LogsAvailable:   false,
+			Recoverable:     true,
+			CorrelationID:   sess.ID,
+			SuggestedAction: "Start the browser auth flow again when you are ready to finish sign-in.",
+			Metadata: map[string]interface{}{
+				"runner": sess.Runner,
+				"method": sess.Method,
+			},
+		})
+	}
+}
+
+func firstNonEmptyBrowserAuth(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 func lookupRunnerBrowserAuthSession(id string) (*runnerBrowserAuthSessionState, bool) {
@@ -260,7 +337,11 @@ func (s *HTTPServer) handleRunnerBrowserAuthStatus(w http.ResponseWriter, r *htt
 	}
 	jsonReply(w, http.StatusOK, map[string]any{
 		"ok":      true,
-		"session": sess.snapshot(),
+		"session": func() runnerBrowserAuthSession {
+			snap := sess.snapshot()
+			recordRunnerBrowserAuthOperation(snap)
+			return snap
+		}(),
 	})
 }
 
@@ -289,8 +370,11 @@ func (s *HTTPServer) handleRunnerBrowserAuthCancel(w http.ResponseWriter, r *htt
 		}
 		state.CompletedAt = time.Now().UnixMilli()
 	})
+	snap := sess.snapshot()
+	recordRunnerBrowserAuthOperation(snap)
+	recordRunnerBrowserAuthIncident(snap)
 	jsonReply(w, http.StatusOK, map[string]any{
 		"ok":      true,
-		"session": sess.snapshot(),
+		"session": snap,
 	})
 }

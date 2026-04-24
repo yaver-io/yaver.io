@@ -82,25 +82,25 @@ type RecoveryResponse struct {
 // intervention from the user. Two load-bearing responsibilities beyond
 // writing the token:
 //
-//   1. Re-resolve ownership. The recovered bearer may belong to a
-//      *different* user than whoever provisioned the agent — e.g. the
-//      developer signed out, signed back in with a different OAuth
-//      provider, or had their session force-rotated. If we leave
-//      s.ownerUserID pointing at the old identity, every subsequent
-//      request from the new session trips the "token belongs to a
-//      different user" check in auth() (httpserver.go ~L1583, 1590) and
-//      the daemon looks completely dead to the app even though the
-//      token itself is valid. We re-validate the new token against
-//      Convex and rebind s.ownerUserID to whatever it actually maps to
-//      before any request can race in.
+//  1. Re-resolve ownership. The recovered bearer may belong to a
+//     *different* user than whoever provisioned the agent — e.g. the
+//     developer signed out, signed back in with a different OAuth
+//     provider, or had their session force-rotated. If we leave
+//     s.ownerUserID pointing at the old identity, every subsequent
+//     request from the new session trips the "token belongs to a
+//     different user" check in auth() (httpserver.go ~L1583, 1590) and
+//     the daemon looks completely dead to the app even though the
+//     token itself is valid. We re-validate the new token against
+//     Convex and rebind s.ownerUserID to whatever it actually maps to
+//     before any request can race in.
 //
-//   2. Flush the token cache. auth() caches token→userID decisions in
-//      s.tokenCache for the life of the process. After reauth the old
-//      bearer may still be in there with its (now-stale) userID, guest
-//      grant, or host-share decision. Leaving those entries behind
-//      re-admits revoked sessions and routes the wrong isolation slot.
-//      A full Range+Delete is the safe thing — the cache is small and
-//      the next request repopulates whatever it needs.
+//  2. Flush the token cache. auth() caches token→userID decisions in
+//     s.tokenCache for the life of the process. After reauth the old
+//     bearer may still be in there with its (now-stale) userID, guest
+//     grant, or host-share decision. Leaving those entries behind
+//     re-admits revoked sessions and routes the wrong isolation slot.
+//     A full Range+Delete is the safe thing — the cache is small and
+//     the next request repopulates whatever it needs.
 func applyRecoveredAuthToken(token, convexURL string, s *HTTPServer) {
 	cfg, _ := LoadConfig()
 	if cfg == nil {
@@ -257,6 +257,13 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusTooManyRequests, "too many recovery attempts — wait 5 seconds")
 		return
 	}
+	cfg, _ := LoadConfig()
+	ingress := classifyRecoveryIngress(r, cfg)
+	if !ingress.Allowed {
+		reportRecoveryEventFn(s, "blocked_public_ingress", map[string]interface{}{"ip": ip, "reason": ingress.Reason})
+		jsonError(w, http.StatusForbidden, ingress.Reason)
+		return
+	}
 
 	// Determine auth mode up front. This used to happen below the
 	// healthy-agent guard, but that meant a host-authed caller
@@ -335,7 +342,6 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 		// dashboard, where the user is logged into yaver.io and just
 		// wants to hand their existing session down to a headless box
 		// that lost its own.
-		cfg, _ := LoadConfig()
 		convexURL := ""
 		if cfg != nil {
 			convexURL = cfg.ConvexSiteURL
@@ -348,6 +354,7 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 		reportRecoveryEventFn(s, "direct_applied", map[string]interface{}{
 			"ip":         ip,
 			"authMethod": authMethod,
+			"transport":  ingress.Transport,
 		})
 		jsonReply(w, http.StatusOK, RecoveryResponse{
 			OK:   true,
@@ -376,6 +383,7 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 		reportRecoveryEventFn(s, "pair_started", map[string]interface{}{
 			"ip":         ip,
 			"authMethod": authMethod,
+			"transport":  ingress.Transport,
 			"reused":     reused,
 		})
 		jsonReply(w, http.StatusOK, resp)
@@ -386,8 +394,7 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 		// in a browser with whichever provider they prefer
 		// (Apple / Google / Microsoft — all live behind the
 		// same yaver.io/auth/device page).
-		cfg, err := LoadConfig()
-		if err != nil || cfg == nil || cfg.ConvexSiteURL == "" {
+		if cfg == nil || cfg.ConvexSiteURL == "" {
 			jsonError(w, http.StatusInternalServerError, "no convex URL configured")
 			return
 		}
@@ -410,7 +417,7 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 			UserCode:      dc.UserCode,
 			ExpiresAt:     time.UnixMilli(dc.ExpiresAt).UTC().Format(time.RFC3339),
 		}
-		reportRecoveryEventFn(s, "device_code_started", map[string]interface{}{"ip": ip, "authMethod": authMethod})
+		reportRecoveryEventFn(s, "device_code_started", map[string]interface{}{"ip": ip, "authMethod": authMethod, "transport": ingress.Transport})
 		jsonReply(w, http.StatusOK, resp)
 
 	default:
@@ -559,8 +566,9 @@ func runConfigBootstrapSecret(args []string) {
 // the bootstrap beacon, and the user ID / email is behind auth().
 //
 // Response:
-//   { authenticated: bool, reason?: "revoked" | "grace_expired" | "no_token" | "never_validated",
-//     since?: <unix ms>, bootstrap: bool }
+//
+//	{ authenticated: bool, reason?: "revoked" | "grace_expired" | "no_token" | "never_validated",
+//	  since?: <unix ms>, bootstrap: bool }
 //
 // bootstrap=true means the agent is still in pre-pair mode (never
 // signed in yet). authenticated=false with reason=revoked means the

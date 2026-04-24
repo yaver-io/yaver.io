@@ -48,6 +48,69 @@ func DetectRunnerRuntimeStatus(runner RunnerConfig, workDir string) RunnerRuntim
 	}
 }
 
+func capabilityForRunner(runnerID, workDir string) CapabilityTargetReadiness {
+	cfg := GetRunnerConfig(runnerID)
+	if err := CheckRunnerBinary(cfg.Command); err != nil {
+		return CapabilityTargetReadiness{
+			Enabled:         false,
+			ReasonCode:      "runner." + normalizeRunnerID(runnerID) + ".not_installed",
+			Reason:          fmt.Sprintf("%s is not installed on this machine.", runnerCapabilityName(runnerID)),
+			SuggestedAction: fmt.Sprintf("Install %s on the host machine before using it remotely.", runnerCapabilityName(runnerID)),
+		}
+	}
+	status := DetectRunnerRuntimeStatus(cfg, workDir)
+	if code, reason, action, blocked := runnerCapabilityReason(normalizeRunnerID(runnerID), status); blocked {
+		return CapabilityTargetReadiness{
+			Enabled:         false,
+			ReasonCode:      code,
+			Reason:          reason,
+			SuggestedAction: action,
+		}
+	}
+	notes := []string{}
+	if status.AuthConfigured && strings.TrimSpace(status.AuthSource) != "" {
+		notes = append(notes, "authenticated via "+strings.TrimSpace(status.AuthSource))
+	}
+	if strings.TrimSpace(status.Warning) != "" {
+		notes = append(notes, strings.TrimSpace(status.Warning))
+	}
+	return CapabilityTargetReadiness{Enabled: true, Notes: notes}
+}
+
+func runnerCapabilityName(runnerID string) string {
+	switch normalizeRunnerID(runnerID) {
+	case "codex":
+		return "Codex"
+	case "claude":
+		return "Claude Code"
+	case "opencode":
+		return "OpenCode"
+	default:
+		return strings.TrimSpace(runnerID)
+	}
+}
+
+func runnerCapabilityReason(runnerID string, status RunnerRuntimeStatus) (code, reason, action string, blocked bool) {
+	switch runnerID {
+	case "codex":
+		if strings.Contains(strings.ToLower(status.Error), "not authenticated") {
+			return ReasonRunnerCodexNotAuthenticated, "Codex is installed but not authenticated on this machine.", "Run the Codex login flow or provide `OPENAI_API_KEY` before using Codex remotely.", true
+		}
+		if strings.Contains(strings.ToLower(status.Error), "blocking the sandbox") {
+			return ReasonRunnerCodexLinuxSandboxBlocked, "This Linux machine is blocking the sandbox Codex needs for execution.", "Fix the Linux sandbox prerequisites on the host before running Codex.", true
+		}
+	case "claude":
+		if !status.AuthConfigured {
+			return ReasonRunnerClaudeAuthRequired, "Claude Code is installed but no usable auth was detected yet.", "Run the Claude browser login flow or save an Anthropic credential on the host machine.", true
+		}
+	case "opencode":
+		if strings.TrimSpace(status.Error) != "" {
+			return ReasonRunnerOpenCodeUnusable, strings.TrimSpace(status.Error), "Update the OpenCode provider/auth configuration on the host before using it remotely.", true
+		}
+	}
+	return "", "", "", false
+}
+
 func runnerDoctorDetail(runner RunnerConfig, workDir, binaryPath, version string) (string, string) {
 	status := DetectRunnerRuntimeStatus(runner, workDir)
 	detail := strings.TrimSpace(binaryPath)

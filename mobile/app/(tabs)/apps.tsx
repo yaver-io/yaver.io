@@ -19,7 +19,7 @@ import { useRouter } from "expo-router";
 import { Platform } from "react-native";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
-import { quicClient, type DevCompatibilityStatus, type DevServerStatus, type MobileWorkerPreviewSession } from "../../src/lib/quic";
+import { quicClient, type CapabilitySnapshot, type DevCompatibilityStatus, type DevServerStatus, type MobileWorkerPreviewSession } from "../../src/lib/quic";
 import { getAvailableModules, loadApp } from "../../src/lib/bundleLoader";
 import { downloadArtifact } from "../../src/lib/builds";
 import { describeConnectionStatus } from "../../src/lib/connection";
@@ -220,6 +220,25 @@ export default function AppsScreen() {
   const [buildProgress, setBuildProgress] = useState(0);
   const [buildStatus, setBuildStatus] = useState<string | null>(null);
   const [quickActionStatus, setQuickActionStatus] = useState<string | null>(null);
+  const [capabilitySnapshot, setCapabilitySnapshot] = useState<CapabilitySnapshot | null>(null);
+
+  useEffect(() => {
+    if (!isConnected) {
+      setCapabilitySnapshot(null);
+      return;
+    }
+    quicClient.capabilitySnapshot()
+      .then(setCapabilitySnapshot)
+      .catch(() => setCapabilitySnapshot(null));
+  }, [isConnected, activeDevice?.id]);
+
+  const deployBlocker = useCallback((target: "testflight" | "playstore", machineOs?: string): string | null => {
+    const readiness = capabilitySnapshot?.targets?.[target];
+    if (readiness && readiness.enabled === false) {
+      return readiness.reason || readiness.suggestedAction || devMachineDeployBlocker(target, machineOs);
+    }
+    return devMachineDeployBlocker(target, machineOs);
+  }, [capabilitySnapshot]);
 
   // sendTaskOrWarn replaces the old `.catch(() => {})` pattern on user-
   // initiated taps. Every call either succeeds and navigates the user to the
@@ -813,7 +832,7 @@ export default function AppsScreen() {
       const reason = !isDirectConnection
         ? `Running ${frameworkLabel} directly on your phone needs both your machine and phone on the same Wi-Fi. Right now you're on relay / 4G, so the direct install is not possible.`
         : `This ${frameworkLabel} build needs to run on a ${framework === "swift" ? "iPhone" : "Android phone"}, but you're controlling Yaver from ${Platform.OS === "ios" ? "iPhone" : "Android"}. A direct install from this phone is not possible.`;
-      const blocker = deploy ? devMachineDeployBlocker(deploy.target, activeDevice?.os) : null;
+      const blocker = deploy ? deployBlocker(deploy.target, activeDevice?.os) : null;
       const alternative = !deploy
         ? ""
         : blocker
@@ -1403,7 +1422,7 @@ export default function AppsScreen() {
                       return;
                     }
                     if (action.label === "Ship It") {
-                      const iosBlocker = devMachineDeployBlocker("testflight", activeDevice?.os);
+                      const iosBlocker = deployBlocker("testflight", activeDevice?.os);
                       if (iosBlocker) {
                         Alert.alert(
                           "Can't Ship From This Dev Machine",

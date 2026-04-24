@@ -26,34 +26,34 @@ var currentLocalAgentPort atomic.Int64
 
 // HTTPServer serves the V1 HTTP API for mobile clients over Tailscale.
 type HTTPServer struct {
-	port               int
-	token              string
-	ownerUserID        string
-	deviceID           string
-	convexURL          string
-	hostname           string
-	taskMgr            *TaskManager
-	execMgr            *ExecManager
-	scheduler          *Scheduler
-	analytics          *Analytics
-	aclMgr             *ACLManager
-	emailMgr           *EmailManager
-	notifyMgr          *NotificationManager
-	vaultStore         *VaultStore
-	buildMgr           *BuildManager
-	tunnelMgr          *TunnelManager
-	testMgr            *TestManager
-	feedbackMgr        *FeedbackManager
-	blackboxMgr        *BlackBoxManager
-	devServerMgr       *DevServerManager
-	todolistMgr        *TodoListManager
-	sessionAuditor     *SessionAuditor
-	guestConfigMgr     *GuestConfigManager
+	port           int
+	token          string
+	ownerUserID    string
+	deviceID       string
+	convexURL      string
+	hostname       string
+	taskMgr        *TaskManager
+	execMgr        *ExecManager
+	scheduler      *Scheduler
+	analytics      *Analytics
+	aclMgr         *ACLManager
+	emailMgr       *EmailManager
+	notifyMgr      *NotificationManager
+	vaultStore     *VaultStore
+	buildMgr       *BuildManager
+	tunnelMgr      *TunnelManager
+	testMgr        *TestManager
+	feedbackMgr    *FeedbackManager
+	blackboxMgr    *BlackBoxManager
+	devServerMgr   *DevServerManager
+	todolistMgr    *TodoListManager
+	sessionAuditor *SessionAuditor
+	guestConfigMgr *GuestConfigManager
 	// Deploy history (in-memory ring buffer of recent /deploy/ship runs)
 	// and per-caller concurrency limiter. Both are always live — lazy
 	// allocation happens on first use via the ensureDeploy* helpers.
-	deployHistory *DeployHistory
-	deployLimiter *deployLimiter
+	deployHistory      *DeployHistory
+	deployLimiter      *deployLimiter
 	containerRunner    *ContainerRunner     // nil if Docker not available
 	containerizeGuests bool                 // run guest tasks in containers
 	containerizeHost   bool                 // run host tasks in containers
@@ -289,6 +289,13 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/releases/list", s.auth(s.handleReleaseList))
 	mux.HandleFunc("/releases/latest", s.auth(s.handleReleaseLatest))
 	mux.HandleFunc("/releases/bundle", s.auth(s.handleReleaseBundle))
+	mux.HandleFunc("/incidents", s.auth(s.handleIncidents))
+	mux.HandleFunc("/incidents/stream", s.auth(s.handleIncidentsStream))
+	mux.HandleFunc("/incidents/summary", s.auth(s.handleIncidentsSummary))
+	mux.HandleFunc("/incidents/", s.auth(s.handleIncidentByID))
+	mux.HandleFunc("/operations", s.auth(s.handleOperations))
+	mux.HandleFunc("/operations/stream", s.auth(s.handleOperationsStream))
+	mux.HandleFunc("/capabilities/snapshot", s.auth(s.handleCapabilitiesSnapshot))
 	mux.HandleFunc("/errors", s.auth(s.handleErrors))
 	mux.HandleFunc("/errors/stats", s.auth(s.handleErrorsStats))
 	mux.HandleFunc("/errors/detail", s.auth(s.handleErrorsDetail))
@@ -3304,6 +3311,17 @@ func (s *HTTPServer) handleDoctor(w http.ResponseWriter, r *http.Request) {
 	} else {
 		addCheck("network", "Local IP", "warn", "Could not determine")
 	}
+	recoveryPosture := computeRecoveryTransportPosture(cfg)
+	if recoveryPosture.HasPrivateTransport {
+		addCheck("network", "Remote recovery transport", "pass", recoveryPosture.Summary)
+	} else {
+		addCheck("network", "Remote recovery transport", "warn", recoveryPosture.Summary)
+	}
+	if recoveryPosture.PublicDirectRecoveryClosed {
+		addCheck("network", "Public recovery exposure", "pass", "Direct public HTTP recovery is blocked by the agent")
+	} else {
+		addCheck("network", "Public recovery exposure", "warn", "Direct public HTTP recovery is enabled (default). Set require-private-recovery=true to lock /auth/recover to private paths.")
+	}
 
 	// Voice
 	if cfg != nil && cfg.Speech != nil && cfg.Speech.Provider != "" {
@@ -5930,8 +5948,18 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 				return mcpToolError(fmt.Sprintf("save config: %v", err))
 			}
 			return mcpToolResult(fmt.Sprintf("headless-keep-awake set to %v", enabled))
+		case "require-private-recovery":
+			enabled := args.Value == "true" || args.Value == "1" || args.Value == "yes"
+			cfg.RequirePrivateRecoveryTransport = enabled
+			if err := SaveConfig(cfg); err != nil {
+				return mcpToolError(fmt.Sprintf("save config: %v", err))
+			}
+			if enabled {
+				return mcpToolResult("require-private-recovery enabled; /auth/recover now rejects direct public HTTP")
+			}
+			return mcpToolResult("require-private-recovery disabled; /auth/recover is back to default open mode")
 		default:
-			return mcpToolError(fmt.Sprintf("Unknown config key: %s. Supported: auto-start, auto-update, headless-keep-awake", args.Key))
+			return mcpToolError(fmt.Sprintf("Unknown config key: %s. Supported: auto-start, auto-update, headless-keep-awake, require-private-recovery", args.Key))
 		}
 
 	case "relay_test":

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { agentClient } from "@/lib/agent-client";
+import { agentClient, type CapabilitySnapshot, type CapabilityTargetReadiness } from "@/lib/agent-client";
 
 interface Build { id: string; platform: string; status: string; startedAt?: number; artifactName?: string; }
 interface Project { name: string; path: string; framework?: string; }
@@ -51,8 +51,9 @@ export default function BuildsView({ onTaskCreated }: { onTaskCreated?: (taskId:
   const [unityRuns, setUnityRuns] = useState<UnityRun[]>([]);
   const [allowGitHubFallback, setAllowGitHubFallback] = useState(false);
   const [publishBusy, setPublishBusy] = useState<string | null>(null);
+  const [capabilitySnapshot, setCapabilitySnapshot] = useState<CapabilitySnapshot | null>(null);
 
-  useEffect(() => { void loadBuilds(); void loadProjects(); void loadPublishes(); void loadUnityRuns(); }, []);
+  useEffect(() => { void loadBuilds(); void loadProjects(); void loadPublishes(); void loadUnityRuns(); void loadCapabilities(); }, []);
   useEffect(() => {
     if (!selectedPath) return;
     void loadPublishConfig(selectedPath);
@@ -94,6 +95,14 @@ export default function BuildsView({ onTaskCreated }: { onTaskCreated?: (taskId:
     } catch {}
   }
 
+  async function loadCapabilities() {
+    try {
+      setCapabilitySnapshot(await agentClient.capabilitySnapshot());
+    } catch {
+      setCapabilitySnapshot(null);
+    }
+  }
+
   async function deploy(target: "testflight" | "playstore" | "web") {
     let proj = projects.find((p) => p.path === selectedPath) ?? projects[0];
     if (!proj) { alert("No projects found"); return; }
@@ -108,6 +117,22 @@ export default function BuildsView({ onTaskCreated }: { onTaskCreated?: (taskId:
       const task = await agentClient.sendTask(`Deploy ${proj.name} to ${target}`, prompts[target]);
       onTaskCreated?.(task.id);
     } catch {}
+  }
+
+  function targetReadiness(target: "testflight" | "playstore" | "web-preview"): CapabilityTargetReadiness | null {
+    return capabilitySnapshot?.targets?.[target] ?? null;
+  }
+
+  function deployDisabledReason(target: "testflight" | "playstore" | "web") {
+    if (target === "web") return "";
+    const readiness = targetReadiness(target);
+    if (!readiness) return "";
+    if (readiness.enabled) return "";
+    return readiness.reason || readiness.suggestedAction || "This target is not ready on the connected machine.";
+  }
+
+  function deployButtonClass(disabled: boolean) {
+    return `px-3 py-2 text-sm rounded-lg border flex items-center gap-2 ${disabled ? "border-surface-800 bg-surface-950 text-surface-500 cursor-not-allowed opacity-70" : "border-surface-700 bg-surface-900 hover:bg-surface-800 text-surface-200"}`;
   }
 
   async function runPublish(targetId: string) {
@@ -237,16 +262,34 @@ export default function BuildsView({ onTaskCreated }: { onTaskCreated?: (taskId:
       </div>
 
       <div className="flex gap-2 flex-wrap">
-        <button onClick={() => deploy("testflight")} className="px-3 py-2 text-sm rounded-lg border border-surface-700 bg-surface-900 hover:bg-surface-800 flex items-center gap-2">
+        <button
+          onClick={() => deploy("testflight")}
+          disabled={!!deployDisabledReason("testflight")}
+          title={deployDisabledReason("testflight")}
+          className={deployButtonClass(!!deployDisabledReason("testflight"))}
+        >
           <span>&#x1F34E;</span> TestFlight Task
         </button>
-        <button onClick={() => deploy("playstore")} className="px-3 py-2 text-sm rounded-lg border border-surface-700 bg-surface-900 hover:bg-surface-800 flex items-center gap-2">
+        <button
+          onClick={() => deploy("playstore")}
+          disabled={!!deployDisabledReason("playstore")}
+          title={deployDisabledReason("playstore")}
+          className={deployButtonClass(!!deployDisabledReason("playstore"))}
+        >
           <span>&#x1F4E6;</span> Play Task
         </button>
-        <button onClick={() => deploy("web")} className="px-3 py-2 text-sm rounded-lg border border-surface-700 bg-surface-900 hover:bg-surface-800 flex items-center gap-2">
+        <button onClick={() => deploy("web")} className={deployButtonClass(false)}>
           <span>&#x1F310;</span> Web Task
         </button>
       </div>
+
+      {(deployDisabledReason("testflight") || deployDisabledReason("playstore")) ? (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200 space-y-2">
+          <div className="font-medium">Host readiness blockers</div>
+          {deployDisabledReason("testflight") ? <div>TestFlight: {deployDisabledReason("testflight")}</div> : null}
+          {deployDisabledReason("playstore") ? <div>Play Store: {deployDisabledReason("playstore")}</div> : null}
+        </div>
+      ) : null}
 
       <div className="text-xs text-surface-500 font-medium uppercase tracking-wider">Recent Builds</div>
 

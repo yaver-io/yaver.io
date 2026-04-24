@@ -9,6 +9,16 @@ import {
 } from "./access";
 import { recommendPlacement } from "./edgePlacement";
 
+const recoveryPostureValidator = v.object({
+  status: v.string(),
+  mobileApprovedTransports: v.array(v.string()),
+  webApprovedTransports: v.array(v.string()),
+  hasPrivateTransport: v.boolean(),
+  hasBrowserTransport: v.boolean(),
+  publicDirectRecoveryClosed: v.boolean(),
+  summary: v.string(),
+});
+
 // HEARTBEAT_STALE_MS: how long after the last heartbeat we still
 // trust the device's `isOnline` flag. The agent beats every 30 s,
 // so 90 s is "missed three beats" — far less likely than network
@@ -68,6 +78,7 @@ type ListedDevice = {
   sessionBinding?: "dedicated" | "legacy-shared";
   deviceClass?: "desktop" | "edge-mobile" | "server";
   edgeProfile?: Doc<"devices">["edgeProfile"];
+  recoveryPosture?: Doc<"devices">["recoveryPosture"];
 };
 
 type ShareRule = {
@@ -315,6 +326,7 @@ export const registerDevice = mutation({
     quicPort: v.number(),
     publicEndpoints: v.optional(v.array(v.string())),
     hardwareId: v.optional(v.string()),
+    recoveryPosture: v.optional(recoveryPostureValidator),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -351,6 +363,7 @@ export const registerDevice = mutation({
         needsAuth: false,
         lastHeartbeat: Date.now(),
         ...(args.hardwareId ? { hardwareId: args.hardwareId } : {}),
+        ...(args.recoveryPosture ? { recoveryPosture: args.recoveryPosture } : {}),
       });
       return existing._id;
     }
@@ -393,6 +406,7 @@ export const registerDevice = mutation({
       lastHeartbeat: Date.now(),
       createdAt: Date.now(),
       hardwareId: args.hardwareId,
+      recoveryPosture: args.recoveryPosture,
     });
   },
 });
@@ -471,6 +485,7 @@ export const heartbeat = mutation({
       isCharging: v.optional(v.boolean()),
       thermalState: v.optional(v.union(v.literal("nominal"), v.literal("warm"), v.literal("hot"))),
     })),
+    recoveryPosture: v.optional(recoveryPostureValidator),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -514,6 +529,9 @@ export const heartbeat = mutation({
     }
     if (args.edgeProfile) {
       patch.edgeProfile = args.edgeProfile;
+    }
+    if (args.recoveryPosture) {
+      patch.recoveryPosture = args.recoveryPosture;
     }
     await ctx.db.patch(device._id, patch);
   },
@@ -686,6 +704,7 @@ export const listMyDevices = query({
       sessionBinding: dedicatedSessionDeviceIds.has(d.deviceId) ? "dedicated" as const : "legacy-shared" as const,
       deviceClass: d.deviceClass,
       edgeProfile: d.edgeProfile,
+      recoveryPosture: d.recoveryPosture,
     }));
 
     const scopedGrants = await listActiveInfraGrantsForGuest(ctx, session.user._id);

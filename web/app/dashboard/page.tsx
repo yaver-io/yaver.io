@@ -2,7 +2,7 @@
 
 import { useAuth } from "@/lib/use-auth";
 import { useDevices, type Device } from "@/lib/use-devices";
-import { agentClient, type Task, type ConnectionState, type Runner, type AgentInfo, type ConnectAttemptDiagnostic } from "@/lib/agent-client";
+import { agentClient, type Task, type ConnectionState, type Runner, type AgentInfo, type ConnectAttemptDiagnostic, type DeviceStatusProbe } from "@/lib/agent-client";
 import { CONVEX_URL } from "@/lib/constants";
 import { fetchGuestHosts, acceptGuestInvitation, type GuestInvitation } from "@/lib/guests";
 import { useState, useEffect, useRef } from "react";
@@ -158,31 +158,35 @@ function hasRecentLiveSignal(
 }
 
 function deviceReachabilitySummary(
-  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "host" | "lastTunnelEvent" | "peerState" | "workspaceLive">,
+  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "host" | "lastTunnelEvent" | "peerState" | "workspaceLive" | "probeState" | "probePath" | "probeError">,
 ): string {
   if (device.workspaceLive) return "Active workspace connection";
+  if (device.probeState === "ok") return `Authenticated agent probe succeeded via ${device.probePath || "device path"}`;
+  if (device.probeState === "auth-expired") return "Agent reached, but its session is expired";
   if (device.peerState === "online") return "Live bus signal";
   if (hasRecentLiveSignal(device)) return "Live relay signal";
   if (device.peerState === "stale") return "Bus saw this machine recently, but no current transport is healthy";
-  if (device.online) return "Fresh heartbeat";
+  if (device.online) return "Recently confirmed by agent";
   if (device.needsAuth) return "Agent session expired; relay recovery may still work";
   const age = formatAgeShort(lastSeenAgeMs(device.lastSeen));
   const hasPublicPath = Boolean(device.tunnelUrl) || Boolean(device.publicEndpoints?.length);
-  if (age && hasPublicPath) return `No fresh live signal for ${age}; relay or tunnel may still be worth probing`;
-  if (age) return `No fresh live signal for ${age}; no tunnel or public endpoint advertised`;
-  if (hasPublicPath) return "No recent live signal; relay or tunnel may still be worth probing";
-  if (device.host) return "No recent live signal; direct browser access usually needs relay";
-  return "No recent live signal";
+  if (age && hasPublicPath) return `No recent agent signal for ${age}; relay or tunnel may still be worth probing`;
+  if (age) return `No recent agent signal for ${age}; no tunnel or public endpoint advertised`;
+  if (hasPublicPath) return "No recent agent signal; relay or tunnel may still be worth probing";
+  if (device.probeError) return device.probeError;
+  if (device.host) return "No recent agent signal; direct browser access usually needs relay";
+  return "No recent agent signal";
 }
 
 const DORMANT_DEVICE_HIDE_MS = 10 * 60 * 1000;
 
 function isDormantUnreachableDevice(
-  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "isGuest" | "peerState" | "workspaceLive">,
+  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "isGuest" | "peerState" | "workspaceLive" | "probeState">,
 ): boolean {
   if (device.isGuest) return false;
   if (device.online) return false;
   if (device.workspaceLive) return false;
+  if (device.probeState === "ok" || device.probeState === "auth-expired") return false;
   if (device.peerState === "online") return false;
   if (device.needsAuth) return false;
   if (Boolean(device.tunnelUrl) || Boolean(device.publicEndpoints?.length)) return false;
@@ -312,7 +316,21 @@ function DeviceConnectCard({
               }`}
             />
             <span className="text-[11px] text-surface-400">
-              {connectionError ? "failed" : isConnecting ? "connecting" : device.workspaceLive ? "workspace live" : isOffline ? "offline" : liveSignal ? "relay live" : "online"} · {liveSignalAge}
+              {connectionError
+                ? "failed"
+                : isConnecting
+                  ? "connecting"
+                  : device.workspaceLive
+                    ? "workspace live"
+                    : device.peerState === "online"
+                      ? "bus live"
+                      : device.peerState === "stale"
+                        ? "bus stale"
+                        : isOffline
+                          ? "offline"
+                          : liveSignal
+                            ? "relay live"
+                            : "online"} · {liveSignalAge}
             </span>
           </div>
           <p className="mt-1 text-[11px] leading-5 text-surface-500">
@@ -486,6 +504,7 @@ export default function DashboardPage() {
   const [relayReady, setRelayReady] = useState(false);
   const [previewTargetId, setPreviewTargetId] = useState<string | null>(null);
   const [peerStates, setPeerStates] = useState<Record<string, { state: "online" | "stale" | "offline"; lastSeen?: string }>>({});
+  const [probeStates, setProbeStates] = useState<Record<string, DeviceStatusProbe>>({});
   // Primary-device preference — the device auto-connect prefers when the
   // user has more than one online. Also mirrored onto mobile and CLI via
   // the /settings endpoint so every surface picks the same default.
@@ -589,6 +608,54 @@ export default function DashboardPage() {
       clearInterval(interval);
     };
   }, [isConnected, connectedDevice?.id]);
+
+  useEffect(() => {
+    if (!token || devices.length === 0) {
+      setProbeStates({});
+      return;
+    }
+    let cancelled = false;
+    const refreshProbes = async () => {
+      const nextEntries = await Promise.all(
+        devices.map(async (device) => {
+          try {
+            const probe = await agentClient.probeDeviceStatus({
+              host: device.host,
+              port: device.port,
+              token,
+              deviceId: device.id,
+              tunnelUrls: Array.from(
+                new Set(
+                  [
+                    ...(Array.isArray(device.publicEndpoints) ? device.publicEndpoints : []),
+                    ...(device.tunnelUrl ? [device.tunnelUrl] : []),
+                  ]
+                    .map((url) => String(url || "").trim())
+                    .filter(Boolean),
+                ),
+              ),
+            });
+            return [device.id, probe] as const;
+          } catch (error: any) {
+            return [device.id, {
+              ok: false,
+              checkedAt: new Date().toISOString(),
+              error: error?.message || "Probe failed",
+              diagnostics: [],
+            } satisfies DeviceStatusProbe] as const;
+          }
+        }),
+      );
+      if (cancelled) return;
+      setProbeStates(Object.fromEntries(nextEntries));
+    };
+    void refreshProbes();
+    const interval = setInterval(refreshProbes, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [token, devices]);
 
   useEffect(() => { const u = agentClient.on("connectionState", setConnState); return u; }, []);
 
@@ -861,6 +928,7 @@ export default function DashboardPage() {
 
   const displayDevices = devices.map((device) => {
     const peer = peerStates[device.id];
+    const probe = probeStates[device.id];
     const workspaceLive =
       connectedDevice?.id === device.id &&
       (connState === "connected" || connState === "connecting");
@@ -869,12 +937,18 @@ export default function DashboardPage() {
       workspaceLive,
       peerState: peer?.state ?? device.peerState,
       peerLastSeen: peer?.lastSeen ?? device.peerLastSeen,
-      online: workspaceLive || (peer?.state === "online" ? true : device.online),
+      probeState: workspaceLive ? "ok" : probe?.ok ? "ok" : probe?.authExpired ? "auth-expired" : probe ? "unreachable" : device.probeState,
+      probePath: workspaceLive ? device.probePath : probe?.path ?? device.probePath,
+      probeCheckedAt: probe?.checkedAt ?? device.probeCheckedAt,
+      probeError: probe?.error ?? device.probeError,
+      probeInfo: probe?.info ?? device.probeInfo,
+      online: workspaceLive || probe?.ok === true || (peer?.state === "online" ? true : device.online),
       lastSeen: (() => {
         const workspaceSeen = workspaceLive ? new Date().toISOString() : "";
         const peerSeen = peer?.lastSeen || "";
+        const probeSeen = probe?.checkedAt || "";
         const currentSeen = device.lastSeen || "";
-        const best = [workspaceSeen, peerSeen, currentSeen]
+        const best = [workspaceSeen, peerSeen, probeSeen, currentSeen]
           .filter(Boolean)
           .sort((a, b) => (Date.parse(b) || 0) - (Date.parse(a) || 0))[0];
         return best || currentSeen;
@@ -1038,20 +1112,24 @@ export default function DashboardPage() {
                   const hasError = isSelected && connState === "error";
                   const needsAuth = !!d.needsAuth && !d.isGuest;
                   const isReauthing = reauthBusy === d.id;
+                  const reachableNow = d.workspaceLive || d.probeState === "ok";
+                  const authExpired = d.probeState === "auth-expired" || needsAuth;
                   const dotClass = hasError
                     ? "bg-red-400"
                     : isConnecting || isReauthing
                       ? "bg-amber-400 animate-pulse"
-                      : needsAuth
+                      : authExpired
                         ? "bg-amber-400"
-                        : d.online
-                          ? "bg-emerald-400"
+                        : reachableNow
+                          ? "bg-cyan-400"
+                          : d.online
+                            ? "bg-emerald-400"
                           : "bg-surface-600";
                   const wrapClass = hasError
                     ? "border border-red-500/30 bg-red-500/5"
                     : isConnecting
                       ? "border border-amber-500/30 bg-amber-500/5"
-                      : needsAuth
+                      : authExpired
                         ? "border border-amber-500/30 bg-amber-500/5"
                         : "border border-transparent hover:bg-surface-800/80";
                   const showReauthMsg = reauthMsg && reauthMsg.deviceId === d.id;
@@ -1072,7 +1150,7 @@ export default function DashboardPage() {
                             <span className="shrink-0 rounded bg-sky-500/15 px-1 text-[9px] uppercase text-sky-300">shared</span>
                           ) : null}
                         </button>
-                        {needsAuth ? (
+                        {authExpired ? (
                           <button
                             onClick={() => reauthDevice(d)}
                             disabled={isReauthing}

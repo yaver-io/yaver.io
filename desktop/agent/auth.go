@@ -1310,15 +1310,16 @@ func ChangePassword(baseURL, token, currentPassword, newPassword string) error {
 
 // RegisterDeviceRequest contains the fields sent when registering a device.
 type RegisterDeviceRequest struct {
-	Token           string   `json:"-"`
-	DeviceID        string   `json:"deviceId"`
-	Name            string   `json:"name"`
-	Platform        string   `json:"platform"`
-	PublicKey       string   `json:"publicKey"`
-	QuicHost        string   `json:"quicHost"`
-	QuicPort        int      `json:"quicPort"`
-	PublicEndpoints []string `json:"publicEndpoints,omitempty"`
-	HardwareID      string   `json:"hardwareId,omitempty"`
+	Token           string                    `json:"-"`
+	DeviceID        string                    `json:"deviceId"`
+	Name            string                    `json:"name"`
+	Platform        string                    `json:"platform"`
+	PublicKey       string                    `json:"publicKey"`
+	QuicHost        string                    `json:"quicHost"`
+	QuicPort        int                       `json:"quicPort"`
+	PublicEndpoints []string                  `json:"publicEndpoints,omitempty"`
+	HardwareID      string                    `json:"hardwareId,omitempty"`
+	RecoveryPosture *RecoveryTransportPosture `json:"recoveryPosture,omitempty"`
 }
 
 // RelayServerInfo describes a relay server from platform config.
@@ -1456,7 +1457,7 @@ var ErrAuthExpired = fmt.Errorf("auth token expired (401)")
 // (quicHost), and every reachable LAN/Tailscale/Ethernet address the agent
 // has (localIps) so mobile clients can race them in parallel during connect.
 // Returns ErrAuthExpired if the server returns 401.
-func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, quicHost string, localIps []string, publicEndpoints []string) error {
+func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, quicHost string, localIps []string, publicEndpoints []string, recoveryPosture *RecoveryTransportPosture) error {
 	payload := map[string]interface{}{
 		"deviceId":   deviceID,
 		"runners":    runners,
@@ -1470,6 +1471,9 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, quicHo
 	}
 	if len(publicEndpoints) > 0 {
 		payload["publicEndpoints"] = publicEndpoints
+	}
+	if recoveryPosture != nil {
+		payload["recoveryPosture"] = recoveryPosture
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

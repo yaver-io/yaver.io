@@ -1,5 +1,13 @@
 import { Platform } from 'react-native';
-import { FeedbackBundle, RunnerBrowserAuthSession, TestSession, VoiceCapability } from './types';
+import {
+  CapabilitySnapshot,
+  FeedbackBundle,
+  IncidentEvent,
+  OperationState,
+  RunnerBrowserAuthSession,
+  TestSession,
+  VoiceCapability,
+} from './types';
 
 export interface FeedbackEvent {
   type: string;
@@ -189,6 +197,67 @@ export class P2PClient {
   async cancelRunnerBrowserAuth(sessionId: string): Promise<void> {
     const url = `${this.baseUrl}/runner-auth/browser/cancel?id=${encodeURIComponent(sessionId)}`;
     try { await fetch(url, { method: 'POST', headers: this.authHeaders() }); } catch { /* best-effort */ }
+  }
+
+  async capabilitySnapshot(): Promise<CapabilitySnapshot | null> {
+    try {
+      const resp = await fetch(`${this.baseUrl}/capabilities/snapshot`, { headers: this.authHeaders() });
+      if (!resp.ok) return null;
+      const data = await resp.json().catch(() => ({} as Record<string, unknown>));
+      return (data.snapshot ?? null) as CapabilitySnapshot | null;
+    } catch {
+      return null;
+    }
+  }
+
+  async incidents(opts: {
+    category?: string;
+    severity?: string;
+    code?: string;
+    deviceId?: string;
+    projectPath?: string;
+    includeResolved?: boolean;
+    limit?: number;
+  } = {}): Promise<IncidentEvent[]> {
+    try {
+      const url = new URL(`${this.baseUrl}/incidents`);
+      if (opts.category) url.searchParams.set('category', opts.category);
+      if (opts.severity) url.searchParams.set('severity', opts.severity);
+      if (opts.code) url.searchParams.set('code', opts.code);
+      if (opts.deviceId) url.searchParams.set('device', opts.deviceId);
+      if (opts.projectPath) url.searchParams.set('projectPath', opts.projectPath);
+      if (opts.includeResolved) url.searchParams.set('includeResolved', '1');
+      if (typeof opts.limit === 'number') url.searchParams.set('limit', String(opts.limit));
+      const resp = await fetch(url.toString(), { headers: this.authHeaders() });
+      if (!resp.ok) return [];
+      const data = await resp.json().catch(() => ({} as Record<string, unknown>));
+      return Array.isArray(data.incidents) ? (data.incidents as IncidentEvent[]) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async operations(opts: {
+    kind?: string;
+    status?: string;
+    deviceId?: string;
+    projectPath?: string;
+    limit?: number;
+  } = {}): Promise<OperationState[]> {
+    try {
+      const url = new URL(`${this.baseUrl}/operations`);
+      if (opts.kind) url.searchParams.set('kind', opts.kind);
+      if (opts.status) url.searchParams.set('status', opts.status);
+      if (opts.deviceId) url.searchParams.set('device', opts.deviceId);
+      if (opts.projectPath) url.searchParams.set('projectPath', opts.projectPath);
+      if (typeof opts.limit === 'number') url.searchParams.set('limit', String(opts.limit));
+      const resp = await fetch(url.toString(), { headers: this.authHeaders() });
+      if (!resp.ok) return [];
+      const data = await resp.json().catch(() => ({} as Record<string, unknown>));
+      return Array.isArray(data.operations) ? (data.operations as OperationState[]) : [];
+    } catch {
+      return [];
+    }
   }
 
   /** Health check — returns true if the agent is reachable. */
