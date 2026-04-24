@@ -1,0 +1,98 @@
+# Hard heal for yaver-test-ephemeral when the systemd user unit is
+# stuck in "activating auto-restart" because an orphan yaver serve
+# (PPid=1, spawned by ensureDaemonAlive from /home/yaver/.yaver) is
+# holding port 18080.
+#
+# Sequence:
+#   1. Stop the user unit (so systemd stops fighting us while we
+#      kill its target).
+#   2. SIGKILL every yaver serve, regardless of parent.
+#   3. Free port 18080 via fuser.
+#   4. Wait for TIME_WAIT to clear.
+#   5. Delete any stale .yaver/agent.pid that could confuse a
+#      would-be launcher into thinking it's already running.
+#   6. Restart the user unit once.
+#   7. Verify /info.workDir = /home/yaver/Workspace.
+
+name: Force Heal Agent
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: force-heal-agent
+  cancel-in-progress: true
+
+jobs:
+  heal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Hard heal
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          set +e
+          YAVER_UID=$(id -u yaver)
+          USER_SYSTEMCTL="runuser -u yaver -- env XDG_RUNTIME_DIR=/run/user/$YAVER_UID systemctl --user"
+
+          echo "== STEP 1: stop the user unit (disable Restart=always race) =="
+          $USER_SYSTEMCTL stop yaver.service
+          $USER_SYSTEMCTL reset-failed yaver.service 2>/dev/null
+
+          echo ""
+          echo "== STEP 2: kill every yaver serve (SIGTERM then SIGKILL) =="
+          pgrep -af "yaver serve" || echo "  (none)"
+          pkill -TERM -f "yaver serve"; sleep 1
+          pkill -KILL -f "yaver serve"; sleep 1
+
+          echo ""
+          echo "== STEP 3: free port 18080 =="
+          fuser -k 18080/tcp 2>/dev/null
+          fuser 18080/tcp 2>/dev/null || echo "  port 18080 free"
+
+          echo ""
+          echo "== STEP 4: clear stale pid / lock files =="
+          rm -f /home/yaver/.yaver/agent.pid /home/yaver/.yaver/agent.lock 2>/dev/null
+          echo "  .yaver state:"
+          ls /home/yaver/.yaver/*.pid /home/yaver/.yaver/*.lock 2>/dev/null || echo "  (clean)"
+
+          echo ""
+          echo "== STEP 5: wait 3s for kernel to release the socket =="
+          sleep 3
+          ss -ltnp 'sport = :18080' 2>/dev/null | tail -5 || echo "  18080 free"
+
+          echo ""
+          echo "== STEP 6: start the user unit ONCE =="
+          $USER_SYSTEMCTL daemon-reload
+          $USER_SYSTEMCTL start yaver.service
+          sleep 4
+          $USER_SYSTEMCTL status yaver.service --no-pager --lines=10 | head -15
+
+          echo ""
+          echo "== STEP 7: verify =="
+          pgrep -af "yaver serve" | while read line; do
+            echo "  proc: $line"
+          done
+          TOKEN=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['auth_token'])" /home/yaver/.yaver/config.json)
+          curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:18080/info \
+            | jq '{version, workDir, authExpired}' || echo "  /info unreachable"
+
+          echo ""
+          echo "== STEP 8: /workspace/apps?kind=web,hybrid =="
+          curl -fsS -H "Authorization: Bearer $TOKEN" 'http://127.0.0.1:18080/workspace/apps?kind=web%2Chybrid' \
+            | jq '.apps | map({name, kind, stack, exists})' || echo "  /workspace/apps unreachable"
+          REMOTE
