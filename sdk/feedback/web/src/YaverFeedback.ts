@@ -145,8 +145,12 @@ export class YaverFeedback {
    * production hostnames, regardless of whether the string contains "prod".
    */
   private static detectDevEnvironment(): boolean {
-    if (typeof process !== 'undefined' && process.env?.NODE_ENV) {
-      return process.env.NODE_ENV === 'development';
+    // process exists in Node toolchains (Vite/Webpack/Next inline it via
+    // process.env.NODE_ENV at build time). Bypass TS's missing-Node-types
+    // check rather than dragging @types/node into a browser-only SDK.
+    const proc = (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process;
+    if (proc?.env?.NODE_ENV) {
+      return proc.env.NODE_ENV === 'development';
     }
     if (typeof window === 'undefined' || !window.location) return false;
     const host = window.location.hostname;
