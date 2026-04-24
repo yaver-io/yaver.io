@@ -1351,7 +1351,35 @@ export default function DashboardPage() {
             /></div>
           ) : activeTab === "web-reload" ? (
             <div className="flex-1 min-h-0 overflow-hidden">
-              <WebReloadView connectedDevice={connectedDevice} connState={connState} />
+              <WebReloadView
+                connectedDevice={connectedDevice}
+                connState={connState}
+                onReconnect={connectedDevice ? async () => { await connectToDevice(connectedDevice); } : undefined}
+                onRepairRelay={token ? async () => {
+                  const res = await fetch(`${CONVEX_URL}/settings/repair-relay`, {
+                    method: "POST",
+                    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                  });
+                  if (!res.ok) {
+                    const body = await res.json().catch(() => ({}));
+                    throw new Error(body?.error || `repair HTTP ${res.status}`);
+                  }
+                  const body = await res.json();
+                  try {
+                    const r = await fetch(`${CONVEX_URL}/config`);
+                    let relays: any[] = [];
+                    if (r.ok) relays = (await r.json()).relayServers || [];
+                    const sr = await fetch(`${CONVEX_URL}/settings`, { headers: { Authorization: `Bearer ${token}` } });
+                    if (sr.ok) {
+                      const sd = await sr.json();
+                      const pw = sd.settings?.relayPassword || sd.relayPassword;
+                      if (pw) relays = relays.map((x: any) => ({ ...x, password: pw }));
+                    }
+                    if (relays.length > 0) agentClient.setRelayServers(relays);
+                  } catch { /* non-fatal — next connect will re-read */ }
+                  return { repaired: !!body.repaired, reason: body.reason || "" };
+                } : undefined}
+              />
             </div>
           ) : activeTab === "health" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><HealthView /></div>

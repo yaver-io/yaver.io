@@ -24,9 +24,16 @@ import { WebPreviewFrame } from "./WebPreviewFrame";
 interface Props {
   connectedDevice: Device | null;
   connState: string;
+  /** Hand the same repair handler the Hot Reload tab uses — POSTs
+   *  /settings/repair-relay on Convex, re-syncs the user's password
+   *  with the platform default. When present, WebReloadView auto-
+   *  repairs on the first "invalid relay password" and exposes a
+   *  manual button. When absent, the button is hidden. */
+  onRepairRelay?: () => Promise<{ repaired: boolean; reason: string }>;
+  onReconnect?: () => Promise<void>;
 }
 
-export function WebReloadView({ connectedDevice, connState }: Props) {
+export function WebReloadView({ connectedDevice, connState, onRepairRelay, onReconnect }: Props) {
   const [apps, setApps] = useState<WorkspaceAppView[]>([]);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
@@ -36,10 +43,16 @@ export function WebReloadView({ connectedDevice, connState }: Props) {
   const [startError, setStartError] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [showLogs, setShowLogs] = useState(false);
+  const [relayRepairState, setRelayRepairState] = useState<"idle" | "repairing" | "repaired" | "failed">("idle");
+  const [relayRepairMsg, setRelayRepairMsg] = useState<string | null>(null);
 
   const isConnected = connState === "connected" && !!connectedDevice;
 
   // Load workspace apps on connect and whenever device changes.
+  // The fetch also doubles as our "is the relay password healthy?"
+  // probe — a 401 "invalid relay password" here surfaces exactly as
+  // the user would see on the iframe, and lets us auto-repair before
+  // they even click anything.
   useEffect(() => {
     let cancelled = false;
     if (!isConnected) {
@@ -49,22 +62,56 @@ export function WebReloadView({ connectedDevice, connState }: Props) {
     }
     setWorkspaceLoading(true);
     setWorkspaceError(null);
-    agentClient
-      .getWorkspaceApps("web,hybrid")
-      .then((list) => {
+    (async () => {
+      try {
+        const list = await agentClient.getWorkspaceApps("web,hybrid");
         if (cancelled) return;
         setApps(list);
-        if (list.length === 0) setWorkspaceError("No yaver.workspace.yaml found on the connected machine.");
-      })
-      .catch((err) => {
+        if (list.length === 0)
+          setWorkspaceError("No yaver.workspace.yaml found on the connected machine.");
+      } catch (err) {
         if (cancelled) return;
-        setWorkspaceError(String(err?.message ?? err));
-      })
-      .finally(() => {
+        const msg = err instanceof Error ? err.message : String(err);
+        setWorkspaceError(msg);
+        if (/invalid relay password/i.test(msg) && onRepairRelay) {
+          void repairRelayThenReconnect("auto");
+        }
+      } finally {
         if (!cancelled) setWorkspaceLoading(false);
-      });
+      }
+    })();
     return () => { cancelled = true; };
+    // repairRelayThenReconnect is stable in this component.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, connectedDevice?.id]);
+
+  const repairRelayThenReconnect = async (mode: "auto" | "manual") => {
+    if (!onRepairRelay) return;
+    setRelayRepairState("repairing");
+    setRelayRepairMsg(mode === "auto" ? "Detected invalid relay password — auto-repairing…" : "Repairing relay password…");
+    try {
+      const r = await onRepairRelay();
+      if (r.repaired) {
+        setRelayRepairState("repaired");
+        setRelayRepairMsg(r.reason || "repaired");
+        if (onReconnect) {
+          try { await onReconnect(); } catch { /* surfaced by device status */ }
+        }
+        // Retry the workspace load now that the password is fresh.
+        try {
+          const list = await agentClient.getWorkspaceApps("web,hybrid");
+          setApps(list);
+          setWorkspaceError(list.length === 0 ? "No yaver.workspace.yaml found on the connected machine." : null);
+        } catch { /* keep prior error state */ }
+      } else {
+        setRelayRepairState("failed");
+        setRelayRepairMsg(r.reason || "repair reported no change");
+      }
+    } catch (e) {
+      setRelayRepairState("failed");
+      setRelayRepairMsg(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   // Poll dev server status. Reuse the same 2s cadence PreviewPane uses.
   useEffect(() => {
@@ -192,6 +239,16 @@ export function WebReloadView({ connectedDevice, connState }: Props) {
           <span className="text-[10px] uppercase tracking-widest text-surface-500">{connectionLabel}</span>
         </div>
         <div className="ml-auto flex items-center gap-2">
+          {onRepairRelay && (
+            <button
+              onClick={() => void repairRelayThenReconnect("manual")}
+              disabled={relayRepairState === "repairing"}
+              className="rounded border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
+              title="Re-sync userSettings.relayPassword with the platform default — fixes 'invalid relay password' iframe failures"
+            >
+              {relayRepairState === "repairing" ? "Repairing…" : "Repair relay"}
+            </button>
+          )}
           {isRunning ? (
             <>
               <button
@@ -218,6 +275,18 @@ export function WebReloadView({ connectedDevice, connState }: Props) {
           )}
         </div>
       </div>
+
+      {relayRepairMsg && (
+        <div className={`rounded-md border px-3 py-2 text-[11px] ${
+          relayRepairState === "failed"
+            ? "border-red-500/40 bg-red-500/5 text-red-200"
+            : relayRepairState === "repaired"
+              ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-200"
+              : "border-amber-500/40 bg-amber-500/5 text-amber-200"
+        }`}>
+          {relayRepairMsg}
+        </div>
+      )}
 
       {startError && (
         <div className="rounded-md border border-red-500/40 bg-red-500/5 px-3 py-2 text-[11px] text-red-200">

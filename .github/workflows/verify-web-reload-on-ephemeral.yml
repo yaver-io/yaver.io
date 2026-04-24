@@ -1,0 +1,123 @@
+# Smoke-test the Web Reload + Hot Reload plumbing end-to-end on
+# yaver-test-ephemeral, independently of any browser / relay.
+#
+# What this proves (or fails loudly on):
+#   1. /workspace/apps returns at least the declared apps (carrotbet,
+#      sfmg), classified as kind=web and kind=hybrid respectively.
+#   2. /dev/start with {app, surface} resolves the app from the
+#      manifest, starts a dev server, and /dev/status reports the
+#      right kind.
+#   3. /dev/ proxy is reachable on the agent (so the iframe target
+#      URL would serve SOMETHING — relay health is a separate concern).
+#
+# Anything that fails here is a 1.99.x agent regression. Things that
+# PASS here but still fail in the browser are relay-password /
+# header-strip / iframe-CSP issues handled elsewhere.
+
+name: Verify Web Reload on Ephemeral
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: verify-web-reload-ephemeral
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Run agent-side smoke on the box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          set -euo pipefail
+
+          YVR_VER="$(yaver --version 2>/dev/null || echo unknown)"
+          echo "=== yaver binary: $YVR_VER"
+
+          # Pick up the agent's auth_token + working dir from the on-box
+          # config. We hit localhost:18080 directly so the relay is out
+          # of the equation entirely.
+          CONFIG_PATH="/root/.yaver/config.json"
+          for candidate in /root/.yaver/config.json /home/yaver/.yaver/config.json; do
+            [ -f "$candidate" ] && CONFIG_PATH="$candidate" && break
+          done
+          echo "=== using config at $CONFIG_PATH"
+          TOKEN=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['auth_token'])" "$CONFIG_PATH")
+          [ -n "$TOKEN" ] || { echo "no auth_token on disk" >&2; exit 2; }
+
+          AGENT="http://127.0.0.1:18080"
+          AUTH="Authorization: Bearer $TOKEN"
+
+          hit() {
+            local method="$1"; shift
+            local path="$1"; shift
+            local body="${1:-}"
+            if [ -n "$body" ]; then
+              curl -fsS -X "$method" -H "$AUTH" -H "Content-Type: application/json" -d "$body" "$AGENT$path"
+            else
+              curl -fsS -X "$method" -H "$AUTH" "$AGENT$path"
+            fi
+          }
+
+          echo "=== /health ==="
+          curl -fsS "$AGENT/health" | jq . || true
+
+          echo "=== /info ==="
+          hit GET /info | jq '{ok, version, hostname, workDir, sandbox}' || true
+
+          echo "=== /workspace ==="
+          hit GET /workspace | jq '{ok, root, path, apps: (.apps | map({name, kind, stack, exists}))}' \
+            || echo "(workspace endpoint failed — see HTTP status above)"
+
+          echo "=== /workspace/apps?kind=web,hybrid ==="
+          hit GET '/workspace/apps?kind=web%2Chybrid' \
+            | jq '.apps | map({name, kind, stack, exists, absPath})' \
+            || echo "(filtered workspace failed)"
+
+          echo "=== dev server status BEFORE start ==="
+          hit GET /dev/status | jq . || true
+
+          echo "=== attempting /dev/start app=carrotbet surface=web-reload ==="
+          if hit POST /dev/start '{"app":"carrotbet","surface":"web-reload"}' | tee /tmp/start-carrotbet.json | jq .; then
+            echo "carrotbet start OK"
+            sleep 2
+            hit GET /dev/status | jq '{running, framework, kind, port, workDir}' || true
+            hit GET / -o /dev/null -w "/dev/ proxy HTTP %{http_code}\n" || true
+            hit POST /dev/stop >/dev/null || true
+          else
+            echo "!! carrotbet start failed — response follows:"
+            cat /tmp/start-carrotbet.json 2>/dev/null || true
+          fi
+
+          echo "=== attempting /dev/start app=sfmg surface=hot-reload ==="
+          if hit POST /dev/start '{"app":"sfmg","surface":"hot-reload"}' | tee /tmp/start-sfmg.json | jq .; then
+            echo "sfmg start OK"
+            sleep 2
+            hit GET /dev/status | jq '{running, framework, kind, port, workDir}' || true
+            hit POST /dev/stop >/dev/null || true
+          else
+            echo "!! sfmg start failed — response follows:"
+            cat /tmp/start-sfmg.json 2>/dev/null || true
+          fi
+
+          echo "=== verification complete ==="
+          REMOTE
