@@ -1,0 +1,100 @@
+# Wipe yaver-test-ephemeral's auth state so you can pair it with your
+# current account.
+#
+# Why: /info returns `authExpired: true` and every web-UI request hits
+# the agent with a different user's session token than the one on
+# disk, so owner-auth endpoints 403 "token belongs to a different
+# user". This clears the agent's auth_token + deviceId and forces it
+# back into bootstrap-pair mode. From that state, sign in on
+# yaver.io/auth (desktop) or open the mobile app — the box appears as
+# an unpaired device and you can claim it.
+#
+# What it does:
+#   1. Stop the yaver user unit so the agent doesn't re-authenticate
+#      with the stale token mid-reset.
+#   2. kill every yaver serve (orphan + user-unit).
+#   3. yaver auth factory-reset (clears auth_token, deviceId cache,
+#      runner tokens — per the banner hint we saw in the dashboard).
+#   4. Start the user unit again — agent comes up in bootstrap mode,
+#      ready to pair.
+#
+# Destructive in scope: only auth state under /home/yaver/.yaver.
+# Projects, vault entries, and yaver.workspace.yaml are preserved.
+
+name: Repair Ephemeral Auth
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: repair-ephemeral-auth
+  cancel-in-progress: true
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Factory-reset auth + restart
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          set +e
+          YAVER_UID=$(id -u yaver)
+          USER_SYSTEMCTL="runuser -u yaver -- env XDG_RUNTIME_DIR=/run/user/$YAVER_UID systemctl --user"
+
+          echo "== 1. snapshot current auth state =="
+          python3 -c "import json;d=json.load(open('/home/yaver/.yaver/config.json'));print('token_set:',bool(d.get('auth_token')),'device_id:',d.get('device_id'),'convex:',d.get('convex_site_url'))" 2>&1 || true
+
+          echo ""
+          echo "== 2. stop systemd user unit =="
+          $USER_SYSTEMCTL stop yaver.service
+          $USER_SYSTEMCTL reset-failed yaver.service 2>/dev/null
+
+          echo ""
+          echo "== 3. SIGKILL any yaver serve still running =="
+          pkill -KILL -f "yaver serve" 2>/dev/null
+          fuser -k 18080/tcp 2>/dev/null
+          sleep 2
+          pgrep -af "yaver serve" || echo "  (no yaver serve processes — good)"
+
+          echo ""
+          echo "== 4. yaver auth factory-reset (as user yaver) =="
+          runuser -u yaver -- yaver auth factory-reset 2>&1 | head -30 \
+            || echo "  factory-reset command returned non-zero (may be expected if no auth state existed)"
+
+          echo ""
+          echo "== 5. confirm auth_token cleared =="
+          python3 -c "import json;d=json.load(open('/home/yaver/.yaver/config.json'));print('token_set:',bool(d.get('auth_token')),'device_id:',d.get('device_id'),'convex:',d.get('convex_site_url'))" 2>&1 || true
+
+          echo ""
+          echo "== 6. restart the user unit — agent comes up in bootstrap-pair mode =="
+          $USER_SYSTEMCTL start yaver.service
+          sleep 4
+          $USER_SYSTEMCTL status yaver.service --no-pager --lines=6 | head -10
+          pgrep -af "yaver serve" | head -3
+
+          echo ""
+          echo "== 7. final /info — should show authExpired cleared, hostname set =="
+          curl -fsS http://127.0.0.1:18080/info 2>&1 | jq '{version, workDir, authExpired, hostname}' 2>&1 | head -10
+
+          echo ""
+          echo "── NEXT STEP ──"
+          echo "The box is now in bootstrap-pair mode. To claim it:"
+          echo "  Desktop: open https://yaver.io/auth on the same network → pair wizard picks up the box."
+          echo "  Mobile:  open the Yaver app → the box should appear as an unpaired device → tap to pair."
+          echo "Alternatively push a specific token: sudo -u yaver yaver auth --token=<FRESH-TOKEN>"
+          REMOTE
