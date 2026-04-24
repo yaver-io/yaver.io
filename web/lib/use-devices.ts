@@ -63,6 +63,7 @@ export interface Device {
   };
   peerState?: "online" | "stale" | "offline";
   peerLastSeen?: string;
+  workspaceLive?: boolean;
 }
 
 interface DevicesState {

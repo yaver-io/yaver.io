@@ -144,9 +144,10 @@ function formatAgeShort(ms: number | null): string | null {
 }
 
 function hasRecentLiveSignal(
-  device: Pick<Device, "lastTunnelEvent" | "peerState">,
+  device: Pick<Device, "lastTunnelEvent" | "peerState" | "workspaceLive">,
   maxAgeMs = 90_000,
 ): boolean {
+  if (device.workspaceLive) return true;
   if (device.peerState === "online") return true;
   return Boolean(
     device.lastTunnelEvent &&
@@ -157,8 +158,9 @@ function hasRecentLiveSignal(
 }
 
 function deviceReachabilitySummary(
-  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "host" | "lastTunnelEvent" | "peerState">,
+  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "host" | "lastTunnelEvent" | "peerState" | "workspaceLive">,
 ): string {
+  if (device.workspaceLive) return "Active workspace connection";
   if (device.peerState === "online") return "Live bus signal";
   if (hasRecentLiveSignal(device)) return "Live relay signal";
   if (device.peerState === "stale") return "Bus saw this machine recently, but no current transport is healthy";
@@ -176,10 +178,11 @@ function deviceReachabilitySummary(
 const DORMANT_DEVICE_HIDE_MS = 10 * 60 * 1000;
 
 function isDormantUnreachableDevice(
-  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "isGuest" | "peerState">,
+  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "isGuest" | "peerState" | "workspaceLive">,
 ): boolean {
   if (device.isGuest) return false;
   if (device.online) return false;
+  if (device.workspaceLive) return false;
   if (device.peerState === "online") return false;
   if (device.needsAuth) return false;
   if (Boolean(device.tunnelUrl) || Boolean(device.publicEndpoints?.length)) return false;
@@ -309,7 +312,7 @@ function DeviceConnectCard({
               }`}
             />
             <span className="text-[11px] text-surface-400">
-              {connectionError ? "failed" : isOffline ? "offline" : isConnecting ? "connecting" : liveSignal ? "relay live" : "online"} · {liveSignalAge}
+              {connectionError ? "failed" : isConnecting ? "connecting" : device.workspaceLive ? "workspace live" : isOffline ? "offline" : liveSignal ? "relay live" : "online"} · {liveSignalAge}
             </span>
           </div>
           <p className="mt-1 text-[11px] leading-5 text-surface-500">
@@ -858,17 +861,26 @@ export default function DashboardPage() {
 
   const displayDevices = devices.map((device) => {
     const peer = peerStates[device.id];
-    if (!peer) return device;
-    return {
+    const workspaceLive =
+      connectedDevice?.id === device.id &&
+      (connState === "connected" || connState === "connecting");
+    const next = {
       ...device,
-      peerState: peer.state,
-      peerLastSeen: peer.lastSeen,
-      online: peer.state === "online" ? true : device.online,
-      lastSeen:
-        peer.lastSeen && ((Date.parse(peer.lastSeen) || 0) > (Date.parse(device.lastSeen) || 0))
-          ? peer.lastSeen
-          : device.lastSeen,
+      workspaceLive,
+      peerState: peer?.state ?? device.peerState,
+      peerLastSeen: peer?.lastSeen ?? device.peerLastSeen,
+      online: workspaceLive || (peer?.state === "online" ? true : device.online),
+      lastSeen: (() => {
+        const workspaceSeen = workspaceLive ? new Date().toISOString() : "";
+        const peerSeen = peer?.lastSeen || "";
+        const currentSeen = device.lastSeen || "";
+        const best = [workspaceSeen, peerSeen, currentSeen]
+          .filter(Boolean)
+          .sort((a, b) => (Date.parse(b) || 0) - (Date.parse(a) || 0))[0];
+        return best || currentSeen;
+      })(),
     };
+    return next;
   });
   const runningTask = tasks.find(t => t.status === "running");
   const mobileWorkers = displayDevices.filter((d) => d.deviceClass === "edge-mobile");

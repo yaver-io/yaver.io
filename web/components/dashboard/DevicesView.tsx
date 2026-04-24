@@ -98,9 +98,10 @@ function formatAgeShort(ms: number | null): string | null {
 }
 
 function hasRecentLiveSignal(
-  device: Pick<Device, "lastTunnelEvent" | "peerState">,
+  device: Pick<Device, "lastTunnelEvent" | "peerState" | "workspaceLive">,
   maxAgeMs = 90_000,
 ): boolean {
+  if (device.workspaceLive) return true;
   if (device.peerState === "online") return true;
   return Boolean(
     device.lastTunnelEvent &&
@@ -111,8 +112,9 @@ function hasRecentLiveSignal(
 }
 
 function deviceReachabilitySummary(
-  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "host" | "lastTunnelEvent" | "peerState">,
+  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "host" | "lastTunnelEvent" | "peerState" | "workspaceLive">,
 ): string {
+  if (device.workspaceLive) return "Active workspace connection";
   if (device.peerState === "online") return "Live bus signal";
   if (hasRecentLiveSignal(device)) return "Live relay signal";
   if (device.peerState === "stale") return "Bus saw this machine recently, but no current transport is healthy";
@@ -130,10 +132,11 @@ function deviceReachabilitySummary(
 const DORMANT_DEVICE_HIDE_MS = 10 * 60 * 1000;
 
 function isDormantUnreachableDevice(
-  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "isGuest" | "peerState">,
+  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "isGuest" | "peerState" | "workspaceLive">,
 ): boolean {
   if (device.isGuest) return false;
   if (device.online) return false;
+  if (device.workspaceLive) return false;
   if (device.peerState === "online") return false;
   if (device.needsAuth) return false;
   if (Boolean(device.tunnelUrl) || Boolean(device.publicEndpoints?.length)) return false;
@@ -331,7 +334,7 @@ function useDeviceRuntimeInfo(device: Device, enabled: boolean, token: string | 
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!enabled || !token || !device.online) return;
+    if (!enabled || !token || (!device.online && !device.workspaceLive)) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -356,7 +359,7 @@ function useDeviceRuntimeInfo(device: Device, enabled: boolean, token: string | 
       }
     })();
     return () => { cancelled = true; };
-  }, [enabled, token, device.id, device.host, device.port, device.online]);
+  }, [enabled, token, device.id, device.host, device.port, device.online, device.workspaceLive]);
 
   return { info, error, loading };
 }
@@ -537,7 +540,9 @@ export default function DevicesView({
                       ) : null}
                       <span
                         className={`inline-flex h-2 w-2 rounded-full ${
-                          device.peerState === "online"
+                          device.workspaceLive
+                            ? "bg-emerald-300"
+                            : device.peerState === "online"
                             ? "bg-cyan-400"
                             : device.online
                               ? "bg-green-400"
@@ -547,7 +552,9 @@ export default function DevicesView({
                         }`}
                       />
                       <span className="text-xs text-surface-500">
-                        {device.peerState === "online"
+                        {device.workspaceLive
+                          ? "Workspace Live"
+                          : device.peerState === "online"
                           ? "Bus Live"
                           : device.online
                             ? "Online"
@@ -821,8 +828,11 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
         </div>
         <div>
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-surface-500">Runtime</div>
-          {row("Status", device.online ? "Online" : "Offline")}
+          {row("Status", device.workspaceLive ? "Workspace Live" : device.online ? "Online" : "Offline")}
+          {row("Auth", device.needsAuth ? "Needs auth" : info?.authExpired === true ? "Expired" : device.workspaceLive ? "Authenticated workspace" : "Authenticated")}
+          {row("Agent mode", typeof info?.mode === "string" ? info.mode : null)}
           {row("Live signal", device.lastTunnelEvent?.at ? `${device.lastTunnelEvent.online ? "relay-online" : "relay-offline"} (${formatLastSeen(new Date(device.lastTunnelEvent.at).toISOString())})` : null)}
+          {row("Peer bus", device.peerState ? `${device.peerState}${device.peerLastSeen ? ` (${formatLastSeen(device.peerLastSeen)})` : ""}` : null)}
           {row("Reachability", deviceReachabilitySummary(device))}
           {row("Last heartbeat", device.lastSeen ? `${formatLastSeen(device.lastSeen)} (${device.lastSeen})` : null)}
           {row("Version", info?.version)}
