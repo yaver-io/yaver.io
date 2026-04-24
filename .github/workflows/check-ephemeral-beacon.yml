@@ -33,18 +33,27 @@ jobs:
           fi
 
           echo
-          echo "--- ~/.yaver contents (root) ---"
-          ls -la /root/.yaver/ 2>&1 | head -20
+          echo "--- ~/.yaver contents per likely owner ---"
+          for d in /root/.yaver /home/yaver/.yaver /var/lib/yaver; do
+            if [ -d "$d" ]; then
+              echo "[$d]"
+              ls -la "$d" 2>&1 | head -10
+            fi
+          done
 
           echo
-          echo "--- beacon ---"
-          if [ -f /root/.yaver/last-healthy ]; then
-            age=$(( $(date -u +%s) - $(stat -c '%Y' /root/.yaver/last-healthy) ))
-            echo "last-healthy age=${age}s"
-            cat /root/.yaver/last-healthy
-          else
-            echo "MISSING /root/.yaver/last-healthy"
-          fi
+          echo "--- beacon candidates ---"
+          for cand in /root/.yaver/last-healthy /home/yaver/.yaver/last-healthy /var/lib/yaver/last-healthy; do
+            if [ -f "$cand" ]; then
+              age=$(( $(date -u +%s) - $(stat -c '%Y' "$cand") ))
+              echo "FOUND $cand age=${age}s"
+              cat "$cand"
+            fi
+          done
+          # Final fallback — any last-healthy anywhere under /home or /root
+          echo
+          echo "--- any last-healthy on disk ---"
+          find /home /root /var/lib /tmp -maxdepth 4 -name 'last-healthy' 2>/dev/null | head -10
           echo
           echo "--- agent version ---"
           /usr/local/bin/yaver --version 2>&1 | head -2
