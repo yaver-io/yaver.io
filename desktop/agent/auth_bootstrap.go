@@ -628,6 +628,51 @@ func needsBootstrap(cfg *Config, loadErr error) bool {
 	return false
 }
 
+// notifyConvexAuthExpired is the one-shot variant of notifyConvexBootstrap.
+// Called from the heartbeat loop when the agent discovers mid-session that
+// its session token has been revoked / expired (heartbeat 401 + refresh
+// failure). It re-uses the bootstrap mutation, which authenticates on the
+// (deviceId, hardwareId, publicKey) identity triple — exactly the proof we
+// still hold even though the session token is dead — and flips
+// needsAuth=true on the device row so web/mobile clients can surface a
+// re-auth UI without waiting for the next reboot's bootstrap dance.
+//
+// One-shot: heartbeat already runs on its own ticker, so we don't need a
+// background re-register loop here. Repeated 401s will trigger this again
+// naturally, and the mutation is idempotent.
+func notifyConvexAuthExpired(cfg *Config, httpPort int) {
+	if cfg == nil || cfg.ConvexSiteURL == "" || cfg.DeviceID == "" {
+		return
+	}
+	dk, err := LoadOrGenerateKeys()
+	if err != nil {
+		log.Printf("[auth-expired-convex] cannot load keys: %v", err)
+		return
+	}
+	body := map[string]interface{}{
+		"deviceId":   cfg.DeviceID,
+		"hardwareId": HardwareID(),
+		"publicKey":  dk.PublicKeyBase64(),
+		"quicHost":   getLocalIP(),
+		"quicPort":   httpPort,
+	}
+	data, _ := json.Marshal(body)
+	url := strings.TrimRight(cfg.ConvexSiteURL, "/") + "/devices/bootstrap"
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Post(url, "application/json", strings.NewReader(string(data)))
+	if err != nil {
+		log.Printf("[auth-expired-convex] request failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		log.Printf("[auth-expired-convex] Convex returned %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+		return
+	}
+	log.Printf("[auth-expired-convex] Marked device %s as needs-auth so clients can show re-auth UI", cfg.DeviceID[:8])
+}
+
 // notifyConvexBootstrap tells the Convex backend this device is
 // running in bootstrap mode (no token). Convex updates the device
 // record with needsAuth=true + isOnline=true so the mobile app and

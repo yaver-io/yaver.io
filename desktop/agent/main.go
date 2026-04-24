@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.21"
+const version = "1.99.22"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -6574,6 +6574,29 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 	lastPublicEndpoints := configuredPublicEndpoints(cfgAtStart)
 	authExpiredLogged := false
 
+	// Notify Convex that this device's auth has gone bad mid-session, so
+	// web/mobile clients see needsAuth=true on the device row and can
+	// surface a re-auth UI without waiting for a reboot's bootstrap dance.
+	// Throttled to one notify per 5 minutes — we don't need to spam it.
+	var lastAuthExpiredNotify time.Time
+	notifyAuthExpiredOnce := func() {
+		if time.Since(lastAuthExpiredNotify) < 5*time.Minute {
+			return
+		}
+		lastAuthExpiredNotify = time.Now()
+		port := 0
+		if httpServer != nil {
+			port = httpServer.port
+		}
+		cfgNow, _ := LoadConfig()
+		if cfgNow != nil {
+			go notifyConvexAuthExpired(cfgNow, port)
+		}
+	}
+	clearAuthExpiredNotify := func() {
+		lastAuthExpiredNotify = time.Time{}
+	}
+
 	// Send first heartbeat immediately (don't wait 2 min for ticker)
 	runners := taskMgr.GetRunnerInfos()
 	if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, lastIP, lastIPs, lastPublicEndpoints); err != nil {
@@ -6583,6 +6606,7 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 			if httpServer != nil {
 				httpServer.authExpired.Store(true)
 			}
+			notifyAuthExpiredOnce()
 		} else {
 			log.Printf("initial heartbeat failed: %v", err)
 		}
@@ -6600,6 +6624,7 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 				if httpServer != nil {
 					httpServer.authExpired.Store(false)
 				}
+				clearAuthExpiredNotify()
 			}
 		case <-ticker.C:
 			currentIP := getLocalIP()
@@ -6634,12 +6659,14 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 								httpServer.authExpired.Store(true)
 							}
 						}
+						notifyAuthExpiredOnce()
 					} else {
 						log.Println("[auth] Token refreshed after 401 — retrying heartbeat...")
 						authExpiredLogged = false
 						if httpServer != nil {
 							httpServer.authExpired.Store(false)
 						}
+						clearAuthExpiredNotify()
 						// Retry heartbeat
 						if retryErr := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP, currentIPs, currentPublicEndpoints); retryErr != nil {
 							log.Printf("heartbeat retry failed: %v", retryErr)
@@ -6655,6 +6682,7 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 					if httpServer != nil {
 						httpServer.authExpired.Store(false)
 					}
+					clearAuthExpiredNotify()
 				}
 			}
 		}

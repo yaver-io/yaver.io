@@ -4,6 +4,7 @@ import { useAuth } from "@/lib/use-auth";
 import { useDevices, type Device } from "@/lib/use-devices";
 import { agentClient, type Task, type ConnectionState, type Runner, type AgentInfo, type ConnectAttemptDiagnostic } from "@/lib/agent-client";
 import { CONVEX_URL } from "@/lib/constants";
+import { fetchGuestHosts, acceptGuestInvitation, type GuestInvitation } from "@/lib/guests";
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "@/components/ThemeProvider";
@@ -381,6 +382,10 @@ export default function DashboardPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [guestCode, setGuestCode] = useState("");
+  const [pendingInvites, setPendingInvites] = useState<GuestInvitation[]>([]);
+  const [invitesBusy, setInvitesBusy] = useState<string | null>(null);
+  const [reauthBusy, setReauthBusy] = useState<string | null>(null);
+  const [reauthMsg, setReauthMsg] = useState<{ deviceId: string; ok: boolean; text: string } | null>(null);
   const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "tools" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "domains">("home");
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -474,6 +479,78 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => { if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight; }, [outputLines]);
+
+  useEffect(() => {
+    if (!token) { setPendingInvites([]); return; }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetchGuestHosts(token);
+        if (!cancelled) setPendingInvites(res.pending || []);
+      } catch {
+        if (!cancelled) setPendingInvites([]);
+      }
+    };
+    load();
+    const iv = setInterval(load, 30000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [token]);
+
+  const reauthDevice = async (d: Device) => {
+    if (!token) return;
+    setReauthBusy(d.id);
+    setReauthMsg(null);
+    try {
+      const r = await agentClient.reauthAgent({
+        deviceId: d.id,
+        hostSessionToken: token,
+      });
+      if (r.ok) {
+        setReauthMsg({
+          deviceId: d.id,
+          ok: true,
+          text: `Re-auth succeeded via ${r.via} (${r.mode}). Refreshing…`,
+        });
+        // Agent's next heartbeat clears needsAuth on Convex side.
+        setTimeout(refreshDevices, 2500);
+        setTimeout(() => setReauthMsg((m) => (m?.deviceId === d.id ? null : m)), 6000);
+      } else {
+        const diagSummary = r.diagnostics
+          .map((dx) => `${dx.path}/${dx.step}: ${dx.ok ? "ok" : dx.error || "fail"}`)
+          .join(" · ");
+        setReauthMsg({
+          deviceId: d.id,
+          ok: false,
+          text: `Re-auth failed${r.error ? `: ${r.error}` : ""}. ${diagSummary}`,
+        });
+      }
+    } catch (e: any) {
+      setReauthMsg({
+        deviceId: d.id,
+        ok: false,
+        text: `Re-auth crashed: ${e?.message || String(e)}`,
+      });
+    } finally {
+      setReauthBusy(null);
+    }
+  };
+
+  const acceptInvite = async (invite: GuestInvitation) => {
+    if (!token) return;
+    const key = invite.inviteId || invite.inviteCode || invite.hostUserId;
+    setInvitesBusy(key);
+    try {
+      await acceptGuestInvitation(token, invite.hostUserId);
+      setPendingInvites((prev) =>
+        prev.filter((p) => (p.inviteId || p.inviteCode || p.hostUserId) !== key),
+      );
+      refreshDevices();
+    } catch (e: any) {
+      alert(e?.message || "Failed to accept invitation");
+    } finally {
+      setInvitesBusy(null);
+    }
+  };
 
   useEffect(() => {
     if (!isConnected) return;
@@ -714,32 +791,63 @@ export default function DashboardPage() {
                   const isSelected = connectedDevice?.id === d.id;
                   const isConnecting = isSelected && connState === "connecting";
                   const hasError = isSelected && connState === "error";
+                  const needsAuth = !!d.needsAuth && !d.isGuest;
+                  const isReauthing = reauthBusy === d.id;
+                  const dotClass = hasError
+                    ? "bg-red-400"
+                    : isConnecting || isReauthing
+                      ? "bg-amber-400 animate-pulse"
+                      : needsAuth
+                        ? "bg-amber-400"
+                        : d.online
+                          ? "bg-emerald-400"
+                          : "bg-surface-600";
+                  const wrapClass = hasError
+                    ? "border border-red-500/30 bg-red-500/5"
+                    : isConnecting
+                      ? "border border-amber-500/30 bg-amber-500/5"
+                      : needsAuth
+                        ? "border border-amber-500/30 bg-amber-500/5"
+                        : "border border-transparent hover:bg-surface-800/80";
+                  const showReauthMsg = reauthMsg && reauthMsg.deviceId === d.id;
                   return (
-                    <button
-                      key={d.id}
-                      onClick={() => connectToDevice(d)}
-                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
-                        hasError
-                          ? "border border-red-500/30 bg-red-500/5"
-                          : isConnecting
-                            ? "border border-amber-500/30 bg-amber-500/5"
-                            : "border border-transparent hover:bg-surface-800/80"
-                      }`}
-                      title={`${d.host}:${d.port}`}
-                    >
-                      <span
-                        className={`h-2 w-2 shrink-0 rounded-full ${
-                          hasError ? "bg-red-400" : isConnecting ? "bg-amber-400" : d.online ? "bg-emerald-400" : "bg-surface-600"
-                        }`}
-                      />
-                      <span className="min-w-0 flex-1 truncate text-surface-200">{d.name}</span>
-                      {primaryDeviceId === d.id ? (
-                        <span className="shrink-0 text-[9px] text-indigo-400" title="Primary">&#9733;</span>
+                    <div key={d.id} className={`rounded-md ${wrapClass}`}>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => connectToDevice(d)}
+                          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-xs"
+                          title={`${d.host}:${d.port}`}
+                        >
+                          <span className={`h-2 w-2 shrink-0 rounded-full ${dotClass}`} />
+                          <span className="min-w-0 flex-1 truncate text-surface-200">{d.name}</span>
+                          {primaryDeviceId === d.id ? (
+                            <span className="shrink-0 text-[9px] text-indigo-400" title="Primary">&#9733;</span>
+                          ) : null}
+                          {d.isGuest ? (
+                            <span className="shrink-0 rounded bg-sky-500/15 px-1 text-[9px] uppercase text-sky-300">shared</span>
+                          ) : null}
+                        </button>
+                        {needsAuth ? (
+                          <button
+                            onClick={() => reauthDevice(d)}
+                            disabled={isReauthing}
+                            title="Agent's session token expired — click to re-auth via /auth/recover"
+                            className="mr-1 shrink-0 rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200 hover:bg-amber-500/30 disabled:opacity-40"
+                          >
+                            {isReauthing ? "…" : "Re-auth"}
+                          </button>
+                        ) : null}
+                      </div>
+                      {showReauthMsg ? (
+                        <div
+                          className={`px-2 pb-1 text-[10px] leading-tight ${
+                            reauthMsg!.ok ? "text-emerald-300" : "text-red-300"
+                          }`}
+                        >
+                          {reauthMsg!.text}
+                        </div>
                       ) : null}
-                      {d.isGuest ? (
-                        <span className="shrink-0 rounded bg-sky-500/15 px-1 text-[9px] uppercase text-sky-300">shared</span>
-                      ) : null}
-                    </button>
+                    </div>
                   );
                 })}
                 {visibleDevices.length > 5 ? (
@@ -762,6 +870,41 @@ export default function DashboardPage() {
           >
             + Invite guest
           </button>
+
+          {/* Pending invites — auto-match by signed-in email, no code required */}
+          {pendingInvites.length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-surface-500 mb-1">
+                Pending invites
+              </p>
+              <div className="flex flex-col gap-1.5">
+                {pendingInvites.map((inv) => {
+                  const key = inv.inviteId || inv.inviteCode || inv.hostUserId;
+                  const busy = invitesBusy === key;
+                  return (
+                    <div
+                      key={key}
+                      className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-2"
+                    >
+                      <div className="text-[11px] font-medium text-emerald-200 truncate">
+                        {inv.hostName || "Yaver host"}
+                      </div>
+                      <div className="text-[10px] text-emerald-400/80 truncate mb-1.5">
+                        {inv.hostEmail}
+                      </div>
+                      <button
+                        onClick={() => acceptInvite(inv)}
+                        disabled={busy}
+                        className="w-full rounded bg-emerald-500 px-2 py-1 text-[11px] font-medium text-white hover:bg-emerald-400 disabled:opacity-40"
+                      >
+                        {busy ? "Joining…" : "Accept"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Guest code */}
           <div>

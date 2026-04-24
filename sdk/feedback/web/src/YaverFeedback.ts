@@ -13,7 +13,12 @@ import {
   configureAuthEndpoints,
   DEFAULT_CONVEX_SITE_URL,
   getSelectedDeviceId,
+  clearSelectedDeviceId,
   getToken as getCachedToken,
+  getUser as getCachedUser,
+  saveUser as saveCachedUser,
+  validateToken,
+  clearToken,
   listReachableDevices,
 } from './auth';
 import { openLoginModal } from './LoginModal';
@@ -423,6 +428,30 @@ export class YaverFeedback {
     return client.reloadApp(mode, YaverFeedback.projectIdentity());
   }
 
+  /**
+   * Sign out — clears the cached Yaver session token and selected device.
+   * After this returns, ensureAuthToken() will prompt for sign-in again on
+   * the next interactive flow (record / screenshot / vibing / reload).
+   */
+  static async signOut(): Promise<void> {
+    clearToken();
+    clearSelectedDeviceId();
+    if (YaverFeedback.config) {
+      YaverFeedback.config.authToken = undefined;
+      YaverFeedback.config.preferredDeviceId = undefined;
+      YaverFeedback.config.agentUrl = undefined;
+    }
+    YaverFeedback.client = null;
+    if (YaverFeedback.commandAbortController) {
+      YaverFeedback.commandAbortController.abort();
+      YaverFeedback.commandAbortController = null;
+    }
+    if (YaverFeedback.commandReconnectTimer) {
+      clearTimeout(YaverFeedback.commandReconnectTimer);
+      YaverFeedback.commandReconnectTimer = null;
+    }
+  }
+
   static async getVibingEligibility(): Promise<{
     canVibe: boolean;
     reason?: string;
@@ -529,6 +558,17 @@ export class YaverFeedback {
             <button id="yaver-fb-close" class="yvr-fb-close" type="button" aria-label="Close">×</button>
           </div>
 
+          <div class="yvr-fb-auth">
+            <div class="yvr-fb-auth-info">
+              <div class="yvr-fb-auth-top">
+                <span class="yvr-fb-auth-label">Yaver Account</span>
+                <span id="yaver-fb-auth-status" class="yvr-fb-auth-status yvr-fb-auth-status-idle">Checking…</span>
+              </div>
+              <div id="yaver-fb-auth-user" class="yvr-fb-auth-user">&nbsp;</div>
+            </div>
+            <button id="yaver-fb-auth-action" class="yvr-fb-auth-action" type="button" data-action="sign-in">Sign In</button>
+          </div>
+
           <button id="yaver-fb-machine" class="yvr-fb-machine" type="button">
             <div class="yvr-fb-machine-top">
               <span class="yvr-fb-machine-label">Selected Machine</span>
@@ -577,14 +617,59 @@ export class YaverFeedback {
     const lastReport = document.getElementById('yaver-fb-last-report')!;
     const progressTrack = document.getElementById('yaver-fb-progress-track')!;
     const progressFill = document.getElementById('yaver-fb-progress-fill')!;
+    const authStatus = document.getElementById('yaver-fb-auth-status')!;
+    const authUser = document.getElementById('yaver-fb-auth-user')!;
+    const authAction = document.getElementById('yaver-fb-auth-action') as HTMLButtonElement;
 
     let busy = false;
     const setBusy = (nextBusy: boolean) => {
       busy = nextBusy;
-      [recordBtn, sendBtn, screenshotBtn, reloadBtn, vibeBtn, machineBtn].forEach((el) => {
+      [recordBtn, sendBtn, screenshotBtn, reloadBtn, vibeBtn, machineBtn, authAction].forEach((el) => {
         (el as HTMLButtonElement).disabled = nextBusy;
       });
       vibePrompt.disabled = nextBusy;
+    };
+    const setAuthStatusClass = (kind: 'idle' | 'in' | 'out') => {
+      authStatus.classList.remove(
+        'yvr-fb-auth-status-idle',
+        'yvr-fb-auth-status-in',
+        'yvr-fb-auth-status-out',
+      );
+      authStatus.classList.add(`yvr-fb-auth-status-${kind}`);
+    };
+    const refreshAuthCard = async () => {
+      const token = YaverFeedback.config?.authToken;
+      if (!token) {
+        authStatus.textContent = 'Not signed in';
+        setAuthStatusClass('out');
+        authUser.textContent = 'Sign in to pick a machine and start vibing.';
+        authAction.textContent = 'Sign In';
+        authAction.dataset.action = 'sign-in';
+        return;
+      }
+      let user = getCachedUser();
+      if (!user) {
+        authStatus.textContent = 'Verifying…';
+        setAuthStatusClass('idle');
+        authUser.textContent = ' ';
+        user = await validateToken(token);
+        if (user) saveCachedUser(user);
+      }
+      if (!user) {
+        authStatus.textContent = 'Sign-in expired';
+        setAuthStatusClass('out');
+        authUser.textContent = 'Your session expired. Sign in again to continue.';
+        authAction.textContent = 'Sign In';
+        authAction.dataset.action = 'sign-in';
+        return;
+      }
+      authStatus.textContent = 'Signed in';
+      setAuthStatusClass('in');
+      authUser.textContent = user.name && user.name !== user.email
+        ? `${user.email} (${user.name})`
+        : user.email;
+      authAction.textContent = 'Sign Out';
+      authAction.dataset.action = 'sign-out';
     };
     const setStatus = (message: string, progress?: number) => {
       status.textContent = message;
@@ -669,7 +754,41 @@ export class YaverFeedback {
     }) as EventListener;
     window.addEventListener('yaver-feedback:status', statusListener);
     refreshLastReport();
+    void refreshAuthCard();
     void refreshMachineCard();
+
+    authAction.onclick = async () => {
+      if (busy) return;
+      const action = authAction.dataset.action;
+      if (action === 'sign-in') {
+        setBusy(true);
+        try {
+          const token = await openLoginModal();
+          if (YaverFeedback.config) YaverFeedback.config.authToken = token;
+          const u = await validateToken(token);
+          if (u) saveCachedUser(u);
+          YaverFeedback.syncClient();
+          YaverFeedback.connectCommandStream();
+          setStatus('Signed in. Pick a machine to start vibing.');
+        } catch {
+          setStatus('Sign-in cancelled.');
+        } finally {
+          setBusy(false);
+          await refreshAuthCard();
+          await refreshMachineCard();
+        }
+      } else if (action === 'sign-out') {
+        setBusy(true);
+        try {
+          await YaverFeedback.signOut();
+          setStatus('Signed out.');
+        } finally {
+          setBusy(false);
+          await refreshAuthCard();
+          await refreshMachineCard();
+        }
+      }
+    };
 
     recordBtn.onclick = async () => {
       setBusy(true);
@@ -1113,6 +1232,32 @@ export class YaverFeedback {
       .yvr-fb-close {
         border: none; background: transparent; color: #94a3b8; cursor: pointer; font-size: 22px; line-height: 1; padding: 0 4px;
       }
+      .yvr-fb-auth {
+        display: flex; align-items: center; gap: 10px;
+        background: rgba(15, 23, 42, 0.78); border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: 10px; padding: 10px 12px; margin-bottom: 10px;
+      }
+      .yvr-fb-auth-info { flex: 1; min-width: 0; }
+      .yvr-fb-auth-top { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+      .yvr-fb-auth-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #94a3b8; }
+      .yvr-fb-auth-status {
+        font-size: 10px; padding: 2px 6px; border-radius: 999px;
+        text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
+      }
+      .yvr-fb-auth-status-in { background: rgba(34, 197, 94, 0.18); color: #4ade80; }
+      .yvr-fb-auth-status-out { background: rgba(248, 113, 113, 0.18); color: #fca5a5; }
+      .yvr-fb-auth-status-idle { background: rgba(148, 163, 184, 0.18); color: #cbd5e1; }
+      .yvr-fb-auth-user {
+        font-size: 12px; color: #e2e8f0; line-height: 1.4;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .yvr-fb-auth-action {
+        flex-shrink: 0; border: 1px solid rgba(148, 163, 184, 0.35); background: transparent;
+        color: #e2e8f0; border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 12px;
+        font-weight: 600; cursor: pointer;
+      }
+      .yvr-fb-auth-action:hover { background: rgba(148, 163, 184, 0.12); }
+      .yvr-fb-auth-action:disabled { opacity: 0.5; cursor: not-allowed; }
       .yvr-fb-machine {
         width: 100%; text-align: left; background: rgba(15, 23, 42, 0.78); border: 1px solid rgba(148, 163, 184, 0.18);
         color: inherit; border-radius: 10px; padding: 12px; margin-bottom: 12px; cursor: pointer;

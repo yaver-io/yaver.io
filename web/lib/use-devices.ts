@@ -25,6 +25,13 @@ export interface Device {
     thermalState?: "nominal" | "warm" | "hot";
   };
   isGuest?: boolean;
+  /**
+   * True when the agent's session token is revoked or expired. The agent
+   * itself flips this on the device row via /devices/bootstrap when its
+   * heartbeat 401s, so the dashboard can surface a "needs re-auth" UI
+   * without the user having to attempt a connect first.
+   */
+  needsAuth?: boolean;
   hostName?: string;
   hostEmail?: string;
   accessScope?: "owner" | "shared-scoped" | "shared-legacy";
@@ -243,6 +250,7 @@ export function useDevices(token: string | null): DevicesState {
         deviceClass: d.deviceClass,
         edgeProfile: d.edgeProfile,
         isGuest: d.isGuest ?? false,
+        needsAuth: Boolean(d.needsAuth ?? false),
         hostName: d.hostName,
         hostEmail: d.hostEmail,
         accessScope: d.accessScope,

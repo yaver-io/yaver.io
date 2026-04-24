@@ -212,11 +212,6 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusMethodNotAllowed, "use POST")
 		return
 	}
-	if s != nil && strings.TrimSpace(s.token) != "" && !s.authExpired.Load() {
-		reportRecoveryEventFn(s, "rejected_healthy", map[string]interface{}{"ip": clientIP(r)})
-		jsonError(w, http.StatusConflict, "agent auth is healthy; recovery is not allowed")
-		return
-	}
 	ip := clientIP(r)
 	if !recoveryLimiter.allow(ip) {
 		reportRecoveryEventFn(s, "rate_limited", map[string]interface{}{"ip": ip})
@@ -224,12 +219,14 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body RecoveryRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		jsonError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-
+	// Determine auth mode up front. This used to happen below the
+	// healthy-agent guard, but that meant a host-authed caller
+	// (provably the owner) could not proactively recover until the
+	// heartbeat loop noticed the 401 and flipped authExpired. With
+	// the order swapped, host-token mode is allowed anytime; only
+	// shared-secret mode still requires authExpired to be set, which
+	// keeps random-LAN attempts gated behind a real failure signal.
+	//
 	// Two ways to authenticate this call:
 	//   1. host-token mode (preferred): the caller presents their
 	//      own Convex Bearer token. We ask Convex who owns the
@@ -248,6 +245,18 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 			authMethod = "host_token"
 		}
 	}
+	if s != nil && strings.TrimSpace(s.token) != "" && !s.authExpired.Load() && !authedAsHost {
+		reportRecoveryEventFn(s, "rejected_healthy", map[string]interface{}{"ip": ip})
+		jsonError(w, http.StatusConflict, "agent auth is healthy; recovery is not allowed")
+		return
+	}
+
+	var body RecoveryRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
 	if !authedAsHost {
 		if body.Secret == "" {
 			reportRecoveryEventFn(s, "missing_proof", map[string]interface{}{"ip": ip, "mode": body.Mode})
