@@ -52,6 +52,10 @@ jobs:
           ls -1 "$WORKSPACE_ROOT" | head -10 || true
 
           echo "== writing manifest at $MANIFEST"
+          # carrotbet is a turbo monorepo (package.json name = "backgammon-platform").
+          # Web dev-server lives in apps/web (Vite), RN/Expo lives in mobile.
+          # The workspace manifest points at the real dev-server dirs so
+          # the Web Reload + Hot Reload surfaces kick the right thing.
           cat >"$MANIFEST" <<'YAML'
           version: 1
           name: ephemeral-test
@@ -59,8 +63,11 @@ jobs:
             root: "."
           apps:
             - name: carrotbet
-              path: ./carrotbet
-              stack: nextjs
+              path: ./carrotbet/apps/web
+              stack: vite
+            - name: carrotbet-mobile
+              path: ./carrotbet/mobile
+              stack: react-native-expo
             - name: sfmg
               path: ./sfmg
               stack: react-native-expo
