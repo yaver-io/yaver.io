@@ -221,6 +221,26 @@ func GetRunnerConfig(runnerID string) RunnerConfig {
 	return defaultRunner
 }
 
+// firstInstalledBuiltinRunner returns the first builtin runner whose command
+// resolves via PATH (or the expanded common-locations search). Scan order is
+// stable so callers get a predictable pick. Returns (_, false) when nothing
+// is installed, letting the caller surface a clean error instead of crashing
+// in a retry loop.
+func firstInstalledBuiltinRunner() (RunnerConfig, bool) {
+	// Stable preference order: frontier CLIs first, then local/free runners.
+	order := []string{"claude", "codex", "aider", "opencode", "goose", "amp", "ollama", "aider-ollama"}
+	for _, id := range order {
+		r, ok := builtinRunners[id]
+		if !ok {
+			continue
+		}
+		if err := CheckRunnerBinary(r.Command); err == nil {
+			return r, true
+		}
+	}
+	return RunnerConfig{}, false
+}
+
 // cachedModels stores models fetched from Convex for the /agent/runners endpoint.
 var cachedModels []BackendModel
 
@@ -1001,6 +1021,21 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 				taskRunner = tm.runner
 			} else {
 				return nil, fmt.Errorf("unknown runner: %s", runnerID)
+			}
+		}
+
+		// If the caller left the runner unspecified and the agent's configured
+		// default isn't actually installed on this host, fall back to the first
+		// installed builtin. Without this the task would spawn a missing binary,
+		// crash with <100 bytes of output, and enter the 4x auto-restart loop
+		// until the runner gets marked down in Convex — visible to the user as
+		// "Agent process crashed — restarting (attempt N/4)" with no recourse.
+		if !tm.DummyMode && normalizedRunnerID == "" {
+			if err := CheckRunnerBinary(taskRunner.Command); err != nil {
+				if alt, ok := firstInstalledBuiltinRunner(); ok {
+					log.Printf("[runner] configured default %q not installed (%v) — falling back to %q for this task", taskRunner.Command, err, alt.RunnerID)
+					taskRunner = alt
+				}
 			}
 		}
 	}
