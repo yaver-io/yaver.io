@@ -1,0 +1,128 @@
+# Rebuild the yaver agent binary from the current main on the
+# persistent yaver-test-ephemeral Hetzner box and restart it —
+# skip the 6-hour auto-update cycle when we want a cost-cutting
+# commit live right now.
+#
+# workflow_dispatch-only. Safe to rerun; the old binary gets
+# replaced atomically (temp + rename), and any running yaver
+# process is killed cleanly before the new one spawns via the
+# agent's existing auto-start logic.
+name: Rollout yaver from main to ephemeral
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: rollout-ephemeral-from-main
+  cancel-in-progress: true
+
+jobs:
+  rollout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Rsync desktop/agent to the box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          rsync -az --delete \
+            -e "ssh -i $HCLOUD_SSH_PRIVATE_KEY_PATH -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
+            --exclude 'node_modules' --exclude 'dist' --exclude '.git' \
+            desktop/agent/ "root@$HETZNER_TEST_SERVER_IP:/opt/yaver/desktop/agent/"
+
+      - name: Build + replace binary on the box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          set -e
+          export PATH="/usr/local/go/bin:$PATH"
+          cd /opt/yaver/desktop/agent
+
+          # Build beside the installed binary, then move into place.
+          go build -o /tmp/yaver.new .
+          chmod 0755 /tmp/yaver.new
+
+          # Kill any running yaver cleanly. Prefer systemd if a
+          # matching unit exists; otherwise pkill. The agent's own
+          # autostart path (installed via `yaver serve` earlier)
+          # will respawn from the new binary when we exit — no
+          # manual restart needed.
+          if systemctl is-active --quiet yaver-agent.service 2>/dev/null; then
+            systemctl stop yaver-agent.service
+          elif systemctl is-active --quiet yaver.service 2>/dev/null; then
+            systemctl stop yaver.service
+          fi
+          pkill -x yaver || true
+          sleep 1
+
+          # Atomic replace — don't leave a half-written binary if
+          # someone Ctrl-C's this step.
+          install -m 0755 /tmp/yaver.new /usr/local/bin/yaver
+          rm -f /tmp/yaver.new
+
+          # Bring the agent back. Prefer systemd; otherwise rely
+          # on the auto-start hook invoked by the yaver CLI itself.
+          if systemctl list-unit-files yaver-agent.service >/dev/null 2>&1; then
+            systemctl start yaver-agent.service
+          elif systemctl list-unit-files yaver.service >/dev/null 2>&1; then
+            systemctl start yaver.service
+          else
+            # Last-ditch — start detached with the same PATH the
+            # systemd unit would have used.
+            nohup /usr/local/bin/yaver serve >/var/log/yaver.log 2>&1 &
+          fi
+
+          echo "installed version: $(/usr/local/bin/yaver --version 2>/dev/null | head -1)"
+          REMOTE
+
+      - name: Verify bus + watchdog are healthy
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          set -e
+          # Give the agent a moment to bind + the supervisor to tick.
+          for i in 1 2 3 4 5; do
+            if curl -sSf --max-time 5 http://127.0.0.1:18080/health >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+
+          echo "--- /health ---"
+          curl -sS --max-time 5 http://127.0.0.1:18080/health | head -20
+
+          echo
+          echo "--- /self-check (no auth — will 401 if supervisor is up) ---"
+          curl -sS --max-time 5 -o /dev/null -w "HTTP %{http_code}\n" http://127.0.0.1:18080/self-check
+
+          echo
+          echo "--- watchdog journal tail ---"
+          journalctl -u yaver-watchdog.service --no-pager -n 10 || true
+
+          echo
+          echo "--- beacon file freshness ---"
+          if [ -f /root/.yaver/last-healthy ]; then
+            age=$(( $(date -u +%s) - $(stat -c '%Y' /root/.yaver/last-healthy) ))
+            echo "last-healthy age: ${age}s"
+          else
+            echo "beacon missing (will appear after first watchdog tick)"
+          fi
+          REMOTE
