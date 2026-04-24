@@ -398,9 +398,6 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                     ))}
                   </div>
                 ) : null}
-                <p className="text-xs text-surface-600 font-mono">
-                  {device.id.substring(0, 8)}...
-                </p>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   {onOpen && device.online ? (
                     <button
