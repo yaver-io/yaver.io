@@ -26,8 +26,14 @@ on:
         required: true
         type: string
       git_url:
-        description: "Clone URL. Use https://<PAT>@github.com/... for private repos, or ssh-style."
-        required: true
+        description: "Clone URL (optional — leave blank to skip clone when the project already exists on disk)."
+        required: false
+        default: ""
+        type: string
+      existing_path:
+        description: "Absolute path to an already-cloned repo on the box (e.g. /home/yaver/Workspace/carrotbet). When set, skips clone."
+        required: false
+        default: ""
         type: string
       stack:
         description: "Workspace stack label — nextjs / vite / react-native-expo / react-native / flutter / node / go / python / rust"
@@ -63,6 +69,7 @@ jobs:
           HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
           PROJECT_NAME: ${{ inputs.project_name }}
           GIT_URL: ${{ inputs.git_url }}
+          EXISTING_PATH: ${{ inputs.existing_path }}
           STACK: ${{ inputs.stack }}
           SET_AS_WORKDIR: ${{ inputs.set_as_workdir }}
         run: |
@@ -71,25 +78,34 @@ jobs:
               -o UserKnownHostsFile=/dev/null \
               -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
               "root@$HETZNER_TEST_SERVER_IP" \
-              "PROJECT_NAME=$PROJECT_NAME GIT_URL='$GIT_URL' STACK=$STACK SET_AS_WORKDIR=$SET_AS_WORKDIR bash -s" <<'REMOTE'
+              "PROJECT_NAME=$PROJECT_NAME GIT_URL='$GIT_URL' EXISTING_PATH='$EXISTING_PATH' STACK=$STACK SET_AS_WORKDIR=$SET_AS_WORKDIR bash -s" <<'REMOTE'
           set -euo pipefail
 
           projects_root="/opt/yaver/projects"
-          project_dir="$projects_root/$PROJECT_NAME"
 
-          mkdir -p "$projects_root"
-
-          if [ -d "$project_dir/.git" ]; then
-            echo "== updating existing clone at $project_dir"
-            git -C "$project_dir" fetch --quiet
-            # Reset to default branch tip. We don't want merge conflicts
-            # surviving across bootstrap runs since this is a test box.
-            default_branch=$(git -C "$project_dir" remote show origin | awk '/HEAD branch/ {print $NF}')
-            git -C "$project_dir" checkout --quiet "$default_branch"
-            git -C "$project_dir" reset --hard "origin/$default_branch" --quiet
+          # Three ways to resolve project_dir, in priority:
+          #   1. EXISTING_PATH given + it's a git repo on disk → use it
+          #   2. GIT_URL given → clone or update into projects_root/PROJECT_NAME
+          #   3. Neither → bail out, nothing to do
+          if [ -n "$EXISTING_PATH" ] && [ -d "$EXISTING_PATH/.git" ]; then
+            project_dir="$EXISTING_PATH"
+            echo "== reusing existing repo at $project_dir"
+          elif [ -n "$GIT_URL" ]; then
+            project_dir="$projects_root/$PROJECT_NAME"
+            mkdir -p "$projects_root"
+            if [ -d "$project_dir/.git" ]; then
+              echo "== updating existing clone at $project_dir"
+              git -C "$project_dir" fetch --quiet
+              default_branch=$(git -C "$project_dir" remote show origin | awk '/HEAD branch/ {print $NF}')
+              git -C "$project_dir" checkout --quiet "$default_branch"
+              git -C "$project_dir" reset --hard "origin/$default_branch" --quiet
+            else
+              echo "== cloning $GIT_URL into $project_dir"
+              git clone --depth 1 "$GIT_URL" "$project_dir"
+            fi
           else
-            echo "== cloning $GIT_URL into $project_dir"
-            git clone --depth 1 "$GIT_URL" "$project_dir"
+            echo "ERROR: provide either --git_url=<url> or --existing_path=<path>" >&2
+            exit 1
           fi
 
           # Always pick the workspace manifest location: the agent's
