@@ -205,6 +205,31 @@ export interface DevTargetPreference {
   targetDeviceClass?: string;
 }
 
+export type DevServerKind = "web" | "mobile" | "hybrid";
+
+/** One app from the monorepo workspace manifest, as returned by /workspace/apps. */
+export interface WorkspaceAppView {
+  name: string;
+  path: string;
+  absPath?: string;
+  stack?: string;
+  kind?: DevServerKind;
+  framework?: string;
+  depends?: string[];
+  env?: string[];
+  envMissing?: string[];
+  provider?: Record<string, string>;
+  exists: boolean;
+}
+
+export interface WorkspaceResponse {
+  ok: boolean;
+  root: string;
+  path: string;
+  manifest?: unknown;
+  apps?: WorkspaceAppView[];
+}
+
 /**
  * Per-attempt diagnostic captured during connect(). Lets the dashboard show
  * WHY each relay / direct path failed instead of a single flat error line.
@@ -2608,8 +2633,11 @@ export class AgentClient {
   }
 
   async startDevServer(opts: {
-    framework: string;
-    workDir: string;
+    framework?: string;
+    workDir?: string;
+    app?: string;      // workspace manifest app name (monorepo)
+    surface?: "web-reload" | "hot-reload";
+    root?: string;     // workspace root override
     platform?: string;
     targetDeviceId?: string;
     targetDeviceName?: string;
@@ -2621,7 +2649,34 @@ export class AgentClient {
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
       body: JSON.stringify(opts),
     });
-    if (!res.ok) throw new Error("Failed to start dev server");
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body?.error || `Failed to start dev server (HTTP ${res.status})`);
+    }
+  }
+
+  // ── Workspace manifest (monorepo) ────────────────────────────────
+
+  async getWorkspace(): Promise<WorkspaceResponse | null> {
+    this.assertConnected();
+    try {
+      const res = await fetch(`${this.baseUrl}/workspace`, { headers: this.authHeaders });
+      if (!res.ok) return null;
+      return res.json();
+    } catch { return null; }
+  }
+
+  async getWorkspaceApps(kind?: string | string[]): Promise<WorkspaceAppView[]> {
+    this.assertConnected();
+    const query = kind
+      ? `?kind=${encodeURIComponent(Array.isArray(kind) ? kind.join(",") : kind)}`
+      : "";
+    try {
+      const res = await fetch(`${this.baseUrl}/workspace/apps${query}`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data?.apps) ? data.apps : [];
+    } catch { return []; }
   }
 
   async stopDevServer(): Promise<void> {

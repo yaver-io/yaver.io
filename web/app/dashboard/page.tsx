@@ -38,6 +38,7 @@ import PhoneProjectsView from "@/components/dashboard/PhoneProjectsView";
 import ExecView from "@/components/dashboard/ExecView";
 import DomainsView from "@/components/dashboard/DomainsView";
 import VibeCodingView from "@/components/dashboard/VibeCodingView";
+import { WebReloadView } from "@/components/dashboard/WebReloadView";
 import GitView from "@/components/dashboard/GitView";
 import DevicesView from "@/components/dashboard/DevicesView";
 
@@ -767,6 +768,7 @@ export default function DashboardPage() {
     { id: "todos", label: "Todos", icon: "\u2611\uFE0F", badge: todoCount },
     { id: "builds", label: "Builds", icon: "\uD83D\uDE80" },
     { id: "preview", label: "Preview", icon: "\uD83C\uDFA8" },
+    { id: "web-reload", label: "Web Reload", icon: "\uD83C\uDF10" },
     { id: "health", label: "Health", icon: "\uD83D\uDCCA" },
     { id: "quality", label: "Quality", icon: "\u2705" },
     { id: "data", label: "Data", icon: "\uD83D\uDDC4\uFE0F" },
@@ -854,6 +856,7 @@ export default function DashboardPage() {
               { id: "git",      label: "Git",      icon: "⎇" },
               { id: "builds",   label: "Builds",   icon: "🛠️" },
               { id: "preview",  label: "Hot Reload", icon: "📱" },
+              { id: "web-reload", label: "Web Reload", icon: "🌐" },
               { id: "guests",   label: "Guests",   icon: "👥" },
               { id: "vault",    label: "Vault",    icon: "🔐" },
             ] as const).map((it) => (
@@ -1346,6 +1349,10 @@ export default function DashboardPage() {
                 return { repaired: !!body.repaired, reason: body.reason || "" };
               } : undefined}
             /></div>
+          ) : activeTab === "web-reload" ? (
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <WebReloadView connectedDevice={connectedDevice} connState={connState} />
+            </div>
           ) : activeTab === "health" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><HealthView /></div>
           ) : activeTab === "quality" ? (
