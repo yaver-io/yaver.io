@@ -253,6 +253,16 @@ func (t *TunnelClient) handleRequest(stream quic.Stream) {
 		}
 	}
 
+	// Web Reload dashboard tab iframes /dev/* responses. Dev servers
+	// routinely ship frame-blocking headers (Next.js sets
+	// `frame-ancestors 'self'` in its default CSP) that prevent the
+	// iframe from rendering. Strip those headers narrowly on /dev/*
+	// only — other paths retain their production-grade security
+	// posture.
+	if strings.HasPrefix(req.Path, "/dev/") {
+		stripFrameBlockingHeaders(headers)
+	}
+
 	tunnelResp := TunnelResponse{
 		ID:         req.ID,
 		StatusCode: resp.StatusCode,
