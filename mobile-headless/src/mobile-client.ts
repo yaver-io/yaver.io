@@ -980,6 +980,81 @@ export class MobileClient {
     servers.sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
     return { servers, userRelayPassword };
   }
+
+  // ── P2P bus ───────────────────────────────────────────────────
+  //
+  // Mobile-specific usage pattern: subscribe only while the app is
+  // foregrounded (iOS/Android both kill long-lived sockets in
+  // background). When backgrounded, fall back to periodic Convex
+  // /devices/list polling (what listDevices() already does).
+  //
+  // The SSE stream matches what web-headless sees and what a Go
+  // bus peer emits — one shared wire format.
+
+  /** Subscribe to the connected agent's P2P bus event stream.
+   *  `prefix` filters to a topic prefix (e.g. "peer" for presence).
+   *  Returns an unsubscribe function that aborts the underlying
+   *  fetch; call it when the app backgrounds. */
+  subscribeBusEvents(opts: {
+    prefix?: string;
+    onEvent: (evt: {
+      id: string;
+      topic: string;
+      publisher: string;
+      publishedAt: number;
+      ttl?: number;
+      qos: number;
+      payload?: unknown;
+    }) => void;
+    onError?: (err: Error) => void;
+  }): () => void {
+    const url = new URL(this.agentURL("/bus/events"));
+    if (opts.prefix) url.searchParams.set("prefix", opts.prefix);
+    const ctrl = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(url.toString(), {
+          headers: { ...this.authHeaders(), Accept: "text/event-stream" },
+          signal: ctrl.signal,
+        });
+        if (!res.ok || !res.body) throw new Error(`bus/events: HTTP ${res.status}`);
+        const reader = (res.body as any).getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) return;
+          buf += decoder.decode(value, { stream: true });
+          for (;;) {
+            const nl = buf.indexOf("\n");
+            if (nl < 0) break;
+            const line = buf.slice(0, nl).replace(/\r$/, "");
+            buf = buf.slice(nl + 1);
+            if (!line.startsWith("data: ")) continue;
+            try {
+              opts.onEvent(JSON.parse(line.slice("data: ".length)));
+            } catch {
+              /* skip malformed frame */
+            }
+          }
+        }
+      } catch (err: any) {
+        if (err?.name === "AbortError") return;
+        opts.onError?.(err);
+      }
+    })();
+    return () => ctrl.abort();
+  }
+
+  async getBusStatus(): Promise<any> {
+    try {
+      const res = await fetch(this.agentURL("/bus/status"), { headers: this.authHeaders() });
+      if (!res.ok) return null;
+      return await safeJson(res);
+    } catch {
+      return null;
+    }
+  }
 }
 
 async function safeJson(res: Response): Promise<any> {

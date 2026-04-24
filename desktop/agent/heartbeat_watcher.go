@@ -212,10 +212,60 @@ func StartHeartbeatWatcher(ctx context.Context) {
 	}()
 }
 
-// pollPeerHeartbeats fetches the current peer list from Convex
-// (the one thing it's allowed to do) and feeds each record
-// through the watcher. Shared HTTP client, tight timeout.
+// pollPeerHeartbeats drains the local LeaderTracker cache — which
+// is itself populated by the P2P bus (relay / direct / future LAN
+// multicast) — and feeds each known peer through the watcher. Used
+// to cost a Convex GET /devices call per tick (60/hour/user); now
+// costs zero. Convex is only hit at cold-boot bootstrap when the
+// bus cache is empty (first 5 min after `yaver serve` starts).
+//
+// The Convex fallback is deliberate: when an agent first boots, it
+// hasn't yet heard anyone's `peer/*/online` event, so it needs some
+// way to populate the list. After the bus converges (~1 min), this
+// falls back path is a no-op.
 func pollPeerHeartbeats() {
+	hostname, _ := os.Hostname()
+	watcher := globalPeerWatcher()
+
+	// Primary path: bus cache via the process-global LeaderTracker.
+	// Zero Convex calls in the steady state.
+	if lt := globalLeader; lt != nil {
+		peers := lt.Peers()
+		if len(peers) > 0 {
+			cfg, _ := LoadConfig()
+			selfID := ""
+			if cfg != nil {
+				selfID = cfg.DeviceID
+			}
+			for _, p := range peers {
+				if p.DeviceID == selfID {
+					continue
+				}
+				lastHB := time.UnixMilli(p.LastSeenAt).UTC().Format(time.RFC3339)
+				msg := watcher.observe(p.DeviceID, p.Hostname, lastHB)
+				if msg != "" {
+					fmt.Fprintf(os.Stderr, "[heartbeat] %s\n", msg)
+					if nm := globalMonitorNotifier; nm != nil {
+						nm("peer-heartbeat", hostname, msg, 0)
+					}
+				}
+			}
+			return
+		}
+	}
+
+	// Cold-boot fallback: bus hasn't converged yet. Ask Convex for
+	// the registry exactly once. Runs maybe once or twice after
+	// `yaver serve` starts, then never again for the life of the
+	// process.
+	convexBootstrapPeers(hostname, watcher)
+}
+
+// convexBootstrapPeers is the legacy Convex-polling path, kept
+// behind a bus-empty gate so a fresh agent still has a peer list
+// within seconds of booting (before the first `peer/*/ping` arrives
+// over the bus). Inner contents identical to the pre-bus implementation.
+func convexBootstrapPeers(hostname string, watcher *peerWatcher) {
 	cfg, err := LoadConfig()
 	if err != nil || cfg == nil || cfg.AuthToken == "" || cfg.ConvexSiteURL == "" {
 		return
@@ -247,11 +297,7 @@ func pollPeerHeartbeats() {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return
 	}
-	hostname, _ := os.Hostname()
-	watcher := globalPeerWatcher()
 	for _, d := range payload.Devices {
-		// Skip ourselves — it's trivially "up" and the alert
-		// would be meaningless.
 		if d.DeviceID == cfg.DeviceID {
 			continue
 		}

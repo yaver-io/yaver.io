@@ -129,6 +129,38 @@ export interface Task {
   updatedAt?: number;
 }
 
+/** One event on the Yaver P2P bus. Mirrors desktop/agent/bus.go. */
+export interface BusEvent {
+  id: string;
+  topic: string;
+  publisher: string;
+  publishedAt: number;
+  ttl?: number;
+  qos: 0 | 1;
+  payload?: unknown;
+}
+
+export interface BusStatus {
+  enabled: boolean;
+  bus?: {
+    deviceId: string;
+    userId: string;
+    running: boolean;
+    published: number;
+    received: number;
+    dupes: number;
+    transports: string[];
+    retainedCount: number;
+    subscriptionCount: number;
+  };
+  leader?: {
+    self: string;
+    leader: string;
+    amLeader: boolean;
+    alivePeers: Array<{ deviceId: string; hostname?: string; lastSeenAt?: number }>;
+  };
+}
+
 export interface CreateTaskOpts {
   title: string;
   description: string;
@@ -478,6 +510,78 @@ export class WebClient {
 
   async stopTask(taskId: string): Promise<void> {
     await this.agentFetch("POST", `/tasks/${encodeURIComponent(taskId)}/stop`);
+  }
+
+  // ── P2P bus ────────────────────────────────────────────────────
+
+  /** Subscribe to the connected agent's bus event stream. Returns
+   *  an unsubscribe function. Use prefix to filter (e.g. "peer" for
+   *  presence-only). Designed for Node/Bun scripts; the underlying
+   *  SSE format is identical to what /bus/events exposes, so mobile
+   *  and browser clients can consume the same stream via EventSource. */
+  subscribeBusEvents(opts: {
+    prefix?: string;
+    onEvent: (evt: BusEvent) => void;
+    onError?: (err: Error) => void;
+  }): () => void {
+    if (!this.baseUrl) {
+      throw new Error("subscribeBusEvents: not connected. Call connect(deviceId) first.");
+    }
+    const url = new URL(`${this.baseUrl}/bus/events`);
+    if (opts.prefix) url.searchParams.set("prefix", opts.prefix);
+    const ctrl = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(url.toString(), {
+          headers: { ...this.authHeaders(), Accept: "text/event-stream" },
+          signal: ctrl.signal,
+        });
+        if (!res.ok || !res.body) throw new Error(`bus/events: HTTP ${res.status}`);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) return;
+          buf += decoder.decode(value, { stream: true });
+          for (;;) {
+            const nl = buf.indexOf("\n");
+            if (nl < 0) break;
+            const line = buf.slice(0, nl).replace(/\r$/, "");
+            buf = buf.slice(nl + 1);
+            if (!line.startsWith("data: ")) continue;
+            try {
+              opts.onEvent(JSON.parse(line.slice("data: ".length)) as BusEvent);
+            } catch {
+              /* skip malformed frame */
+            }
+          }
+        }
+      } catch (err: any) {
+        if (err?.name === "AbortError") return;
+        opts.onError?.(err);
+      }
+    })();
+    return () => ctrl.abort();
+  }
+
+  async publishBusEvent(
+    topic: string,
+    payload: unknown,
+    opts: { retainSec?: number; qos?: 0 | 1 } = {},
+  ): Promise<{ id: string; topic: string }> {
+    const body: Record<string, unknown> = { topic, payload };
+    if (opts.retainSec !== undefined) body.retainSec = opts.retainSec;
+    if (opts.qos !== undefined) body.qos = opts.qos;
+    return this.agentFetch("POST", "/bus/publish", body);
+  }
+
+  async getBusStatus(): Promise<BusStatus | null> {
+    try {
+      return await this.agentFetch("GET", "/bus/status");
+    } catch {
+      return null;
+    }
   }
 
   // ── Recovery: Reconnect & Fix (matches PreviewPane handler) ────

@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.35"
+const version = "1.99.36"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -2384,14 +2384,31 @@ func runServe(args []string) {
 
 	// Connect the first available relay as a Tier-2 transport.
 	// Non-fatal if the relay is unreachable — the bus still works
-	// for local pub/sub, and other transports (Phase 2) will cover
-	// remote delivery.
+	// for local pub/sub, and other transports will cover remote
+	// delivery.
 	if len(cfg.RelayServers) > 0 {
 		primary := cfg.RelayServers[0]
 		if primary.HttpURL != "" {
 			rt := NewRelayBusTransport(primary.HttpURL, primary.Password, cfg.AuthToken, b)
 			rt.Start(ctx)
 			b.RegisterTransport(rt)
+		}
+	}
+
+	// Tier-1 LAN transport — UDP broadcast on :19838. Non-fatal on
+	// startup error (network permission denied, port in use, etc).
+	// YAVER_DISABLE_LAN_BUS=1 skips the listen entirely for hosts
+	// that don't want stray UDP chatter.
+	if os.Getenv("YAVER_DISABLE_LAN_BUS") != "1" {
+		// Single-tenant mode — we don't have userID locally on the
+		// agent (it's derived per-request from the bearer). Accept
+		// all same-LAN Yaver traffic for now; tighten later when
+		// we thread userID through config.
+		lt := NewLANBusTransport(b, cfg.DeviceID, "")
+		if err := lt.Start(ctx); err != nil {
+			log.Printf("[bus-lan] skip: %v", err)
+		} else {
+			b.RegisterTransport(lt)
 		}
 	}
 
@@ -6601,14 +6618,21 @@ func execOpen(name string, args ...string) {
 }
 
 func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr *TaskManager, httpServer *HTTPServer) {
-	// 30 s instead of 2 min: a SIGKILL'd / power-cut / wifi-dropped
-	// agent can't call MarkOffline, so the only way Convex (and the
-	// mobile/web clients reading it) notices is via the lastHeartbeat
-	// freshness check on the next query. Tightening to 30 s caps the
-	// "device looks online for ~5 min after a hard crash" UX bug at
-	// ~90 s end-to-end (one missed beat + the 60 s server-side
-	// staleness window). Cheap — it's a single small POST.
-	ticker := time.NewTicker(30 * time.Second)
+	// 5 min instead of 30 s: the P2P bus (see bus.go) now carries
+	// live peer presence between devices for free. Convex only
+	// needs to know "does this device exist" for the dashboard's
+	// cold-boot rendering — a 5-min cadence keeps lastHeartbeat
+	// fresh enough for "is this machine online within the last
+	// hour" style queries without burning 120 calls/hour/user.
+	//
+	// A SIGKILL'd agent now shows "possibly offline" to bus peers
+	// within ~1 min (their keepalive timeout) and to the web
+	// dashboard within ~5 min (next Convex heartbeat cutoff). That
+	// ~5-min staleness is the conscious trade for ~90% lower
+	// Convex call volume — the web dashboard can regain sub-minute
+	// responsiveness by subscribing to /bus/events on the agent
+	// directly (follow-up PR).
+	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
 	currentToken := func() string {

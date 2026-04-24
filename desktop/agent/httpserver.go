@@ -4047,6 +4047,10 @@ func (s *HTTPServer) handleMCP(w http.ResponseWriter, r *http.Request) {
 				"name":    "yaver",
 				"version": version,
 			},
+			// Shown to the calling LLM on every session start. Mirrors
+			// the "Read This First" section of CLAUDE.md + AGENTS.md so
+			// clients that never open those files still hear the rule.
+			"instructions": mcpInstructions(),
 		}
 
 	case "tools/list":
@@ -10192,6 +10196,18 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		p, _ := json.Marshal(opsWebPreviewPayload{Action: "stop"})
 		r := opsWebPreviewHandler(OpsContext{Server: s, Caller: "owner"}, p)
 		body, _ := json.MarshalIndent(r, "", "  ")
+		return mcpToolResult(string(body))
+
+	case "project_context":
+		var args struct {
+			WorkDir string `json:"workDir,omitempty"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		workDir := strings.TrimSpace(args.WorkDir)
+		if workDir == "" && s.taskMgr != nil {
+			workDir = s.taskMgr.workDir
+		}
+		body, _ := json.MarshalIndent(projectContextFiles(workDir), "", "  ")
 		return mcpToolResult(string(body))
 
 	case "diagnose":
