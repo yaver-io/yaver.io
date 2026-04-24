@@ -1118,6 +1118,25 @@ in the vault once and they stop needing `export` in every shell.
 GitHub Actions keep working unchanged: a CI host with no vault just
 falls through to env vars set by `secrets.*`.
 
+### Shared-machine deploys (`yaver deploy ship`)
+
+Guests you invite with the new `deploy` scope can trigger a deploy
+on *your* machine from *their* laptop, without ever seeing the
+secrets on your disk:
+
+```bash
+# Host
+yaver guests invite friend@example.com --scope=deploy --projects=mobile
+
+# Guest — runs on their laptop; the build actually happens on yours
+yaver deploy ship --app mobile --target testflight --machine <host-device-id>
+```
+
+The script body is generated on your machine, vault values are
+injected into the subprocess env (never into the script source),
+and only stdout/stderr stream back over SSE. Security model in
+[`docs/vault-and-deploy.md`](docs/vault-and-deploy.md#12-guest-triggered-deploys-post-deployship).
+
 Full reference: [`docs/vault-and-deploy.md`](docs/vault-and-deploy.md).
 
 ## Container Sandbox (Optional)
