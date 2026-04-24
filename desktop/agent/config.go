@@ -38,6 +38,14 @@ type Config struct {
 	Notifications                 *NotificationConfig      `json:"notifications,omitempty"`
 	WebhookSecret                 string                   `json:"webhook_secret,omitempty"`
 	AnalyticsWebhookURL           string                   `json:"analytics_webhook_url,omitempty"`
+	// DeployWebhookURL is POST'd a JSON body summarising each finished
+	// /deploy/ship run. Empty = disabled. Intended use: point at a
+	// Slack / Discord / Zapier inbound URL so overnight guest-deploy
+	// failures can page a human.
+	DeployWebhookURL string `json:"deploy_webhook_url,omitempty"`
+	// DeployWebhookOn filters which events fire. Values: "success",
+	// "failure", "all" (default). Empty also means "all".
+	DeployWebhookOn string `json:"deploy_webhook_on,omitempty"`
 	RateLimit                     *RateLimitConfig         `json:"rate_limit,omitempty"`
 
 	// Machine-level monitors (disk-health, peer heartbeat)

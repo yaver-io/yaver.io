@@ -356,6 +356,10 @@ func (s *HTTPServer) handleDeployShip(w http.ResponseWriter, r *http.Request) {
 		"error_class": string(finalRun.ErrorClass),
 		"timed_out":   timedOut,
 	})
+	// Fire-and-forget completion webhook. Runs in its own goroutine
+	// so a slow/failing Slack/Discord endpoint never blocks this
+	// handler (stream already flushed to the client above).
+	FireDeployWebhook(finalRun)
 }
 
 // buildDeployShipEnv composes the subprocess env: sanitised system vars

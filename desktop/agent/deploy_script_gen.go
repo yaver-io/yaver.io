@@ -48,7 +48,7 @@ var deployTemplates = map[string]deployTemplate{
 	"react-native-expo:testflight": {
 		Stack:       "react-native-expo",
 		Target:      "testflight",
-		Description: "iOS TestFlight: xcodebuild archive + export + upload via App Store Connect API.",
+		Description: "iOS TestFlight: xcodebuild archive + export + upload via App Store Connect API. Idempotent — a failed upload leaves the archive in place, and the next run reuses it instead of re-archiving.",
 		Body: `cd "{{.Path}}/ios"
 
 : "${APP_STORE_KEY_PATH:?Missing APP_STORE_KEY_PATH (yaver vault add APP_STORE_KEY_PATH --project {{.App}})}"
@@ -61,25 +61,55 @@ WORKSPACE=$(find . -maxdepth 2 -name '*.xcworkspace' -not -path '*/Pods/*' | hea
 SCHEME=$(basename "$WORKSPACE" .xcworkspace)
 INFO_PLIST=$(find . -maxdepth 3 -name Info.plist -path "*/$SCHEME/*" | head -1)
 
+# Scoped per (app, target) so parallel deploys of different apps
+# don't clobber each other.
+ARCHIVE=/tmp/yaver-deploy-{{.App}}-{{.Target}}.xcarchive
+EXPORT_DIR=/tmp/yaver-deploy-{{.App}}-{{.Target}}-export
+EXPORT_OPTIONS=/tmp/yaver-deploy-{{.App}}-{{.Target}}-ExportOptions.plist
+DERIVED=/tmp/yaver-deploy-{{.App}}-{{.Target}}-build
+
 CURRENT_BUILD=$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" "$INFO_PLIST")
-NEW_BUILD=$((CURRENT_BUILD + 1))
-/usr/libexec/PlistBuddy -c "Set CFBundleVersion $NEW_BUILD" "$INFO_PLIST"
-echo "Build $CURRENT_BUILD → $NEW_BUILD"
 
-rm -rf /tmp/yaver-deploy.xcarchive
-echo "Archiving..."
-xcodebuild -workspace "$WORKSPACE" -scheme "$SCHEME" -configuration Release \
-  -archivePath /tmp/yaver-deploy.xcarchive archive \
-  DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic \
-  ENABLE_USER_SCRIPT_SANDBOXING=NO -allowProvisioningUpdates \
-  -authenticationKeyPath "$APP_STORE_KEY_PATH" \
-  -authenticationKeyID "$APP_STORE_KEY_ID" \
-  -authenticationKeyIssuerID "$APP_STORE_KEY_ISSUER" \
-  -derivedDataPath /tmp/yaver-deploy-build 2>&1 | tail -3
+# Idempotent resume: if an archive already exists for this
+# (app, target), verify its embedded CFBundleVersion matches the
+# project's current value and that it's less than 6 hours old. If
+# both hold, skip xcodebuild archive (the expensive step — 15-20
+# min on real apps) and go straight to export + upload. This turns
+# "the upload hiccuped, try again" from 30 min into 30 seconds.
+RESUME=0
+if [ -d "$ARCHIVE" ] && [ -f "$ARCHIVE/Info.plist" ]; then
+  ARCH_VER=$(/usr/libexec/PlistBuddy -c "Print ApplicationProperties:CFBundleVersion" "$ARCHIVE/Info.plist" 2>/dev/null || echo "")
+  ARCH_MTIME=$(stat -f %m "$ARCHIVE" 2>/dev/null || stat -c %Y "$ARCHIVE" 2>/dev/null || echo 0)
+  NOW_TS=$(date +%s)
+  AGE_SEC=$(( NOW_TS - ARCH_MTIME ))
+  MAX_AGE=$(( 6 * 60 * 60 ))
+  if [ -n "$ARCH_VER" ] && [ "$ARCH_VER" = "$CURRENT_BUILD" ] && [ $AGE_SEC -lt $MAX_AGE ]; then
+    echo "⏭  Resuming: existing archive for build $ARCH_VER is $(( AGE_SEC / 60 )) min old — skipping xcodebuild archive."
+    RESUME=1
+  fi
+fi
 
-[ -d /tmp/yaver-deploy.xcarchive ] || { echo "ERROR: archive failed"; exit 1; }
+if [ $RESUME -eq 0 ]; then
+  NEW_BUILD=$((CURRENT_BUILD + 1))
+  /usr/libexec/PlistBuddy -c "Set CFBundleVersion $NEW_BUILD" "$INFO_PLIST"
+  echo "Build $CURRENT_BUILD → $NEW_BUILD"
+  rm -rf "$ARCHIVE"
+  echo "Archiving..."
+  xcodebuild -workspace "$WORKSPACE" -scheme "$SCHEME" -configuration Release \
+    -archivePath "$ARCHIVE" archive \
+    DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic \
+    ENABLE_USER_SCRIPT_SANDBOXING=NO -allowProvisioningUpdates \
+    -authenticationKeyPath "$APP_STORE_KEY_PATH" \
+    -authenticationKeyID "$APP_STORE_KEY_ID" \
+    -authenticationKeyIssuerID "$APP_STORE_KEY_ISSUER" \
+    -derivedDataPath "$DERIVED" 2>&1 | tail -3
+  [ -d "$ARCHIVE" ] || { echo "ERROR: archive failed"; exit 1; }
+  EFFECTIVE_BUILD=$NEW_BUILD
+else
+  EFFECTIVE_BUILD=$ARCH_VER
+fi
 
-cat > /tmp/yaver-deploy-ExportOptions.plist <<EOF
+cat > "$EXPORT_OPTIONS" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -94,18 +124,23 @@ cat > /tmp/yaver-deploy-ExportOptions.plist <<EOF
 EOF
 
 echo "Exporting + uploading..."
-OUT=$(xcodebuild -exportArchive -archivePath /tmp/yaver-deploy.xcarchive \
-  -exportOptionsPlist /tmp/yaver-deploy-ExportOptions.plist \
-  -exportPath /tmp/yaver-deploy-export -allowProvisioningUpdates \
+rm -rf "$EXPORT_DIR"
+OUT=$(xcodebuild -exportArchive -archivePath "$ARCHIVE" \
+  -exportOptionsPlist "$EXPORT_OPTIONS" \
+  -exportPath "$EXPORT_DIR" -allowProvisioningUpdates \
   -authenticationKeyPath "$APP_STORE_KEY_PATH" \
   -authenticationKeyID "$APP_STORE_KEY_ID" \
   -authenticationKeyIssuerID "$APP_STORE_KEY_ISSUER" 2>&1)
 RC=$?
 echo "$OUT" | tail -3
 if [ $RC -ne 0 ] && ! echo "$OUT" | grep -q "Redundant Binary Upload"; then
-  echo "ERROR: export/upload failed (rc=$RC)"; exit 1
+  # Deliberate: DO NOT remove $ARCHIVE on failure. Next run resumes.
+  echo "ERROR: export/upload failed (rc=$RC). Archive kept at $ARCHIVE for resume on the next run."
+  exit 1
 fi
-echo "✓ TestFlight build $NEW_BUILD uploaded."
+# Success — free disk.
+rm -rf "$ARCHIVE" "$EXPORT_DIR" "$DERIVED" "$EXPORT_OPTIONS"
+echo "✓ TestFlight build $EFFECTIVE_BUILD uploaded."
 `,
 	},
 	"react-native-expo:playstore": {

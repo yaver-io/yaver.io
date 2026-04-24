@@ -568,6 +568,80 @@ yaver deploy logs <run-id>  [--machine <deviceId>]       # full log
 `GET /deploy/runs/{id}/output` and falls back to the in-memory tail
 when disk persistence wasn't active for that run.
 
+### Idempotent TestFlight resume
+
+The iOS template is resumable across retries. If a previous run
+archived successfully but the upload failed (Apple transient error,
+network hiccup, TestFlight rate limit), the archive is **kept on
+disk**. The next invocation of `yaver deploy ship --app X --target
+testflight` checks for an existing archive at
+`/tmp/yaver-deploy-<app>-testflight.xcarchive` whose embedded
+`ApplicationProperties:CFBundleVersion` matches the project's
+current `CFBundleVersion` and whose mtime is less than 6 h old.
+If both hold, it prints `⏭ Resuming: existing archive for build N
+is M min old — skipping xcodebuild archive.` and jumps straight to
+the 30-second export + upload phase.
+
+The template also scopes archive + export + derived-data + export-
+options-plist paths per `(app, target)` so parallel deploys of
+different projects no longer race on `/tmp/yaver-deploy.xcarchive`.
+
+On successful upload, all four temp dirs/files are removed. On
+failure, they stay — that's the whole point of the resume.
+
+Cost of this change: ~15 lines of bash in the template + one extra
+test assertion. No new Go code. Works with the existing
+`ClassifyDeployOutput` error-classifier (a resumed run that
+succeeds on the second try still lands as `exit_code=0,
+error_class=""`; a repeated Apple-side failure classifies the same
+way it did the first time).
+
+### Completion webhook
+
+`Config.DeployWebhookURL` (in `~/.yaver/config.json`) is POST'd a
+JSON summary after every finished `/deploy/ship` run. Intended
+targets: Slack / Discord / Zapier inbound URLs, or a small private
+dashboard. Fire-and-forget: runs in its own goroutine, one retry
+after 2 seconds on non-2xx, then gives up. A failing webhook
+**cannot** block or slow a deploy.
+
+```json
+{
+  "id": "abc12345",
+  "app": "mobile",
+  "target": "testflight",
+  "stack": "react-native-expo",
+  "requested_by": "friend-user-id",
+  "is_guest": true,
+  "started_at": 1714065600000,
+  "duration_ms": 187000,
+  "exit_code": 0,
+  "ok": true,
+  "error_class": "",
+  "timed_out": false,
+  "host": "mac-mini"
+}
+```
+
+Config:
+
+| Key | Value | Notes |
+|---|---|---|
+| `deploy_webhook_url` | HTTPS URL | empty = disabled |
+| `deploy_webhook_on`  | `all` (default), `success`, `failure` | filter |
+
+```bash
+# Set via direct edit of ~/.yaver/config.json, or:
+yaver config set deploy-webhook-url "https://hooks.slack.com/..."
+yaver config set deploy-webhook-on failure   # only fire for fails
+```
+
+Rationale for host-local (not Convex) storage: the URL is a
+host-machine behavior, not a user-identity setting. It lives in
+`~/.yaver/config.json` next to the other fire-and-forget hooks
+(`webhook_secret`, `analytics_webhook_url`). The Privacy Contract
+for Convex is unchanged.
+
 ### Remaining follow-ups (smaller)
 
 - **Server-side composite endpoint**: today's composite is a
@@ -575,12 +649,13 @@ when disk persistence wasn't active for that run.
   `POST /deploy/ship` accepting `targets: [...]` and multiplexing
   events into one SSE stream) would be cheaper for mobile clients
   that don't want N parallel connections open.
-- **Idempotent resume**: a failed TestFlight upload after a 30-min
-  archive is a drag. Detect "same commit + same version" and skip
-  the archive step on retry.
-- **Webhook on completion**: `userSettings.deployWebhookUrl` could
-  POST `{id, app, target, exit_code, duration_ms, error_class}` so
-  a host owner gets a ping when overnight guest deploys fail.
+- **Webhook signing**: the POST body is currently unsigned. Adding
+  an `X-Yaver-Signature` HMAC header keyed on a shared secret
+  would let downstream filters verify authenticity before acting.
+- **Per-target webhook filters**: today the filter is global
+  (`all/success/failure`). A config like
+  `{"testflight": "failure", "cloudflare": "all"}` would let the
+  operator be choosier.
 
 ---
 
@@ -669,6 +744,8 @@ manually. Safe to `rm` once you've confirmed the live vault is OK.
 | `desktop/agent/guest_scope.go` | `GuestScopeDeploy` tier + allow-lists |
 | `desktop/agent/vault_lock_unix.go` / `_windows.go` | Cross-process file lock for vault writes |
 | `desktop/agent/vault_lock_test.go` | File-lock + stale-tmp detection tests |
+| `desktop/agent/deploy_webhook.go` | Fire-and-forget completion webhook (one-retry-then-give-up) |
+| `desktop/agent/deploy_webhook_test.go` | Webhook payload + filter + retry tests (httptest.Server) |
 | `scripts/deploy-testflight.sh` | TestFlight deploy, vault-aware |
 | `scripts/deploy-playstore.sh` | Play Store deploy, vault-aware |
 | `scripts/deploy-web.sh` | Cloudflare deploy, vault-aware |

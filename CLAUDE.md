@@ -1311,6 +1311,20 @@ Shared-machine deploy flow — e.g. friend triggers TestFlight from his laptop a
 
 `desktop/agent/deploy_classify.go::ClassifyDeployOutput` matches narrow regexes against the captured output tail. First match wins; ordered specific → generic. Classes: `already_uploaded` (rewrites `ok` to true — TestFlight's "Redundant Binary Upload"), `vault_locked`, `preflight_failed`, `signing_error`, `auth_error`, `toolchain_missing`, `network_error`, `disk_full`, `timeout`, `build_failed`. Adding a class = appending a `classifyRule` entry.
 
+### Idempotent TestFlight upload (resumable archive)
+
+- Template-level change in `deploy_script_gen.go::deployTemplates["react-native-expo:testflight"]`. On rerun the shell checks for `/tmp/yaver-deploy-<app>-<target>.xcarchive`; if the embedded `ApplicationProperties:CFBundleVersion` matches the project's current `CFBundleVersion` and the archive is < 6 h old, the 15-20 min xcodebuild archive is skipped and we go straight to export + upload. On failure the archive is deliberately kept; on success it's cleaned up along with the derived-data dir, export dir, and ExportOptions.plist.
+- Scoped temp paths per (app, target) so parallel deploys of different projects stop racing on `/tmp/yaver-deploy.xcarchive`.
+- Only needed for iOS — Android `gradle bundleRelease` is already incremental-friendly at the filesystem layer; Cloudflare / Convex / npm / PyPI deploys are stateless uploads.
+
+### Completion webhook (`Config.DeployWebhookURL`)
+
+- `~/.yaver/config.json` keys: `deploy_webhook_url` (HTTPS URL; empty=disabled), `deploy_webhook_on` (`all`/`success`/`failure`; default `all`).
+- `desktop/agent/deploy_webhook.go::FireDeployWebhook` — fire-and-forget goroutine called from `handleDeployShip` right after the `exit` SSE event. One retry after 2 s on non-2xx; then logs and gives up. Cannot block the handler.
+- Payload: `{id, app, target, stack, requested_by, is_guest, started_at, duration_ms, exit_code, ok, error_class, timed_out, host}`. Omits empty fields (`host` is omitted on machines where `os.Hostname` errors).
+- Host-local by design — the URL is a host-machine behavior (like `webhook_secret` and `analytics_webhook_url` already are), not a user-identity setting. Convex Privacy Contract unchanged.
+- Test stub: `hostnameForWebhook` is a `var` so tests can swap it; `osHostname` is not re-exported.
+
 ### Vault resilience (file lock + stale-tmp detect + sync conflicts)
 
 - **Cross-process file lock**: `~/.yaver/vault.enc.lock` with `flock(LOCK_EX)` on POSIX, `LockFileEx(LOCKFILE_EXCLUSIVE_LOCK)` on Windows. Taken during every `persist()`. Fail-soft: a flock failure logs once and the in-process mutex still protects the write.

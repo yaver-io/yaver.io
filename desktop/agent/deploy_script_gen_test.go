@@ -47,9 +47,28 @@ func TestGenerateDeployScriptTestflight(t *testing.T) {
 		"APP_STORE_KEY_ISSUER",
 		"app-store-connect",
 		`cd "/tmp/mobile/ios"`,
+		// Resumable-archive guarantees:
+		"ARCHIVE=/tmp/yaver-deploy-mobile-testflight.xcarchive",
+		"ApplicationProperties:CFBundleVersion",
+		"Resuming: existing archive",
+		"Archive kept at",
+		// After a successful upload the archive is cleaned up.
+		`rm -rf "$ARCHIVE"`,
 	} {
 		if !strings.Contains(script, s) {
 			t.Errorf("testflight script missing %q", s)
+		}
+	}
+	// Older, unscoped paths must not appear anywhere — two parallel
+	// apps would race on them.
+	for _, forbidden := range []string{
+		"/tmp/yaver-deploy.xcarchive",
+		"/tmp/yaver-deploy-build",
+		"/tmp/yaver-deploy-ExportOptions.plist",
+		"/tmp/yaver-deploy-export",
+	} {
+		if strings.Contains(script, forbidden) {
+			t.Errorf("testflight script still has unscoped path %q", forbidden)
 		}
 	}
 }

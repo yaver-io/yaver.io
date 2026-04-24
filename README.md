@@ -1169,6 +1169,21 @@ Failures are auto-classified: `vault_locked`, `toolchain_missing`,
 already shipped" — treated as success, not failure), plus generic
 `build_failed` when nothing specific matches.
 
+If Apple upload hiccups after a 20-min archive, just rerun — the
+iOS template is **idempotent**. The archive lives at
+`/tmp/yaver-deploy-<app>-testflight.xcarchive`; the second run
+checks its `CFBundleVersion` + mtime and skips straight to the
+30-second export+upload phase. On success the archive is cleaned
+up; on failure it's kept for the next attempt.
+
+Want a ping on completion? Set `deploy_webhook_url` in
+`~/.yaver/config.json` to a Slack/Discord/Zapier inbound URL. Every
+finished run POSTs `{id, app, target, exit_code, duration_ms, ok,
+error_class, is_guest, ...}` — fire-and-forget, one retry on
+non-2xx, then logged-and-forgotten. Especially useful for
+overnight guest-triggered deploys where nobody is watching the
+terminal.
+
 Full reference: [`docs/vault-and-deploy.md`](docs/vault-and-deploy.md).
 
 ## Container Sandbox (Optional)
